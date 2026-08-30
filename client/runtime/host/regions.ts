@@ -115,6 +115,41 @@
     return ms;
   }
 
+  // REGION_ATTR_NAME_PATTERN validates a data-gosx-region-key or
+  // data-gosx-region-cursor value at bind time, before it is ever built
+  // into a "[" + value + "]" CSS attribute selector: an unvalidated value
+  // containing a space, a bracket, or another character outside this
+  // shape would either build an invalid selector (a SyntaxError out of
+  // querySelectorAll, landing in fetchRegion's own catch on every single
+  // refresh) or silently match nothing at all. validRegionAttrName warns
+  // once at bind time instead and disables only that one feature (dedupe
+  // or the cursor), never the whole region.
+  var REGION_ATTR_NAME_PATTERN = /^[A-Za-z_][-A-Za-z0-9_.]*$/;
+
+  function validRegionAttrName(raw, sourceAttr) {
+    var value = raw || "";
+    if (!value) return "";
+    if (REGION_ATTR_NAME_PATTERN.test(value)) return value;
+    console.warn(
+      "[gosx] invalid " + sourceAttr + " value " + JSON.stringify(String(value))
+      + "; must be a valid HTML attribute name"
+    );
+    return "";
+  }
+
+  // regionDirectChildrenByAttr answers el's own direct children carrying
+  // attr, never a deeper descendant: ":scope > [attr]" rather than a bare
+  // "[attr]", so a keyed or cursored row nested inside another row's own
+  // markup (a round-header wrapper containing its own pick row, for
+  // example) is never mistaken for one of the region's own top-level
+  // entries. Guarded against a target with no querySelectorAll at all (a
+  // detached fragment, a minimal test double): answers no matches rather
+  // than throwing.
+  function regionDirectChildrenByAttr(el, attr) {
+    if (!el || !attr || typeof el.querySelectorAll !== "function") return [];
+    return Array.from(el.querySelectorAll(":scope > [" + attr + "]") || []);
+  }
+
   // activeRegionPointerTarget tracks the element under a currently-held
   // pointer, document-wide, for regionPollBlocked below — one delegated
   // listener pair for every polled region, not one per region. Installed
@@ -252,6 +287,53 @@
     return record.requestController;
   }
 
+  // regionCursorValue reads {cursor}'s fill value off el's own current
+  // children — never off the fetched fragment, which does not exist yet
+  // at the point record.refresh builds the request URL: the FIRST
+  // cursorAttr-carrying child in prepend mode (a prepend inserts ABOVE
+  // it, so "since my current newest row" is the first one on the page
+  // today), the LAST one otherwise (append or replace mode; "since my
+  // current last row" for a feed that grows downward). Resolves "" when
+  // cursorAttr names nothing, or el has no matching child yet (the first
+  // fetch of a region that starts empty).
+  function regionCursorValue(record, el) {
+    if (!record.cursorAttr) return "";
+    var matches = regionDirectChildrenByAttr(el, record.cursorAttr);
+    if (!matches.length) return "";
+    var node = record.mode === "prepend" ? matches[0] : matches[matches.length - 1];
+    return node && typeof node.getAttribute === "function" ? (node.getAttribute(record.cursorAttr) || "") : "";
+  }
+
+  // insertRegionFragment keeps every existing child. A keyed node whose key
+  // attribute matches a child already present is dropped, so an overlapping
+  // fragment never duplicates a row. Only the inserted nodes mount; the
+  // container and its older children are never re-mounted. Returns whether
+  // anything was inserted.
+  function insertRegionFragment(record, el, html) {
+    var position = record.mode === "prepend" ? "afterbegin" : "beforeend";
+    var scratch = document.createElement("template");
+    scratch.innerHTML = html;
+    var content = scratch.content || scratch;
+    var nodes = Array.from(content.childNodes || []).filter(function (node) { return node.nodeType === 1; });
+    if (record.keyAttr) {
+      var present = {};
+      for (var existing of regionDirectChildrenByAttr(el, record.keyAttr)) present[existing.getAttribute(record.keyAttr)] = true;
+      nodes = nodes.filter(function (node) { var key = node.getAttribute(record.keyAttr); return key == null || !present[key]; });
+    }
+    if (!nodes.length) return false;
+    var before = (el.childNodes || []).length;
+    el.insertAdjacentHTML(position, nodes.map(function (node) { return node.outerHTML; }).join(""));
+    var all = Array.from(el.childNodes || []);
+    var added = all.length - before;
+    var fresh = position === "afterbegin" ? all.slice(0, added) : all.slice(all.length - added);
+    for (var node of fresh) {
+      if (!node || node.nodeType !== 1) continue;
+      if (gosxHost.surfaces && typeof gosxHost.surfaces.mount === "function") gosxHost.surfaces.mount(node);
+      applySceneCommandScripts(node);
+    }
+    return true;
+  }
+
   // fetchRegion is shared by every trigger kind — signal, hub event, manual
   // refresh(), and the periodic poll bindRegion below starts for
   // data-gosx-region-interval (gosx#217). If-None-Match/ETag support lives
@@ -319,18 +401,28 @@
         // does not scroll on its own axis.
         var scrollTop = typeof el.scrollTop === "number" ? el.scrollTop : null;
         var scrollLeft = typeof el.scrollLeft === "number" ? el.scrollLeft : null;
-        // gosxHost.dom.replace is a forwarding shim compatibility.ts installs
-        // unconditionally, so it is always a function; probe the ambient
-        // name it forwards to instead of the shim to tell "dom.ts never
-        // loaded" (run the unmanaged fallback below, as before) apart from
-        // "dom.ts loaded and replaceRuntimeContent failed" (see dom.ts:
-        // on failure it already disposed the old subtree and may have
-        // partially written the new one, so re-running the unmanaged
-        // dispose/innerHTML/mount fallback would double-apply on top of
-        // that). The latter throws instead, so the catch below reports the
-        // failure and sets the region to the error state, matching the
-        // pre-migration behavior.
-        if (typeof gosxHostCompatibility.read("__gosx_replace_runtime_content") === "function") {
+        var inserted = true;
+        if (record.mode === "append" || record.mode === "prepend") {
+          // append/prepend never touches el's own children beyond the
+          // fetched fragment — no dispose/mount cycle for the container,
+          // no gosxHost.dom.replace managed swap, and no innerHTML
+          // rewrite: insertRegionFragment mounts only the newly inserted
+          // nodes (see its own doc comment) and reports whether it
+          // inserted anything, so a fully deduplicated fragment (every
+          // keyed node already present) can skip the event below.
+          inserted = insertRegionFragment(record, el, html);
+        } else if (typeof gosxHostCompatibility.read("__gosx_replace_runtime_content") === "function") {
+          // gosxHost.dom.replace is a forwarding shim compatibility.ts installs
+          // unconditionally, so it is always a function; probe the ambient
+          // name it forwards to instead of the shim to tell "dom.ts never
+          // loaded" (run the unmanaged fallback below, as before) apart from
+          // "dom.ts loaded and replaceRuntimeContent failed" (see dom.ts:
+          // on failure it already disposed the old subtree and may have
+          // partially written the new one, so re-running the unmanaged
+          // dispose/innerHTML/mount fallback would double-apply on top of
+          // that). The latter throws instead, so the catch below reports the
+          // failure and sets the region to the error state, matching the
+          // pre-migration behavior.
           if (gosxHost.dom.replace(el, html) === false) {
             throw new Error("runtime content replacement failed");
           }
@@ -347,7 +439,7 @@
         if (scrollTop != null) el.scrollTop = scrollTop;
         if (scrollLeft != null) el.scrollLeft = scrollLeft;
         setRegionState(el, "ready", "");
-        emit("gosx:region:after", { element: el, url: url, html: html });
+        if (inserted) emit("gosx:region:after", { element: el, url: url, html: html });
         observeRegion("info", "region refresh completed", { url: url });
       })
       .catch(function (err) {
@@ -395,6 +487,18 @@
     // suppresses the fetch (the default — avoids hitting e.g. /selection/ with a
     // blank id).
     var allowEmpty = el.hasAttribute("data-gosx-region-allow-empty");
+    // mode (gosx#217 extension): "replace" (default) keeps the existing
+    // managed-swap/innerHTML-fallback contract untouched. "append" and
+    // "prepend" instead grow the region — see insertRegionFragment's own
+    // doc comment — for a tape, a board, or any other list that should
+    // only ever gain rows, never re-mount ones it already has. keyAttr
+    // names the attribute a fetched fragment's own top-level elements
+    // carry for dedupe; cursorAttr names the attribute record.refresh
+    // reads off an already-present child to fill a "{cursor}" token in
+    // url, the append/prepend counterpart to "{value}" above.
+    var mode = el.getAttribute("data-gosx-region-mode") || "replace";
+    var keyAttr = validRegionAttrName(el.getAttribute("data-gosx-region-key"), "data-gosx-region-key");
+    var cursorAttr = validRegionAttrName(el.getAttribute("data-gosx-region-cursor"), "data-gosx-region-cursor");
     var rawInterval = el.getAttribute("data-gosx-region-interval");
     var pollIntervalMs = null;
     if (rawInterval) {
@@ -417,6 +521,9 @@
       field: field,
       signalName: signalName,
       onEvents: onEvents,
+      mode: mode,
+      keyAttr: keyAttr,
+      cursorAttr: cursorAttr,
       transport: createRegionTransport(),
       requestController: null,
       unsubscribe: null,
@@ -434,6 +541,11 @@
       if (requestURL.indexOf("{value}") >= 0) {
         if (!record.lastValue && !allowEmpty) return Promise.resolve(false);
         requestURL = requestURL.replace("{value}", encodeURIComponent(record.lastValue || ""));
+      }
+      if (requestURL.indexOf("{cursor}") >= 0) {
+        var cursor = regionCursorValue(record, el);
+        if (!cursor && !allowEmpty) return Promise.resolve(false);
+        requestURL = requestURL.replace("{cursor}", encodeURIComponent(cursor || ""));
       }
       return fetchRegion(record, requestURL).then(function () { return true; });
     };

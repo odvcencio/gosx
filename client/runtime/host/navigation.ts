@@ -93,6 +93,8 @@
   const LIVE_INTERVAL_ATTR = "data-gosx-live-interval";
   const LIVE_BIND_ATTR = "data-gosx-live-bind";
   const LIVE_FLASH_CLASS_ATTR = "data-gosx-live-flash-class";
+  const LIVE_BIND_ATTRIBUTE_ATTR = "data-gosx-live-bind-attr";
+  const LIVE_BIND_CLASS_ATTR = "data-gosx-live-bind-class";
   // LIVE_SIGNAL_ATTR and LIVE_ON_ATTR (gosx#228) are the manual-refresh
   // triggers, mirroring data-gosx-region's own -signal/-on grammar in
   // regions.ts exactly (same shared-signal subscription, same
@@ -101,6 +103,28 @@
   // region manual refresh" comment ahead of setupLiveRegions below.
   const LIVE_SIGNAL_ATTR = "data-gosx-live-signal";
   const LIVE_ON_ATTR = "data-gosx-live-on";
+  // LIVE_MODE_ATTR (gosx#217 extension) selects event mode:
+  // data-gosx-live-mode="event" applies a matching gosx:hub:event's own
+  // object payload directly to the binds under root, with no fetch at
+  // all — data-gosx-live-src becomes optional in that mode, serving only
+  // the public window.__gosx.live.refresh(element) manual-refresh path.
+  // Any other data-gosx-live-mode value warns once and is treated as
+  // unset (fetch mode).
+  const LIVE_MODE_ATTR = "data-gosx-live-mode";
+  // LIVE_HUB_ATTR optionally scopes event mode to one hub by name:
+  // data-gosx-hub-name (see server/navigation_contract.go) does not exist
+  // — the value is whatever string the page's own hub manifest gave that
+  // connection, matched against detail.hubName on the gosx:hub:event
+  // CustomEvent. Event NAMES share one page-global namespace across every
+  // connected hub (fetch mode always has, unchanged here): with no
+  // LIVE_HUB_ATTR, a same-named event from ANY hub on the page applies —
+  // fine for a page with exactly one hub, a real hazard for a page with
+  // two ("draft-live" and "chat-hub" both emitting a generic "update"
+  // event, for example). LIVE_HUB_ATTR is the opt-in fix for that case;
+  // it has no effect at all outside event mode, where every trigger
+  // still only ever calls runLiveRegionFetch — there is no payload
+  // identity to check.
+  const LIVE_HUB_ATTR = "data-gosx-live-hub";
   // Declarative list filter (data-gosx-filter, gosx#215). See "Declarative
   // list filter" below for the full contract; these are the attribute,
   // class-hook, and timing constants it reads and writes.
@@ -215,6 +239,7 @@
   // per-generation counter — see its doc comment for why.
   let countdownRoots = [];
   let countdownTimerHandle = null;
+  let countdownObserver = null;
   let countdownGeneration = 0;
   // countdownFiredTargets and countdownThenLastFiredAt back
   // then="revalidate" (gosx#178 review finding B1): see triggerCountdownThen
@@ -2814,6 +2839,7 @@
     // — see its own doc comment above.
     setupPageHeartbeat();
     setupPageCountdowns();
+    syncCueToggles();
     // setupPageWatchers (gosx#214) and setupPageFilters (gosx#215) both
     // follow the exact same rescan lifecycle — see their own doc comments
     // above.
@@ -3314,6 +3340,104 @@
   // bounded-growth shape missingPatchPathWarnings uses in patch.ts.
   const audioCueDebugLog = [];
 
+  // Cue mute (D1 item 7, gosx#217 extension): a runtime-wide switch that
+  // silences every cue playCountdownCue would otherwise play, without
+  // touching the countdown/watcher state that decides WHEN a cue would
+  // fire. audioCuesMuted is the one module-level source of truth;
+  // CUE_MUTED_STORAGE_KEY only persists a visitor's choice across a
+  // reload, and is never read again after boot except through the public
+  // cuesAPI below.
+  const CUE_TOGGLE_ATTR = "data-gosx-cue-toggle";
+  const CUE_TOGGLE_STATE_ATTR = "data-gosx-cue-state";
+  const CUE_LABEL_ON_ATTR = "data-gosx-cue-label-on";
+  const CUE_LABEL_OFF_ATTR = "data-gosx-cue-label-off";
+  const CUE_MUTED_STORAGE_KEY = "gosx:cues:muted";
+  let audioCuesMuted = false;
+  // cueToggleTagWarned is the same one-time-warning latch shape
+  // regionBootstrapWarned uses below for checkRegionBootstrapDiagnostic:
+  // set once, checked first, never reset — a page with several
+  // data-gosx-cue-toggle controls gets exactly one console warning for
+  // the first non-button one syncCueToggles ever finds, not one per
+  // control and not one per rescan.
+  let cueToggleTagWarned = false;
+
+  // readStoredCueMute runs once at boot, before the first countdown tick,
+  // so a stored mute silences the very first crossing. Every storage
+  // access is wrapped: private mode and a sandboxed frame throw here.
+  function readStoredCueMute() {
+    try {
+      const storage = typeof window !== "undefined" ? window.localStorage : null;
+      return !!storage && storage.getItem(CUE_MUTED_STORAGE_KEY) === "1";
+    } catch (_e) { return false; }
+  }
+
+  function writeStoredCueMute(muted) {
+    try {
+      const storage = typeof window !== "undefined" ? window.localStorage : null;
+      if (storage) storage.setItem(CUE_MUTED_STORAGE_KEY, muted ? "1" : "0");
+    } catch (_e) { /* the in-memory state is authoritative for this page */ }
+  }
+
+  function findCueToggleElements() {
+    const found = [];
+    walkElements(document.body, function(node) {
+      if (node.hasAttribute && node.hasAttribute(CUE_TOGGLE_ATTR)) found.push(node);
+      return true;
+    });
+    return found;
+  }
+
+  // syncCueToggles writes the live state onto every control: aria-pressed
+  // ("true" means sound on), data-gosx-cue-state, and the optional label.
+  // It runs at boot, after every soft navigation, and on every
+  // gosx:region:after rescan, so a control a swap just rendered never
+  // shows the server default over the visitor's own choice.
+  function syncCueToggles() {
+    const on = !audioCuesMuted;
+    for (const node of findCueToggleElements()) {
+      if (!cueToggleTagWarned && node.tagName && String(node.tagName).toUpperCase() !== "BUTTON") {
+        cueToggleTagWarned = true;
+        console.warn(
+          "[gosx] " + CUE_TOGGLE_ATTR + " expects a <button type=\"button\">; found <" + String(node.tagName).toLowerCase() + ">",
+        );
+      }
+      if (node.getAttribute("aria-pressed") !== String(on)) node.setAttribute("aria-pressed", String(on));
+      if (node.getAttribute(CUE_TOGGLE_STATE_ATTR) !== (on ? "on" : "off")) node.setAttribute(CUE_TOGGLE_STATE_ATTR, on ? "on" : "off");
+      const label = node.getAttribute(on ? CUE_LABEL_ON_ATTR : CUE_LABEL_OFF_ATTR);
+      if (label != null && String(node.textContent || "").trim() !== label) node.textContent = label;
+    }
+  }
+
+  function setCuesMuted(muted) {
+    const next = !!muted;
+    if (next === audioCuesMuted) return;
+    audioCuesMuted = next;
+    writeStoredCueMute(next);
+    syncCueToggles();
+    if (typeof CustomEvent === "function" && typeof document.dispatchEvent === "function") {
+      document.dispatchEvent(new CustomEvent("gosx:cue:muted", { detail: { muted: next } }));
+    }
+  }
+
+  function onCueToggleClick(event) {
+    for (let node = event && event.target; node && node !== document; node = node.parentNode) {
+      if (!node.hasAttribute || !node.hasAttribute(CUE_TOGGLE_ATTR)) continue;
+      // NavigationCueToggleAttr's own doc comment asks for a dedicated
+      // <button type="button">, which has no default action to preserve
+      // — preventDefault here is normally a harmless no-op, not a real
+      // behavior change. But a node that ALSO carries data-gosx-action or
+      // href is deliberately left alone: this listener's only job is the
+      // mute toggle, and it must never swallow a click actions.ts's own
+      // listener, or an ordinary link navigation, still needs to see.
+      const carriesOtherBehavior = node.hasAttribute("data-gosx-action") || node.hasAttribute("href");
+      if (!carriesOtherBehavior && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      setCuesMuted(!audioCuesMuted);
+      return;
+    }
+  }
+
   function audioCueContextConstructor() {
     return (typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext)) || null;
   }
@@ -3425,7 +3549,12 @@
   // all: a page nobody has clicked or typed into yet is the expected
   // common case for a countdown or a watcher whose threshold or condition
   // is reached before the visitor's first gesture, not a bug to report.
+  // A muted cue (D1 item 7) is dropped here too, before it ever reaches
+  // audioCueContext — the crossing that triggered it is NOT remembered
+  // for replay, so unmuting only ever plays the next crossing, never a
+  // past one.
   function playCountdownCue(name) {
+    if (audioCuesMuted) return;
     if (!audioCueContext) return;
     resumeAudioCueContextIfSuspended();
     if (typeof audioCueContext.createOscillator !== "function" || typeof audioCueContext.createGain !== "function") return;
@@ -3987,6 +4116,41 @@
     return remainderMs <= 0 && (!state.then || countdownFiredTargets.has(state.targetMs));
   }
 
+  // retargetCountdownRoot re-reads root's data-gosx-countdown into its live
+  // record. The record keeps its warn and cue tiers; a new instant mints new
+  // cue keys on its own (countdownCueFiredKeys). A finished countdown that
+  // was cleared by runCountdownTick's m8 rule restarts the shared interval.
+  function retargetCountdownRoot(root, explicitInstant) {
+    const state = countdownRoots.find(function(candidate) { return candidate.root === root; });
+    if (!state) return false;
+    const raw = explicitInstant != null ? String(explicitInstant) : root.getAttribute(COUNTDOWN_ATTR);
+    const targetMs = parseCountdownInstant(raw);
+    if (targetMs == null || targetMs === state.targetMs) return false;
+    state.targetMs = targetMs;
+    ensureCountdownTimer();
+    return true;
+  }
+
+  function ensureCountdownTimer() {
+    if (countdownTimerHandle == null && countdownRoots.length) {
+      countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+    }
+  }
+
+  function observeCountdownRoots() {
+    if (countdownObserver) countdownObserver.disconnect();
+    countdownObserver = null;
+    if (typeof MutationObserver !== "function" || !countdownRoots.length) return;
+    countdownObserver = new MutationObserver(function(records) {
+      for (const entry of records) {
+        if (entry && entry.type === "attributes" && entry.attributeName === COUNTDOWN_ATTR) retargetCountdownRoot(entry.target);
+      }
+    });
+    for (const state of countdownRoots) {
+      countdownObserver.observe(state.root, { attributes: true, attributeFilter: [COUNTDOWN_ATTR] });
+    }
+  }
+
   function runCountdownTick() {
     const now = Date.now();
     let allFinished = true;
@@ -4010,6 +4174,8 @@
     }
     countdownTimerHandle = null;
     countdownRoots = [];
+    if (countdownObserver) countdownObserver.disconnect();
+    countdownObserver = null;
   }
 
   // setupPageCountdowns scans for every data-gosx-countdown element on
@@ -4056,6 +4222,7 @@
       return;
     }
     countdownRoots = states;
+    observeCountdownRoots();
     // Keep an already-running shared interval running across this rescan,
     // rather than unconditionally clearing and recreating it: a fresh
     // setInterval restarts its own 1-second phase from the moment it is
@@ -4070,9 +4237,7 @@
     // runCountdownTick's own "every countdown finished" branch ever stops
     // this interval; a later rescan that still (or again) has roots
     // reuses it unchanged.
-    if (countdownTimerHandle == null) {
-      countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
-    }
+    ensureCountdownTimer();
   }
 
   // ---------------------------------------------------------------------
@@ -5695,6 +5860,7 @@
           || node.hasAttribute(LIVE_INTERVAL_ATTR)
           || node.hasAttribute(LIVE_SIGNAL_ATTR)
           || node.hasAttribute(LIVE_ON_ATTR)
+          || node.hasAttribute(LIVE_MODE_ATTR)
         )
       ) {
         found.push(node);
@@ -5718,7 +5884,7 @@
   function findLiveBindElements(root) {
     const found = [];
     walkElements(root, function(node) {
-      if (node.hasAttribute && node.hasAttribute(LIVE_BIND_ATTR)) found.push(node);
+      if (node.hasAttribute && (node.hasAttribute(LIVE_BIND_ATTR) || node.hasAttribute(LIVE_BIND_ATTRIBUTE_ATTR) || node.hasAttribute(LIVE_BIND_CLASS_ATTR))) found.push(node);
       return true;
     });
     return found;
@@ -5796,23 +5962,166 @@
     } catch (_error) {
       return;
     }
+    applyLiveBindObject(root, payload);
+  }
+
+  // A POSITIVE allowlist: an attribute bind writes only these targets, so
+  // the gate stays correct as the DOM grows. Refused by omission: every
+  // event handler, style, srcdoc, src, srcset, poster, ping, background,
+  // action, formaction, target, id, name, class, xlink:href (a target
+  // containing a colon is unreachable anyway — parseLiveBindPairs below
+  // splits on the first colon, leaving a bare "xlink" target, which this
+  // allowlist refuses on its own), and every runtime-owned data-gosx-*
+  // attribute. data-gosx-countdown is allowed because retargeting a
+  // countdown is this primitive's purpose; a node that also declares
+  // data-gosx-countdown-then is refused, so a payload can never trigger a
+  // revalidation. data-csrf-token and data-csrf are refused even though
+  // neither carries a data-gosx- prefix: csrfTokenFromElement reads both,
+  // so a bind must never be able to rewrite the token an action
+  // submission later trusts. Every other data-* and aria-* name is read
+  // only by the consumer's own code; the runtime reads none of them.
+  const LIVE_BIND_ATTR_NAME_PATTERN = /^[A-Za-z_][-A-Za-z0-9_.]*$/;
+  // Every one of these four target maps is built with Object.create(null)
+  // and checked through liveBindTargetMapHas rather than a bracket lookup
+  // or bare truthiness test — the same pattern findCountdownSegments
+  // documents in full above (gosx#178 review finding B2): a bind target
+  // is untrusted, author-controlled attribute data, and a plain object
+  // literal answers a lookup like map["constructor"], map["__proto__"],
+  // or map["hasOwnProperty"] truthy without that name ever having been
+  // added to the map. Every one of those three is refused TODAY only by
+  // the accident of which check in liveBindAttrTargetAllowed happens to
+  // run first (LIVE_BIND_REFUSED_DATA_TARGETS's own inherited-property
+  // lookup returns a truthy function/object for each of them, which this
+  // function's "if refused, return false" branch happens to treat as a
+  // refusal) — not because any of these maps was designed to reject them.
+  // A null-prototype object removes the whole class of accident: it has
+  // no inherited properties for an untrusted key to ever collide with.
+  function liveBindTargetMap(names) {
+    const map = Object.create(null);
+    for (const name of names) map[name] = true;
+    return map;
+  }
+  function liveBindTargetMapHas(map, name) {
+    return Object.prototype.hasOwnProperty.call(map, name);
+  }
+  const LIVE_BIND_PLAIN_TARGETS = liveBindTargetMap(["title", "value", "datetime", "disabled", "hidden"]);
+  const LIVE_BIND_BOOLEAN_TARGETS = liveBindTargetMap(["disabled", "hidden"]);
+  const LIVE_BIND_URL_TARGETS = liveBindTargetMap(["href"]);
+  const LIVE_BIND_REFUSED_DATA_TARGETS = liveBindTargetMap(["data-csrf-token", "data-csrf"]);
+
+  function liveBindAttrTargetAllowed(node, target, value) {
+    const name = String(target || "").toLowerCase();
+    if (!name || !LIVE_BIND_ATTR_NAME_PATTERN.test(name)) return false;
+    if (name === COUNTDOWN_ATTR) return !(node && node.hasAttribute && node.hasAttribute(COUNTDOWN_THEN_ATTR));
+    if (name.indexOf("data-gosx-") === 0) return false;
+    if (liveBindTargetMapHas(LIVE_BIND_REFUSED_DATA_TARGETS, name)) return false;
+    if (name.indexOf("data-") === 0 || name.indexOf("aria-") === 0 || liveBindTargetMapHas(LIVE_BIND_PLAIN_TARGETS, name)) return true;
+    if (liveBindTargetMapHas(LIVE_BIND_URL_TARGETS, name)) {
+      // Browsers drop ASCII whitespace and control characters inside a URL
+      // before resolving its scheme ("java\tscript:" runs), so strip every
+      // code point <= 0x20 before the scheme test. Browsers also map a
+      // backslash to a forward slash while resolving a URL with a special
+      // scheme (http/https among them), so "/\evil.example/x" and
+      // "\\evil.example/x" both resolve exactly like "//evil.example/x" —
+      // normalize every backslash to a forward slash before EITHER check,
+      // or both checks below run against a string a browser never
+      // actually sees.
+      const clean = String(value).replace(/[\u0000-\u0020]/g, "");
+      const norm = clean.replace(/\\/g, "/");
+      if (/^[a-z][a-z0-9+.-]*:/i.test(norm)) return /^https?:/i.test(norm);
+      return norm.indexOf("//") !== 0;
+    }
+    return false;
+  }
+
+  // liveBindBooleanValue interprets a boolean attribute bind's resolved
+  // value (data-gosx-live-bind-attr targeting "hidden" or "disabled",
+  // LIVE_BIND_BOOLEAN_TARGETS above): true and the string "true" both
+  // mean "present"; false, the string "false", and a JSON null all mean
+  // "absent" — a boolean HTML attribute's state is its presence, never
+  // its stringified value, so writing the literal text "true"/"false"
+  // into the attribute (the way liveBindTextValue would for any other
+  // target) would be wrong even though it looks right at a glance. Any
+  // other type (a number, an object, an unrecognized string, or a
+  // missing key) resolves undefined so the caller leaves the attribute
+  // untouched, the same "ignore, don't guess" contract a class bind's
+  // non-boolean value already follows.
+  function liveBindBooleanValue(value) {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false" || value === null) return false;
+    return undefined;
+  }
+
+  // parseLiveBindPairs turns "a:x.y,b:z" into [{target:"a", key:"x.y"}, ...].
+  // It splits each pair on its FIRST colon only, so a target that itself
+  // contains a colon (for example "xlink:href") can never be named as one
+  // target here — it splits into a shorter target ("xlink") and a key
+  // that absorbs the rest ("href:..."). liveBindAttrTargetAllowed refuses
+  // that shorter target on its own, so this is a parsing quirk, not a
+  // gap in the allowlist; window.__gosx.navigation.debugParseLiveBindPairs
+  // exposes this function directly so a test can pin the exact split.
+  function parseLiveBindPairs(spec) {
+    const pairs = [];
+    for (const part of String(spec || "").split(",")) {
+      const idx = part.indexOf(":");
+      if (idx < 1) continue;
+      const target = part.slice(0, idx).trim();
+      const key = part.slice(idx + 1).trim();
+      if (target && key) pairs.push({ target: target, key: key });
+    }
+    return pairs;
+  }
+
+  function applyLiveBindObject(root, payload) {
     for (const node of findLiveBindElements(root)) {
-      const next = liveBindTextValue(resolveLiveBindValue(payload, node.getAttribute(LIVE_BIND_ATTR)));
-      if (next == null) continue;
-      if (String(node.textContent || "").trim() === next) continue;
-      node.textContent = next;
-      flashLiveBindElement(node, node.getAttribute(LIVE_FLASH_CLASS_ATTR));
+      if (node.hasAttribute(LIVE_BIND_ATTR)) {
+        const next = liveBindTextValue(resolveLiveBindValue(payload, node.getAttribute(LIVE_BIND_ATTR)));
+        if (next != null && String(node.textContent || "").trim() !== next) {
+          node.textContent = next;
+          flashLiveBindElement(node, node.getAttribute(LIVE_FLASH_CLASS_ATTR));
+        }
+      }
+      for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_ATTRIBUTE_ATTR))) {
+        const raw = resolveLiveBindValue(payload, pair.key);
+        if (liveBindTargetMapHas(LIVE_BIND_BOOLEAN_TARGETS, String(pair.target || "").toLowerCase())) {
+          const active = liveBindBooleanValue(raw);
+          if (active == null || !liveBindAttrTargetAllowed(node, pair.target, raw)) continue;
+          if (active) {
+            if (node.getAttribute(pair.target) !== "") node.setAttribute(pair.target, "");
+          } else if (node.hasAttribute(pair.target)) {
+            node.removeAttribute(pair.target);
+          }
+          continue;
+        }
+        const next = liveBindTextValue(raw);
+        if (next == null || !liveBindAttrTargetAllowed(node, pair.target, next)) continue;
+        if (node.getAttribute(pair.target) !== next) node.setAttribute(pair.target, next);
+      }
+      for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_CLASS_ATTR))) {
+        if (!isValidCountdownWarnClassToken(pair.target)) continue;
+        const value = resolveLiveBindValue(payload, pair.key);
+        if (typeof value === "boolean") setElementClassActive(node, pair.target, value);
+      }
     }
   }
 
-  // createLiveRegionRecord validates root's LIVE_SRC_ATTR (always required)
-  // and returns a fresh per-region record, or null (logging one console
-  // warning) when it is missing or cross-origin — the same "disabled, not
-  // an error" handling setupPageRevalidation gives a bad
-  // data-gosx-revalidate-interval. LIVE_INTERVAL_ATTR is now optional
-  // (gosx#228): an invalid value disables only the periodic-poll trigger
-  // (warns, leaves intervalMs null) rather than the whole region, so a
-  // malformed -interval never silently breaks a working -signal or -on
+  // createLiveRegionRecord validates root's LIVE_SRC_ATTR and returns a
+  // fresh per-region record, or null (logging one console warning) when
+  // both LIVE_SRC_ATTR and event mode are absent, or LIVE_SRC_ATTR is
+  // present but cross-origin or unparseable — the same "disabled, not an
+  // error" handling setupPageRevalidation gives a bad
+  // data-gosx-revalidate-interval. LIVE_SRC_ATTR is optional in event mode
+  // (LIVE_MODE_ATTR === "event", gosx#217 extension): an event-mode-only
+  // root applies a matching hub event's payload directly to its binds and
+  // never fetches on its own, so it needs no src at all — src still stores
+  // as "" on its record, since window.__gosx.live.refresh(element) (an
+  // explicit, discrete, user-caused trigger, not a background poll) still
+  // needs one to serve a manual refresh. LIVE_INTERVAL_ATTR is optional
+  // (gosx#228): an invalid value, or one given on a root with no src at
+  // all, disables only the periodic-poll trigger (warns, leaves
+  // intervalMs null) rather than the whole region, so a malformed
+  // -interval never silently breaks a working -signal, -on, or event-mode
   // trigger on the same root. LIVE_SIGNAL_ATTR/LIVE_ON_ATTR need no
   // validation of their own here, the same way RegionSignalAttr/
   // RegionEventsAttr need none in regions.ts — an absent or unmatched
@@ -5820,42 +6129,67 @@
   // connects.
   function createLiveRegionRecord(root) {
     const rawSrc = root.getAttribute(LIVE_SRC_ATTR);
-    if (!rawSrc) {
+    const rawMode = root.getAttribute(LIVE_MODE_ATTR);
+    const eventMode = rawMode === "event";
+    if (rawMode && !eventMode) {
+      console.warn(
+        "[gosx] invalid " + LIVE_MODE_ATTR + " value " + JSON.stringify(String(rawMode))
+        + "; only \"event\" is recognized, so this live region behaves as if " + LIVE_MODE_ATTR + " were absent",
+      );
+    }
+    if (!rawSrc && !eventMode) {
       console.warn(
         "[gosx] a live region requires " + LIVE_SRC_ATTR + " on the same element; "
         + "this live region is disabled",
       );
       return null;
     }
-    if (!isSameOriginNavigation(rawSrc, windowLocationHref())) {
-      console.warn(
-        "[gosx] " + LIVE_SRC_ATTR + " must be same-origin: " + JSON.stringify(String(rawSrc))
-        + "; this live region is disabled",
-      );
-      return null;
+    let src = "";
+    if (rawSrc) {
+      if (!isSameOriginNavigation(rawSrc, windowLocationHref())) {
+        console.warn(
+          "[gosx] " + LIVE_SRC_ATTR + " must be same-origin: " + JSON.stringify(String(rawSrc))
+          + "; this live region is disabled",
+        );
+        return null;
+      }
+      const parsedSrc = navigationURLParts(rawSrc);
+      src = parsedSrc ? parsedSrc.href : "";
+      if (!src) return null;
     }
-    const parsedSrc = navigationURLParts(rawSrc);
-    const src = parsedSrc ? parsedSrc.href : "";
-    if (!src) return null;
     const rawInterval = root.getAttribute(LIVE_INTERVAL_ATTR);
     let intervalMs = null;
     if (rawInterval) {
-      intervalMs = parseRevalidateInterval(rawInterval);
-      if (intervalMs == null) {
+      if (!src) {
         console.warn(
-          "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval))
-          + "; periodic refresh is disabled for this live region",
+          "[gosx] " + LIVE_INTERVAL_ATTR + " has no effect without " + LIVE_SRC_ATTR + " on the same element",
         );
-      } else if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) {
-        intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+      } else {
+        intervalMs = parseRevalidateInterval(rawInterval);
+        if (intervalMs == null) {
+          console.warn(
+            "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval))
+            + "; periodic refresh is disabled for this live region",
+          );
+        } else if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) {
+          intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+        }
       }
+    }
+    const onEvents = splitLiveEvents(root.getAttribute(LIVE_ON_ATTR));
+    if (eventMode && !onEvents.length) {
+      console.warn(
+        "[gosx] " + LIVE_MODE_ATTR + "=\"event\" has no effect without " + LIVE_ON_ATTR + " on the same element",
+      );
     }
     return {
       root: root,
       src: src,
+      eventMode: eventMode,
+      hub: root.getAttribute(LIVE_HUB_ATTR) || "",
       intervalMs: intervalMs,
       signalName: root.getAttribute(LIVE_SIGNAL_ATTR) || "",
-      onEvents: splitLiveEvents(root.getAttribute(LIVE_ON_ATTR)),
+      onEvents: onEvents,
       etag: "",
       lastBody: null,
       inFlight: false,
@@ -5885,7 +6219,13 @@
   // response instead of writing it into a record no longer on
   // liveRegionRecords.
   async function runLiveRegionFetch(record) {
-    if (record.disposed || record.inFlight) return;
+    // record.src === "" is an event-mode-only record (no LIVE_SRC_ATTR at
+    // all, see createLiveRegionRecord's own doc comment): there is
+    // nothing to fetch, so every trigger that would otherwise call this
+    // — the interval, a signal, a non-event-mode gosx:hub:event, and the
+    // public window.__gosx.live.refresh(element) API — is a silent no-op
+    // instead of a network error.
+    if (record.disposed || record.inFlight || record.src === "") return;
     record.inFlight = true;
     try {
       const headers = { Accept: "application/json" };
@@ -5979,7 +6319,12 @@
       const record = createLiveRegionRecord(root);
       if (!record) continue;
       records.push(record);
-      if (record.signalName && typeof window.__gosx_subscribe_shared_signal === "function") {
+      // A src-less record (event mode with no LIVE_SRC_ATTR,
+      // createLiveRegionRecord's own doc comment) has nothing a signal
+      // trigger could usefully fetch — runLiveRegionFetch would already
+      // no-op for it, but skipping the subscription itself avoids
+      // registering a listener that can only ever fire and do nothing.
+      if (record.src && record.signalName && typeof window.__gosx_subscribe_shared_signal === "function") {
         record.unsubscribe = window.__gosx_subscribe_shared_signal(
           record.signalName,
           function() { runLiveRegionFetch(record); },
@@ -5987,9 +6332,29 @@
         );
       }
       if (record.onEvents.length) {
+        // A matched event either fetches (the ordinary, non-event-mode
+        // path this record always used before gosx#217) or, in event
+        // mode, applies the event's own object payload to this root's
+        // binds directly with no fetch at all — see LIVE_MODE_ATTR's own
+        // doc comment for why data-gosx-live-src is optional there. Event
+        // NAMES share one page-global namespace across every connected
+        // hub (fetch mode's own behavior, unchanged); record.hub (see
+        // LIVE_HUB_ATTR's own doc comment) is event mode's opt-in fix for
+        // a page running more than one hub — checked only in event mode,
+        // since fetch mode has no payload identity to check at all. A
+        // non-object payload (missing, a primitive, or an array) is
+        // silently ignored, the same "malformed input, next trigger tries
+        // again" contract applyLiveBindPayload's own JSON.parse failure
+        // follows for the ordinary fetch path.
         record.hubListener = function(event) {
-          const eventName = event && event.detail && event.detail.event;
-          if (eventName && record.onEvents.indexOf(eventName) >= 0) runLiveRegionFetch(record);
+          const detail = event && event.detail;
+          const eventName = detail && detail.event;
+          if (!eventName || record.onEvents.indexOf(eventName) < 0) return;
+          if (!record.eventMode) { runLiveRegionFetch(record); return; }
+          if (record.hub && detail.hubName !== record.hub) return;
+          const data = detail.data;
+          if (!data || typeof data !== "object" || Array.isArray(data)) return;
+          try { applyLiveBindObject(record.root, data); } catch (error) { reportNavigationFailure("live region apply", error, { source: eventName }); }
         };
         document.addEventListener("gosx:hub:event", record.hubListener);
       }
@@ -6052,6 +6417,17 @@
   };
   gosxHost.live = liveAPI;
   window.__gosx.live = Object.assign(window.__gosx.live || {}, liveAPI);
+
+  const countdownAPI = {
+    retarget: function(root, instant) {
+      if (root) return retargetCountdownRoot(root, instant);
+      let changed = false;
+      for (const state of countdownRoots) changed = retargetCountdownRoot(state.root) || changed;
+      return changed;
+    },
+  };
+  gosxHost.countdown = countdownAPI;
+  window.__gosx.countdown = Object.assign(window.__gosx.countdown || {}, countdownAPI);
 
   // ---------------------------------------------------------------------
   // Region-bootstrap diagnostic (data-gosx-region, gosx#227)
@@ -6159,6 +6535,7 @@
     setupPageRevalidation();
     setupPageHeartbeat();
     setupPageCountdowns();
+    syncCueToggles();
     setupPageWatchers();
     setupLiveRegions();
     setupPageFilters();
@@ -6267,6 +6644,13 @@
   prefetchManagedLinks("render");
   setupPageRevalidation();
   setupPageHeartbeat();
+  // Cue mute (D1 item 7): read the visitor's stored choice, and start
+  // listening for a data-gosx-cue-toggle click, before the first
+  // countdown tick below can ever fire a cue — a stored mute must
+  // silence even the very first crossing.
+  audioCuesMuted = readStoredCueMute();
+  document.addEventListener("click", onCueToggleClick, true);
+  syncCueToggles();
   setupPageCountdowns();
   setupPageWatchers();
   setupLiveRegions();
@@ -6303,9 +6687,23 @@
   // rescan never re-announces an unchanged filter result on every swap.
   document.addEventListener("gosx:region:after", function() {
     setupPageCountdowns();
+    syncCueToggles();
     setupPageWatchers();
     setupPageFilters({ announce: false });
   });
+
+  // cuesAPI is the public surface for D1 item 7's cue mute: scripts that
+  // want their own mute button, or that need to know the current state
+  // before deciding whether to play a cue of their own, use this instead
+  // of reaching into module-private state.
+  const cuesAPI = {
+    mute: function() { setCuesMuted(true); },
+    unmute: function() { setCuesMuted(false); },
+    toggle: function() { setCuesMuted(!audioCuesMuted); },
+    muted: function() { return audioCuesMuted; },
+  };
+  gosxHost.cues = cuesAPI;
+  window.__gosx.cues = Object.assign(window.__gosx.cues || {}, cuesAPI);
 
   const navigationAPI = {
     navigate: navigate,
@@ -6334,6 +6732,14 @@
     // "id:<id>" or "pos:<index>" key, see buildWatchState) as active.
     debugWatchActive: function(key) {
       return watchActiveState.get(key) === true;
+    },
+    // debugParseLiveBindPairs is the same kind of hook for gosx#217's
+    // "target:key[,target:key...]" grammar: a direct pass-through to
+    // parseLiveBindPairs, so a test can pin its exact first-colon split
+    // (see that function's own doc comment) without re-implementing the
+    // parser.
+    debugParseLiveBindPairs: function(spec) {
+      return parseLiveBindPairs(spec);
     },
   };
   // Keep the original global for compatibility while publishing the

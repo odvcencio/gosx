@@ -103,6 +103,32 @@ const (
 	// select retains focus. See the client runtime guide's "Live-bound
 	// regions" section for the full contract.
 	RegionIntervalAttr = "data-gosx-region-interval"
+	// RegionModeAttr (gosx#217 extension) selects "replace" (the default:
+	// the existing managed-swap/innerHTML-fallback contract, unchanged),
+	// "append", or "prepend": the latter two insert a fetched fragment
+	// beside el's existing children instead of replacing them, for a tape,
+	// a board, or any other list that should only ever grow. RegionKeyAttr
+	// names the attribute a fetched fragment's own top-level elements
+	// carry for dedupe — a fragment node whose key matches a child already
+	// present is dropped, so an overlapping fetch never duplicates a row.
+	// RegionCursorAttr names the attribute read off an already-present
+	// child (the first one in prepend mode, the last one otherwise) to
+	// fill a "{cursor}" token in RegionURLAttr, the append/prepend
+	// counterpart to RegionFieldAttr's own "{value}" token; an empty
+	// cursor without RegionAllowEmptyAttr suppresses the fetch, the same
+	// as an empty "{value}". RegionKeyAttr and RegionCursorAttr both read
+	// only el's own DIRECT children, never a nested descendant, so a
+	// wrapper row's own nested markup can never be mistaken for one of
+	// the region's own top-level entries. Growth in append/prepend mode
+	// is UNBOUNDED: the runtime never trims an old row on its own — an app
+	// that wants a capped tape or board trims it itself (removing a
+	// node's own DOM subtree runs page disposal on any surface, engine,
+	// or island that subtree still holds, the same disposal a
+	// data-gosx-region "replace" swap or a soft navigation already
+	// triggers).
+	RegionModeAttr   = "data-gosx-region-mode"
+	RegionKeyAttr    = "data-gosx-region-key"
+	RegionCursorAttr = "data-gosx-region-cursor"
 )
 
 // ProgressiveEnhancementOptions describes a browser enhancement while
@@ -292,13 +318,20 @@ func Action(tag string, opts ActionOptions, args ...any) Node {
 
 // RegionOptions describes a server-rendered HTML region that the bootstrap
 // may refresh after a signal or hub event. The initial children remain the
-// progressive-enhancement fallback.
+// progressive-enhancement fallback. Mode selects "replace" (the zero value
+// and default), "append", or "prepend" (gosx#217 extension); Key and Cursor
+// are meaningful only alongside "append"/"prepend" — see RegionModeAttr,
+// RegionKeyAttr, and RegionCursorAttr's own doc comments above for the full
+// contract.
 type RegionOptions struct {
 	URL      string
 	Signal   string
 	Events   []string
 	Field    string
 	Interval string
+	Mode     string
+	Key      string
+	Cursor   string
 
 	AllowEmpty bool
 }
@@ -330,6 +363,15 @@ func RegionAttrs(opts RegionOptions) AttrList {
 	}
 	if value := strings.TrimSpace(opts.Interval); value != "" {
 		attrs = append(attrs, Attr(RegionIntervalAttr, value))
+	}
+	if value := strings.TrimSpace(opts.Mode); value != "" {
+		attrs = append(attrs, Attr(RegionModeAttr, value))
+	}
+	if value := strings.TrimSpace(opts.Key); value != "" {
+		attrs = append(attrs, Attr(RegionKeyAttr, value))
+	}
+	if value := strings.TrimSpace(opts.Cursor); value != "" {
+		attrs = append(attrs, Attr(RegionCursorAttr, value))
 	}
 	if opts.AllowEmpty {
 		attrs = append(attrs, BoolAttr(RegionAllowEmptyAttr))

@@ -299,13 +299,20 @@
       || key === " ";
   }
 
-  function connectHub(entry) {
+  // connectHub's optional attempt parameter is the reconnect attempt
+  // number this connection is retrying (0 for a fresh, first-ever
+  // connection): scheduleHubReconnect below passes its own
+  // current.reconnectAttempt through so the NEW record it creates keeps
+  // counting up the same exponential-backoff sequence instead of
+  // resetting to attempt 0 on every retry, which would otherwise pin
+  // every reconnect delay back to reconnectDelayMs(0) forever.
+  function connectHub(entry, attempt) {
     if (!canConnectHub(entry)) return;
 
     if (gosxHost.hubs && typeof gosxHost.hubs.disconnect === "function") {
       gosxHost.hubs.disconnect(entry.id);
     }
-    const record = createHubRecord(entry);
+    const record = createHubRecord(entry, attempt);
     window.__gosx.hubs.set(entry.id, record);
     attachHubSocketHandlers(record);
   }
@@ -314,11 +321,12 @@
     return Boolean(entry && entry.id && entry.path && typeof WebSocket === "function");
   }
 
-  function createHubRecord(entry) {
+  function createHubRecord(entry, attempt) {
     return {
       entry: entry,
       socket: new WebSocket(hubURL(entry.path)),
       reconnectTimer: null,
+      reconnectAttempt: attempt || 0,
     };
   }
 
@@ -372,6 +380,11 @@
       // Some test doubles and embedded runtimes expose binaryType as read-only.
     }
     socket.onopen = function() {
+      // A successful open proves the connection is healthy again, so the
+      // exponential backoff resets: the NEXT unexpected close starts back
+      // at reconnectDelayMs(0), not wherever this connection's own retry
+      // count left off.
+      record.reconnectAttempt = 0;
       if (record.inputController && typeof record.inputController.flush === "function") {
         record.inputController.flush();
       }
@@ -456,14 +469,35 @@
     }));
   }
 
+  // reconnectDelayMs computes a hub's next reconnect delay: exponential
+  // backoff from a 500ms base, doubling per attempt (0-indexed: attempt 0
+  // is the first retry after the original connection), capped at 15s, plus
+  // up to 25 percent random jitter on top of whichever of those two is
+  // smaller — the jitter spreads out a thundering-herd reconnect storm
+  // (every hub client on a restarted server retrying at the exact same
+  // moment) without ever pushing a delay past the 15s cap itself. random
+  // is an injection point for a deterministic test; production callers
+  // omit it and get Math.random().
+  function reconnectDelayMs(attempt, random) {
+    var base = Math.min(15000, 500 * Math.pow(2, Math.max(0, attempt)));
+    var jitter = typeof random === "number" ? random : Math.random();
+    return Math.round(Math.min(15000, base + base * 0.25 * jitter));
+  }
+
   function scheduleHubReconnect(record) {
     const entry = record.entry;
-    const socket = record.socket;
     const current = window.__gosx.hubs.get(entry.id);
-    if (!current || current.socket !== socket) return;
+    // current.reconnectTimer != null means a reconnect is already
+    // scheduled for this hub id — a second close of the same (already
+    // closing) socket, or a close racing an in-flight reconnect, must
+    // never schedule a second, overlapping retry on top of the first.
+    if (!current || current.socket !== record.socket || current.reconnectTimer != null) return;
+    current.reconnectAttempt = (current.reconnectAttempt || 0) + 1;
+    current.reconnectDelay = reconnectDelayMs(current.reconnectAttempt - 1);
     current.reconnectTimer = setTimeout(function() {
-      connectHub(entry);
-    }, 1000);
+      current.reconnectTimer = null;
+      connectHub(entry, current.reconnectAttempt);
+    }, current.reconnectDelay);
   }
 
   async function connectAllHubs(manifest) {
@@ -515,4 +549,5 @@
     connect: connectHub,
     connectAll: connectAllHubs,
     revalidate: revalidateHubConnections,
+    reconnectDelayMs: reconnectDelayMs,
   });

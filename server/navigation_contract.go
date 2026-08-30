@@ -76,6 +76,46 @@ const (
 	NavigationCountdownCueAttr     = "data-gosx-countdown-cue"
 	NavigationCountdownThenAttr    = "data-gosx-countdown-then"
 
+	// NavigationCueToggleAttr (D1 item 7) marks a dedicated
+	// <button type="button"> that mutes or unmutes every cue on the page
+	// — every NavigationCountdownCueAttr tier and every "cue:<name>"
+	// NavigationWatchEffectAttr token alike, through the same shared
+	// audio subsystem. Use a plain button, not an element that also
+	// carries a data-gosx-action or href: this attribute never calls
+	// preventDefault() on a node carrying either, so the click still
+	// reaches its OWN action submission or navigation unchanged — the
+	// mute toggle and that other behavior both fire from the same click,
+	// deliberately, rather than one silently swallowing the other. A
+	// toggle element that is not a <button> warns once (the same
+	// one-time-warning channel every other declarative primitive in this
+	// file uses) but still functions.
+	//
+	// A click toggles the runtime-wide mute; the runtime owns
+	// NavigationCueStateAttr ("on" or "off") and the element's
+	// aria-pressed attribute ("true"/"false", true meaning sound on), and
+	// swaps in the matching NavigationCueLabelOnAttr or
+	// NavigationCueLabelOffAttr text when either is present — an app
+	// never writes any of the three itself, including on a control a
+	// data-gosx-region swap renders later, which the runtime re-syncs to
+	// the current state rather than trusting its server-rendered
+	// default. The choice persists in the browser's localStorage under
+	// the fixed key "gosx:cues:muted" (a missing or throwing
+	// localStorage — private browsing, a sandboxed frame — never throws;
+	// the in-memory state stays authoritative for the page). A muted cue
+	// is dropped at the moment it would have played, never queued, so
+	// unmuting never replays a crossing missed while muted.
+	//
+	// Every mute/unmute dispatches a "gosx:cue:muted" CustomEvent on
+	// document with `detail.muted` for a script that wants to react. This
+	// fires only on a CHANGE, never on the boot-time restore of a stored
+	// choice — a script that needs the initial state reads
+	// window.__gosx.cues.muted() directly instead of waiting for an
+	// event that will not come.
+	NavigationCueToggleAttr   = "data-gosx-cue-toggle"
+	NavigationCueStateAttr    = "data-gosx-cue-state"
+	NavigationCueLabelOnAttr  = "data-gosx-cue-label-on"
+	NavigationCueLabelOffAttr = "data-gosx-cue-label-off"
+
 	// NavigationWatchAttr declares a condition over one of the watch
 	// element's own attributes (gosx#214):
 	// "<attrName>=<value>" compares that attribute's live value against a
@@ -204,6 +244,60 @@ const (
 	NavigationLiveFlashClassAttr = "data-gosx-live-flash-class"
 	NavigationLiveSignalAttr     = "data-gosx-live-signal"
 	NavigationLiveOnAttr         = "data-gosx-live-on"
+	// NavigationLiveModeAttr selects event mode: "event" applies a matched
+	// gosx:hub:event's own object payload directly to the binds under the
+	// same root, with no fetch at all. NavigationLiveSrcAttr becomes
+	// optional in that mode — it still serves the public
+	// window.__gosx.live.refresh(element) manual-refresh API, but nothing
+	// else, since an event-mode-only root never polls and never fetches on
+	// its own. Any other value warns once and is treated as absent (fetch
+	// mode).
+	//
+	// Event NAMES (NavigationLiveOnAttr) share one page-global namespace
+	// across every hub the page connects — the same way fetch mode always
+	// has. A page running exactly one hub never notices; a page running
+	// two or more, where the same event name means something different on
+	// each, is a real hazard in event mode specifically, since event mode
+	// applies the payload directly rather than triggering a fetch that
+	// would fail closed on a shape mismatch. NavigationLiveHubAttr is the
+	// opt-in fix: when present, its value is matched against the firing
+	// hub's own name (detail.hubName on the gosx:hub:event CustomEvent),
+	// and a frame from any other hub is ignored for this root. It has no
+	// effect outside event mode.
+	NavigationLiveModeAttr = "data-gosx-live-mode"
+	NavigationLiveHubAttr  = "data-gosx-live-hub"
+	// NavigationLiveBindAttrAttr sets a named element attribute from a
+	// live-bind key, and NavigationLiveBindClassAttr toggles a named class
+	// from a boolean live-bind value. Both share NavigationLiveBindAttr's
+	// polled or event-mode payload and its "."-separated key grammar; each
+	// takes a comma-separated "target:key[,target:key...]" value. An
+	// attribute bind is a POSITIVE allowlist: it writes only a data-*
+	// attribute (other than a runtime-owned data-gosx-* attribute, or
+	// data-csrf-token/data-csrf, which the runtime itself reads for CSRF
+	// token resolution), an aria-* attribute,
+	// title/value/datetime/disabled/hidden, or href (a relative or
+	// http(s) URL only, after stripping every code point <= 0x20 and
+	// normalizing every backslash to a forward slash — matching how a
+	// browser resolves a URL — so a scheme or an off-site "//" hidden
+	// behind embedded whitespace, a control character, or a backslash
+	// cannot slip through). hidden and disabled are boolean attributes:
+	// a bound value of true or "true" sets the attribute present with an
+	// empty value; false, "false", or a JSON null removes it. Every other
+	// value type for a boolean target is refused, leaving the attribute
+	// untouched. data-gosx-countdown is the single exception to the
+	// data-gosx-* refusal, letting a payload retarget a countdown; it is
+	// refused whenever the node also declares data-gosx-countdown-then,
+	// so a payload can never trigger a revalidation. Other data-* and
+	// aria-* names are read only by the consumer's own code; the runtime
+	// reads none of them except the refused ones. Every other target —
+	// every on* handler, style, srcdoc, src, srcset, poster, ping,
+	// background, action, formaction, target, id, name, class, and
+	// xlink:href — is refused by omission (a target containing a colon,
+	// such as xlink:href, is also unreachable: the "target:key" grammar
+	// splits on the first colon, leaving a bare "xlink" target, which the
+	// allowlist refuses on its own).
+	NavigationLiveBindAttrAttr  = "data-gosx-live-bind-attr"
+	NavigationLiveBindClassAttr = "data-gosx-live-bind-class"
 	// NavigationFilterAttr, on an input, names the list it filters
 	// (gosx#215): an element id, or — when no element has that id — a CSS
 	// selector. Each row inside that target (any descendant, not only a

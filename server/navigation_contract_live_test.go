@@ -22,4 +22,10 @@ func TestNavigationLiveAttrConstants(t *testing.T) {
 	if got, want := NavigationLiveFlashClassAttr, "data-gosx-live-flash-class"; got != want {
 		t.Fatalf("NavigationLiveFlashClassAttr = %q, want %q", got, want)
 	}
+	if got, want := NavigationLiveBindAttrAttr, "data-gosx-live-bind-attr"; got != want {
+		t.Fatalf("NavigationLiveBindAttrAttr = %q, want %q", got, want)
+	}
+	if got, want := NavigationLiveBindClassAttr, "data-gosx-live-bind-class"; got != want {
+		t.Fatalf("NavigationLiveBindClassAttr = %q, want %q", got, want)
+	}
 }

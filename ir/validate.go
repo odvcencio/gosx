@@ -323,6 +323,22 @@ const (
 	liveBindAttr       = "data-gosx-live-bind"
 	liveFlashClassAttr = "data-gosx-live-flash-class"
 	regionIntervalAttr = "data-gosx-region-interval"
+	// regionModeAttr (gosx#217 extension) is the one data-gosx-region-*
+	// growth-mode value this file can usefully reject ahead of time: see
+	// isValidRegionModeValue below for why a typo here is worse than the
+	// usual "silently falls back to a default" shape most other enumerated
+	// attributes in this file get.
+	regionModeAttr = "data-gosx-region-mode"
+	// liveBindAttrAttr and liveBindClassAttr (gosx#217 extension) share
+	// liveBindAttr's polled-or-event payload but each take a
+	// comma-separated "target:key[,target:key...]" value instead of one
+	// bare key: liveBindAttrAttr sets a named element attribute,
+	// liveBindClassAttr toggles a named class from a boolean. Pinned
+	// against NavigationLiveBindAttrAttr and NavigationLiveBindClassAttr
+	// in server/navigation_contract.go and liveBindAttrTargetAllowed in
+	// client/runtime/host/navigation.ts.
+	liveBindAttrAttr  = "data-gosx-live-bind-attr"
+	liveBindClassAttr = "data-gosx-live-bind-class"
 )
 
 // revalidateIntervalAttr, heartbeatIntervalAttr, and
@@ -383,6 +399,12 @@ var (
 	// navigation.ts: one or more non-empty, whitespace-free segments joined
 	// by ".".
 	liveBindKeyPattern = regexp.MustCompile(`^[^\s.]+(?:\.[^\s.]+)*$`)
+	// liveBindAttrTargetNamePattern rejects a data-gosx-live-bind-attr
+	// target that could never work as an HTML attribute name at all —
+	// embedded whitespace, a colon, or any other character outside this
+	// shape — mirroring the identical guard LIVE_BIND_ATTR_NAME_PATTERN
+	// applies in liveBindAttrTargetAllowed (client/runtime/host/navigation.ts).
+	liveBindAttrTargetNamePattern = regexp.MustCompile(`^[A-Za-z_][-A-Za-z0-9_.]*$`)
 )
 
 // isValidCountdownThresholdValue reports whether value parses under the
@@ -511,6 +533,73 @@ func isValidLiveBindKeyValue(value string) bool {
 	return liveBindKeyPattern.MatchString(strings.TrimSpace(value))
 }
 
+// isValidLiveBindPairsValue parses value under liveBindAttrAttr and
+// liveBindClassAttr's shared "target:key[,target:key...]" grammar,
+// mirroring parseLiveBindPairs in navigation.ts, and applies checkTarget to
+// each pair's target. Malformed syntax (no ":", an empty target, or an
+// empty key) fails the whole value, the same fail-closed-as-a-whole
+// contract isValidCountdownTierPairsValue documents for the
+// countdown-warn/-cue pair grammar above.
+func isValidLiveBindPairsValue(value string, checkTarget func(string) bool) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, rawPair := range strings.Split(trimmed, ",") {
+		pair := strings.TrimSpace(rawPair)
+		splitAt := strings.Index(pair, ":")
+		if splitAt <= 0 || splitAt == len(pair)-1 {
+			return false
+		}
+		target := strings.TrimSpace(pair[:splitAt])
+		key := strings.TrimSpace(pair[splitAt+1:])
+		if target == "" || !isValidLiveBindKeyValue(key) || !checkTarget(target) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidLiveBindAttrTargetValue reports whether target is a permitted
+// data-gosx-live-bind-attr target at check time, mirroring
+// liveBindAttrTargetAllowed's run-time POSITIVE allowlist in
+// client/runtime/host/navigation.ts by name: a data-* attribute other
+// than a runtime-owned data-gosx-* attribute or the runtime-read
+// data-csrf-token/data-csrf pair, an aria-* attribute,
+// title/value/datetime/disabled/hidden, href, or data-gosx-countdown
+// itself. A target whose shape could never work as an HTML attribute
+// name at all (embedded whitespace, a colon, and so on) fails first,
+// under the same liveBindAttrTargetNamePattern the run-time allowlist
+// checks too. This check-time pass does not guarantee a run-time pass —
+// an href target's scheme, and a data-gosx-countdown target's node-level
+// -then refusal, are both known only once a payload value (or the node)
+// is in hand — but a check-time failure here always means a guaranteed
+// run-time refusal too, so a bind that checks clean is never silently
+// rejected once live.
+func isValidLiveBindAttrTargetValue(target string) bool {
+	name := strings.ToLower(strings.TrimSpace(target))
+	if name == "" || !liveBindAttrTargetNamePattern.MatchString(name) {
+		return false
+	}
+	if name == countdownInstantAttr {
+		return true
+	}
+	if strings.HasPrefix(name, "data-gosx-") {
+		return false
+	}
+	if name == "data-csrf-token" || name == "data-csrf" {
+		return false
+	}
+	if strings.HasPrefix(name, "data-") || strings.HasPrefix(name, "aria-") {
+		return true
+	}
+	switch name {
+	case "title", "value", "datetime", "disabled", "hidden", "href":
+		return true
+	}
+	return false
+}
+
 // isValidLinkCurrentPolicyValue reports whether value is one of the four
 // policies NormalizeNavigationLinkCurrentPolicy recognizes by name
 // (case-insensitively, surrounding whitespace ignored) rather than
@@ -531,6 +620,32 @@ func isValidLinkCurrentPolicyValue(value string) bool {
 func isValidPrefetchValue(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "off", "intent", "render", "force":
+		return true
+	default:
+		return false
+	}
+}
+
+// isValidRegionModeValue reports whether value is one of the three
+// data-gosx-region-mode values RegionModeAttr's own doc comment in
+// runtime_contract.go documents: "replace" (the default), "append", or
+// "prepend" — matched byte for byte against the run-time's own exact,
+// UNTRIMMED comparison (record.mode === "append" || record.mode ===
+// "prepend", where record.mode itself is read straight off
+// el.getAttribute with no trim at all). This function deliberately does
+// not call strings.TrimSpace either: "append " or " prepend" is exactly
+// as wrong as "Append" here, since the run-time's === would reject all
+// three the same way. Unlike isValidLinkCurrentPolicyValue or
+// isValidPrefetchValue above, an unrecognized region mode is not a
+// harmless "falls back to a sane default and moves on" value: the
+// run-time treats anything other than "append"/"prepend" as "replace",
+// so a typo (a stray space, "Append", "perpend") would silently turn an
+// intended growth mode into a destructive full-region swap that wipes
+// every row the region already rendered — this must fail `gosx check`,
+// never reach a browser.
+func isValidRegionModeValue(value string) bool {
+	switch value {
+	case "replace", "append", "prepend":
 		return true
 	default:
 		return false
@@ -640,6 +755,14 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Hint:    `for example "4s" or "2m" — the same subset data-gosx-revalidate-interval accepts`,
 			})
 		}
+	case regionModeAttr:
+		if !isValidRegionModeValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"replace\", \"append\", or \"prepend\"", regionModeAttr, attr.Value),
+				Hint:    `an unrecognized value falls back to "replace" at run time, silently turning an intended growth mode into a destructive full-region swap`,
+			})
+		}
 	case linkCurrentPolicyAttr:
 		if !isValidLinkCurrentPolicyValue(attr.Value) {
 			v.diags = append(v.diags, Diagnostic{
@@ -669,6 +792,22 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 			v.diags = append(v.diags, Diagnostic{
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be one class name with no embedded whitespace", liveFlashClassAttr, attr.Value),
+			})
+		}
+	case liveBindAttrAttr:
+		if !isValidLiveBindPairsValue(attr.Value, isValidLiveBindAttrTargetValue) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of target:key pairs", liveBindAttrAttr, attr.Value),
+				Hint:    `for example "data-gosx-countdown:clock.deadline,href:link"; a target must be a data-* attribute (other than data-gosx-* or data-csrf-token/data-csrf), an aria-* attribute, title/value/datetime/disabled/hidden, href, or data-gosx-countdown`,
+			})
+		}
+	case liveBindClassAttr:
+		if !isValidLiveBindPairsValue(attr.Value, isValidCountdownWarnClassToken) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of class:key pairs", liveBindClassAttr, attr.Value),
+				Hint:    `for example "pick-clock--paused:clock.paused"; each class name may not contain embedded whitespace`,
 			})
 		}
 	}

@@ -6038,7 +6038,7 @@ test("countdown boot survives a segment name that collides with an Object.protot
 
   assert.equal(typeof env.context.__gosx.navigation, "object", "the navigation runtime must still publish");
   assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
-  assert.equal(env.context.document.eventListeners.get("click").length, 1, "the click listener must still install");
+  assert.equal(env.context.document.eventListeners.get("click").length, 2, "the navigation click listener and the cue-toggle click listener must both still install");
 });
 
 test("countdown boot survives a \"__proto__\" segment name", () => {

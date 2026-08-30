@@ -92,6 +92,9 @@ func Page() Node {
 			<span class="inline-code">DropStats</span>
 			and client drop statistics. A dropped text event is not replayed automatically.
 		</p>
+		<p>
+			The browser runtime's own hub client reconnects automatically after an unexpected close: the delay grows from 500 ms, doubling per attempt with up to 25 percent jitter, up to a 15 second cap, and resets to 500 ms the moment a reconnect actually opens.
+		</p>
 		<h2 id="documents">CRDT documents</h2>
 		<CodeBlock lang="go" source={data.crdtSample} />
 		<p>

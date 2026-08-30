@@ -570,7 +570,16 @@ const budgets = [
   // 1_578_296 / 428_783 / 344_121 raw/gzip/brotli. Keep the loader's approved
   // raw allocation at 1_578_550; gzip moves 428_500 -> 428_900 and Brotli
   // 344_050 -> 344_250 for narrow measured headroom.
-  { file: "bootstrap.js", raw: 1_578_550, gzip: 428_900, brotli: 344_250 },
+  // gosx#217: event-mode live binds (data-gosx-live-mode="event"), region
+  // append/prepend growth modes, hub reconnect backoff, and the earlier
+  // boolean-attribute live bind (data-gosx-live-bind-attr targeting
+  // hidden/disabled) plus its Object.create(null) target-map hardening, all
+  // carried by navigation.ts/regions.ts/hubs.ts in the monolith. Measured:
+  // 1_580_179 / 429_352 / 344_765. Caps raised with narrow rounding headroom.
+  // gosx#217 review follow-up: hub-identity scoping (data-gosx-live-hub),
+  // page-wide cue mute (data-gosx-cue-toggle), and the region-key/-cursor
+  // shape validation. Measured: 1_580_623 / 429_444 / 345_193.
+  { file: "bootstrap.js", raw: 1_580_800, gzip: 429_700, brotli: 345_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -637,7 +646,14 @@ const budgets = [
   // 144_189 / 39_212 / 34_215, plus rounding headroom.
   // v0.52.0 disclosure authority. Measured: 148_060 / 40_423 / 35_255,
   // plus narrow rounding headroom.
-  { file: "bootstrap-runtime.js", raw: 149_000, gzip: 41_000, brotli: 35_800 },
+  // gosx#217: event-mode live binds, region append/prepend, and hub
+  // reconnect backoff (navigation.ts/regions.ts/hubs.ts, all carried by the
+  // runtime chunk). Measured raw 149_876; gzip and brotli stayed under
+  // their existing caps. Raw cap raised with narrow rounding headroom.
+  // gosx#217 review follow-up: hub-identity scoping, cue mute, and the
+  // region-key/-cursor validation (navigation.ts/regions.ts, both carried
+  // by the runtime chunk). Measured: 150_160 / 41_135 / 35_887.
+  { file: "bootstrap-runtime.js", raw: 150_400, gzip: 41_300, brotli: 36_100 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -686,7 +702,14 @@ const budgets = [
   // ride in the lite bundle. Measured: 107_874 / 28_741 / 25_605.
   // v0.52.0 disclosure authority. Measured: 111_565 / 29_882 / 26_549,
   // plus narrow rounding headroom.
-  { file: "bootstrap-lite.js", raw: 112_500, gzip: 30_500, brotli: 27_100 },
+  // gosx#217: same navigation.ts/regions.ts growth as bootstrap-runtime.js
+  // above, carried by the lite chunk. Measured raw 113_378; gzip and brotli
+  // stayed under their existing caps. Raw cap raised with narrow rounding
+  // headroom.
+  // gosx#217 review follow-up: same navigation.ts/regions.ts growth as
+  // bootstrap-runtime.js above, carried by the lite chunk. Measured:
+  // 113_659 / 30_609 / 27_146.
+  { file: "bootstrap-lite.js", raw: 113_900, gzip: 30_800, brotli: 27_400 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1430,9 +1453,14 @@ const routeBudgets = [
     // metadata and nonce propagation. Measured: 254_644 / 72_004 / 63_239.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // selective total: 257_866 / 72_950 / 64_082, plus narrow headroom.
-    raw: 259_000,
-    gzip: 73_500,
-    brotli: 64_700,
+    // Bumped raw 259_000 -> 260_000 for event-mode live binds, region
+    // append/prepend, and hub reconnect backoff (gosx#217 extension).
+    // Measured selective total: 259_682 / 73_492 / 64_547, plus narrow
+    // headroom on gzip/brotli too (both were within single-digit percent of
+    // their prior caps already).
+    raw: 260_000,
+    gzip: 73_700,
+    brotli: 64_800,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1679,9 +1707,13 @@ const routeBudgets = [
     // this five-chunk route: 1_068_638 / 295_977 / 250_761 raw/gzip/brotli.
     // Raw remains within the existing ceiling; gzip 295_750 -> 296_000 and
     // brotli 250_500 -> 250_950.
-    raw: 1_069_000,
-    gzip: 296_000,
-    brotli: 250_950,
+    // Bumped raw 1_069_000 -> 1_071_000, gzip 296_000 -> 296_600, brotli
+    // 250_950 -> 251_400 for event-mode live binds, region append/prepend,
+    // and hub reconnect backoff (gosx#217 extension). Measured:
+    // 1_070_068 / 296_424 / 251_179, plus narrow rounding headroom.
+    raw: 1_071_000,
+    gzip: 296_600,
+    brotli: 251_400,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1801,9 +1833,16 @@ const routeBudgets = [
     // this six-chunk route: 1_461_812 / 391_170 / 330_429 raw/gzip/brotli.
     // Raw remains within the existing ceiling; gzip 390_950 -> 391_250 and
     // brotli 330_250 -> 330_650.
-    raw: 1_462_000,
-    gzip: 391_250,
-    brotli: 330_650,
+    // Bumped raw 1_462_000 -> 1_464_000, gzip 391_250 -> 391_800, brotli
+    // 330_650 -> 331_000 for event-mode live binds, region append/prepend,
+    // and hub reconnect backoff (gosx#217 extension). Measured:
+    // 1_463_242 / 391_617 / 330_847, plus narrow rounding headroom.
+    // gosx#217 review follow-up: hub-identity scoping, cue mute, and the
+    // region-key/-cursor validation. Measured: 1_463_526 / 391_787 /
+    // 331_014; only brotli exceeded, raised with narrow rounding headroom.
+    raw: 1_464_000,
+    gzip: 391_800,
+    brotli: 331_200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1919,9 +1958,13 @@ const routeBudgets = [
     // raised with narrow rounding headroom.
     // Specular-color decoding measured 1090039/287220/240514; caps set to
     // the exact measured values.
-    raw: 1_090_039,
-    gzip: 287_220,
-    brotli: 240_514,
+    // Bumped raw 1_090_039 -> 1_091_500, gzip 287_220 -> 287_800, brotli
+    // 240_514 -> 241_000 for event-mode live binds, region append/prepend,
+    // and hub reconnect backoff (gosx#217 extension). Measured:
+    // 1_090_507 / 287_567 / 240_809, plus narrow rounding headroom.
+    raw: 1_091_500,
+    gzip: 287_800,
+    brotli: 241_000,
   },
 
 ];
@@ -1930,6 +1973,31 @@ function fileSize(relativePath) {
   const absolute = path.join(__dirname, relativePath);
   return fs.statSync(absolute).size;
 }
+
+// navigationRuntimeMinBudget governs client/runtime/host/navigation-
+// runtime.min.js on its own, separately from the budgets/routeBudgets
+// arrays above: those pair every raw size with a matching .gz/.br
+// sidecar this file has never generated (see navigation_asset.go's own
+// doc comment — the server's EnableGzip middleware compresses it
+// on-the-fly instead), so a raw-only budget is this file's own shape.
+// It ships in the lean, always-on navigation payload every page loads
+// regardless of whether a bootstrap bundle is present at all (gosx#221),
+// so its own growth deserves its own governance rather than riding along
+// only inside bootstrap-runtime.js's/bootstrap-lite.js's shared budgets
+// above.
+//
+// gosx#217 review follow-up: hub-identity scoping, page-wide cue mute,
+// and the region-key/-cursor validation. Measured: 88_076. Cap set with
+// narrow rounding headroom.
+const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 88_500 };
+
+test("navigation-runtime.min.js stays within its own raw size budget", () => {
+  const raw = fileSize(navigationRuntimeMinBudget.file);
+  assert.ok(
+    raw <= navigationRuntimeMinBudget.raw,
+    `${navigationRuntimeMinBudget.file} raw size ${raw} exceeds budget ${navigationRuntimeMinBudget.raw}`,
+  );
+});
 
 test("generated bootstrap bundles stay within runtime size budgets", () => {
   for (const budget of budgets) {

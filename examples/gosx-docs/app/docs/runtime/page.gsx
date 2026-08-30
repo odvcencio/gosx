@@ -340,6 +340,56 @@ func Page() Node {
 			</p>
 			<p>
 				Add
+				<span class="inline-code">data-gosx-cue-toggle</span>
+				to a dedicated
+				<span class="inline-code">&lt;button type="button"&gt;</span>
+				to let the visitor mute every cue on the page. The runtime keeps
+				<span class="inline-code">aria-pressed</span>
+				,
+				<span class="inline-code">data-gosx-cue-state</span>
+				, and the optional
+				<span class="inline-code">data-gosx-cue-label-on</span>
+				/
+				<span class="inline-code">-off</span>
+				text in sync, also on a control a region swap renders later. The choice persists in
+				<span class="inline-code">localStorage</span>
+				under
+				<span class="inline-code">gosx:cues:muted</span>
+				. Scripts use
+				<span class="inline-code">window.__gosx.cues</span>
+				(
+				<span class="inline-code">mute</span>
+				,
+				<span class="inline-code">unmute</span>
+				,
+				<span class="inline-code">toggle</span>
+				,
+				<span class="inline-code">muted</span>
+				) and listen for
+				<span class="inline-code">gosx:cue:muted</span>
+				. A muted cue is skipped, never queued.
+			</p>
+			{CodeBlock("gosx", `<button data-gosx-cue-toggle
+	    data-gosx-cue-label-on="Sound on" data-gosx-cue-label-off="Sound off">
+	    Sound on
+	</button>`)}
+			<p>
+				A toggle on any other tag still functions, but warns once in the console — the
+				<span class="inline-code">&lt;button type="button"&gt;</span>
+				requirement is not enforced. The toggle never calls
+				<span class="inline-code">preventDefault()</span>
+				on an element that also carries
+				<span class="inline-code">data-gosx-action</span>
+				or
+				<span class="inline-code">href</span>
+				, so the same click can mute AND submit an action or navigate — the two behaviors are independent, neither swallows the other.
+				<span class="inline-code">gosx:cue:muted</span>
+				fires only on a change; it never fires for the boot-time restore of a stored choice. A script that needs the initial state reads
+				<span class="inline-code">window.__gosx.cues.muted()</span>
+				directly instead of waiting for an event that will not come.
+			</p>
+			<p>
+				Add
 				<span class="inline-code">data-gosx-countdown-then="revalidate"</span>
 				to fire one revalidation of the page's revalidate root (see
 				<span class="inline-code">data-gosx-revalidate-interval</span>
@@ -380,6 +430,15 @@ func Page() Node {
 				,
 				<span class="inline-code">detail.url</span>
 				) to run your own re-initialization. This rescan never restarts the periodic revalidation poll, the heartbeat ping, or a live region's own connection — those keep their own independent timer or connection across every swap.
+			</p>
+			<p>
+				A countdown follows its own
+				<span class="inline-code">data-gosx-countdown</span>
+				attribute. Change the attribute and the next tick counts from the new instant — a live-bound region can retarget an existing countdown this way instead of re-rendering it (see
+				<span class="inline-code">data-gosx-live-bind-attr</span>
+				below).
+				<span class="inline-code">window.__gosx.countdown.retarget(root)</span>
+				forces the re-read and restarts the shared timer after an expiry, for a caller that changed the attribute without triggering the runtime's own attribute observer.
 			</p>
 		</section>
 		<section id="attention-watcher">
@@ -643,6 +702,61 @@ func Page() Node {
 				to a bound element to retrigger a CSS animation class whenever its resolved text actually changes — the same remove-then-re-add-after-a-reflow trick a hand-written score ticker already uses, now with zero application JavaScript.
 			</p>
 			<p>
+				Add
+				<span class="inline-code">data-gosx-live-bind-attr</span>
+				to set a named element attribute from a bind key instead of the element's text, and
+				<span class="inline-code">data-gosx-live-bind-class</span>
+				to toggle a named class from a boolean bind value. Each takes a comma-separated
+				<span class="inline-code">target:key[,target:key...]</span>
+				list, sharing the same polled or event-mode payload and the same key grammar
+				<span class="inline-code">data-gosx-live-bind</span>
+				uses above.
+			</p>
+			{CodeBlock("gosx", `<b data-gosx-countdown="2026-09-06T17:00:00Z"
+	    data-gosx-live-bind-attr="data-gosx-countdown:clock.effective_deadline"
+	    data-gosx-live-bind-class="pick-clock--paused:clock.paused">15:00</b>`)}
+			<p>
+				An attribute bind is a server-controlled write into the DOM, so its target passes a POSITIVE allowlist: never an
+				<span class="inline-code">on*</span>
+				handler,
+				<span class="inline-code">style</span>
+				,
+				<span class="inline-code">srcdoc</span>
+				, or a runtime
+				<span class="inline-code">data-gosx-*</span>
+				attribute other than
+				<span class="inline-code">data-gosx-countdown</span>
+				(letting a payload retarget a countdown, refused whenever the node also declares
+				<span class="inline-code">data-gosx-countdown-then</span>
+				); a URL attribute such as
+				<span class="inline-code">href</span>
+				takes a relative or http(s) URL only.
+				<span class="inline-code">hidden</span>
+				and
+				<span class="inline-code">disabled</span>
+				are boolean attributes: a bound value of
+				<span class="inline-code">true</span>
+				sets the attribute present with an empty value;
+				<span class="inline-code">false</span>
+				or a JSON
+				<span class="inline-code">null</span>
+				removes it.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-live-on</span>
+				together with
+				<span class="inline-code">data-gosx-live-mode="event"</span>
+				to apply a matching hub event's own object payload directly to the binds under the root, with no fetch at all —
+				<span class="inline-code">data-gosx-live-src</span>
+				becomes optional in that mode, serving only the public
+				<span class="inline-code">window.__gosx.live.refresh(element)</span>
+				manual-refresh escape hatch.
+			</p>
+			{CodeBlock("gosx", `<div data-gosx-live-on="draft:pick" data-gosx-live-mode="event">
+	    <span data-gosx-live-bind="cell.3.4">3.04</span>
+	</div>`)}
+			<p>
 				Many independent live regions can exist on one page, each on its own timer, because each is free to poll a different source at a different cadence. Unlike periodic revalidation above, an interval-triggered live region fires its first tick immediately at setup rather than waiting out a full interval — the tick's own action is a cheap text patch, not a decision about whether a much heavier full-page revalidation is worth doing. A region declaring only a signal or hub-event trigger, with no interval, fires no tick at setup either — it stays on its server-rendered text until that trigger first fires.
 			</p>
 			<p>
@@ -708,6 +822,43 @@ func Page() Node {
 			<p>
 				The server renders the fragment as ordinary HTML; the runtime replaces the region's children with the fetched markup. A growing or reordering list the server is already positioned to render belongs here, not rebuilt from a JSON payload in application JavaScript.
 			</p>
+			<p>
+				The default
+				<span class="inline-code">replace</span>
+				mode above rewrites the whole region on every refresh — the right shape for a region whose fragment fully replaces itself each time. Add
+				<span class="inline-code">data-gosx-region-mode="append"</span>
+				or
+				<span class="inline-code">data-gosx-region-mode="prepend"</span>
+				to insert a fetched fragment beside the region's existing children instead — for a tape, a board, or any other list that should only ever grow. Add
+				<span class="inline-code">data-gosx-region-key</span>
+				to dedupe: a fragment node whose key attribute matches a child already present is dropped, so an overlapping fetch never duplicates a row. Add
+				<span class="inline-code">data-gosx-region-cursor</span>
+				to fill a
+				<span class="inline-code">&#123;cursor&#125;</span>
+				token in
+				<span class="inline-code">data-gosx-region-url</span>
+				from an already-present child (the first one in prepend mode, the last one in append mode) — the append/prepend counterpart to
+				<span class="inline-code">&#123;value&#125;</span>
+				above.
+			</p>
+			<p>
+				Growth in
+				<span class="inline-code">append</span>
+				/
+				<span class="inline-code">prepend</span>
+				mode is unbounded — the runtime never trims an old row on its own. A page that wants a capped tape or board trims it itself, removing the node it no longer needs; removing a node's own subtree runs page disposal on any surface, engine, or island still attached to it, the same disposal a
+				<span class="inline-code">replace</span>
+				swap or a soft navigation already triggers. Both
+				<span class="inline-code">data-gosx-region-key</span>
+				and
+				<span class="inline-code">data-gosx-region-cursor</span>
+				read only the region's own direct children, never a nested descendant, so a wrapper row's own nested markup is never mistaken for one of the region's own entries.
+			</p>
+			{CodeBlock("gosx", `<div data-gosx-region data-gosx-region-url="/tape?since={cursor}"
+	    data-gosx-region-mode="prepend" data-gosx-region-key="data-tape-key"
+	    data-gosx-region-cursor="data-pick-number">
+	    <!-- server-rendered rows, newest first -->
+	</div>`)}
 			<p>
 				A tick from the interval trigger alone skips, and retries next tick, while the document is hidden, a navigation is in flight, or the region contains the document's focused element or an element under an active pointer. A signal or hub-event trigger answers its own discrete, user-caused event immediately regardless — picking an option and having its own region refresh right away, even while that same element keeps focus, is the whole point of that trigger.
 			</p>
