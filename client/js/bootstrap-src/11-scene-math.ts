@@ -419,22 +419,31 @@
     return out;
   }
 
+  function sceneMatrixTransformInto(out, matrix, x, y, z, stride, translate) {
+    out.x = matrix[0] * x + matrix[stride] * y + matrix[stride * 2] * z;
+    out.y = matrix[1] * x + matrix[stride + 1] * y + matrix[stride * 2 + 1] * z;
+    out.z = matrix[2] * x + matrix[stride + 2] * y + matrix[stride * 2 + 2] * z;
+    if (translate) {
+      out.x += matrix[12]; out.y += matrix[13]; out.z += matrix[14];
+    }
+    return out;
+  }
+
+  function sceneEulerMatrixInto(out, rx, ry, rz, x, y, z) {
+    const cx = Math.cos(rx), sx = Math.sin(rx);
+    const cy = Math.cos(ry), sy = Math.sin(ry);
+    const cz = Math.cos(rz), sz = Math.sin(rz);
+    out[0] = cy * cz; out[4] = sx * sy * cz - cx * sz; out[8] = cx * sy * cz + sx * sz; out[12] = x;
+    out[1] = cy * sz; out[5] = sx * sy * sz + cx * cz; out[9] = cx * sy * sz - sx * cz; out[13] = y;
+    out[2] = -sy; out[6] = sx * cy; out[10] = cx * cy; out[14] = z;
+    out[3] = 0; out[7] = 0; out[11] = 0; out[15] = 1;
+    return out;
+  }
+
   // Build a column-major 4x4 matrix from translation, quaternion rotation,
   // and scale components (TRS decomposition). Returns a new Float32Array(16).
   function sceneTRSToMat4(t, r, s) {
-    var out = new Float32Array(16);
-    var x = r[0], y = r[1], z = r[2], w = r[3];
-    var x2 = x + x, y2 = y + y, z2 = z + z;
-    var xx = x * x2, xy = x * y2, xz = x * z2;
-    var yy = y * y2, yz = y * z2, zz = z * z2;
-    var wx = w * x2, wy = w * y2, wz = w * z2;
-
-    out[0]  = (1 - (yy + zz)) * s[0]; out[1]  = (xy + wz) * s[0];       out[2]  = (xz - wy) * s[0];       out[3]  = 0;
-    out[4]  = (xy - wz) * s[1];       out[5]  = (1 - (xx + zz)) * s[1]; out[6]  = (yz + wx) * s[1];       out[7]  = 0;
-    out[8]  = (xz + wy) * s[2];       out[9]  = (yz - wx) * s[2];       out[10] = (1 - (xx + yy)) * s[2]; out[11] = 0;
-    out[12] = t[0];                    out[13] = t[1];                    out[14] = t[2];                    out[15] = 1;
-
-    return out;
+    return sceneTRSToMat4Into(new Float32Array(16), t, r, s);
   }
 
   // Convert a unit quaternion (x,y,z,w) to the (rotationX, rotationY, rotationZ)
@@ -567,6 +576,7 @@
       SCENE_IDENTITY_MAT4,
       sceneMat4Multiply,
       sceneMat4MultiplyInto,
+      sceneEulerMatrixInto,
       sceneTRSToMat4,
       sceneTRSToMat4Into,
       _sceneMat4ScratchA,

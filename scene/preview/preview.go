@@ -553,7 +553,37 @@ func ensureMaterial(frame *engine.RenderBundle, indexes map[string]int, material
 }
 
 func objectMatrix(o scene.ObjectIR) []float64 {
-	return trsMatrix(o.X, o.Y, o.Z, o.RotationX, o.RotationY, o.RotationZ, 1, 1, 1)
+	sx, sy, sz := resolvedScaleComponents(o.ScaleX, o.ScaleY, o.ScaleZ)
+	return composeParentMatrix(o.ParentMatrix, trsMatrix(o.X, o.Y, o.Z, o.RotationX, o.RotationY, o.RotationZ, sx, sy, sz))
+}
+
+func resolvedScaleComponents(x, y, z float64) (float64, float64, float64) {
+	if x == 0 {
+		x = 1
+	}
+	if y == 0 {
+		y = 1
+	}
+	if z == 0 {
+		z = 1
+	}
+	return x, y, z
+}
+
+func composeParentMatrix(parent, local []float64) []float64 {
+	if len(parent) != 16 {
+		return local
+	}
+	out := make([]float64, 16)
+	for column := 0; column < 4; column++ {
+		for row := 0; row < 4; row++ {
+			out[column*4+row] = parent[row]*local[column*4] +
+				parent[4+row]*local[column*4+1] +
+				parent[8+row]*local[column*4+2] +
+				parent[12+row]*local[column*4+3]
+		}
+	}
+	return out
 }
 
 func trsMatrix(x, y, z, rx, ry, rz, sx, sy, sz float64) []float64 {
@@ -573,7 +603,7 @@ func transformPointPositions(points scene.PointsIR) []float64 {
 	if len(points.Positions) == 0 {
 		return nil
 	}
-	matrix := trsMatrix(points.X, points.Y, points.Z, points.RotationX, points.RotationY, points.RotationZ, 1, 1, 1)
+	matrix := composeParentMatrix(points.ParentMatrix, trsMatrix(points.X, points.Y, points.Z, points.RotationX, points.RotationY, points.RotationZ, 1, 1, 1))
 	out := make([]float64, len(points.Positions))
 	copy(out, points.Positions)
 	for index := 0; index+2 < len(out); index += 3 {

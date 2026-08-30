@@ -183,6 +183,12 @@
         "live": { "$ref": "#/$defs/liveArray" }
       }
     },
+    "affineMatrix": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 16,
+      "maxItems": 16
+    },
     "transformFields": {
       "type": "object",
       "additionalProperties": true,
@@ -193,6 +199,7 @@
         "scaleX": { "type": "number" },
         "scaleY": { "type": "number" },
         "scaleZ": { "type": "number" },
+        "parentMatrix": { "$ref": "#/$defs/affineMatrix" },
         "rotationX": { "type": "number" },
         "rotationY": { "type": "number" },
         "rotationZ": { "type": "number" },

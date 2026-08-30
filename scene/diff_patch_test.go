@@ -69,7 +69,7 @@ func TestDiffScenePatchTransformsReplacesPairForMovedObject(t *testing.T) {
 }
 
 // TestDiffScenePatchTransformsDeclinesForAnyOtherChange is the safety case. The
-// patch carries nine floats, so any other changed field would be dropped. Each
+// patch carries the scalar transform and optional parent matrix, so any other changed field would be dropped. Each
 // case changes the transform AND one other field, and the diff has to fall back
 // to the pair that carries the whole record.
 func TestDiffScenePatchTransformsDeclinesForAnyOtherChange(t *testing.T) {
@@ -155,8 +155,8 @@ func TestTransformPatchShipsEveryKeyIncludingZero(t *testing.T) {
 		"rotationX": 0, "rotationY": 0, "rotationZ": 0,
 		"scaleX": 1, "scaleY": 1, "scaleZ": 1,
 	}
-	if len(decoded) != len(wantKeys) {
-		t.Errorf("patch keys = %v, want exactly %d keys", decoded, len(wantKeys))
+	if len(decoded) != len(wantKeys)+1 {
+		t.Errorf("patch keys = %v, want exactly %d keys", decoded, len(wantKeys)+1)
 	}
 	for key, want := range wantKeys {
 		value, ok := decoded[key]
@@ -167,6 +167,9 @@ func TestTransformPatchShipsEveryKeyIncludingZero(t *testing.T) {
 		if value != want {
 			t.Errorf("patch %q = %v, want %v", key, value, want)
 		}
+	}
+	if value, ok := decoded["parentMatrix"]; !ok || value != nil {
+		t.Errorf("parentMatrix = %v (present %v), want explicit null reset", value, ok)
 	}
 }
 

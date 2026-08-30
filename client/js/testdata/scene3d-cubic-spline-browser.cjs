@@ -1,5 +1,6 @@
 'use strict';
-/* Native browser regression probe for imported glTF CUBICSPLINE animation.
+/* Native browser regression probe for imported glTF CUBICSPLINE animation
+ * and exact affine Group.Scale rendering/picking.
  *
  * Boots real Chrome over CDP (Node builtins only), serves the built
  * bootstrap.js plus a strict method-and-path allowlist of feature assets on
@@ -157,6 +158,16 @@ function manifestFor(mount, engine, webgpu) {
       lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
         directionX: 0, directionY: 0, directionZ: -1 }],
       forceWebGL: !webgpu, requireWebGL: !webgpu, preferWebGPU: Boolean(webgpu),
+      objects: [{
+        id: 'affine-group-child', kind: 'box', pickable: true, color: '#f6a44c',
+        rotationZ: Math.PI / 4,
+        parentMatrix: [2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.5, 0.5, 1, 1],
+        vertices: {
+          positions: [-0.4, -0.4, 0, 0.4, -0.4, 0, 0, 0.4, 0],
+          normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+          uvs: [0, 0, 1, 0, 0.5, 1], count: 3, immutable: true, revision: 0,
+        },
+      }],
       models: [{
         id: 'cubic', src: '/models/cubic-spline.glb',
         animation: 'curve', animationSpeed: 0, loop: true,
@@ -1104,6 +1115,32 @@ function poseExpr() {
     'wgPasses:window.__cubicWGPasses,wgSubmits:window.__cubicWGSubmits};})()';
 }
 
+function affineExpr() {
+  return '(function(){var r=window.__cubicRefs,api=window.__gosx_scene3d_api;' +
+    'if(!r||!r.state||!api||typeof api.createSceneRenderBundle!=="function"||' +
+    'typeof api.sceneRaycastPick!=="function")return null;' +
+    'var object=r.state.objects&&r.state.objects.get("affine-group-child");if(!object)return null;' +
+    'var bundle=api.createSceneRenderBundle(' + W + ',' + H + ',"#101418",r.state.camera,' +
+    '[object],[],[],[],[],r.state.environment,0,[],[],[],[],[],0,false,{retainedGeometry:true});' +
+    'var packet=null;for(var i=0;i<bundle.meshObjects.length;i+=1){' +
+    'if(bundle.meshObjects[i]&&bundle.meshObjects[i].id==="affine-group-child"){' +
+    'packet=bundle.meshObjects[i];break;}}' +
+    'var origin={},axisX={},axisY={},axisZ={};' +
+    'api.translateScenePointInto(origin,0,0,0,object,0);' +
+    'api.translateScenePointInto(axisX,1,0,0,object,0);' +
+    'api.translateScenePointInto(axisY,0,1,0,object,0);' +
+    'api.translateScenePointInto(axisZ,0,0,1,object,0);' +
+    'var hit=api.sceneRaycastPick(' + (W / 2) + ',' + (H / 2) + ',' + W + ',' + H + ',bundle.camera,bundle);' +
+    'return {parent:Array.prototype.slice.call(object.parentMatrix||[]),' +
+    'matrix:[axisX.x-origin.x,axisX.y-origin.y,axisX.z-origin.z,0,' +
+    'axisY.x-origin.x,axisY.y-origin.y,axisY.z-origin.z,0,' +
+    'axisZ.x-origin.x,axisZ.y-origin.y,axisZ.z-origin.z,0,origin.x,origin.y,origin.z,1],' +
+    'packet:!!packet,direct:!!(packet&&packet.directVertices),bounds:packet&&packet.bounds,' +
+    'worldPositions:Array.prototype.slice.call(bundle.worldMeshPositions||[],0,9),' +
+    'hit:hit?{id:hit.object&&hit.object.id,distance:hit.distance,' +
+    'point:hit.worldPosition&&[hit.worldPosition.x,hit.worldPosition.y,hit.worldPosition.z]}:null};})()';
+}
+
 function hubExpr(detail) {
   return '(function(){try{document.dispatchEvent(new CustomEvent("gosx:hub:event",' +
     '{detail:' + JSON.stringify(detail) + '}));return true;}catch(e){return false;}})()';
@@ -1396,6 +1433,35 @@ async function runCase(send, c, sessionId) {
   ev.meshID = load.meshID;
   if (c.webgpu) {
     ev.webgpuDiagnostics = await evalSend(send, webGPUDiagnosticsExpr());
+  }
+
+  // The same mounted native backend must consume a retained packet whose
+  // matrix is parentAffine * live leaf TRS. The non-uniform parent followed by
+  // the 45-degree leaf rotation has non-orthogonal columns (real shear), so a
+  // scalar TRS approximation cannot satisfy this matrix and pick oracle.
+  const affine = await evalSend(send, affineExpr());
+  ev.affine = affine;
+  if (!affine || !affine.packet || !affine.hit) {
+    fail('[' + c.name + '] affine render packet/pick unavailable: ' + JSON.stringify(affine));
+  } else {
+    assertClose(affine.parent,
+      [2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.5, 0.5, 1, 1],
+      '[' + c.name + '] affine parent matrix', 1e-6);
+    assertClose(affine.matrix,
+      [Math.SQRT2, Math.SQRT1_2, 0, 0, -Math.SQRT2, Math.SQRT1_2, 0, 0,
+        0, 0, 1, 0, 0.5, 0.5, 1, 1],
+      '[' + c.name + '] affine model matrix', 2e-5);
+    assertClose(affine.worldPositions,
+      [0.5, 0.5 - 0.4 * Math.SQRT2, 1, 0.5 + 0.8 * Math.SQRT2, 0.5, 1,
+        0.5 - 0.4 * Math.SQRT2, 0.5 + 0.2 * Math.SQRT2, 1],
+      '[' + c.name + '] renderer-consumed affine vertices', 2e-5);
+    if (affine.hit.id !== 'affine-group-child') {
+      fail('[' + c.name + '] affine center pick chose ' + JSON.stringify(affine.hit.id));
+    }
+    if (Math.abs(Number(affine.hit.distance) - 2) >= 2e-4) {
+      fail('[' + c.name + '] affine pick distance=' + affine.hit.distance + ' want 2');
+    }
+    assertClose(affine.hit.point, [0.5, 0.5, 1], '[' + c.name + '] affine pick point', 2e-4);
   }
 
   let baseline = null;

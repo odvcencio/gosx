@@ -502,29 +502,17 @@ function gosxConfigureSceneScript(script, role, src) {
     return resolved;
   }
 
-  function sceneModelTransformPoint(point, model) {
+  function sceneModelTransform(point, model, mode) {
     const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
-    const scaleX = sceneNumber(model && model.scaleX, 1);
-    const scaleY = sceneNumber(model && model.scaleY, 1);
-    const scaleZ = sceneNumber(model && model.scaleZ, 1);
-    const rotated = sceneRotatePoint(
-      {
-        x: local.x * scaleX,
-        y: local.y * scaleY,
-        z: local.z * scaleZ,
-      },
-      sceneNumber(model && model.rotationX, 0),
-      sceneNumber(model && model.rotationY, 0),
-      sceneNumber(model && model.rotationZ, 0),
-    );
-    return {
-      x: rotated.x + sceneNumber(model && model.x, 0),
-      y: rotated.y + sceneNumber(model && model.y, 0),
-      z: rotated.z + sceneNumber(model && model.z, 0),
-    };
+    const matrix = sceneModelTransformMatrix(model);
+    const out = sceneMatrixTransformInto({}, matrix, local.x, local.y, local.z, 4, false);
+    if (!mode) {
+      out.x += matrix[12]; out.y += matrix[13]; out.z += matrix[14];
+    }
+    return out;
   }
 
-  function sceneModelTransformVector(point, model) {
+  function sceneModelLocalTransformVector(point, model) {
     const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
     return sceneRotatePoint(
       {
@@ -539,11 +527,8 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneModelMaxScale(model) {
-    return Math.max(
-      Math.abs(sceneNumber(model && model.scaleX, 1)),
-      Math.abs(sceneNumber(model && model.scaleY, 1)),
-      Math.abs(sceneNumber(model && model.scaleZ, 1)),
-    );
+    const sx = Math.abs(sceneNumber(model && model.scaleX, 1)), sy = Math.abs(sceneNumber(model && model.scaleY, 1)), sz = Math.abs(sceneNumber(model && model.scaleZ, 1));
+    return Math.max(sx, sy, sz);
   }
 
   function sceneModelZeroOpacityHidesObject(model, object) {
@@ -571,27 +556,20 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneModelRotateDirection(point, model) {
-    return sceneRotatePoint(
+    const rotated = sceneRotatePoint(
       point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 },
       sceneNumber(model && model.rotationX, 0),
       sceneNumber(model && model.rotationY, 0),
       sceneNumber(model && model.rotationZ, 0),
     );
+    const parent = model && model.parentMatrix;
+    return !parent ? rotated : sceneNormalizeDirection(
+      sceneMatrixTransformInto({}, parent, rotated.x, rotated.y, rotated.z, 4, false),
+    );
   }
 
   function sceneModelTransformMatrix(model) {
-    const rx = sceneNumber(model && model.rotationX, 0);
-    const ry = sceneNumber(model && model.rotationY, 0);
-    const rz = sceneNumber(model && model.rotationZ, 0);
-    const basisX = sceneRotatePoint({ x: sceneNumber(model && model.scaleX, 1), y: 0, z: 0 }, rx, ry, rz);
-    const basisY = sceneRotatePoint({ x: 0, y: sceneNumber(model && model.scaleY, 1), z: 0 }, rx, ry, rz);
-    const basisZ = sceneRotatePoint({ x: 0, y: 0, z: sceneNumber(model && model.scaleZ, 1) }, rx, ry, rz);
-    return new Float32Array([
-      basisX.x, basisX.y, basisX.z, 0,
-      basisY.x, basisY.y, basisY.z, 0,
-      basisZ.x, basisZ.y, basisZ.z, 0,
-      sceneNumber(model && model.x, 0), sceneNumber(model && model.y, 0), sceneNumber(model && model.z, 0), 1,
-    ]);
+    return sceneObjectModelMatrix(model, 0);
   }
 
   function sceneModelFitMode(value) {
@@ -649,7 +627,7 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
     }
-    const translated = sceneModelTransformVector(offset, model);
+    const translated = sceneModelLocalTransformVector(offset, model);
     const fitted = Object.assign({}, model, {
       x: sceneNumber(model && model.x, 0) + translated.x,
       y: sceneNumber(model && model.y, 0) + translated.y,
@@ -868,7 +846,7 @@ function gosxConfigureSceneScript(script, role, src) {
       rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
       rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
     });
-    const positioned = sceneModelTransformPoint({ x: object.x, y: object.y, z: object.z }, model);
+    const positioned = sceneModelTransform({ x: object.x, y: object.y, z: object.z }, model, 0);
     instanced.x = positioned.x;
     instanced.y = positioned.y;
     instanced.z = positioned.z;
@@ -913,7 +891,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const scaleY = sceneNumber(model && model.scaleY, 1);
     const scaleZ = sceneNumber(model && model.scaleZ, 1);
     const scaled = sceneScaleModelLinePoints(object.points, scaleX, scaleY, scaleZ);
-    const positioned = sceneModelTransformPoint({ x: object.x, y: object.y, z: object.z }, model);
+    const positioned = sceneModelTransform({ x: object.x, y: object.y, z: object.z }, model, 0);
     const instanced = Object.assign({}, object, {
       id: prefix + "/" + (object.id || "object"),
       points: scaled,
@@ -1039,7 +1017,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const scaleY = sceneNumber(model && model.scaleY, 1);
     const scaleZ = sceneNumber(model && model.scaleZ, 1);
     const positions = sceneScaleModelPointPositions(normalized._cachedPos || normalized.positions, scaleX, scaleY, scaleZ);
-    const positioned = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const positioned = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
     const instanced = Object.assign({}, normalized, {
       id: prefix + "/" + normalized.id,
       positions,
@@ -1171,14 +1149,14 @@ function gosxConfigureSceneScript(script, role, src) {
       instanced.vertices = {
         count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
         positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
-          return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+          return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
         }),
         normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
-          return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+          return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
         }),
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
         tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
-          const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+          const rotated = sceneNormalizeDirection(sceneModelTransform({ x: x, y: y, z: z }, model, 1));
           return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
         }),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
@@ -1298,7 +1276,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
     const normalized = normalizeSceneLabel(rawLabel, index);
-    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const position = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
     return Object.assign({}, normalized, {
       id: prefix + "/" + normalized.id,
       x: position.x,
@@ -1333,7 +1311,7 @@ function gosxConfigureSceneScript(script, role, src) {
       }
       return next;
     }
-    const position = sceneModelTransformPoint({ x: next.x, y: next.y, z: next.z }, model);
+    const position = sceneModelTransform({ x: next.x, y: next.y, z: next.z }, model, 0);
     next.x = position.x;
     next.y = position.y;
     next.z = position.z;
@@ -1357,8 +1335,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!normalized || !normalized.src) {
       return null;
     }
-    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
-    const shift = sceneModelTransformVector({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model);
+    const position = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
+    const shift = sceneModelTransform({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model, 1);
     const modelScale = sceneModelMaxScale(model);
     return Object.assign({}, normalized, {
       id: prefix + "/" + normalized.id,
@@ -1378,8 +1356,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!normalized || !normalized.html.trim()) {
       return null;
     }
-    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
-    const shift = sceneModelTransformVector({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model);
+    const position = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
+    const shift = sceneModelTransform({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model, 1);
     const modelScale = sceneModelMaxScale(model);
     return Object.assign({}, normalized, {
       id: prefix + "/" + normalized.id,
@@ -3213,16 +3191,16 @@ function gosxConfigureSceneScript(script, role, src) {
         continue;
       }
       object.vertices.positions = sceneModelTransformMeshFloats(local.positions, 3, function(x, y, z) {
-        return sceneModelTransformPoint({ x: x, y: y, z: z }, record.model);
+        return sceneModelTransform({ x: x, y: y, z: z }, record.model, 0);
       });
       if (local.normals && local.normals.length) {
         object.vertices.normals = sceneModelTransformMeshFloats(local.normals, 3, function(x, y, z) {
-          return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, record.model));
+          return sceneNormalizeDirection(sceneObjectTransformNormal(record.model, { x: x, y: y, z: z }, 0));
         });
       }
       if (local.tangents && local.tangents.length) {
         object.vertices.tangents = sceneModelTransformMeshFloats(local.tangents, 4, function(x, y, z, w) {
-          const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, record.model));
+          const rotated = sceneNormalizeDirection(sceneModelTransform({ x: x, y: y, z: z }, record.model, 1));
           return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
         });
       }
@@ -3392,7 +3370,7 @@ function gosxConfigureSceneScript(script, role, src) {
     };
 
     object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
-      return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+      return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
     });
 
     const sourceNormals = sourceLocal.normals && sourceLocal.normals.length >= count * 3
@@ -3406,7 +3384,7 @@ function gosxConfigureSceneScript(script, role, src) {
       : null;
     if (morphedNormals) {
       object.vertices.normals = sceneModelTransformMeshFloats(morphedNormals, 3, function(x, y, z) {
-        return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
       });
     }
 
@@ -3421,7 +3399,7 @@ function gosxConfigureSceneScript(script, role, src) {
       : null;
     if (morphedTangents) {
       object.vertices.tangents = sceneModelTransformMeshFloats(morphedTangents, 4, function(x, y, z, w) {
-        const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        const rotated = sceneNormalizeDirection(sceneModelTransform({ x: x, y: y, z: z }, model, 1));
         return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
       });
     }

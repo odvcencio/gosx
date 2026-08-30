@@ -55,6 +55,7 @@
         validateSceneStrictPrimitive(diagnostics, object || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, object || {}, path);
         validateSceneStrictFiniteScalars(diagnostics, object || {}, path, ["scaleX", "scaleY", "scaleZ"], "scene.objects.non_finite", "Object scale scalar must be finite", object && object.id);
+        validateSceneStrictParentMatrix(diagnostics, object && object.parentMatrix, path + ".parentMatrix", object && object.id);
         validateSceneStrictLiveFields(diagnostics, object && object.live, path, object && object.id);
       });
       models.forEach(function(model, index) {
@@ -62,6 +63,7 @@
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, model && model.id, path + ".id", strict || !!(model && model.pickable));
         validateSceneStrictPrimitive(diagnostics, model || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, model || {}, path);
+        validateSceneStrictParentMatrix(diagnostics, model && model.parentMatrix, path + ".parentMatrix", model && model.id);
         validateSceneStrictNonNegativeScalars(diagnostics, model || {}, path, ["bounds"], "scene.model.invalid_bounds", "Model bounds must be finite and non-negative");
         validateSceneStrictNonNegativeScalars(diagnostics, model || {}, path, ["animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"], "scene.animation.invalid_parameter", "Animation parameter must be finite and non-negative");
         validateSceneStrictLiveFields(diagnostics, model && model.live, path, model && model.id);
@@ -159,6 +161,7 @@
       }
       validateSceneStrictNumericArray(diagnostics, entry.positions, path + ".positions", entry.id, "scene.points.array_non_finite", "Point positions must be finite");
       validateSceneStrictNumericArray(diagnostics, entry.sizes, path + ".sizes", entry.id, "scene.points.array_non_finite", "Point sizes must be finite");
+      validateSceneStrictParentMatrix(diagnostics, entry.parentMatrix, path + ".parentMatrix", entry.id);
       validateSceneStrictPointsColorArray(diagnostics, entry.colors, count, path + ".colors", entry.id);
       var rawPositions = sceneStrictArrayLikeLength(entry.positions);
       var compressedPositions = validateSceneStrictCompressedArray(diagnostics, entry.compressedPositions, path + ".compressedPositions", entry.id, true);
@@ -258,6 +261,7 @@
         var instancePath = path + ".instances[" + index + "]";
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, instance && instance.id, instancePath + ".id", false);
         validateSceneStrictFiniteScalars(diagnostics, instance || {}, instancePath, ["x", "y", "z", "scaleX", "scaleY", "scaleZ", "rotationX", "rotationY", "rotationZ"], "scene.instances.non_finite", "Instance transform scalar must be finite", mesh.id);
+        validateSceneStrictParentMatrix(diagnostics, instance && instance.parentMatrix, instancePath + ".parentMatrix", mesh.id);
       });
     }
 
@@ -600,6 +604,22 @@
           pushSceneStrictDiagnostic(diagnostics, "error", code, message, path + "." + name, id, { value: value });
         }
       });
+    }
+
+    function validateSceneStrictParentMatrix(diagnostics, matrix, path, id) {
+      if (matrix === undefined) {
+        return;
+      }
+      if (!sceneStrictIsArrayLike(matrix) || matrix.length !== 16) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.transform.invalid_parent_matrix", "parentMatrix must contain exactly 16 numbers", path, id, { values: sceneStrictArrayLikeLength(matrix) });
+        return;
+      }
+      for (var index = 0; index < 16; index += 1) {
+        if (!sceneStrictIsFiniteNumber(matrix[index])) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.transform.invalid_parent_matrix", "parentMatrix values must be finite numbers", path + "[" + index + "]", id);
+          return;
+        }
+      }
     }
 
     function validateSceneStrictNonNegativeScalars(diagnostics, object, path, names, code, message) {

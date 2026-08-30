@@ -901,7 +901,7 @@ func (a *SceneAccelerator) intersect(prim *accelPrim, ray Ray, threshold float64
 	default:
 		localThreshold := 0.0
 		if prim.stroked {
-			localThreshold = threshold / scaleFactor(prim.scale)
+			localThreshold = localDistanceBound(prim.world, prim.scale, threshold)
 		}
 		hit, ok := raycastTransformedGeometry(prim.geometry, prim.world, prim.scale, ray, localThreshold)
 		if !ok {
@@ -939,10 +939,10 @@ func (a *SceneAccelerator) flatten(node Node, parent worldTransform) {
 			a.flattenInstancedMesh(*current, parent)
 		}
 	case Group:
-		a.flattenChildren(current.Children, combineTransforms(parent, localTransform(current.Position, current.Rotation)))
+		a.flattenChildren(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)))
 	case *Group:
 		if current != nil {
-			a.flattenChildren(current.Children, combineTransforms(parent, localTransform(current.Position, current.Rotation)))
+			a.flattenChildren(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)))
 		}
 	case LODGroup:
 		a.flattenLODGroup(current, parent)
@@ -1006,7 +1006,7 @@ func (a *SceneAccelerator) flattenMesh(mesh Mesh, parent worldTransform) {
 		pickable: mesh.Pickable == nil || *mesh.Pickable,
 		stroked:  strokes > 0,
 		index:    -1,
-		radius:   radius*maxAbsComponent(scale) + strokes*a.buildThreshold,
+		radius:   radius*worldScaleBound(world, scale) + strokes*a.buildThreshold,
 	})
 	a.flattenChildren(mesh.Children, world)
 }
@@ -1021,17 +1021,18 @@ func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent world
 	for i := 0; i < count; i++ {
 		position := vectorAt(mesh.Positions, i, Vector3{})
 		rotation := eulerAt(mesh.Rotations, i, Euler{})
+		world := combineTransforms(parent, localTransform(position, rotation))
 		scale := sanitizedScale(vectorAt(mesh.Scales, i, sceneUnitScale()))
 		a.append(accelPrim{
 			geometry: geometry,
-			world:    combineTransforms(parent, localTransform(position, rotation)),
+			world:    world,
 			scale:    scale,
 			id:       id,
 			kind:     primInstance,
 			pickable: pickable,
 			stroked:  strokes > 0,
 			index:    i,
-			radius:   localRadius*maxAbsComponent(scale) + stroke,
+			radius:   localRadius*worldScaleBound(world, scale) + stroke,
 		})
 	}
 }
@@ -1105,7 +1106,7 @@ func (a *SceneAccelerator) flattenPoints(points Points, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(points.Position, points.Rotation))
 	id := strings.TrimSpace(points.ID)
 	for i := 0; i < count; i++ {
-		center := addVectors(world.Position, world.Rotation.rotate(points.Positions[i]))
+		center := affinePoint(worldAffine(world), points.Positions[i])
 		a.append(accelPrim{
 			world:    worldTransform{Position: center, Rotation: quaternion{W: 1}},
 			scale:    sceneUnitScale(),
@@ -1124,7 +1125,7 @@ func (a *SceneAccelerator) flattenSprite(sprite Sprite, parent worldTransform) {
 	}
 	radiusScale := spriteRadiusScale(sprite)
 	a.append(accelPrim{
-		world:    worldTransform{Position: addVectors(parent.Position, parent.Rotation.rotate(sprite.Position)), Rotation: quaternion{W: 1}},
+		world:    worldTransform{Position: combineTransforms(parent, localTransform(sprite.Position, Euler{})).Position, Rotation: quaternion{W: 1}},
 		scale:    Vector3{X: radiusScale, Y: radiusScale, Z: radiusScale},
 		id:       strings.TrimSpace(sprite.ID),
 		kind:     primSprite,
@@ -1150,7 +1151,7 @@ func (a *SceneAccelerator) flattenModel(model Model, parent worldTransform) {
 		kind:     primModel,
 		pickable: model.Pickable == nil || *model.Pickable,
 		index:    -1,
-		radius:   radius * maxAbsComponent(scale),
+		radius:   radius * worldScaleBound(world, scale),
 	})
 }
 
