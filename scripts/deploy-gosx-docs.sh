@@ -16,6 +16,7 @@ expected_tinygo="0.41.1"
 expected_tinygo_go="go1.25.5"
 tinygo_go_root="${GOSX_TINYGO_GOROOT:-}"
 curl_cmd="${CURL:-curl}"
+expected_revision="${GOSX_DOCS_DEPLOY_EXPECT_REVISION:-}"
 
 require_command() {
 	command_name="$1"
@@ -29,13 +30,41 @@ worktree_changes() {
 	git status --porcelain --untracked-files=normal -- . ':(exclude)examples/gosx-docs/dist'
 }
 
-for command_name in git "$go_cmd" "$docker_cmd" "$kubectl_cmd" "$tinygo_cmd" "$curl_cmd" \
-	base64 date dirname find grep jq mktemp sed tail tr; do
+for command_name in git; do
 	require_command "$command_name"
 done
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+approve_source_revision() {
+	source_expected_revision="$1"
+	if [ -n "$source_expected_revision" ]; then
+		sh scripts/check-gosx-docs-deploy-source.sh \
+			--root "$repo_root" \
+			--remote origin \
+			--branch main \
+			--allow-fetch 1 \
+			--expected-revision "$source_expected_revision"
+	else
+		sh scripts/check-gosx-docs-deploy-source.sh \
+			--root "$repo_root" \
+			--remote origin \
+			--branch main \
+			--allow-fetch 1
+	fi
+}
+approved_revision_from_line() {
+	approved_line="$1"
+	approved_revision="${approved_line#revision=}"
+	if [ "$approved_line" = "$approved_revision" ] || [ -z "$approved_revision" ]; then
+		echo "gosx docs deploy: source authority gate did not return an approved revision" >&2
+		exit 1
+	fi
+	printf '%s\n' "$approved_revision"
+}
+approved_revision_line="$(approve_source_revision "$expected_revision")"
+revision="$(approved_revision_from_line "$approved_revision_line")"
+
 transaction_lib="${repo_root}/scripts/deploy-gosx-docs-transaction.sh"
 if [ ! -f "$transaction_lib" ]; then
 	echo "gosx docs deploy: transaction helper is missing: ${transaction_lib}" >&2
@@ -51,6 +80,11 @@ fi
 # shellcheck source=deploy-gosx-docs-public.sh
 . "$public_lib"
 
+for command_name in "$go_cmd" "$docker_cmd" "$kubectl_cmd" "$tinygo_cmd" "$curl_cmd" \
+	date dirname find grep jq mktemp sed tail tr; do
+	require_command "$command_name"
+done
+
 host_goos="$($go_cmd env GOHOSTOS)"
 host_goarch="$($go_cmd env GOHOSTARCH)"
 if [ "$host_goos/$host_goarch" != "linux/amd64" ]; then
@@ -60,11 +94,6 @@ fi
 docker_platform="$($docker_cmd version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>/dev/null || true)"
 if [ "$docker_platform" != "linux/amd64" ]; then
 	echo "gosx docs deploy: the Docker builder must be linux/amd64; got ${docker_platform:-unavailable}" >&2
-	exit 1
-fi
-
-if [ -n "$(worktree_changes)" ]; then
-	echo "gosx docs deploy: refusing a dirty worktree" >&2
 	exit 1
 fi
 
@@ -90,7 +119,6 @@ case "$compat_go_version" in
 		;;
 esac
 
-revision="$(git rev-parse HEAD)"
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ ! -r /proc/sys/kernel/random/uuid ]; then
 	echo "gosx docs deploy: kernel UUID source is unavailable" >&2
@@ -104,6 +132,7 @@ if [ "${#transaction_id}" -ne 32 ]; then
 	echo "gosx docs deploy: could not create a unique deployment transaction ID" >&2
 	exit 1
 fi
+local_identity_secret="gosx-docs-local-identity-${transaction_id}"
 tag="${GOSX_DOCS_TAG:-git-${revision}}"
 image="${registry}:${tag}"
 
@@ -126,11 +155,9 @@ if [ -z "$build_base_deployment_uid" ] || [ -z "$build_base_spec" ] || \
 	echo "gosx docs deploy: starting Deployment identity is unavailable" >&2
 	exit 1
 fi
-session_secret_b64="$($kubectl_cmd get -n "$namespace" "secret/${secret}" -o json | jq -er '.data["session-secret"]')"
-session_secret="$(printf '%s' "$session_secret_b64" | base64 --decode)"
-session_secret_b64=""
-if [ -z "$session_secret" ]; then
-	echo "gosx docs deploy: secret/${secret} has an empty session-secret" >&2
+session_secret_present="$($kubectl_cmd get -n "$namespace" "secret/${secret}" -o json | jq -er '.data["session-secret"] | strings | length > 0')"
+if [ "$session_secret_present" != "true" ]; then
+	echo "gosx docs deploy: secret/${secret} session-secret is missing or empty" >&2
 	exit 1
 fi
 
@@ -207,10 +234,9 @@ PATH="${tinygo_dir}:${PATH}" \
 	PUBLIC_URL="$public_url" \
 	GOSX_DOCS_REVISION="$revision" \
 	GOSX_DOCS_BUILT_AT="$built_at" \
-	SESSION_SECRET="$session_secret" \
+	SESSION_SECRET="$local_identity_secret" \
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
 	"$gosx_cli" build --prod ./examples/gosx-docs
-session_secret=""
 for required_output in build.json run.sh server/app; do
 	if [ ! -s "${dist_dir}/${required_output}" ]; then
 		echo "gosx docs deploy: production build did not create dist/${required_output}" >&2
@@ -219,6 +245,19 @@ for required_output in build.json run.sh server/app; do
 done
 if [ -n "$(worktree_changes)" ]; then
 	echo "gosx docs deploy: production build changed the worktree" >&2
+	exit 1
+fi
+SESSION_SECRET="$local_identity_secret" sh scripts/check-gosx-docs-built-identity.sh \
+	--root "$dist_dir" \
+	--app "${dist_dir}/server/app" \
+	--framework-version "$framework_version" \
+	--revision "$revision" \
+	--built-at "$built_at" \
+	--public-url "$public_url"
+approved_mutation_revision_line="$(approve_source_revision "$revision")"
+mutation_revision="$(approved_revision_from_line "$approved_mutation_revision_line")"
+if [ "$mutation_revision" != "$revision" ]; then
+	echo "gosx docs deploy: source authority changed before deployment mutation" >&2
 	exit 1
 fi
 
