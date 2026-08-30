@@ -570,7 +570,9 @@ const budgets = [
   // 1_578_296 / 428_783 / 344_121 raw/gzip/brotli. Keep the loader's approved
   // raw allocation at 1_578_550; gzip moves 428_500 -> 428_900 and Brotli
   // 344_050 -> 344_250 for narrow measured headroom.
-  { file: "bootstrap.js", raw: 1_578_550, gzip: 428_900, brotli: 344_250 },
+  // CUBICSPLINE playback measured 1_578_677 / 428_944 / 344_512; raise only
+  // the exceeded caps to the next 100-byte boundary.
+  { file: "bootstrap.js", raw: 1_578_700, gzip: 429_000, brotli: 344_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1219,7 +1221,9 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 45_000, gzip: 16_200, brotli: 14_420 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
+  // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
+  // next 100-byte boundary while compressed caps remain unchanged.
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_600, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
