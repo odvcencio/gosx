@@ -210,17 +210,30 @@ const (
 	// polled or event-mode payload and its "."-separated key grammar; each
 	// takes a comma-separated "target:key[,target:key...]" value. An
 	// attribute bind is a POSITIVE allowlist: it writes only a data-*
-	// attribute (other than a runtime-owned data-gosx-* attribute),
-	// an aria-* attribute, title/value/datetime/disabled/hidden, or href
-	// (a relative or http(s) URL only, after stripping every code point
-	// <= 0x20 so a scheme hidden behind embedded whitespace or a control
-	// character cannot slip through). data-gosx-countdown is the single
-	// exception to the data-gosx-* refusal, letting a payload retarget a
-	// countdown; it is refused whenever the node also declares
-	// data-gosx-countdown-then, so a payload can never trigger a
-	// revalidation. Every other target — every on* handler, style,
-	// srcdoc, src, srcset, poster, ping, background, action, formaction,
-	// target, id, name, class, and xlink:href — is refused by omission.
+	// attribute (other than a runtime-owned data-gosx-* attribute, or
+	// data-csrf-token/data-csrf, which the runtime itself reads for CSRF
+	// token resolution), an aria-* attribute,
+	// title/value/datetime/disabled/hidden, or href (a relative or
+	// http(s) URL only, after stripping every code point <= 0x20 and
+	// normalizing every backslash to a forward slash — matching how a
+	// browser resolves a URL — so a scheme or an off-site "//" hidden
+	// behind embedded whitespace, a control character, or a backslash
+	// cannot slip through). hidden and disabled are boolean attributes:
+	// a bound value of true or "true" sets the attribute present with an
+	// empty value; false, "false", or a JSON null removes it. Every other
+	// value type for a boolean target is refused, leaving the attribute
+	// untouched. data-gosx-countdown is the single exception to the
+	// data-gosx-* refusal, letting a payload retarget a countdown; it is
+	// refused whenever the node also declares data-gosx-countdown-then,
+	// so a payload can never trigger a revalidation. Other data-* and
+	// aria-* names are read only by the consumer's own code; the runtime
+	// reads none of them except the refused ones. Every other target —
+	// every on* handler, style, srcdoc, src, srcset, poster, ping,
+	// background, action, formaction, target, id, name, class, and
+	// xlink:href — is refused by omission (a target containing a colon,
+	// such as xlink:href, is also unreachable: the "target:key" grammar
+	// splits on the first colon, leaving a bare "xlink" target, which the
+	// allowlist refuses on its own).
 	NavigationLiveBindAttrAttr  = "data-gosx-live-bind-attr"
 	NavigationLiveBindClassAttr = "data-gosx-live-bind-class"
 	// NavigationFilterAttr, on an input, names the list it filters

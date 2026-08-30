@@ -778,6 +778,104 @@ func Page() Node {
 	}
 }
 
+// TestValidateAllowsValidLiveBindAttrAndClassAttrs proves gosx#217's
+// attribute and class bind grammar does not false-positive on every
+// well-formed shape: an href pair, a data-gosx-countdown retarget pair,
+// and a multi-pair class bind.
+func TestValidateAllowsValidLiveBindAttrAndClassAttrs(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <b data-gosx-countdown="2026-09-06T17:00:00Z" data-gosx-live-bind-attr="href:link,data-gosx-countdown:clock.deadline" data-gosx-live-bind-class="pick-clock--warn:clock.warn,pick-clock--paused:clock.paused">1:30</b>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid live-bind-attr/class attributes, got %+v", diags)
+	}
+}
+
+// TestValidateRejectsInvalidLiveBindAttrTargetShape covers a
+// data-gosx-live-bind-attr target whose shape could never work as an HTML
+// attribute name at all (embedded whitespace), the same
+// liveBindAttrTargetNamePattern guard liveBindAttrTargetAllowed applies at
+// run time in client/runtime/host/navigation.ts.
+func TestValidateRejectsInvalidLiveBindAttrTargetShape(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-live-bind-attr="data-x onclick:score"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-live-bind-attr value "data-x onclick:score": must be a comma-separated list of target:key pairs`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsRefusedLiveBindAttrTargets covers the check-time half
+// of liveBindAttrTargetAllowed's run-time POSITIVE allowlist
+// (client/runtime/host/navigation.ts): a target this file can already
+// refuse by name alone, before a browser ever sees a payload — an event
+// handler, style, srcdoc, a runtime-owned data-gosx-* attribute, and the
+// two CSRF-token attributes the runtime itself reads.
+func TestValidateRejectsRefusedLiveBindAttrTargets(t *testing.T) {
+	for _, target := range []string{"onclick", "style", "srcdoc", "data-gosx-live-src", "data-csrf-token", "data-csrf", "class", "id"} {
+		t.Run(target, func(t *testing.T) {
+			source := []byte("package main\n\nfunc Page() Node {\n\treturn <span data-gosx-live-bind-attr=\"" + target + ":score\"></span>\n}\n")
+			prog, err := parse(t, source)
+			if err != nil {
+				t.Fatalf("Lower failed: %v", err)
+			}
+
+			diags := ir.Validate(prog)
+			if len(diags) != 1 {
+				t.Fatalf("expected exactly one diagnostic for target %q, got %+v", target, diags)
+			}
+		})
+	}
+}
+
+// TestValidateRejectsInvalidLiveBindClassTarget covers a
+// data-gosx-live-bind-class target with embedded whitespace, the same
+// isValidCountdownWarnClassToken rule a countdown warn class already
+// applies.
+func TestValidateRejectsInvalidLiveBindClassTarget(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-live-bind-class="pick clock:clock.warn"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-live-bind-class value "pick clock:clock.warn": must be a comma-separated list of class:key pairs`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
 // TestValidateWarningsFlagsUntypedLegacyProps covers step one of retiring
 // legacy component syntax: an untyped legacy component (`func Name(props
 // any) Node`) gets one SeverityWarning diagnostic naming the component and

@@ -393,6 +393,12 @@ var (
 	// navigation.ts: one or more non-empty, whitespace-free segments joined
 	// by ".".
 	liveBindKeyPattern = regexp.MustCompile(`^[^\s.]+(?:\.[^\s.]+)*$`)
+	// liveBindAttrTargetNamePattern rejects a data-gosx-live-bind-attr
+	// target that could never work as an HTML attribute name at all —
+	// embedded whitespace, a colon, or any other character outside this
+	// shape — mirroring the identical guard LIVE_BIND_ATTR_NAME_PATTERN
+	// applies in liveBindAttrTargetAllowed (client/runtime/host/navigation.ts).
+	liveBindAttrTargetNamePattern = regexp.MustCompile(`^[A-Za-z_][-A-Za-z0-9_.]*$`)
 )
 
 // isValidCountdownThresholdValue reports whether value parses under the
@@ -548,31 +554,44 @@ func isValidLiveBindPairsValue(value string, checkTarget func(string) bool) bool
 	return true
 }
 
-// isValidLiveBindAttrTargetValue reports whether target is a syntactically
-// permitted data-gosx-live-bind-attr target at check time: never an on*
-// event handler, never style or srcdoc, and never a runtime-owned
-// data-gosx-* attribute other than data-gosx-countdown. This is the
-// check-time subset of liveBindAttrTargetAllowed's full run-time positive
-// allowlist in client/runtime/host/navigation.ts — catching a typo'd
-// target here, before it ever reaches a browser, while still letting the
-// run-time allowlist make the final call once a payload value is in hand
-// (for example, an href target's scheme check needs the value, not only
-// the target name).
+// isValidLiveBindAttrTargetValue reports whether target is a permitted
+// data-gosx-live-bind-attr target at check time, mirroring
+// liveBindAttrTargetAllowed's run-time POSITIVE allowlist in
+// client/runtime/host/navigation.ts by name: a data-* attribute other
+// than a runtime-owned data-gosx-* attribute or the runtime-read
+// data-csrf-token/data-csrf pair, an aria-* attribute,
+// title/value/datetime/disabled/hidden, href, or data-gosx-countdown
+// itself. A target whose shape could never work as an HTML attribute
+// name at all (embedded whitespace, a colon, and so on) fails first,
+// under the same liveBindAttrTargetNamePattern the run-time allowlist
+// checks too. This check-time pass does not guarantee a run-time pass —
+// an href target's scheme, and a data-gosx-countdown target's node-level
+// -then refusal, are both known only once a payload value (or the node)
+// is in hand — but a check-time failure here always means a guaranteed
+// run-time refusal too, so a bind that checks clean is never silently
+// rejected once live.
 func isValidLiveBindAttrTargetValue(target string) bool {
 	name := strings.ToLower(strings.TrimSpace(target))
-	if name == "" {
+	if name == "" || !liveBindAttrTargetNamePattern.MatchString(name) {
 		return false
 	}
-	if strings.HasPrefix(name, "on") {
+	if name == countdownInstantAttr {
+		return true
+	}
+	if strings.HasPrefix(name, "data-gosx-") {
 		return false
 	}
-	if name == "style" || name == "srcdoc" {
+	if name == "data-csrf-token" || name == "data-csrf" {
 		return false
 	}
-	if strings.HasPrefix(name, "data-gosx-") && name != countdownInstantAttr {
-		return false
+	if strings.HasPrefix(name, "data-") || strings.HasPrefix(name, "aria-") {
+		return true
 	}
-	return true
+	switch name {
+	case "title", "value", "datetime", "disabled", "hidden", "href":
+		return true
+	}
+	return false
 }
 
 // isValidLinkCurrentPolicyValue reports whether value is one of the four
@@ -740,7 +759,7 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 			v.diags = append(v.diags, Diagnostic{
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of target:key pairs", liveBindAttrAttr, attr.Value),
-				Hint:    `for example "data-gosx-countdown:clock.deadline,href:link"; a target may never start with "on", be "style" or "srcdoc", or be a data-gosx-* attribute other than data-gosx-countdown`,
+				Hint:    `for example "data-gosx-countdown:clock.deadline,href:link"; a target must be a data-* attribute (other than data-gosx-* or data-csrf-token/data-csrf), an aria-* attribute, title/value/datetime/disabled/hidden, href, or data-gosx-countdown`,
 			})
 		}
 	case liveBindClassAttr:

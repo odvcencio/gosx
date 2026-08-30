@@ -93,7 +93,7 @@
   const LIVE_INTERVAL_ATTR = "data-gosx-live-interval";
   const LIVE_BIND_ATTR = "data-gosx-live-bind";
   const LIVE_FLASH_CLASS_ATTR = "data-gosx-live-flash-class";
-  const LIVE_BIND_ATTR_ATTR = "data-gosx-live-bind-attr";
+  const LIVE_BIND_ATTRIBUTE_ATTR = "data-gosx-live-bind-attr";
   const LIVE_BIND_CLASS_ATTR = "data-gosx-live-bind-class";
   // LIVE_SIGNAL_ATTR and LIVE_ON_ATTR (gosx#228) are the manual-refresh
   // triggers, mirroring data-gosx-region's own -signal/-on grammar in
@@ -5757,7 +5757,7 @@
   function findLiveBindElements(root) {
     const found = [];
     walkElements(root, function(node) {
-      if (node.hasAttribute && (node.hasAttribute(LIVE_BIND_ATTR) || node.hasAttribute(LIVE_BIND_ATTR_ATTR) || node.hasAttribute(LIVE_BIND_CLASS_ATTR))) found.push(node);
+      if (node.hasAttribute && (node.hasAttribute(LIVE_BIND_ATTR) || node.hasAttribute(LIVE_BIND_ATTRIBUTE_ATTR) || node.hasAttribute(LIVE_BIND_CLASS_ATTR))) found.push(node);
       return true;
     });
     return found;
@@ -5841,33 +5841,76 @@
   // A POSITIVE allowlist: an attribute bind writes only these targets, so
   // the gate stays correct as the DOM grows. Refused by omission: every
   // event handler, style, srcdoc, src, srcset, poster, ping, background,
-  // action, formaction, target, id, name, class, xlink:href, and every
-  // runtime-owned data-gosx-* attribute. data-gosx-countdown is allowed
-  // because retargeting a countdown is this primitive's purpose; a node that
-  // also declares data-gosx-countdown-then is refused, so a payload can
-  // never trigger a revalidation. Other data-* and aria-* names are inert
-  // for the runtime and belong to the consumer.
+  // action, formaction, target, id, name, class, xlink:href (a target
+  // containing a colon is unreachable anyway — parseLiveBindPairs below
+  // splits on the first colon, leaving a bare "xlink" target, which this
+  // allowlist refuses on its own), and every runtime-owned data-gosx-*
+  // attribute. data-gosx-countdown is allowed because retargeting a
+  // countdown is this primitive's purpose; a node that also declares
+  // data-gosx-countdown-then is refused, so a payload can never trigger a
+  // revalidation. data-csrf-token and data-csrf are refused even though
+  // neither carries a data-gosx- prefix: csrfTokenFromElement reads both,
+  // so a bind must never be able to rewrite the token an action
+  // submission later trusts. Every other data-* and aria-* name is read
+  // only by the consumer's own code; the runtime reads none of them.
+  const LIVE_BIND_ATTR_NAME_PATTERN = /^[A-Za-z_][-A-Za-z0-9_.]*$/;
   const LIVE_BIND_PLAIN_TARGETS = { title: true, value: true, datetime: true, disabled: true, hidden: true };
+  const LIVE_BIND_BOOLEAN_TARGETS = { disabled: true, hidden: true };
   const LIVE_BIND_URL_TARGETS = { href: true };
+  const LIVE_BIND_REFUSED_DATA_TARGETS = { "data-csrf-token": true, "data-csrf": true };
 
   function liveBindAttrTargetAllowed(node, target, value) {
     const name = String(target || "").toLowerCase();
-    if (!name) return false;
-    if (name === COUNTDOWN_ATTR) return !(node && node.hasAttribute && node.hasAttribute("data-gosx-countdown-then"));
+    if (!name || !LIVE_BIND_ATTR_NAME_PATTERN.test(name)) return false;
+    if (name === COUNTDOWN_ATTR) return !(node && node.hasAttribute && node.hasAttribute(COUNTDOWN_THEN_ATTR));
     if (name.indexOf("data-gosx-") === 0) return false;
+    if (LIVE_BIND_REFUSED_DATA_TARGETS[name]) return false;
     if (name.indexOf("data-") === 0 || name.indexOf("aria-") === 0 || LIVE_BIND_PLAIN_TARGETS[name]) return true;
     if (LIVE_BIND_URL_TARGETS[name]) {
       // Browsers drop ASCII whitespace and control characters inside a URL
       // before resolving its scheme ("java\tscript:" runs), so strip every
-      // code point <= 0x20 before the scheme test.
+      // code point <= 0x20 before the scheme test. Browsers also map a
+      // backslash to a forward slash while resolving a URL with a special
+      // scheme (http/https among them), so "/\evil.example/x" and
+      // "\\evil.example/x" both resolve exactly like "//evil.example/x" —
+      // normalize every backslash to a forward slash before EITHER check,
+      // or both checks below run against a string a browser never
+      // actually sees.
       const clean = String(value).replace(/[\u0000-\u0020]/g, "");
-      if (/^[a-z][a-z0-9+.-]*:/i.test(clean)) return /^https?:/i.test(clean);
-      return clean.indexOf("//") !== 0;
+      const norm = clean.replace(/\\/g, "/");
+      if (/^[a-z][a-z0-9+.-]*:/i.test(norm)) return /^https?:/i.test(norm);
+      return norm.indexOf("//") !== 0;
     }
     return false;
   }
 
+  // liveBindBooleanValue interprets a boolean attribute bind's resolved
+  // value (data-gosx-live-bind-attr targeting "hidden" or "disabled",
+  // LIVE_BIND_BOOLEAN_TARGETS above): true and the string "true" both
+  // mean "present"; false, the string "false", and a JSON null all mean
+  // "absent" — a boolean HTML attribute's state is its presence, never
+  // its stringified value, so writing the literal text "true"/"false"
+  // into the attribute (the way liveBindTextValue would for any other
+  // target) would be wrong even though it looks right at a glance. Any
+  // other type (a number, an object, an unrecognized string, or a
+  // missing key) resolves undefined so the caller leaves the attribute
+  // untouched, the same "ignore, don't guess" contract a class bind's
+  // non-boolean value already follows.
+  function liveBindBooleanValue(value) {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false" || value === null) return false;
+    return undefined;
+  }
+
   // parseLiveBindPairs turns "a:x.y,b:z" into [{target:"a", key:"x.y"}, ...].
+  // It splits each pair on its FIRST colon only, so a target that itself
+  // contains a colon (for example "xlink:href") can never be named as one
+  // target here — it splits into a shorter target ("xlink") and a key
+  // that absorbs the rest ("href:..."). liveBindAttrTargetAllowed refuses
+  // that shorter target on its own, so this is a parsing quirk, not a
+  // gap in the allowlist; window.__gosx.navigation.debugParseLiveBindPairs
+  // exposes this function directly so a test can pin the exact split.
   function parseLiveBindPairs(spec) {
     const pairs = [];
     for (const part of String(spec || "").split(",")) {
@@ -5889,12 +5932,24 @@
           flashLiveBindElement(node, node.getAttribute(LIVE_FLASH_CLASS_ATTR));
         }
       }
-      for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_ATTR_ATTR))) {
-        const next = liveBindTextValue(resolveLiveBindValue(payload, pair.key));
+      for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_ATTRIBUTE_ATTR))) {
+        const raw = resolveLiveBindValue(payload, pair.key);
+        if (LIVE_BIND_BOOLEAN_TARGETS[String(pair.target || "").toLowerCase()]) {
+          const active = liveBindBooleanValue(raw);
+          if (active == null || !liveBindAttrTargetAllowed(node, pair.target, raw)) continue;
+          if (active) {
+            if (node.getAttribute(pair.target) !== "") node.setAttribute(pair.target, "");
+          } else if (node.hasAttribute(pair.target)) {
+            node.removeAttribute(pair.target);
+          }
+          continue;
+        }
+        const next = liveBindTextValue(raw);
         if (next == null || !liveBindAttrTargetAllowed(node, pair.target, next)) continue;
         if (node.getAttribute(pair.target) !== next) node.setAttribute(pair.target, next);
       }
       for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_CLASS_ATTR))) {
+        if (!isValidCountdownWarnClassToken(pair.target)) continue;
         const value = resolveLiveBindValue(payload, pair.key);
         if (typeof value === "boolean") setElementClassActive(node, pair.target, value);
       }
@@ -6441,6 +6496,14 @@
     // "id:<id>" or "pos:<index>" key, see buildWatchState) as active.
     debugWatchActive: function(key) {
       return watchActiveState.get(key) === true;
+    },
+    // debugParseLiveBindPairs is the same kind of hook for gosx#217's
+    // "target:key[,target:key...]" grammar: a direct pass-through to
+    // parseLiveBindPairs, so a test can pin its exact first-colon split
+    // (see that function's own doc comment) without re-implementing the
+    // parser.
+    debugParseLiveBindPairs: function(spec) {
+      return parseLiveBindPairs(spec);
     },
   };
   // Keep the original global for compatibility while publishing the
