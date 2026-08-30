@@ -1,0 +1,60 @@
+package docs
+
+import (
+	"log"
+
+	"m31labs.dev/gosx/route"
+)
+
+type docsNavLinkBinding struct {
+	Href   string
+	Label  string
+	Active bool
+}
+
+type docsNavigationBinding struct {
+	Overview       docsNavLinkBinding
+	GettingStarted docsNavLinkBinding
+	Routing        docsNavLinkBinding
+	Forms          docsNavLinkBinding
+	Auth           docsNavLinkBinding
+	Runtime        docsNavLinkBinding
+	Images         docsNavLinkBinding
+	Streaming      docsNavLinkBinding
+	Secret         docsNavLinkBinding
+}
+
+func init() {
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
+		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			path := ""
+			if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil {
+				path = ctx.Request.URL.Path
+			}
+			return route.FileTemplateBindings{
+				Values: map[string]any{
+					"docsNav": docsNavigationForPath(path),
+				},
+			}
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func docsNavigationForPath(path string) docsNavigationBinding {
+	link := func(href, label string) docsNavLinkBinding {
+		return docsNavLinkBinding{Href: href, Label: label, Active: path == href}
+	}
+	return docsNavigationBinding{
+		Overview:       link("/", "Overview"),
+		GettingStarted: link("/docs/getting-started", "Getting Started"),
+		Routing:        link("/docs/routing", "Routing"),
+		Forms:          link("/docs/forms", "Forms"),
+		Auth:           link("/docs/auth", "Auth"),
+		Runtime:        link("/docs/runtime", "Runtime"),
+		Images:         link("/docs/images", "Images"),
+		Streaming:      link("/labs/stream", "Streaming"),
+		Secret:         link("/labs/secret", "Secret"),
+	}
+}

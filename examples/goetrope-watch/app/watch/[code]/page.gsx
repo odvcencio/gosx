@@ -1,22 +1,6 @@
 package watch
 
-func QueueRow(props any) Node {
-	return <div class="queue-row">
-		<span class="queue-row__index">{props.Index}</span>
-		<div class="queue-row__body">
-			<strong>{props.DisplayTitle}</strong>
-			<p>{props.Year}</p>
-		</div>
-		<span class="queue-row__state">{props.SubtitleState}</span>
-	</div>
-}
-
-func Moment(props any) Node {
-	return <div class="moment">
-		<span class="eyebrow">{props.Label}</span>
-		<p>{props.Value}</p>
-	</div>
-}
+import watchui "../components"
 
 func Page() Node {
 	return <article class="watch-page">
@@ -64,7 +48,7 @@ func Page() Node {
 						Server-renders the room first. Transport stays narrow.
 					</h2>
 					<p>{data.subtitle_state.detail}</p>
-					<TransportShell {...data.player}></TransportShell>
+					<watchui.TransportShell {...data.player}></watchui.TransportShell>
 				</div>
 			</div>
 			<aside class="watch-grid__side">
@@ -75,7 +59,7 @@ func Page() Node {
 					</div>
 					<div class="queue-list">
 						<Each as="item" of={data.queue}>
-							<QueueRow {...item}></QueueRow>
+							<watchui.QueueRow {...item}></watchui.QueueRow>
 						</Each>
 					</div>
 				</section>
@@ -94,7 +78,7 @@ func Page() Node {
 					<span class="eyebrow">Moments</span>
 					<div class="moment-list">
 						<Each as="moment" of={data.moments}>
-							<Moment {...moment}></Moment>
+							<watchui.Moment {...moment}></watchui.Moment>
 						</Each>
 					</div>
 				</section>

@@ -2,6 +2,13 @@ package docs
 
 import "m31labs.dev/gosx/route"
 
+type docsFeature struct {
+	Kicker string
+	Title  string
+	Body   string
+	Href   string
+}
+
 func init() {
 	RegisterStaticDocsPage(
 		"Overview",
@@ -10,36 +17,36 @@ func init() {
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
 					"showRouteTree": true,
-					"features": []map[string]string{
+					"features": []docsFeature{
 						{
-							"kicker": "Tier 1",
-							"title":  "App scaffolding, metadata, APIs, 404 and 500 pages, public assets, and env loading.",
-							"body":   "The basics for building and booting a real server-first app now exist in the framework, not just in examples.",
-							"href":   "/docs/getting-started",
+							Kicker: "Tier 1",
+							Title:  "App scaffolding, metadata, APIs, 404 and 500 pages, public assets, and env loading.",
+							Body:   "The basics for building and booting a real server-first app now exist in the framework, not just in examples.",
+							Href:   "/docs/getting-started",
 						},
 						{
-							"kicker": "Tier 2",
-							"title":  "Client navigation and per-route middleware without spinning up a second framework.",
-							"body":   "Page-to-page transitions can stay inside the same GoSX runtime and preserve a server-first mental model.",
-							"href":   "/docs/runtime",
+							Kicker: "Tier 2",
+							Title:  "Client navigation and per-route middleware without spinning up a second framework.",
+							Body:   "Page-to-page transitions can stay inside the same GoSX runtime and preserve a server-first mental model.",
+							Href:   "/docs/runtime",
 						},
 						{
-							"kicker": "Tier 3",
-							"title":  "File-based pages, route groups, nested layouts, scoped 404s, redirects, and rewrites.",
-							"body":   "The route tree is now visible from the filesystem instead of being hidden inside a setup function.",
-							"href":   "/docs/routing",
+							Kicker: "Tier 3",
+							Title:  "File-based pages, route groups, nested layouts, scoped 404s, redirects, and rewrites.",
+							Body:   "The route tree is now visible from the filesystem instead of being hidden inside a setup function.",
+							Href:   "/docs/routing",
 						},
 						{
-							"kicker": "Phase 2",
-							"title":  "Sessions, CSRF, flashed form state, and auth now ride inside the same routed app model.",
-							"body":   "Forms and guards are part of the framework plane rather than bespoke app middleware.",
-							"href":   "/docs/forms",
+							Kicker: "Phase 2",
+							Title:  "Sessions, CSRF, flashed form state, and auth now ride inside the same routed app model.",
+							Body:   "Forms and guards are part of the framework plane rather than bespoke app middleware.",
+							Href:   "/docs/forms",
 						},
 						{
-							"kicker": "Why this matters",
-							"title":  "The docs tree itself is the route map. You can see the information architecture from the filesystem.",
-							"body":   "This site exists to prove that GoSX features compose inside one dogfooded app instead of as disconnected demos.",
-							"href":   "/docs/auth",
+							Kicker: "Why this matters",
+							Title:  "The docs tree itself is the route map. You can see the information architecture from the filesystem.",
+							Body:   "This site exists to prove that GoSX features compose inside one dogfooded app instead of as disconnected demos.",
+							Href:   "/docs/auth",
 						},
 					},
 				}, nil

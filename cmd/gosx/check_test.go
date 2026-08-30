@@ -46,9 +46,9 @@ func Page(item Item, ok bool) Node {
 // TestRunCheckWarnsOnUntypedLegacyComponent covers step one of retiring
 // legacy component syntax: an untyped legacy component (`func Name(props
 // any) Node`) must produce a warning naming the component and the strict
-// replacement, but must not fail the check — 7 such declarations exist in
-// this repo today and must keep checking, compiling, and rendering exactly
-// as they do now.
+// replacement, but must not fail the check. The compatibility path remains
+// covered even though shipped templates and examples no longer use this
+// declaration shape.
 func TestRunCheckWarnsOnUntypedLegacyComponent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "page.gsx")

@@ -1,6 +1,12 @@
 package watch
 
-func HighlightCard(props any) Node {
+type HighlightCardProps struct {
+	Kicker string
+	Title  string
+	Body   string
+}
+
+component HighlightCard(props: HighlightCardProps) {
 	return <section class="feature-card">
 		<span class="eyebrow">{props.Kicker}</span>
 		<h3>{props.Title}</h3>
@@ -8,7 +14,14 @@ func HighlightCard(props any) Node {
 	</section>
 }
 
-func RoomPreview(props any) Node {
+type RoomPreviewProps struct {
+	Status        string
+	SubtitleState string
+	DisplayTitle  string
+	Title         string
+}
+
+component RoomPreview(props: RoomPreviewProps) {
 	return <article class="room-preview">
 		<div class="room-preview__top">
 			<span class="eyebrow">{props.Status}</span>

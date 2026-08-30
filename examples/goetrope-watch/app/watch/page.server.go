@@ -11,6 +11,29 @@ import (
 	"m31labs.dev/gosx/server"
 )
 
+type watchPlayer struct {
+	Title           string
+	Subtitle        string
+	Badge           string
+	PrimaryAction   string
+	SecondaryAction string
+	TertiaryAction  string
+}
+
+type watchQueueItem struct {
+	Index         string
+	DisplayTitle  string
+	Title         string
+	Year          string
+	Status        string
+	SubtitleState string
+}
+
+type watchMoment struct {
+	Label string
+	Value string
+}
+
 func init() {
 	_, thisFile, _, _ := runtime.Caller(0)
 	source := filepath.Join(filepath.Dir(thisFile), "[code]", "page.gsx")
@@ -79,13 +102,13 @@ func watchSnapshot(code string) map[string]any {
 			"position":      "2:43:17",
 			"chapter":       "The Signal",
 		},
-		"player": map[string]any{
-			"title":            "Transport shell",
-			"subtitle":         "Reserve client work for media transport only.",
-			"badge":            "Server-first",
-			"primary_action":   "Resume",
-			"secondary_action": "Subtitle warmup",
-			"tertiary_action":  "Hold canonical position",
+		"player": watchPlayer{
+			Title:           "Transport shell",
+			Subtitle:        "Reserve client work for media transport only.",
+			Badge:           "Server-first",
+			PrimaryAction:   "Resume",
+			SecondaryAction: "Subtitle warmup",
+			TertiaryAction:  "Hold canonical position",
 		},
 		"subtitle_state": map[string]any{
 			"label":  "Subtitles ready",
@@ -99,52 +122,52 @@ func watchSnapshot(code string) map[string]any {
 			"reason":        "Already cached and ready to advance.",
 			"year":          "1986",
 		},
-		"queue": []map[string]any{
+		"queue": []watchQueueItem{
 			{
-				"index":          "01",
-				"display_title":  "Alien",
-				"title":          "Alien",
-				"year":           "1979",
-				"status":         "Playing",
-				"subtitle_state": "Ready",
+				Index:         "01",
+				DisplayTitle:  "Alien",
+				Title:         "Alien",
+				Year:          "1979",
+				Status:        "Playing",
+				SubtitleState: "Ready",
 			},
 			{
-				"index":          "02",
-				"display_title":  "Aliens: Special Edition",
-				"title":          "Aliens",
-				"year":           "1986",
-				"status":         "Queued",
-				"subtitle_state": "Cached",
+				Index:         "02",
+				DisplayTitle:  "Aliens: Special Edition",
+				Title:         "Aliens",
+				Year:          "1986",
+				Status:        "Queued",
+				SubtitleState: "Cached",
 			},
 			{
-				"index":          "03",
-				"display_title":  "Alien 3",
-				"title":          "Alien 3",
-				"year":           "1992",
-				"status":         "Warm",
-				"subtitle_state": "Warm",
+				Index:         "03",
+				DisplayTitle:  "Alien 3",
+				Title:         "Alien 3",
+				Year:          "1992",
+				Status:        "Warm",
+				SubtitleState: "Warm",
 			},
 			{
-				"index":          "04",
-				"display_title":  "Alien Resurrection",
-				"title":          "Alien Resurrection",
-				"year":           "1997",
-				"status":         "Ready",
-				"subtitle_state": "Ready",
+				Index:         "04",
+				DisplayTitle:  "Alien Resurrection",
+				Title:         "Alien Resurrection",
+				Year:          "1997",
+				Status:        "Ready",
+				SubtitleState: "Ready",
 			},
 		},
-		"moments": []map[string]any{
+		"moments": []watchMoment{
 			{
-				"label": "Canonical position",
-				"value": "Held across reloads",
+				Label: "Canonical position",
+				Value: "Held across reloads",
 			},
 			{
-				"label": "Subtitle prep",
-				"value": "Queued ahead of handoff",
+				Label: "Subtitle prep",
+				Value: "Queued ahead of handoff",
 			},
 			{
-				"label": "Stream durability",
-				"value": "Dampens jitter before it grows",
+				Label: "Stream durability",
+				Value: "Dampens jitter before it grows",
 			},
 		},
 	}

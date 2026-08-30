@@ -156,6 +156,7 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		".gitignore",
 		"main.go",
 		"app/layout.gsx",
+		"app/layout.server.go",
 		"app/modules.go",
 		"app/page.server.go",
 		"app/page.gsx",

@@ -1,14 +1,32 @@
 package docs
 
-func FeatureCard(props any) Node {
+type FeatureCardProps struct {
+	Kicker string
+	Title  string
+	Body   string
+	Href   string
+}
+
+component FeatureCard(props: FeatureCardProps) {
 	return <section class="card">
 		<strong>{props.Kicker}</strong>
 		<h3>{props.Title}</h3>
 		<p>{props.Body}</p>
 		<div class="hero-actions">
-			<Link class="hero-link" href={props.Href}>Open section</Link>
+			<a
+				class="hero-link"
+				href={props.Href}
+				data-gosx-link
+				data-gosx-link-state="idle"
+				data-gosx-enhance="navigation"
+				data-gosx-enhance-layer="bootstrap"
+				data-gosx-fallback="native-link"
+				data-gosx-link-current-policy="auto"
+				data-gosx-link-current="none"
+				data-gosx-prefetch-state="idle"
+			>Open section</a>
 		</div>
-		{props.Children}
+		{children}
 	</section>
 }
 

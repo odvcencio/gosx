@@ -58,12 +58,18 @@ func Layout() Node {
 	</div>
 }
 
-func DocsNavLink(props any) Node {
+type DocsNavLinkProps struct {
+	Href   string
+	Label  string
+	Active bool
+}
+
+component DocsNavLink(props: DocsNavLinkProps) {
 	return <>
-		<If when={props.Active}>
+		<If cond={props.Active}>
 			<a href={props.Href} data-gosx-link class="nav-link active">{props.Label}</a>
 		</If>
-		<If when={props.Active == false}>
+		<If cond={props.Active == false}>
 			<a href={props.Href} data-gosx-link class="nav-link">{props.Label}</a>
 		</If>
 	</>
@@ -74,29 +80,25 @@ func DocsNavigation() Node {
 		<div class="nav-group">
 			<span class="nav-group-title">Guide</span>
 			<div class="nav-group-links">
-				<DocsNavLink href="/" label="Overview" active={request.path == "/"}></DocsNavLink>
-				<DocsNavLink
-					href="/docs/getting-started"
-					label="Getting Started"
-					active={request.path == "/docs/getting-started"}
-				></DocsNavLink>
-				<DocsNavLink href="/docs/routing" label="Routing" active={request.path == "/docs/routing"}></DocsNavLink>
-				<DocsNavLink href="/docs/forms" label="Forms" active={request.path == "/docs/forms"}></DocsNavLink>
-				<DocsNavLink href="/docs/auth" label="Auth" active={request.path == "/docs/auth"}></DocsNavLink>
+				<DocsNavLink {...docsNav.Overview}></DocsNavLink>
+				<DocsNavLink {...docsNav.GettingStarted}></DocsNavLink>
+				<DocsNavLink {...docsNav.Routing}></DocsNavLink>
+				<DocsNavLink {...docsNav.Forms}></DocsNavLink>
+				<DocsNavLink {...docsNav.Auth}></DocsNavLink>
 			</div>
 		</div>
 		<div class="nav-group">
 			<span class="nav-group-title">Runtime</span>
 			<div class="nav-group-links">
-				<DocsNavLink href="/docs/runtime" label="Runtime" active={request.path == "/docs/runtime"}></DocsNavLink>
-				<DocsNavLink href="/docs/images" label="Images" active={request.path == "/docs/images"}></DocsNavLink>
+				<DocsNavLink {...docsNav.Runtime}></DocsNavLink>
+				<DocsNavLink {...docsNav.Images}></DocsNavLink>
 			</div>
 		</div>
 		<div class="nav-group">
 			<span class="nav-group-title">Labs</span>
 			<div class="nav-group-links">
-				<DocsNavLink href="/labs/stream" label="Streaming" active={request.path == "/labs/stream"}></DocsNavLink>
-				<DocsNavLink href="/labs/secret" label="Secret" active={request.path == "/labs/secret"}></DocsNavLink>
+				<DocsNavLink {...docsNav.Streaming}></DocsNavLink>
+				<DocsNavLink {...docsNav.Secret}></DocsNavLink>
 			</div>
 		</div>
 	</>
