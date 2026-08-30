@@ -2,10 +2,16 @@ package perf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
+)
+
+const (
+	defaultSceneFrameSampleWindow = 10 * time.Second
+	defaultSceneFramePollInterval = 50 * time.Millisecond
 )
 
 // Scenario describes a profiling session.
@@ -33,6 +39,12 @@ type Scenario struct {
 
 	routeRunner scenarioRouteRunner
 	diagnostics io.Writer
+
+	// Test-only sampling overrides. Production scenarios use the bounded
+	// defaults above; keeping these private prevents them from becoming part of
+	// the perf command's public contract.
+	sceneFrameSampleWindow time.Duration
+	sceneFramePollInterval time.Duration
 }
 
 type scenarioRouteRunner func(ctx context.Context, url string, index int, total int) (*PageReport, error)
@@ -88,6 +100,14 @@ func RunScenario(s *Scenario) (*Report, error) {
 	if frames <= 0 {
 		frames = 120
 	}
+	sceneFrameSampleWindow := s.sceneFrameSampleWindow
+	if sceneFrameSampleWindow <= 0 {
+		sceneFrameSampleWindow = defaultSceneFrameSampleWindow
+	}
+	sceneFramePollInterval := s.sceneFramePollInterval
+	if sceneFramePollInterval <= 0 {
+		sceneFramePollInterval = defaultSceneFramePollInterval
+	}
 
 	// Start recording if requested.
 	var recorder *Recorder
@@ -132,6 +152,18 @@ func RunScenario(s *Scenario) (*Report, error) {
 				}
 				fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s done elapsed=%s\n", i+1, total, url, name, elapsed.Round(time.Millisecond))
 				return nil
+			}
+			runSceneFrameSamplePhase := func(name string) error {
+				return runPhase(name, func() error {
+					sample, err := waitForSceneFrames(routeD, frames, sceneFrameSampleWindow, sceneFramePollInterval)
+					if err != nil {
+						return err
+					}
+					if sample.Exhausted {
+						fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s sample-window-exhausted target=%d observed=%d window=%s action=continue-with-partial-metrics\n", i+1, total, url, name, sample.Target, sample.Observed, sceneFrameSampleWindow)
+					}
+					return nil
+				})
 			}
 
 			navigate := func() error {
@@ -201,9 +233,7 @@ func RunScenario(s *Scenario) (*Report, error) {
 				return nil, fmt.Errorf("phase %s: %w", routePhase, err)
 			}
 			if scenePresent {
-				if err := runPhase("scene3d-wait", func() error {
-					return waitForSceneFrames(routeD, frames)
-				}); err != nil {
+				if err := runSceneFrameSamplePhase("scene3d-wait"); err != nil {
 					return nil, fmt.Errorf("phase %s: %w", routePhase, err)
 				}
 			}
@@ -219,9 +249,7 @@ func RunScenario(s *Scenario) (*Report, error) {
 
 			// If scene detected, wait for frames then re-collect scene metrics.
 			if page.Scene != nil {
-				if err := runPhase("scene3d-rewait", func() error {
-					return waitForSceneFrames(routeD, frames)
-				}); err != nil {
+				if err := runSceneFrameSamplePhase("scene3d-rewait"); err != nil {
 					return nil, fmt.Errorf("phase %s: %w", routePhase, err)
 				}
 				var sceneEntries []PerfEntry
@@ -354,33 +382,124 @@ func captureCoverageForRoute(enabled bool, index int) bool {
 	return enabled && index == 0
 }
 
-func waitForSceneFrames(d *Driver, target int) error {
-	// Poll frameCount until we have enough frames or timeout.
+type sceneFrameSampleResult struct {
+	Target    int
+	Observed  int
+	Exhausted bool
+}
+
+func waitForSceneFrames(d *Driver, target int, window, pollInterval time.Duration) (sceneFrameSampleResult, error) {
+	result := sceneFrameSampleResult{Target: target}
 	if target <= 0 {
-		return nil
+		return result, nil
 	}
-	js := fmt.Sprintf(`window.__gosx_perf && window.__gosx_perf.frameCount >= %d`, target)
-	waitD, cancel := d.WithOperationContext(d.Context(), 10*time.Second)
+	if window <= 0 {
+		window = defaultSceneFrameSampleWindow
+	}
+	if pollInterval <= 0 {
+		pollInterval = defaultSceneFramePollInterval
+	}
+
+	waitD, cancel := d.WithOperationContext(d.Context(), window)
 	defer cancel()
-	ticker := time.NewTicker(50 * time.Millisecond)
+
+	// WithOperationContext preserves the earliest enclosing deadline. An equal
+	// deadline therefore belongs to the route/parent and remains fatal; only a
+	// strictly earlier deadline introduced by this helper is best-effort.
+	internalDeadline := true
+	if waitDeadline, ok := waitD.Context().Deadline(); ok {
+		if parentDeadline, parentOK := d.Context().Deadline(); parentOK && !waitDeadline.Before(parentDeadline) {
+			internalDeadline = false
+		}
+	}
+
+	return pollSceneFrameSamples(d.Context(), waitD.Context(), internalDeadline, target, pollInterval, func() (int, error) {
+		var observed int
+		err := waitD.Evaluate(`(function(){
+			var perf = window.__gosx_perf;
+			var count = perf ? Number(perf.frameCount) : 0;
+			return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+		})()`, &observed)
+		return observed, err
+	})
+}
+
+func pollSceneFrameSamples(parentCtx, sampleCtx context.Context, internalDeadline bool, target int, pollInterval time.Duration, probe func() (int, error)) (sceneFrameSampleResult, error) {
+	result := sceneFrameSampleResult{Target: target}
+	if target <= 0 {
+		return result, nil
+	}
+	if pollInterval <= 0 {
+		pollInterval = defaultSceneFramePollInterval
+	}
+
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
-		var done bool
-		if err := waitD.Evaluate(js, &done); err != nil {
-			if waitD.Context().Err() != nil {
-				return waitD.Context().Err()
+		observed, err := probe()
+		if observed > result.Observed {
+			result.Observed = observed
+		}
+		if err != nil {
+			// A completed sample context must not erase an independent CDP or
+			// protocol failure returned by the probe. Only an error whose entire
+			// unwrap chain terminates in context cancellation/deadline can be
+			// attributed to the sampling context below.
+			if !isSolelyContextTerminationError(err) {
+				return result, err
 			}
-			return err
+			if parentCtx.Err() != nil || sampleCtx.Err() != nil {
+				return finishSceneFrameSampling(parentCtx, sampleCtx, internalDeadline, result)
+			}
+			return result, err
 		}
-		if done {
-			return nil
+		if result.Observed >= target {
+			return result, nil
 		}
+
 		select {
-		case <-waitD.Context().Done():
-			return waitD.Context().Err()
+		case <-sampleCtx.Done():
+			return finishSceneFrameSampling(parentCtx, sampleCtx, internalDeadline, result)
 		case <-ticker.C:
 		}
 	}
+}
+
+func isSolelyContextTerminationError(err error) bool {
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return true
+	}
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := multi.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !isSolelyContextTerminationError(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if single, ok := err.(interface{ Unwrap() error }); ok {
+		return isSolelyContextTerminationError(single.Unwrap())
+	}
+	return false
+}
+
+func finishSceneFrameSampling(parentCtx, sampleCtx context.Context, internalDeadline bool, result sceneFrameSampleResult) (sceneFrameSampleResult, error) {
+	if err := parentCtx.Err(); err != nil {
+		return result, err
+	}
+	sampleErr := sampleCtx.Err()
+	if internalDeadline && errors.Is(sampleErr, context.DeadlineExceeded) {
+		result.Exhausted = true
+		return result, nil
+	}
+	if sampleErr != nil {
+		return result, sampleErr
+	}
+	return result, errors.New("scene frame sample context ended without a cancellation cause")
 }
 
 func scene3DSurfacePresent(d *Driver) bool {

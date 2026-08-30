@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -129,5 +131,150 @@ func TestPerfBudgetFailureRemainsAuthoritativeAfterRouteIsolation(t *testing.T) 
 	}
 	if len(result.Pages) != 1 || len(result.Pages[0].Assertions) != 1 || result.Pages[0].Assertions[0].Passed {
 		t.Fatalf("unexpected budget result: %#v", result)
+	}
+}
+
+func TestPollSceneFrameSamplesInternalWindowReturnsPartialResult(t *testing.T) {
+	parentCtx := context.Background()
+	sampleCtx, cancel := context.WithTimeout(parentCtx, 30*time.Millisecond)
+	defer cancel()
+
+	observations := []int{1, 3}
+	probeCount := 0
+	result, err := pollSceneFrameSamples(parentCtx, sampleCtx, true, 10, time.Millisecond, func() (int, error) {
+		index := probeCount
+		probeCount++
+		if index >= len(observations) {
+			index = len(observations) - 1
+		}
+		return observations[index], nil
+	})
+	if err != nil {
+		t.Fatalf("internal sample-window exhaustion should be best-effort: %v", err)
+	}
+	if !result.Exhausted || result.Target != 10 || result.Observed != 3 {
+		t.Fatalf("unexpected partial sample result: %#v", result)
+	}
+}
+
+func TestPollSceneFrameSamplesExternalCancellationRemainsFatal(t *testing.T) {
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	sampleCtx, cancelSample := context.WithTimeout(parentCtx, time.Second)
+	defer cancelSample()
+
+	result, err := pollSceneFrameSamples(parentCtx, sampleCtx, true, 10, time.Millisecond, func() (int, error) {
+		cancelParent()
+		return 2, fmt.Errorf("evaluate: %w", context.Canceled)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("external cancellation should remain fatal, got result=%#v err=%v", result, err)
+	}
+	if result.Exhausted {
+		t.Fatalf("external cancellation was misclassified as local exhaustion: %#v", result)
+	}
+}
+
+func TestPollSceneFrameSamplesRouteDeadlineRemainsFatal(t *testing.T) {
+	parentCtx, cancelParent := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancelParent()
+	sampleCtx, cancelSample := context.WithTimeout(parentCtx, time.Second)
+	defer cancelSample()
+
+	result, err := pollSceneFrameSamples(parentCtx, sampleCtx, false, 10, time.Millisecond, func() (int, error) {
+		return 2, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("route deadline should remain fatal, got result=%#v err=%v", result, err)
+	}
+	if result.Exhausted {
+		t.Fatalf("route deadline was misclassified as local exhaustion: %#v", result)
+	}
+}
+
+func TestPollSceneFrameSamplesCDPErrorRemainsFatal(t *testing.T) {
+	parentCtx := context.Background()
+	sampleCtx, cancelSample := context.WithTimeout(parentCtx, time.Second)
+	defer cancelSample()
+	wantErr := errors.New("cdp evaluation failed")
+
+	result, err := pollSceneFrameSamples(parentCtx, sampleCtx, true, 10, time.Millisecond, func() (int, error) {
+		return 2, wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("CDP error should remain fatal, got result=%#v err=%v", result, err)
+	}
+	if result.Exhausted {
+		t.Fatalf("CDP error was misclassified as local exhaustion: %#v", result)
+	}
+}
+
+func TestPollSceneFrameSamplesAlreadyExpiredInternalContextIsExhausted(t *testing.T) {
+	parentCtx := context.Background()
+	sampleCtx, cancelSample := context.WithDeadline(parentCtx, time.Now().Add(-time.Second))
+	defer cancelSample()
+
+	result, err := pollSceneFrameSamples(parentCtx, sampleCtx, true, 10, time.Millisecond, func() (int, error) {
+		return 3, context.DeadlineExceeded
+	})
+	if err != nil {
+		t.Fatalf("expired internal sample context should be best-effort: %v", err)
+	}
+	if !result.Exhausted || result.Observed != 3 {
+		t.Fatalf("unexpected expired-context result: %#v", result)
+	}
+}
+
+func TestPollSceneFrameSamplesConcurrentExpiryDoesNotSwallowCDPError(t *testing.T) {
+	wantErr := errors.New("execution context destroyed")
+	for _, tt := range []struct {
+		name     string
+		probeErr error
+	}{
+		{name: "sentinel", probeErr: wantErr},
+		{name: "sentinel joined with context", probeErr: errors.Join(context.DeadlineExceeded, wantErr)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parentCtx := context.Background()
+			sampleCtx, cancelSample := context.WithTimeout(parentCtx, 10*time.Millisecond)
+			defer cancelSample()
+
+			result, err := pollSceneFrameSamples(parentCtx, sampleCtx, true, 10, time.Millisecond, func() (int, error) {
+				<-sampleCtx.Done()
+				return 3, tt.probeErr
+			})
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("concurrent sample expiry swallowed CDP error: result=%#v err=%v", result, err)
+			}
+			if result.Exhausted {
+				t.Fatalf("concurrent CDP error was misclassified as local exhaustion: %#v", result)
+			}
+		})
+	}
+}
+
+func TestPollSceneFrameSamplesWrappedInternalContextErrorsAreExhausted(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		contextErr error
+	}{
+		{name: "deadline", contextErr: context.DeadlineExceeded},
+		{name: "canceled", contextErr: context.Canceled},
+		{name: "joined context errors", contextErr: errors.Join(context.DeadlineExceeded, context.Canceled)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parentCtx := context.Background()
+			sampleCtx, cancelSample := context.WithDeadline(parentCtx, time.Now().Add(-time.Second))
+			defer cancelSample()
+
+			result, err := pollSceneFrameSamples(parentCtx, sampleCtx, true, 10, time.Millisecond, func() (int, error) {
+				return 3, fmt.Errorf("evaluate: %w", tt.contextErr)
+			})
+			if err != nil {
+				t.Fatalf("wrapped internal context error should be best-effort: %v", err)
+			}
+			if !result.Exhausted || result.Observed != 3 {
+				t.Fatalf("unexpected wrapped-context result: %#v", result)
+			}
+		})
 	}
 }
