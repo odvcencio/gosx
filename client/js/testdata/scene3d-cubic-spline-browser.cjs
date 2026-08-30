@@ -23,14 +23,16 @@
  *     TRS/morph state and baseline pixels exactly on the SAME
  *     mount/canvas/state/record; disposal then clears the engine state.
  *   - Real draw calls (GL) and render passes + queue submissions (WG) are
- *     observed through strictly forwarding wrappers; changed geometry pixels
- *     are decoded and compared as RGBA, not by file size or hash.
+ *     observed through forwarding wrappers. WebGL pixels come from a CDP
+ *     screenshot; WebGPU pixels come from a COPY_SRC presentation texture
+ *     copied into a mapped buffer before teardown. Changed geometry pixels
+ *     are compared as RGBA bytes, not by file size or hash.
  *
  * Any page console error or warning fails the probe. Usage:
  *
  *   node scene3d-cubic-spline-browser.cjs <repoRoot> <existingArtifactDir>
  *
- * Writes report.json and per-case PNGs into the artifact directory. */
+ * Writes report.json and WebGL PNGs into the artifact directory. */
 
 const fs = require('fs');
 const os = require('os');
@@ -53,6 +55,11 @@ try {
 
 const fixture = require(path.join(__dirname, 'cubic-spline-fixture.cjs'));
 const GLB = fixture.buildCubicSplineGLB();
+const MUTATION = String(process.env.GOSX_SCENE3D_CUBIC_MUTATION || '').trim();
+if (MUTATION && MUTATION !== 'webgpu-no-draw' && MUTATION !== 'webgpu-no-submit') {
+  console.error('unsupported GOSX_SCENE3D_CUBIC_MUTATION: ' + MUTATION);
+  process.exit(2);
+}
 
 const errors = [];
 const warnings = [];
@@ -199,6 +206,7 @@ let ws = null;
 let chrome = null;
 let profile = null;
 let msgId = 0;
+let activeSessionId = null;
 const pending = new Map();
 const listeners = [];
 
@@ -216,9 +224,9 @@ function cdpSend(method, params, sessionId, timeoutMs) {
   });
 }
 
-function waitForEvent(name, timeoutMs) {
+function waitForEvent(name, timeoutMs, sessionId) {
   return new Promise((resolve, reject) => {
-    const entry = { name, resolve, timer: setTimeout(() => {
+    const entry = { name, sessionId: sessionId || '', resolve, timer: setTimeout(() => {
       const i = listeners.indexOf(entry);
       if (i >= 0) listeners.splice(i, 1);
       reject(new Error('event timeout: ' + name));
@@ -267,13 +275,19 @@ function dispatch(raw) {
     } else p.resolve(m.result);
   } else if (m.method) {
     for (let i = listeners.length - 1; i >= 0; i -= 1) {
-      if (listeners[i].name === m.method) {
+      if (listeners[i].name === m.method &&
+          (!listeners[i].sessionId || listeners[i].sessionId === m.sessionId)) {
         const e = listeners[i];
         clearTimeout(e.timer);
         listeners.splice(i, 1);
         e.resolve(m.params || {});
       }
     }
+    // Capability checks and completed case targets intentionally have no
+    // diagnostic ownership. Chromium can emit device/context-loss warnings
+    // while those throwaway targets are closing; only the live proof target's
+    // events are evidence about the case under test.
+    if (!activeSessionId || m.sessionId !== activeSessionId) return;
     if (m.method === 'Runtime.consoleAPICalled' && m.params && m.params.args) {
       const text = m.params.args.map((x) => x.value !== undefined ? String(x.value) : (x.description || '')).join(' ');
       if (m.params.type === 'error') errors.push('console.error: ' + text);
@@ -344,12 +358,16 @@ async function evalSend(send, expression, extra) {
 
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-// Strictly forwarding wrappers only: every wrapped native forwards
-// arguments/this/result unchanged; observation is counter-only.
+// Production calls are forwarding-only in the normal proof. The two explicit
+// mutation modes are local negative controls: they suppress WebGPU draw or
+// submit while leaving the old pass/submission counters green, so acceptance
+// must come from the mapped presentation pixels rather than those counters.
 const PRELOAD = `
 window.__cubicGLDraws = 0; window.__cubicGLContext = '';
 window.__cubicWGPasses = 0; window.__cubicWGSubmits = 0;
+window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
 (function () {
+  var mutation = window.__cubicProofMutation;
   function wrapGL(proto) {
     if (!proto) return;
     ['drawArrays', 'drawElements'].forEach(function (name) {
@@ -372,11 +390,196 @@ window.__cubicWGPasses = 0; window.__cubicWGSubmits = 0;
       return origPass.apply(this, arguments);
     };
   }
-  if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype && GPUQueue.prototype.submit) {
+
+  if (mutation === 'webgpu-no-draw' && typeof GPURenderPassEncoder !== 'undefined' &&
+      GPURenderPassEncoder.prototype) {
+    ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'].forEach(function (name) {
+      if (!GPURenderPassEncoder.prototype[name]) return;
+      GPURenderPassEncoder.prototype[name] = function () {};
+    });
+  }
+
+  var readback = window.__cubicWGReadback = {
+    pending: null,
+    snapshots: Object.create(null),
+    failures: [],
+    sequence: 0,
+    configureCalls: 0,
+    textureCalls: 0,
+    submitCalls: 0,
+    results: Object.create(null),
+    arm: function (canvas, label) {
+      var self = this;
+      label = String(label || '');
+      if (!canvas) return false;
+      if (self.pending) return false;
+      self.results[label] = new Promise(function (resolve) {
+        var pending = { canvas: canvas, label: String(label || ''), resolve: resolve, timer: null };
+        pending.timer = setTimeout(function () {
+          if (self.pending !== pending) return;
+          self.pending = null;
+          var error = 'readback timed out (configure=' + self.configureCalls +
+            ', texture=' + self.textureCalls + ', submit=' + self.submitCalls + ')';
+          self.failures.push(error);
+          resolve({ error: error });
+        }, 10000);
+        self.pending = pending;
+      });
+      return true;
+    },
+    result: function (label) {
+      return this.results[String(label || '')] || Promise.resolve({ error: 'readback was not armed' });
+    },
+    capture: function (canvas, label) {
+      return this.arm(canvas, label)
+        ? this.result(label)
+        : Promise.resolve({ error: canvas ? 'readback already pending' : 'canvas unavailable' });
+    },
+    compare: function (a, b) {
+      var left = this.snapshots[String(a || '')];
+      var right = this.snapshots[String(b || '')];
+      if (!left || !right) return null;
+      if (left.width !== right.width || left.height !== right.height ||
+          left.pixels.length !== right.pixels.length) return { dimsMatch: false };
+      var d1 = left.pixels, d2 = right.pixels;
+      var exactBytes = 0, exactPixels = 0, meanChanged = 0, maxDelta = 0;
+      for (var i = 0; i < d1.length; i += 4) {
+        var delta = Math.max(Math.abs(d1[i] - d2[i]), Math.abs(d1[i + 1] - d2[i + 1]),
+          Math.abs(d1[i + 2] - d2[i + 2]), Math.abs(d1[i + 3] - d2[i + 3]));
+        if (delta > 0) {
+          if (d1[i] !== d2[i]) exactBytes++;
+          if (d1[i + 1] !== d2[i + 1]) exactBytes++;
+          if (d1[i + 2] !== d2[i + 2]) exactBytes++;
+          if (d1[i + 3] !== d2[i + 3]) exactBytes++;
+          exactPixels++;
+          if (delta > 2) meanChanged++;
+        }
+        if (delta > maxDelta) maxDelta = delta;
+      }
+      return { dimsMatch: true, exactBytes: exactBytes, exactPixels: exactPixels,
+        meanChanged: meanChanged, maxDelta: maxDelta };
+    },
+  };
+
+  function readbackFailure(pending, reason) {
+    if (pending.timer) clearTimeout(pending.timer);
+    var message = String(reason && (reason.message || reason) || 'unknown readback failure');
+    readback.failures.push(message);
+    pending.resolve({ error: message });
+  }
+
+  function readbackSummary(snapshot) {
+    var pixels = snapshot.pixels;
+    var r = pixels[0] || 0, g = pixels[1] || 0, b = pixels[2] || 0, a = pixels[3] || 0;
+    var foregroundPixels = 0;
+    for (var i = 0; i < pixels.length; i += 4) {
+      if (Math.max(Math.abs(pixels[i] - r), Math.abs(pixels[i + 1] - g),
+          Math.abs(pixels[i + 2] - b), Math.abs(pixels[i + 3] - a)) > 2) {
+        foregroundPixels++;
+      }
+    }
+    return { label: snapshot.label, sequence: snapshot.sequence,
+      width: snapshot.width, height: snapshot.height, format: snapshot.format,
+      byteLength: pixels.length, cornerRGBA: [r, g, b, a],
+      foregroundPixels: foregroundPixels,
+      productSubmissionForwarded: snapshot.productSubmissionForwarded };
+  }
+
+  var contexts = typeof WeakMap === 'function' ? new WeakMap() : null;
+  var lastSurface = null;
+  if (typeof GPUCanvasContext !== 'undefined' && GPUCanvasContext.prototype &&
+      GPUCanvasContext.prototype.configure && GPUCanvasContext.prototype.getCurrentTexture &&
+      typeof GPUTextureUsage !== 'undefined') {
+    var origConfigure = GPUCanvasContext.prototype.configure;
+    var origCurrentTexture = GPUCanvasContext.prototype.getCurrentTexture;
+    GPUCanvasContext.prototype.configure = function (config) {
+      readback.configureCalls++;
+      var next = Object.assign({}, config || {});
+      var defaultUsage = GPUTextureUsage.RENDER_ATTACHMENT;
+      next.usage = (Number(next.usage) || defaultUsage) | GPUTextureUsage.COPY_SRC;
+      var result = origConfigure.call(this, next);
+      if (contexts) contexts.set(this, { canvas: this.canvas, device: next.device, format: next.format });
+      return result;
+    };
+    GPUCanvasContext.prototype.getCurrentTexture = function () {
+      readback.textureCalls++;
+      var texture = origCurrentTexture.apply(this, arguments);
+      var meta = contexts && contexts.get(this);
+      if (meta) {
+        lastSurface = { canvas: meta.canvas, device: meta.device, format: meta.format,
+          texture: texture };
+      }
+      return texture;
+    };
+  }
+
+  if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype && GPUQueue.prototype.submit &&
+      typeof GPUBufferUsage !== 'undefined' && typeof GPUMapMode !== 'undefined') {
     var origSubmit = GPUQueue.prototype.submit;
     GPUQueue.prototype.submit = function () {
+      readback.submitCalls++;
       window.__cubicWGSubmits += 1;
-      return origSubmit.apply(this, arguments);
+      var surface = lastSurface;
+      lastSurface = null;
+      var suppress = mutation === 'webgpu-no-submit' && !!surface;
+      var result;
+      if (!suppress) result = origSubmit.apply(this, arguments);
+
+      var pending = readback.pending;
+      if (!pending || !surface || pending.canvas !== surface.canvas) return result;
+      readback.pending = null;
+      if (pending.timer) clearTimeout(pending.timer);
+      var buffer = null;
+      try {
+        var device = surface.device;
+        var width = Math.max(1, Number(surface.texture.width) || Number(surface.canvas.width) || 1);
+        var height = Math.max(1, Number(surface.texture.height) || Number(surface.canvas.height) || 1);
+        var bytesPerRow = Math.ceil(width * 4 / 256) * 256;
+        buffer = device.createBuffer({ size: bytesPerRow * height,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        var encoder = device.createCommandEncoder({ label: 'gosx-cubic-proof-readback' });
+        encoder.copyTextureToBuffer({ texture: surface.texture },
+          { buffer: buffer, bytesPerRow: bytesPerRow, rowsPerImage: height },
+          { width: width, height: height, depthOrArrayLayers: 1 });
+        // Bypass this wrapper: the proof copy is not a product submission and
+        // must not make the product submission counter pass.
+        origSubmit.call(this, [encoder.finish()]);
+        var sequence = ++readback.sequence;
+        buffer.mapAsync(GPUMapMode.READ).then(function () {
+          try {
+            var padded = new Uint8Array(buffer.getMappedRange());
+            var dense = new Uint8Array(width * height * 4);
+            for (var y = 0; y < height; y++) {
+              dense.set(padded.subarray(y * bytesPerRow, y * bytesPerRow + width * 4), y * width * 4);
+            }
+            if (String(surface.format || '').toLowerCase().indexOf('bgra') === 0) {
+              for (var i = 0; i < dense.length; i += 4) {
+                var red = dense[i];
+                dense[i] = dense[i + 2];
+                dense[i + 2] = red;
+              }
+            }
+            var snapshot = { label: pending.label, sequence: sequence, width: width, height: height,
+              format: String(surface.format || ''), pixels: dense,
+              productSubmissionForwarded: !suppress };
+            readback.snapshots[pending.label] = snapshot;
+            buffer.unmap();
+            buffer.destroy();
+            pending.resolve(readbackSummary(snapshot));
+          } catch (err) {
+            try { buffer.unmap(); } catch (_err) {}
+            try { buffer.destroy(); } catch (_err) {}
+            readbackFailure(pending, err);
+          }
+        }, function (err) {
+          try { buffer.destroy(); } catch (_err) {}
+          readbackFailure(pending, err);
+        });
+      } catch (err) {
+        try { if (buffer) buffer.destroy(); } catch (_err) {}
+        readbackFailure(pending, err);
+      }
+      return result;
     };
   }
 })();
@@ -527,6 +730,55 @@ async function capture(send, mount) {
   return r.data;
 }
 
+function webGPUCaptureExpr(mount, label) {
+  return '(function(){var m=document.getElementById(' + JSON.stringify(mount) + ');' +
+    'var cv=m&&m.querySelector("canvas");var r=window.__cubicWGReadback;' +
+    'if(!cv||!r||typeof r.capture!=="function")' +
+      'return Promise.resolve({error:"WebGPU readback unavailable"});' +
+    'return r.capture(cv,' + JSON.stringify(label) + ');})()';
+}
+
+async function captureWebGPU(send, mount, label) {
+  return evalSend(send, webGPUCaptureExpr(mount, label), { awaitPromise: true });
+}
+
+function webGPUArmExpr(mount, label) {
+  return '(function(){var m=document.getElementById(' + JSON.stringify(mount) + ');' +
+    'var cv=m&&m.querySelector("canvas");var r=window.__cubicWGReadback;' +
+    'return !!(cv&&r&&typeof r.arm==="function"&&r.arm(cv,' +
+      JSON.stringify(label) + '));})()';
+}
+
+function webGPUResultExpr(label) {
+  return '(function(){var r=window.__cubicWGReadback;' +
+    'return r&&typeof r.result==="function"?r.result(' + JSON.stringify(label) + '):' +
+      'Promise.resolve({error:"WebGPU readback unavailable"});})()';
+}
+
+function webGPUCompareExpr(a, b) {
+  return '(function(){var r=window.__cubicWGReadback;' +
+    'return r&&typeof r.compare==="function"?r.compare(' +
+      JSON.stringify(a) + ',' + JSON.stringify(b) + '):null;})()';
+}
+
+function assertWebGPUReadback(summary, label) {
+  if (!summary || summary.error) {
+    fail(label + ' mapped presentation readback failed: ' +
+      JSON.stringify(summary && summary.error || summary));
+    return;
+  }
+  if (summary.width !== W || summary.height !== H || summary.byteLength !== W * H * 4) {
+    fail(label + ' mapped presentation dimensions are wrong: ' + JSON.stringify(summary));
+  }
+  if (summary.productSubmissionForwarded !== true) {
+    fail(label + ' product queue submission was not forwarded');
+  }
+  if (!(summary.foregroundPixels > 20)) {
+    fail(label + ' mapped presentation contains ' + summary.foregroundPixels +
+      ' non-background pixels, expected > 20');
+  }
+}
+
 function writeArtifact(name, base64) {
   try {
     fs.writeFileSync(path.join(ART, name), Buffer.from(base64, 'base64'));
@@ -589,10 +841,10 @@ function compareSampledPose(pose, t, label) {
   assertClose(pose.t0.weights, fixture.evalWeights(t), label + ' sampled weights', 2e-3);
 }
 
-async function runCase(send, c) {
+async function runCase(send, c, sessionId) {
   const ev = { name: c.name, webgpu: c.webgpu, mount: c.mount, engine: c.engine };
 
-  const loadP = waitForEvent('Page.loadEventFired', MOUNT_WAIT_MS);
+  const loadP = waitForEvent('Page.loadEventFired', MOUNT_WAIT_MS, sessionId);
   await send('Page.navigate', { url: BASE + '/case/' + c.name });
   await loadP;
 
@@ -649,8 +901,14 @@ async function runCase(send, c) {
   assertClose(load.verts, fixture.BASE_POSITIONS, '[' + c.name + '] authored vertices at load', 1e-6);
   ev.meshID = load.meshID;
 
-  const baseline = await capture(send, c.mount);
-  writeArtifact(c.name + '-baseline.png', baseline);
+  let baseline = null;
+  if (c.webgpu) {
+    ev.baselineReadback = await captureWebGPU(send, c.mount, c.name + '-baseline');
+    assertWebGPUReadback(ev.baselineReadback, '[' + c.name + '] baseline');
+  } else {
+    baseline = await capture(send, c.mount);
+    writeArtifact(c.name + '-baseline.png', baseline);
+  }
 
   // Playback starts ONLY through the public hub event.
   if ((await evalSend(send, hubExpr(START_DETAIL))) !== true) {
@@ -730,12 +988,20 @@ async function runCase(send, c) {
     }
   }
 
-  const playing = await capture(send, c.mount);
-  writeArtifact(c.name + '-playing.png', playing);
-  const playDiff = await evalSend(send, diffExpr(baseline, playing), { awaitPromise: true });
+  let playDiff = null;
+  if (c.webgpu) {
+    ev.playingReadback = await captureWebGPU(send, c.mount, c.name + '-playing');
+    assertWebGPUReadback(ev.playingReadback, '[' + c.name + '] playing');
+    playDiff = await evalSend(send,
+      webGPUCompareExpr(c.name + '-baseline', c.name + '-playing'));
+  } else {
+    const playing = await capture(send, c.mount);
+    writeArtifact(c.name + '-playing.png', playing);
+    playDiff = await evalSend(send, diffExpr(baseline, playing), { awaitPromise: true });
+  }
   ev.playDiff = playDiff;
   if (!playDiff || !playDiff.dimsMatch) {
-    fail('[' + c.name + '] playing screenshot not comparable: ' + JSON.stringify(playDiff));
+    fail('[' + c.name + '] playing frame not comparable: ' + JSON.stringify(playDiff));
   } else if (!(playDiff.exactPixels > 20)) {
     fail('[' + c.name + '] playing frame changed ' + playDiff.exactPixels +
       ' pixels, expected > 20');
@@ -749,6 +1015,17 @@ async function runCase(send, c) {
   }
 
   // Public stop with zero fades restores the authored pose on the SAME scene.
+  // Arm the WebGPU copy before the stop event: once the restored frame is
+  // submitted the idle scene may stop rendering, so a later capture request
+  // would have no product submission to observe.
+  let restoreReadbackArmed = true;
+  if (c.webgpu) {
+    restoreReadbackArmed = await evalSend(send,
+      webGPUArmExpr(c.mount, c.name + '-restored'));
+    if (restoreReadbackArmed !== true) {
+      fail('[' + c.name + '] restored mapped presentation readback could not be armed');
+    }
+  }
   if ((await evalSend(send, hubExpr(STOP_DETAIL))) !== true) {
     fail('[' + c.name + '] hub stop event dispatch failed');
   }
@@ -773,12 +1050,22 @@ async function runCase(send, c) {
   }
   assertClose(restored.verts, fixture.BASE_POSITIONS, '[' + c.name + '] restored authored vertices', 1e-6);
 
-  const restoredShot = await capture(send, c.mount);
-  writeArtifact(c.name + '-restored.png', restoredShot);
-  const restoreDiff = await evalSend(send, diffExpr(baseline, restoredShot), { awaitPromise: true });
+  let restoreDiff = null;
+  if (c.webgpu) {
+    ev.restoredReadback = restoreReadbackArmed === true
+      ? await evalSend(send, webGPUResultExpr(c.name + '-restored'), { awaitPromise: true })
+      : { error: 'readback was not armed' };
+    assertWebGPUReadback(ev.restoredReadback, '[' + c.name + '] restored');
+    restoreDiff = await evalSend(send,
+      webGPUCompareExpr(c.name + '-baseline', c.name + '-restored'));
+  } else {
+    const restoredShot = await capture(send, c.mount);
+    writeArtifact(c.name + '-restored.png', restoredShot);
+    restoreDiff = await evalSend(send, diffExpr(baseline, restoredShot), { awaitPromise: true });
+  }
   ev.restoreDiff = restoreDiff;
   if (!restoreDiff || !restoreDiff.dimsMatch) {
-    fail('[' + c.name + '] restored screenshot not comparable: ' + JSON.stringify(restoreDiff));
+    fail('[' + c.name + '] restored frame not comparable: ' + JSON.stringify(restoreDiff));
   } else if (restoreDiff.exactPixels !== 0) {
     fail('[' + c.name + '] restore did not reproduce baseline pixels exactly: ' +
       JSON.stringify(restoreDiff));
@@ -820,7 +1107,7 @@ function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, intentionalNoContent,
     clientEventResponses,
-    nativeCaps: global.__caps || null, cases: CASE_EVIDENCE,
+    nativeCaps: global.__caps || null, mutation: MUTATION || null, cases: CASE_EVIDENCE,
   }, extra || {});
   try {
     fs.writeFileSync(path.join(ART, 'report.json'), JSON.stringify(report, null, 2));
@@ -844,8 +1131,18 @@ function cleanup() {
       await Promise.race([exited, sleep(5000)]);
     }
     if (profile) {
-      try { fs.rmSync(profile, { recursive: true, force: true }); }
-      catch (e) { warnings.push('profile cleanup skipped: ' + e.message); }
+      let cleanupError = null;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          fs.rmSync(profile, { recursive: true, force: true });
+          cleanupError = null;
+          break;
+        } catch (e) {
+          cleanupError = e;
+          await sleep(50 * (attempt + 1));
+        }
+      }
+      if (cleanupError) warnings.push('profile cleanup skipped: ' + cleanupError.message);
     }
     await new Promise((res) => {
       let done = false;
@@ -912,29 +1209,50 @@ const watchdog = setTimeout(() => {
   });
   ws.onmessage = (evData) => dispatch(evData.data);
 
-  const { targetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
-  const { sessionId } = await cdpSend('Target.attachToTarget', { targetId, flatten: true });
-  const send = (method, params, to) => cdpSend(method, params, sessionId, to || STEP_MS);
-  await send('Page.enable');
-  await send('Runtime.enable');
-  await send('Network.enable');
-  await send('Log.enable');
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
-
   // Native capability gate on a real served loopback origin: BOTH WebGL2 and
-  // WebGPU are required. No fallback, no skips.
-  const capsLoad = waitForEvent('Page.loadEventFired', STEP_MS);
-  await send('Page.navigate', { url: BASE + '/' });
+  // WebGPU are required. No fallback, no skips. This target is deliberately
+  // separate from the proof targets: closing its throwaway WebGL context and
+  // adapter must not contaminate either renderer case's diagnostics.
+  const { targetId: capsTargetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
+  const { sessionId: capsSessionId } = await cdpSend('Target.attachToTarget', {
+    targetId: capsTargetId, flatten: true,
+  });
+  const capsSend = (method, params, to) =>
+    cdpSend(method, params, capsSessionId, to || STEP_MS);
+  await capsSend('Page.enable');
+  await capsSend('Runtime.enable');
+  const capsLoad = waitForEvent('Page.loadEventFired', STEP_MS, capsSessionId);
+  await capsSend('Page.navigate', { url: BASE + '/' });
   await capsLoad;
-  await evalSend(send, CAPS_START_EXPR);
-  const caps = await evalSend(send, 'window.__cubicCapsPromise', { awaitPromise: true });
+  await evalSend(capsSend, CAPS_START_EXPR);
+  const caps = await evalSend(capsSend, 'window.__cubicCapsPromise', { awaitPromise: true });
   global.__caps = caps;
   if (!caps || caps.webgl2 !== true || caps.webgpu !== true) {
     throw new Error('native WebGL2 and WebGPU are both required; got ' + JSON.stringify(caps));
   }
+  await cdpSend('Target.closeTarget', { targetId: capsTargetId }, null, STEP_MS);
 
   for (let i = 0; i < CASES.length; i += 1) {
-    CASE_EVIDENCE.push(await runCase(send, CASES[i]));
+    const c = CASES[i];
+    const { targetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await cdpSend('Target.attachToTarget', { targetId, flatten: true });
+    const send = (method, params, to) => cdpSend(method, params, sessionId, to || STEP_MS);
+    try {
+      await send('Page.enable');
+      await send('Runtime.enable');
+      await send('Network.enable');
+      await send('Log.enable');
+      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
+      activeSessionId = sessionId;
+      CASE_EVIDENCE.push(await runCase(send, c, sessionId));
+    } finally {
+      // Stop accepting diagnostics before intentional target destruction.
+      // In particular, Chromium 154 destroys SwiftShader devices here and
+      // reports that expected lifecycle event as a console warning.
+      activeSessionId = null;
+      networkRequests.clear();
+      try { await cdpSend('Target.closeTarget', { targetId }, null, STEP_MS); } catch (_err) {}
+    }
   }
   if (clientEventResponses.length !== CASES.length) {
     fail('expected one intentional client-events 204 per renderer case, got ' +
