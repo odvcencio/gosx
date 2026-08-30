@@ -376,6 +376,8 @@ test-repo-hygiene:
 
 test-perf-budget-ci:
 	sh scripts/perf-budget-ci-test.sh
+	sh scripts/verify-perf-browser-identity-test.sh
+	sh scripts/check-perf-browser-pin-test.sh
 
 release-gate:
 	@echo "release-gate (1/10): go run ./cmd/gosx release check"

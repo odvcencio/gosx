@@ -344,9 +344,30 @@ jobs:
           GOSX_CHROME_NO_SANDBOX: "1"
         run: make test-perf-browser
 
+      # Perf budgets are release measurements, so their browser is a governed
+      # fixture rather than the floating snapshot used by the compatibility
+      # tests above. Run 33305212196 measured this exact snapshot green on the
+      # same runtime/perf sources. Renew the pin only with a reviewed hosted
+      # receipt; latest-browser coverage remains in the earlier steps.
+      - name: Set up pinned Chromium for perf budget
+        id: perf-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: '1688711'
+
+      - name: Verify pinned perf browser identity
+        env:
+          PERF_CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}
+          PERF_CHROME_VERSION: ${{ steps.perf-chrome.outputs.chrome-version }}
+        run: |
+          sh scripts/verify-perf-browser-identity.sh \
+            "$PERF_CHROME_PATH" \
+            "$PERF_CHROME_VERSION" \
+            build/perf-browser-identity.txt
+
       - name: Perf budget gate
         env:
-          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
       - name: Upload perf budget failure diagnostics
@@ -357,6 +378,7 @@ jobs:
           path: |
             build/perf-report.json
             build/perf-server.log
+            build/perf-browser-identity.txt
           if-no-files-found: ignore
           retention-days: 7
 
