@@ -552,6 +552,10 @@ The release boundary is narrower than the full feature inventory below. See
 [the Scene3D v1 support contract](docs/scene3d-v1-support.md) for the executable
 corpus, current blockers, backend evidence targets, and non-goals.
 
+Generic hosted CI certifies production WebGPU renderer execution and exact
+pixels from a proof-private GPU target. Actual WebGPU canvas presentation is a
+separate release-pinned hardware certification obligation in that contract.
+
 - **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes

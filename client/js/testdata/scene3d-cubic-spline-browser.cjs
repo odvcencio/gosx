@@ -23,10 +23,13 @@
  *     TRS/morph state and baseline pixels exactly on the SAME
  *     mount/canvas/state/record; disposal then clears the engine state.
  *   - Real draw calls (GL) and render passes + queue submissions (WG) are
- *     observed through forwarding wrappers. WebGL pixels come from a CDP
- *     screenshot; WebGPU pixels come from a COPY_SRC presentation texture
- *     copied into a mapped buffer before teardown. Changed geometry pixels
- *     are compared as RGBA bytes, not by file size or hash.
+ *     observed through forwarding wrappers. WebGL pixels come from a native
+ *     canvas CDP screenshot. Hosted WebGPU proof mode bypasses native canvas
+ *     configuration/presentation and returns a proof-private COPY_SRC render
+ *     target to the unmodified production renderer; that exact target is
+ *     copied into a mapped buffer after the forwarded product submission.
+ *     Changed geometry pixels are compared as RGBA bytes, not by file size or
+ *     hash. Actual WebGPU canvas presentation remains hardware-certified.
  *
  * Any page console error or warning fails the probe. Usage:
  *
@@ -60,6 +63,12 @@ if (MUTATION && MUTATION !== 'webgpu-no-draw' && MUTATION !== 'webgpu-no-submit'
   console.error('unsupported GOSX_SCENE3D_CUBIC_MUTATION: ' + MUTATION);
   process.exit(2);
 }
+const PROOF_TARGET_ENV = 'GOSX_SCENE3D_CUBIC_WEBGPU_TARGET';
+const PROOF_TARGET = String(process.env[PROOF_TARGET_ENV] || 'private-texture').trim();
+if (PROOF_TARGET !== 'private-texture') {
+  console.error(PROOF_TARGET_ENV + ' must be exactly private-texture');
+  process.exit(2);
+}
 const RESTORE_ATOMIC_GAP_MS = Number(
   process.env.GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS || 0);
 if (!Number.isInteger(RESTORE_ATOMIC_GAP_MS) || RESTORE_ATOMIC_GAP_MS < 0 ||
@@ -67,7 +76,6 @@ if (!Number.isInteger(RESTORE_ATOMIC_GAP_MS) || RESTORE_ATOMIC_GAP_MS < 0 ||
   console.error('GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS must be an integer from 0 to 1000');
   process.exit(2);
 }
-
 const errors = [];
 const warnings = [];
 const fail = (m) => { errors.push(m); };
@@ -80,6 +88,52 @@ const MOUNT_WAIT_MS = 30000;
 const CLOCK_TIMEOUT_MS = 20000;
 const CLOCK_MIN = 0.9;
 const CLOCK_MAX = 2.5;
+
+// Select Chromium's test-only SwiftShader paths explicitly for both ANGLE and
+// Dawn. WebGL2 still owns a native canvas pixel oracle; WebGPU renders only to
+// a device-created private texture and never initializes a swap surface.
+const CHROME_GPU_FLAGS = Object.freeze([
+  '--ignore-gpu-blocklist',
+  '--enable-unsafe-swiftshader',
+  '--enable-unsafe-webgpu',
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--use-webgpu-adapter=swiftshader',
+  '--use-gpu-in-tests',
+]);
+
+function validateChromeGPUFlags(flags) {
+  if (!Array.isArray(flags) || new Set(flags).size !== flags.length) {
+    throw new Error('Chrome GPU flags must be unique');
+  }
+  for (const required of ['--enable-unsafe-swiftshader', '--enable-unsafe-webgpu',
+    '--use-gl=angle', '--use-angle=swiftshader',
+    '--use-webgpu-adapter=swiftshader', '--use-gpu-in-tests']) {
+    if (!flags.includes(required)) throw new Error('required Chrome GPU flag missing: ' + required);
+  }
+  for (const prefix of ['--use-gl=', '--use-angle=', '--use-webgpu-adapter=']) {
+    if (flags.filter((flag) => flag.startsWith(prefix)).length !== 1) {
+      throw new Error('Chrome GPU selection must contain exactly one ' + prefix + ' flag');
+    }
+  }
+  return true;
+}
+
+validateChromeGPUFlags(CHROME_GPU_FLAGS);
+
+const CHROME_WINDOW_FLAGS = Object.freeze(['--headless=new']);
+const CHROME_SWAP_DIAGNOSTICS = Object.freeze([
+  'webgpuswapchaintexture',
+  'sharedimagebackingfactory',
+  'unable to create shared image',
+  'non-existent mailbox',
+]);
+const CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS = Object.freeze([
+  'external instance',
+  'device was destroyed',
+  'device has been lost',
+  'gpu device lost',
+]);
 
 const CASES = [
   { name: 'gl', webgpu: false, mount: 'scene-cubic-gl', engine: 'gosx-engine-cubic-gl' },
@@ -211,7 +265,13 @@ const server = http.createServer((req, res) => {
 // ---- CDP plumbing (bounded, strict) ----
 let ws = null;
 let chrome = null;
+let chromeClosed = false;
 let profile = null;
+let chromeStderrFD = null;
+let chromeStderrBytes = 0;
+let chromeStderrWriteError = '';
+let webGPUIntentionalTeardownStderrByte = null;
+let chromeDiagnostics = null;
 let msgId = 0;
 let activeSessionId = null;
 const pending = new Map();
@@ -368,13 +428,15 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 // Production calls are forwarding-only in the normal proof. The two explicit
 // mutation modes are local negative controls: they suppress WebGPU draw or
 // submit while leaving the old pass/submission counters green, so acceptance
-// must come from the mapped presentation pixels rather than those counters.
+// must come from the mapped renderer-target pixels rather than those counters.
 const PRELOAD = `
 window.__cubicGLDraws = 0; window.__cubicGLContext = '';
 window.__cubicWGPasses = 0; window.__cubicWGSubmits = 0;
 window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
+window.__cubicProofTarget = ${JSON.stringify(PROOF_TARGET)};
 (function () {
   var mutation = window.__cubicProofMutation;
+  var proofTarget = window.__cubicProofTarget;
   function wrapGL(proto) {
     if (!proto) return;
     ['drawArrays', 'drawElements'].forEach(function (name) {
@@ -389,15 +451,6 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
   }
   wrapGL(typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext.prototype : null);
   wrapGL(typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext.prototype : null);
-  if (typeof GPUCommandEncoder !== 'undefined' && GPUCommandEncoder.prototype &&
-      GPUCommandEncoder.prototype.beginRenderPass) {
-    var origPass = GPUCommandEncoder.prototype.beginRenderPass;
-    GPUCommandEncoder.prototype.beginRenderPass = function () {
-      window.__cubicWGPasses += 1;
-      return origPass.apply(this, arguments);
-    };
-  }
-
   if (mutation === 'webgpu-no-draw' && typeof GPURenderPassEncoder !== 'undefined' &&
       GPURenderPassEncoder.prototype) {
     ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'].forEach(function (name) {
@@ -411,9 +464,15 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
     snapshots: Object.create(null),
     failures: [],
     sequence: 0,
-    configureCalls: 0,
-    textureCalls: 0,
+    interceptedConfigureCalls: 0,
+    interceptedGetCurrentTextureCalls: 0,
+    nativeConfigureCalls: 0,
+    nativeGetCurrentTextureCalls: 0,
     submitCalls: 0,
+    proofCopySubmitCalls: 0,
+    reusedConfigureCalls: 0,
+    contextCount: 0,
+    targetGenerationCount: 0,
     results: Object.create(null),
     arm: function (canvas, label) {
       var self = this;
@@ -425,8 +484,9 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
         pending.timer = setTimeout(function () {
           if (self.pending !== pending) return;
           self.pending = null;
-          var error = 'readback timed out (configure=' + self.configureCalls +
-            ', texture=' + self.textureCalls + ', submit=' + self.submitCalls + ')';
+          var error = 'private-target readback timed out (configure=' +
+            self.interceptedConfigureCalls + ', texture=' +
+            self.interceptedGetCurrentTextureCalls + ', submit=' + self.submitCalls + ')';
           self.failures.push(error);
           resolve({ error: error });
         }, 10000);
@@ -466,6 +526,25 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
       return { dimsMatch: true, exactBytes: exactBytes, exactPixels: exactPixels,
         meanChanged: meanChanged, maxDelta: maxDelta };
     },
+    receipt: function () {
+      return {
+        proofTarget: proofTarget,
+        renderTargetKind: 'proof-private-gpu-texture',
+        canvasPresented: false,
+        interceptedConfigureCalls: this.interceptedConfigureCalls,
+        interceptedGetCurrentTextureCalls: this.interceptedGetCurrentTextureCalls,
+        nativeConfigureCalls: this.nativeConfigureCalls,
+        nativeGetCurrentTextureCalls: this.nativeGetCurrentTextureCalls,
+        productSubmitCalls: this.submitCalls,
+        proofCopySubmitCalls: this.proofCopySubmitCalls,
+        reusedConfigureCalls: this.reusedConfigureCalls,
+        contextCount: this.contextCount,
+        targetGenerationCount: this.targetGenerationCount,
+        failures: this.failures.slice(),
+        configuredTargets: configuredTargets.map(targetReceipt),
+        capturedLabels: Object.keys(this.snapshots).sort(),
+      };
+    },
   };
 
   function readbackFailure(pending, reason) {
@@ -487,48 +566,345 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
     }
     return { label: snapshot.label, sequence: snapshot.sequence,
       width: snapshot.width, height: snapshot.height, format: snapshot.format,
-      byteLength: pixels.length, cornerRGBA: [r, g, b, a],
+      byteLength: pixels.length, pixelSHA256: snapshot.pixelSHA256,
+      cornerRGBA: [r, g, b, a],
       foregroundPixels: foregroundPixels,
+      renderTargetKind: snapshot.renderTargetKind,
+      canvasPresented: snapshot.canvasPresented,
+      contextID: snapshot.contextID,
+      deviceID: snapshot.deviceID,
+      queueID: snapshot.queueID,
+      targetID: snapshot.targetID,
+      targetGeneration: snapshot.targetGeneration,
+      configureSequence: snapshot.configureSequence,
+      getCurrentTextureSequence: snapshot.getCurrentTextureSequence,
+      targetViewSequence: snapshot.targetViewSequence,
+      renderPassSequence: snapshot.renderPassSequence,
+      commandBufferSequence: snapshot.commandBufferSequence,
+      productSubmitSequence: snapshot.productSubmitSequence,
+      proofCopySequence: snapshot.proofCopySequence,
+      targetUsage: snapshot.targetUsage,
+      alphaMode: snapshot.alphaMode,
+      colorSpace: snapshot.colorSpace,
+      toneMapping: snapshot.toneMapping == null
+        ? null : JSON.parse(JSON.stringify(snapshot.toneMapping)),
+      returnedToProduct: snapshot.returnedToProduct,
+      productRenderPassLinked: snapshot.productRenderPassLinked,
+      productCommandBufferLinked: snapshot.productCommandBufferLinked,
+      productQueueMatched: snapshot.productQueueMatched,
+      proofCommandKinds: snapshot.proofCommandKinds.slice(),
+      interceptedConfigureCalls: readback.interceptedConfigureCalls,
+      interceptedGetCurrentTextureCalls: readback.interceptedGetCurrentTextureCalls,
+      nativeConfigureCalls: readback.nativeConfigureCalls,
+      nativeGetCurrentTextureCalls: readback.nativeGetCurrentTextureCalls,
       productSubmissionForwarded: snapshot.productSubmissionForwarded };
   }
 
-  var contexts = typeof WeakMap === 'function' ? new WeakMap() : null;
-  var lastSurface = null;
+  var identityMaps = {
+    context: new WeakMap(), device: new WeakMap(), queue: new WeakMap(), target: new WeakMap(),
+  };
+  var identityCounts = { context: 0, device: 0, queue: 0, target: 0 };
+  function identity(kind, value) {
+    var map = identityMaps[kind];
+    var token = map.get(value);
+    if (!token) {
+      token = kind + '-' + (++identityCounts[kind]);
+      map.set(value, token);
+    }
+    return token;
+  }
+  function targetReceipt(meta) {
+    return {
+      renderTargetKind: 'proof-private-gpu-texture',
+      canvasPresented: false,
+      contextID: meta.contextID,
+      deviceID: meta.deviceID,
+      queueID: meta.queueID,
+      targetID: meta.targetID,
+      targetGeneration: meta.targetGeneration,
+      configureSequence: meta.configureSequence,
+      width: meta.width,
+      height: meta.height,
+      format: meta.format,
+      productionUsage: meta.productionUsage,
+      targetUsage: meta.targetUsage,
+      viewFormats: meta.viewFormats.slice(),
+      alphaMode: meta.alphaMode,
+      colorSpace: meta.colorSpace,
+      toneMapping: meta.toneMapping == null
+        ? null : JSON.parse(JSON.stringify(meta.toneMapping)),
+      configureCalls: meta.configureCalls,
+      reusedConfigureCalls: meta.reusedConfigureCalls,
+      returnedToProduct: meta.returnedToProduct,
+      getCurrentTextureCalls: meta.getCurrentTextureCalls,
+      targetViewCalls: meta.targetViewCalls,
+      linkedRenderPasses: meta.linkedRenderPasses,
+      linkedCommandBuffers: meta.linkedCommandBuffers,
+      linkedProductSubmits: meta.linkedProductSubmits,
+    };
+  }
+  function failClosed(message) {
+    readback.failures.push(String(message));
+    throw new Error(String(message));
+  }
+
+  var contexts = new WeakMap();
+  var targetMetaByTexture = new WeakMap();
+  var targetMetaByView = new WeakMap();
+  var encoderLinks = new WeakMap();
+  var commandBufferLinks = new WeakMap();
+  var configuredTargets = [];
+  var configureSequence = 0;
+  var getCurrentTextureSequence = 0;
+  var targetViewSequence = 0;
+  var renderPassSequence = 0;
+  var commandBufferSequence = 0;
+  var productSubmitSequence = 0;
+  var proofCopySequence = 0;
+
+  function optionalString(value, label) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !value) {
+      failClosed('private target ' + label + ' is invalid');
+    }
+    return value;
+  }
+  function copyToneMapping(value) {
+    if (value == null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      failClosed('private target toneMapping is invalid');
+    }
+    var copied;
+    try { copied = JSON.parse(JSON.stringify(value)); }
+    catch (_error) { failClosed('private target toneMapping is not serializable'); }
+    if (!copied || typeof copied !== 'object' || Array.isArray(copied)) {
+      failClosed('private target toneMapping did not serialize as an object');
+    }
+    return copied;
+  }
+  function sameArray(left, right) {
+    if (left.length !== right.length) return false;
+    for (var i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
+    return true;
+  }
+  function sameJSON(left, right) {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
   if (typeof GPUCanvasContext !== 'undefined' && GPUCanvasContext.prototype &&
       GPUCanvasContext.prototype.configure && GPUCanvasContext.prototype.getCurrentTexture &&
       typeof GPUTextureUsage !== 'undefined') {
-    var origConfigure = GPUCanvasContext.prototype.configure;
-    var origCurrentTexture = GPUCanvasContext.prototype.getCurrentTexture;
     GPUCanvasContext.prototype.configure = function (config) {
-      readback.configureCalls++;
-      var next = Object.assign({}, config || {});
-      var defaultUsage = GPUTextureUsage.RENDER_ATTACHMENT;
-      next.usage = (Number(next.usage) || defaultUsage) | GPUTextureUsage.COPY_SRC;
-      var result = origConfigure.call(this, next);
-      if (contexts) contexts.set(this, { canvas: this.canvas, device: next.device, format: next.format });
-      return result;
+      readback.interceptedConfigureCalls++;
+      var next = config || {};
+      var device = next.device;
+      var canvas = this.canvas;
+      if (proofTarget !== 'private-texture') failClosed('unsupported WebGPU proof target');
+      if (!device || typeof device.createTexture !== 'function' || !device.queue) {
+        failClosed('private target configure requires the production GPUDevice and queue');
+      }
+      if (!canvas) failClosed('private target configure requires a canvas-owned context');
+      var width = Number(canvas.width);
+      var height = Number(canvas.height);
+      if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+        failClosed('private target dimensions are invalid: ' + width + 'x' + height);
+      }
+      var format = optionalString(next.format, 'format');
+      var productionUsage = next.usage == null
+        ? GPUTextureUsage.RENDER_ATTACHMENT : Number(next.usage);
+      if (!Number.isInteger(productionUsage) || productionUsage < 0 ||
+          productionUsage > 0xffffffff) {
+        failClosed('private target production usage is invalid');
+      }
+      productionUsage = productionUsage >>> 0;
+      var targetUsage = (productionUsage | GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.COPY_SRC) >>> 0;
+      if (next.viewFormats != null && !Array.isArray(next.viewFormats)) {
+        failClosed('private target viewFormats must be an array');
+      }
+      var viewFormats = Array.isArray(next.viewFormats) ? next.viewFormats.slice() : [];
+      if (!viewFormats.every(function (value) {
+        return typeof value === 'string' && value.length > 0;
+      })) failClosed('private target viewFormats are invalid');
+      var alphaMode = optionalString(next.alphaMode, 'alphaMode');
+      var colorSpace = optionalString(next.colorSpace, 'colorSpace');
+      var toneMapping = copyToneMapping(next.toneMapping);
+      var previous = contexts.get(this);
+      if (previous && previous.canvas === canvas && previous.device === device &&
+          previous.width === width && previous.height === height &&
+          previous.format === format && previous.productionUsage === productionUsage &&
+          sameArray(previous.viewFormats, viewFormats) &&
+          previous.alphaMode === alphaMode && previous.colorSpace === colorSpace &&
+          sameJSON(previous.toneMapping, toneMapping)) {
+        readback.reusedConfigureCalls++;
+        previous.configureCalls++;
+        previous.reusedConfigureCalls++;
+        return undefined;
+      }
+      var texture = device.createTexture({
+        label: 'gosx-cubic-proof-private-target',
+        size: { width: width, height: height, depthOrArrayLayers: 1 },
+        mipLevelCount: 1,
+        sampleCount: 1,
+        dimension: '2d',
+        format: format,
+        usage: targetUsage,
+        viewFormats: viewFormats,
+      });
+      if (previous && previous.texture && typeof previous.texture.destroy === 'function') {
+        try { previous.texture.destroy(); } catch (_error) {}
+      } else if (!previous) {
+        readback.contextCount++;
+      }
+      var meta = {
+        canvas: canvas,
+        context: this,
+        device: device,
+        queue: device.queue,
+        texture: texture,
+        contextID: identity('context', this),
+        deviceID: identity('device', device),
+        queueID: identity('queue', device.queue),
+        targetID: identity('target', texture),
+        targetGeneration: ++readback.targetGenerationCount,
+        configureSequence: ++configureSequence,
+        width: width,
+        height: height,
+        format: format,
+        productionUsage: productionUsage,
+        targetUsage: targetUsage,
+        viewFormats: viewFormats,
+        alphaMode: alphaMode,
+        colorSpace: colorSpace,
+        toneMapping: toneMapping,
+        configureCalls: 1,
+        reusedConfigureCalls: 0,
+        returnedToProduct: false,
+        getCurrentTextureCalls: 0,
+        targetViewCalls: 0,
+        linkedRenderPasses: 0,
+        linkedCommandBuffers: 0,
+        linkedProductSubmits: 0,
+        lastGetCurrentTextureSequence: 0,
+      };
+      contexts.set(this, meta);
+      targetMetaByTexture.set(texture, meta);
+      configuredTargets.push(meta);
+      return undefined;
     };
     GPUCanvasContext.prototype.getCurrentTexture = function () {
-      readback.textureCalls++;
-      var texture = origCurrentTexture.apply(this, arguments);
-      var meta = contexts && contexts.get(this);
-      if (meta) {
-        lastSurface = { canvas: meta.canvas, device: meta.device, format: meta.format,
-          texture: texture };
-      }
-      return texture;
+      readback.interceptedGetCurrentTextureCalls++;
+      var meta = contexts.get(this);
+      if (!meta || !meta.texture) failClosed('getCurrentTexture preceded private configure');
+      meta.returnedToProduct = true;
+      meta.getCurrentTextureCalls++;
+      meta.lastGetCurrentTextureSequence = ++getCurrentTextureSequence;
+      return meta.texture;
     };
+  }
+
+  if (typeof GPUTexture !== 'undefined' && GPUTexture.prototype &&
+      GPUTexture.prototype.createView) {
+    var origCreateView = GPUTexture.prototype.createView;
+    GPUTexture.prototype.createView = function () {
+      var view = origCreateView.apply(this, arguments);
+      var meta = targetMetaByTexture.get(this);
+      if (meta) {
+        meta.targetViewCalls++;
+        meta.lastTargetViewSequence = ++targetViewSequence;
+        targetMetaByView.set(view, meta);
+      }
+      return view;
+    };
+  }
+
+  if (typeof GPUCommandEncoder !== 'undefined' && GPUCommandEncoder.prototype &&
+      GPUCommandEncoder.prototype.beginRenderPass) {
+    var origPass = GPUCommandEncoder.prototype.beginRenderPass;
+    GPUCommandEncoder.prototype.beginRenderPass = function (descriptor) {
+      window.__cubicWGPasses += 1;
+      var passSequence = ++renderPassSequence;
+      var attachments = descriptor && descriptor.colorAttachments;
+      var linkedMeta = null;
+      if (attachments && typeof attachments.length === 'number') {
+        for (var i = 0; i < attachments.length; i++) {
+          var attachment = attachments[i];
+          if (!attachment) continue;
+          var meta = targetMetaByView.get(attachment.view) ||
+            targetMetaByView.get(attachment.resolveTarget);
+          if (!meta) continue;
+          if (linkedMeta && linkedMeta !== meta) {
+            failClosed('one render pass linked multiple private targets');
+          }
+          linkedMeta = meta;
+        }
+      }
+      if (linkedMeta) {
+        if (!linkedMeta.returnedToProduct || linkedMeta.lastGetCurrentTextureSequence <= 0) {
+          failClosed('private target render pass was not returned through getCurrentTexture');
+        }
+        var existing = encoderLinks.get(this);
+        if (existing && existing.meta !== linkedMeta) {
+          failClosed('one command encoder linked multiple private targets');
+        }
+        linkedMeta.linkedRenderPasses++;
+        encoderLinks.set(this, {
+          meta: linkedMeta,
+          getCurrentTextureSequence: linkedMeta.lastGetCurrentTextureSequence,
+          targetViewSequence: linkedMeta.lastTargetViewSequence,
+          renderPassSequence: passSequence,
+        });
+      }
+      return origPass.apply(this, arguments);
+    };
+    if (GPUCommandEncoder.prototype.finish) {
+      var origFinish = GPUCommandEncoder.prototype.finish;
+      GPUCommandEncoder.prototype.finish = function () {
+        var commandBuffer = origFinish.apply(this, arguments);
+        var link = encoderLinks.get(this);
+        if (link) {
+          link.meta.linkedCommandBuffers++;
+          commandBufferLinks.set(commandBuffer, {
+            meta: link.meta,
+            getCurrentTextureSequence: link.getCurrentTextureSequence,
+            targetViewSequence: link.targetViewSequence,
+            renderPassSequence: link.renderPassSequence,
+            commandBufferSequence: ++commandBufferSequence,
+          });
+        }
+        return commandBuffer;
+      };
+    }
   }
 
   if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype && GPUQueue.prototype.submit &&
       typeof GPUBufferUsage !== 'undefined' && typeof GPUMapMode !== 'undefined') {
     var origSubmit = GPUQueue.prototype.submit;
-    GPUQueue.prototype.submit = function () {
+    GPUQueue.prototype.submit = function (commandBuffers) {
       readback.submitCalls++;
       window.__cubicWGSubmits += 1;
-      var surface = lastSurface;
-      lastSurface = null;
+      var link = null;
+      if (commandBuffers && typeof commandBuffers.length === 'number') {
+        for (var i = 0; i < commandBuffers.length; i++) {
+          var candidate = commandBufferLinks.get(commandBuffers[i]);
+          if (!candidate) continue;
+          if (link && link.meta !== candidate.meta) {
+            failClosed('one queue submit linked multiple private targets');
+          }
+          link = candidate;
+        }
+      }
+      var surface = link && link.meta;
+      var productQueueMatched = !surface || this === surface.queue;
+      if (surface && !productQueueMatched) {
+        failClosed('private target command buffer reached a different product queue');
+      }
       var suppress = mutation === 'webgpu-no-submit' && !!surface;
+      var submitSequence = 0;
+      if (surface) {
+        submitSequence = ++productSubmitSequence;
+        surface.linkedProductSubmits++;
+      }
       var result;
       if (!suppress) result = origSubmit.apply(this, arguments);
 
@@ -539,8 +915,8 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
       var buffer = null;
       try {
         var device = surface.device;
-        var width = Math.max(1, Number(surface.texture.width) || Number(surface.canvas.width) || 1);
-        var height = Math.max(1, Number(surface.texture.height) || Number(surface.canvas.height) || 1);
+        var width = surface.width;
+        var height = surface.height;
         var bytesPerRow = Math.ceil(width * 4 / 256) * 256;
         buffer = device.createBuffer({ size: bytesPerRow * height,
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
@@ -551,6 +927,8 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
         // Bypass this wrapper: the proof copy is not a product submission and
         // must not make the product submission counter pass.
         origSubmit.call(this, [encoder.finish()]);
+        readback.proofCopySubmitCalls++;
+        var copySequence = ++proofCopySequence;
         var sequence = ++readback.sequence;
         buffer.mapAsync(GPUMapMode.READ).then(function () {
           try {
@@ -566,13 +944,53 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
                 dense[i + 2] = red;
               }
             }
-            var snapshot = { label: pending.label, sequence: sequence, width: width, height: height,
-              format: String(surface.format || ''), pixels: dense,
-              productSubmissionForwarded: !suppress };
-            readback.snapshots[pending.label] = snapshot;
             buffer.unmap();
             buffer.destroy();
-            pending.resolve(readbackSummary(snapshot));
+            if (!globalThis.crypto || !globalThis.crypto.subtle) {
+              throw new Error('Web Crypto SHA-256 unavailable for renderer-target receipt');
+            }
+            globalThis.crypto.subtle.digest('SHA-256', dense).then(function (digest) {
+              try {
+                var bytes = new Uint8Array(digest);
+                var pixelSHA256 = '';
+                for (var j = 0; j < bytes.length; j++) {
+                  pixelSHA256 += bytes[j].toString(16).padStart(2, '0');
+                }
+                var snapshot = { label: pending.label, sequence: sequence,
+                  width: width, height: height,
+                  format: String(surface.format || ''), pixels: dense,
+                  pixelSHA256: pixelSHA256,
+                  renderTargetKind: 'proof-private-gpu-texture',
+                  canvasPresented: false,
+                  contextID: surface.contextID,
+                  deviceID: surface.deviceID,
+                  queueID: surface.queueID,
+                  targetID: surface.targetID,
+                  targetGeneration: surface.targetGeneration,
+                  configureSequence: surface.configureSequence,
+                  getCurrentTextureSequence: link.getCurrentTextureSequence,
+                  targetViewSequence: link.targetViewSequence,
+                  renderPassSequence: link.renderPassSequence,
+                  commandBufferSequence: link.commandBufferSequence,
+                  productSubmitSequence: submitSequence,
+                  proofCopySequence: copySequence,
+                  targetUsage: surface.targetUsage,
+                  alphaMode: surface.alphaMode,
+                  colorSpace: surface.colorSpace,
+                  toneMapping: surface.toneMapping == null
+                    ? null : JSON.parse(JSON.stringify(surface.toneMapping)),
+                  returnedToProduct: surface.returnedToProduct,
+                  productRenderPassLinked: link.renderPassSequence > 0,
+                  productCommandBufferLinked: link.commandBufferSequence > 0,
+                  productQueueMatched: productQueueMatched,
+                  proofCommandKinds: ['copyTextureToBuffer'],
+                  productSubmissionForwarded: !suppress };
+                readback.snapshots[pending.label] = snapshot;
+                pending.resolve(readbackSummary(snapshot));
+              } catch (err) {
+                readbackFailure(pending, err);
+              }
+            }, function (err) { readbackFailure(pending, err); });
           } catch (err) {
             try { buffer.unmap(); } catch (_err) {}
             try { buffer.destroy(); } catch (_err) {}
@@ -593,12 +1011,23 @@ window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
 `;
 
 const CAPS_START_EXPR = '(function(){' +
-  'var c=document.createElement("canvas");var gl2=false;' +
-  'try{gl2=!!c.getContext("webgl2");}catch(e){gl2=false;}' +
+  'var c=document.createElement("canvas");var gl2=false,gl=null,released=false;' +
+  'try{gl=c.getContext("webgl2");gl2=!!gl;' +
+  'var lose=gl&&gl.getExtension("WEBGL_lose_context");' +
+  'if(lose&&typeof lose.loseContext==="function"){lose.loseContext();released=true;}}' +
+  'catch(e){gl2=false;released=false;}' +
+  'var snapshot=function(a){var out={};var i=a&&a.info;' +
+  'if(!i||typeof i!=="object")return out;' +
+  '["vendor","architecture","device","description","subgroupMinSize","subgroupMaxSize"].' +
+  'forEach(function(k){var v=i[k];if(typeof v==="string"&&v)out[k]=v;' +
+  'else if(typeof v==="number"&&Number.isFinite(v))out[k]=v;});return out;};' +
   'var p=(navigator.gpu&&navigator.gpu.requestAdapter)?' +
-  'navigator.gpu.requestAdapter().then(function(a){return {webgl2:gl2,webgpu:!!a};},' +
-  'function(){return {webgl2:gl2,webgpu:false};}):' +
-  'Promise.resolve({webgl2:gl2,webgpu:false,reason:"navigator.gpu unavailable"});' +
+  'navigator.gpu.requestAdapter().then(function(a){return {' +
+  'webgl2:gl2,webglContextReleased:released,webgpu:!!a,adapterInfo:snapshot(a)};},' +
+  'function(){return {webgl2:gl2,webglContextReleased:released,' +
+  'webgpu:false,adapterInfo:{}};}):' +
+  'Promise.resolve({webgl2:gl2,webglContextReleased:released,webgpu:false,adapterInfo:{},' +
+  'reason:"navigator.gpu unavailable"});' +
   'window.__cubicCapsPromise=p;return true;})()';
 
 const CLOCK_EXPR = '(function(){var r=window.__cubicRefs;if(!r||!r.record)return null;' +
@@ -636,6 +1065,14 @@ function attrsExpr(mount) {
     'mounted:m.getAttribute("data-gosx-scene3d-mounted"),' +
     'renderer:m.getAttribute("data-gosx-scene3d-renderer"),' +
     'fallback:m.getAttribute("data-gosx-scene3d-renderer-fallback")};})()';
+}
+
+function webGPUDiagnosticsExpr() {
+  return '(function(){try{' +
+    'var fn=window.__gosx_scene3d_webgpu_diagnostics;' +
+    'if(typeof fn!=="function")return null;' +
+    'return JSON.parse(JSON.stringify(fn()));' +
+    '}catch(e){return {error:String(e&&e.message||e)}}})()';
 }
 
 function poseExpr() {
@@ -776,20 +1213,61 @@ function webGPUCompareExpr(a, b) {
       JSON.stringify(a) + ',' + JSON.stringify(b) + '):null;})()';
 }
 
+function webGPUProofExpr() {
+  return '(function(){var r=window.__cubicWGReadback;' +
+    'return r&&typeof r.receipt==="function"?r.receipt():null;})()';
+}
+
 function assertWebGPUReadback(summary, label) {
   if (!summary || summary.error) {
-    fail(label + ' mapped presentation readback failed: ' +
+    fail(label + ' mapped renderer-target readback failed: ' +
       JSON.stringify(summary && summary.error || summary));
     return;
   }
   if (summary.width !== W || summary.height !== H || summary.byteLength !== W * H * 4) {
-    fail(label + ' mapped presentation dimensions are wrong: ' + JSON.stringify(summary));
+    fail(label + ' mapped renderer-target dimensions are wrong: ' + JSON.stringify(summary));
+  }
+  if (typeof summary.pixelSHA256 !== 'string' || !/^[a-f0-9]{64}$/.test(summary.pixelSHA256)) {
+    fail(label + ' mapped renderer-target SHA-256 is invalid: ' +
+      JSON.stringify(summary.pixelSHA256));
+  }
+  if (summary.renderTargetKind !== 'proof-private-gpu-texture' ||
+      summary.canvasPresented !== false) {
+    fail(label + ' renderer-target kind/presentation receipt is invalid: ' +
+      JSON.stringify(summary));
+  }
+  for (const field of ['contextID', 'deviceID', 'queueID', 'targetID']) {
+    if (typeof summary[field] !== 'string' || !summary[field]) {
+      fail(label + ' renderer-target ' + field + ' is missing');
+    }
+  }
+  for (const field of ['targetGeneration', 'configureSequence',
+    'getCurrentTextureSequence', 'targetViewSequence', 'renderPassSequence',
+    'commandBufferSequence', 'productSubmitSequence', 'proofCopySequence']) {
+    if (!Number.isInteger(summary[field]) || summary[field] <= 0) {
+      fail(label + ' renderer-target ' + field + ' is invalid: ' + summary[field]);
+    }
+  }
+  if ((summary.targetUsage & 0x01) !== 0x01 || (summary.targetUsage & 0x10) !== 0x10) {
+    fail(label + ' renderer-target usage lacks COPY_SRC|RENDER_ATTACHMENT: ' +
+      summary.targetUsage);
+  }
+  if (summary.returnedToProduct !== true || summary.productRenderPassLinked !== true ||
+      summary.productCommandBufferLinked !== true || summary.productQueueMatched !== true) {
+    fail(label + ' renderer-target product linkage is invalid: ' + JSON.stringify(summary));
+  }
+  if (JSON.stringify(summary.proofCommandKinds) !== JSON.stringify(['copyTextureToBuffer'])) {
+    fail(label + ' proof commands were not copy-only: ' +
+      JSON.stringify(summary.proofCommandKinds));
+  }
+  if (summary.nativeConfigureCalls !== 0 || summary.nativeGetCurrentTextureCalls !== 0) {
+    fail(label + ' native WebGPU canvas calls were observed: ' + JSON.stringify(summary));
   }
   if (summary.productSubmissionForwarded !== true) {
     fail(label + ' product queue submission was not forwarded');
   }
   if (!(summary.foregroundPixels > 20)) {
-    fail(label + ' mapped presentation contains ' + summary.foregroundPixels +
+    fail(label + ' mapped renderer target contains ' + summary.foregroundPixels +
       ' non-background pixels, expected > 20');
   }
 }
@@ -915,6 +1393,9 @@ async function runCase(send, c, sessionId) {
   }
   assertClose(load.verts, fixture.BASE_POSITIONS, '[' + c.name + '] authored vertices at load', 1e-6);
   ev.meshID = load.meshID;
+  if (c.webgpu) {
+    ev.webgpuDiagnostics = await evalSend(send, webGPUDiagnosticsExpr());
+  }
 
   let baseline = null;
   if (c.webgpu) {
@@ -1041,7 +1522,7 @@ async function runCase(send, c, sessionId) {
     restoreReadbackArmed = !!(armAndStop && armAndStop.armed);
     stopDispatched = !!(armAndStop && armAndStop.dispatched);
     if (restoreReadbackArmed !== true) {
-      fail('[' + c.name + '] restored mapped presentation readback could not be armed');
+      fail('[' + c.name + '] restored mapped renderer-target readback could not be armed');
     }
   } else {
     stopDispatched = (await evalSend(send, hubExpr(STOP_DETAIL))) === true;
@@ -1099,6 +1580,23 @@ async function runCase(send, c, sessionId) {
       JSON.stringify(idRestore));
   }
 
+  if (c.webgpu) {
+    ev.webgpuProof = await evalSend(send, webGPUProofExpr());
+    if (!ev.webgpuProof || ev.webgpuProof.proofTarget !== 'private-texture' ||
+        ev.webgpuProof.renderTargetKind !== 'proof-private-gpu-texture' ||
+        ev.webgpuProof.canvasPresented !== false ||
+        ev.webgpuProof.nativeConfigureCalls !== 0 ||
+        ev.webgpuProof.nativeGetCurrentTextureCalls !== 0 ||
+        !Array.isArray(ev.webgpuProof.failures) || ev.webgpuProof.failures.length !== 0) {
+      fail('[' + c.name + '] private renderer-target proof receipt is invalid: ' +
+        JSON.stringify(ev.webgpuProof));
+    }
+    // Give Chrome's stderr pipe a bounded chance to flush all renderer work,
+    // then mark the exact boundary before intentional product/target teardown.
+    await sleep(100);
+    webGPUIntentionalTeardownStderrByte = chromeStderrBytes;
+  }
+
   const disposed = await evalSend(send, disposeExpr(c.engine, c.mount));
   ev.disposed = disposed;
   if (disposed !== true) fail('[' + c.name + '] disposal did not clear engine state');
@@ -1120,15 +1618,84 @@ async function runCase(send, c, sessionId) {
 const CASE_EVIDENCE = [];
 let BASE = '';
 let SELECTED_BROWSER = null;
+let BROWSER_GPU_INFO = null;
+let CAPABILITY_ADAPTER_INFO = null;
+let CAPABILITY_WEBGL_CONTEXT_RELEASED = null;
+let CAPABILITY_STDERR_RANGE = null;
+const CASE_STDERR_RANGES = [];
 let finished = false;
 let exitCode = 0;
 let reportWriteFailed = false;
+
+function countDiagnostic(content, needle) {
+  let count = 0;
+  let offset = 0;
+  for (;;) {
+    const found = content.indexOf(needle, offset);
+    if (found < 0) return count;
+    count += 1;
+    offset = found + Math.max(1, needle.length);
+  }
+}
+
+function scanChromeDiagnostics() {
+  const stderrPath = path.join(ART, 'chrome-stderr.log');
+  try {
+    const raw = fs.readFileSync(stderrPath);
+    const all = raw.toString('utf8').toLowerCase();
+    const boundary = Number.isInteger(webGPUIntentionalTeardownStderrByte)
+      ? Math.max(0, Math.min(raw.length, webGPUIntentionalTeardownStderrByte))
+      : raw.length;
+    const beforeTeardown = raw.subarray(0, boundary).toString('utf8').toLowerCase();
+    const swapFindings = CHROME_SWAP_DIAGNOSTICS.map((needle) => ({
+      needle, count: countDiagnostic(all, needle),
+    })).filter((entry) => entry.count > 0);
+    const preTeardownLifecycleFindings =
+      CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS.map((needle) => ({
+        needle, count: countDiagnostic(beforeTeardown, needle),
+      })).filter((entry) => entry.count > 0);
+    return {
+      scannedBytes: raw.length,
+      webgpuIntentionalTeardownStderrByte: boundary,
+      swapFindings,
+      preTeardownLifecycleFindings,
+      scanError: '',
+    };
+  } catch (error) {
+    return {
+      scannedBytes: null,
+      webgpuIntentionalTeardownStderrByte,
+      swapFindings: [],
+      preTeardownLifecycleFindings: [],
+      scanError: String(error && error.message || error),
+    };
+  }
+}
 
 function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, intentionalNoContent,
     clientEventResponses,
     selectedBrowser: SELECTED_BROWSER,
+    webgpuProofTarget: PROOF_TARGET,
+    renderTargetKind: 'proof-private-gpu-texture',
+    canvasPresented: false,
+    chromeLaunch: {
+      browserMode: 'headless',
+      display: null,
+      waylandDisplay: null,
+      windowFlags: CHROME_WINDOW_FLAGS.slice(),
+      gpuFlags: CHROME_GPU_FLAGS.slice(),
+      stderrFile: 'chrome-stderr.log',
+      stderrBytes: chromeStderrBytes,
+      stderrWriteError: chromeStderrWriteError,
+    },
+    chromeDiagnostics: chromeDiagnostics || scanChromeDiagnostics(),
+    browserGPU: BROWSER_GPU_INFO,
+    capabilityAdapterInfo: CAPABILITY_ADAPTER_INFO,
+    capabilityWebGLContextReleased: CAPABILITY_WEBGL_CONTEXT_RELEASED,
+    capabilityStderrRange: CAPABILITY_STDERR_RANGE,
+    caseStderrRanges: CASE_STDERR_RANGES,
     nativeCaps: global.__caps || null, mutation: MUTATION || null,
     restoreAtomicGapMS: RESTORE_ATOMIC_GAP_MS, cases: CASE_EVIDENCE,
   }, extra || {});
@@ -1149,9 +1716,18 @@ function cleanup() {
     listeners.length = 0;
     try { if (ws) ws.close(); } catch (e) {}
     if (chrome) {
-      const exited = new Promise((res) => chrome.once('exit', res));
-      try { chrome.kill('SIGKILL'); } catch (e) {}
-      await Promise.race([exited, sleep(5000)]);
+      if (!chromeClosed) {
+        const closed = new Promise((res) => chrome.once('close', res));
+        try { chrome.kill('SIGKILL'); } catch (e) {}
+        await Promise.race([closed, sleep(5000)]);
+      }
+    }
+    if (chromeStderrFD !== null) {
+      try { fs.closeSync(chromeStderrFD); }
+      catch (e) {
+        if (!chromeStderrWriteError) chromeStderrWriteError = e.message;
+      }
+      chromeStderrFD = null;
     }
     if (profile) {
       let cleanupError = null;
@@ -1198,22 +1774,48 @@ const watchdog = setTimeout(() => {
   profile = fs.mkdtempSync(path.join(os.tmpdir(), 'gosx-cubic-probe-'));
   const chromeBin = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
   if (!fs.existsSync(chromeBin)) throw new Error('chrome binary not found: ' + chromeBin);
+  chromeStderrFD = fs.openSync(path.join(ART, 'chrome-stderr.log'), 'w');
   chrome = spawn(chromeBin, [
-    '--headless=new', '--no-sandbox', '--use-gl=angle', '--use-angle=gl-egl',
-    '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader', '--enable-unsafe-webgpu',
+    ...CHROME_WINDOW_FLAGS, '--no-sandbox', ...CHROME_GPU_FLAGS,
     '--disable-dev-shm-usage', '--user-data-dir=' + profile,
     '--remote-debugging-port=0', 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  chrome.once('close', () => { chromeClosed = true; });
 
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
+    let settled = false;
     const t = setTimeout(() => reject(new Error('no DevTools ws URL')), 20000);
-    const onExit = () => { clearTimeout(t); reject(new Error('chrome exited early: ' + buf)); };
-    const onErr = (e) => { clearTimeout(t); reject(new Error('chrome spawn error: ' + e.message)); };
+    const onExit = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(t);
+      reject(new Error('chrome exited early: ' + buf));
+    };
+    const onErr = (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(t);
+      reject(new Error('chrome spawn error: ' + e.message));
+    };
     chrome.stderr.on('data', (d) => {
-      buf += d.toString();
+      const chunk = Buffer.isBuffer(d) ? d : Buffer.from(d);
+      if (chromeStderrFD !== null) {
+        try {
+          fs.writeSync(chromeStderrFD, chunk);
+          chromeStderrBytes += chunk.length;
+        } catch (e) {
+          if (!chromeStderrWriteError) {
+            chromeStderrWriteError = e.message;
+            fail('Chrome stderr artifact write failed: ' + e.message);
+          }
+        }
+      }
+      if (settled) return;
+      buf += chunk.toString();
       const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+/);
       if (m) {
+        settled = true;
         clearTimeout(t);
         chrome.removeListener('exit', onExit);
         chrome.removeListener('error', onErr);
@@ -1241,11 +1843,14 @@ const watchdog = setTimeout(() => {
   console.log('selected browser: ' + SELECTED_BROWSER.product +
     ' (protocol ' + SELECTED_BROWSER.protocolVersion + ', revision ' +
     SELECTED_BROWSER.revision + ')');
+  const systemInfo = await cdpSend('SystemInfo.getInfo', null, null, STEP_MS);
+  BROWSER_GPU_INFO = systemInfo && systemInfo.gpu || null;
 
   // Native capability gate on a real served loopback origin: BOTH WebGL2 and
   // WebGPU are required. No fallback, no skips. This target is deliberately
   // separate from the proof targets: closing its throwaway WebGL context and
   // adapter must not contaminate either renderer case's diagnostics.
+  const capabilityStderrStart = chromeStderrBytes;
   const { targetId: capsTargetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
   const { sessionId: capsSessionId } = await cdpSend('Target.attachToTarget', {
     targetId: capsTargetId, flatten: true,
@@ -1258,15 +1863,28 @@ const watchdog = setTimeout(() => {
   await capsSend('Page.navigate', { url: BASE + '/' });
   await capsLoad;
   await evalSend(capsSend, CAPS_START_EXPR);
-  const caps = await evalSend(capsSend, 'window.__cubicCapsPromise', { awaitPromise: true });
+  const capsReceipt = await evalSend(capsSend, 'window.__cubicCapsPromise', { awaitPromise: true });
+  const caps = capsReceipt && {
+    webgl2: capsReceipt.webgl2 === true,
+    webgpu: capsReceipt.webgpu === true,
+  };
   global.__caps = caps;
+  CAPABILITY_ADAPTER_INFO = capsReceipt && capsReceipt.adapterInfo || {};
+  CAPABILITY_WEBGL_CONTEXT_RELEASED =
+    !!(capsReceipt && capsReceipt.webglContextReleased === true);
   if (!caps || caps.webgl2 !== true || caps.webgpu !== true) {
     throw new Error('native WebGL2 and WebGPU are both required; got ' + JSON.stringify(caps));
   }
   await cdpSend('Target.closeTarget', { targetId: capsTargetId }, null, STEP_MS);
+  await sleep(100);
+  CAPABILITY_STDERR_RANGE = {
+    startByte: capabilityStderrStart,
+    afterTargetCloseByte: chromeStderrBytes,
+  };
 
   for (let i = 0; i < CASES.length; i += 1) {
     const c = CASES[i];
+    const caseStderrStart = chromeStderrBytes;
     const { targetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await cdpSend('Target.attachToTarget', { targetId, flatten: true });
     const send = (method, params, to) => cdpSend(method, params, sessionId, to || STEP_MS);
@@ -1279,6 +1897,12 @@ const watchdog = setTimeout(() => {
       activeSessionId = sessionId;
       CASE_EVIDENCE.push(await runCase(send, c, sessionId));
     } finally {
+      await sleep(100);
+      CASE_STDERR_RANGES.push({
+        name: c.name,
+        startByte: caseStderrStart,
+        beforeTargetCloseByte: chromeStderrBytes,
+      });
       // Stop accepting diagnostics before intentional target destruction.
       // In particular, Chromium 154 destroys SwiftShader devices here and
       // reports that expected lifecycle event as a console warning.
@@ -1299,6 +1923,18 @@ const watchdog = setTimeout(() => {
     clearTimeout(watchdog);
   }
   await cleanup();
+  chromeDiagnostics = scanChromeDiagnostics();
+  if (chromeDiagnostics.scanError) {
+    fail('Chrome stderr diagnostic scan failed: ' + chromeDiagnostics.scanError);
+  }
+  if (chromeDiagnostics.swapFindings.length > 0) {
+    fail('Chrome stderr contains forbidden swap/SharedImage diagnostics: ' +
+      JSON.stringify(chromeDiagnostics.swapFindings));
+  }
+  if (chromeDiagnostics.preTeardownLifecycleFindings.length > 0) {
+    fail('Chrome stderr contains pre-teardown WebGPU lifecycle diagnostics: ' +
+      JSON.stringify(chromeDiagnostics.preTeardownLifecycleFindings));
+  }
   writeReport({});
   exitCode = (errors.length || warnings.length || notFound.length || unexpectedRequests.length ||
     networkFailures.length || reportWriteFailed) ? 1 : 0;

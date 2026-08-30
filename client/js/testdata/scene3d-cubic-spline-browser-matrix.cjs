@@ -1,8 +1,8 @@
 'use strict';
-/* Bounded, causal four-mode verifier for the native Scene3D CUBICSPLINE
- * browser proof. One selected Chrome binary runs every mode:
+/* Bounded, causal four-mode verifier for the Scene3D CUBICSPLINE browser
+ * renderer proof. One selected Chrome binary runs every mode:
  *
- *   positive      native WebGL2 + WebGPU presentation proof
+ *   positive      native WebGL2 canvas + WebGPU private-target renderer proof
  *   gap100        the same proof with a 100ms atomic restore scheduler gap
  *   no-draw       WebGPU draw suppression must fail only the pixel oracle
  *   no-submit     WebGPU submit suppression must fail forwarding + pixels
@@ -41,6 +41,29 @@ const IDENTITY_SELF_CHECK_ENV = 'GOSX_SCENE3D_CUBIC_IDENTITY_SELF_CHECK_ONLY';
 const IDENTITY_SELF_CHECK_ONLY = process.env[IDENTITY_SELF_CHECK_ENV] || '';
 const MODE_TIMEOUT_MS = 115000;
 const MATRIX_REPORT = path.join(ART, 'matrix-report.json');
+const EXPECTED_PROOF_TARGET = 'private-texture';
+const EXPECTED_CHROME_GPU_FLAGS = [
+  '--ignore-gpu-blocklist',
+  '--enable-unsafe-swiftshader',
+  '--enable-unsafe-webgpu',
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--use-webgpu-adapter=swiftshader',
+  '--use-gpu-in-tests',
+];
+const EXPECTED_CHROME_WINDOW_FLAGS = ['--headless=new'];
+const CHROME_SWAP_DIAGNOSTICS = [
+  'webgpuswapchaintexture',
+  'sharedimagebackingfactory',
+  'unable to create shared image',
+  'non-existent mailbox',
+];
+const CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS = [
+  'external instance',
+  'device was destroyed',
+  'device has been lost',
+  'gpu device lost',
+];
 
 if (IDENTITY_SELF_CHECK_ONLY && IDENTITY_SELF_CHECK_ONLY !== 'wrong-product-same-version') {
   console.error('unsupported ' + IDENTITY_SELF_CHECK_ENV + ': ' + IDENTITY_SELF_CHECK_ONLY);
@@ -56,24 +79,78 @@ const MODES = [
 
 const NEGATIVE_ERRORS = {
   'no-draw': [
-    '[wg] baseline mapped presentation contains 0 non-background pixels, expected > 20',
-    '[wg] playing mapped presentation contains 0 non-background pixels, expected > 20',
+    '[wg] baseline mapped renderer target contains 0 non-background pixels, expected > 20',
+    '[wg] playing mapped renderer target contains 0 non-background pixels, expected > 20',
     '[wg] playing frame changed 0 pixels, expected > 20',
-    '[wg] restored mapped presentation contains 0 non-background pixels, expected > 20',
+    '[wg] restored mapped renderer target contains 0 non-background pixels, expected > 20',
   ],
   'no-submit': [
     '[wg] baseline product queue submission was not forwarded',
-    '[wg] baseline mapped presentation contains 0 non-background pixels, expected > 20',
+    '[wg] baseline mapped renderer target contains 0 non-background pixels, expected > 20',
     '[wg] playing product queue submission was not forwarded',
-    '[wg] playing mapped presentation contains 0 non-background pixels, expected > 20',
+    '[wg] playing mapped renderer target contains 0 non-background pixels, expected > 20',
     '[wg] playing frame changed 0 pixels, expected > 20',
     '[wg] restored product queue submission was not forwarded',
-    '[wg] restored mapped presentation contains 0 non-background pixels, expected > 20',
+    '[wg] restored mapped renderer target contains 0 non-background pixels, expected > 20',
   ],
 };
 
 function digestFile(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function verifyHostedClaimSources() {
+  const files = {
+    harness: HARNESS,
+    matrix: __filename,
+    workflow: path.join(REPO, '.github', 'workflows', 'ci.yml'),
+    corpus: path.join(REPO, 'scene', 'harness', 'testdata', 'v1-corpus.json'),
+    readme: path.join(REPO, 'README.md'),
+    support: path.join(REPO, 'docs', 'scene3d-v1-support.md'),
+  };
+  const source = Object.fromEntries(Object.entries(files).map(([name, file]) =>
+    [name, fs.readFileSync(file, 'utf8')]));
+  // The verifier itself names the rejected phrases below, so evaluate only
+  // the hosted evidence sources those assertions govern.
+  const combinedProofSources = [source.harness, source.workflow, source.corpus,
+    source.readme, source.support]
+    .join('\n');
+  const forbidden = [
+    'scene3d-v1-browser-proof',
+    'Run Scene3D CUBICSPLINE browser proof',
+    'mapped presentation',
+    'COPY_SRC presentation texture',
+    'WebGPU presentation proof',
+    'native WebGL2 + WebGPU presentation proof',
+  ];
+  const found = forbidden.filter((phrase) => combinedProofSources.includes(phrase));
+  if (found.length > 0) {
+    throw new Error('hosted claim sources retain forbidden presentation wording: ' +
+      JSON.stringify(found));
+  }
+  if (/canvasPresented\s*:\s*true/.test(combinedProofSources)) {
+    throw new Error('private-target proof sources must not claim canvasPresented:true');
+  }
+  for (const required of [
+    'scene3d-v1-browser-renderer-proof',
+    'Run Scene3D CUBICSPLINE browser renderer proof',
+    'GOSX_SCENE3D_CUBIC_WEBGPU_TARGET: private-texture',
+    'proof-private-gpu-texture',
+    'canvasPresented: false',
+    'proof-private GPU target',
+    'Actual WebGPU canvas presentation remains part of the release-pinned hardware',
+  ]) {
+    if (!combinedProofSources.includes(required)) {
+      throw new Error('hosted claim source marker missing: ' + required);
+    }
+  }
+  return {
+    verified: true,
+    forbiddenPhrasesAbsent: forbidden,
+    canvasPresentedTrueAbsent: true,
+    fileSHA256: Object.fromEntries(Object.entries(files).map(([name, file]) =>
+      [name, digestFile(file)])),
+  };
 }
 
 const FOUR_PART_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
@@ -127,6 +204,7 @@ const receipt = {
   startedAt: new Date().toISOString(),
   nodeVersion: process.version,
   selectedBrowser: null,
+  webgpuProofTarget: EXPECTED_PROOF_TARGET,
   modeTimeoutMS: MODE_TIMEOUT_MS,
   modes: [],
   errors: [],
@@ -143,6 +221,41 @@ function check(failures, condition, message) {
 function exact(failures, actual, expected, label) {
   check(failures, util.isDeepStrictEqual(actual, expected), label + ': got ' +
     JSON.stringify(actual) + ', want ' + JSON.stringify(expected));
+}
+
+function containsSwiftShader(value) {
+  try { return JSON.stringify(value).toLowerCase().includes('swiftshader'); }
+  catch (_error) { return false; }
+}
+
+function countDiagnostic(content, needle) {
+  let count = 0;
+  let offset = 0;
+  for (;;) {
+    const found = content.indexOf(needle, offset);
+    if (found < 0) return count;
+    count += 1;
+    offset = found + Math.max(1, needle.length);
+  }
+}
+
+function scanChromeDiagnostics(raw, boundary) {
+  const all = raw.toString('utf8').toLowerCase();
+  const bounded = Number.isInteger(boundary)
+    ? Math.max(0, Math.min(raw.length, boundary)) : raw.length;
+  const beforeTeardown = raw.subarray(0, bounded).toString('utf8').toLowerCase();
+  return {
+    scannedBytes: raw.length,
+    webgpuIntentionalTeardownStderrByte: bounded,
+    swapFindings: CHROME_SWAP_DIAGNOSTICS.map((needle) => ({
+      needle, count: countDiagnostic(all, needle),
+    })).filter((entry) => entry.count > 0),
+    preTeardownLifecycleFindings:
+      CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS.map((needle) => ({
+        needle, count: countDiagnostic(beforeTeardown, needle),
+      })).filter((entry) => entry.count > 0),
+    scanError: '',
+  };
 }
 
 function checkCDPBrowserIdentity(failures, value, browser, label) {
@@ -166,6 +279,18 @@ function browserIdentitySelfCheck(browser) {
       JSON.stringify(cdpFailures));
   }
 
+  const wrongVersionCDPProduct = 'Chrome/0.0.0.0';
+  const wrongVersionFailures = [];
+  checkCDPBrowserIdentity(wrongVersionFailures, {
+    product: wrongVersionCDPProduct, protocolVersion: '1.3',
+    revision: '@adversarial-version-mutation',
+  }, browser, 'wrongVersionCDP');
+  if (wrongVersionFailures.length !== 1 ||
+      !wrongVersionFailures[0].includes('wrongVersionCDP.product')) {
+    throw new Error('wrong CDP version was not rejected exactly: ' +
+      JSON.stringify(wrongVersionFailures));
+  }
+
   const wrongCLIInvocation = 'Chromium ' + browser.expectedVersion;
   let wrongCLIError = '';
   try { parseChromeCLI(wrongCLIInvocation); }
@@ -178,6 +303,9 @@ function browserIdentitySelfCheck(browser) {
     wrongCDPProduct,
     wrongCDPRejected: true,
     wrongCDPFailures: cdpFailures,
+    wrongVersionCDPProduct,
+    wrongVersionRejected: true,
+    wrongVersionFailures,
     wrongCLIInvocation,
     wrongCLIRejected: true,
     wrongCLIError,
@@ -318,6 +446,27 @@ function checkGL(failures, value) {
 function checkWG(failures, value, mode) {
   checkCommonCase(failures, value, 'wg');
   if (!value) return;
+  const diagnostics = value.webgpuDiagnostics;
+  check(failures, diagnostics && typeof diagnostics === 'object',
+    'wg.webgpuDiagnostics: missing');
+  if (diagnostics && typeof diagnostics === 'object') {
+    exact(failures, diagnostics.ready, true, 'wg.webgpuDiagnostics.ready');
+    exact(failures, diagnostics.adapterAvailable, true,
+      'wg.webgpuDiagnostics.adapterAvailable');
+    exact(failures, diagnostics.deviceAvailable, true,
+      'wg.webgpuDiagnostics.deviceAvailable');
+    exact(failures, diagnostics.error, '', 'wg.webgpuDiagnostics.error');
+    exact(failures, diagnostics.lost, null, 'wg.webgpuDiagnostics.lost');
+    check(failures, diagnostics.adapterInfo && typeof diagnostics.adapterInfo === 'object',
+      'wg.webgpuDiagnostics.adapterInfo: missing');
+    check(failures, diagnostics.adapterInfo &&
+      String(diagnostics.adapterInfo.architecture || '').toLowerCase() === 'swiftshader',
+    'wg.webgpuDiagnostics.adapterInfo.architecture is not SwiftShader');
+    check(failures, Array.isArray(diagnostics.deviceFeatures),
+      'wg.webgpuDiagnostics.deviceFeatures: missing');
+    check(failures, diagnostics.deviceLimits && typeof diagnostics.deviceLimits === 'object',
+      'wg.webgpuDiagnostics.deviceLimits: missing');
+  }
   check(failures, value.load && value.load.wgPasses > 0 && value.load.wgSubmits > 0,
     'wg initial render-pass/submission counters are not positive');
   check(failures, value.frozen && value.load &&
@@ -329,8 +478,101 @@ function checkWG(failures, value, mode) {
     value.restored.wgSubmits > value.frozen.wgSubmits,
   'wg legacy render-pass/submission counters did not advance through restore');
 
+  const proof = value.webgpuProof;
+  check(failures, proof && typeof proof === 'object', 'wg.webgpuProof: missing');
+  if (proof && typeof proof === 'object') {
+    exact(failures, proof.proofTarget, EXPECTED_PROOF_TARGET,
+      'wg.webgpuProof.proofTarget');
+    exact(failures, proof.renderTargetKind, 'proof-private-gpu-texture',
+      'wg.webgpuProof.renderTargetKind');
+    exact(failures, proof.canvasPresented, false, 'wg.webgpuProof.canvasPresented');
+    check(failures, Number.isInteger(proof.interceptedConfigureCalls) &&
+      proof.interceptedConfigureCalls > 0,
+    'wg.webgpuProof.interceptedConfigureCalls is not positive');
+    check(failures, Number.isInteger(proof.interceptedGetCurrentTextureCalls) &&
+      proof.interceptedGetCurrentTextureCalls > 0,
+    'wg.webgpuProof.interceptedGetCurrentTextureCalls is not positive');
+    exact(failures, proof.nativeConfigureCalls, 0,
+      'wg.webgpuProof.nativeConfigureCalls');
+    exact(failures, proof.nativeGetCurrentTextureCalls, 0,
+      'wg.webgpuProof.nativeGetCurrentTextureCalls');
+    check(failures, Number.isInteger(proof.productSubmitCalls) && proof.productSubmitCalls > 0,
+      'wg.webgpuProof.productSubmitCalls is not positive');
+    exact(failures, proof.proofCopySubmitCalls, 3,
+      'wg.webgpuProof.proofCopySubmitCalls');
+    check(failures, Number.isInteger(proof.reusedConfigureCalls) &&
+      proof.reusedConfigureCalls >= 0,
+    'wg.webgpuProof.reusedConfigureCalls is invalid');
+    exact(failures, proof.failures, [], 'wg.webgpuProof.failures');
+    exact(failures, proof.capturedLabels,
+      ['wg-baseline', 'wg-playing', 'wg-restored'], 'wg.webgpuProof.capturedLabels');
+    const configuredTargets = Array.isArray(proof.configuredTargets)
+      ? proof.configuredTargets : [];
+    check(failures, configuredTargets.length > 0,
+      'wg.webgpuProof.configuredTargets must not be empty');
+    exact(failures, proof.targetGenerationCount, configuredTargets.length,
+      'wg.webgpuProof.targetGenerationCount');
+    exact(failures, proof.interceptedConfigureCalls,
+      configuredTargets.length + proof.reusedConfigureCalls,
+      'wg.webgpuProof configure/create/reuse count');
+    exact(failures, proof.contextCount,
+      new Set(configuredTargets.map((target) => target && target.contextID)).size,
+      'wg.webgpuProof.contextCount');
+    const returnedTargets = configuredTargets.filter((target) =>
+      target && target.returnedToProduct === true);
+    exact(failures, returnedTargets.length, 1,
+      'wg.webgpuProof returned target count');
+    const target = returnedTargets[0];
+    if (target) {
+      exact(failures, target.renderTargetKind, 'proof-private-gpu-texture',
+        'wg.webgpuProof.configuredTargets[0].renderTargetKind');
+      exact(failures, target.canvasPresented, false,
+        'wg.webgpuProof.configuredTargets[0].canvasPresented');
+      exact(failures, target.width, 320, 'wg.webgpuProof.configuredTargets[0].width');
+      exact(failures, target.height, 180, 'wg.webgpuProof.configuredTargets[0].height');
+      check(failures, Number.isInteger(target.targetUsage) &&
+        (target.targetUsage & 0x01) === 0x01 && (target.targetUsage & 0x10) === 0x10,
+      'wg.webgpuProof.configuredTargets[0].targetUsage lacks COPY_SRC|RENDER_ATTACHMENT');
+      check(failures, Number.isInteger(target.configureCalls) && target.configureCalls > 0,
+        'wg.webgpuProof.configuredTargets[0].configureCalls is not positive');
+      check(failures, Number.isInteger(target.reusedConfigureCalls) &&
+        target.reusedConfigureCalls >= 0 &&
+        target.configureCalls === target.reusedConfigureCalls + 1,
+      'wg.webgpuProof.configuredTargets[0] configure reuse receipt is invalid');
+      check(failures, target.alphaMode === null ||
+        typeof target.alphaMode === 'string',
+      'wg.webgpuProof.configuredTargets[0].alphaMode is invalid');
+      check(failures, target.colorSpace === null ||
+        typeof target.colorSpace === 'string',
+      'wg.webgpuProof.configuredTargets[0].colorSpace is invalid');
+      check(failures, target.toneMapping === null ||
+        target.toneMapping && typeof target.toneMapping === 'object' &&
+        !Array.isArray(target.toneMapping),
+      'wg.webgpuProof.configuredTargets[0].toneMapping is invalid');
+      exact(failures, target.returnedToProduct, true,
+        'wg.webgpuProof.configuredTargets[0].returnedToProduct');
+      for (const field of ['getCurrentTextureCalls', 'targetViewCalls',
+        'linkedRenderPasses', 'linkedCommandBuffers', 'linkedProductSubmits']) {
+        check(failures, Number.isInteger(target[field]) && target[field] > 0,
+          'wg.webgpuProof.configuredTargets[0].' + field + ' is not positive');
+      }
+    }
+    for (const inactive of configuredTargets.filter((candidate) => candidate !== target)) {
+      exact(failures, inactive && inactive.returnedToProduct, false,
+        'wg.webgpuProof inactiveTarget.returnedToProduct');
+      for (const field of ['getCurrentTextureCalls', 'targetViewCalls',
+        'linkedRenderPasses', 'linkedCommandBuffers', 'linkedProductSubmits']) {
+        exact(failures, inactive && inactive[field], 0,
+          'wg.webgpuProof inactiveTarget.' + field);
+      }
+    }
+  }
+
   const negative = mode.name === 'no-draw' || mode.name === 'no-submit';
   const forwarded = mode.name !== 'no-submit';
+  let firstReadback = null;
+  let previousReadback = null;
+  const readbacks = Object.create(null);
   for (const [field, label, sequence] of [
     ['baselineReadback', 'wg-baseline', 1],
     ['playingReadback', 'wg-playing', 2],
@@ -340,11 +582,75 @@ function checkWG(failures, value, mode) {
     check(failures, readback && !readback.error, 'wg.' + field + ' failed: ' +
       JSON.stringify(readback));
     if (!readback) continue;
+    readbacks[field] = readback;
     exact(failures, readback.label, label, 'wg.' + field + '.label');
     exact(failures, readback.sequence, sequence, 'wg.' + field + '.sequence');
     exact(failures, readback.width, 320, 'wg.' + field + '.width');
     exact(failures, readback.height, 180, 'wg.' + field + '.height');
     exact(failures, readback.byteLength, 230400, 'wg.' + field + '.byteLength');
+    check(failures, typeof readback.pixelSHA256 === 'string' &&
+      /^[a-f0-9]{64}$/.test(readback.pixelSHA256),
+    'wg.' + field + '.pixelSHA256 is invalid');
+    exact(failures, readback.renderTargetKind, 'proof-private-gpu-texture',
+      'wg.' + field + '.renderTargetKind');
+    exact(failures, readback.canvasPresented, false,
+      'wg.' + field + '.canvasPresented');
+    for (const id of ['contextID', 'deviceID', 'queueID', 'targetID']) {
+      check(failures, typeof readback[id] === 'string' && readback[id] !== '',
+        'wg.' + field + '.' + id + ' is missing');
+    }
+    for (const linked of ['returnedToProduct', 'productRenderPassLinked',
+      'productCommandBufferLinked', 'productQueueMatched']) {
+      exact(failures, readback[linked], true, 'wg.' + field + '.' + linked);
+    }
+    exact(failures, readback.proofCommandKinds, ['copyTextureToBuffer'],
+      'wg.' + field + '.proofCommandKinds');
+    exact(failures, readback.nativeConfigureCalls, 0,
+      'wg.' + field + '.nativeConfigureCalls');
+    exact(failures, readback.nativeGetCurrentTextureCalls, 0,
+      'wg.' + field + '.nativeGetCurrentTextureCalls');
+    check(failures, Number.isInteger(readback.interceptedConfigureCalls) &&
+      readback.interceptedConfigureCalls > 0,
+    'wg.' + field + '.interceptedConfigureCalls is not positive');
+    check(failures, Number.isInteger(readback.interceptedGetCurrentTextureCalls) &&
+      readback.interceptedGetCurrentTextureCalls > 0,
+    'wg.' + field + '.interceptedGetCurrentTextureCalls is not positive');
+    exact(failures, readback.proofCopySequence, sequence,
+      'wg.' + field + '.proofCopySequence');
+    check(failures, Number.isInteger(readback.targetUsage) &&
+      (readback.targetUsage & 0x01) === 0x01 && (readback.targetUsage & 0x10) === 0x10,
+    'wg.' + field + '.targetUsage lacks COPY_SRC|RENDER_ATTACHMENT');
+    if (!firstReadback) {
+      firstReadback = readback;
+      const targets = proof && Array.isArray(proof.configuredTargets)
+        ? proof.configuredTargets : [];
+      const target = targets.find((candidate) =>
+        candidate && candidate.returnedToProduct === true);
+      if (target) {
+        for (const same of ['contextID', 'deviceID', 'queueID', 'targetID',
+          'targetGeneration', 'configureSequence', 'format', 'targetUsage',
+          'alphaMode', 'colorSpace', 'toneMapping']) {
+          exact(failures, readback[same], target[same],
+            'wg.' + field + '.configuredTarget.' + same);
+        }
+      }
+    } else {
+      for (const same of ['contextID', 'deviceID', 'queueID', 'targetID',
+        'targetGeneration', 'configureSequence', 'format', 'targetUsage',
+        'alphaMode', 'colorSpace', 'toneMapping']) {
+        exact(failures, readback[same], firstReadback[same],
+          'wg.' + field + '.' + same);
+      }
+    }
+    if (previousReadback) {
+      for (const increasing of ['getCurrentTextureSequence', 'targetViewSequence',
+        'renderPassSequence', 'commandBufferSequence', 'productSubmitSequence']) {
+        check(failures, Number.isInteger(readback[increasing]) &&
+          readback[increasing] > previousReadback[increasing],
+        'wg.' + field + '.' + increasing + ' did not strictly increase');
+      }
+    }
+    previousReadback = readback;
     exact(failures, readback.productSubmissionForwarded, forwarded,
       'wg.' + field + '.productSubmissionForwarded');
     if (negative) {
@@ -353,6 +659,21 @@ function checkWG(failures, value, mode) {
     } else {
       check(failures, readback.foregroundPixels > 20,
         'wg.' + field + '.foregroundPixels is not > 20: ' + readback.foregroundPixels);
+    }
+  }
+  if (readbacks.baselineReadback && readbacks.playingReadback &&
+      readbacks.restoredReadback) {
+    exact(failures, readbacks.restoredReadback.pixelSHA256,
+      readbacks.baselineReadback.pixelSHA256,
+      'wg.restoredReadback.pixelSHA256 exact baseline restore');
+    if (negative) {
+      exact(failures, readbacks.playingReadback.pixelSHA256,
+        readbacks.baselineReadback.pixelSHA256,
+        'wg mutation playing pixel SHA-256');
+    } else {
+      check(failures, readbacks.playingReadback.pixelSHA256 !==
+        readbacks.baselineReadback.pixelSHA256,
+      'wg positive playing pixel SHA-256 did not change');
     }
   }
   if (negative) {
@@ -370,7 +691,14 @@ function checkWG(failures, value, mode) {
 function checkTopLevel(failures, report, mode, browser) {
   exact(failures, report.mutation, mode.mutation || null, 'report.mutation');
   exact(failures, report.restoreAtomicGapMS, mode.gapMS, 'report.restoreAtomicGapMS');
+  exact(failures, report.webgpuProofTarget, EXPECTED_PROOF_TARGET,
+    'report.webgpuProofTarget');
+  exact(failures, report.renderTargetKind, 'proof-private-gpu-texture',
+    'report.renderTargetKind');
+  exact(failures, report.canvasPresented, false, 'report.canvasPresented');
   exact(failures, report.nativeCaps, { webgl2: true, webgpu: true }, 'report.nativeCaps');
+  exact(failures, report.capabilityWebGLContextReleased, true,
+    'report.capabilityWebGLContextReleased');
   exact(failures, report.warnings, [], 'report.warnings');
   exact(failures, report.notFound, [], 'report.notFound');
   exact(failures, report.unexpectedRequests, [], 'report.unexpectedRequests');
@@ -387,6 +715,83 @@ function checkTopLevel(failures, report, mode, browser) {
   ], 'report.intentionalNoContent');
   check(failures, !Object.prototype.hasOwnProperty.call(report, 'fatal'),
     'report unexpectedly contains fatal: ' + JSON.stringify(report.fatal));
+
+  check(failures, report.chromeLaunch && typeof report.chromeLaunch === 'object',
+    'report.chromeLaunch: missing');
+  if (report.chromeLaunch && typeof report.chromeLaunch === 'object') {
+    exact(failures, report.chromeLaunch.browserMode, 'headless',
+      'report.chromeLaunch.browserMode');
+    exact(failures, report.chromeLaunch.windowFlags, EXPECTED_CHROME_WINDOW_FLAGS,
+      'report.chromeLaunch.windowFlags');
+    exact(failures, report.chromeLaunch.waylandDisplay, null,
+      'report.chromeLaunch.waylandDisplay');
+    exact(failures, report.chromeLaunch.display, null, 'report.chromeLaunch.display');
+    exact(failures, report.chromeLaunch.gpuFlags, EXPECTED_CHROME_GPU_FLAGS,
+      'report.chromeLaunch.gpuFlags');
+    exact(failures, report.chromeLaunch.stderrFile, 'chrome-stderr.log',
+      'report.chromeLaunch.stderrFile');
+    check(failures, Number.isInteger(report.chromeLaunch.stderrBytes) &&
+      report.chromeLaunch.stderrBytes >= 0,
+    'report.chromeLaunch.stderrBytes must be non-negative');
+    exact(failures, report.chromeLaunch.stderrWriteError, '',
+      'report.chromeLaunch.stderrWriteError');
+  }
+  check(failures, report.chromeDiagnostics &&
+    typeof report.chromeDiagnostics === 'object', 'report.chromeDiagnostics: missing');
+  if (report.chromeDiagnostics && typeof report.chromeDiagnostics === 'object') {
+    exact(failures, report.chromeDiagnostics.scannedBytes,
+      report.chromeLaunch && report.chromeLaunch.stderrBytes,
+      'report.chromeDiagnostics.scannedBytes');
+    check(failures,
+      Number.isInteger(report.chromeDiagnostics.webgpuIntentionalTeardownStderrByte) &&
+      report.chromeDiagnostics.webgpuIntentionalTeardownStderrByte >= 0 &&
+      report.chromeDiagnostics.webgpuIntentionalTeardownStderrByte <=
+        report.chromeDiagnostics.scannedBytes,
+    'report.chromeDiagnostics.webgpuIntentionalTeardownStderrByte is invalid');
+    exact(failures, report.chromeDiagnostics.swapFindings, [],
+      'report.chromeDiagnostics.swapFindings');
+    exact(failures, report.chromeDiagnostics.preTeardownLifecycleFindings, [],
+      'report.chromeDiagnostics.preTeardownLifecycleFindings');
+    exact(failures, report.chromeDiagnostics.scanError, '',
+      'report.chromeDiagnostics.scanError');
+    const maxByte = report.chromeDiagnostics.scannedBytes;
+    check(failures, report.capabilityStderrRange &&
+      Number.isInteger(report.capabilityStderrRange.startByte) &&
+      Number.isInteger(report.capabilityStderrRange.afterTargetCloseByte) &&
+      report.capabilityStderrRange.startByte >= 0 &&
+      report.capabilityStderrRange.afterTargetCloseByte >=
+        report.capabilityStderrRange.startByte &&
+      report.capabilityStderrRange.afterTargetCloseByte <= maxByte,
+    'report.capabilityStderrRange is invalid');
+    exact(failures, Array.isArray(report.caseStderrRanges) &&
+      report.caseStderrRanges.map((entry) => entry && entry.name),
+    ['gl', 'wg'], 'report.caseStderrRanges names');
+    if (Array.isArray(report.caseStderrRanges)) {
+      for (const [index, entry] of report.caseStderrRanges.entries()) {
+        check(failures, entry && Number.isInteger(entry.startByte) &&
+          Number.isInteger(entry.beforeTargetCloseByte) && entry.startByte >= 0 &&
+          entry.beforeTargetCloseByte >= entry.startByte &&
+          entry.beforeTargetCloseByte <= maxByte,
+        'report.caseStderrRanges[' + index + '] is invalid');
+      }
+    }
+  }
+  check(failures, report.browserGPU && typeof report.browserGPU === 'object',
+    'report.browserGPU: missing');
+  check(failures, report.capabilityAdapterInfo &&
+    typeof report.capabilityAdapterInfo === 'object',
+  'report.capabilityAdapterInfo: missing');
+  exact(failures,
+    String(report.capabilityAdapterInfo &&
+      report.capabilityAdapterInfo.architecture || '').toLowerCase(),
+    'swiftshader', 'report.capabilityAdapterInfo.architecture');
+  check(failures, Array.isArray(report.browserGPU && report.browserGPU.devices) &&
+    report.browserGPU.devices.some((device) => containsSwiftShader(device)),
+  'report.browserGPU.devices do not identify SwiftShader');
+  check(failures, String(report.browserGPU && report.browserGPU.auxAttributes &&
+    report.browserGPU.auxAttributes.glImplementationParts || '')
+    .toLowerCase().includes('angle=swiftshader'),
+  'report.browserGPU ANGLE implementation is not SwiftShader');
 
   checkCDPBrowserIdentity(failures, report.selectedBrowser, browser,
     'report.selectedBrowser');
@@ -436,6 +841,62 @@ function verifyWrongProductReportMutation(browser) {
   };
 }
 
+function verifyWrongVersionReportMutation(browser) {
+  const reportPath = path.join(ART, 'positive', 'report.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const baselineFailures = verifyReport(report, MODES[0], browser);
+  if (baselineFailures.length !== 0) {
+    throw new Error('positive report was not green before version mutation: ' +
+      JSON.stringify(baselineFailures));
+  }
+  const mutated = JSON.parse(JSON.stringify(report));
+  const wrongVersion = 'Chrome/0.0.0.0';
+  mutated.selectedBrowser.product = wrongVersion;
+  const mutationFailures = verifyReport(mutated, MODES[0], browser);
+  if (mutationFailures.length !== 1 ||
+      !mutationFailures[0].includes('report.selectedBrowser.product')) {
+    throw new Error('wrong-version report mutation was not rejected exactly: ' +
+      JSON.stringify(mutationFailures));
+  }
+  return {
+    mutation: 'wrong-browser-version',
+    sourceReport: path.relative(ART, reportPath),
+    sourceReportSHA256: digestFile(reportPath),
+    wrongVersion,
+    rejected: true,
+    verificationFailures: mutationFailures,
+  };
+}
+
+function verifyTargetLinkageReportMutation(browser) {
+  const reportPath = path.join(ART, 'positive', 'report.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const baselineFailures = verifyReport(report, MODES[0], browser);
+  if (baselineFailures.length !== 0) {
+    throw new Error('positive report was not green before target-linkage mutation: ' +
+      JSON.stringify(baselineFailures));
+  }
+  const mutated = JSON.parse(JSON.stringify(report));
+  const wg = mutated.cases.find((value) => value && value.name === 'wg');
+  if (!wg || !wg.playingReadback || !Number.isInteger(wg.playingReadback.targetGeneration)) {
+    throw new Error('positive report lacks target generation for linkage mutation');
+  }
+  wg.playingReadback.targetGeneration += 1;
+  const mutationFailures = verifyReport(mutated, MODES[0], browser);
+  if (mutationFailures.length !== 1 ||
+      !mutationFailures[0].includes('wg.playingReadback.targetGeneration')) {
+    throw new Error('wrong target-generation mutation was not rejected exactly: ' +
+      JSON.stringify(mutationFailures));
+  }
+  return {
+    mutation: 'wrong-private-target-generation',
+    sourceReport: path.relative(ART, reportPath),
+    sourceReportSHA256: digestFile(reportPath),
+    rejected: true,
+    verificationFailures: mutationFailures,
+  };
+}
+
 function runMode(mode, browser) {
   return new Promise((resolve) => {
     const modeDir = path.join(ART, mode.name);
@@ -444,9 +905,13 @@ function runMode(mode, browser) {
     const stderrPath = path.join(modeDir, 'stderr.log');
     const stdoutFD = fs.openSync(stdoutPath, 'w');
     const stderrFD = fs.openSync(stderrPath, 'w');
-    const env = Object.assign({}, process.env, { GOSX_CHROME_BIN: CHROME_BIN });
+    const env = Object.assign({}, process.env, {
+      GOSX_CHROME_BIN: CHROME_BIN,
+      GOSX_SCENE3D_CUBIC_WEBGPU_TARGET: EXPECTED_PROOF_TARGET,
+    });
     delete env.GOSX_SCENE3D_CUBIC_MUTATION;
     delete env.GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS;
+    delete env.GOSX_SCENE3D_CUBIC_BROWSER_MODE;
     if (mode.mutation) env.GOSX_SCENE3D_CUBIC_MUTATION = mode.mutation;
     if (mode.gapMS) env.GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS = String(mode.gapMS);
 
@@ -493,6 +958,39 @@ function runMode(mode, browser) {
       if (!fs.existsSync(reportPath)) verificationFailures.push('report.json missing');
       if (parseError) verificationFailures.push('report.json parse failed: ' + parseError.message);
       if (report) verificationFailures.push(...verifyReport(report, mode, browser));
+      const chromeStderrPath = path.join(modeDir, 'chrome-stderr.log');
+      let chromeStderrBytes = null;
+      let chromeStderrSHA256 = null;
+      let chromeDiagnostics = null;
+      if (!fs.existsSync(chromeStderrPath)) {
+        verificationFailures.push('chrome-stderr.log missing');
+      } else {
+        const chromeStderrRaw = fs.readFileSync(chromeStderrPath);
+        chromeStderrBytes = chromeStderrRaw.length;
+        chromeStderrSHA256 = digestFile(chromeStderrPath);
+        if (report && report.chromeLaunch &&
+            report.chromeLaunch.stderrBytes !== chromeStderrBytes) {
+          verificationFailures.push('chrome stderr byte receipt: got ' +
+            report.chromeLaunch.stderrBytes + ', file has ' + chromeStderrBytes);
+        }
+        const boundary = report && report.chromeDiagnostics &&
+          report.chromeDiagnostics.webgpuIntentionalTeardownStderrByte;
+        chromeDiagnostics = scanChromeDiagnostics(chromeStderrRaw, boundary);
+        if (chromeDiagnostics.swapFindings.length > 0) {
+          verificationFailures.push('raw Chrome stderr contains forbidden swap/SharedImage ' +
+            'diagnostics: ' + JSON.stringify(chromeDiagnostics.swapFindings));
+        }
+        if (chromeDiagnostics.preTeardownLifecycleFindings.length > 0) {
+          verificationFailures.push('raw Chrome stderr contains pre-teardown WebGPU lifecycle ' +
+            'diagnostics: ' +
+            JSON.stringify(chromeDiagnostics.preTeardownLifecycleFindings));
+        }
+        if (report && !util.isDeepStrictEqual(report.chromeDiagnostics, chromeDiagnostics)) {
+          verificationFailures.push('raw Chrome stderr diagnostic receipt mismatch: got ' +
+            JSON.stringify(report.chromeDiagnostics) + ', recomputed ' +
+            JSON.stringify(chromeDiagnostics));
+        }
+      }
 
       const entry = {
         name: mode.name,
@@ -506,6 +1004,10 @@ function runMode(mode, browser) {
         durationMS: Date.now() - startedMS,
         reportPath: path.relative(ART, reportPath),
         reportSHA256: fs.existsSync(reportPath) ? digestFile(reportPath) : null,
+        chromeStderrPath: path.relative(ART, chromeStderrPath),
+        chromeStderrBytes,
+        chromeStderrSHA256,
+        chromeDiagnostics,
         cdpBrowser: report && report.selectedBrowser || null,
         verified: verificationFailures.length === 0,
         verificationFailures,
@@ -516,6 +1018,7 @@ function runMode(mode, browser) {
 }
 
 (async () => {
+  receipt.hostedClaimSourceContract = verifyHostedClaimSources();
   receipt.selectedBrowser = selectedBrowser();
   console.log('selected browser binary: ' + receipt.selectedBrowser.realPath);
   console.log('selected browser version: ' + receipt.selectedBrowser.invocation);
@@ -541,15 +1044,19 @@ function runMode(mode, browser) {
   }
   receipt.browserIdentityReportMutation = verifyWrongProductReportMutation(
     receipt.selectedBrowser);
+  receipt.browserVersionReportMutation = verifyWrongVersionReportMutation(
+    receipt.selectedBrowser);
+  receipt.targetLinkageReportMutation = verifyTargetLinkageReportMutation(
+    receipt.selectedBrowser);
   receipt.finishedAt = new Date().toISOString();
   receipt.verified = receipt.errors.length === 0 && receipt.modes.length === MODES.length;
   writeReceipt();
   if (!receipt.verified) {
-    console.error('Scene3D browser-proof matrix failed causal verification');
+    console.error('Scene3D browser-renderer proof matrix failed causal verification');
     for (const error of receipt.errors) console.error('  ' + error);
     process.exit(1);
   }
-  console.log('Scene3D browser-proof matrix verified all four modes');
+  console.log('Scene3D browser-renderer proof matrix verified all four modes');
 })().catch((error) => {
   receipt.finishedAt = new Date().toISOString();
   receipt.verified = false;

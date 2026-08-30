@@ -61,7 +61,7 @@ dashboards, and interactive scenes. Its supported boundary is:
 | `gltf-meshopt-rejection` | enforced | Meshopt input fails closed with a named error. |
 | `gltf-draco-rejection` | enforced | Draco input fails closed with a named error. |
 | `gltf-basis-ktx2-policy` | enforced | Basis import degradation and renderer KTX2 upload are separate browser facts; S4 owns asset-pipe policy. |
-| `gltf-cubic-trs-morph` | enforced | Analytic fixture covers TRS, morph weights, clamps, seeks, and both browser renderers. |
+| `gltf-cubic-trs-morph` | enforced | Analytic fixture covers TRS, morph weights, clamps, seeks, native WebGL2 canvas pixels, and production WebGPU renderer pixels from the exact proof-private target. Actual WebGPU canvas presentation remains part of the release-pinned hardware completion obligation. |
 | `nested-group-scale-pick` | blocked | Add `Group.Scale` through API, IR, browser/native transforms, raycast, and pick. |
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |
 | `desktop-gizmo-commit` | blocked | Add one end-to-end fly/pointer-lock/object-drag/gizmo commit proof. |
