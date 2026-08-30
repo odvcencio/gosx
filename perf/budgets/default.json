@@ -50,9 +50,9 @@
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. Gates load, the reviewed O-series browser-host and runtime payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately. Remote CI (ad17) measured 1653.78KiB network payload; the shadow-budget draw fix grows the WebGL chunk by ~1.05KiB raw, a bounded runtime increase on top of that CI measurement, so the assertion allows 1656KiB.",
+      "description": "Water route under CI software rasterization. Gates load, the reviewed O-series browser-host and runtime payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately. Remote CI (ad17) measured 1653.78KiB network payload; the shadow-budget draw fix grows the WebGL chunk by ~1.05KiB raw, a bounded runtime increase on top of that CI measurement, so the assertion allows 1656KiB. network_kb raised 1656 to 1665 KiB on 2026-08-30: the v0.53.10 runtime (live-bind attribute/class/event modes, region growth modes, cue mute, backoff) measured 1656.37 KiB in CI.",
       "assertions": [
-        "network_kb <= 1656",
+        "network_kb <= 1665",
         "lcp <= 2000",
         "tbt <= 18000"
       ]
