@@ -756,7 +756,7 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
     bootstrapChunkSources("bootstrap-runtime.js").filter((s) => s.includes("10-runtime-scene")),
     ["bootstrap-src/10-runtime-scene-utils.ts"],
   );
-  // The scene3d chunk carries no copy of the utils file. It bridges the ten
+  // The scene3d chunk carries no copy of the utils file. It bridges the
   // names it reads from window.__gosx_runtime_api instead, so the Chromium
   // Scene3D route downloads those helpers once, not twice.
   assert.deepEqual(
@@ -766,24 +766,32 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
   const scene3dPrefix = fs.readFileSync(
     path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.ts"), "utf8",
   );
-  for (const name of [
+  const bridgedNames = [
     "browserCapabilitySupported", "cancelEngineFrame", "engineCapabilityStatus", "engineFrame",
     "gosxApplyCurrentScriptNonce", "loadManifest", "publishPointerSignals", "queueInputSignal",
     "runtimeCapabilityStatus", "sceneNumber",
-  ]) {
+  ];
+  const publishStart = utils.indexOf("Object.assign(window.__gosx_runtime_api");
+  const publishEnd = utils.indexOf("});", publishStart);
+  assert.notEqual(publishStart, -1, "runtime utility publication must use one shared assignment");
+  assert.notEqual(publishEnd, -1, "runtime utility publication block must close");
+  const published = utils.slice(publishStart, publishEnd);
+  for (const name of bridgedNames) {
     assert.match(scene3dPrefix, new RegExp(`var ${name} = runtimeApi\\.${name}`), `${name} must be bridged`);
-    assert.match(utils, new RegExp(`__gosx_runtime_api\\.${name} = ${name};`), `${name} must be published`);
+    assert.match(published, new RegExp(`\\b${name},`), `${name} must be published`);
   }
+  assert.match(scene3dPrefix, /var gosxOwnDataArray = runtimeApi\.ownDataArray/);
+  assert.match(published, /ownDataArray: gosxOwnDataArray/);
   assert.doesNotMatch(core, /function sceneBool\(/);
   assert.doesNotMatch(core, /function clearChildren\(/);
   assert.match(primitives, /function sceneBool\(/);
   assert.match(primitives, /function clearChildren\(/);
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function scenePrimitiveSegmentResolution\(/g) || []).length,
     1,
   );
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function scenePrimitiveSegmentResolution\(/g) || []).length,
     1,
   );
 });

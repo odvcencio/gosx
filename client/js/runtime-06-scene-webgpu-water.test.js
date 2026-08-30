@@ -30,8 +30,8 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
   const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /function ensurePointsUniformGPUBuffer\(owner, uniformData\)/);
-  assert.match(source, /function ensurePointsParticleGPUBuffer\(entry, particleData\)/);
   assert.match(source, /function ensurePointsParticleVertexGPUBuffer\(entry, particleData\)/);
+  assert.doesNotMatch(source, /function ensurePointsParticleGPUBuffer\(/);
   assert.match(source, /sceneCachedBuffer\(owner,\s*typedArray/);
   assert.match(source, /ensurePointsUniformGPUBuffer\(entry,\s*puF\)/);
   assert.match(source, /ensurePointsParticleVertexGPUBuffer\(entry,\s*particleData\)/);
@@ -1248,12 +1248,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /function sceneWaterCameraWorldDirection/);
   assert.match(webgpu, /return sceneWaterNormalizeReflectionDirection\(\{ x: -forward\.x, y: -forward\.y, z: -forward\.z \}\)/);
   assert.match(webgpu, /function sceneWaterMirrorWaterPoint/);
-  assert.match(webgpu, /function sceneWaterReflectionCamera/);
-  assert.match(webgpu, /var forward = sceneWaterReflectionCameraForward\(cam\)/);
-  assert.match(webgpu, /y: -forward\.y/);
-  assert.match(webgpu, /var horizontal = Math\.sqrt/);
-  assert.match(webgpu, /rotationX: -Math\.atan2\(reflectedForward\.y, horizontal\)/);
-  assert.match(webgpu, /rotationY: Math\.atan2\(reflectedForward\.x, reflectedForward\.z\)/);
+  assert.doesNotMatch(webgpu, /function sceneWaterReflectionCamera\(/);
   assert.match(webgpu, /function sceneWaterReflectionCameraUp/);
   assert.match(webgpu, /return \{ x: up\.x, y: -up\.y, z: up\.z \}/);
   assert.match(webgpu, /function sceneWaterLookAtViewMatrix/);

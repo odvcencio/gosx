@@ -14,6 +14,7 @@
   // Bridge runtime utilities that live in the runtime's IIFE scope.
   // These are exported by 00-textlayout.js to window.__gosx_runtime_api.
   var runtimeApi = window.__gosx_runtime_api || {};
+  var gosxOwnDataArray = runtimeApi.ownDataArray;
   var setAttrValue = runtimeApi.setAttrValue || function() {};
   var setStyleValue = runtimeApi.setStyleValue || function() {};
   var gosxSubscribeSharedSignal = runtimeApi.gosxSubscribeSharedSignal || function() { return function() {}; };

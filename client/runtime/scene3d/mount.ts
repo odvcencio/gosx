@@ -41,16 +41,18 @@
     if (!envelope || envelope[0] !== 1 || envelope[1] !== "scene3d" ||
         envelope[2] !== "scene3d.commands" || envelope[3] !== targetID ||
         envelope[4] !== "initial" || !Array.isArray(envelope[5])) scene3DHydrateFail();
-    const commands = envelope[5];
+    const commands = gosxOwnDataArray(envelope[5]);
+    if (!commands) scene3DHydrateFail();
     for (let index = 0; index < commands.length; index += 1) {
       let command = scene3DHydrateShape(commands[index], ["kind", "objectId"]);
       if (!command) command = scene3DHydrateShape(commands[index], ["kind", "objectId", "data"]);
       const kind = command && command[0];
       if (!command || (kind === 1) !== (command.length === 2) ||
-          kind !== (kind | 0) || kind < 0 || kind > 6 ||
+          !Number.isInteger(kind) || kind < 0 || kind > 6 ||
           !Number.isInteger(command[1]) || command[1] < 0) scene3DHydrateFail();
-      if (kind === 1) continue;
       const data = command[2];
+      commands[index] = { kind, objectId: command[1], data };
+      if (kind === 1) continue;
       if (kind === 6) {
         if (!scene3DHydrateRecord(data) && !(Array.isArray(data) && data.every(scene3DHydrateRecord))) {
           scene3DHydrateFail();
@@ -139,6 +141,7 @@
     function scene3DFactoryOwned() {
       return scene3DFactoryCurrent() && mount.__gosxScene3DOwner === sceneMountOwner;
     }
+    sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
     // The manifest is immutable for the lifetime of an engine mount. Parse its
     // large inline shader payload once instead of once per rendered frame.
@@ -3629,5 +3632,6 @@
       mount.setAttribute(sceneAttr("command-ready"), "true");
     }
     scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
+    sceneState._modelOwner = null;
     return handle;
   });

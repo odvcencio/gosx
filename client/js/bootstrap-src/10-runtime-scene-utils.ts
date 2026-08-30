@@ -1212,28 +1212,42 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
+  // Snapshot an array without executing an index accessor, custom iterator,
+  // or coercion hook. The caller validates each copied value separately.
+  function gosxOwnDataArray(value) {
+    const items = Object.getOwnPropertyDescriptors(value);
+    const length = items.length.value;
+    if (Reflect.ownKeys(items).length - 1 !== length) return null;
+    return Array.from({ length }, function(_, index) {
+      const item = items[index];
+      return item && item.enumerable && "value" in item && item.value;
+    });
+  }
 
   // Publish the helpers the lazily fetched Scene3D chunk reads. That chunk
   // runs in its own IIFE and cannot reach this scope, so it used to carry a
   // second copy of this whole file: the Chromium Scene3D route downloaded
-  // these 42_000 source bytes twice. Eight names close the gap.
+  // these 42_000 source bytes twice. This narrow API closes the gap.
   //
   // One copy behaves like the monolith, which has always had one copy: the
   // capability helpers are deterministic, engineFrame wraps
   // requestAnimationFrame, and the input queue keeps its state on
   // window.__gosx.input, which both bundles already shared.
   if (typeof window !== "undefined" && window.__gosx_runtime_api) {
-    window.__gosx_runtime_api.browserCapabilitySupported = browserCapabilitySupported;
     // loadManifest and gosxApplyCurrentScriptNonce reach the Scene3D chunk
     // only through `typeof X === "function"` guards. A guard turns a missing
     // symbol into silent wrong behaviour, not a crash, so publish both.
-    window.__gosx_runtime_api.gosxApplyCurrentScriptNonce = gosxApplyCurrentScriptNonce;
-    window.__gosx_runtime_api.loadManifest = loadManifest;
-    window.__gosx_runtime_api.cancelEngineFrame = cancelEngineFrame;
-    window.__gosx_runtime_api.engineCapabilityStatus = engineCapabilityStatus;
-    window.__gosx_runtime_api.engineFrame = engineFrame;
-    window.__gosx_runtime_api.publishPointerSignals = publishPointerSignals;
-    window.__gosx_runtime_api.queueInputSignal = queueInputSignal;
-    window.__gosx_runtime_api.runtimeCapabilityStatus = runtimeCapabilityStatus;
-    window.__gosx_runtime_api.sceneNumber = sceneNumber;
+    Object.assign(window.__gosx_runtime_api, {
+      browserCapabilitySupported,
+      gosxApplyCurrentScriptNonce,
+      loadManifest,
+      cancelEngineFrame,
+      engineCapabilityStatus,
+      engineFrame,
+      publishPointerSignals,
+      queueInputSignal,
+      runtimeCapabilityStatus,
+      sceneNumber,
+      ownDataArray: gosxOwnDataArray,
+    });
   }

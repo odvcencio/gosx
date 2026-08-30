@@ -229,6 +229,43 @@ test("Scene3D hydrate rejects a custom prototype forged with Object constructor"
 });
 
 const nestedAccessorEnvelopes = [
+  ["command array index", () => {
+    let getterReads = 0;
+    const commands = [];
+    Object.defineProperty(commands, "0", {
+      get() {
+        getterReads += 1;
+        return createCommand(1);
+      },
+      enumerable: true,
+    });
+    return { value: createEnvelope(commands), getterReads: () => getterReads };
+  }],
+  ["command array custom iterator", () => {
+    let iteratorCalls = 0;
+    const commands = [createCommand(1)];
+    Object.defineProperty(commands, Symbol.iterator, {
+      value: function* () {
+        iteratorCalls += 1;
+        yield { kind: 7, objectId: 1, data: {} };
+      },
+    });
+    return { value: createEnvelope(commands), getterReads: () => iteratorCalls };
+  }],
+  ["coercible command kind", () => {
+    let getterReads = 0;
+    const kind = {};
+    Object.defineProperty(kind, Symbol.toPrimitive, {
+      get() {
+        getterReads += 1;
+        return () => 0;
+      },
+    });
+    return {
+      value: createEnvelope([{ kind, objectId: 1, data: createCommand(1).data }]),
+      getterReads: () => getterReads,
+    };
+  }],
   ["prototype constructor", () => {
     let getterReads = 0;
     const prototype = Object.create(null);
@@ -341,7 +378,7 @@ test("Scene3D hydrate accepts a genuine cross-realm JSON envelope", async () => 
   env.context.__gosx_dispose_engine(targetID);
 });
 
-test("Scene3D hydrate applies a valid envelope exactly once before publication", async () => {
+test("Scene3D hydrate applies a descriptor snapshot without consuming the original iterable", async () => {
   let iteratorReads = 0;
   let publishedDuringApply = false;
   let env;
@@ -366,7 +403,7 @@ test("Scene3D hydrate applies a valid envelope exactly once before publication",
     "published Scene3D handle",
   );
 
-  assert.equal(iteratorReads, 1);
+  assert.equal(iteratorReads, 0);
   assert.equal(publishedDuringApply, false);
   assert.equal(env.hydrateCalls.length, 1);
   assert.equal(env.engineHydrateCalls.length, 0);
@@ -551,6 +588,86 @@ test("a stale post-owner model settlement preserves winner debug and inspector o
       route.resolve(modelAssetResponse("mesh"));
       await flushAsyncWork();
     }
+    if (env.context.__gosx.engines.has(targetID)) env.context.__gosx_dispose_engine(targetID);
+  }
+});
+
+test("a reverse-order stale model settlement cannot publish over the same-id winner", async () => {
+  const oldURL = "/models/deferred-old-owner.gosx3d.json";
+  const winnerURL = "/models/deferred-winner-owner.gosx3d.json";
+  const oldRoute = createDeferredRoute();
+  const winnerRoute = createDeferredRoute();
+  const assetEvents = [];
+  const hydrationEvents = [];
+  let hydrateCount = 0;
+  const { env, mount } = createSceneEnvironment(() => createEnvelope([
+    createCommand(++hydrateCount === 1 ? 11 : 22),
+  ]), {
+    props: {
+      scene: {
+        objects: [],
+        models: [{ id: "old-owner", src: oldURL }],
+      },
+    },
+    fetchRoutes: {
+      [oldURL]: () => oldRoute.promise,
+      [winnerURL]: () => winnerRoute.promise,
+    },
+  });
+  mount.addEventListener("gosx:scene3d:model-status", (event) => assetEvents.push(event.detail));
+  mount.addEventListener("gosx:scene3d:model-hydration-status", (event) => hydrationEvents.push(event.detail));
+
+  let oldResolved = false;
+  let winnerResolved = false;
+  try {
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+    await waitFor(
+      () => env.fetchCalls.filter((call) => call.url === oldURL).length === 1,
+      "old owner model request",
+    );
+    env.context.__gosx_manifest.value.engines[0].props.scene.models = [
+      { id: "winner-owner", src: winnerURL },
+    ];
+    env.context.__gosx_runtime_ready();
+    await waitFor(
+      () => env.fetchCalls.filter((call) => call.url === winnerURL).length === 1,
+      "winner owner model request",
+    );
+
+    winnerRoute.resolve(modelAssetResponse("winner-mesh"));
+    winnerResolved = true;
+    await waitFor(
+      () => env.context.__gosx.engines.has(targetID) && mount.__gosxScene3DState &&
+        mount.__gosxScene3DState.objects.has("22") &&
+        mount.getAttribute("data-gosx-scene3d-model-asset") === winnerURL,
+      "reverse-order replacement winner",
+    );
+    const winnerState = mount.__gosxScene3DState;
+    const winnerHandle = mount.__gosxScene3DHandle;
+    const winnerDebug = env.context.__gosx_scene3d_debug_registry.get(targetID);
+    const assetEventCount = assetEvents.length;
+    const hydrationEventCount = hydrationEvents.length;
+
+    oldRoute.resolve(modelAssetResponse("old-mesh"));
+    oldResolved = true;
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assert.equal(hydrateCount, 2);
+    assert.strictEqual(mount.__gosxScene3DState, winnerState);
+    assert.strictEqual(mount.__gosxScene3DHandle, winnerHandle);
+    assert.strictEqual(env.context.__gosx_scene3d_debug_registry.get(targetID), winnerDebug);
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-asset"), winnerURL);
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-id"), "winner-owner");
+    assert.equal(assetEvents.length, assetEventCount);
+    assert.equal(hydrationEvents.length, hydrationEventCount);
+    assert.equal(winnerState.objects.has("11"), false);
+    assert.equal(winnerState.objects.has("22"), true);
+    assert.deepEqual(env.engineDisposeCalls, [[targetID]]);
+  } finally {
+    if (!oldResolved) oldRoute.resolve(modelAssetResponse("old-mesh"));
+    if (!winnerResolved) winnerRoute.resolve(modelAssetResponse("winner-mesh"));
+    await flushAsyncWork();
     if (env.context.__gosx.engines.has(targetID)) env.context.__gosx_dispose_engine(targetID);
   }
 });

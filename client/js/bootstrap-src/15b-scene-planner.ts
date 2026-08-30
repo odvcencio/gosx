@@ -207,30 +207,6 @@
     return null;
   }
 
-  // sceneCSSFindMaterialForRecord looks up the material referenced by a
-  // points, object, or instanced mesh record via materialIndex or material name.
-  function sceneCSSFindMaterialForRecord(state, record) {
-    var materials = sceneCSSCurrentCollection(state, "materials");
-    if (!Array.isArray(materials) || materials.length === 0) {
-      return null;
-    }
-    // Direct index reference
-    var idx = typeof record.materialIndex === "number" ? record.materialIndex : -1;
-    if (idx >= 0 && idx < materials.length) {
-      return materials[idx];
-    }
-    // Name-based reference
-    var name = typeof record.material === "string" ? record.material : "";
-    if (name) {
-      for (var i = 0; i < materials.length; i++) {
-        if (materials[i] && materials[i].name === name) {
-          return materials[i];
-        }
-      }
-    }
-    return null;
-  }
-
   // sceneCSSParseDuration parses a duration value — accepts milliseconds
   // (number) or CSS-style strings ("4s", "400ms", "2.5s").
   function sceneCSSParseDuration(value) {

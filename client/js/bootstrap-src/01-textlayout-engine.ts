@@ -332,16 +332,6 @@
     return /\s/u.test(char);
   }
 
-  function textLayoutIsCJK(codePoint) {
-    return (
-      (codePoint >= 0x3400 && codePoint <= 0x4DBF) ||
-      (codePoint >= 0x4E00 && codePoint <= 0x9FFF) ||
-      (codePoint >= 0x3040 && codePoint <= 0x309F) ||
-      (codePoint >= 0x30A0 && codePoint <= 0x30FF) ||
-      (codePoint >= 0xAC00 && codePoint <= 0xD7AF)
-    );
-  }
-
   const textLayoutGraphemeSegmenters = new Map();
 
   const textLayoutWordSegmenters = new Map();

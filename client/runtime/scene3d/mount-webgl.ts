@@ -2097,10 +2097,9 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneModelHydrationIsCurrent(meta) {
-    if (!meta || !meta.state) {
-      return true;
-    }
-    return Number(meta.state._modelHydrationGeneration) === Number(meta.generation);
+    const state = meta && meta.state;
+    return !state || Number(state._modelHydrationGeneration) === Number(meta.generation) &&
+      (!state._modelOwner || state._modelOwner());
   }
 
   function invalidateSceneModelHydration(state) {
@@ -3630,10 +3629,10 @@ function gosxConfigureSceneScript(script, role, src) {
         stage: "load",
         variantScope: state && state._modelTextureVariantScope,
       });
-      // A newer command already owns the scene. Avoid needless instantiation
-      // and mixer creation; the terminal generation check still fences the
-      // whole batch in case supersession happens later.
-      if (Number(state._modelHydrationGeneration) !== Number(generation)) {
+      // A newer command or factory owner already owns the scene. Avoid
+      // needless instantiation and mixer creation; the terminal currency
+      // check still fences the whole batch if supersession happens later.
+      if (!sceneModelHydrationIsCurrent({ state, generation })) {
         return { ok: true, staged };
       }
       stage = "fit";
@@ -3767,7 +3766,7 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneStageModelHydration(state, model, modelIndex, generation);
     }));
 
-    if (Number(state._modelHydrationGeneration) !== Number(generation)) {
+    if (!sceneModelHydrationIsCurrent({ state, generation })) {
       sceneDestroyStagedModelHydrations(results);
       gosxSceneEmit("info", "model-hydration-stale", {
         generation,

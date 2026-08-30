@@ -3046,17 +3046,6 @@
     return buffer;
   }
 
-  // Write data into an existing buffer. If the buffer is too small, recreate it.
-  function wgpuEnsureBufferData(device, existingBuffer, usage, data) {
-    var needed = wgpuAlignUp(Math.max(data.byteLength, 4), 4);
-    if (existingBuffer && existingBuffer.size >= needed) {
-      device.queue.writeBuffer(existingBuffer, 0, data);
-      return existingBuffer;
-    }
-    if (existingBuffer) existingBuffer.destroy();
-    return wgpuCreateBuffer(device, usage, data);
-  }
-
   // -----------------------------------------------------------------------
   // Frustum Plane Extraction (browser-side parity with native cull.go)
   // -----------------------------------------------------------------------
@@ -6302,13 +6291,9 @@
     var gpuCtx = canvas.getContext("webgpu");
     if (!gpuCtx) return sceneWebGPUFactoryFailure("canvas-webgpu-context-unavailable");
 
-    // initFailed remains for runtime device-loss recovery; startInit is
-    // effectively a no-op now that we have the device up front, but we
-    // keep the name for backwards compatibility with the existing render
-    // loop structure.
+    // initFailed remains for runtime device-loss recovery.
     var initFailed = false;
     var initError = "";
-    var initStarted = true;
     var targetFormat = navigator.gpu.getPreferredCanvasFormat();
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
     var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
@@ -7365,16 +7350,6 @@
         uniformData,
         GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         true
-      );
-    }
-
-    function ensurePointsParticleGPUBuffer(entry, particleData) {
-      return wgpuCachedTrackedBuffer(
-        entry,
-        "_gosxWGPUPointsParticleBuffer",
-        particleData,
-        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        false
       );
     }
 
@@ -11425,37 +11400,6 @@
         x: sceneNumber(point && point.x, 0),
         y: -sceneNumber(point && point.y, 0),
         z: sceneNumber(point && point.z, 0),
-      };
-    }
-
-    function sceneWaterReflectionCamera(camera) {
-      var cam = sceneRenderCamera(camera);
-      var forward = sceneWaterReflectionCameraForward(cam);
-      var reflectedForward = sceneWaterNormalizeReflectionDirection({
-        x: forward.x,
-        y: -forward.y,
-        z: forward.z,
-      });
-      var horizontal = Math.sqrt(
-        reflectedForward.x * reflectedForward.x +
-        reflectedForward.z * reflectedForward.z
-      );
-      return {
-        kind: cam.kind,
-        x: cam.x,
-        y: -cam.y,
-        z: cam.z,
-        rotationX: -Math.atan2(reflectedForward.y, horizontal),
-        rotationY: Math.atan2(reflectedForward.x, reflectedForward.z),
-        rotationZ: -cam.rotationZ,
-        fov: cam.fov,
-        left: cam.left,
-        right: cam.right,
-        top: cam.top,
-        bottom: cam.bottom,
-        zoom: cam.zoom,
-        near: cam.near,
-        far: cam.far,
       };
     }
 
@@ -17931,7 +17875,7 @@
       // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
       // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
       // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
-      var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
+      updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
