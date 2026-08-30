@@ -700,6 +700,57 @@ func Page() Node {
 	}
 }
 
+// TestValidateRejectsInvalidRegionMode covers gosx#217's region growth
+// modes: data-gosx-region-mode accepts only "replace", "append", or
+// "prepend" — a typo must fail check-time, never silently fall back to a
+// destructive "replace" swap at run time.
+func TestValidateRejectsInvalidRegionMode(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-region-src="/api/wire/events" data-gosx-region-mode="Append"></div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-region-mode value "Append": must be "replace", "append", or "prepend"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateAllowsValidRegionModes proves each of the three recognized
+// data-gosx-region-mode values, plus data-gosx-region-key and
+// data-gosx-region-cursor alongside them, does not false-positive.
+func TestValidateAllowsValidRegionModes(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <main>
+		<ul data-gosx-region-src="/api/wire/events" data-gosx-region-mode="replace"></ul>
+		<ul data-gosx-region-src="/api/wire/events" data-gosx-region-mode="append"></ul>
+		<ul data-gosx-region-src="/api/wire/events" data-gosx-region-mode="prepend" data-gosx-region-key="data-tape-key" data-gosx-region-cursor="data-pick-number"></ul>
+	</main>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid region modes, got %+v", diags)
+	}
+}
+
 // TestValidateRejectsInvalidLiveBind covers a data-gosx-live-bind key with
 // an embedded space, which parseLiveBindKey in navigation.ts also rejects
 // at run time.

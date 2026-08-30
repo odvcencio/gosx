@@ -115,6 +115,41 @@
     return ms;
   }
 
+  // REGION_ATTR_NAME_PATTERN validates a data-gosx-region-key or
+  // data-gosx-region-cursor value at bind time, before it is ever built
+  // into a "[" + value + "]" CSS attribute selector: an unvalidated value
+  // containing a space, a bracket, or another character outside this
+  // shape would either build an invalid selector (a SyntaxError out of
+  // querySelectorAll, landing in fetchRegion's own catch on every single
+  // refresh) or silently match nothing at all. validRegionAttrName warns
+  // once at bind time instead and disables only that one feature (dedupe
+  // or the cursor), never the whole region.
+  var REGION_ATTR_NAME_PATTERN = /^[A-Za-z_][-A-Za-z0-9_.]*$/;
+
+  function validRegionAttrName(raw, sourceAttr) {
+    var value = raw || "";
+    if (!value) return "";
+    if (REGION_ATTR_NAME_PATTERN.test(value)) return value;
+    console.warn(
+      "[gosx] invalid " + sourceAttr + " value " + JSON.stringify(String(value))
+      + "; must be a valid HTML attribute name"
+    );
+    return "";
+  }
+
+  // regionDirectChildrenByAttr answers el's own direct children carrying
+  // attr, never a deeper descendant: ":scope > [attr]" rather than a bare
+  // "[attr]", so a keyed or cursored row nested inside another row's own
+  // markup (a round-header wrapper containing its own pick row, for
+  // example) is never mistaken for one of the region's own top-level
+  // entries. Guarded against a target with no querySelectorAll at all (a
+  // detached fragment, a minimal test double): answers no matches rather
+  // than throwing.
+  function regionDirectChildrenByAttr(el, attr) {
+    if (!el || !attr || typeof el.querySelectorAll !== "function") return [];
+    return Array.from(el.querySelectorAll(":scope > [" + attr + "]") || []);
+  }
+
   // activeRegionPointerTarget tracks the element under a currently-held
   // pointer, document-wide, for regionPollBlocked below — one delegated
   // listener pair for every polled region, not one per region. Installed
@@ -262,8 +297,8 @@
   // cursorAttr names nothing, or el has no matching child yet (the first
   // fetch of a region that starts empty).
   function regionCursorValue(record, el) {
-    if (!record.cursorAttr || !el || typeof el.querySelectorAll !== "function") return "";
-    var matches = Array.from(el.querySelectorAll("[" + record.cursorAttr + "]") || []);
+    if (!record.cursorAttr) return "";
+    var matches = regionDirectChildrenByAttr(el, record.cursorAttr);
     if (!matches.length) return "";
     var node = record.mode === "prepend" ? matches[0] : matches[matches.length - 1];
     return node && typeof node.getAttribute === "function" ? (node.getAttribute(record.cursorAttr) || "") : "";
@@ -282,7 +317,7 @@
     var nodes = Array.from(content.childNodes || []).filter(function (node) { return node.nodeType === 1; });
     if (record.keyAttr) {
       var present = {};
-      for (var existing of Array.from(el.querySelectorAll("[" + record.keyAttr + "]"))) present[existing.getAttribute(record.keyAttr)] = true;
+      for (var existing of regionDirectChildrenByAttr(el, record.keyAttr)) present[existing.getAttribute(record.keyAttr)] = true;
       nodes = nodes.filter(function (node) { var key = node.getAttribute(record.keyAttr); return key == null || !present[key]; });
     }
     if (!nodes.length) return false;
@@ -462,8 +497,8 @@
     // reads off an already-present child to fill a "{cursor}" token in
     // url, the append/prepend counterpart to "{value}" above.
     var mode = el.getAttribute("data-gosx-region-mode") || "replace";
-    var keyAttr = el.getAttribute("data-gosx-region-key") || "";
-    var cursorAttr = el.getAttribute("data-gosx-region-cursor") || "";
+    var keyAttr = validRegionAttrName(el.getAttribute("data-gosx-region-key"), "data-gosx-region-key");
+    var cursorAttr = validRegionAttrName(el.getAttribute("data-gosx-region-cursor"), "data-gosx-region-cursor");
     var rawInterval = el.getAttribute("data-gosx-region-interval");
     var pollIntervalMs = null;
     if (rawInterval) {

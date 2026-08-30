@@ -116,7 +116,16 @@ const (
 	// fill a "{cursor}" token in RegionURLAttr, the append/prepend
 	// counterpart to RegionFieldAttr's own "{value}" token; an empty
 	// cursor without RegionAllowEmptyAttr suppresses the fetch, the same
-	// as an empty "{value}".
+	// as an empty "{value}". RegionKeyAttr and RegionCursorAttr both read
+	// only el's own DIRECT children, never a nested descendant, so a
+	// wrapper row's own nested markup can never be mistaken for one of
+	// the region's own top-level entries. Growth in append/prepend mode
+	// is UNBOUNDED: the runtime never trims an old row on its own — an app
+	// that wants a capped tape or board trims it itself (removing a
+	// node's own DOM subtree runs page disposal on any surface, engine,
+	// or island that subtree still holds, the same disposal a
+	// data-gosx-region "replace" swap or a soft navigation already
+	// triggers).
 	RegionModeAttr   = "data-gosx-region-mode"
 	RegionKeyAttr    = "data-gosx-region-key"
 	RegionCursorAttr = "data-gosx-region-cursor"

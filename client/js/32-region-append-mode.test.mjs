@@ -33,6 +33,26 @@ function attrOf(tag, name) {
   const m = new RegExp("\\b" + name + "=\"([^\"]*)\"").exec(tag);
   return m ? m[1] : null;
 }
+// findNestedAttrNodes models the DESCENDANT half of a real DOM's
+// querySelectorAll("[attr]"): a synthetic getAttribute-only node for
+// every attr="value" occurrence found inside outerHTML's own INNER
+// markup (excluding its own opening tag, which a caller checks against
+// the node itself separately). A crude regex scan, not a real parse —
+// but enough to prove ":scope > [attr]" (direct children only) diverges
+// from a bare "[attr]" (every descendant) once a fragment nests the
+// same attribute name inside a wrapper row.
+function findNestedAttrNodes(outerHTML, attrName) {
+  const openTag = /^<[^>]+>/.exec(outerHTML);
+  const inner = openTag ? outerHTML.slice(openTag[0].length) : "";
+  const re = new RegExp("\\b" + attrName + "=\"([^\"]*)\"", "g");
+  const nodes = [];
+  let m;
+  while ((m = re.exec(inner))) {
+    const value = m[1];
+    nodes.push({ getAttribute: (name) => (name === attrName ? value : null) });
+  }
+  return nodes;
+}
 // parseTopLevel splits html into top-level element records: {tagName,
 // outerHTML, getAttribute}. A child with the same tag name stays inside its
 // parent because the depth counter only closes at depth zero.
@@ -68,9 +88,30 @@ function makeRegion(attrs) {
     removeAttribute(n) { delete this._attrs[n]; },
     hasAttribute(n) { return n in this._attrs; },
     seed(html) { this.children = parseTopLevel(html); },
-    // Answers "[data-tape-key]" and "[data-pick-number]" alike: any
-    // attribute selector returns the children that carry that attribute.
-    querySelectorAll(selector) { const name = /^\[([^\]]+)\]$/.exec(selector); return name ? this.children.filter((c) => c.getAttribute(name[1]) != null) : []; },
+    // ":scope > [attr]" (regionDirectChildrenByAttr's own selector)
+    // answers only this.children — direct children, never a nested
+    // descendant. A bare "[attr]" answers direct children AND every
+    // nested match inside each child's own markup, in document order —
+    // a real DOM's descendant-inclusive default, modeled through
+    // findNestedAttrNodes just well enough to let a test prove the two
+    // selector forms diverge once a regression reintroduces the bare
+    // form into the implementation.
+    querySelectorAll(selector) {
+      const scoped = /^:scope > \[([^\]]+)\]$/.exec(selector);
+      if (scoped) {
+        const name = scoped[1];
+        return this.children.filter((c) => c.getAttribute(name) != null);
+      }
+      const bare = /^\[([^\]]+)\]$/.exec(selector);
+      if (!bare) return [];
+      const name = bare[1];
+      const found = [];
+      for (const child of this.children) {
+        if (child.getAttribute(name) != null) found.push(child);
+        found.push(...findNestedAttrNodes(child.outerHTML, name));
+      }
+      return found;
+    },
     get childNodes() { return this.children; },
     insertAdjacentHTML(position, html) {
       this.inserted.push({ position, html });
@@ -92,8 +133,9 @@ function runModule(regions, payload, opts) {
   opts = opts || {};
   const dispatchedEvents = [];
   const fetches = [];
+  const warnings = [];
   const ctx = {
-    console,
+    console: Object.assign({}, console, { warn: (...args) => warnings.push(args.map(String).join(" ")) }),
     CustomEvent: class CustomEvent {
       constructor(type, init) {
         this.type = type;
@@ -137,13 +179,16 @@ function runModule(regions, payload, opts) {
       ...(opts.replaceRuntimeContent ? {
         __gosx_replace_runtime_content: opts.replaceRuntimeContent,
       } : {}),
+      ...(opts.mountRuntimeSurfaces ? {
+        __gosx_mount_runtime_surfaces: opts.mountRuntimeSurfaces,
+      } : {}),
     },
   };
   ctx.window.document = ctx.document;
   vm.createContext(ctx);
   vm.runInContext(scene3dBridgeSrc, ctx);
   vm.runInContext(moduleSrc, ctx);
-  return { dispatchedEvents, fetches, context: ctx };
+  return { dispatchedEvents, fetches, warnings, context: ctx };
 }
 
 test("prepend mode inserts the fragment before existing children and keeps them", async () => {
@@ -181,4 +226,54 @@ test("append mode inserts at the end", async () => {
   const { context } = runModule([region], { text: "<p>new</p>" });
   await context.window.__gosx.regions.refresh(region);
   assert.deepEqual(region.inserted.map((i) => i.position), ["beforeend"]);
+});
+
+test("append/prepend mounts exactly the fresh nodes, never the container itself", async () => {
+  const region = makeRegion({ "data-gosx-region-url": "/tape", "data-gosx-region-mode": "prepend", "data-gosx-region-key": "data-tape-key" });
+  region.seed('<div data-tape-key="pick-19"></div>');
+  const mounted = [];
+  const { context } = runModule(
+    [region],
+    { text: '<div data-tape-key="round-3"><div class="idx">ROUND 3</div></div><div data-tape-key="pick-20"></div>' },
+    { mountRuntimeSurfaces: (node) => { mounted.push(node); } },
+  );
+  await context.window.__gosx.regions.refresh(region);
+  assert.equal(mounted.length, 2, "exactly the two fresh top-level nodes mount");
+  assert.ok(mounted.every((node) => node !== region), "the container itself is never mounted");
+  assert.deepEqual(mounted.map((node) => node.getAttribute("data-tape-key")), ["round-3", "pick-20"]);
+});
+
+test("dedupe and the cursor read only the region's own direct children, never a nested descendant", async () => {
+  const region = makeRegion({ "data-gosx-region-url": "/tape?since={cursor}", "data-gosx-region-mode": "prepend", "data-gosx-region-key": "data-tape-key", "data-gosx-region-cursor": "data-pick-number" });
+  // "round-3" is the FIRST direct child, so a descendant-inclusive
+  // "[attr]" selector (document order) would hit its NESTED decoy before
+  // ever reaching "pick-18", the second direct child that actually
+  // carries data-pick-number — and would count the decoy's
+  // data-tape-key="pick-19" as an already-present key, wrongly deduping
+  // a genuinely new top-level "pick-19" row the fetch introduces below.
+  region.seed('<div data-tape-key="round-3"><div data-tape-key="pick-19" data-pick-number="1"></div></div><div data-tape-key="pick-18" data-pick-number="18"></div>');
+  const { context, fetches } = runModule([region], { text: '<div data-tape-key="pick-19" data-pick-number="19"></div>' });
+  await context.window.__gosx.regions.refresh(region);
+  assert.equal(fetches[0].u, "/tape?since=18", "the cursor comes from the second DIRECT child's own attribute, not the first child's nested decoy");
+  assert.equal(region.children.length, 3, "the new top-level pick-19 node was not wrongly deduped against the nested pick-19-shaped decoy");
+});
+
+test("a malformed data-gosx-region-key value warns once and disables dedupe instead of throwing", async () => {
+  const region = makeRegion({ "data-gosx-region-url": "/tape", "data-gosx-region-mode": "prepend", "data-gosx-region-key": "data tape key" });
+  region.seed('<div data-tape-key="pick-19"></div>');
+  const { context, warnings } = runModule([region], { text: '<div data-tape-key="pick-19"></div>' });
+  await assert.doesNotReject(() => context.window.__gosx.regions.refresh(region));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /data-gosx-region-key/);
+  assert.equal(region.children.length, 2, "dedupe is disabled, not silently skipped: the duplicate-key-looking fragment still inserts");
+});
+
+test("a malformed data-gosx-region-cursor value warns once and disables the cursor fill instead of throwing", async () => {
+  const region = makeRegion({ "data-gosx-region-url": "/tape?since={cursor}", "data-gosx-region-mode": "append", "data-gosx-region-cursor": "data pick number", "data-gosx-region-allow-empty": "" });
+  region.seed('<div data-tape-key="pick-19"></div>');
+  const { context, fetches, warnings } = runModule([region], { text: "" });
+  await assert.doesNotReject(() => context.window.__gosx.regions.refresh(region));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /data-gosx-region-cursor/);
+  assert.equal(fetches[0].u, "/tape?since=", "the cursor fill is disabled (empty), not a thrown SyntaxError");
 });

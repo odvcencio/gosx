@@ -323,6 +323,12 @@ const (
 	liveBindAttr       = "data-gosx-live-bind"
 	liveFlashClassAttr = "data-gosx-live-flash-class"
 	regionIntervalAttr = "data-gosx-region-interval"
+	// regionModeAttr (gosx#217 extension) is the one data-gosx-region-*
+	// growth-mode value this file can usefully reject ahead of time: see
+	// isValidRegionModeValue below for why a typo here is worse than the
+	// usual "silently falls back to a default" shape most other enumerated
+	// attributes in this file get.
+	regionModeAttr = "data-gosx-region-mode"
 	// liveBindAttrAttr and liveBindClassAttr (gosx#217 extension) share
 	// liveBindAttr's polled-or-event payload but each take a
 	// comma-separated "target:key[,target:key...]" value instead of one
@@ -620,6 +626,27 @@ func isValidPrefetchValue(value string) bool {
 	}
 }
 
+// isValidRegionModeValue reports whether value is one of the three
+// data-gosx-region-mode values RegionModeAttr's own doc comment in
+// runtime_contract.go documents: "replace" (the default), "append", or
+// "prepend" — matched case-sensitively, the same exact-string comparison
+// the run-time (record.mode === "append" || record.mode === "prepend")
+// uses. Unlike isValidLinkCurrentPolicyValue or isValidPrefetchValue
+// above, an unrecognized region mode is not a harmless "falls back to a
+// sane default and moves on" value: the run-time treats anything other
+// than "append"/"prepend" as "replace", so a typo ("Append", "perpend")
+// would silently turn an intended growth mode into a destructive
+// full-region swap that wipes every row the region already rendered —
+// this must fail `gosx check`, never reach a browser.
+func isValidRegionModeValue(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "replace", "append", "prepend":
+		return true
+	default:
+		return false
+	}
+}
+
 // validateStaticCountdownAttr flags a static data-gosx-countdown-*,
 // data-gosx-watch, data-gosx-watch-effect, data-gosx-live-*, or
 // data-gosx-region-interval value outside its documented vocabulary: an instant
@@ -721,6 +748,14 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be a whole number of seconds or minutes", attr.Name, attr.Value),
 				Hint:    `for example "4s" or "2m" — the same subset data-gosx-revalidate-interval accepts`,
+			})
+		}
+	case regionModeAttr:
+		if !isValidRegionModeValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"replace\", \"append\", or \"prepend\"", regionModeAttr, attr.Value),
+				Hint:    `an unrecognized value falls back to "replace" at run time, silently turning an intended growth mode into a destructive full-region swap`,
 			})
 		}
 	case linkCurrentPolicyAttr:

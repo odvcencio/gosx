@@ -234,8 +234,22 @@ const (
 	// optional in that mode — it still serves the public
 	// window.__gosx.live.refresh(element) manual-refresh API, but nothing
 	// else, since an event-mode-only root never polls and never fetches on
-	// its own.
+	// its own. Any other value warns once and is treated as absent (fetch
+	// mode).
+	//
+	// Event NAMES (NavigationLiveOnAttr) share one page-global namespace
+	// across every hub the page connects — the same way fetch mode always
+	// has. A page running exactly one hub never notices; a page running
+	// two or more, where the same event name means something different on
+	// each, is a real hazard in event mode specifically, since event mode
+	// applies the payload directly rather than triggering a fetch that
+	// would fail closed on a shape mismatch. NavigationLiveHubAttr is the
+	// opt-in fix: when present, its value is matched against the firing
+	// hub's own name (detail.hubName on the gosx:hub:event CustomEvent),
+	// and a frame from any other hub is ignored for this root. It has no
+	// effect outside event mode.
 	NavigationLiveModeAttr = "data-gosx-live-mode"
+	NavigationLiveHubAttr  = "data-gosx-live-hub"
 	// NavigationLiveBindAttrAttr sets a named element attribute from a
 	// live-bind key, and NavigationLiveBindClassAttr toggles a named class
 	// from a boolean live-bind value. Both share NavigationLiveBindAttr's

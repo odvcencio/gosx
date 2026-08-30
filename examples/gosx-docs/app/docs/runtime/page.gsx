@@ -824,6 +824,19 @@ func Page() Node {
 				<span class="inline-code">&#123;value&#125;</span>
 				above.
 			</p>
+			<p>
+				Growth in
+				<span class="inline-code">append</span>
+				/
+				<span class="inline-code">prepend</span>
+				mode is unbounded — the runtime never trims an old row on its own. A page that wants a capped tape or board trims it itself, removing the node it no longer needs; removing a node's own subtree runs page disposal on any surface, engine, or island still attached to it, the same disposal a
+				<span class="inline-code">replace</span>
+				swap or a soft navigation already triggers. Both
+				<span class="inline-code">data-gosx-region-key</span>
+				and
+				<span class="inline-code">data-gosx-region-cursor</span>
+				read only the region's own direct children, never a nested descendant, so a wrapper row's own nested markup is never mistaken for one of the region's own entries.
+			</p>
 			{CodeBlock("gosx", `<div data-gosx-region data-gosx-region-url="/tape?since={cursor}"
 	    data-gosx-region-mode="prepend" data-gosx-region-key="data-tape-key"
 	    data-gosx-region-cursor="data-pick-number">

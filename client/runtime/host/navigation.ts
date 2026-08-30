@@ -108,7 +108,23 @@
   // object payload directly to the binds under root, with no fetch at
   // all — data-gosx-live-src becomes optional in that mode, serving only
   // the public window.__gosx.live.refresh(element) manual-refresh path.
+  // Any other data-gosx-live-mode value warns once and is treated as
+  // unset (fetch mode).
   const LIVE_MODE_ATTR = "data-gosx-live-mode";
+  // LIVE_HUB_ATTR optionally scopes event mode to one hub by name:
+  // data-gosx-hub-name (see server/navigation_contract.go) does not exist
+  // — the value is whatever string the page's own hub manifest gave that
+  // connection, matched against detail.hubName on the gosx:hub:event
+  // CustomEvent. Event NAMES share one page-global namespace across every
+  // connected hub (fetch mode always has, unchanged here): with no
+  // LIVE_HUB_ATTR, a same-named event from ANY hub on the page applies —
+  // fine for a page with exactly one hub, a real hazard for a page with
+  // two ("draft-live" and "chat-hub" both emitting a generic "update"
+  // event, for example). LIVE_HUB_ATTR is the opt-in fix for that case;
+  // it has no effect at all outside event mode, where every trigger
+  // still only ever calls runLiveRegionFetch — there is no payload
+  // identity to check.
+  const LIVE_HUB_ATTR = "data-gosx-live-hub";
   // Declarative list filter (data-gosx-filter, gosx#215). See "Declarative
   // list filter" below for the full contract; these are the attribute,
   // class-hook, and timing constants it reads and writes.
@@ -6090,7 +6106,14 @@
   // connects.
   function createLiveRegionRecord(root) {
     const rawSrc = root.getAttribute(LIVE_SRC_ATTR);
-    const eventMode = root.getAttribute(LIVE_MODE_ATTR) === "event";
+    const rawMode = root.getAttribute(LIVE_MODE_ATTR);
+    const eventMode = rawMode === "event";
+    if (rawMode && !eventMode) {
+      console.warn(
+        "[gosx] invalid " + LIVE_MODE_ATTR + " value " + JSON.stringify(String(rawMode))
+        + "; only \"event\" is recognized, so this live region behaves as if " + LIVE_MODE_ATTR + " were absent",
+      );
+    }
     if (!rawSrc && !eventMode) {
       console.warn(
         "[gosx] a live region requires " + LIVE_SRC_ATTR + " on the same element; "
@@ -6130,13 +6153,20 @@
         }
       }
     }
+    const onEvents = splitLiveEvents(root.getAttribute(LIVE_ON_ATTR));
+    if (eventMode && !onEvents.length) {
+      console.warn(
+        "[gosx] " + LIVE_MODE_ATTR + "=\"event\" has no effect without " + LIVE_ON_ATTR + " on the same element",
+      );
+    }
     return {
       root: root,
       src: src,
       eventMode: eventMode,
+      hub: root.getAttribute(LIVE_HUB_ATTR) || "",
       intervalMs: intervalMs,
       signalName: root.getAttribute(LIVE_SIGNAL_ATTR) || "",
-      onEvents: splitLiveEvents(root.getAttribute(LIVE_ON_ATTR)),
+      onEvents: onEvents,
       etag: "",
       lastBody: null,
       inFlight: false,
@@ -6283,7 +6313,12 @@
         // path this record always used before gosx#217) or, in event
         // mode, applies the event's own object payload to this root's
         // binds directly with no fetch at all — see LIVE_MODE_ATTR's own
-        // doc comment for why data-gosx-live-src is optional there. A
+        // doc comment for why data-gosx-live-src is optional there. Event
+        // NAMES share one page-global namespace across every connected
+        // hub (fetch mode's own behavior, unchanged); record.hub (see
+        // LIVE_HUB_ATTR's own doc comment) is event mode's opt-in fix for
+        // a page running more than one hub — checked only in event mode,
+        // since fetch mode has no payload identity to check at all. A
         // non-object payload (missing, a primitive, or an array) is
         // silently ignored, the same "malformed input, next trigger tries
         // again" contract applyLiveBindPayload's own JSON.parse failure
@@ -6293,6 +6328,7 @@
           const eventName = detail && detail.event;
           if (!eventName || record.onEvents.indexOf(eventName) < 0) return;
           if (!record.eventMode) { runLiveRegionFetch(record); return; }
+          if (record.hub && detail.hubName !== record.hub) return;
           const data = detail.data;
           if (!data || typeof data !== "object" || Array.isArray(data)) return;
           try { applyLiveBindObject(record.root, data); } catch (error) { reportNavigationFailure("live region apply", error, { source: eventName }); }

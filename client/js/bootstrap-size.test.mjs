@@ -576,7 +576,10 @@ const budgets = [
   // hidden/disabled) plus its Object.create(null) target-map hardening, all
   // carried by navigation.ts/regions.ts/hubs.ts in the monolith. Measured:
   // 1_580_179 / 429_352 / 344_765. Caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_580_500, gzip: 429_600, brotli: 345_000 },
+  // gosx#217 review follow-up: hub-identity scoping (data-gosx-live-hub),
+  // page-wide cue mute (data-gosx-cue-toggle), and the region-key/-cursor
+  // shape validation. Measured: 1_580_623 / 429_444 / 345_193.
+  { file: "bootstrap.js", raw: 1_580_800, gzip: 429_700, brotli: 345_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -647,7 +650,10 @@ const budgets = [
   // reconnect backoff (navigation.ts/regions.ts/hubs.ts, all carried by the
   // runtime chunk). Measured raw 149_876; gzip and brotli stayed under
   // their existing caps. Raw cap raised with narrow rounding headroom.
-  { file: "bootstrap-runtime.js", raw: 150_000, gzip: 41_000, brotli: 35_800 },
+  // gosx#217 review follow-up: hub-identity scoping, cue mute, and the
+  // region-key/-cursor validation (navigation.ts/regions.ts, both carried
+  // by the runtime chunk). Measured: 150_160 / 41_135 / 35_887.
+  { file: "bootstrap-runtime.js", raw: 150_400, gzip: 41_300, brotli: 36_100 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -700,7 +706,10 @@ const budgets = [
   // above, carried by the lite chunk. Measured raw 113_378; gzip and brotli
   // stayed under their existing caps. Raw cap raised with narrow rounding
   // headroom.
-  { file: "bootstrap-lite.js", raw: 113_500, gzip: 30_500, brotli: 27_100 },
+  // gosx#217 review follow-up: same navigation.ts/regions.ts growth as
+  // bootstrap-runtime.js above, carried by the lite chunk. Measured:
+  // 113_659 / 30_609 / 27_146.
+  { file: "bootstrap-lite.js", raw: 113_900, gzip: 30_800, brotli: 27_400 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1828,9 +1837,12 @@ const routeBudgets = [
     // 330_650 -> 331_000 for event-mode live binds, region append/prepend,
     // and hub reconnect backoff (gosx#217 extension). Measured:
     // 1_463_242 / 391_617 / 330_847, plus narrow rounding headroom.
+    // gosx#217 review follow-up: hub-identity scoping, cue mute, and the
+    // region-key/-cursor validation. Measured: 1_463_526 / 391_787 /
+    // 331_014; only brotli exceeded, raised with narrow rounding headroom.
     raw: 1_464_000,
     gzip: 391_800,
-    brotli: 331_000,
+    brotli: 331_200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
