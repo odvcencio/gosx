@@ -178,6 +178,11 @@ test("strict browser schema validates every parent matrix carrier", () => {
       `[1e150,0,0,0,0,1e150,0,0,0,0,1e150,0,0,0,0,1]`,
       `[-2e-150,0,0,0,1e-150,3e-150,0,0,0,0,4e-150,0,5,6,7,1]`,
       `[9e307,-9e307,0,0,9e307,9e307,0,0,0,0,9e307,0,0,0,0,1]`,
+      `[1e-297,0,0,0,0,2e-303,0,0,0,0,2e-303,0,0,0,0,1]`,
+      `[1e-297,0,0,0,5e-298,2e-303,0,0,-4e-298,1e-303,2e-303,0,0,0,0,1]`,
+      `[1e-297,5e-298,-4e-298,0,0,2e-303,1e-303,0,0,0,2e-303,0,0,0,0,1]`,
+      `[-1e-297,0,0,0,5e-298,2e-303,0,0,-4e-298,1e-303,2e-303,0,0,0,0,1]`,
+      `[1e-297,0,0,0,0,1e-303,0,0,0,0,1.000001e-303,0,0,0,0,1]`,
     ]) {
       context.__matrix = vm.runInContext(valid, context);
       const diagnostics = vm.runInContext(`__gosx_validate_scene_ir_strict(${family}, {strict:true}).diagnostics`, context);
@@ -191,6 +196,8 @@ test("strict browser schema validates every parent matrix carrier", () => {
       `[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,NaN]`,
       `[1,0,0,1,0,1,0,0,0,0,1,0,0,0,0,1]`,
       `[1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1]`,
+      `[1e-297,0,0,0,0,1e-303,0,0,0,0,0.999999e-303,0,0,0,0,1]`,
+      `[1e-308,0,0,0,0,1e-308,0,0,0,0,2e-320,0,0,0,0,1]`,
     ]) {
       context.__matrix = vm.runInContext(invalid, context);
       const diagnostics = vm.runInContext(`__gosx_validate_scene_ir_strict(${family}, {strict:true}).diagnostics`, context);
@@ -199,30 +206,53 @@ test("strict browser schema validates every parent matrix carrier", () => {
   }
 });
 
-test("shared affine inverse stays finite near MaxFloat and fails closed", () => {
+test("shared affine determinant and inverse agree across extreme anisotropy", () => {
   const context = createCoreContext();
   const result = runJSON(context, `(() => {
-    const nearMax = [9e307,-9e307,0,0, 9e307,9e307,0,0, 0,0,9e307,0, 0,0,0,1];
-    const inverse = new Float64Array(12);
-    const overflow = new Float64Array(12);
-    const singular = new Float64Array(12);
+    function inspect(matrix) {
+      const inverse = new Float64Array(12);
+      return {
+        without:sceneAffineDeterminant(matrix,0),
+        withOut:sceneAffineDeterminant(matrix,0,inverse),
+        inverse:Array.from(inverse),
+        normalized:!!sceneNormalizeParentMatrix(matrix,null),
+      };
+    }
     return {
-      determinant:sceneAffineDeterminant(nearMax,0,inverse),
-      inverse:Array.from(inverse),
-      normalized:!!sceneNormalizeParentMatrix(nearMax,null),
-      overflow:sceneAffineDeterminant([1e-308,0,0,0, 0,1e-308,0,0, 0,0,2e-320,0, 0,0,0,1],0,overflow),
-      overflowInverse:Array.from(overflow),
-      singular:sceneAffineDeterminant([1,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,1],0,singular),
+      valid:{
+        tiny:inspect([1e-297,0,0,0, 0,2e-303,0,0, 0,0,2e-303,0, 0,0,0,1]),
+        shear:inspect([1e-297,0,0,0, 5e-298,2e-303,0,0, -4e-298,1e-303,2e-303,0, 0,0,0,1]),
+        transposed:inspect([1e-297,5e-298,-4e-298,0, 0,2e-303,1e-303,0, 0,0,2e-303,0, 0,0,0,1]),
+        reflected:inspect([-1e-297,0,0,0, 5e-298,2e-303,0,0, -4e-298,1e-303,2e-303,0, 0,0,0,1]),
+        threshold:inspect([1e-297,0,0,0, 0,1e-303,0,0, 0,0,1.000001e-303,0, 0,0,0,1]),
+        nearMax:inspect([9e307,-9e307,0,0, 9e307,9e307,0,0, 0,0,9e307,0, 0,0,0,1]),
+      },
+      invalid:{
+        threshold:inspect([1e-297,0,0,0, 0,1e-303,0,0, 0,0,0.999999e-303,0, 0,0,0,1]),
+        overflow:inspect([1e-308,0,0,0, 0,1e-308,0,0, 0,0,2e-320,0, 0,0,0,1]),
+        singular:inspect([1,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,1]),
+      },
     };
   })()`);
-  assert.equal(result.determinant, 2);
-  assert.equal(result.normalized, true);
-  assert.ok(result.inverse.every(Number.isFinite));
-  assert.ok(result.inverse.some((value) => value !== 0), "near-max inverse must not collapse to zero");
-  assert.ok(result.inverse[0] > 0 && result.inverse[0] < 1e-307);
-  assert.equal(result.overflow, 0);
-  assert.ok(result.overflowInverse.every((value) => value === 0));
-  assert.equal(result.singular, 0);
+  for (const [name, value] of Object.entries(result.valid)) {
+    assert.notEqual(value.without, 0, `${name} rejected without inverse output`);
+    assert.equal(value.withOut, value.without, `${name} output changed determinant acceptance`);
+    assert.equal(value.normalized, true, `${name} normalization rejected valid matrix`);
+    assert.ok(value.inverse.every(Number.isFinite), `${name} inverse is non-finite`);
+    assert.ok(value.inverse.some((entry) => entry !== 0), `${name} inverse collapsed to zero`);
+  }
+  assert.equal(result.valid.tiny.without, 4e-12);
+  assert.ok(Math.abs(result.valid.tiny.inverse[0] / 1e297 - 1) < 1e-15);
+  assert.ok(Math.abs(result.valid.tiny.inverse[5] / 5e302 - 1) < 1e-15);
+  assert.ok(Math.abs(result.valid.tiny.inverse[10] / 5e302 - 1) < 1e-15);
+  assert.equal(result.valid.reflected.without, -4e-12);
+  assert.equal(result.valid.nearMax.without, 2);
+  assert.ok(result.valid.nearMax.inverse[0] > 0 && result.valid.nearMax.inverse[0] < 1e-307);
+  for (const [name, value] of Object.entries(result.invalid)) {
+    assert.equal(value.without, 0, `${name} accepted without inverse output`);
+    assert.equal(value.withOut, 0, `${name} accepted with inverse output`);
+    assert.equal(value.normalized, false, `${name} normalization accepted invalid matrix`);
+  }
 });
 
 test("instanced CPU picking inverts a sheared basis exactly", () => {

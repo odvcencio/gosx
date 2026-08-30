@@ -625,8 +625,14 @@
       var a = matrix[0] / scale, b = matrix[4] / scale, c = matrix[8] / scale;
       var d = matrix[1] / scale, e = matrix[5] / scale, f = matrix[9] / scale;
       var g = matrix[2] / scale, h = matrix[6] / scale, i = matrix[10] / scale;
-      var det = a * (e * i - f * h) + b * (f * g - d * i) + c * (d * h - e * g);
-      if (matrix[3] !== 0 || matrix[7] !== 0 || matrix[11] !== 0 || matrix[15] !== 1 || !scale || !Number.isFinite(1 / scale) || !Number.isFinite(det) || Math.abs(det) <= 1e-12) {
+      var c00 = e * i - f * h, c01 = f * g - d * i, c02 = d * h - e * g;
+      var det = a * c00 + b * c01 + c * c02;
+      var inverse = [
+        c00 / det / scale, c01 / det / scale, c02 / det / scale,
+        (c * h - b * i) / det / scale, (a * i - c * g) / det / scale, (b * g - a * h) / det / scale,
+        (b * f - c * e) / det / scale, (c * d - a * f) / det / scale, (a * e - b * d) / det / scale,
+      ];
+      if (matrix[3] !== 0 || matrix[7] !== 0 || matrix[11] !== 0 || matrix[15] !== 1 || !scale || !Number.isFinite(1 / scale) || !Number.isFinite(det) || Math.abs(det) <= 1e-12 || !inverse.every(Number.isFinite) || !inverse.some(Boolean)) {
         pushSceneStrictDiagnostic(diagnostics, "error", "scene.transform.invalid_parent_matrix", "parentMatrix must be a finite, nonsingular affine 4x4 matrix", path, id);
       }
     }

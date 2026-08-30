@@ -90,42 +90,22 @@ func affineVector(matrix affineMatrix, vector Vector3) Vector3 {
 }
 
 func inverseAffine(matrix affineMatrix) (affineMatrix, bool) {
-	if !validAffineMatrix(matrix) {
-		return affineMatrix{}, false
-	}
-	scale := affineLinearMaxAbs(matrix)
-	a, b, c := matrix[0]/scale, matrix[4]/scale, matrix[8]/scale
-	d, e, f := matrix[1]/scale, matrix[5]/scale, matrix[9]/scale
-	g, h, i := matrix[2]/scale, matrix[6]/scale, matrix[10]/scale
-	c00, c01, c02 := e*i-f*h, f*g-d*i, d*h-e*g
-	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
-	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
-	determinant := a*c00 + b*c01 + c*c02
-	// Divide in this order so a finite scale near MaxFloat does not overflow
-	// the otherwise representable determinant*scale product.
-	invDet := 1 / determinant / scale
-	if invDet == 0 || math.IsNaN(invDet) || math.IsInf(invDet, 0) {
+	linear, ok := sceneaffine.InverseLinear(matrix[:])
+	if !ok {
 		return affineMatrix{}, false
 	}
 	out := affineMatrix{
-		c00 * invDet, c01 * invDet, c02 * invDet, 0,
-		c10 * invDet, c11 * invDet, c12 * invDet, 0,
-		c20 * invDet, c21 * invDet, c22 * invDet, 0,
+		linear[0], linear[1], linear[2], 0,
+		linear[3], linear[4], linear[5], 0,
+		linear[6], linear[7], linear[8], 0,
 		0, 0, 0, 1,
 	}
 	translation := affineVector(out, Vector3{X: matrix[12], Y: matrix[13], Z: matrix[14]})
 	out[12], out[13], out[14] = -translation.X, -translation.Y, -translation.Z
-	linearNonZero := false
-	for index, value := range out {
+	for _, value := range out {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return affineMatrix{}, false
 		}
-		if index < 12 && index%4 != 3 && value != 0 {
-			linearNonZero = true
-		}
-	}
-	if !linearNonZero {
-		return affineMatrix{}, false
 	}
 	return out, true
 }

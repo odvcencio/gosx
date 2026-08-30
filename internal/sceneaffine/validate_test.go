@@ -58,3 +58,52 @@ func TestValidParentMatrixScaleInvariantExtremes(t *testing.T) {
 		})
 	}
 }
+
+func TestInverseLinearExtremeAnisotropyAndThreshold(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		matrix []float64
+		valid  bool
+	}{
+		"anisotropic tiny diagonal": {matrix: []float64{
+			1e-297, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1,
+		}, valid: true},
+		"anisotropic tiny shear": {matrix: []float64{
+			1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1,
+		}, valid: true},
+		"anisotropic tiny transposed shear": {matrix: []float64{
+			1e-297, 5e-298, -4e-298, 0, 0, 2e-303, 1e-303, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1,
+		}, valid: true},
+		"anisotropic tiny reflected shear": {matrix: []float64{
+			-1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1,
+		}, valid: true},
+		"just above normalized determinant threshold": {matrix: []float64{
+			1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 1.000001e-303, 0, 0, 0, 0, 1,
+		}, valid: true},
+		"just below normalized determinant threshold": {matrix: []float64{
+			1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 0.999999e-303, 0, 0, 0, 0, 1,
+		}},
+		"unrepresentable inverse coefficient": {matrix: []float64{
+			1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 2e-320, 0, 0, 0, 0, 1,
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inverse, ok := InverseLinear(testCase.matrix)
+			if ok != testCase.valid || ValidParentMatrix(testCase.matrix) != testCase.valid {
+				t.Fatalf("validity = inverse %v parent %v, want %v", ok, ValidParentMatrix(testCase.matrix), testCase.valid)
+			}
+			if !ok {
+				return
+			}
+			nonZero := false
+			for index, value := range inverse {
+				if math.IsNaN(value) || math.IsInf(value, 0) {
+					t.Fatalf("inverse[%d] is non-finite: %v", index, value)
+				}
+				nonZero = nonZero || value != 0
+			}
+			if !nonZero {
+				t.Fatal("accepted inverse is all zero")
+			}
+		})
+	}
+}

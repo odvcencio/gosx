@@ -75,6 +75,13 @@ func TestValidateParentMatrixRequiresAffineAndScaleInvariantInvertible(t *testin
 		"valid small shear reflection": {matrix: validSmall, valid: true},
 		"valid large shear reflection": {matrix: []float64{-2e150, 0, 0, 0, 1e150, 3e150, 0, 0, 0, 0, 4e150, 0, 4, 5, 6, 1}, valid: true},
 		"valid near max finite":        {matrix: []float64{nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1}, valid: true},
+		"valid anisotropic tiny":       {matrix: []float64{1e-297, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1}, valid: true},
+		"valid anisotropic tiny shear": {matrix: []float64{1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1}, valid: true},
+		"valid transposed tiny shear":  {matrix: []float64{1e-297, 5e-298, -4e-298, 0, 0, 2e-303, 1e-303, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1}, valid: true},
+		"valid reflected tiny shear":   {matrix: []float64{-1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1}, valid: true},
+		"valid just above threshold":   {matrix: []float64{1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 1.000001e-303, 0, 0, 0, 0, 1}, valid: true},
+		"below determinant threshold":  {matrix: []float64{1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 0.999999e-303, 0, 0, 0, 0, 1}},
+		"inverse coefficient overflow": {matrix: []float64{1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 2e-320, 0, 0, 0, 0, 1}},
 		"non affine bottom row":        {matrix: append([]float64(nil), validSmall...)},
 		"singular":                     {matrix: append([]float64(nil), validSmall...)},
 	} {

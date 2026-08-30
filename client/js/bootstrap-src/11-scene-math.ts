@@ -427,22 +427,20 @@
     var c00 = e * i - f * h, c01 = f * g - d * i, c02 = d * h - e * g;
     var det = a * c00 + b * c01 + c * c02;
     if (!Number.isFinite(det) || Math.abs(det) <= 1e-12) return 0;
-    if (out) {
-      // Preserve a representable inverse when det*s would overflow.
-      var q = 1 / det / s;
-      if (!Number.isFinite(q) || q === 0) return 0;
-      out[0] = c00 * q; out[1] = c01 * q; out[2] = c02 * q; out[3] = 0;
-      out[4] = (c * h - b * i) * q; out[5] = (a * i - c * g) * q; out[6] = (b * g - a * h) * q; out[7] = 0;
-      out[8] = (b * f - c * e) * q; out[9] = (c * d - a * f) * q; out[10] = (a * e - b * d) * q; out[11] = 0;
-      if (!out.every(Number.isFinite) || !out.some(Boolean)) return 0;
-    }
+    out = out || _sceneAffineInverseScratch;
+    out.set([
+      c00 / det / s, c01 / det / s, c02 / det / s, 0,
+      (c * h - b * i) / det / s, (a * i - c * g) / det / s, (b * g - a * h) / det / s, 0,
+      (b * f - c * e) / det / s, (c * d - a * f) / det / s, (a * e - b * d) / det / s, 0,
+    ]);
+    if (!out.every(Number.isFinite) || !out.some(Boolean)) return 0;
     return det;
   }
 
   // Column-major inverse-transpose of the affine linear part. Singular or
   // non-finite matrices preserve the authored local basis instead of
   // manufacturing NaNs, matching the GPU shader fallback.
-  var _sceneAffineInverseScratch = new Float64Array(12);
+  const _sceneAffineInverseScratch = new Float64Array(12);
   function sceneAffineNormalMatrix(matrix, out) {
     out = out || Array(9);
     if (!sceneAffineDeterminant(matrix, 0, _sceneAffineInverseScratch)) {

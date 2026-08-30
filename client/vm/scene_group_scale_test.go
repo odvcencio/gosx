@@ -94,10 +94,25 @@ func TestSceneParentMatrixResolverCopiesAndRejectsInvalidValues(t *testing.T) {
 		"sheared reflected large": {-2e150, 0, 0, 0, 1e150, 3e150, 0, 0, 0, 0, 4e150, 0, 5, 6, 7, 1},
 		"sheared reflected small": {-2e-150, 0, 0, 0, 1e-150, 3e-150, 0, 0, 0, 0, 4e-150, 0, 5, 6, 7, 1},
 		"near max finite":         {nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1},
+		"anisotropic tiny":        {1e-297, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1},
+		"anisotropic tiny shear":  {1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1},
+		"transposed tiny shear":   {1e-297, 5e-298, -4e-298, 0, 0, 2e-303, 1e-303, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1},
+		"reflected tiny shear":    {-1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1},
+		"just above threshold":    {1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 1.000001e-303, 0, 0, 0, 0, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, ok := sceneParentMatrixFromAny(valid); !ok {
 				t.Fatal("valid affine parent matrix rejected")
+			}
+		})
+	}
+	for name, invalid := range map[string][]float64{
+		"below determinant threshold":  {1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 0.999999e-303, 0, 0, 0, 0, 1},
+		"inverse coefficient overflow": {1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 2e-320, 0, 0, 0, 0, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := sceneParentMatrixFromAny(invalid); ok {
+				t.Fatal("invalid affine parent matrix accepted")
 			}
 		})
 	}

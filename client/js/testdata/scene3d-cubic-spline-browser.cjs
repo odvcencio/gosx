@@ -1388,14 +1388,21 @@ function affineScalePolicyExpr() {
     'function hit(matrix,origin,dir){var mesh={id:"scaled",kind:"sphere",radius:1,count:1,pickable:true,transforms:new Float32Array(matrix)};' +
       'var h=window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes({origin:origin,dir:dir},[mesh],0);' +
       'return h&&{distance:h.distance,local:h.localPosition};}' +
+    'function inverse(matrix){var out=new Float64Array(12),api=window.__gosx_scene3d_api;' +
+      'return {without:api.sceneAffineDeterminant(matrix,0),withOut:api.sceneAffineDeterminant(matrix,0,out),inverse:Array.from(out,function(v){return Number.isFinite(v)?v:null;})};}' +
     'function uniform(s){return hit([s,0,0,0,0,s,0,0,0,0,s,0,0,0,0,1],{x:0,y:0,z:2*s},{x:0,y:0,z:-1});}' +
     'function shear(s){var n=Math.SQRT1_2,len=s*Math.sqrt(5),x=-s*n,y=3*s*n;' +
       'return {expected:len,hit:hit([-2*s,0,0,0,s,3*s,0,0,0,0,4*s,0,0,0,0,1],{x:2*x,y:2*y,z:0},{x:-x/len,y:-y/len,z:0})};}' +
-    'var near=[9e307,-9e307,0,0,9e307,9e307,0,0,0,0,9e307,0,0,0,0,1],inv=new Float64Array(12);' +
+    'var near=[9e307,-9e307,0,0,9e307,9e307,0,0,0,0,9e307,0,0,0,0,1];' +
     'return {uniformCutoff:uniform(1e6),uniformLarge:uniform(1e9),uniformSmall:uniform(1e-9),shearedLarge:shear(1e9),shearedSmall:shear(1e-9),' +
-      'nearMax:{determinant:window.__gosx_scene3d_api.sceneAffineDeterminant(near,0,inv),inverse:Array.from(inv)},' +
-      'overflow:window.__gosx_scene3d_api.sceneAffineDeterminant([1e-308,0,0,0,0,1e-308,0,0,0,0,2e-320,0,0,0,0,1],0,new Float64Array(12)),' +
-      'singular:window.__gosx_scene3d_api.sceneAffineDeterminant([1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],0,new Float64Array(12))};})()';
+      'tiny:inverse([1e-297,0,0,0,0,2e-303,0,0,0,0,2e-303,0,0,0,0,1]),' +
+      'tinyShear:inverse([1e-297,0,0,0,5e-298,2e-303,0,0,-4e-298,1e-303,2e-303,0,0,0,0,1]),' +
+      'tinyTransposed:inverse([1e-297,5e-298,-4e-298,0,0,2e-303,1e-303,0,0,0,2e-303,0,0,0,0,1]),' +
+      'tinyReflected:inverse([-1e-297,0,0,0,5e-298,2e-303,0,0,-4e-298,1e-303,2e-303,0,0,0,0,1]),' +
+      'thresholdAccepted:inverse([1e-297,0,0,0,0,1e-303,0,0,0,0,1.000001e-303,0,0,0,0,1]),nearMax:inverse(near),' +
+      'thresholdRejected:inverse([1e-297,0,0,0,0,1e-303,0,0,0,0,0.999999e-303,0,0,0,0,1]),' +
+      'overflow:inverse([1e-308,0,0,0,0,1e-308,0,0,0,0,2e-320,0,0,0,0,1]),' +
+      'singular:inverse([1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1])};})()';
 }
 
 function affineEvidenceExpr() {
@@ -1842,15 +1849,31 @@ async function runAffineCase(send, c, sessionId) {
       '[' + c.name + '] large sheared/reflected pick distance', 1e-6);
     assertRelative(scalePolicy.shearedSmall.hit.distance, scalePolicy.shearedSmall.expected,
       '[' + c.name + '] small sheared/reflected pick distance', 1e-6);
+    for (const name of ['tiny', 'tinyShear', 'tinyTransposed', 'tinyReflected', 'thresholdAccepted', 'nearMax']) {
+      const receipt = scalePolicy[name];
+      if (!receipt || receipt.without === 0 || receipt.withOut !== receipt.without ||
+          !Array.isArray(receipt.inverse) || !receipt.inverse.every(Number.isFinite) ||
+          !receipt.inverse.some((value) => value !== 0)) {
+        fail('[' + c.name + '] ' + name + ' affine inverse invalid: ' + JSON.stringify(receipt));
+      }
+    }
+    assertRelative(scalePolicy.tiny.inverse[0], 1e297,
+      '[' + c.name + '] anisotropic tiny inverse x', 1e-15);
+    assertRelative(scalePolicy.tiny.inverse[5], 5e302,
+      '[' + c.name + '] anisotropic tiny inverse y', 1e-15);
+    assertRelative(scalePolicy.tiny.inverse[10], 5e302,
+      '[' + c.name + '] anisotropic tiny inverse z', 1e-15);
     const nearInverse = scalePolicy.nearMax && scalePolicy.nearMax.inverse;
-    if (!scalePolicy.nearMax || scalePolicy.nearMax.determinant !== 2 ||
+    if (!scalePolicy.nearMax || scalePolicy.nearMax.without !== 2 ||
         !Array.isArray(nearInverse) || !nearInverse.every(Number.isFinite) ||
         !nearInverse.some((value) => value !== 0)) {
       fail('[' + c.name + '] near-max affine inverse invalid: ' + JSON.stringify(scalePolicy.nearMax));
     }
-    if (scalePolicy.overflow !== 0 || scalePolicy.singular !== 0) {
+    if (!scalePolicy.thresholdRejected || scalePolicy.thresholdRejected.without !== 0 || scalePolicy.thresholdRejected.withOut !== 0 ||
+        !scalePolicy.overflow || scalePolicy.overflow.without !== 0 || scalePolicy.overflow.withOut !== 0 ||
+        !scalePolicy.singular || scalePolicy.singular.without !== 0 || scalePolicy.singular.withOut !== 0) {
       fail('[' + c.name + '] invalid affine inverse did not fail closed: ' +
-        JSON.stringify({ overflow: scalePolicy.overflow, singular: scalePolicy.singular }));
+        JSON.stringify({ threshold: scalePolicy.thresholdRejected, overflow: scalePolicy.overflow, singular: scalePolicy.singular }));
     }
   }
 

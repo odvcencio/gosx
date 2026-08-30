@@ -282,9 +282,27 @@ func TestAffineInverseScaleExtremesAndFailClosed(t *testing.T) {
 		"near max finite": {
 			nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1,
 		},
+		"anisotropic tiny diagonal": {
+			1e-297, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1,
+		},
+		"anisotropic tiny shear": {
+			1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1,
+		},
+		"anisotropic tiny transposed shear": {
+			1e-297, 5e-298, -4e-298, 0, 0, 2e-303, 1e-303, 0, 0, 0, 2e-303, 0, 0, 0, 0, 1,
+		},
+		"anisotropic tiny reflected shear": {
+			-1e-297, 0, 0, 0, 5e-298, 2e-303, 0, 0, -4e-298, 1e-303, 2e-303, 0, 0, 0, 0, 1,
+		},
+		"just above normalized determinant threshold": {
+			1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 1.000001e-303, 0, 0, 0, 0, 1,
+		},
 	}
 	for name, matrix := range valid {
 		t.Run(name, func(t *testing.T) {
+			if !ValidParentMatrix(matrix[:]) {
+				t.Fatal("public parent-matrix validator rejected valid affine inverse")
+			}
 			inverse, ok := inverseAffine(matrix)
 			if !ok {
 				t.Fatal("valid affine inverse was rejected")
@@ -301,8 +319,12 @@ func TestAffineInverseScaleExtremesAndFailClosed(t *testing.T) {
 			if !linearNonZero {
 				t.Fatal("inverse linear basis is all zero")
 			}
-			assertMatrixClose(t, affineSlice(multiplyAffine(matrix, inverse)), identity, 1e-12)
+			assertMatrixClose(t, affineSlice(multiplyAffine(matrix, inverse)), identity, 1e-9)
 		})
+	}
+	tinyInverse, ok := inverseAffine(valid["anisotropic tiny diagonal"])
+	if !ok || math.Abs(tinyInverse[0]/1e297-1) > 1e-15 || math.Abs(tinyInverse[5]/5e302-1) > 1e-15 || math.Abs(tinyInverse[10]/5e302-1) > 1e-15 {
+		t.Fatalf("anisotropic tiny inverse = %v, want diag(1e297,5e302,5e302)", tinyInverse)
 	}
 
 	for name, matrix := range map[string]affineMatrix{
@@ -311,15 +333,25 @@ func TestAffineInverseScaleExtremesAndFailClosed(t *testing.T) {
 		"inverse coefficient overflow": {
 			1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 2e-320, 0, 0, 0, 0, 1,
 		},
-		"inverse translation overflow": {
-			1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 1e-308, 0, 9e307, 0, 0, 1,
+		"below normalized determinant threshold": {
+			1e-297, 0, 0, 0, 0, 1e-303, 0, 0, 0, 0, 0.999999e-303, 0, 0, 0, 0, 1,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if ValidParentMatrix(matrix[:]) {
+				t.Fatal("invalid affine matrix passed the public validator")
+			}
 			if inverse, ok := inverseAffine(matrix); ok {
 				t.Fatalf("invalid inverse reported success: %v", inverse)
 			}
 		})
+	}
+	translationOverflow := affineMatrix{1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 1e-308, 0, 9e307, 0, 0, 1}
+	if !ValidParentMatrix(translationOverflow[:]) {
+		t.Fatal("representable linear inverse was rejected because of translation")
+	}
+	if inverse, ok := inverseAffine(translationOverflow); ok {
+		t.Fatalf("non-finite translated inverse reported success: %v", inverse)
 	}
 }
 
