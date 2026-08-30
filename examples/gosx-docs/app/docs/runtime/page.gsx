@@ -341,7 +341,9 @@ func Page() Node {
 			<p>
 				Add
 				<span class="inline-code">data-gosx-cue-toggle</span>
-				to a button to let the visitor mute every cue on the page. The runtime keeps
+				to a dedicated
+				<span class="inline-code">&lt;button type="button"&gt;</span>
+				to let the visitor mute every cue on the page. The runtime keeps
 				<span class="inline-code">aria-pressed</span>
 				,
 				<span class="inline-code">data-gosx-cue-state</span>
@@ -371,6 +373,21 @@ func Page() Node {
 	    data-gosx-cue-label-on="Sound on" data-gosx-cue-label-off="Sound off">
 	    Sound on
 	</button>`)}
+			<p>
+				A toggle on any other tag still functions, but warns once in the console — the
+				<span class="inline-code">&lt;button type="button"&gt;</span>
+				requirement is not enforced. The toggle never calls
+				<span class="inline-code">preventDefault()</span>
+				on an element that also carries
+				<span class="inline-code">data-gosx-action</span>
+				or
+				<span class="inline-code">href</span>
+				, so the same click can mute AND submit an action or navigate — the two behaviors are independent, neither swallows the other.
+				<span class="inline-code">gosx:cue:muted</span>
+				fires only on a change; it never fires for the boot-time restore of a stored choice. A script that needs the initial state reads
+				<span class="inline-code">window.__gosx.cues.muted()</span>
+				directly instead of waiting for an event that will not come.
+			</p>
 			<p>
 				Add
 				<span class="inline-code">data-gosx-countdown-then="revalidate"</span>

@@ -93,3 +93,53 @@ test("a missing or throwing localStorage never throws and leaves cues unmuted", 
   assert.doesNotThrow(() => cues.mute());
   assert.equal(cues.muted(), true, "the in-memory state still flips when storage is unavailable");
 });
+
+test("a plain toggle (no data-gosx-action, no href) has its click prevented", () => {
+  const button = toggleButton();
+  const { env } = boot([button]);
+  let prevented = false;
+  env.document.dispatchEvent({ type: "click", target: button, preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+});
+
+test("a toggle that also carries data-gosx-action leaves the click alone so the action still fires", () => {
+  const button = toggleButton();
+  button.setAttribute("data-gosx-action", "POST /mute-preference");
+  const { env, cues } = boot([button]);
+  let prevented = false;
+  env.document.dispatchEvent({ type: "click", target: button, preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, false, "the click is left alone for actions.ts's own listener to handle");
+  assert.equal(cues.muted(), true, "the mute toggle itself still happens");
+});
+
+test("a toggle that also carries href leaves the click alone so the navigation still fires", () => {
+  const button = toggleButton();
+  button.setAttribute("href", "/preferences");
+  const { env, cues } = boot([button]);
+  let prevented = false;
+  env.document.dispatchEvent({ type: "click", target: button, preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, false);
+  assert.equal(cues.muted(), true);
+});
+
+test("a data-gosx-cue-toggle element that is not a button warns once", () => {
+  const div = new FakeElement("div", null);
+  div.setAttribute("data-gosx-cue-toggle", "");
+  const { env } = boot([div]);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-cue-toggle/);
+});
+
+test("gosx:cue:muted never fires for the boot-time restore of a stored choice", () => {
+  const storage = fakeStorage({ "gosx:cues:muted": "1" });
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [toggleButton()], AudioContext: audio.AudioContext });
+  env.context.window.localStorage = storage;
+  installManualClock(env.context, 0);
+  installManualTimers(env.context);
+  const seen = [];
+  env.document.addEventListener("gosx:cue:muted", (event) => seen.push(event.detail.muted));
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(env.context.__gosx.cues.muted(), true, "boot reads the stored state");
+  assert.deepEqual(seen, [], "the boot-time restore of a stored choice never dispatches gosx:cue:muted");
+});

@@ -3353,6 +3353,13 @@
   const CUE_LABEL_OFF_ATTR = "data-gosx-cue-label-off";
   const CUE_MUTED_STORAGE_KEY = "gosx:cues:muted";
   let audioCuesMuted = false;
+  // cueToggleTagWarned is the same one-time-warning latch shape
+  // regionBootstrapWarned uses below for checkRegionBootstrapDiagnostic:
+  // set once, checked first, never reset — a page with several
+  // data-gosx-cue-toggle controls gets exactly one console warning for
+  // the first non-button one syncCueToggles ever finds, not one per
+  // control and not one per rescan.
+  let cueToggleTagWarned = false;
 
   // readStoredCueMute runs once at boot, before the first countdown tick,
   // so a stored mute silences the very first crossing. Every storage
@@ -3388,6 +3395,12 @@
   function syncCueToggles() {
     const on = !audioCuesMuted;
     for (const node of findCueToggleElements()) {
+      if (!cueToggleTagWarned && node.tagName && String(node.tagName).toUpperCase() !== "BUTTON") {
+        cueToggleTagWarned = true;
+        console.warn(
+          "[gosx] " + CUE_TOGGLE_ATTR + " expects a <button type=\"button\">; found <" + String(node.tagName).toLowerCase() + ">",
+        );
+      }
       if (node.getAttribute("aria-pressed") !== String(on)) node.setAttribute("aria-pressed", String(on));
       if (node.getAttribute(CUE_TOGGLE_STATE_ATTR) !== (on ? "on" : "off")) node.setAttribute(CUE_TOGGLE_STATE_ATTR, on ? "on" : "off");
       const label = node.getAttribute(on ? CUE_LABEL_ON_ATTR : CUE_LABEL_OFF_ATTR);
@@ -3409,7 +3422,17 @@
   function onCueToggleClick(event) {
     for (let node = event && event.target; node && node !== document; node = node.parentNode) {
       if (!node.hasAttribute || !node.hasAttribute(CUE_TOGGLE_ATTR)) continue;
-      if (typeof event.preventDefault === "function") event.preventDefault();
+      // NavigationCueToggleAttr's own doc comment asks for a dedicated
+      // <button type="button">, which has no default action to preserve
+      // — preventDefault here is normally a harmless no-op, not a real
+      // behavior change. But a node that ALSO carries data-gosx-action or
+      // href is deliberately left alone: this listener's only job is the
+      // mute toggle, and it must never swallow a click actions.ts's own
+      // listener, or an ordinary link navigation, still needs to see.
+      const carriesOtherBehavior = node.hasAttribute("data-gosx-action") || node.hasAttribute("href");
+      if (!carriesOtherBehavior && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
       setCuesMuted(!audioCuesMuted);
       return;
     }

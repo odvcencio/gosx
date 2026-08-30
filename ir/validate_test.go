@@ -1,6 +1,7 @@
 package ir_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -702,27 +703,33 @@ func Page() Node {
 
 // TestValidateRejectsInvalidRegionMode covers gosx#217's region growth
 // modes: data-gosx-region-mode accepts only "replace", "append", or
-// "prepend" — a typo must fail check-time, never silently fall back to a
-// destructive "replace" swap at run time.
+// "prepend", matched byte for byte — a typo ("Append"), or embedded
+// whitespace ("append ", " prepend") the run-time's own untrimmed ===
+// comparison would also reject, must fail check-time, never silently
+// fall back to a destructive "replace" swap at run time.
 func TestValidateRejectsInvalidRegionMode(t *testing.T) {
-	source := []byte(`package main
+	for _, value := range []string{"Append", "append ", " prepend"} {
+		t.Run(value, func(t *testing.T) {
+			source := []byte(fmt.Sprintf(`package main
 
 func Page() Node {
-	return <div data-gosx-region-src="/api/wire/events" data-gosx-region-mode="Append"></div>
+	return <div data-gosx-region-src="/api/wire/events" data-gosx-region-mode="%s"></div>
 }
-`)
-	prog, err := parse(t, source)
-	if err != nil {
-		t.Fatalf("Lower failed: %v", err)
-	}
+`, value))
+			prog, err := parse(t, source)
+			if err != nil {
+				t.Fatalf("Lower failed: %v", err)
+			}
 
-	diags := ir.Validate(prog)
-	if len(diags) != 1 {
-		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
-	}
-	want := `invalid data-gosx-region-mode value "Append": must be "replace", "append", or "prepend"`
-	if diags[0].Message != want {
-		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+			diags := ir.Validate(prog)
+			if len(diags) != 1 {
+				t.Fatalf("expected exactly one diagnostic for value %q, got %+v", value, diags)
+			}
+			want := fmt.Sprintf(`invalid data-gosx-region-mode value %q: must be "replace", "append", or "prepend"`, value)
+			if diags[0].Message != want {
+				t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+			}
+		})
 	}
 }
 

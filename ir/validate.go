@@ -629,17 +629,22 @@ func isValidPrefetchValue(value string) bool {
 // isValidRegionModeValue reports whether value is one of the three
 // data-gosx-region-mode values RegionModeAttr's own doc comment in
 // runtime_contract.go documents: "replace" (the default), "append", or
-// "prepend" — matched case-sensitively, the same exact-string comparison
-// the run-time (record.mode === "append" || record.mode === "prepend")
-// uses. Unlike isValidLinkCurrentPolicyValue or isValidPrefetchValue
-// above, an unrecognized region mode is not a harmless "falls back to a
-// sane default and moves on" value: the run-time treats anything other
-// than "append"/"prepend" as "replace", so a typo ("Append", "perpend")
-// would silently turn an intended growth mode into a destructive
-// full-region swap that wipes every row the region already rendered —
-// this must fail `gosx check`, never reach a browser.
+// "prepend" — matched byte for byte against the run-time's own exact,
+// UNTRIMMED comparison (record.mode === "append" || record.mode ===
+// "prepend", where record.mode itself is read straight off
+// el.getAttribute with no trim at all). This function deliberately does
+// not call strings.TrimSpace either: "append " or " prepend" is exactly
+// as wrong as "Append" here, since the run-time's === would reject all
+// three the same way. Unlike isValidLinkCurrentPolicyValue or
+// isValidPrefetchValue above, an unrecognized region mode is not a
+// harmless "falls back to a sane default and moves on" value: the
+// run-time treats anything other than "append"/"prepend" as "replace",
+// so a typo (a stray space, "Append", "perpend") would silently turn an
+// intended growth mode into a destructive full-region swap that wipes
+// every row the region already rendered — this must fail `gosx check`,
+// never reach a browser.
 func isValidRegionModeValue(value string) bool {
-	switch strings.TrimSpace(value) {
+	switch value {
 	case "replace", "append", "prepend":
 		return true
 	default:
