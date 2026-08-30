@@ -1497,30 +1497,14 @@ func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ moti
 	// renormalized) so non-uniform scale keeps lighting correct; no translation
 	// and no drift offset is applied. Rotation composition mirrors translatePoint
 	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
-	if object.ScaleX != 0 || object.ScaleY != 0 || object.ScaleZ != 0 {
-		sx, sy, sz := object.ScaleX, object.ScaleY, object.ScaleZ
-		if sx == 0 {
-			sx = 1
-		}
-		if sy == 0 {
-			sy = 1
-		}
-		if sz == 0 {
-			sz = 1
-		}
-		normal = point3{X: normal.X / sx, Y: normal.Y / sy, Z: normal.Z / sz}
-		length := math.Sqrt(normal.X*normal.X + normal.Y*normal.Y + normal.Z*normal.Z)
-		if length > 0 {
-			normal = point3{X: normal.X / length, Y: normal.Y / length, Z: normal.Z / length}
-		}
-	}
+	normal = applySceneObjectInverseScaleToNormal(object, normal)
 	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
 		rotated = point3{X: cx, Y: cy, Z: cz}
 	}
 	nx, ny, nz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	return normalizePoint3(point3{X: nx, Y: ny, Z: nz})
+	return applySceneParentNormal(object, point3{X: nx, Y: ny, Z: nz})
 }
 
 // lightingContext holds all light and environment colors pre-resolved from
@@ -1629,8 +1613,8 @@ func sceneLitColorRGBAResolved(base [4]float64, material rootengine.RenderMateri
 // (the static/cache path). It uses the object's combined (rotation+spin*time) trig
 // for the same result as the identity-spin case of sceneObjectWorldNormal.
 func sceneObjectWorldNormalTrig(object sceneObject, point point3, objTrig rotTrig) point3 {
-	normal := sceneObjectLocalNormal(object, point)
-	return normalizePoint3(rotatePointTrig(normal, objTrig))
+	normal := applySceneObjectInverseScaleToNormal(object, sceneObjectLocalNormal(object, point))
+	return applySceneParentNormal(object, rotatePointTrig(normal, objTrig))
 }
 
 func sceneObjectLocalNormal(object sceneObject, point point3) point3 {
@@ -1946,11 +1930,11 @@ func sceneObjectRotTrig(object sceneObject, timeSeconds float64) rotTrig {
 func translatePointTrig(point point3, object sceneObject, timeSeconds float64, objTrig rotTrig) point3 {
 	rotated := rotatePointTrig(applySceneObjectScale(point, object), objTrig)
 	offset := sceneMotionOffset(object, timeSeconds)
-	return point3{
+	return applySceneParentPoint(object, point3{
 		X: rotated.X + object.X + offset.X,
 		Y: rotated.Y + object.Y + offset.Y,
 		Z: rotated.Z + object.Z + offset.Z,
-	}
+	})
 }
 
 // NOTE: The clip composition here (base→clipR→spin, translation in world space)
@@ -1987,11 +1971,60 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	if clip.HasT {
 		tx, ty, tz = clip.T[0], clip.T[1], clip.T[2]
 	}
-	return point3{
+	return applySceneParentPoint(object, point3{
 		X: sx + object.X + offset.X + tx,
 		Y: sy + object.Y + offset.Y + ty,
 		Z: sz + object.Z + offset.Z + tz,
+	})
+}
+
+func applySceneObjectInverseScaleToNormal(object sceneObject, normal point3) point3 {
+	sx, sy, sz := object.ScaleX, object.ScaleY, object.ScaleZ
+	if sx == 0 {
+		sx = 1
 	}
+	if sy == 0 {
+		sy = 1
+	}
+	if sz == 0 {
+		sz = 1
+	}
+	return normalizePoint3(point3{X: normal.X / sx, Y: normal.Y / sy, Z: normal.Z / sz})
+}
+
+func applySceneParentPoint(object sceneObject, point point3) point3 {
+	if !object.HasParentMatrix {
+		return point
+	}
+	matrix := object.ParentMatrix
+	return point3{
+		X: matrix[0]*point.X + matrix[4]*point.Y + matrix[8]*point.Z + matrix[12],
+		Y: matrix[1]*point.X + matrix[5]*point.Y + matrix[9]*point.Z + matrix[13],
+		Z: matrix[2]*point.X + matrix[6]*point.Y + matrix[10]*point.Z + matrix[14],
+	}
+}
+
+func applySceneParentNormal(object sceneObject, normal point3) point3 {
+	if !object.HasParentMatrix {
+		return normalizePoint3(normal)
+	}
+	matrix := object.ParentMatrix
+	a, b, c := matrix[0], matrix[4], matrix[8]
+	d, e, f := matrix[1], matrix[5], matrix[9]
+	g, h, i := matrix[2], matrix[6], matrix[10]
+	c00, c01, c02 := e*i-f*h, f*g-d*i, d*h-e*g
+	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
+	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
+	determinant := a*c00 + b*c01 + c*c02
+	orientation := 1.0
+	if determinant < 0 {
+		orientation = -1
+	}
+	return normalizePoint3(point3{
+		X: orientation * (c00*normal.X + c01*normal.Y + c02*normal.Z),
+		Y: orientation * (c10*normal.X + c11*normal.Y + c12*normal.Z),
+		Z: orientation * (c20*normal.X + c21*normal.Y + c22*normal.Z),
+	})
 }
 
 // applySceneObjectScale applies the static leaf scale (ObjectIR scaleX/Y/Z)

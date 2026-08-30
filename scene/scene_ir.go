@@ -145,16 +145,17 @@ type InstancedGLBMeshIR struct {
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
 type MeshInstanceIR struct {
-	ID        string  `json:"id,omitempty"`
-	X         float64 `json:"x,omitempty"`
-	Y         float64 `json:"y,omitempty"`
-	Z         float64 `json:"z,omitempty"`
-	ScaleX    float64 `json:"scaleX,omitempty"`
-	ScaleY    float64 `json:"scaleY,omitempty"`
-	ScaleZ    float64 `json:"scaleZ,omitempty"`
-	RotationX float64 `json:"rotationX,omitempty"`
-	RotationY float64 `json:"rotationY,omitempty"`
-	RotationZ float64 `json:"rotationZ,omitempty"`
+	ID           string    `json:"id,omitempty"`
+	X            float64   `json:"x,omitempty"`
+	Y            float64   `json:"y,omitempty"`
+	Z            float64   `json:"z,omitempty"`
+	ScaleX       float64   `json:"scaleX,omitempty"`
+	ScaleY       float64   `json:"scaleY,omitempty"`
+	ScaleZ       float64   `json:"scaleZ,omitempty"`
+	RotationX    float64   `json:"rotationX,omitempty"`
+	RotationY    float64   `json:"rotationY,omitempty"`
+	RotationZ    float64   `json:"rotationZ,omitempty"`
+	ParentMatrix []float64 `json:"parentMatrix,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -246,6 +247,7 @@ type ObjectIR struct {
 	ScaleX             float64                    `json:"scaleX,omitempty"`
 	ScaleY             float64                    `json:"scaleY,omitempty"`
 	ScaleZ             float64                    `json:"scaleZ,omitempty"`
+	ParentMatrix       []float64                  `json:"parentMatrix,omitempty"`
 	SpinX              float64                    `json:"spinX,omitempty"`
 	SpinY              float64                    `json:"spinY,omitempty"`
 	SpinZ              float64                    `json:"spinZ,omitempty"`
@@ -547,6 +549,7 @@ type PointsIR struct {
 	RotationX           float64           `json:"rotationX,omitempty"`
 	RotationY           float64           `json:"rotationY,omitempty"`
 	RotationZ           float64           `json:"rotationZ,omitempty"`
+	ParentMatrix        []float64         `json:"parentMatrix,omitempty"`
 	SpinX               float64           `json:"spinX,omitempty"`
 	SpinY               float64           `json:"spinY,omitempty"`
 	SpinZ               float64           `json:"spinZ,omitempty"`
@@ -2040,6 +2043,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "scaleX", item.ScaleX)
 	setNumeric(record, "scaleY", item.ScaleY)
 	setNumeric(record, "scaleZ", item.ScaleZ)
+	if len(item.ParentMatrix) > 0 {
+		record["parentMatrix"] = append([]float64(nil), item.ParentMatrix...)
+	}
 	setNumeric(record, "spinX", item.SpinX)
 	setNumeric(record, "spinY", item.SpinY)
 	setNumeric(record, "spinZ", item.SpinZ)
@@ -2088,6 +2094,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumeric(record, "scaleX", item.ScaleX)
 	setNumeric(record, "scaleY", item.ScaleY)
 	setNumeric(record, "scaleZ", item.ScaleZ)
+	if len(item.ParentMatrix) > 0 {
+		record["parentMatrix"] = append([]float64(nil), item.ParentMatrix...)
+	}
 	setNumeric(record, "bounds", item.Bounds)
 	setString(record, "fit", item.Fit)
 	setString(record, "fitAlign", item.FitAlign)
@@ -2219,6 +2228,9 @@ func (item PointsIR) legacyProps() map[string]any {
 	setNumeric(record, "rotationX", item.RotationX)
 	setNumeric(record, "rotationY", item.RotationY)
 	setNumeric(record, "rotationZ", item.RotationZ)
+	if len(item.ParentMatrix) > 0 {
+		record["parentMatrix"] = append([]float64(nil), item.ParentMatrix...)
+	}
 	setNumeric(record, "spinX", item.SpinX)
 	setNumeric(record, "spinY", item.SpinY)
 	setNumeric(record, "spinZ", item.SpinZ)
@@ -2418,6 +2430,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 			setNumeric(instRecord, "rotationX", inst.RotationX)
 			setNumeric(instRecord, "rotationY", inst.RotationY)
 			setNumeric(instRecord, "rotationZ", inst.RotationZ)
+			if len(inst.ParentMatrix) > 0 {
+				instRecord["parentMatrix"] = append([]float64(nil), inst.ParentMatrix...)
+			}
 			instances = append(instances, instRecord)
 		}
 		record["instances"] = instances

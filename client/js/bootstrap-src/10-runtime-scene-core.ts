@@ -676,6 +676,12 @@
     };
   }
 
+  function sceneNormalizeParentMatrix(value, fallback) {
+    const source = value === undefined ? fallback : value;
+    const out = source && source.length === 16 ? Array.from(source) : [];
+    return out.length && out.every(Number.isFinite) ? out : null;
+  }
+
 
   function normalizeSceneObject(object, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
@@ -784,6 +790,7 @@
       scaleX: sceneNumber(item.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scaleX, 1))),
       scaleY: sceneNumber(item.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scaleY, 1))),
       scaleZ: sceneNumber(item.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scaleZ, 1))),
+      parentMatrix: sceneNormalizeParentMatrix(item.parentMatrix, current.parentMatrix),
       spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
       spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
       spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
@@ -1362,6 +1369,7 @@
       scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scale, 1))),
       scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scale, 1))),
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
+      parentMatrix: sceneNormalizeParentMatrix(current.parentMatrix),
       bounds: Math.max(0, sceneNumber(current.bounds, 0)),
       fit: typeof current.fit === "string" ? current.fit.trim() : "",
       fitAlign: typeof current.fitAlign === "string" ? current.fitAlign.trim() : "",
@@ -1413,6 +1421,7 @@
       scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scale, 1))),
       scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scale, 1))),
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
+      parentMatrix: sceneNormalizeParentMatrix(current.parentMatrix),
     };
   }
 
@@ -1519,6 +1528,7 @@
         scaleX: instance.scaleX,
         scaleY: instance.scaleY,
         scaleZ: instance.scaleZ,
+        parentMatrix: instance.parentMatrix,
       };
       for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "pickable", "visible", "static"]) {
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
@@ -1772,6 +1782,7 @@
       rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
       rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
       rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      parentMatrix: sceneNormalizeParentMatrix(item.parentMatrix, current.parentMatrix),
       spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
       spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
       spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
@@ -4734,9 +4745,9 @@
 
     // Inlined XYZ Euler rotation (was sceneRotatePoint). Applies rotateX
     // then rotateY then rotateZ to match the original helper semantics.
-    const rotX = object.rotationX + object.spinX * timeSeconds;
-    const rotY = object.rotationY + object.spinY * timeSeconds;
-    const rotZ = object.rotationZ + object.spinZ * timeSeconds;
+    const rotX = object.rotationX + (object.spinX || 0) * timeSeconds;
+    const rotY = object.rotationY + (object.spinY || 0) * timeSeconds;
+    const rotZ = object.rotationZ + (object.spinZ || 0) * timeSeconds;
 
     const sinX = Math.sin(rotX);
     const cosX = Math.cos(rotX);
@@ -4770,9 +4781,17 @@
       z += Math.sin(angle) * sceneNumber(object.shiftZ, 0);
     }
 
-    out.x = x + object.x;
-    out.y = y + object.y;
-    out.z = z + object.z;
+    x += object.x;
+    y += object.y;
+    z += object.z;
+    const parentMatrix = object.parentMatrix;
+    if (parentMatrix) {
+      sceneMatrixTransformInto(out, parentMatrix, x, y, z, 4, true);
+      return;
+    }
+    out.x = x;
+    out.y = y;
+    out.z = z;
   }
 
   // Module-level scratches used by the hot line-geometry and triangle-mesh
@@ -4885,6 +4904,11 @@
 	    return out;
 	  }
 
+	  function sceneObjectTransformNormal(object, normal, timeSeconds) {
+	    const transform = sceneObjectMeshBakeLinearState(object, sceneObjectModelMatrix(object, timeSeconds));
+	    return sceneMatrixTransformInto({}, transform, normal.x, normal.y, normal.z, 3, false);
+	  }
+
 	  function sceneObjectModelScaleSigns(object) {
 	    let out = object && typeof object === "object"
 	      ? _sceneObjectModelScaleSignsCache.get(object)
@@ -4962,13 +4986,13 @@
 	      return null;
 	    }
 	    let bounds = null;
+	    const world = { x: 0, y: 0, z: 0 };
 	    for (let corner = 0; corner < 8; corner += 1) {
 	      const x = corner & 1 ? localBounds.maxX : localBounds.minX;
 	      const y = corner & 2 ? localBounds.maxY : localBounds.minY;
 	      const z = corner & 4 ? localBounds.maxZ : localBounds.minZ;
-	      const wx = modelMatrix[0] * x + modelMatrix[4] * y + modelMatrix[8] * z + modelMatrix[12];
-	      const wy = modelMatrix[1] * x + modelMatrix[5] * y + modelMatrix[9] * z + modelMatrix[13];
-	      const wz = modelMatrix[2] * x + modelMatrix[6] * y + modelMatrix[10] * z + modelMatrix[14];
+	      sceneMatrixTransformInto(world, modelMatrix, x, y, z, 4, true);
+	      const wx = world.x, wy = world.y, wz = world.z;
 	      if (!bounds) {
 	        bounds = { minX: wx, minY: wy, minZ: wz, maxX: wx, maxY: wy, maxZ: wz };
 	      } else {
@@ -5172,18 +5196,15 @@
 
   function sceneMeshWorldNormal(vertices, index, normalTransform) {
     const normal = sceneMeshVertexNormal(vertices, index);
-    return sceneNormalizeDirection({
-      x: normalTransform[0] * normal.x + normalTransform[3] * normal.y + normalTransform[6] * normal.z,
-      y: normalTransform[1] * normal.x + normalTransform[4] * normal.y + normalTransform[7] * normal.z,
-      z: normalTransform[2] * normal.x + normalTransform[5] * normal.y + normalTransform[8] * normal.z,
-    });
+    return sceneNormalizeDirection(sceneMatrixTransformInto(
+      normal, normalTransform, normal.x, normal.y, normal.z, 3, false,
+    ));
   }
 
   function sceneMeshWorldTangent(vertices, index, modelMatrix, normal, orientation) {
     const tangent = sceneMeshVertexTangent(vertices, index);
-    let x = modelMatrix[0] * tangent.x + modelMatrix[4] * tangent.y + modelMatrix[8] * tangent.z;
-    let y = modelMatrix[1] * tangent.x + modelMatrix[5] * tangent.y + modelMatrix[9] * tangent.z;
-    let z = modelMatrix[2] * tangent.x + modelMatrix[6] * tangent.y + modelMatrix[10] * tangent.z;
+    sceneMatrixTransformInto(tangent, modelMatrix, tangent.x, tangent.y, tangent.z, 4, false);
+    let x = tangent.x, y = tangent.y, z = tangent.z;
 
     // A tangent is a surface direction, so it follows the ordinary linear
     // transform rather than the normal matrix. Remove any accumulated
@@ -5514,15 +5535,9 @@
       const tri0 = source0 * 3;
       const tri1 = source1 * 3;
       const tri2 = source2 * 3;
-      points[0].x = modelMatrix[0] * positions[tri0] + modelMatrix[4] * positions[tri0 + 1] + modelMatrix[8] * positions[tri0 + 2] + modelMatrix[12];
-      points[0].y = modelMatrix[1] * positions[tri0] + modelMatrix[5] * positions[tri0 + 1] + modelMatrix[9] * positions[tri0 + 2] + modelMatrix[13];
-      points[0].z = modelMatrix[2] * positions[tri0] + modelMatrix[6] * positions[tri0 + 1] + modelMatrix[10] * positions[tri0 + 2] + modelMatrix[14];
-      points[1].x = modelMatrix[0] * positions[tri1] + modelMatrix[4] * positions[tri1 + 1] + modelMatrix[8] * positions[tri1 + 2] + modelMatrix[12];
-      points[1].y = modelMatrix[1] * positions[tri1] + modelMatrix[5] * positions[tri1 + 1] + modelMatrix[9] * positions[tri1 + 2] + modelMatrix[13];
-      points[1].z = modelMatrix[2] * positions[tri1] + modelMatrix[6] * positions[tri1 + 1] + modelMatrix[10] * positions[tri1 + 2] + modelMatrix[14];
-      points[2].x = modelMatrix[0] * positions[tri2] + modelMatrix[4] * positions[tri2 + 1] + modelMatrix[8] * positions[tri2 + 2] + modelMatrix[12];
-      points[2].y = modelMatrix[1] * positions[tri2] + modelMatrix[5] * positions[tri2 + 1] + modelMatrix[9] * positions[tri2 + 2] + modelMatrix[13];
-      points[2].z = modelMatrix[2] * positions[tri2] + modelMatrix[6] * positions[tri2 + 1] + modelMatrix[10] * positions[tri2 + 2] + modelMatrix[14];
+      sceneMatrixTransformInto(points[0], modelMatrix, positions[tri0], positions[tri0 + 1], positions[tri0 + 2], 4, true);
+      sceneMatrixTransformInto(points[1], modelMatrix, positions[tri1], positions[tri1 + 1], positions[tri1 + 2], 4, true);
+      sceneMatrixTransformInto(points[2], modelMatrix, positions[tri2], positions[tri2 + 1], positions[tri2 + 2], 4, true);
       const normals = [
         sceneMeshWorldNormal(vertices, source0, bakeLinearState),
         sceneMeshWorldNormal(vertices, source1, bakeLinearState),

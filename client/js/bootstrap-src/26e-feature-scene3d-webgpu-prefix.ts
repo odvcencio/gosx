@@ -58,6 +58,7 @@
     }
     return out;
   };
+  var sceneEulerMatrixInto = sceneApi.sceneEulerMatrixInto;
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
   var sceneMat4Ortho2DView = sceneApi.sceneMat4Ortho2DView;

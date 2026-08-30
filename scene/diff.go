@@ -636,20 +636,21 @@ func SetPostUniformsCommand(effects []PostUniformPatch) Command {
 // merges over an object whose scale the runtime already resolved, so it must
 // send the resolved 1. Sending 0 would collapse the object to a point.
 type TransformPatch struct {
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	Z         float64 `json:"z"`
-	RotationX float64 `json:"rotationX"`
-	RotationY float64 `json:"rotationY"`
-	RotationZ float64 `json:"rotationZ"`
-	ScaleX    float64 `json:"scaleX"`
-	ScaleY    float64 `json:"scaleY"`
-	ScaleZ    float64 `json:"scaleZ"`
+	X            float64      `json:"x"`
+	Y            float64      `json:"y"`
+	Z            float64      `json:"z"`
+	RotationX    float64      `json:"rotationX"`
+	RotationY    float64      `json:"rotationY"`
+	RotationZ    float64      `json:"rotationZ"`
+	ScaleX       float64      `json:"scaleX"`
+	ScaleY       float64      `json:"scaleY"`
+	ScaleZ       float64      `json:"scaleZ"`
+	ParentMatrix *[16]float64 `json:"parentMatrix"`
 }
 
 // SetTransformCommand patches one object's position, rotation, and scale without
 // replacing the record. Dragging an object through remove plus create ships the
-// whole record every frame, including geometry; this ships nine floats.
+// whole record every frame, including geometry; this ships ten transform fields.
 //
 // DiffScene emits it when DiffOptions.PatchTransforms is on. Any caller may
 // build it by hand for an object the runtime already holds.
@@ -659,7 +660,7 @@ func SetTransformCommand(id string, patch TransformPatch) Command {
 
 // objectTransformPatch returns a transform patch when next changed only in
 // position, rotation, or scale. It proves that claim rather than assuming it: it
-// copies previous, overwrites the nine transform fields with next's, and
+// copies previous, overwrites the ten transform fields with next's, and
 // requires the copy to equal next. Any other changed field, including a nested
 // slice or a map, leaves the copy unequal and the caller falls back to remove
 // plus create. So a patch can never drop a second edit that arrived in the same
@@ -669,20 +670,38 @@ func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
 	probe.X, probe.Y, probe.Z = next.X, next.Y, next.Z
 	probe.RotationX, probe.RotationY, probe.RotationZ = next.RotationX, next.RotationY, next.RotationZ
 	probe.ScaleX, probe.ScaleY, probe.ScaleZ = next.ScaleX, next.ScaleY, next.ScaleZ
+	probe.ParentMatrix = append([]float64(nil), next.ParentMatrix...)
 	if !sceneRecordPointerJSONEqual(&probe, next) {
 		return Command{}, false
 	}
+	parentMatrix, ok := transformPatchParentMatrix(next.ParentMatrix)
+	if !ok {
+		return Command{}, false
+	}
 	return SetTransformCommand(next.ID, TransformPatch{
-		X:         next.X,
-		Y:         next.Y,
-		Z:         next.Z,
-		RotationX: next.RotationX,
-		RotationY: next.RotationY,
-		RotationZ: next.RotationZ,
-		ScaleX:    resolveIRScale(next.ScaleX),
-		ScaleY:    resolveIRScale(next.ScaleY),
-		ScaleZ:    resolveIRScale(next.ScaleZ),
+		X:            next.X,
+		Y:            next.Y,
+		Z:            next.Z,
+		RotationX:    next.RotationX,
+		RotationY:    next.RotationY,
+		RotationZ:    next.RotationZ,
+		ScaleX:       resolveIRScale(next.ScaleX),
+		ScaleY:       resolveIRScale(next.ScaleY),
+		ScaleZ:       resolveIRScale(next.ScaleZ),
+		ParentMatrix: parentMatrix,
 	}), true
+}
+
+func transformPatchParentMatrix(values []float64) (*[16]float64, bool) {
+	if values == nil {
+		return nil, true
+	}
+	affine, ok := affineFromValues(values)
+	if !ok {
+		return nil, false
+	}
+	matrix := [16]float64(affine)
+	return &matrix, true
 }
 
 // resolveIRScale maps one ObjectIR scale component to an explicit factor. See

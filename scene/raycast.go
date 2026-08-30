@@ -168,10 +168,10 @@ func raycastNode(node Node, parent worldTransform, ray Ray, opts RaycastOptions,
 			raycastInstancedMesh(*current, parent, ray, opts, trace)
 		}
 	case Group:
-		raycastNodes(current.Children, combineTransforms(parent, localTransform(current.Position, current.Rotation)), ray, opts, trace)
+		raycastNodes(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)), ray, opts, trace)
 	case *Group:
 		if current != nil {
-			raycastNodes(current.Children, combineTransforms(parent, localTransform(current.Position, current.Rotation)), ray, opts, trace)
+			raycastNodes(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)), ray, opts, trace)
 		}
 	case LODGroup:
 		raycastLODGroup(current, parent, ray, opts, trace)
@@ -245,11 +245,11 @@ func raycastMesh(mesh Mesh, parent worldTransform, ray Ray, opts RaycastOptions,
 		return
 	}
 	scale := meshScaleOrUnit(mesh.Scale)
-	factor := scaleFactor(scale)
+	factor := worldScaleBound(world, scale)
 	threshold := pointHitRadius(opts)
 	// The pick radius is a world length. Divide it once to reach local space,
 	// where every geometry test runs.
-	localThreshold := threshold / factor
+	localThreshold := localDistanceBound(world, scale, threshold)
 	radius, strokes := geometryBounds(mesh.Geometry)
 	// Broadphase: reject the mesh before the exact test when the ray misses its
 	// world-space bounding sphere. This costs about ten arithmetic operations
@@ -282,19 +282,19 @@ func raycastInstancedMesh(mesh InstancedMesh, parent worldTransform, ray Ray, op
 	localRadius, strokes := geometryBounds(mesh.Geometry)
 	for i := 0; i < count; i++ {
 		position := vectorAt(mesh.Positions, i, Vector3{})
+		rotation := eulerAt(mesh.Rotations, i, Euler{})
+		world := combineTransforms(parent, localTransform(position, rotation))
 		scale := sanitizedScale(vectorAt(mesh.Scales, i, sceneUnitScale()))
-		factor := scaleFactor(scale)
-		localThreshold := threshold / factor
+		factor := worldScaleBound(world, scale)
+		localThreshold := localDistanceBound(world, scale, threshold)
 		// Broadphase per instance. Instance rotation cannot move the bounding
 		// sphere, so this test needs the world center only. Rejected instances
 		// never pay for a quaternion inverse or a geometry intersection.
-		center := addVectors(parent.Position, parent.Rotation.rotate(position))
+		center := world.Position
 		if rayMissesSphere(ray, center, localRadius*factor+strokes*threshold, opts.MaxDistance) {
 			trace.BroadphaseRejected++
 			continue
 		}
-		rotation := eulerAt(mesh.Rotations, i, Euler{})
-		world := combineTransforms(parent, localTransform(position, rotation))
 		trace.PrimitivesTested++
 		trace.InstancesTested++
 		if hit, ok := raycastTransformedGeometry(mesh.Geometry, world, scale, ray, localThreshold); ok {
@@ -346,7 +346,7 @@ func raycastPoints(points Points, parent worldTransform, ray Ray, opts RaycastOp
 	radius := pointHitRadius(opts)
 	id := strings.TrimSpace(points.ID)
 	for i := 0; i < count; i++ {
-		center := addVectors(world.Position, world.Rotation.rotate(points.Positions[i]))
+		center := affinePoint(worldAffine(world), points.Positions[i])
 		if rayMissesSphere(ray, center, radius, opts.MaxDistance) {
 			trace.BroadphaseRejected++
 			continue
@@ -382,7 +382,7 @@ func raycastSprite(sprite Sprite, parent worldTransform, ray Ray, opts RaycastOp
 		trace.FilteredPrimitives++
 		return
 	}
-	center := addVectors(parent.Position, parent.Rotation.rotate(sprite.Position))
+	center := combineTransforms(parent, localTransform(sprite.Position, Euler{})).Position
 	radius := pointHitRadius(opts) * spriteRadiusScale(sprite)
 	if rayMissesSphere(ray, center, radius, opts.MaxDistance) {
 		trace.BroadphaseRejected++
@@ -417,7 +417,7 @@ func raycastModel(model Model, parent worldTransform, ray Ray, opts RaycastOptio
 	world := combineTransforms(parent, localTransform(model.Position, model.Rotation))
 	scale := meshScaleOrUnit(model.Scale)
 	half := model.Bounds / 2
-	if rayMissesSphere(ray, world.Position, half*math.Sqrt(3)*maxAbsComponent(scale), opts.MaxDistance) {
+	if rayMissesSphere(ray, world.Position, half*math.Sqrt(3)*worldScaleBound(world, scale), opts.MaxDistance) {
 		trace.BroadphaseRejected++
 		return
 	}
@@ -585,6 +585,27 @@ func scaleFactor(scale Vector3) float64 {
 	return factor
 }
 
+func worldScaleBound(world worldTransform, scale Vector3) float64 {
+	if !world.HasMatrix {
+		return scaleFactor(scale)
+	}
+	return affineLinearBound(worldAffineWithScale(world, scale))
+}
+
+func localDistanceBound(world worldTransform, scale Vector3, distance float64) float64 {
+	if distance <= 0 {
+		return 0
+	}
+	if !world.HasMatrix {
+		return distance / scaleFactor(scale)
+	}
+	inverse, ok := inverseAffine(worldAffineWithScale(world, scale))
+	if !ok {
+		return 0
+	}
+	return distance * affineLinearBound(inverse)
+}
+
 // boxCornerRadius returns the radius of the sphere that encloses a box.
 func boxCornerRadius(min, max Vector3) float64 {
 	x := math.Max(math.Abs(min.X), math.Abs(max.X))
@@ -597,7 +618,10 @@ func boxCornerRadius(min, max Vector3) float64 {
 // localThreshold is the pick radius in local units, which only Lines strokes
 // read.
 func raycastTransformedGeometry(geometry Geometry, world worldTransform, scale Vector3, ray Ray, localThreshold float64) (RayHit, bool) {
-	localRay := localRayFor(world, scale, ray)
+	localRay, ok := localRayFor(world, scale, ray)
+	if !ok {
+		return RayHit{}, false
+	}
 	localHit, kind, ok := raycastGeometry(geometry, localRay, localThreshold)
 	if !ok {
 		return RayHit{}, false
@@ -606,19 +630,23 @@ func raycastTransformedGeometry(geometry Geometry, world worldTransform, scale V
 }
 
 // localRayFor moves a world ray into the local space of one node.
-func localRayFor(world worldTransform, scale Vector3, ray Ray) Ray {
-	inv := world.Rotation.conjugate().normalized()
-	return Ray{
-		Origin:    divideVector(inv.rotate(subVectors(ray.Origin, world.Position)), scale),
-		Direction: normalizeVector(divideVector(inv.rotate(ray.Direction), scale)),
+func localRayFor(world worldTransform, scale Vector3, ray Ray) (Ray, bool) {
+	inverse, ok := inverseAffine(worldAffineWithScale(world, scale))
+	if !ok {
+		return Ray{}, false
 	}
+	return Ray{
+		Origin:    affinePoint(inverse, ray.Origin),
+		Direction: normalizeVector(affineVector(inverse, ray.Direction)),
+	}, true
 }
 
 // worldHitFor lifts a local-space hit back into world space. The distance comes
 // from the world point, so a non-uniform scale reports the true world distance.
 func worldHitFor(localHit RayHit, kind string, world worldTransform, scale Vector3, ray Ray) RayHit {
-	point := addVectors(world.Position, world.Rotation.rotate(multiplyVector(localHit.Point, scale)))
-	normal := normalizeVector(world.Rotation.rotate(divideVector(localHit.Normal, scale)))
+	matrix := worldAffineWithScale(world, scale)
+	point := affinePoint(matrix, localHit.Point)
+	normal := affineNormal(matrix, localHit.Normal)
 	return RayHit{
 		Kind:     kind,
 		Distance: vectorLength(subVectors(point, ray.Origin)),
@@ -1461,10 +1489,7 @@ func sceneUnitScale() Vector3 { return Vector3{X: 1, Y: 1, Z: 1} }
 // meshScaleOrUnit treats the Mesh.Scale zero value as unit scale so scenes
 // authored before leaf scale existed keep their behavior.
 func meshScaleOrUnit(scale Vector3) Vector3 {
-	if scale == (Vector3{}) {
-		return sceneUnitScale()
-	}
-	return scale
+	return sanitizedScale(scale)
 }
 
 func sanitizedScale(scale Vector3) Vector3 {

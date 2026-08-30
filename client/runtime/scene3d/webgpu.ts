@@ -16450,43 +16450,26 @@
         var px = sceneNumber(entry.x, 0);
         var py = sceneNumber(entry.y, 0);
         var pz = sceneNumber(entry.z, 0);
+        var rx = sceneNumber(entry.rotationX, 0);
+        var ry = sceneNumber(entry.rotationY, 0);
+        var rz = sceneNumber(entry.rotationZ, 0);
         var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
 
         if (hasSpin) {
           var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
           var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
           var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
-          var csx = Math.cos(spx), ssx = Math.sin(spx);
-          var csy = Math.cos(spy), ssy = Math.sin(spy);
-          var csz = Math.cos(spz), ssz = Math.sin(spz);
-          _pointsSpin[0] = csy*csz; _pointsSpin[4] = ssx*ssy*csz-csx*ssz; _pointsSpin[8]  = csx*ssy*csz+ssx*ssz; _pointsSpin[12] = 0;
-          _pointsSpin[1] = csy*ssz; _pointsSpin[5] = ssx*ssy*ssz+csx*csz; _pointsSpin[9]  = csx*ssy*ssz-ssx*csz; _pointsSpin[13] = 0;
-          _pointsSpin[2] = -ssy;    _pointsSpin[6] = ssx*csy;             _pointsSpin[10] = csx*csy;             _pointsSpin[14] = 0;
-          _pointsSpin[3] = 0;       _pointsSpin[7] = 0;                   _pointsSpin[11] = 0;                   _pointsSpin[15] = 1;
-
-          var rx = sceneNumber(entry.rotationX, 0);
-          var ry = sceneNumber(entry.rotationY, 0);
-          var rz = sceneNumber(entry.rotationZ, 0);
-          var cxr = Math.cos(rx), sxr = Math.sin(rx);
-          var cyr = Math.cos(ry), syr = Math.sin(ry);
-          var czr = Math.cos(rz), szr = Math.sin(rz);
-          _pointsTilt[0] = cyr*czr; _pointsTilt[4] = sxr*syr*czr-cxr*szr; _pointsTilt[8]  = cxr*syr*czr+sxr*szr; _pointsTilt[12] = px;
-          _pointsTilt[1] = cyr*szr; _pointsTilt[5] = sxr*syr*szr+cxr*czr; _pointsTilt[9]  = cxr*syr*szr-sxr*czr; _pointsTilt[13] = py;
-          _pointsTilt[2] = -syr;    _pointsTilt[6] = sxr*cyr;             _pointsTilt[10] = cxr*cyr;             _pointsTilt[14] = pz;
-          _pointsTilt[3] = 0;       _pointsTilt[7] = 0;                   _pointsTilt[11] = 0;                   _pointsTilt[15] = 1;
-
+          sceneEulerMatrixInto(_pointsSpin, spx, spy, spz, 0, 0, 0);
+          sceneEulerMatrixInto(_pointsTilt, rx, ry, rz, px, py, pz);
           sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
         } else {
-          var rx2 = sceneNumber(entry.rotationX, 0);
-          var ry2 = sceneNumber(entry.rotationY, 0);
-          var rz2 = sceneNumber(entry.rotationZ, 0);
-          var cxr2 = Math.cos(rx2), sxr2 = Math.sin(rx2);
-          var cyr2 = Math.cos(ry2), syr2 = Math.sin(ry2);
-          var czr2 = Math.cos(rz2), szr2 = Math.sin(rz2);
-          _pointsModelMat[0] = cyr2*czr2; _pointsModelMat[4] = sxr2*syr2*czr2-cxr2*szr2; _pointsModelMat[8]  = cxr2*syr2*czr2+sxr2*szr2; _pointsModelMat[12] = px;
-          _pointsModelMat[1] = cyr2*szr2; _pointsModelMat[5] = sxr2*syr2*szr2+cxr2*czr2; _pointsModelMat[9]  = cxr2*syr2*szr2-sxr2*czr2; _pointsModelMat[13] = py;
-          _pointsModelMat[2] = -syr2;     _pointsModelMat[6] = sxr2*cyr2;                _pointsModelMat[10] = cxr2*cyr2;                _pointsModelMat[14] = pz;
-          _pointsModelMat[3] = 0;         _pointsModelMat[7] = 0;                        _pointsModelMat[11] = 0;                        _pointsModelMat[15] = 1;
+          sceneEulerMatrixInto(_pointsModelMat, rx, ry, rz, px, py, pz);
+        }
+
+        var pointsModelMat = _pointsModelMat;
+        if (entry.parentMatrix) {
+          sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
+          pointsModelMat = _pointsTilt;
         }
 
         // Build PointsUniforms buffer.
@@ -16496,7 +16479,7 @@
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
 
-        puF.set(_pointsModelMat, 0);   // modelMatrix @ 0
+        puF.set(pointsModelMat, 0);   // modelMatrix @ 0
         var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
         puF[16] = defaultColorRGBA[0]; // defaultColorAndSize.r @ 64
         puF[17] = defaultColorRGBA[1];

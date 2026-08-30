@@ -310,7 +310,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run Scene3D CUBICSPLINE browser proof
+      - name: Run Scene3D v1 browser proof
         env:
           GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: |

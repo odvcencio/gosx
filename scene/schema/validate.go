@@ -73,9 +73,67 @@ func ValidateJSON(data []byte, opts Options) Report {
 		return report
 	}
 	validateSpecularRawDocument(&report, data)
+	validateParentMatricesRawDocument(&report, data)
 	validateDocument(&report, doc, opts)
 	report.Valid = !hasError(report.Diagnostics)
 	return report
+}
+
+func validateParentMatricesRawDocument(report *Report, data []byte) {
+	var raw struct {
+		Objects            []json.RawMessage `json:"objects"`
+		Models             []json.RawMessage `json:"models"`
+		Points             []json.RawMessage `json:"points"`
+		InstancedGLBMeshes []struct {
+			ID        string            `json:"id"`
+			Instances []json.RawMessage `json:"instances"`
+		} `json:"instancedGLBMeshes"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return
+	}
+	validateRecords := func(records []json.RawMessage, family string) {
+		for index, record := range records {
+			validateParentMatrixRaw(report, record, fmt.Sprintf("%s[%d].parentMatrix", family, index), "")
+		}
+	}
+	validateRecords(raw.Objects, "objects")
+	validateRecords(raw.Models, "models")
+	validateRecords(raw.Points, "points")
+	for batchIndex, batch := range raw.InstancedGLBMeshes {
+		for instanceIndex, instance := range batch.Instances {
+			validateParentMatrixRaw(report, instance, fmt.Sprintf("instancedGLBMeshes[%d].instances[%d].parentMatrix", batchIndex, instanceIndex), batch.ID)
+		}
+	}
+}
+
+func validateParentMatrixRaw(report *Report, record json.RawMessage, path, fallbackID string) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(record, &fields) != nil {
+		return
+	}
+	ownerID := fallbackID
+	if rawID, ok := fields["id"]; ok {
+		_ = json.Unmarshal(rawID, &ownerID)
+	}
+	raw, ok := fields["parentMatrix"]
+	if !ok {
+		return
+	}
+	var values []json.RawMessage
+	if json.Unmarshal(raw, &values) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix must be an array of 16 finite numbers", path, ownerID, nil)
+		return
+	}
+	for index, encoded := range values {
+		var value any
+		if json.Unmarshal(encoded, &value) != nil {
+			continue
+		}
+		if _, ok := value.(float64); !ok {
+			report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix values must be numbers", fmt.Sprintf("%s[%d]", path, index), ownerID, nil)
+		}
+	}
 }
 
 func validateDocument(report *Report, doc Document, opts Options) {
@@ -259,6 +317,9 @@ func validateObject(report *Report, object scene.ObjectIR, path string) {
 		"rotationX":      object.RotationX,
 		"rotationY":      object.RotationY,
 		"rotationZ":      object.RotationZ,
+		"scaleX":         object.ScaleX,
+		"scaleY":         object.ScaleY,
+		"scaleZ":         object.ScaleZ,
 		"spinX":          object.SpinX,
 		"spinY":          object.SpinY,
 		"spinZ":          object.SpinZ,
@@ -268,6 +329,7 @@ func validateObject(report *Report, object scene.ObjectIR, path string) {
 		"driftSpeed":     object.DriftSpeed,
 		"driftPhase":     object.DriftPhase,
 	})
+	validateParentMatrix(report, object.ID, path+".parentMatrix", object.ParentMatrix)
 	validateNonNegativeNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
 		"dashSize":       object.DashSize,
@@ -362,6 +424,7 @@ func validatePoints(report *Report, points scene.PointsIR, path string) {
 		"spinY":        points.SpinY,
 		"spinZ":        points.SpinZ,
 	})
+	validateParentMatrix(report, points.ID, path+".parentMatrix", points.ParentMatrix)
 	validateNonNegativeNumericFields(report, points.ID, path, map[string]float64{
 		"size":         points.Size,
 		"minPixelSize": points.MinPixelSize,
@@ -431,6 +494,20 @@ func validateMeshInstance(report *Report, instance scene.MeshInstanceIR, path, p
 		"rotationY": instance.RotationY,
 		"rotationZ": instance.RotationZ,
 	})
+	validateParentMatrix(report, parentID, path+".parentMatrix", instance.ParentMatrix)
+}
+
+func validateParentMatrix(report *Report, ownerID, path string, matrix []float64) {
+	if matrix == nil {
+		return
+	}
+	if len(matrix) != 16 {
+		report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix must contain exactly 16 values", path, ownerID, map[string]any{"values": len(matrix)})
+		return
+	}
+	for index, value := range matrix {
+		validateFiniteFloat(report, ownerID, fmt.Sprintf("%s[%d]", path, index), value)
+	}
 }
 
 func validateComputeParticles(report *Report, particles scene.ComputeParticlesIR, path string) {
