@@ -344,9 +344,30 @@ jobs:
           GOSX_CHROME_NO_SANDBOX: "1"
         run: make test-perf-browser
 
+      # Perf budgets are release measurements, so their browser is a governed
+      # fixture rather than the floating snapshot used by the compatibility
+      # tests above. Run 33305212196 measured this exact snapshot green on the
+      # same runtime/perf sources. Renew the pin only with a reviewed hosted
+      # receipt; latest-browser coverage remains in the earlier steps.
+      - name: Set up pinned Chromium for perf budget
+        id: perf-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: '1688711'
+
+      - name: Verify pinned perf browser identity
+        env:
+          PERF_CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}
+          PERF_CHROME_VERSION: ${{ steps.perf-chrome.outputs.chrome-version }}
+        run: |
+          sh scripts/verify-perf-browser-identity.sh \
+            "$PERF_CHROME_PATH" \
+            "$PERF_CHROME_VERSION" \
+            build/perf-browser-identity.txt
+
       - name: Perf budget gate
         env:
-          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
       - name: Upload perf budget failure diagnostics
@@ -357,13 +378,17 @@ jobs:
           path: |
             build/perf-report.json
             build/perf-server.log
+            build/perf-browser-identity.txt
           if-no-files-found: ignore
           retention-days: 7
 
   # test: kept as the lightweight aggregate required-check surface. It must
   # include release-gate so branch protection on the aggregate `test` check also
-  # gates release policy and governed workflow topology.
+  # gates release policy and governed workflow topology. `always()` makes the
+  # aggregate run after a failed/skipped dependency; the step then fails closed
+  # unless every required dependency reports success.
   test:
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
       - release-gate
@@ -377,7 +402,34 @@ jobs:
 
     steps:
       - name: All test jobs passed
-        run: echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
+        env:
+          RELEASE_GATE_RESULT: ${{ needs.release-gate.result }}
+          GO_TESTS_RESULT: ${{ needs.go-tests.result }}
+          GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
+          GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
+          JS_TESTS_RESULT: ${{ needs.js-tests.result }}
+          WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
+          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}
+        run: |
+          set -eu
+          for result in \
+            "release-gate=$RELEASE_GATE_RESULT" \
+            "go-tests=$GO_TESTS_RESULT" \
+            "go-race-tests=$GO_RACE_TESTS_RESULT" \
+            "go-cli-tests=$GO_CLI_TESTS_RESULT" \
+            "js-tests=$JS_TESTS_RESULT" \
+            "wasm-tests=$WASM_TESTS_RESULT" \
+            "browser-tests=$BROWSER_TESTS_RESULT"
+          do
+            case "$result" in
+              *=success) ;;
+              *)
+                echo "required test job did not succeed: $result" >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
