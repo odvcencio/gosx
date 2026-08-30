@@ -60,6 +60,13 @@ if (MUTATION && MUTATION !== 'webgpu-no-draw' && MUTATION !== 'webgpu-no-submit'
   console.error('unsupported GOSX_SCENE3D_CUBIC_MUTATION: ' + MUTATION);
   process.exit(2);
 }
+const RESTORE_ATOMIC_GAP_MS = Number(
+  process.env.GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS || 0);
+if (!Number.isInteger(RESTORE_ATOMIC_GAP_MS) || RESTORE_ATOMIC_GAP_MS < 0 ||
+    RESTORE_ATOMIC_GAP_MS > 1000) {
+  console.error('GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS must be an integer from 0 to 1000');
+  process.exit(2);
+}
 
 const errors = [];
 const warnings = [];
@@ -742,11 +749,19 @@ async function captureWebGPU(send, mount, label) {
   return evalSend(send, webGPUCaptureExpr(mount, label), { awaitPromise: true });
 }
 
-function webGPUArmExpr(mount, label) {
+function webGPUArmAndHubExpr(mount, label, detail) {
   return '(function(){var m=document.getElementById(' + JSON.stringify(mount) + ');' +
     'var cv=m&&m.querySelector("canvas");var r=window.__cubicWGReadback;' +
-    'return !!(cv&&r&&typeof r.arm==="function"&&r.arm(cv,' +
-      JSON.stringify(label) + '));})()';
+    'var armed=!!(cv&&r&&typeof r.arm==="function"&&r.arm(cv,' +
+      JSON.stringify(label) + '));' +
+    // The optional busy gap is an adversarial control. Because it remains in
+    // this synchronous page task, even a long gap cannot let RAF consume the
+    // arm before the public STOP event is dispatched.
+    'var until=performance.now()+' + RESTORE_ATOMIC_GAP_MS + ';' +
+    'while(performance.now()<until){}' +
+    'var dispatched=false;try{document.dispatchEvent(new CustomEvent("gosx:hub:event",' +
+      '{detail:' + JSON.stringify(detail) + '}));dispatched=true;}catch(e){}' +
+    'return {armed:armed,dispatched:dispatched};})()';
 }
 
 function webGPUResultExpr(label) {
@@ -1015,18 +1030,23 @@ async function runCase(send, c, sessionId) {
   }
 
   // Public stop with zero fades restores the authored pose on the SAME scene.
-  // Arm the WebGPU copy before the stop event: once the restored frame is
-  // submitted the idle scene may stop rendering, so a later capture request
-  // would have no product submission to observe.
+  // Arm the WebGPU copy and dispatch stop synchronously in one page task.
+  // Once the restored frame is submitted the idle scene may stop rendering,
+  // while separate CDP evaluations would leave a RAF-sized interception gap.
   let restoreReadbackArmed = true;
+  let stopDispatched = false;
   if (c.webgpu) {
-    restoreReadbackArmed = await evalSend(send,
-      webGPUArmExpr(c.mount, c.name + '-restored'));
+    const armAndStop = await evalSend(send,
+      webGPUArmAndHubExpr(c.mount, c.name + '-restored', STOP_DETAIL));
+    restoreReadbackArmed = !!(armAndStop && armAndStop.armed);
+    stopDispatched = !!(armAndStop && armAndStop.dispatched);
     if (restoreReadbackArmed !== true) {
       fail('[' + c.name + '] restored mapped presentation readback could not be armed');
     }
+  } else {
+    stopDispatched = (await evalSend(send, hubExpr(STOP_DETAIL))) === true;
   }
-  if ((await evalSend(send, hubExpr(STOP_DETAIL))) !== true) {
+  if (!stopDispatched) {
     fail('[' + c.name + '] hub stop event dispatch failed');
   }
   await settleFrames(send, 12);
@@ -1107,7 +1127,8 @@ function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, intentionalNoContent,
     clientEventResponses,
-    nativeCaps: global.__caps || null, mutation: MUTATION || null, cases: CASE_EVIDENCE,
+    nativeCaps: global.__caps || null, mutation: MUTATION || null,
+    restoreAtomicGapMS: RESTORE_ATOMIC_GAP_MS, cases: CASE_EVIDENCE,
   }, extra || {});
   try {
     fs.writeFileSync(path.join(ART, 'report.json'), JSON.stringify(report, null, 2));
