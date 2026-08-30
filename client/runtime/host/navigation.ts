@@ -2823,6 +2823,7 @@
     // — see its own doc comment above.
     setupPageHeartbeat();
     setupPageCountdowns();
+    syncCueToggles();
     // setupPageWatchers (gosx#214) and setupPageFilters (gosx#215) both
     // follow the exact same rescan lifecycle — see their own doc comments
     // above.
@@ -3323,6 +3324,81 @@
   // bounded-growth shape missingPatchPathWarnings uses in patch.ts.
   const audioCueDebugLog = [];
 
+  // Cue mute (D1 item 7, gosx#217 extension): a runtime-wide switch that
+  // silences every cue playCountdownCue would otherwise play, without
+  // touching the countdown/watcher state that decides WHEN a cue would
+  // fire. audioCuesMuted is the one module-level source of truth;
+  // CUE_MUTED_STORAGE_KEY only persists a visitor's choice across a
+  // reload, and is never read again after boot except through the public
+  // cuesAPI below.
+  const CUE_TOGGLE_ATTR = "data-gosx-cue-toggle";
+  const CUE_TOGGLE_STATE_ATTR = "data-gosx-cue-state";
+  const CUE_LABEL_ON_ATTR = "data-gosx-cue-label-on";
+  const CUE_LABEL_OFF_ATTR = "data-gosx-cue-label-off";
+  const CUE_MUTED_STORAGE_KEY = "gosx:cues:muted";
+  let audioCuesMuted = false;
+
+  // readStoredCueMute runs once at boot, before the first countdown tick,
+  // so a stored mute silences the very first crossing. Every storage
+  // access is wrapped: private mode and a sandboxed frame throw here.
+  function readStoredCueMute() {
+    try {
+      const storage = typeof window !== "undefined" ? window.localStorage : null;
+      return !!storage && storage.getItem(CUE_MUTED_STORAGE_KEY) === "1";
+    } catch (_e) { return false; }
+  }
+
+  function writeStoredCueMute(muted) {
+    try {
+      const storage = typeof window !== "undefined" ? window.localStorage : null;
+      if (storage) storage.setItem(CUE_MUTED_STORAGE_KEY, muted ? "1" : "0");
+    } catch (_e) { /* the in-memory state is authoritative for this page */ }
+  }
+
+  function findCueToggleElements() {
+    const found = [];
+    walkElements(document.body, function(node) {
+      if (node.hasAttribute && node.hasAttribute(CUE_TOGGLE_ATTR)) found.push(node);
+      return true;
+    });
+    return found;
+  }
+
+  // syncCueToggles writes the live state onto every control: aria-pressed
+  // ("true" means sound on), data-gosx-cue-state, and the optional label.
+  // It runs at boot, after every soft navigation, and on every
+  // gosx:region:after rescan, so a control a swap just rendered never
+  // shows the server default over the visitor's own choice.
+  function syncCueToggles() {
+    const on = !audioCuesMuted;
+    for (const node of findCueToggleElements()) {
+      if (node.getAttribute("aria-pressed") !== String(on)) node.setAttribute("aria-pressed", String(on));
+      if (node.getAttribute(CUE_TOGGLE_STATE_ATTR) !== (on ? "on" : "off")) node.setAttribute(CUE_TOGGLE_STATE_ATTR, on ? "on" : "off");
+      const label = node.getAttribute(on ? CUE_LABEL_ON_ATTR : CUE_LABEL_OFF_ATTR);
+      if (label != null && String(node.textContent || "").trim() !== label) node.textContent = label;
+    }
+  }
+
+  function setCuesMuted(muted) {
+    const next = !!muted;
+    if (next === audioCuesMuted) return;
+    audioCuesMuted = next;
+    writeStoredCueMute(next);
+    syncCueToggles();
+    if (typeof CustomEvent === "function" && typeof document.dispatchEvent === "function") {
+      document.dispatchEvent(new CustomEvent("gosx:cue:muted", { detail: { muted: next } }));
+    }
+  }
+
+  function onCueToggleClick(event) {
+    for (let node = event && event.target; node && node !== document; node = node.parentNode) {
+      if (!node.hasAttribute || !node.hasAttribute(CUE_TOGGLE_ATTR)) continue;
+      if (typeof event.preventDefault === "function") event.preventDefault();
+      setCuesMuted(!audioCuesMuted);
+      return;
+    }
+  }
+
   function audioCueContextConstructor() {
     return (typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext)) || null;
   }
@@ -3434,7 +3510,12 @@
   // all: a page nobody has clicked or typed into yet is the expected
   // common case for a countdown or a watcher whose threshold or condition
   // is reached before the visitor's first gesture, not a bug to report.
+  // A muted cue (D1 item 7) is dropped here too, before it ever reaches
+  // audioCueContext — the crossing that triggered it is NOT remembered
+  // for replay, so unmuting only ever plays the next crossing, never a
+  // past one.
   function playCountdownCue(name) {
+    if (audioCuesMuted) return;
     if (!audioCueContext) return;
     resumeAudioCueContextIfSuspended();
     if (typeof audioCueContext.createOscillator !== "function" || typeof audioCueContext.createGain !== "function") return;
@@ -6395,6 +6476,7 @@
     setupPageRevalidation();
     setupPageHeartbeat();
     setupPageCountdowns();
+    syncCueToggles();
     setupPageWatchers();
     setupLiveRegions();
     setupPageFilters();
@@ -6503,6 +6585,13 @@
   prefetchManagedLinks("render");
   setupPageRevalidation();
   setupPageHeartbeat();
+  // Cue mute (D1 item 7): read the visitor's stored choice, and start
+  // listening for a data-gosx-cue-toggle click, before the first
+  // countdown tick below can ever fire a cue — a stored mute must
+  // silence even the very first crossing.
+  audioCuesMuted = readStoredCueMute();
+  document.addEventListener("click", onCueToggleClick, true);
+  syncCueToggles();
   setupPageCountdowns();
   setupPageWatchers();
   setupLiveRegions();
@@ -6539,9 +6628,23 @@
   // rescan never re-announces an unchanged filter result on every swap.
   document.addEventListener("gosx:region:after", function() {
     setupPageCountdowns();
+    syncCueToggles();
     setupPageWatchers();
     setupPageFilters({ announce: false });
   });
+
+  // cuesAPI is the public surface for D1 item 7's cue mute: scripts that
+  // want their own mute button, or that need to know the current state
+  // before deciding whether to play a cue of their own, use this instead
+  // of reaching into module-private state.
+  const cuesAPI = {
+    mute: function() { setCuesMuted(true); },
+    unmute: function() { setCuesMuted(false); },
+    toggle: function() { setCuesMuted(!audioCuesMuted); },
+    muted: function() { return audioCuesMuted; },
+  };
+  gosxHost.cues = cuesAPI;
+  window.__gosx.cues = Object.assign(window.__gosx.cues || {}, cuesAPI);
 
   const navigationAPI = {
     navigate: navigate,

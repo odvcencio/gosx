@@ -340,6 +340,39 @@ func Page() Node {
 			</p>
 			<p>
 				Add
+				<span class="inline-code">data-gosx-cue-toggle</span>
+				to a button to let the visitor mute every cue on the page. The runtime keeps
+				<span class="inline-code">aria-pressed</span>
+				,
+				<span class="inline-code">data-gosx-cue-state</span>
+				, and the optional
+				<span class="inline-code">data-gosx-cue-label-on</span>
+				/
+				<span class="inline-code">-off</span>
+				text in sync, also on a control a region swap renders later. The choice persists in
+				<span class="inline-code">localStorage</span>
+				under
+				<span class="inline-code">gosx:cues:muted</span>
+				. Scripts use
+				<span class="inline-code">window.__gosx.cues</span>
+				(
+				<span class="inline-code">mute</span>
+				,
+				<span class="inline-code">unmute</span>
+				,
+				<span class="inline-code">toggle</span>
+				,
+				<span class="inline-code">muted</span>
+				) and listen for
+				<span class="inline-code">gosx:cue:muted</span>
+				. A muted cue is skipped, never queued.
+			</p>
+			{CodeBlock("gosx", `<button data-gosx-cue-toggle
+	    data-gosx-cue-label-on="Sound on" data-gosx-cue-label-off="Sound off">
+	    Sound on
+	</button>`)}
+			<p>
+				Add
 				<span class="inline-code">data-gosx-countdown-then="revalidate"</span>
 				to fire one revalidation of the page's revalidate root (see
 				<span class="inline-code">data-gosx-revalidate-interval</span>

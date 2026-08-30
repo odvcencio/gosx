@@ -7,6 +7,7 @@
 - `data-gosx-live-mode="event"` applies a hub event's object payload to `data-gosx-live-bind` keys without a fetch; `data-gosx-live-src` is optional in that mode.
 - `data-gosx-region-mode="append|prepend"` inserts a fetched fragment beside existing children; `data-gosx-region-key` drops duplicates; `data-gosx-region-cursor` fills `{cursor}` in the URL.
 - A countdown re-reads a changed `data-gosx-countdown`; `window.__gosx.countdown.retarget(root)` restarts the shared timer after an expiry.
+- `data-gosx-cue-toggle` and `window.__gosx.cues` mute every countdown and watcher cue; the state persists under `gosx:cues:muted`; `gosx:cue:muted` announces a change.
 
 ### Changed: hub reconnect uses exponential backoff
 - 500 ms to 15 s with 25 percent jitter, reset on a successful open.

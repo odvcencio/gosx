@@ -76,6 +76,30 @@ const (
 	NavigationCountdownCueAttr     = "data-gosx-countdown-cue"
 	NavigationCountdownThenAttr    = "data-gosx-countdown-then"
 
+	// NavigationCueToggleAttr (D1 item 7) marks a button that mutes or
+	// unmutes every cue on the page — every NavigationCountdownCueAttr
+	// tier and every "cue:<name>" NavigationWatchEffectAttr token alike,
+	// through the same shared audio subsystem. A click toggles the
+	// runtime-wide mute; the runtime owns NavigationCueStateAttr
+	// ("on" or "off") and the element's aria-pressed attribute
+	// ("true"/"false", true meaning sound on), and swaps in the matching
+	// NavigationCueLabelOnAttr or NavigationCueLabelOffAttr text when
+	// either is present — an app never writes any of the three itself,
+	// including on a control a data-gosx-region swap renders later, which
+	// the runtime re-syncs to the current state rather than trusting its
+	// server-rendered default. The choice persists in the browser's
+	// localStorage under the fixed key "gosx:cues:muted" (a missing or
+	// throwing localStorage — private browsing, a sandboxed frame — never
+	// throws; the in-memory state stays authoritative for the page). A
+	// muted cue is dropped at the moment it would have played, never
+	// queued, so unmuting never replays a crossing missed while muted.
+	// Every mute/unmute dispatches a "gosx:cue:muted" CustomEvent on
+	// document with `detail.muted` for a script that wants to react.
+	NavigationCueToggleAttr   = "data-gosx-cue-toggle"
+	NavigationCueStateAttr    = "data-gosx-cue-state"
+	NavigationCueLabelOnAttr  = "data-gosx-cue-label-on"
+	NavigationCueLabelOffAttr = "data-gosx-cue-label-off"
+
 	// NavigationWatchAttr declares a condition over one of the watch
 	// element's own attributes (gosx#214):
 	// "<attrName>=<value>" compares that attribute's live value against a
