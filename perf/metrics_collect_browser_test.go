@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -17,26 +18,37 @@ import (
 func TestCollectPageReportBusyMainThreadAttributesFirstQuery(t *testing.T) {
 	d := requireDriver(t, 5*time.Second)
 	busyStarted := make(chan struct{}, 1)
+	releaseBusy := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseBusy)
+		})
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/busy-started" {
+		if r.URL.Path == "/busy-block" {
 			select {
 			case busyStarted <- struct{}{}:
 			default:
 			}
+			<-releaseBusy
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<!doctype html><html><body><script>
-			setTimeout(function() {
-				navigator.sendBeacon('/busy-started', 'busy');
-				var until = performance.now() + 1500;
-				while (performance.now() < until) {}
-			}, 50);
+			window.blockMainThreadForPerfTest = function() {
+				var xhr = new XMLHttpRequest();
+				xhr.open('GET', '/busy-block', false);
+				xhr.send();
+			};
 		</script></body></html>`)
 	}))
-	defer srv.Close()
+	defer func() {
+		release()
+		srv.Close()
+	}()
 
 	if err := d.Navigate(srv.URL); err != nil {
 		t.Fatalf("Navigate: %v", err)
@@ -44,6 +56,12 @@ func TestCollectPageReportBusyMainThreadAttributesFirstQuery(t *testing.T) {
 	if err := d.WaitReady(); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
+
+	blockErr := make(chan error, 1)
+	go func() {
+		var ignored any
+		blockErr <- d.Evaluate(`window.blockMainThreadForPerfTest()`, &ignored)
+	}()
 	select {
 	case <-busyStarted:
 	case <-time.After(2 * time.Second):
@@ -63,11 +81,14 @@ func TestCollectPageReportBusyMainThreadAttributesFirstQuery(t *testing.T) {
 		diagnosticPageReportQueryRunner(&diagnostics, 0, 1, srv.URL, queryTimeout),
 	)
 	if report != nil {
+		release()
 		t.Fatalf("busy page returned a report: %+v", report)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
+		release()
 		t.Fatalf("busy page error = %v, want context deadline exceeded", err)
 	}
+	release()
 	if !strings.Contains(err.Error(), "collect/navigation-timing") {
 		t.Fatalf("busy page error lacks exact first-query attribution: %v", err)
 	}
@@ -82,5 +103,8 @@ func TestCollectPageReportBusyMainThreadAttributesFirstQuery(t *testing.T) {
 	}
 	if strings.Contains(log, "phase=collect/heap-size start") {
 		t.Fatalf("collector advanced after required query cancellation:\n%s", log)
+	}
+	if err := <-blockErr; err != nil {
+		t.Fatalf("release synchronized busy-main-thread section: %v", err)
 	}
 }
