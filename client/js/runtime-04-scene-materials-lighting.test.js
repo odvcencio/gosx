@@ -2506,14 +2506,14 @@ test("Scene3D unsupported renderer fences initial model hydration before late as
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
   await flushAsyncWork();
-  assert.ok(state, "state must exist while unsupported cleanup is being evaluated");
+  assert.equal(state, null, "unsupported private state must never be published");
   await flushAsyncWork();
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
-  assert.ok(state._modelHydrationGeneration >= 2);
+  assert.equal(mount.__gosxScene3DHandle, undefined);
 
   route.resolve(modelAssetJSON("must-not-commit"));
   for (let attempt = 0; attempt < 5; attempt += 1) await flushAsyncWork();
-  assert.deepEqual(Array.from(state.objects.keys()), []);
+  assert.equal(state, null);
   assert.equal(assetStatuses.some((entry) => entry.status === "loaded"), false);
   assert.equal(hydrationStatuses.some((entry) => entry.status === "committed"), false);
 });

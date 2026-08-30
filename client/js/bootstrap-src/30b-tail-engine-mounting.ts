@@ -449,11 +449,13 @@
 
   function disposePendingEngine(pending, restoreFallback) {
     if (!pending || pending.closed) return;
+    const owned = pendingEngineOwned(pending);
     pending.closed = true;
     if (pendingEngineRuntimes.get(pending.id) === pending) {
       pendingEngineRuntimes.delete(pending.id);
     }
     releaseGoWASMEngineWaiter(pending);
+    if (!owned) return;
     if (!pending.runtimeDisposed && pending.runtime && typeof pending.runtime.dispose === "function") {
       pending.runtimeDisposed = true;
       try {

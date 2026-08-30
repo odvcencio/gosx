@@ -41,7 +41,7 @@ function createEnvelope(commands = []) {
   };
 }
 
-function createSceneEnvironment(onHydrate) {
+function createSceneEnvironment(onHydrate, options = {}) {
   const mount = new FakeElement("div", null);
   mount.id = "scene-hydrate-envelope-root";
   const ssr = new FakeElement("span", null);
@@ -52,6 +52,7 @@ function createSceneEnvironment(onHydrate) {
   const env = createContext({
     elements: [mount],
     enableWebGL: true,
+    enableWebGPU: Boolean(options.enableWebGPU),
     disableCanvas2D: true,
     fetchRoutes: {
       "/runtime.wasm": { bytes: [0, 97, 115, 109] },
@@ -65,7 +66,7 @@ function createSceneEnvironment(onHydrate) {
         kind: "surface",
         mountId: mount.id,
         runtime: "shared",
-        props: { width: 320, height: 180, background: "#08151f" },
+        props: Object.assign({ width: 320, height: 180, background: "#08151f" }, options.props || {}),
         programRef: "/scene-program.json",
       }],
     },
@@ -95,6 +96,26 @@ const malformedEnvelopes = [
     return value;
   }],
   ["extra field", () => Object.assign(createEnvelope(), { extra: true })],
+  ["non-enumerable extra field", () => {
+    const value = createEnvelope();
+    Object.defineProperty(value, "hidden", { value: true, enumerable: false });
+    return value;
+  }],
+  ["symbol extra field", () => {
+    const value = createEnvelope();
+    value[Symbol("hidden")] = true;
+    return value;
+  }],
+  ["non-enumerable required field", () => {
+    const value = createEnvelope();
+    Object.defineProperty(value, "mode", { value: "initial", enumerable: false });
+    return value;
+  }],
+  ["accessor required field", () => {
+    const value = createEnvelope();
+    Object.defineProperty(value, "mode", { get() { return "initial"; }, enumerable: true });
+    return value;
+  }],
   ["substituted top-level field", () => {
     const value = createEnvelope();
     delete value.commands;
@@ -148,6 +169,27 @@ for (const [name, makeEnvelope] of malformedEnvelopes) {
   });
 }
 
+test("Scene3D hydrate shape validation never invokes an expected-field accessor", async () => {
+  let getterReads = 0;
+  const value = createEnvelope();
+  Object.defineProperty(value, "mode", {
+    get() {
+      getterReads += 1;
+      return "initial";
+    },
+    enumerable: true,
+  });
+  const { env, mount, ssr } = createSceneEnvironment(() => value);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await waitFor(() => env.engineDisposeCalls.length === 1, "accessor envelope disposal");
+
+  assert.equal(getterReads, 0);
+  assert.strictEqual(mount.firstChild, ssr);
+  assert.equal(mount.__gosxScene3DState, undefined);
+  assert.equal(mount.__gosxScene3DHandle, undefined);
+});
+
 test("Scene3D hydrate applies a valid envelope exactly once before publication", async () => {
   let iteratorReads = 0;
   let publishedDuringApply = false;
@@ -158,7 +200,7 @@ test("Scene3D hydrate applies a valid envelope exactly once before publication",
       if (property === Symbol.iterator) {
         iteratorReads += 1;
         publishedDuringApply = Boolean(
-          mount.__gosxScene3DHandle ||
+          mount.__gosxScene3DState || mount.__gosxScene3DHandle ||
           (env.context.__gosx.engines && env.context.__gosx.engines.has(targetID)),
         );
       }
@@ -225,6 +267,47 @@ test("a stale blocked hydrate cannot apply or publish after a same-id winner", a
   assert.equal(env.context.__gosx.engines.has(targetID), true);
   assert.equal(mount.__gosxScene3DState.objects.has("22"), true);
   assert.equal(mount.__gosxScene3DState.objects.has("11"), false);
+  assert.deepEqual(env.engineDisposeCalls, [[targetID]]);
+});
+
+test("a post-hydrate same-id replacement cannot lose winner state to stale cleanup", async () => {
+  let env;
+  let hydrateCount = 0;
+  let mount;
+  ({ env, mount } = createSceneEnvironment(() => {
+    hydrateCount += 1;
+    if (hydrateCount === 1) {
+      setTimeout(() => env.context.__gosx_runtime_ready(), 0);
+    }
+    return createEnvelope([createCommand(hydrateCount === 1 ? 11 : 22)]);
+  }, {
+    enableWebGPU: true,
+    props: { preferWebGPU: true },
+  }));
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await waitFor(
+    () => hydrateCount === 2 && env.context.__gosx.engines.has(targetID) &&
+      mount.__gosxScene3DState && mount.__gosxScene3DHandle,
+    "post-hydrate replacement winner",
+  );
+
+  const winnerRecord = env.context.__gosx.engines.get(targetID);
+  const winnerState = mount.__gosxScene3DState;
+  const winnerHandle = mount.__gosxScene3DHandle;
+  const winnerCanvas = mount.querySelector("canvas");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(hydrateCount, 2);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.strictEqual(env.context.__gosx.engines.get(targetID), winnerRecord);
+  assert.strictEqual(mount.__gosxScene3DState, winnerState);
+  assert.strictEqual(mount.__gosxScene3DHandle, winnerHandle);
+  assert.strictEqual(mount.querySelector("canvas"), winnerCanvas);
+  assert.strictEqual(winnerRecord.handle, winnerHandle);
+  assert.equal(winnerState.objects.has("22"), true);
+  assert.equal(winnerState.objects.has("11"), false);
   assert.deepEqual(env.engineDisposeCalls, [[targetID]]);
 });
 
