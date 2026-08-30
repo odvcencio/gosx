@@ -139,7 +139,6 @@
       element,
       update,
       dispose() {
-        mount.removeAttribute("data-gosx-scene3d-inspector-enabled");
         if (element.parentNode === mount) {
           mount.removeChild(element);
         }

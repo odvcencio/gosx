@@ -16,17 +16,20 @@
     if (!sceneIsPlainObject(value)) return false;
     const proto = Object.getPrototypeOf(value);
     if (proto === null) return true;
-    const constructor = Object.prototype.hasOwnProperty.call(proto, "constructor") && proto.constructor;
-    return Object.getPrototypeOf(proto) === null && typeof constructor === "function" &&
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "constructor");
+    const constructor = descriptor && descriptor.value;
+    const prototype = typeof constructor === "function" &&
+      Object.getOwnPropertyDescriptor(constructor, "prototype");
+    return Object.getPrototypeOf(proto) === null && prototype && prototype.value === proto &&
       Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object);
   }
 
   function scene3DHydrateShape(value, keys) {
-    if (!scene3DHydrateRecord(value)) return false;
-    return Reflect.ownKeys(value).length === keys.length && keys.every(function(key) {
+    const fields = [];
+    return scene3DHydrateRecord(value) && Reflect.ownKeys(value).length === keys.length && keys.every(function(key) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      return descriptor && descriptor.enumerable && "value" in descriptor;
-    });
+      return descriptor && descriptor.enumerable && !("get" in descriptor) && (fields.push(descriptor.value), true);
+    }) ? fields : null;
   }
 
   function scene3DHydrateFail() {
@@ -34,34 +37,36 @@
   }
 
   function decodeScene3DInitialHydrateEnvelope(value, targetID) {
-    if (!scene3DHydrateShape(value, ["version", "surfaceKind", "outputKind", "targetId", "mode", "commands"]) ||
-        value.version !== 1 || value.surfaceKind !== "scene3d" ||
-        value.outputKind !== "scene3d.commands" || value.targetId !== targetID ||
-        value.mode !== "initial" || !Array.isArray(value.commands)) scene3DHydrateFail();
-    for (let index = 0; index < value.commands.length; index += 1) {
-      const command = value.commands[index];
-      const kind = command && command.kind;
-      if (!scene3DHydrateShape(command, kind === 1 ? ["kind", "objectId"] : ["kind", "objectId", "data"]) ||
-          !Number.isInteger(kind) || kind < 0 || kind > 6 ||
-          !Number.isInteger(command.objectId) || command.objectId < 0) scene3DHydrateFail();
+    const envelope = scene3DHydrateShape(value, ["version", "surfaceKind", "outputKind", "targetId", "mode", "commands"]);
+    if (!envelope || envelope[0] !== 1 || envelope[1] !== "scene3d" ||
+        envelope[2] !== "scene3d.commands" || envelope[3] !== targetID ||
+        envelope[4] !== "initial" || !Array.isArray(envelope[5])) scene3DHydrateFail();
+    const commands = envelope[5];
+    for (let index = 0; index < commands.length; index += 1) {
+      let command = scene3DHydrateShape(commands[index], ["kind", "objectId"]);
+      if (!command) command = scene3DHydrateShape(commands[index], ["kind", "objectId", "data"]);
+      const kind = command && command[0];
+      if (!command || (kind === 1) !== (command.length === 2) ||
+          kind !== (kind | 0) || kind < 0 || kind > 6 ||
+          !Number.isInteger(command[1]) || command[1] < 0) scene3DHydrateFail();
       if (kind === 1) continue;
-      if (command.kind === 6) {
-        if (!scene3DHydrateRecord(command.data) && !(Array.isArray(command.data) && command.data.every(scene3DHydrateRecord))) {
+      const data = command[2];
+      if (kind === 6) {
+        if (!scene3DHydrateRecord(data) && !(Array.isArray(data) && data.every(scene3DHydrateRecord))) {
           scene3DHydrateFail();
         }
         continue;
       }
-      if (!scene3DHydrateRecord(command.data)) scene3DHydrateFail();
-      if (command.kind === 0) {
-        const data = command.data;
-        if (!scene3DHydrateShape(data, ["kind", "geometry", "material", "props", "children", "static"]) ||
-            typeof data.kind !== "string" || !data.kind || typeof data.geometry !== "string" ||
-            typeof data.material !== "string" || data.props !== null && !scene3DHydrateRecord(data.props) ||
-            data.children !== null && (!Array.isArray(data.children) || !data.children.every(function(child) { return Number.isInteger(child) && child >= 0; })) ||
-            typeof data.static !== "boolean") scene3DHydrateFail();
+      if (!scene3DHydrateRecord(data)) scene3DHydrateFail();
+      if (kind === 0) {
+        const create = scene3DHydrateShape(data, ["kind", "geometry", "material", "props", "children", "static"]);
+        if (!create || typeof create[0] !== "string" || !create[0] || typeof create[1] !== "string" ||
+            typeof create[2] !== "string" || create[3] !== null && !scene3DHydrateRecord(create[3]) ||
+            create[4] !== null && (!Array.isArray(create[4]) || !create[4].every(function(child) { return Number.isInteger(child) && child >= 0; })) ||
+            typeof create[5] !== "boolean") scene3DHydrateFail();
       }
     }
-    return value.commands;
+    return commands;
   }
 
 /**
@@ -3597,6 +3602,7 @@
         delete mount.__gosxScene3DHandle;
         delete mount.__gosxScene3DOwner;
         if (typeof mount.removeAttribute === "function") {
+          mount.removeAttribute(sceneAttr("inspector-enabled"));
           mount.removeAttribute(sceneAttr("command-ready"));
           mount.removeAttribute(sceneAttr("command-revision"));
           mount.removeAttribute(sceneAttr("command-applied-revision"));
