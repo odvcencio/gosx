@@ -165,6 +165,7 @@ func RunScenario(s *Scenario) (*Report, error) {
 					return nil
 				})
 			}
+			runCollectQuery := diagnosticPageReportQueryRunner(diagnostics, i, total, url, s.Timeout)
 
 			navigate := func() error {
 				if err := runPhase("navigate", func() error { return routeD.Navigate(url) }); err != nil {
@@ -241,7 +242,7 @@ func RunScenario(s *Scenario) (*Report, error) {
 			var page *PageReport
 			if err := runPhase("collect", func() error {
 				var err error
-				page, err = CollectPageReport(routeD, url)
+				page, err = collectPageReportWithQueryRunner(routeD, url, runCollectQuery)
 				return err
 			}); err != nil {
 				return nil, fmt.Errorf("phase %s: %w", routePhase, err)
@@ -376,6 +377,25 @@ func formatPerfTimeout(timeout time.Duration) string {
 		return "none"
 	}
 	return timeout.String()
+}
+
+func diagnosticPageReportQueryRunner(diagnostics io.Writer, index, total int, url string, timeout time.Duration) pageReportQueryRunner {
+	return func(phase string, required bool, query func() error) error {
+		start := time.Now()
+		fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s start required=%t timeout=%s\n", index+1, total, url, phase, required, formatPerfTimeout(timeout))
+		err := query()
+		elapsed := time.Since(start).Round(time.Millisecond)
+		if err != nil {
+			action := "continue"
+			if required {
+				action = "fail"
+			}
+			fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s failed elapsed=%s required=%t action=%s: %v\n", index+1, total, url, phase, elapsed, required, action, err)
+			return err
+		}
+		fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s done elapsed=%s required=%t\n", index+1, total, url, phase, elapsed, required)
+		return nil
+	}
 }
 
 func captureCoverageForRoute(enabled bool, index int) bool {
