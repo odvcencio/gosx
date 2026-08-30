@@ -174,6 +174,15 @@ test("strict browser schema validates every parent matrix carrier", () => {
     `({instancedGLBMeshes:[{id:"batch",src:"model.glb",instances:[{id:"instance",parentMatrix:__matrix}]}]})`,
   ];
   for (const family of families) {
+    for (const valid of [
+      `[1e150,0,0,0,0,1e150,0,0,0,0,1e150,0,0,0,0,1]`,
+      `[-2e-150,0,0,0,1e-150,3e-150,0,0,0,0,4e-150,0,5,6,7,1]`,
+      `[9e307,-9e307,0,0,9e307,9e307,0,0,0,0,9e307,0,0,0,0,1]`,
+    ]) {
+      context.__matrix = vm.runInContext(valid, context);
+      const diagnostics = vm.runInContext(`__gosx_validate_scene_ir_strict(${family}, {strict:true}).diagnostics`, context);
+      assert.ok(!diagnostics.some((item) => item.code === "scene.transform.invalid_parent_matrix"), `${family} rejected ${valid}`);
+    }
     for (const invalid of [
       `null`,
       `[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0]`,
@@ -188,6 +197,32 @@ test("strict browser schema validates every parent matrix carrier", () => {
       assert.ok(diagnostics.some((item) => item.code === "scene.transform.invalid_parent_matrix"), `${family} accepted ${invalid}`);
     }
   }
+});
+
+test("shared affine inverse stays finite near MaxFloat and fails closed", () => {
+  const context = createCoreContext();
+  const result = runJSON(context, `(() => {
+    const nearMax = [9e307,-9e307,0,0, 9e307,9e307,0,0, 0,0,9e307,0, 0,0,0,1];
+    const inverse = new Float64Array(12);
+    const overflow = new Float64Array(12);
+    const singular = new Float64Array(12);
+    return {
+      determinant:sceneAffineDeterminant(nearMax,0,inverse),
+      inverse:Array.from(inverse),
+      normalized:!!sceneNormalizeParentMatrix(nearMax,null),
+      overflow:sceneAffineDeterminant([1e-308,0,0,0, 0,1e-308,0,0, 0,0,2e-320,0, 0,0,0,1],0,overflow),
+      overflowInverse:Array.from(overflow),
+      singular:sceneAffineDeterminant([1,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,1],0,singular),
+    };
+  })()`);
+  assert.equal(result.determinant, 2);
+  assert.equal(result.normalized, true);
+  assert.ok(result.inverse.every(Number.isFinite));
+  assert.ok(result.inverse.some((value) => value !== 0), "near-max inverse must not collapse to zero");
+  assert.ok(result.inverse[0] > 0 && result.inverse[0] < 1e-307);
+  assert.equal(result.overflow, 0);
+  assert.ok(result.overflowInverse.every((value) => value === 0));
+  assert.equal(result.singular, 0);
 });
 
 test("instanced CPU picking inverts a sheared basis exactly", () => {
@@ -205,6 +240,52 @@ test("instanced CPU picking inverts a sheared basis exactly", () => {
   assert.equal(result.miss, false);
   assert.ok(Math.abs(result.point.x - 1.3) < 1e-12);
   assert.ok(Math.abs(result.point.y - 0.7) < 1e-12);
+});
+
+test("instanced CPU picking preserves world distance across large and small affine scales", () => {
+  const context = createCoreContext();
+  vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
+  const result = runJSON(context, `(() => {
+    function pick(matrix, origin, dir) {
+      const mesh = {id:"scaled",kind:"sphere",radius:1,count:1,pickable:true,transforms:new Float32Array(matrix)};
+      const hit = sceneRaycastPickInstancedMeshes({origin,dir},[mesh],0);
+      return hit && {distance:hit.distance,local:hit.localPosition};
+    }
+    function sheared(scale) {
+      const n = Math.SQRT1_2, length = scale * Math.sqrt(5);
+      const step = {x:-scale*n,y:3*scale*n,z:0};
+      return {expected:length,hit:pick(
+        [-2*scale,0,0,0, scale,3*scale,0,0, 0,0,4*scale,0, 0,0,0,1],
+        {x:2*step.x,y:2*step.y,z:0},
+        {x:-step.x/length,y:-step.y/length,z:0})};
+    }
+    return {
+      uniformCutoff:pick([1e6,0,0,0,0,1e6,0,0,0,0,1e6,0,0,0,0,1],{x:0,y:0,z:2e6},{x:0,y:0,z:-1}),
+      uniformLarge:pick([1e9,0,0,0,0,1e9,0,0,0,0,1e9,0,0,0,0,1],{x:0,y:0,z:2e9},{x:0,y:0,z:-1}),
+      uniformSmall:pick([1e-9,0,0,0,0,1e-9,0,0,0,0,1e-9,0,0,0,0,1],{x:0,y:0,z:2e-9},{x:0,y:0,z:-1}),
+      shearedLarge:sheared(1e9),
+      shearedSmall:sheared(1e-9),
+    };
+  })()`);
+  function close(actual, expected, relative = 1e-6) {
+    assert.ok(Math.abs(actual - expected) <= Math.abs(expected) * relative,
+      `${actual} is not within ${relative} of ${expected}`);
+  }
+  assert.ok(result.uniformCutoff);
+  close(result.uniformCutoff.distance, 1e6, 1e-12);
+  close(result.uniformCutoff.local.z, 1, 1e-12);
+  assert.ok(result.uniformLarge);
+  close(result.uniformLarge.distance, 1e9, 1e-12);
+  close(result.uniformLarge.local.z, 1, 1e-12);
+  assert.ok(result.uniformSmall);
+  close(result.uniformSmall.distance, 1e-9);
+  close(result.uniformSmall.local.z, 1);
+  for (const value of [result.shearedLarge, result.shearedSmall]) {
+    assert.ok(value.hit);
+    close(value.hit.distance, value.expected);
+    close(value.hit.local.x, Math.SQRT1_2);
+    close(value.hit.local.y, Math.SQRT1_2);
+  }
 });
 
 test("WebGL2 and WebGPU Points upload parent times live-local through the shared multiply", () => {

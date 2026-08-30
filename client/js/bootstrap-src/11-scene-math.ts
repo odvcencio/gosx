@@ -428,11 +428,13 @@
     var det = a * c00 + b * c01 + c * c02;
     if (!Number.isFinite(det) || Math.abs(det) <= 1e-12) return 0;
     if (out) {
-      var q = 1 / (det * s);
+      // Preserve a representable inverse when det*s would overflow.
+      var q = 1 / det / s;
+      if (!Number.isFinite(q) || q === 0) return 0;
       out[0] = c00 * q; out[1] = c01 * q; out[2] = c02 * q; out[3] = 0;
       out[4] = (c * h - b * i) * q; out[5] = (a * i - c * g) * q; out[6] = (b * g - a * h) * q; out[7] = 0;
       out[8] = (b * f - c * e) * q; out[9] = (c * d - a * f) * q; out[10] = (a * e - b * d) * q; out[11] = 0;
-      if (!out.every(Number.isFinite)) return 0;
+      if (!out.every(Number.isFinite) || !out.some(Boolean)) return 0;
     }
     return det;
   }

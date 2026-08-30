@@ -267,6 +267,62 @@ func TestGroupScaleRandomizedWalkBVHParity(t *testing.T) {
 	}
 }
 
+func TestAffineInverseScaleExtremesAndFailClosed(t *testing.T) {
+	const nearMax = 9e307
+	identity := affineMatrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+	valid := map[string]affineMatrix{
+		"uniform large": {1e150, 0, 0, 0, 0, 1e150, 0, 0, 0, 0, 1e150, 0, 0, 0, 0, 1},
+		"uniform small": {1e-150, 0, 0, 0, 0, 1e-150, 0, 0, 0, 0, 1e-150, 0, 0, 0, 0, 1},
+		"sheared reflected large": {
+			-2e150, 0, 0, 0, 1e150, 3e150, 0, 0, 0, 0, 4e150, 0, 0, 0, 0, 1,
+		},
+		"sheared reflected small": {
+			-2e-150, 0, 0, 0, 1e-150, 3e-150, 0, 0, 0, 0, 4e-150, 0, 0, 0, 0, 1,
+		},
+		"near max finite": {
+			nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1,
+		},
+	}
+	for name, matrix := range valid {
+		t.Run(name, func(t *testing.T) {
+			inverse, ok := inverseAffine(matrix)
+			if !ok {
+				t.Fatal("valid affine inverse was rejected")
+			}
+			linearNonZero := false
+			for index, value := range inverse {
+				if math.IsNaN(value) || math.IsInf(value, 0) {
+					t.Fatalf("inverse[%d] is non-finite: %v", index, value)
+				}
+				if index < 12 && index%4 != 3 && value != 0 {
+					linearNonZero = true
+				}
+			}
+			if !linearNonZero {
+				t.Fatal("inverse linear basis is all zero")
+			}
+			assertMatrixClose(t, affineSlice(multiplyAffine(matrix, inverse)), identity, 1e-12)
+		})
+	}
+
+	for name, matrix := range map[string]affineMatrix{
+		"singular":   {1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		"non finite": {math.Inf(1), 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		"inverse coefficient overflow": {
+			1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 2e-320, 0, 0, 0, 0, 1,
+		},
+		"inverse translation overflow": {
+			1e-308, 0, 0, 0, 0, 1e-308, 0, 0, 0, 0, 1e-308, 0, 9e307, 0, 0, 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if inverse, ok := inverseAffine(matrix); ok {
+				t.Fatalf("invalid inverse reported success: %v", inverse)
+			}
+		})
+	}
+}
+
 func TestGroupScaleCanonicalIRClonesParentMatrix(t *testing.T) {
 	props := Props{Graph: NewGraph(Group{Scale: Vector3{X: 2, Y: 3, Z: 4}, Children: []Node{Mesh{ID: "box", Geometry: BoxGeometry{}}}})}
 	legacy := props.SceneIR()
