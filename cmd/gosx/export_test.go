@@ -97,6 +97,20 @@ func TestRunExportStrictGateRunsBeforeAssetOrDistWrites(t *testing.T) {
 	}
 }
 
+func TestRunExportRejectsAmbiguousImportedIslandNamesBeforeAssetOrDistWrites(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+
+	err := RunExport(dir)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("RunExport error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"build", "dist", "modules/modules.go"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island gate wrote %s before failing: %v", output, statErr)
+		}
+	}
+}
+
 func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 	buildDir := t.TempDir()
 	outputDir := t.TempDir()

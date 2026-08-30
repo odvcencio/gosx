@@ -755,6 +755,9 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	if manifest == nil {
 		return fmt.Errorf("build manifest is nil")
 	}
+	if err := manifest.ValidateIslandAssets(); err != nil {
+		return fmt.Errorf("apply build manifest: %w", err)
+	}
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
 	r.runtimeAssets = manifest.Runtime

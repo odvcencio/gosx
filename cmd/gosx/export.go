@@ -15,9 +15,13 @@ import (
 
 // RunExport prerenders static file-routed pages into dist/static.
 func RunExport(dir string) error {
-	absDir, err := filepath.Abs(dir)
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	discovery, err := collectProjectIslandDiscovery(absDir)
+	if err != nil {
+		return err
 	}
 	if err := checkVersionSkew(absDir); err != nil {
 		return err
@@ -55,7 +59,7 @@ func RunExport(dir string) error {
 	if err := os.RemoveAll(distDir); err != nil {
 		return fmt.Errorf("clean output directory: %w", err)
 	}
-	if err := prepareDevAssets(absDir); err != nil {
+	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
 		return err
 	}
 

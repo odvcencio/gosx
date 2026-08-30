@@ -764,6 +764,30 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	}
 }
 
+func TestApplyBuildManifestRejectsAmbiguousIslandAssetsBeforeMutation(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Islands: []buildmanifest.IslandAsset{
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: buildmanifest.HashedAsset{File: "Counter.aaaaaaaa.gxi", Hash: "aaaaaaaa", Size: 1},
+		},
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: buildmanifest.HashedAsset{File: "Counter.bbbbbbbb.gxi", Hash: "bbbbbbbb", Size: 1},
+		},
+	}}
+
+	err := r.ApplyBuildManifest(manifest, "/gosx/assets")
+	if err == nil || !strings.Contains(err.Error(), "duplicate island asset name \"Counter\"") {
+		t.Fatalf("ApplyBuildManifest error = %v, want ambiguous island rejection", err)
+	}
+	if asset, ok := r.programAssets["Counter"]; ok {
+		t.Fatalf("ApplyBuildManifest partially installed an ambiguous asset: %+v", asset)
+	}
+}
+
 func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{

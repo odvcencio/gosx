@@ -65,7 +65,7 @@ type Component struct {
 				"islandSample": `package counter
 
 //gosx:island
-func Counter() Node {
+component Counter() {
 	count := signal.New(0)
 	return <button data-on-click="count.Set(count.Get() + 1)">
 		{count.Get()}

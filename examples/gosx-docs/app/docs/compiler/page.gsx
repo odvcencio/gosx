@@ -28,7 +28,7 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Language pipeline</span>
 			<p class="lede">
-				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary and are the only spelling GoSX teaches. The legacy Go-function form still parses for existing code, islands, engines, and loader-bound routes.
+				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary and are the only spelling GoSX teaches. The legacy Go-function form still parses for existing code, engines, and loader-bound routes. Strict islands use the supported client-VM subset and fail closed outside it.
 			</p>
 		</div>
 		<h2 id="source-model">GSX source model</h2>
@@ -111,7 +111,11 @@ func Page() Node {
 		<p>
 			An island is marked by
 			<span class="inline-code">//gosx:island</span>
-			. In v0.39, island and engine directives use the legacy Go-function component style. Their recognized signal, computed, and handler declarations are lowered with the returned markup into a compact program for the shared browser VM; applying a client directive to a strict declaration fails closed.
+			. Strict and legacy island declarations lower their recognized signal, computed, and handler declarations with the returned markup into a compact program for the shared browser VM. Strict engine declarations and automatic
+			<span class="inline-code">.gsx //gosx:engine</span>
+			discovery remain preview/post-v1; programmatic
+			<span class="inline-code">engine.Config</span>
+			is the v1 engine surface.
 		</p>
 		<CodeBlock lang="gosx" source={data.islandSample} />
 		<p>

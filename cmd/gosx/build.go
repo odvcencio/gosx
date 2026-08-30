@@ -185,6 +185,9 @@ func removeFileIfExists(path string) error {
 // RunBuildWithOptions also performs — see
 // TestWarnStaleIslandsEndToEndAfterRealBuildPipeline.
 func writeIslandManifestAssets(dir, islandDir string, dev bool, islandProgs []*IslandProgramSource) ([]IslandAsset, error) {
+	if err := validateUniqueIslandProgramNames(islandProgs); err != nil {
+		return nil, err
+	}
 	fmt.Println("\n  Islands:")
 	islandExt := ".gxi" // GoSX Island — binary prod format
 	if dev {
@@ -255,11 +258,16 @@ func RunBuild(dir string, dev bool) error {
 }
 
 func RunBuildWithOptions(dir string, opts BuildOptions) error {
-	absDir, err := filepath.Abs(dir)
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	dir = absDir
+	// The initial discovery is a side-effect barrier: invalid source must fail
+	// before module sync, dependency resolution, or a user hook can run.
+	if _, err := collectProjectIslandDiscovery(dir); err != nil {
+		return err
+	}
 
 	if err := checkVersionSkew(dir); err != nil {
 		return err
@@ -274,9 +282,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
+	discovery, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, cfg.Build.Hooks.Pre)
+	if err != nil {
 		return err
 	}
+	islandProgs, gsxFiles := discovery.Programs, discovery.GSXFiles
 	printBundlePolicyWarnings(cfg.Build.Bundle)
 	if diagnostics := bundlepolicy.ValidateProject(dir, cfg.Build.Bundle); !diagnostics.Empty() {
 		return errors.New(diagnostics.Error())
@@ -284,7 +294,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := checkStrictProject(context.Background(), dir); err != nil {
 		return fmt.Errorf("check strict components: %w", err)
 	}
-
 	distDir := filepath.Join(dir, "dist")
 	if err := os.RemoveAll(distDir); err != nil {
 		return fmt.Errorf("clean output directory: %w", err)
@@ -340,11 +349,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Printf("  Grammar: gosx-grammar.blob (%d bytes)\n", len(grammarBlob))
 
 	// ── Tier 1: Compile .gsx files ──────────────────────────────────────
-
-	islandProgs, gsxFiles, err := collectProjectIslandPrograms(dir)
-	if err != nil {
-		return err
-	}
 
 	fmt.Printf("  Sources: %d .gsx files\n", len(gsxFiles))
 
@@ -646,13 +650,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		)
 	}
 
-	// ── Engine surface bytecode lowering ────────────────────────────────
-	//
-	// Engine surfaces no longer produce a per-component WASM artifact at
-	// build time. They lower to shared-VM bytecode at server start via
-	// engine/surface.Discover, which writes JSON programs into
-	// .gosx/cache/surfaces/. See ADR 0003 (supersedure) and ADR 0005
-	// (buildsurface deletion) in the m31labs-gosx hyphae space.
+	// Automatic .gsx engine-surface discovery is preview/post-v1 and is not
+	// part of the production build contract. Programmatic engine.Config is
+	// the v1 engine surface and uses the runtime assets staged above.
 
 	// Build the application binary when the target directory is a runnable app.
 	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
@@ -777,6 +777,21 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	return nil
+}
+
+// runPreBuildHooksAndRefreshIslandDiscovery makes the post-hook filesystem the
+// sole source of truth for build artifacts. Hooks are allowed to mutate,
+// generate, or delete .gsx files, so the pre-hook validation snapshot must
+// never be reused for manifest rows, island programs, or sidecar CSS.
+func runPreBuildHooksAndRefreshIslandDiscovery(dir string, commands []string) (*islandDiscoveryResult, error) {
+	if err := runBuildHookCommands(dir, "pre-build", commands); err != nil {
+		return nil, err
+	}
+	discovery, err := collectProjectIslandDiscovery(dir)
+	if err != nil {
+		return discovery, fmt.Errorf("validate island sources after pre-build hook: %w", err)
+	}
+	return discovery, nil
 }
 
 func checkStrictProject(ctx context.Context, dir string) error {

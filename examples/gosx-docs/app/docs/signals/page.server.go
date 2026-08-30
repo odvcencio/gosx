@@ -26,7 +26,7 @@ func init() {
 				"deriveSample": "first := signal.New(\"Ada\")\nlast := signal.New(\"Lovelace\")\nfull := signal.Derive(func() string {\n\treturn first.Get() + \" \" + last.Get()\n})\ndefer full.Stop()\n\nfmt.Println(full.Get())",
 				"watchSample":  "effect := signal.Watch(func() {\n\tlog.Printf(\"total changed: %d\", total.Get())\n})\ndefer effect.Dispose()",
 				"batchSample":  "signal.Batch(func() {\n\tfirst.Set(\"Grace\")\n\tlast.Set(\"Hopper\")\n})",
-				"islandSample": "//gosx:island\nfunc Counter() Node {\n\tcount := signal.New(0)\n\ttheme := signal.NewShared(\"theme\", \"dark\")\n\tincrement := func() { count.Set(count.Get() + 1) }\n\treturn <button class={theme.Get()} onClick={increment}>\n\t\t{count.Get()}\n\t</button>\n}",
+				"islandSample": "//gosx:island\ncomponent Counter() {\n\tcount := signal.New(0)\n\ttheme := signal.NewShared(\"theme\", \"dark\")\n\tincrement := func() { count.Set(count.Get() + 1) }\n\treturn <button class={theme.Get()} onClick={increment}>\n\t\t{count.Get()}\n\t</button>\n}",
 			}, nil
 		},
 	})

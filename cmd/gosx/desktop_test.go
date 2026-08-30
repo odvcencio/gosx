@@ -232,6 +232,19 @@ func TestDesktopAppInitialStrictGateRunsBeforeAssetWrites(t *testing.T) {
 	}
 }
 
+func TestDesktopAppInitialIslandClosureGateRunsBeforeGeneratedWrites(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+	err := prepareDesktopDevProject(context.Background(), dir)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("prepareDesktopDevProject error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"build", "modules/modules.go"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island desktop preflight created %s before failing: %v", output, statErr)
+		}
+	}
+}
+
 func TestDesktopAppChangeStrictGateStopsUnsafeUpstream(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "desktop-change-strict-gate")
 	runner := &recordingDevStopper{}

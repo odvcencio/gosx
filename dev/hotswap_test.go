@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // islandGSX is a self-contained island component that compiles cleanly via
@@ -111,6 +113,129 @@ func TestHotSwapIslandChangeEmitsProgramNotReload(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(payload.Program), &island); err != nil || island.Name != "Counter" {
 		t.Fatalf("expected island program for Counter, got name=%q err=%v", island.Name, err)
+	}
+}
+
+func TestHotSwapMixedServerAndIslandFileForcesRestart(t *testing.T) {
+	dir := t.TempDir()
+	gsxPath := filepath.Join(dir, "mixed.gsx")
+	writeTestFile(t, gsxPath, []byte(`package app
+
+func Wrapper() Node {
+	return <main>server output</main>
+}
+
+//gosx:island
+component Counter() {
+	count := signal.New(0)
+	return <button data-on-click="count.Set(count.Get() + 1)">{count.Get()}</button>
+}
+`))
+
+	restarts := 0
+	s := &Server{Dir: dir, OnChange: func() error { restarts++; return nil }}
+	events := captureEvents(t, s)
+	s.emitChange([]string{gsxPath})
+	got := drainEvents(events)
+	if restarts != 1 {
+		t.Fatalf("mixed server/island source restarts = %d, want 1", restarts)
+	}
+	if _, ok := got["reload"]; !ok {
+		t.Fatalf("mixed server/island source did not reload: %v", keys(got))
+	}
+	if _, ok := got["program"]; ok {
+		t.Fatalf("mixed server/island source used unsafe island-only hot swap: %v", keys(got))
+	}
+}
+
+func TestAllowlistedExternalMixedGSXServerEditForcesRestart(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	gsxPath := filepath.Join(external, "mixed.gsx")
+	beforeSource := `package shared
+
+func Wrapper() Node {
+	return <main>server output one</main>
+}
+
+//gosx:island
+component Counter() {
+	count := signal.New(0)
+	return <button data-on-click="count.Set(count.Get() + 1)">{count.Get()}</button>
+}
+`
+	writeTestFile(t, gsxPath, []byte(beforeSource))
+	dirs, err := normalizeDependencyWatchDirs(root, []string{external})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := watchedSourceSnapshot(root, dirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, gsxPath, []byte(strings.Replace(beforeSource, "server output one", "server output two with a different size", 1)))
+	after, err := watchedSourceSnapshot(root, dirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := changedWatchedPaths(before, after)
+	if len(changed) != 1 || changed[0] != canonicalWatchEventPath(gsxPath) {
+		t.Fatalf("external mixed-file changes = %v, want %q", changed, canonicalWatchEventPath(gsxPath))
+	}
+
+	restarts := 0
+	s := &Server{Dir: root, WatchDirs: dirs, OnChange: func() error { restarts++; return nil }}
+	events := captureEvents(t, s)
+	s.emitChange(changed)
+	got := drainEvents(events)
+	if restarts != 1 {
+		t.Fatalf("external mixed server edit restarts = %d, want 1", restarts)
+	}
+	if _, ok := got["reload"]; !ok {
+		t.Fatalf("external mixed server edit did not reload: %v", keys(got))
+	}
+	if _, ok := got["program"]; ok {
+		t.Fatalf("external mixed server edit emitted island-only program event: %v", keys(got))
+	}
+}
+
+func TestAllowlistedExternalIslandChangeReachesHotSwapPipeline(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	gsxPath := filepath.Join(external, "counter.gsx")
+	writeTestFile(t, gsxPath, []byte(islandGSX))
+	dirs, err := normalizeDependencyWatchDirs(root, []string{external})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := watchedSourceSnapshot(root, dirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSource := strings.Replace(islandGSX, "+ 1", "+ 2", 1) + "\n"
+	writeTestFile(t, gsxPath, []byte(changedSource))
+	after, err := watchedSourceSnapshot(root, dirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedPaths := changedWatchedPaths(before, after)
+	if len(changedPaths) != 1 || changedPaths[0] != canonicalWatchEventPath(gsxPath) {
+		t.Fatalf("external polling snapshot changes = %#v, want %q", changedPaths, canonicalWatchEventPath(gsxPath))
+	}
+	event := fsnotify.Event{Name: gsxPath, Op: fsnotify.Write}
+	if !isWatchedSourceEvent(root, dirs, event) {
+		t.Fatal("allowlisted external island change did not enter the watcher pipeline")
+	}
+
+	s := &Server{Dir: root, WatchDirs: dirs}
+	events := captureEvents(t, s)
+	s.emitChange(changedPaths)
+	got := drainEvents(events)
+	if _, ok := got["program"]; !ok {
+		t.Fatalf("external island change did not emit a program event: %v", keys(got))
+	}
+	if _, ok := got["reload"]; ok {
+		t.Fatalf("external island hot swap unexpectedly emitted reload: %v", keys(got))
 	}
 }
 

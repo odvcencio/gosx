@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -87,6 +88,43 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if cssAsset.File != "app_counter.66666666.css" {
 		t.Fatalf("unexpected css asset file: %s", cssAsset.File)
+	}
+}
+
+func TestManifestRejectsAmbiguousIslandAssetNames(t *testing.T) {
+	manifest := &Manifest{Islands: []IslandAsset{
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: HashedAsset{File: "Counter.aaaaaaaa.gxi", Hash: "aaaaaaaa", Size: 1},
+		},
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: HashedAsset{File: "Counter.bbbbbbbb.gxi", Hash: "bbbbbbbb", Size: 1},
+		},
+	}}
+
+	err := manifest.ValidateIslandAssets()
+	for _, want := range []string{"duplicate island asset name \"Counter\"", "Counter.aaaaaaaa.gxi", "Counter.bbbbbbbb.gxi"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("ValidateIslandAssets error = %v, want substring %q", err, want)
+		}
+	}
+	if asset, ok := manifest.IslandAssetByName("Counter"); ok {
+		t.Fatalf("IslandAssetByName accepted ambiguous rows: %+v", asset)
+	}
+
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "build.json")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "duplicate island asset name \"Counter\"") {
+		t.Fatalf("Load error = %v, want ambiguous island rejection", err)
 	}
 }
 

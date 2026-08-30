@@ -198,6 +198,9 @@ func Load(path string) (*Manifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("decode build manifest %s: %w", path, err)
 	}
+	if err := manifest.ValidateIslandAssets(); err != nil {
+		return nil, fmt.Errorf("validate build manifest %s: %w", path, err)
+	}
 	return &manifest, nil
 }
 
@@ -236,14 +239,45 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 	}
 }
 
-// IslandAssetByName returns the hashed island asset for a component, if any.
+// ValidateIslandAssets rejects ambiguous unqualified runtime names. Island
+// mounts, compatibility asset requests, and renderer program maps all resolve
+// by this name, so accepting two rows would let different consumers select
+// different programs for the same component.
+func (m *Manifest) ValidateIslandAssets() error {
+	if m == nil {
+		return fmt.Errorf("build manifest is nil")
+	}
+	seen := make(map[string]IslandAsset, len(m.Islands))
+	for _, asset := range m.Islands {
+		if previous, ok := seen[asset.Name]; ok {
+			return fmt.Errorf(
+				"duplicate island asset name %q: files %q and %q would resolve the same runtime component",
+				asset.Name,
+				previous.File,
+				asset.File,
+			)
+		}
+		seen[asset.Name] = asset
+	}
+	return nil
+}
+
+// IslandAssetByName returns the unique hashed island asset for a component.
+// An ambiguous in-memory manifest fails closed even if it did not come through
+// Load's validation path.
 func (m *Manifest) IslandAssetByName(componentName string) (IslandAsset, bool) {
+	var match IslandAsset
+	found := false
 	for _, asset := range m.Islands {
 		if asset.Name == componentName {
-			return asset, true
+			if found {
+				return IslandAsset{}, false
+			}
+			match = asset
+			found = true
 		}
 	}
-	return IslandAsset{}, false
+	return match, found
 }
 
 // ContentHash returns the first 16 hex characters (8 bytes) of the sha256
