@@ -21,13 +21,22 @@ const (
 	stableJobName  = "scene3d-v1-browser-renderer-proof"
 	testJobName    = "test"
 
-	latestSetupName = "Set up Chrome"
-	driverName      = "Perf driver browser tests"
-	pinnedSetupName = "Set up pinned Chromium for perf budget"
-	identityName    = "Verify pinned perf browser identity"
-	budgetName      = "Perf budget gate"
-	uploadName      = "Upload perf budget failure diagnostics"
-	stableSetupName = "Set up stable Chrome for Testing"
+	latestSetupName  = "Set up Chrome"
+	checkoutName     = "Check out repository"
+	goSetupName      = "Set up Go"
+	tinyGoName       = "Install TinyGo"
+	docsName         = "Browser docs E2E gate"
+	ouroborosName    = "Ouroboros media metadata browser smoke"
+	driverName       = "Perf driver browser tests"
+	pinnedSetupName  = "Set up pinned Chromium for perf budget"
+	identityName     = "Verify pinned perf browser identity"
+	budgetName       = "Perf budget gate"
+	uploadName       = "Upload perf budget failure diagnostics"
+	stableSetupName  = "Set up stable Chrome for Testing"
+	stableNodeName   = "Set up Node.js"
+	stableProofName  = "Run Scene3D CUBICSPLINE browser renderer proof"
+	stableUploadName = "Upload Scene3D proof diagnostics"
+	stableCleanName  = "Clean Scene3D proof artifacts"
 
 	latestChromePath = "${{ steps.chrome.outputs.chrome-path }}"
 	pinnedChromePath = "${{ steps.perf-chrome.outputs.chrome-path }}"
@@ -40,9 +49,38 @@ const (
   "$PERF_CHROME_VERSION" \
   build/perf-browser-identity.txt
 `
+	ouroborosRun = `chrome_bin="$(command -v google-chrome-stable || command -v google-chrome)"
+GOSX_CHROME_BIN="$chrome_bin" go test ./examples/ouroboros-corpus -run '^TestFixtureMP4BrowserLoadsMetadata$' -count=1
+`
 	failureArtifactPaths = `build/perf-report.json
 build/perf-server.log
 build/perf-browser-identity.txt
+`
+	stableProofRun = `set -eu
+if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+  echo "unsafe RUNNER_TEMP" >&2
+  exit 2
+fi
+artifact_dir="${RUNNER_TEMP}/gosx-cubic-proof"
+rm -rf -- "$artifact_dir"
+mkdir -p "$artifact_dir"
+proof_status=0
+trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+set +e
+node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+proof_status=$?
+set -e
+if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/matrix-report.json" ]; then
+  cat "$artifact_dir/matrix-report.json"
+fi
+exit "$proof_status"
+`
+	stableCleanRun = `set -eu
+if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+  echo "unsafe RUNNER_TEMP" >&2
+  exit 2
+fi
+rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
 `
 )
 
@@ -177,15 +215,7 @@ func validateBrowserJob(node *yaml.Node) error {
 		return err
 	}
 
-	steps, err := namedSteps(job["steps"], label+".steps")
-	if err != nil {
-		return err
-	}
-	governed, err := validateGovernedBrowserSteps(steps)
-	if err != nil {
-		return err
-	}
-	if err := validateBrowserOrder(governed); err != nil {
+	if err := validateExactStepRoster(job["steps"], label+".steps", browserStepContracts()); err != nil {
 		return err
 	}
 	return validateBrowserIsolation(node)
@@ -197,34 +227,55 @@ type stepContract struct {
 	validate func(*yaml.Node) error
 }
 
-func validateGovernedBrowserSteps(steps map[string]namedStep) ([]namedStep, error) {
-	contracts := []stepContract{
+func browserStepContracts() []stepContract {
+	return []stepContract{
+		{checkoutName, "browser checkout", validateCheckout},
+		{goSetupName, "browser Go setup", validateGoSetup},
 		{latestSetupName, "latest browser setup", validateLatestSetup},
+		{tinyGoName, "browser TinyGo install", validateTinyGo},
+		{docsName, "browser docs E2E gate", validateDocs},
+		{ouroborosName, "Ouroboros browser smoke", validateOuroboros},
 		{driverName, "perf driver browser tests", validateDriver},
 		{pinnedSetupName, "pinned perf browser setup", validatePinnedSetup},
 		{identityName, "pinned perf browser identity", validateIdentity},
 		{budgetName, "perf budget gate", validateBudget},
 		{uploadName, "perf failure diagnostic upload", validateUpload},
 	}
-	governed := make([]namedStep, 0, len(contracts))
-	for _, contract := range contracts {
-		step, err := requiredStep(steps, contract.name, contract.label)
-		if err != nil {
-			return nil, err
-		}
-		if err := contract.validate(step.node); err != nil {
-			return nil, err
-		}
-		governed = append(governed, step)
-	}
-	return governed, nil
 }
 
-func validateBrowserOrder(governed []namedStep) error {
-	latest, driver, pinned := governed[0], governed[1], governed[2]
-	identity, budget, upload := governed[3], governed[4], governed[5]
-	if !(latest.index < driver.index && driver.index+1 == pinned.index && pinned.index+1 == identity.index && identity.index+1 == budget.index && budget.index+1 == upload.index) {
-		return errors.New("browser-tests job.steps: governed order must be latest setup before driver, followed immediately by pinned setup, identity, budget, and failure upload")
+func stableStepContracts() []stepContract {
+	return []stepContract{
+		{checkoutName, "stable Scene3D renderer proof checkout", validateCheckout},
+		{stableSetupName, "stable Scene3D renderer proof setup", validateStableSetup},
+		{stableNodeName, "stable Scene3D renderer proof Node setup", validateStableNode},
+		{stableProofName, "stable Scene3D renderer proof", validateStableProof},
+		{stableUploadName, "stable Scene3D diagnostic upload", validateStableUpload},
+		{stableCleanName, "stable Scene3D artifact cleanup", validateStableCleanup},
+	}
+}
+
+func validateExactStepRoster(node *yaml.Node, label string, contracts []stepContract) error {
+	// The roster is closed, not merely ordered. An otherwise valid extra run
+	// step can persist BASH_ENV through GITHUB_ENV and turn later sh/make gates
+	// into successful no-ops even when every named gate is textually exact.
+	steps, err := namedSteps(node, label)
+	if err != nil {
+		return err
+	}
+	if len(steps) != len(contracts) {
+		return fmt.Errorf("%s: got %d steps, want exact governed roster of %d", label, len(steps), len(contracts))
+	}
+	for index, contract := range contracts {
+		step, err := requiredStep(steps, contract.name, contract.label)
+		if err != nil {
+			return err
+		}
+		if step.index != index {
+			return fmt.Errorf("%s: step %q is at index %d, want exact governed index %d", label, contract.name, step.index, index)
+		}
+		if err := contract.validate(step.node); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -246,6 +297,88 @@ func validateBrowserIsolation(node *yaml.Node) error {
 		return fmt.Errorf("browser-tests job: latest browser path is referenced %d times, want 2", got)
 	}
 	return nil
+}
+
+func validateCheckout(node *yaml.Node) error {
+	const label = "repository checkout"
+	// No with map is intentional: the event's current revision must be checked
+	// out, never an attacker-selected ref or path shared with another checkout.
+	step, err := exactMapping(node, label, "name", "uses")
+	if err != nil {
+		return err
+	}
+	return exactStrings(step, label, map[string]string{
+		"name": checkoutName,
+		"uses": "actions/checkout@v4",
+	})
+}
+
+func validateGoSetup(node *yaml.Node) error {
+	const label = "browser Go setup"
+	step, err := exactMapping(node, label, "name", "uses", "with")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": goSetupName,
+		"uses": "actions/setup-go@v5",
+	}); err != nil {
+		return err
+	}
+	with, err := exactMapping(step["with"], label+".with", "go-version-file", "cache")
+	if err != nil {
+		return err
+	}
+	if err := exactString(with["go-version-file"], label+".with.go-version-file", "go.mod"); err != nil {
+		return err
+	}
+	return exactBool(with["cache"], label+".with.cache", true)
+}
+
+func validateTinyGo(node *yaml.Node) error {
+	const label = "browser TinyGo install"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": tinyGoName,
+		"run":  "scripts/install-ci-tinygo.sh",
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["env"], label+".env", map[string]string{
+		"TINYGO_VERSION": "0.41.1",
+	})
+}
+
+func validateDocs(node *yaml.Node) error {
+	const label = "browser docs E2E gate"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": docsName,
+		"run":  "make test-e2e",
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["env"], label+".env", map[string]string{
+		"GOSX_E2E_CHROME": latestChromePath,
+	})
+}
+
+func validateOuroboros(node *yaml.Node) error {
+	const label = "Ouroboros browser smoke"
+	step, err := exactMapping(node, label, "name", "run")
+	if err != nil {
+		return err
+	}
+	return exactStrings(step, label, map[string]string{
+		"name": ouroborosName,
+		"run":  ouroborosRun,
+	})
 }
 
 func validateLatestSetup(node *yaml.Node) error {
@@ -361,43 +494,113 @@ func validateUpload(node *yaml.Node) error {
 	return exactInt(with["retention-days"], label+".with.retention-days", "7")
 }
 
-func validateStableJob(node *yaml.Node) error {
-	const label = "stable Scene3D renderer proof job"
-	job, err := mapping(node, label)
+func validateStableSetup(node *yaml.Node) error {
+	const label = "stable Scene3D renderer proof setup"
+	step, err := exactMapping(node, label, "name", "id", "uses", "with")
 	if err != nil {
 		return err
 	}
-	for _, forbidden := range []string{"if", "continue-on-error"} {
-		if _, ok := job[forbidden]; ok {
-			return fmt.Errorf("%s: forbidden field %q", label, forbidden)
-		}
-	}
-	stepsNode, ok := job["steps"]
-	if !ok {
-		return fmt.Errorf("%s: missing field %q", label, "steps")
-	}
-	steps, err := namedSteps(stepsNode, label+".steps")
-	if err != nil {
-		return err
-	}
-	setup, err := requiredStep(steps, stableSetupName, "stable Scene3D renderer proof setup")
-	if err != nil {
-		return err
-	}
-	step, err := exactMapping(setup.node, "stable Scene3D renderer proof setup", "name", "id", "uses", "with")
-	if err != nil {
-		return err
-	}
-	if err := exactStrings(step, "stable Scene3D renderer proof setup", map[string]string{
+	if err := exactStrings(step, label, map[string]string{
 		"name": stableSetupName,
 		"id":   "chrome",
 		"uses": "browser-actions/setup-chrome@v2",
 	}); err != nil {
 		return err
 	}
-	if err := exactStringMap(step["with"], "stable Scene3D renderer proof setup.with", map[string]string{
+	return exactStringMap(step["with"], label+".with", map[string]string{
 		"chrome-version": "stable",
+	})
+}
+
+func validateStableNode(node *yaml.Node) error {
+	const label = "stable Scene3D renderer proof Node setup"
+	step, err := exactMapping(node, label, "name", "uses", "with")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": stableNodeName,
+		"uses": "actions/setup-node@v4",
 	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["with"], label+".with", map[string]string{
+		"node-version": "22",
+	})
+}
+
+func validateStableProof(node *yaml.Node) error {
+	const label = "stable Scene3D renderer proof"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": stableProofName,
+		"run":  stableProofRun,
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["env"], label+".env", map[string]string{
+		"GOSX_CHROME_BIN":                  latestChromePath,
+		"GOSX_EXPECTED_CHROME_VERSION":     "${{ steps.chrome.outputs.chrome-version }}",
+		"GOSX_SCENE3D_CUBIC_WEBGPU_TARGET": "private-texture",
+	})
+}
+
+func validateStableUpload(node *yaml.Node) error {
+	const label = "stable Scene3D diagnostic upload"
+	step, err := exactMapping(node, label, "name", "if", "uses", "with")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": stableUploadName,
+		"if":   "${{ failure() }}",
+		"uses": "actions/upload-artifact@v4",
+	}); err != nil {
+		return err
+	}
+	with, err := exactMapping(step["with"], label+".with", "name", "path", "if-no-files-found", "retention-days")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(with, label+".with", map[string]string{
+		"name":              "scene3d-v1-cubic-proof-${{ github.run_id }}-${{ github.run_attempt }}",
+		"path":              "${{ runner.temp }}/gosx-cubic-proof",
+		"if-no-files-found": "ignore",
+	}); err != nil {
+		return err
+	}
+	return exactInt(with["retention-days"], label+".with.retention-days", "7")
+}
+
+func validateStableCleanup(node *yaml.Node) error {
+	const label = "stable Scene3D artifact cleanup"
+	step, err := exactMapping(node, label, "name", "if", "run")
+	if err != nil {
+		return err
+	}
+	return exactStrings(step, label, map[string]string{
+		"name": stableCleanName,
+		"if":   "${{ always() }}",
+		"run":  stableCleanRun,
+	})
+}
+
+func validateStableJob(node *yaml.Node) error {
+	const label = "stable Scene3D renderer proof job"
+	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	if err != nil {
+		return err
+	}
+	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
+		return err
+	}
+	if err := exactInt(job["timeout-minutes"], label+".timeout-minutes", "10"); err != nil {
+		return err
+	}
+	if err := validateExactStepRoster(job["steps"], label+".steps", stableStepContracts()); err != nil {
 		return err
 	}
 	for _, forbidden := range []string{pinnedSnapshot, productVersion, "perf-chrome"} {
@@ -556,6 +759,20 @@ func exactString(node *yaml.Node, label, want string) error {
 	}
 	if node.Value != want {
 		return fmt.Errorf("%s: got %q, want %q", label, node.Value, want)
+	}
+	return nil
+}
+
+func exactBool(node *yaml.Node, label string, want bool) error {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
+		return fmt.Errorf("%s: expected boolean %t", label, want)
+	}
+	wantValue := "false"
+	if want {
+		wantValue = "true"
+	}
+	if node.Value != wantValue {
+		return fmt.Errorf("%s: got %q, want %q", label, node.Value, wantValue)
 	}
 	return nil
 }

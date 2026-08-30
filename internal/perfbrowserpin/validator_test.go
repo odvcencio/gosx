@@ -31,6 +31,14 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want: "pinned perf browser setup.with.chrome-version",
 		},
 		{
+			name: "browser checkout redirects to main",
+			mutate: replaceBrowserOnce(
+				"      - name: Check out repository\n        uses: actions/checkout@v4\n",
+				"      - name: Check out repository\n        uses: actions/checkout@v4\n        with:\n          ref: main\n",
+			),
+			want: "repository checkout: unexpected field \"with\"",
+		},
+		{
 			name: "budget uses floating browser",
 			mutate: replace(
 				"      - name: Perf budget gate\n        env:\n          CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}",
@@ -226,12 +234,28 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want: "perf driver browser tests: unexpected field \"if\"",
 		},
 		{
+			name: "browser docs skipped",
+			mutate: insertAfter(
+				"      - name: Browser docs E2E gate\n",
+				"        if: false\n",
+			),
+			want: "browser docs E2E gate: unexpected field \"if\"",
+		},
+		{
+			name: "pre-driver BASH_ENV injection",
+			mutate: insertAfterBrowser(
+				"        run: scripts/install-ci-tinygo.sh\n",
+				"\n      - name: Poison later shells\n        run: |\n          printf '%s\\n' 'sh() { :; }' 'make() { :; }' > /tmp/fail-open-shell-prelude\n          printf '%s\\n' 'BASH_ENV=/tmp/fail-open-shell-prelude' >> \"$GITHUB_ENV\"\n",
+			),
+			want: "browser-tests job.steps: got 12 steps, want exact governed roster of 11",
+		},
+		{
 			name: "governed ordering interrupted",
 			mutate: insertAfter(
 				"        run: make test-perf-browser\n",
 				"\n      - name: Unreviewed interposed browser step\n        run: echo interposed\n",
 			),
-			want: "governed order",
+			want: "exact governed roster",
 		},
 		{
 			name: "duplicate governed step name",
@@ -264,6 +288,14 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 				"\nenv:\n  BASH_ENV: /tmp/fail-open-shell-prelude\n\njobs:\n",
 			),
 			want: "workflow: forbidden inherited execution field \"env\"",
+		},
+		{
+			name: "browser job environment injects shell prelude",
+			mutate: insertAfter(
+				"  browser-tests:\n",
+				"    env:\n      BASH_ENV: /tmp/fail-open-shell-prelude\n",
+			),
+			want: "browser-tests job: unexpected field \"env\"",
 		},
 	}
 
@@ -305,7 +337,31 @@ func TestStableRendererProofComposition(t *testing.T) {
 				"  scene3d-v1-browser-renderer-proof:\n",
 				"    if: false\n",
 			),
-			want: "stable Scene3D renderer proof job: forbidden field \"if\"",
+			want: "stable Scene3D renderer proof job: unexpected field \"if\"",
+		},
+		{
+			name: "stable checkout redirects to main",
+			mutate: replaceStableOnce(
+				"      - name: Check out repository\n        uses: actions/checkout@v4\n",
+				"      - name: Check out repository\n        uses: actions/checkout@v4\n        with:\n          ref: main\n",
+			),
+			want: "repository checkout: unexpected field \"with\"",
+		},
+		{
+			name: "stable renderer proof skipped",
+			mutate: insertAfter(
+				"      - name: Run Scene3D CUBICSPLINE browser renderer proof\n",
+				"        if: false\n",
+			),
+			want: "stable Scene3D renderer proof: unexpected field \"if\"",
+		},
+		{
+			name: "stable job environment injects shell prelude",
+			mutate: insertAfter(
+				"  scene3d-v1-browser-renderer-proof:\n",
+				"    env:\n      BASH_ENV: /tmp/fail-open-shell-prelude\n",
+			),
+			want: "stable Scene3D renderer proof job: unexpected field \"env\"",
 		},
 		{
 			name: "stable aggregate need removed",
@@ -360,6 +416,37 @@ func replace(old, replacement string) func(*testing.T, string) string {
 
 func insertAfter(anchor, insertion string) func(*testing.T, string) string {
 	return replace(anchor, anchor+insertion)
+}
+
+func replaceBrowserOnce(old, replacement string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		browserStart := strings.Index(source, "  browser-tests:\n")
+		if browserStart < 0 {
+			t.Fatal("browser-tests job is missing")
+		}
+		relativeEnd := strings.Index(source[browserStart:], "\n  # test:")
+		if relativeEnd < 0 {
+			t.Fatal("browser-tests job end is missing")
+		}
+		browserEnd := browserStart + relativeEnd
+		return source[:browserStart] + replaceOnce(t, source[browserStart:browserEnd], old, replacement) + source[browserEnd:]
+	}
+}
+
+func insertAfterBrowser(anchor, insertion string) func(*testing.T, string) string {
+	return replaceBrowserOnce(anchor, anchor+insertion)
+}
+
+func replaceStableOnce(old, replacement string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		stableStart := strings.Index(source, "  scene3d-v1-browser-renderer-proof:\n")
+		if stableStart < 0 {
+			t.Fatal("stable Scene3D renderer proof job is missing")
+		}
+		return source[:stableStart] + replaceOnce(t, source[stableStart:], old, replacement)
+	}
 }
 
 func replaceOnce(t *testing.T, source, old, replacement string) string {
@@ -422,11 +509,65 @@ func ensureStableProof(t *testing.T, source string) string {
 
   scene3d-v1-browser-renderer-proof:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Set up stable Chrome for Testing
         id: chrome
         uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Scene3D CUBICSPLINE browser renderer proof
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}
+          GOSX_SCENE3D_CUBIC_WEBGPU_TARGET: private-texture
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          artifact_dir="${RUNNER_TEMP}/gosx-cubic-proof"
+          rm -rf -- "$artifact_dir"
+          mkdir -p "$artifact_dir"
+          proof_status=0
+          trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+          set +e
+          node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+          proof_status=$?
+          set -e
+          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/matrix-report.json" ]; then
+            cat "$artifact_dir/matrix-report.json"
+          fi
+          exit "$proof_status"
+
+      - name: Upload Scene3D proof diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scene3d-v1-cubic-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gosx-cubic-proof
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean Scene3D proof artifacts
+        if: ${{ always() }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
 `
 }
