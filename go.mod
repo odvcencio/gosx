@@ -8,6 +8,7 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/image v0.38.0
 	golang.org/x/net v0.52.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require github.com/odvcencio/turboquant v0.1.3
@@ -48,7 +49,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	m31labs.dev/eos v0.1.4
 )
