@@ -29,7 +29,8 @@
  *     target to the unmodified production renderer; that exact target is
  *     copied into a mapped buffer after the forwarded product submission.
  *     Changed geometry pixels are compared as RGBA bytes, not by file size or
- *     hash. Actual WebGPU canvas presentation remains hardware-certified.
+ *     hash. Actual WebGPU canvas presentation is outside this hosted proof and
+ *     remains a release-pinned hardware certification obligation.
  *
  * Any page console error or warning fails the probe. Usage:
  *

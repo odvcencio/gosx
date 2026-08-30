@@ -122,6 +122,7 @@ function verifyHostedClaimSources() {
     'COPY_SRC presentation texture',
     'WebGPU presentation proof',
     'native WebGL2 + WebGPU presentation proof',
+    'remains hardware-certified',
   ];
   const found = forbidden.filter((phrase) => combinedProofSources.includes(phrase));
   if (found.length > 0) {
