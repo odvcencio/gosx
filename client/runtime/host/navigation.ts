@@ -205,8 +205,9 @@
   // discovered by the current generation's setupPageCountdowns() call; a
   // single shared setInterval (countdownTimerHandle) ticks all of them
   // together every second. countdownGeneration is bumped every time
-  // setupPageCountdowns runs (page boot and every soft navigation) — see
-  // its own doc comment and revalidateGeneration above. It discards a
+  // setupPageCountdowns runs (page boot, every soft navigation, and every
+  // gosx:region:after rescan) — see its own doc comment and
+  // revalidateGeneration above. It discards a
   // countdown-triggered revalidation's failure report once navigation has
   // moved past the generation that started it (see triggerCountdownThen);
   // the then="revalidate" trigger's own re-fire guard lives in
@@ -240,7 +241,8 @@
   const countdownCueFiredKeys = new Set();
   // watchRoots/watchGeneration mirror countdownRoots/countdownGeneration:
   // one record per data-gosx-watch element, rebuilt by setupPageWatchers on
-  // every boot and soft navigation. See setupPageWatchers' own doc comment.
+  // every boot, soft navigation, and gosx:region:after rescan. See
+  // setupPageWatchers' own doc comment.
   let watchRoots = [];
   let watchGeneration = 0;
   // watchActiveState survives across watchGeneration the same way
@@ -250,17 +252,30 @@
   // node itself. Keyed by each record's own key (its id, or its position
   // among data-gosx-watch elements when it has none — see buildWatchState).
   const watchActiveState = new Map();
-  // titleFlashHandle/titleFlashOriginalTitle/titleFlashOwnerKey back
-  // data-gosx-watch-effect's "title" effect (gosx#214). document.title is
-  // one shared global resource, so only one watcher flashes it at a time;
-  // a later transition takes ownership from an earlier still-flashing one
-  // rather than stacking. See startTitleFlash/stopTitleFlash below.
+  // titleFlashHandle/titleFlashOriginalTitle/titleFlashOwnerKey/
+  // titleFlashMessage/titleFlashShowingMessage back data-gosx-watch-effect's
+  // "title" effect (gosx#214). document.title is one shared global
+  // resource, so only one watcher flashes it at a time; a later transition
+  // takes ownership from an earlier still-flashing one rather than
+  // stacking. titleFlashMessage/titleFlashShowingMessage together record
+  // what the flash mechanism itself most recently intended document.title
+  // to hold (message when true, titleFlashOriginalTitle when false) — a
+  // repeated call for the SAME owner (setupPageWatchers re-evaluates every
+  // record on every rescan: a real soft navigation, or a gosx:region:after
+  // rescan an unrelated region swap now also triggers) compares
+  // document.title's actual CURRENT value against that expectation and
+  // only writes when they disagree. See startTitleFlash's own doc comment
+  // for why that distinction, rather than an unconditional reassert, is
+  // required.
   let titleFlashHandle = null;
   let titleFlashOriginalTitle = null;
   let titleFlashOwnerKey = null;
+  let titleFlashMessage = null;
+  let titleFlashShowingMessage = false;
   // filterRoots/filterGeneration mirror watchRoots/watchGeneration: one
   // record per data-gosx-filter input, rebuilt by setupPageFilters on every
-  // boot and soft navigation — see its own doc comment below.
+  // boot, soft navigation, and gosx:region:after rescan — see its own doc
+  // comment below.
   let filterRoots = [];
   let filterGeneration = 0;
   // filterQueryState survives across filterGeneration the same way
@@ -3998,18 +4013,24 @@
   }
 
   // setupPageCountdowns scans for every data-gosx-countdown element on
-  // page boot and after every soft navigation (see finalizeNavigation and
-  // the initial-document replay below) — the same lifecycle
-  // setupPageRevalidation follows just above. It never writes to a
-  // countdown element itself: the server-rendered text (or segment
-  // values) stays exactly as rendered until the first tick, one second
-  // later, moves it.
+  // page boot, after every soft navigation (see finalizeNavigation and the
+  // initial-document replay below), and after every gosx:region:after
+  // rescan (see the listener near the bottom of this file). It never
+  // writes to a countdown element itself: the server-rendered text (or
+  // segment values) stays exactly as rendered until the shared interval
+  // below next fires. On page boot that interval is freshly created, so
+  // the first update lands close to one second later. On a later rescan
+  // that finds the interval already running, a newly-registered countdown
+  // instead inherits that interval's CURRENT phase — see the interval-reuse
+  // comment below — so its own first update can land sooner than a full
+  // second after THIS call; the interval is deliberately never restarted
+  // just because a rescan ran.
   function setupPageCountdowns() {
-    // Every call — page boot and every soft navigation — starts a new
-    // generation, even one that ends up finding no countdown roots at
-    // all. See countdownGeneration's declaration for why.
+    // Every call — page boot, every soft navigation, and every
+    // gosx:region:after rescan — starts a new generation, even one that
+    // ends up finding no countdown roots at all. See countdownGeneration's
+    // declaration for why.
     countdownGeneration += 1;
-    teardownPageCountdowns();
     const states = [];
     for (const root of findCountdownRootElements()) {
       // gosx#178 review finding B2, second layer: buildCountdownState (and
@@ -4031,10 +4052,27 @@
       if (state) states.push(state);
     }
     if (!states.length) {
+      teardownPageCountdowns();
       return;
     }
     countdownRoots = states;
-    countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+    // Keep an already-running shared interval running across this rescan,
+    // rather than unconditionally clearing and recreating it: a fresh
+    // setInterval restarts its own 1-second phase from the moment it is
+    // created, so any two rescans landing under 1000ms apart would push
+    // the next real tick out indefinitely. gosx:region:after is the case
+    // that actually hits this — neither a signal- nor a hub-event-
+    // triggered region rate-limits its own refetch, and a polled region's
+    // own floor is exactly 1000ms — so a page with an active region could
+    // rescan just often enough to starve the tick forever, freezing every
+    // countdown on the page, not only the one inside the region. Only a
+    // rescan that finds zero roots (teardownPageCountdowns above) or
+    // runCountdownTick's own "every countdown finished" branch ever stops
+    // this interval; a later rescan that still (or again) has roots
+    // reuses it unchanged.
+    if (countdownTimerHandle == null) {
+      countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -4301,17 +4339,33 @@
   //
   // Called on every evaluation where the owning record's condition is
   // active, not only on the false-to-true edge (see applyWatchTitleEffect
-  // below): a soft navigation applies the incoming document's own <title>
-  // BEFORE setupPageWatchers runs (the same way a real browser navigation
-  // updates the tab title), which would otherwise silently overwrite an
-  // in-progress flash on every swap where the condition merely STAYS
-  // true. A call for the CURRENT owner while already flashing is cheap
-  // and idempotent: it only re-asserts `message`, without disturbing
-  // titleFlashOriginalTitle or restarting the blink cycle.
+  // below) — setupPageWatchers re-evaluates every record on EVERY rescan:
+  // a real soft navigation, or (since gosx:region:after) an unrelated
+  // region's own swap, which for a polled region can land every second. A
+  // same-owner call while already flashing compares document.title's
+  // CURRENT value against titleFlashShowingMessage's own expectation
+  // (message, or titleFlashOriginalTitle) and writes only on a mismatch —
+  // covering two real cases with one check: a soft navigation applies the
+  // incoming document's own <title> BEFORE setupPageWatchers runs (the
+  // same way a real browser navigation updates the tab title), which
+  // knocks document.title away from what the toggle last set and must be
+  // reasserted immediately; a gosx:region:after rescan never touches
+  // document.title at all, so it always matches and this function leaves
+  // the toggle's current phase — "on" or "off" — completely undisturbed.
+  // Without that distinction, an unconditional reassert (this function's
+  // behavior before the gosx:region:after fix) would stomp the "off" phase
+  // back to `message` on every single region-triggered rescan, and a
+  // polled region's own rescan can land close to once a second — often
+  // enough that the "off" phase would never actually get a chance to show.
   function startTitleFlash(ownerKey, message) {
     if (typeof document === "undefined" || typeof document.title !== "string") return;
     if (titleFlashOwnerKey === ownerKey && titleFlashHandle != null) {
-      document.title = message;
+      titleFlashMessage = message;
+      const expected = titleFlashShowingMessage ? titleFlashMessage : titleFlashOriginalTitle;
+      if (document.title !== expected) {
+        titleFlashShowingMessage = true;
+        document.title = message;
+      }
       return;
     }
     if (titleFlashHandle == null) {
@@ -4320,11 +4374,12 @@
       clearInterval(titleFlashHandle);
     }
     titleFlashOwnerKey = ownerKey;
-    let showingMessage = true;
+    titleFlashMessage = message;
+    titleFlashShowingMessage = true;
     document.title = message;
     titleFlashHandle = setInterval(function() {
-      showingMessage = !showingMessage;
-      document.title = showingMessage ? message : titleFlashOriginalTitle;
+      titleFlashShowingMessage = !titleFlashShowingMessage;
+      document.title = titleFlashShowingMessage ? titleFlashMessage : titleFlashOriginalTitle;
     }, WATCH_TITLE_FLASH_INTERVAL_MS);
   }
 
@@ -4344,6 +4399,8 @@
     }
     titleFlashOwnerKey = null;
     titleFlashOriginalTitle = null;
+    titleFlashMessage = null;
+    titleFlashShowingMessage = false;
   }
 
   function onTitleFlashWindowFocus() {
@@ -4400,20 +4457,23 @@
     watchRoots = [];
   }
 
-  // setupPageWatchers scans for every data-gosx-watch element on page boot
-  // and after every soft navigation (see finalizeNavigation and the
-  // initial-document replay below) — the same lifecycle setupPageCountdowns
-  // follows just above, and the mechanism this section's own scope note
-  // documents. Each record is built AND evaluated in the same pass: this
+  // setupPageWatchers scans for every data-gosx-watch element on page
+  // boot, after every soft navigation (see finalizeNavigation and the
+  // initial-document replay below), and after every gosx:region:after
+  // rescan (see the listener near the bottom of this file) — the same
+  // lifecycle setupPageCountdowns follows just above, and the mechanism
+  // this section's own scope note documents. Each record is built AND
+  // evaluated in the same pass: this
   // is what lets a watcher whose condition is already true the first time
   // it is ever seen (the primary gosx#214 scenario — a revalidation swap
   // that introduces a freshly-true data-on-clock attribute) fire its
   // effects immediately, since watchActiveState.get(key) reads undefined
   // (never "already active") for a key it has not seen before.
   function setupPageWatchers() {
-    // Every call — page boot and every soft navigation — starts a new
-    // generation, even one that ends up finding no watch roots at all.
-    // See watchGeneration's declaration for why.
+    // Every call — page boot, every soft navigation, and every
+    // gosx:region:after rescan — starts a new generation, even one that
+    // ends up finding no watch roots at all. See watchGeneration's
+    // declaration for why.
     watchGeneration += 1;
     teardownPageWatchers();
     const records = [];
@@ -4483,7 +4543,10 @@
   // input into an "N of M shown" live-region announcement after every
   // apply, reusing the shared aria-live region announceNavigation already
   // maintains — the cheapest possible accessible count, one shared region
-  // rather than a second one this feature would otherwise have to own.
+  // rather than a second one this feature would otherwise have to own —
+  // except a gosx:region:after rescan's own apply, which suppresses the
+  // announcement (see setupPageFilters' and applyFilterRecord's own doc
+  // comments).
   //
   // Like data-gosx-watch, a filter is rebuilt from scratch at page boot and
   // after every soft navigation or revalidation swap (setupPageFilters,
@@ -4616,7 +4679,13 @@
   // keystroke and once per record on every rescan (setupPageFilters
   // below), so an empty query (or a guard that has since cleared) always
   // converges to the correct shown/hidden state within one apply.
-  function applyFilterRecord(record) {
+  // announceEnabled defaults to true — both call sites that omit it
+  // (onFilterInput's own debounced apply below, and any future direct
+  // caller) always want the announcement a real keystroke earns.
+  // setupPageFilters is the only caller that ever passes false, and only
+  // for its own gosx:region:after rescan pass; see its own doc comment for
+  // why.
+  function applyFilterRecord(record, announceEnabled) {
     if (!record.target) return;
     const rows = filterRowsOf(record.target);
     const query = normalizeFilterQuery(record.rawQuery);
@@ -4628,7 +4697,7 @@
       setElementClassActive(row, FILTER_HIDDEN_CLASS, hide);
       if (!hide) shown += 1;
     }
-    if (record.announce) {
+    if (record.announce && announceEnabled !== false) {
       announceNavigation(shown + " of " + rows.length + " shown");
     }
   }
@@ -4671,15 +4740,29 @@
     filterRoots = [];
   }
 
-  // setupPageFilters scans for every data-gosx-filter input on page boot
-  // and after every soft navigation (see finalizeNavigation and the
-  // initial-document replay below) — the same rescan lifecycle
-  // setupPageWatchers follows just above. Each record restores its
-  // remembered query (filterQueryState) onto the freshly-rendered input's
-  // own .value and re-applies it against the freshly-rendered rows in the
-  // same pass — see this section's own doc comment for why both halves of
-  // that are necessary.
-  function setupPageFilters() {
+  // setupPageFilters scans for every data-gosx-filter input on page boot,
+  // after every soft navigation (see finalizeNavigation and the
+  // initial-document replay below), and after every gosx:region:after
+  // rescan (see the listener near the bottom of this file) — the same
+  // rescan lifecycle setupPageWatchers follows just above. Each record
+  // restores its remembered query (filterQueryState) onto the
+  // freshly-rendered input's own .value and re-applies it against the
+  // freshly-rendered rows in the same pass — see this section's own doc
+  // comment for why both halves of that are necessary.
+  //
+  // options.announce defaults to true: page boot and a real soft
+  // navigation both still announce "N of M shown" for every
+  // data-gosx-filter-announce input, exactly as before this parameter
+  // existed. The gosx:region:after listener is the one caller that passes
+  // { announce: false } — announceNavigation's shared aria-live region is
+  // meant for a result the visitor's own action changed (a keystroke, a
+  // real page navigation), not a rescan some unrelated region's own swap
+  // silently triggered elsewhere on the page; a polled region can rescan
+  // every second, and re-reading out the same unchanged count that often
+  // would drown out anything else the page announces.
+  function setupPageFilters(options) {
+    const opts = options || {};
+    const announce = opts.announce !== false;
     filterGeneration += 1;
     teardownPageFilters();
     const inputs = findFilterInputElements();
@@ -4703,7 +4786,7 @@
     filterRoots = records;
     for (const record of filterRoots) {
       try {
-        applyFilterRecord(record);
+        applyFilterRecord(record, announce);
       } catch (error) {
         reportNavigationFailure("filter apply", error, { source: windowLocationHref() });
       }
@@ -6191,6 +6274,38 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
   }
+  // A declarative region (regions.ts) replaces its own subtree with
+  // gosxHost.dom.replace/innerHTML on every refetch, entirely outside the
+  // soft-navigation lifecycle finalizeNavigation and the initial-document
+  // replay above already re-scan through. Without this listener a
+  // countdown, watcher, or filter element swapped in by a region refetch
+  // is never registered at all — the region draft pick clock symptom this
+  // fix targets. Each of the three setup functions tears down its own
+  // records and rescans the WHOLE document from scratch (not just the
+  // swapped region), so this is exactly as safe to call here as it is
+  // from a soft navigation: a detached old element simply drops out (its
+  // root is no longer found by the relevant findXRootElements scan), and
+  // an element newly inside the swapped region registers for the first
+  // time. See regions.ts' own emit("gosx:region:after", ...) call for the
+  // event contract (detail.element, detail.url).
+  //
+  // Deliberately only these three of the six boot-time setups above.
+  // setupPageRevalidation, setupPageHeartbeat, and setupLiveRegions are
+  // NEVER re-run here: each owns a phase-sensitive timer or an open
+  // connection — the revalidate poll's own interval, the heartbeat ping's
+  // own interval, and a live region's own EventSource/WebSocket — that a
+  // swap elsewhere on the page must not restart. Restarting any of those
+  // on every region rescan would either re-arm its interval's phase (the
+  // exact class of bug setupPageCountdowns' own interval-reuse fix above
+  // addresses) or tear down and reopen a live connection that has nothing
+  // to do with the region that just refreshed. setupPageFilters also
+  // passes { announce: false } here — see its own doc comment — so a
+  // rescan never re-announces an unchanged filter result on every swap.
+  document.addEventListener("gosx:region:after", function() {
+    setupPageCountdowns();
+    setupPageWatchers();
+    setupPageFilters({ announce: false });
+  });
 
   const navigationAPI = {
     navigate: navigate,

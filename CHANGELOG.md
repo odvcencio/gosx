@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## v0.53.9 (2026-08-29)
+
+### Fixed: countdowns, watchers, and filters keep working after a region swap
+
+- A `data-gosx-countdown`, `data-gosx-watch`, or `data-gosx-filter`
+  element swapped in by a `data-gosx-region` refresh now registers
+  correctly. The navigation runtime re-scans the document on
+  `gosx:region:after`, the event a region already dispatches after every
+  successful swap.
+- The shared countdown interval keeps its own phase across a rescan
+  instead of being torn down and recreated, so two region swaps under
+  1000ms apart no longer freeze every countdown on the page.
+- A title flash (`data-gosx-watch-effect="title"`) keeps its current
+  on/off phase across a rescan, and `data-gosx-filter-announce` never
+  re-announces an unchanged "N of M shown" count on a rescan. A real page
+  navigation still announces exactly as before.
+- The rescan never restarts periodic revalidation, the heartbeat ping, or
+  a live region's own connection; those keep their own independent timer
+  or connection across every swap.
+
 ### Changed: the declarative heartbeat pings while hidden, at a slower marked rate
 
 - `data-gosx-heartbeat` no longer pauses entirely while the document is
