@@ -1,0 +1,206 @@
+{
+  "schema": "gosx.scene3d.corpus/v1",
+  "contract": "docs/scene3d-v1-support.md",
+  "contractCI": {
+    "label": "scene3d-v1-corpus",
+    "job": "go-tests",
+    "step": "Scene3D v1 corpus contract",
+    "command": "go test ./scene/harness -run '^TestV1CorpusContract' -count=1"
+  },
+  "completionRule": "zero blocked cases plus green named CI lanes and release-pinned WebGPU hardware evidence",
+  "nonGoals": [
+    "generic-threejs-parity",
+    "webxr",
+    "runtime-meshopt-draco-basis-transcoders",
+    "ik-retargeting-csg-nurbs-modeling-studio",
+    "advanced-taa-ssr-motion-blur",
+    "full-native-visual-and-platform-parity",
+    "general-mobile-touch-pinch-gamepad-controls",
+    "alpha-sh-custom-attributes-spot-and-point-shadows-as-v1-gates"
+  ],
+  "cases": [
+    {
+      "id": "gltf-single-buffer-textured",
+      "state": "blocked",
+      "requirement": "Uncompressed single-buffer GLB with a textured standard material renders end to end.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [],
+      "evidence": []
+    },
+    {
+      "id": "gltf-multi-buffer-external",
+      "state": "enforced",
+      "requirement": "JSON glTF resolves indexed data-URI and same-origin external buffers.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": ".gltf loading fetches mixed data and relative buffer URIs by index", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "glb-bin-plus-external",
+      "state": "enforced",
+      "requirement": "GLB BIN buffer zero and an external second buffer coexist.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "GLB BIN buffer 0 can share a document with external buffer 1", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "gltf-sparse-embedded-image",
+      "state": "enforced",
+      "requirement": "Sparse accessor overlays and embedded bufferView images remain bounded and correct.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "sparse overlays normalize after merging without mutating base bytes", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "embedded bufferView images resolve the referenced buffer in a multi-buffer source", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "gltf-meshopt-rejection",
+      "state": "enforced",
+      "requirement": "Meshopt-compressed buffer views fail closed with a named diagnostic.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "EXT_meshopt_compression raises a named error instead of reading garbage", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "gltf-draco-rejection",
+      "state": "enforced",
+      "requirement": "Draco-compressed primitives fail closed with a named diagnostic.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "KHR_draco_mesh_compression raises a named error", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "gltf-basis-ktx2-policy",
+      "state": "enforced",
+      "requirement": "glTF Basis degradation and renderer KTX2 block upload are reported as distinct browser capabilities.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "KHR_texture_basisu degrades to no texture and warns", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/19a-scene-ktx2-renderer-upload.test.mjs", "contains": "both renderer chunks open the KTX2 upload gate", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/19a-scene-ktx2-renderer-upload.test.mjs", "contains": "a successful upload swaps the texture and clears pending", "backends": ["webgpu"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "gltf-cubic-trs-morph",
+      "state": "enforced",
+      "requirement": "Imported CUBICSPLINE translation, rotation, scale, and morph weights follow glTF Appendix C.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"},
+        {"label": "scene3d-v1-browser-proof", "job": "scene3d-v1-browser-proof", "step": "Run Scene3D CUBICSPLINE browser proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/scene3d-cubic-spline.test.mjs", "contains": "CUBICSPLINE translation Hermite-interpolates with interval-scaled tangents", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
+        {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "native WebGL2 and WebGPU are both required", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-proof"}
+      ]
+    },
+    {
+      "id": "nested-group-scale-pick",
+      "state": "blocked",
+      "requirement": "Nested group scale reaches SceneIR, render transforms, raycast, and pick.",
+      "targetBackends": ["webgpu", "webgl2", "native-preview"],
+      "ciOwners": [],
+      "evidence": []
+    },
+    {
+      "id": "desktop-controls-picking",
+      "state": "enforced",
+      "requirement": "Desktop orbit and first-person controls plus authored picking remain executable without authored JavaScript.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/runtime-02-scene-mount-controls.test.js", "contains": "bootstrap drives shared-runtime Scene3D orbit controls without authored JS", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/runtime-02-scene-mount-controls.test.js", "contains": "bootstrap drives shared-runtime Scene3D first-person controls without authored JS", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/17-scene-input-pick.test.mjs", "contains": "the nearest hit wins between a mesh and a point cloud", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"}
+      ]
+    },
+    {
+      "id": "desktop-gizmo-commit",
+      "state": "blocked",
+      "requirement": "Fly, pointer-lock, object-drag, and transform-gizmo commit behavior has one end-to-end proof.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [],
+      "evidence": []
+    },
+    {
+      "id": "ordered-post-custom-uniforms",
+      "state": "blocked",
+      "requirement": "Supported post effects preserve declaration order and live custom uniform patches.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [],
+      "evidence": []
+    },
+    {
+      "id": "native-preview-degradation",
+      "state": "blocked",
+      "requirement": "Unsupported native custom-post behavior remains explicit and observable.",
+      "targetBackends": ["native-preview", "headless"],
+      "ciOwners": [],
+      "evidence": []
+    },
+    {
+      "id": "hub-command-diff",
+      "state": "enforced",
+      "requirement": "Diffable fields produce a complete, lossless hub command stream.",
+      "targetBackends": ["hub"],
+      "ciOwners": [
+        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"}
+      ],
+      "evidence": [
+        {"kind": "go-test", "path": "hub/scene3d/roundtrip_test.go", "contains": "TestDiffScenePreservesOrdinaryAndEmptyBehavior", "backends": ["hub"], "ciLabel": "go-tests"}
+      ]
+    },
+    {
+      "id": "hub-remount-atomic-reject",
+      "state": "enforced",
+      "requirement": "A remount-required diff rejects before mutation or notification.",
+      "targetBackends": ["hub"],
+      "ciOwners": [
+        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"}
+      ],
+      "evidence": [
+        {"kind": "go-test", "path": "hub/scene3d/roundtrip_test.go", "contains": "TestDiffSceneRejectsMixedDiffAtomically", "backends": ["hub"], "ciLabel": "go-tests"}
+      ]
+    },
+    {
+      "id": "scene-p95-budget-route",
+      "state": "blocked",
+      "requirement": "A release-pinned Scene3D corpus route records p95 and p99 frame evidence under budgets.",
+      "targetBackends": ["webgpu", "webgl2"],
+      "ciOwners": [],
+      "evidence": []
+    },
+    {
+      "id": "generic-adapter-command-envelope",
+      "state": "blocked",
+      "requirement": "Generic hydration returns or applies Scene3D commands without silent discard.",
+      "targetBackends": ["hub", "webgpu", "webgl2"],
+      "ciOwners": [],
+      "evidence": []
+    }
+  ]
+}

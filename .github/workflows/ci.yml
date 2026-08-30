@@ -99,6 +99,11 @@ jobs:
       - name: CI package partition validation
         run: make test-ci-partitions
 
+      # Named convergence gate: validates the v1 boundary, case inventory,
+      # CI ownership labels, and every evidence anchor before broad Go tests.
+      - name: Scene3D v1 corpus contract
+        run: go test ./scene/harness -run '^TestV1CorpusContract' -count=1
+
       - name: Non-CLI unit and integration tests
         run: make test-unit
 
@@ -285,8 +290,70 @@ jobs:
       - name: Build WASM runtime
         run: make build-runtime
 
-  # browser-tests: Go + Chrome + TinyGo. No Node install — the browser
-  # executes the WASM itself; nothing here shells out to `node`.
+  # scene3d-v1-browser-proof: one bounded renderer-contract proof with its own
+  # check name and timeout. Successful runs trap-clean artifacts immediately;
+  # failed runs upload the report and PNGs before the always cleanup step.
+  scene3d-v1-browser-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Scene3D CUBICSPLINE browser proof
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          artifact_dir="${RUNNER_TEMP}/gosx-cubic-proof"
+          rm -rf -- "$artifact_dir"
+          mkdir -p "$artifact_dir"
+          proof_status=0
+          trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+          set +e
+          node client/js/testdata/scene3d-cubic-spline-browser.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+          proof_status=$?
+          set -e
+          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/report.json" ]; then
+            cat "$artifact_dir/report.json"
+          fi
+          exit "$proof_status"
+
+      - name: Upload Scene3D proof diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scene3d-v1-cubic-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gosx-cubic-proof
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean Scene3D proof artifacts
+        if: ${{ always() }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
+
+  # browser-tests: Go + Chrome + TinyGo. The wider browser suite executes WASM
+  # directly; the bounded Scene3D proof runs in its separately named job.
   browser-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30

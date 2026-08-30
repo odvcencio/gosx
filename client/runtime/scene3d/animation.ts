@@ -286,16 +286,23 @@
     var componentCount = isRotation ? 4 : sceneAnimChannelWidth(channel);
     var scratch = isRotation ? _animScratch4 : sceneAnimChannelScratch(channel, componentCount);
 
+    // CUBICSPLINE (glTF 2.0 Appendix C) stores three width-wide vectors per
+    // key: [inTangent, value, outTangent]. Every other mode stores one wide
+    // vector per key. The PROPERTY value sits one vector into each key.
+    var isCubic = channel.interpolation === "CUBICSPLINE";
+    var keyStride = isCubic ? componentCount * 3 : componentCount;
+    var valueOffset = isCubic ? componentCount : 0;
+
     // Clamp before first keyframe.
     if (time <= times[0]) {
       channel._lastIndex = 0;
-      for (var si = 0; si < componentCount; si++) scratch[si] = values[si];
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[valueOffset + si];
       return scratch;
     }
     // Clamp after last keyframe.
     if (time >= times[times.length - 1]) {
       channel._lastIndex = 0;
-      var start = (times.length - 1) * componentCount;
+      var start = (times.length - 1) * keyStride + valueOffset;
       for (var si = 0; si < componentCount; si++) scratch[si] = values[start + si];
       return scratch;
     }
@@ -312,11 +319,48 @@
     var t1 = times[i + 1];
     var alpha = (time - t0) / (t1 - t0);
 
-    var start0 = i * componentCount;
-    var start1 = (i + 1) * componentCount;
+    var start0 = i * keyStride + valueOffset;
+    var start1 = (i + 1) * keyStride + valueOffset;
 
     if (channel.interpolation === "STEP") {
       for (var si = 0; si < componentCount; si++) scratch[si] = values[start0 + si];
+      return scratch;
+    }
+
+    if (isCubic) {
+      // Cubic Hermite between key i and key i + 1 (glTF 2.0 Appendix C).
+      // The stored tangents are derivatives, so they scale by the actual
+      // interval duration. All components interpolate independently — for
+      // rotations this is deliberately NOT slerp and the tangent controls
+      // are NOT sign-flipped; the quaternion is normalized afterwards.
+      var dt = t1 - t0;
+      var u = alpha;
+      var u2 = u * u;
+      var u3 = u2 * u;
+      var h00 = 2 * u3 - 3 * u2 + 1;
+      var h10 = u3 - 2 * u2 + u;
+      var h01 = -2 * u3 + 3 * u2;
+      var h11 = u3 - u2;
+      var m0Off = i * keyStride + 2 * componentCount;   // outTangent of key i
+      var m1Off = (i + 1) * keyStride;                  // inTangent of key i + 1
+      for (var ci = 0; ci < componentCount; ci++) {
+        var p0 = values[start0 + ci];
+        var p1 = values[start1 + ci];
+        var m0 = values[m0Off + ci] * dt;
+        var m1 = values[m1Off + ci] * dt;
+        scratch[ci] = h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
+      }
+      if (isRotation) {
+        var len = Math.sqrt(
+          scratch[0] * scratch[0] + scratch[1] * scratch[1] +
+          scratch[2] * scratch[2] + scratch[3] * scratch[3]
+        );
+        if (len < 1e-10) {
+          scratch[0] = 0; scratch[1] = 0; scratch[2] = 0; scratch[3] = 1;
+        } else {
+          scratch[0] /= len; scratch[1] /= len; scratch[2] /= len; scratch[3] /= len;
+        }
+      }
       return scratch;
     }
 
