@@ -204,6 +204,25 @@ const (
 	NavigationLiveFlashClassAttr = "data-gosx-live-flash-class"
 	NavigationLiveSignalAttr     = "data-gosx-live-signal"
 	NavigationLiveOnAttr         = "data-gosx-live-on"
+	// NavigationLiveBindAttrAttr sets a named element attribute from a
+	// live-bind key, and NavigationLiveBindClassAttr toggles a named class
+	// from a boolean live-bind value. Both share NavigationLiveBindAttr's
+	// polled or event-mode payload and its "."-separated key grammar; each
+	// takes a comma-separated "target:key[,target:key...]" value. An
+	// attribute bind is a POSITIVE allowlist: it writes only a data-*
+	// attribute (other than a runtime-owned data-gosx-* attribute),
+	// an aria-* attribute, title/value/datetime/disabled/hidden, or href
+	// (a relative or http(s) URL only, after stripping every code point
+	// <= 0x20 so a scheme hidden behind embedded whitespace or a control
+	// character cannot slip through). data-gosx-countdown is the single
+	// exception to the data-gosx-* refusal, letting a payload retarget a
+	// countdown; it is refused whenever the node also declares
+	// data-gosx-countdown-then, so a payload can never trigger a
+	// revalidation. Every other target — every on* handler, style,
+	// srcdoc, src, srcset, poster, ping, background, action, formaction,
+	// target, id, name, class, and xlink:href — is refused by omission.
+	NavigationLiveBindAttrAttr  = "data-gosx-live-bind-attr"
+	NavigationLiveBindClassAttr = "data-gosx-live-bind-class"
 	// NavigationFilterAttr, on an input, names the list it filters
 	// (gosx#215): an element id, or — when no element has that id — a CSS
 	// selector. Each row inside that target (any descendant, not only a

@@ -323,6 +323,16 @@ const (
 	liveBindAttr       = "data-gosx-live-bind"
 	liveFlashClassAttr = "data-gosx-live-flash-class"
 	regionIntervalAttr = "data-gosx-region-interval"
+	// liveBindAttrAttr and liveBindClassAttr (gosx#217 extension) share
+	// liveBindAttr's polled-or-event payload but each take a
+	// comma-separated "target:key[,target:key...]" value instead of one
+	// bare key: liveBindAttrAttr sets a named element attribute,
+	// liveBindClassAttr toggles a named class from a boolean. Pinned
+	// against NavigationLiveBindAttrAttr and NavigationLiveBindClassAttr
+	// in server/navigation_contract.go and liveBindAttrTargetAllowed in
+	// client/runtime/host/navigation.ts.
+	liveBindAttrAttr  = "data-gosx-live-bind-attr"
+	liveBindClassAttr = "data-gosx-live-bind-class"
 )
 
 // revalidateIntervalAttr, heartbeatIntervalAttr, and
@@ -511,6 +521,60 @@ func isValidLiveBindKeyValue(value string) bool {
 	return liveBindKeyPattern.MatchString(strings.TrimSpace(value))
 }
 
+// isValidLiveBindPairsValue parses value under liveBindAttrAttr and
+// liveBindClassAttr's shared "target:key[,target:key...]" grammar,
+// mirroring parseLiveBindPairs in navigation.ts, and applies checkTarget to
+// each pair's target. Malformed syntax (no ":", an empty target, or an
+// empty key) fails the whole value, the same fail-closed-as-a-whole
+// contract isValidCountdownTierPairsValue documents for the
+// countdown-warn/-cue pair grammar above.
+func isValidLiveBindPairsValue(value string, checkTarget func(string) bool) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, rawPair := range strings.Split(trimmed, ",") {
+		pair := strings.TrimSpace(rawPair)
+		splitAt := strings.Index(pair, ":")
+		if splitAt <= 0 || splitAt == len(pair)-1 {
+			return false
+		}
+		target := strings.TrimSpace(pair[:splitAt])
+		key := strings.TrimSpace(pair[splitAt+1:])
+		if target == "" || !isValidLiveBindKeyValue(key) || !checkTarget(target) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidLiveBindAttrTargetValue reports whether target is a syntactically
+// permitted data-gosx-live-bind-attr target at check time: never an on*
+// event handler, never style or srcdoc, and never a runtime-owned
+// data-gosx-* attribute other than data-gosx-countdown. This is the
+// check-time subset of liveBindAttrTargetAllowed's full run-time positive
+// allowlist in client/runtime/host/navigation.ts — catching a typo'd
+// target here, before it ever reaches a browser, while still letting the
+// run-time allowlist make the final call once a payload value is in hand
+// (for example, an href target's scheme check needs the value, not only
+// the target name).
+func isValidLiveBindAttrTargetValue(target string) bool {
+	name := strings.ToLower(strings.TrimSpace(target))
+	if name == "" {
+		return false
+	}
+	if strings.HasPrefix(name, "on") {
+		return false
+	}
+	if name == "style" || name == "srcdoc" {
+		return false
+	}
+	if strings.HasPrefix(name, "data-gosx-") && name != countdownInstantAttr {
+		return false
+	}
+	return true
+}
+
 // isValidLinkCurrentPolicyValue reports whether value is one of the four
 // policies NormalizeNavigationLinkCurrentPolicy recognizes by name
 // (case-insensitively, surrounding whitespace ignored) rather than
@@ -669,6 +733,22 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 			v.diags = append(v.diags, Diagnostic{
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be one class name with no embedded whitespace", liveFlashClassAttr, attr.Value),
+			})
+		}
+	case liveBindAttrAttr:
+		if !isValidLiveBindPairsValue(attr.Value, isValidLiveBindAttrTargetValue) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of target:key pairs", liveBindAttrAttr, attr.Value),
+				Hint:    `for example "data-gosx-countdown:clock.deadline,href:link"; a target may never start with "on", be "style" or "srcdoc", or be a data-gosx-* attribute other than data-gosx-countdown`,
+			})
+		}
+	case liveBindClassAttr:
+		if !isValidLiveBindPairsValue(attr.Value, isValidCountdownWarnClassToken) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of class:key pairs", liveBindClassAttr, attr.Value),
+				Hint:    `for example "pick-clock--paused:clock.paused"; each class name may not contain embedded whitespace`,
 			})
 		}
 	}

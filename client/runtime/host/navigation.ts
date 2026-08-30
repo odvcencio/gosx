@@ -93,6 +93,8 @@
   const LIVE_INTERVAL_ATTR = "data-gosx-live-interval";
   const LIVE_BIND_ATTR = "data-gosx-live-bind";
   const LIVE_FLASH_CLASS_ATTR = "data-gosx-live-flash-class";
+  const LIVE_BIND_ATTR_ATTR = "data-gosx-live-bind-attr";
+  const LIVE_BIND_CLASS_ATTR = "data-gosx-live-bind-class";
   // LIVE_SIGNAL_ATTR and LIVE_ON_ATTR (gosx#228) are the manual-refresh
   // triggers, mirroring data-gosx-region's own -signal/-on grammar in
   // regions.ts exactly (same shared-signal subscription, same
@@ -215,6 +217,7 @@
   // per-generation counter — see its doc comment for why.
   let countdownRoots = [];
   let countdownTimerHandle = null;
+  let countdownObserver = null;
   let countdownGeneration = 0;
   // countdownFiredTargets and countdownThenLastFiredAt back
   // then="revalidate" (gosx#178 review finding B1): see triggerCountdownThen
@@ -3987,6 +3990,41 @@
     return remainderMs <= 0 && (!state.then || countdownFiredTargets.has(state.targetMs));
   }
 
+  // retargetCountdownRoot re-reads root's data-gosx-countdown into its live
+  // record. The record keeps its warn and cue tiers; a new instant mints new
+  // cue keys on its own (countdownCueFiredKeys). A finished countdown that
+  // was cleared by runCountdownTick's m8 rule restarts the shared interval.
+  function retargetCountdownRoot(root, explicitInstant) {
+    const state = countdownRoots.find(function(candidate) { return candidate.root === root; });
+    if (!state) return false;
+    const raw = explicitInstant != null ? String(explicitInstant) : root.getAttribute(COUNTDOWN_ATTR);
+    const targetMs = parseCountdownInstant(raw);
+    if (targetMs == null || targetMs === state.targetMs) return false;
+    state.targetMs = targetMs;
+    ensureCountdownTimer();
+    return true;
+  }
+
+  function ensureCountdownTimer() {
+    if (countdownTimerHandle == null && countdownRoots.length) {
+      countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+    }
+  }
+
+  function observeCountdownRoots() {
+    if (countdownObserver) countdownObserver.disconnect();
+    countdownObserver = null;
+    if (typeof MutationObserver !== "function" || !countdownRoots.length) return;
+    countdownObserver = new MutationObserver(function(records) {
+      for (const entry of records) {
+        if (entry && entry.type === "attributes" && entry.attributeName === COUNTDOWN_ATTR) retargetCountdownRoot(entry.target);
+      }
+    });
+    for (const state of countdownRoots) {
+      countdownObserver.observe(state.root, { attributes: true, attributeFilter: [COUNTDOWN_ATTR] });
+    }
+  }
+
   function runCountdownTick() {
     const now = Date.now();
     let allFinished = true;
@@ -4010,6 +4048,8 @@
     }
     countdownTimerHandle = null;
     countdownRoots = [];
+    if (countdownObserver) countdownObserver.disconnect();
+    countdownObserver = null;
   }
 
   // setupPageCountdowns scans for every data-gosx-countdown element on
@@ -4056,6 +4096,7 @@
       return;
     }
     countdownRoots = states;
+    observeCountdownRoots();
     // Keep an already-running shared interval running across this rescan,
     // rather than unconditionally clearing and recreating it: a fresh
     // setInterval restarts its own 1-second phase from the moment it is
@@ -4070,9 +4111,7 @@
     // runCountdownTick's own "every countdown finished" branch ever stops
     // this interval; a later rescan that still (or again) has roots
     // reuses it unchanged.
-    if (countdownTimerHandle == null) {
-      countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
-    }
+    ensureCountdownTimer();
   }
 
   // ---------------------------------------------------------------------
@@ -5718,7 +5757,7 @@
   function findLiveBindElements(root) {
     const found = [];
     walkElements(root, function(node) {
-      if (node.hasAttribute && node.hasAttribute(LIVE_BIND_ATTR)) found.push(node);
+      if (node.hasAttribute && (node.hasAttribute(LIVE_BIND_ATTR) || node.hasAttribute(LIVE_BIND_ATTR_ATTR) || node.hasAttribute(LIVE_BIND_CLASS_ATTR))) found.push(node);
       return true;
     });
     return found;
@@ -5796,12 +5835,69 @@
     } catch (_error) {
       return;
     }
+    applyLiveBindObject(root, payload);
+  }
+
+  // A POSITIVE allowlist: an attribute bind writes only these targets, so
+  // the gate stays correct as the DOM grows. Refused by omission: every
+  // event handler, style, srcdoc, src, srcset, poster, ping, background,
+  // action, formaction, target, id, name, class, xlink:href, and every
+  // runtime-owned data-gosx-* attribute. data-gosx-countdown is allowed
+  // because retargeting a countdown is this primitive's purpose; a node that
+  // also declares data-gosx-countdown-then is refused, so a payload can
+  // never trigger a revalidation. Other data-* and aria-* names are inert
+  // for the runtime and belong to the consumer.
+  const LIVE_BIND_PLAIN_TARGETS = { title: true, value: true, datetime: true, disabled: true, hidden: true };
+  const LIVE_BIND_URL_TARGETS = { href: true };
+
+  function liveBindAttrTargetAllowed(node, target, value) {
+    const name = String(target || "").toLowerCase();
+    if (!name) return false;
+    if (name === COUNTDOWN_ATTR) return !(node && node.hasAttribute && node.hasAttribute("data-gosx-countdown-then"));
+    if (name.indexOf("data-gosx-") === 0) return false;
+    if (name.indexOf("data-") === 0 || name.indexOf("aria-") === 0 || LIVE_BIND_PLAIN_TARGETS[name]) return true;
+    if (LIVE_BIND_URL_TARGETS[name]) {
+      // Browsers drop ASCII whitespace and control characters inside a URL
+      // before resolving its scheme ("java\tscript:" runs), so strip every
+      // code point <= 0x20 before the scheme test.
+      const clean = String(value).replace(/[\u0000-\u0020]/g, "");
+      if (/^[a-z][a-z0-9+.-]*:/i.test(clean)) return /^https?:/i.test(clean);
+      return clean.indexOf("//") !== 0;
+    }
+    return false;
+  }
+
+  // parseLiveBindPairs turns "a:x.y,b:z" into [{target:"a", key:"x.y"}, ...].
+  function parseLiveBindPairs(spec) {
+    const pairs = [];
+    for (const part of String(spec || "").split(",")) {
+      const idx = part.indexOf(":");
+      if (idx < 1) continue;
+      const target = part.slice(0, idx).trim();
+      const key = part.slice(idx + 1).trim();
+      if (target && key) pairs.push({ target: target, key: key });
+    }
+    return pairs;
+  }
+
+  function applyLiveBindObject(root, payload) {
     for (const node of findLiveBindElements(root)) {
-      const next = liveBindTextValue(resolveLiveBindValue(payload, node.getAttribute(LIVE_BIND_ATTR)));
-      if (next == null) continue;
-      if (String(node.textContent || "").trim() === next) continue;
-      node.textContent = next;
-      flashLiveBindElement(node, node.getAttribute(LIVE_FLASH_CLASS_ATTR));
+      if (node.hasAttribute(LIVE_BIND_ATTR)) {
+        const next = liveBindTextValue(resolveLiveBindValue(payload, node.getAttribute(LIVE_BIND_ATTR)));
+        if (next != null && String(node.textContent || "").trim() !== next) {
+          node.textContent = next;
+          flashLiveBindElement(node, node.getAttribute(LIVE_FLASH_CLASS_ATTR));
+        }
+      }
+      for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_ATTR_ATTR))) {
+        const next = liveBindTextValue(resolveLiveBindValue(payload, pair.key));
+        if (next == null || !liveBindAttrTargetAllowed(node, pair.target, next)) continue;
+        if (node.getAttribute(pair.target) !== next) node.setAttribute(pair.target, next);
+      }
+      for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_CLASS_ATTR))) {
+        const value = resolveLiveBindValue(payload, pair.key);
+        if (typeof value === "boolean") setElementClassActive(node, pair.target, value);
+      }
     }
   }
 
@@ -6052,6 +6148,17 @@
   };
   gosxHost.live = liveAPI;
   window.__gosx.live = Object.assign(window.__gosx.live || {}, liveAPI);
+
+  const countdownAPI = {
+    retarget: function(root, instant) {
+      if (root) return retargetCountdownRoot(root, instant);
+      let changed = false;
+      for (const state of countdownRoots) changed = retargetCountdownRoot(state.root) || changed;
+      return changed;
+    },
+  };
+  gosxHost.countdown = countdownAPI;
+  window.__gosx.countdown = Object.assign(window.__gosx.countdown || {}, countdownAPI);
 
   // ---------------------------------------------------------------------
   // Region-bootstrap diagnostic (data-gosx-region, gosx#227)
