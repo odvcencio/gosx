@@ -48,6 +48,19 @@ func TestRunDevStrictGateRunsBeforeAssetWritesOrRunnerStart(t *testing.T) {
 	}
 }
 
+func TestRunDevRejectsAmbiguousIslandClosureBeforeGeneratedWritesOrRunnerStart(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+	err := RunDev(dir)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("RunDev error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"build", "modules/modules.go"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island dev preflight created %s before failing: %v", output, statErr)
+		}
+	}
+}
+
 func TestDevChangeStrictGateRunsBeforeAssetWritesOrRestart(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "dev-change-strict-gate")
 	err := rebuildChangedDevApp(context.Background(), dir, nil, "0", "http://127.0.0.1:0")
@@ -80,6 +93,19 @@ func TestDevHotSwapPreflightStopsUnsafeUpstream(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
 		t.Fatalf("hot-swap preflight wrote assets before failing: %v", statErr)
+	}
+}
+
+func TestDevHotSwapPreflightStopsAmbiguousIslandUpstream(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, false)
+	runner := &recordingDevStopper{}
+
+	err := preflightChangedDevApp(context.Background(), dir, runner)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("preflightChangedDevApp error = %v, want ambiguous island rejection", err)
+	}
+	if !runner.stopped {
+		t.Fatal("ambiguous island hot swap left the old upstream process running")
 	}
 }
 
@@ -232,6 +258,24 @@ var _ = studio.ServerOnlyValue
 	}
 	if !strings.Contains(string(data), `"name": "HomeLayerSelectionIsland"`) {
 		t.Fatalf("unexpected imported island JSON: %s", data)
+	}
+}
+
+func TestCompileDevIslandsRejectsAmbiguousNamesBeforeReplacingAssets(t *testing.T) {
+	appDir, _, _ := newAmbiguousIslandProject(t, false)
+	out := filepath.Join(appDir, "build", "islands")
+	writeTempFile(t, out, "Counter.json", "previous-valid-program")
+
+	err := compileDevIslands(appDir, out)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("compileDevIslands error = %v, want ambiguous island rejection", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(out, "Counter.json"))
+	if readErr != nil {
+		t.Fatalf("read previous island asset: %v", readErr)
+	}
+	if got := string(data); got != "previous-valid-program" {
+		t.Fatalf("ambiguous discovery replaced previous island asset with %q", got)
 	}
 }
 

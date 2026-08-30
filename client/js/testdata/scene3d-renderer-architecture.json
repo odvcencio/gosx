@@ -1,0 +1,867 @@
+{
+  "schemaVersion": 1,
+  "measuredAtCommit": "05778d2f5f2b496ab88e978b7d2e87615e487395",
+  "canopyVersion": "v0.18.0-19-g01a5f95-dirty",
+  "audit": {
+    "architectureReportConsumerFiles": 25,
+    "physicalConsumerFilesAtMeasuredCommit": 24,
+    "directLiteralReadSitesMigrated": 98,
+    "filenameCoupledInjectionSitesMigrated": 1,
+    "joinedHelperCallSitesMigrated": 4,
+    "totalSourceCoupledSitesMigrated": 103,
+    "goSourceInspectionReadersMigrated": 7,
+    "intentionalDirectRendererReferenceEntries": 22,
+    "intentionalBypassExceptions": 22
+  },
+  "governanceBudgetRevision": {
+    "originalAuthoredLineTarget": 600,
+    "revisedGovernanceLineBudget": 2700,
+    "actualGovernanceLinesAtReview": 2607,
+    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
+  },
+  "rendererSourceNamingContract": [
+    "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
+    "WebGPU bootstrap supplemental renderer sources must be named bootstrap-src/16aN-scene-webgpu-*.ts.",
+    "The lazy backend chunks may not add runtime Scene3D sources outside sourceSets without updating this contract and its ratchets."
+  ],
+  "extraProtectedSources": [
+    "../runtime/scene3d/mount-webgl.ts"
+  ],
+  "directRendererReferenceSources": [
+    "16a1-scene-webgpu-selena-uniforms.ts",
+    "mount-webgl.ts",
+    "webgl.ts",
+    "webgpu.ts"
+  ],
+  "intentionalDirectRendererReferences": [
+    {
+      "file": "client/js/16a-scene-webgpu-pick.test.mjs",
+      "source": "webgpu.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/19a-scene-animation.test.mjs",
+      "source": "mount-webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "16a1-scene-webgpu-selena-uniforms.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "mount-webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/runtime-06-scene-webgpu-water.test.js",
+      "source": "16a1-scene-webgpu-selena-uniforms.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/runtime-18-scene-webgpu-board-water.test.js",
+      "source": "webgpu.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/runtime-24-scene-hdr-ibl.test.js",
+      "source": "mount-webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/runtime-31-scene-indexed-buffergeometry.test.js",
+      "source": "mount-webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/runtime-test-harness.js",
+      "source": "mount-webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/scene3d-material-ior.test.js",
+      "source": "mount-webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/scene3d-material-specular.test.js",
+      "source": "mount-webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/scene3d-render-truth.test.mjs",
+      "source": "mount-webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/scene3d-shadow-budget.test.js",
+      "source": "webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "16a1-scene-webgpu-selena-uniforms.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "mount-webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
+      "source": "mount-webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
+      "source": "webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
+      "source": "webgpu.ts",
+      "count": 1
+    }
+  ],
+  "sourceSets": {
+    "webgl": {
+      "chunk": "bootstrap-feature-scene3d-webgl.js",
+      "chunkSources": [
+        "bootstrap-src/26j-feature-scene3d-webgl-prefix.ts",
+        "bootstrap-src/15a1-scene-texture-budget.ts",
+        "bootstrap-src/16b-scene-hdr.ts",
+        "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl.ts",
+        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
+      ],
+      "chunkSourceRoles": {
+        "bootstrap-src/26j-feature-scene3d-webgl-prefix.ts": "chunk-wrapper",
+        "bootstrap-src/15a1-scene-texture-budget.ts": "shared-scene-support",
+        "bootstrap-src/16b-scene-hdr.ts": "shared-scene-support",
+        "bootstrap-src/16e-scene-webgl-legacy.ts": "backend-support",
+        "../runtime/scene3d/webgl.ts": "governed-renderer",
+        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper"
+      },
+      "sources": [
+        "../runtime/scene3d/webgl.ts"
+      ],
+      "maxLines": 9643,
+      "maxFileLines": 9643
+    },
+    "webgpu": {
+      "chunk": "bootstrap-feature-scene3d-webgpu.js",
+      "chunkSources": [
+        "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
+        "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "../runtime/scene3d/webgpu.ts",
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
+      ],
+      "chunkSourceRoles": {
+        "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts": "chunk-wrapper",
+        "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts": "backend-support",
+        "../runtime/scene3d/webgpu.ts": "governed-renderer",
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": "governed-renderer",
+        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper"
+      },
+      "sources": [
+        "../runtime/scene3d/webgpu.ts",
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"
+      ],
+      "maxLines": 19062,
+      "maxFileLines": 18864
+    }
+  },
+  "files": {
+    "../runtime/scene3d/webgl.ts": 9643,
+    "../runtime/scene3d/webgpu.ts": 18864,
+    "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
+    "../runtime/scene3d/mount-webgl.ts": 4879,
+    "../runtime/scene3d/mount.ts": 3561
+  },
+  "functionDefaults": {
+    "lines": 200,
+    "cyclomatic": 40,
+    "cognitive": 60,
+    "maxNesting": 4,
+    "parameters": 8
+  },
+  "functionExceptions": [
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createSceneWaterSimWebGL@2124:3",
+      "lines": 255,
+      "cyclomatic": 78,
+      "cognitive": 84,
+      "maxNesting": 2,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createSceneWaterRendererWebGL@2898:3",
+      "lines": 1287,
+      "cyclomatic": 354,
+      "cognitive": 437,
+      "maxNesting": 4,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "waterShadowSignature@3084:5",
+      "lines": 11,
+      "cyclomatic": 4,
+      "cognitive": 4,
+      "maxNesting": 2,
+      "parameters": 10
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "applyWaterQualityProfile@3525:5",
+      "lines": 100,
+      "cyclomatic": 58,
+      "cognitive": 68,
+      "maxNesting": 3,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "renderMeshTextureTarget@3683:5",
+      "lines": 28,
+      "cyclomatic": 6,
+      "cognitive": 5,
+      "maxNesting": 1,
+      "parameters": 15
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawFrame@3712:5",
+      "lines": 398,
+      "cyclomatic": 103,
+      "cognitive": 126,
+      "maxNesting": 4,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createScenePostProcessor@4251:3",
+      "lines": 550,
+      "cyclomatic": 140,
+      "cognitive": 200,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "anonymous@4653:14",
+      "lines": 136,
+      "cyclomatic": 34,
+      "cognitive": 74,
+      "maxNesting": 5,
+      "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "scenePBRUploadLights@6022:3",
+      "lines": 116,
+      "cyclomatic": 33,
+      "cognitive": 64,
+      "maxNesting": 7,
+      "parameters": 5
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "scenePBRUploadEnvironmentMap@6495:3",
+      "lines": 110,
+      "cyclomatic": 49,
+      "cognitive": 95,
+      "maxNesting": 9,
+      "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createScenePBRRenderer@6611:3",
+      "lines": 2736,
+      "cyclomatic": 770,
+      "cognitive": 1179,
+      "maxNesting": 7,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "uploadCustomUniforms@7244:5",
+      "lines": 24,
+      "cyclomatic": 21,
+      "cognitive": 31,
+      "maxNesting": 5,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "render@7420:5",
+      "lines": 283,
+      "cyclomatic": 73,
+      "cognitive": 105,
+      "maxNesting": 3,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawPBRObjectList@8221:5",
+      "lines": 261,
+      "cyclomatic": 74,
+      "cognitive": 173,
+      "maxNesting": 6,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "applyPointsAuthoredCustomUniforms@8628:5",
+      "lines": 33,
+      "cyclomatic": 16,
+      "cognitive": 44,
+      "maxNesting": 7,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawPointsEntries@8804:5",
+      "lines": 219,
+      "cyclomatic": 63,
+      "cognitive": 125,
+      "maxNesting": 6,
+      "parameters": 7
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawInstancedMeshes@9129:5",
+      "lines": 206,
+      "cyclomatic": 55,
+      "cognitive": 117,
+      "maxNesting": 5,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "wgpuLoadTexture@3225:3",
+      "lines": 116,
+      "cyclomatic": 33,
+      "cognitive": 63,
+      "maxNesting": 5,
+      "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "wgpuCreateSceneColorPipeline@3838:3",
+      "lines": 26,
+      "cyclomatic": 2,
+      "cognitive": 1,
+      "maxNesting": 0,
+      "parameters": 9
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "wgpuCreatePostProcessor@4090:3",
+      "lines": 667,
+      "cyclomatic": 126,
+      "cognitive": 194,
+      "maxNesting": 8,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "anonymous@4458:14",
+      "lines": 303,
+      "cyclomatic": 29,
+      "cognitive": 81,
+      "maxNesting": 8,
+      "parameters": 8
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "createSceneWebGPUPicker@5125:3",
+      "lines": 415,
+      "cyclomatic": 118,
+      "cognitive": 173,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "queuePick@5287:5",
+      "lines": 31,
+      "cyclomatic": 9,
+      "cognitive": 18,
+      "maxNesting": 5,
+      "parameters": 5
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "createSceneWebGPURenderer@6176:3",
+      "lines": 12004,
+      "cyclomatic": 4022,
+      "cognitive": 5194,
+      "maxNesting": 7,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "initGPUResources@7416:6",
+      "lines": 394,
+      "cyclomatic": 26,
+      "cognitive": 34,
+      "maxNesting": 4,
+      "parameters": 0
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "createSelenaBindGroup@8460:5",
+      "lines": 124,
+      "cyclomatic": 48,
+      "cognitive": 70,
+      "maxNesting": 3,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "sceneWaterObjectState@9546:5",
+      "lines": 95,
+      "cyclomatic": 39,
+      "cognitive": 57,
+      "maxNesting": 5,
+      "parameters": 5
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "sceneWaterManifestShaderSources@9826:5",
+      "lines": 85,
+      "cyclomatic": 74,
+      "cognitive": 121,
+      "maxNesting": 5,
+      "parameters": 0
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "ingestManifestValue@9852:7",
+      "lines": 20,
+      "cyclomatic": 19,
+      "cognitive": 38,
+      "maxNesting": 5,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "ingestManifestText@9872:7",
+      "lines": 22,
+      "cyclomatic": 22,
+      "cognitive": 41,
+      "maxNesting": 5,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "createSceneWaterSystem@10360:5",
+      "lines": 202,
+      "cyclomatic": 33,
+      "cognitive": 32,
+      "maxNesting": 1,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "renderWaterObjectMeshTargetPass@11160:5",
+      "lines": 27,
+      "cyclomatic": 14,
+      "cognitive": 13,
+      "maxNesting": 1,
+      "parameters": 11
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "renderWaterObjectSceneTexturePasses@11528:5",
+      "lines": 147,
+      "cyclomatic": 39,
+      "cognitive": 60,
+      "maxNesting": 3,
+      "parameters": 9
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "updateWaterSystems@11679:5",
+      "lines": 507,
+      "cyclomatic": 168,
+      "cognitive": 280,
+      "maxNesting": 6,
+      "parameters": 10
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawWaterPoolEntries@13207:5",
+      "lines": 104,
+      "cyclomatic": 34,
+      "cognitive": 79,
+      "maxNesting": 6,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawWaterSurfaceSide@13355:5",
+      "lines": 104,
+      "cyclomatic": 34,
+      "cognitive": 84,
+      "maxNesting": 6,
+      "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "updateInstancedCullSystems@13516:5",
+      "lines": 164,
+      "cyclomatic": 68,
+      "cognitive": 113,
+      "maxNesting": 5,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "syncEnvironmentIBL@13956:5",
+      "lines": 60,
+      "cyclomatic": 31,
+      "cognitive": 63,
+      "maxNesting": 7,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "renderShadowPass@15426:5",
+      "lines": 104,
+      "cyclomatic": 35,
+      "cognitive": 67,
+      "maxNesting": 4,
+      "parameters": 5
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawPBRObjects@15547:5",
+      "lines": 179,
+      "cyclomatic": 87,
+      "cognitive": 170,
+      "maxNesting": 6,
+      "parameters": 9
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "instancedMeshColorData@15769:5",
+      "lines": 48,
+      "cyclomatic": 20,
+      "cognitive": 35,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawPointsEntries@16428:5",
+      "lines": 178,
+      "cyclomatic": 51,
+      "cognitive": 86,
+      "maxNesting": 6,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawComputeParticleEntries@16624:5",
+      "lines": 155,
+      "cyclomatic": 44,
+      "cognitive": 60,
+      "maxNesting": 2,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "publishWebGPUFrameStats@16847:5",
+      "lines": 313,
+      "cyclomatic": 257,
+      "cognitive": 257,
+      "maxNesting": 2,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawBoardLabels@17520:5",
+      "lines": 117,
+      "cyclomatic": 39,
+      "cognitive": 76,
+      "maxNesting": 4,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "render@17755:5",
+      "lines": 653,
+      "cyclomatic": 175,
+      "cognitive": 226,
+      "maxNesting": 4,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "diagnostics@18705:5",
+      "lines": 90,
+      "cyclomatic": 49,
+      "cognitive": 49,
+      "maxNesting": 2,
+      "parameters": 0
+    }
+  ],
+  "symbols": [
+    {
+      "source": "../runtime/scene3d/mount-telemetry.ts",
+      "name": "mountSnapshot",
+      "lines": 118,
+      "cyclomatic": 66,
+      "cognitive": 81,
+      "maxNesting": 4,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/mount.ts",
+      "name": "renderFrame",
+      "lines": 202,
+      "cyclomatic": 60,
+      "cognitive": 70,
+      "maxNesting": 3,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createSceneWaterSimWebGL",
+      "lines": 255,
+      "cyclomatic": 78,
+      "cognitive": 84,
+      "maxNesting": 2,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createSceneWaterRendererWebGL",
+      "lines": 1287,
+      "cyclomatic": 354,
+      "cognitive": 437,
+      "maxNesting": 4,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawFrame",
+      "lines": 398,
+      "cyclomatic": 103,
+      "cognitive": 126,
+      "maxNesting": 4,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createScenePostProcessor",
+      "lines": 550,
+      "cyclomatic": 140,
+      "cognitive": 200,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createScenePBRRenderer",
+      "lines": 2736,
+      "cyclomatic": 770,
+      "cognitive": 1179,
+      "maxNesting": 7,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawPBRObjectList",
+      "lines": 261,
+      "cyclomatic": 74,
+      "cognitive": 173,
+      "maxNesting": 6,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "wgpuCreatePostProcessor",
+      "lines": 667,
+      "cyclomatic": 126,
+      "cognitive": 194,
+      "maxNesting": 8,
+      "parameters": 4
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "createSceneWebGPUPicker",
+      "lines": 415,
+      "cyclomatic": 118,
+      "cognitive": 173,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "createSceneWebGPURenderer",
+      "lines": 12004,
+      "cyclomatic": 4022,
+      "cognitive": 5194,
+      "maxNesting": 7,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "updateWaterSystems",
+      "lines": 507,
+      "cyclomatic": 168,
+      "cognitive": 280,
+      "maxNesting": 6,
+      "parameters": 10
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "drawPBRObjects",
+      "lines": 179,
+      "cyclomatic": 87,
+      "cognitive": 170,
+      "maxNesting": 6,
+      "parameters": 9
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "publishWebGPUFrameStats",
+      "lines": 313,
+      "cyclomatic": 257,
+      "cognitive": 257,
+      "maxNesting": 2,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "render",
+      "lines": 653,
+      "cyclomatic": 175,
+      "cognitive": 226,
+      "maxNesting": 4,
+      "parameters": 3
+    }
+  ],
+  "rendererSets": {
+    "base+webgl": {
+      "chunks": [
+        "bootstrap-feature-scene3d.js",
+        "bootstrap-feature-scene3d-webgl.js"
+      ],
+      "raw": 767915,
+      "gzip": 212127,
+      "brotli": 176975
+    },
+    "base+webgpu": {
+      "chunks": [
+        "bootstrap-feature-scene3d.js",
+        "bootstrap-feature-scene3d-webgpu.js"
+      ],
+      "raw": 940631,
+      "gzip": 246602,
+      "brotli": 205089
+    },
+    "base+webgl+gltf+animation": {
+      "chunks": [
+        "bootstrap-feature-scene3d.js",
+        "bootstrap-feature-scene3d-webgl.js",
+        "bootstrap-feature-scene3d-gltf.js",
+        "bootstrap-feature-scene3d-animation.js"
+      ],
+      "raw": 821021,
+      "gzip": 231683,
+      "brotli": 194407
+    },
+    "base+webgpu+gltf+animation": {
+      "chunks": [
+        "bootstrap-feature-scene3d.js",
+        "bootstrap-feature-scene3d-webgpu.js",
+        "bootstrap-feature-scene3d-gltf.js",
+        "bootstrap-feature-scene3d-animation.js"
+      ],
+      "raw": 993737,
+      "gzip": 266158,
+      "brotli": 222521
+    }
+  },
+  "rendererABI": {
+    "required": [
+      "kind",
+      "render",
+      "dispose"
+    ],
+    "optional": [
+      "supportsRetainedGeometry",
+      "supportsBundle",
+      "setLifecycle",
+      "diagnostics",
+      "textureVariantContext",
+      "getStats",
+      "pollPerformanceSample",
+      "getPerformanceTimingStatus",
+      "disablePostProcessing",
+      "enablePostProcessing"
+    ],
+    "experimental": [
+      "queuePick"
+    ],
+    "implementationDetail": [
+      "type"
+    ],
+    "implementations": {
+      "webgl": [
+        "diagnostics",
+        "dispose",
+        "kind",
+        "render",
+        "supportsRetainedGeometry",
+        "textureVariantContext",
+        "type"
+      ],
+      "webgpu": [
+        "diagnostics",
+        "disablePostProcessing",
+        "dispose",
+        "enablePostProcessing",
+        "getPerformanceTimingStatus",
+        "kind",
+        "pollPerformanceSample",
+        "queuePick",
+        "render",
+        "setLifecycle",
+        "supportsBundle",
+        "supportsRetainedGeometry",
+        "textureVariantContext",
+        "type"
+      ]
+    }
+  }
+}

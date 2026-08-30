@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // WebGPU board bundles and the Selena water passes, including the compiled
 // fixture parity checks and the per-frame device-call shape budgets.
 //
@@ -1070,7 +1072,7 @@ test("Scene3D fake WebGPU timing partial allocation failure destroys candidates 
 });
 
 test("Scene3D WebGL water binds the full Selena object contract", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const source = readSceneRendererBackendSrc("webgl");
   assert.match(source, /mvp: mvp, modelMatrix: identity4, normalMatrix: identity3/,
     "direct analytic objects must receive an identity model matrix when their vertices are already world-baked");
   assert.match(source, /name: "causticTexture", target: gl\.TEXTURE_2D, tex: causticTex/,

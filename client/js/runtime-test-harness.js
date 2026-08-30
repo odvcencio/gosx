@@ -23,6 +23,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const nodeCrypto = require("node:crypto");
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
@@ -37,7 +38,7 @@ const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
-const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+const scene3DWebGPUBackendSource = readSceneRendererBackendSrc("webgpu");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.ts"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
@@ -4284,13 +4285,6 @@ function readSceneMountSrc() {
   );
 }
 
-// readWebGPUBackendSrc joins the WebGPU backend source files. The Selena
-// uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
-// assertion about the backend must read both files.
-function readWebGPUBackendSrc() {
-  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.ts");
-}
-
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
 // single 30-tail.js is now that file set.
 function readBootstrapTailSrc() {
@@ -4316,13 +4310,20 @@ function freshFeatureBundleSource(name, options) {
   const clientJS = __dirname;
   const opts = options || {};
   function read(rel) {
-    const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
-    if (rel.endsWith("webgl.ts") && opts.exportWaterRendererForTest) {
-      return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
-    }
-    return source;
+    return fs.readFileSync(path.join(clientJS, rel), "utf8");
   }
-  return bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read).join("\n");
+  const sourceParts = bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read);
+  let source = sourceParts.join("\n");
+  if (name === "scene3d-webgl" && opts.exportWaterRendererForTest) {
+    // Inject at the joined chunk's final-source boundary. The final source is
+    // the feature suffix that closes the registry factory, so the export stays
+    // in lexical scope without depending on which renderer file owns it.
+    const finalSourceStart = source.length - sourceParts[sourceParts.length - 1].length;
+    source = source.slice(0, finalSourceStart)
+      + "window.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n"
+      + source.slice(finalSourceStart);
+  }
+  return source;
 }
 
 // createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks
@@ -5642,7 +5643,7 @@ module.exports = {
   bootstrapFeatureScene3DDecompressSource,
   bootstrapFeatureScene3DWebGLSource,
   bootstrapFeatureScene3DWebGPUSource,
-  bootstrapScene3DWebGPUSourceFile,
+  scene3DWebGPUBackendSource,
   bootstrapScene3DInputSourceFile,
   bootstrapScene3DMountSourceFile,
   bootstrapScene3DDOMRegionsSourceFile,
@@ -5736,7 +5737,6 @@ module.exports = {
   bootstrapChunkSources,
   readBootstrapSrc,
   readSceneMountSrc,
-  readWebGPUBackendSrc,
   readBootstrapTailSrc,
   freshFeatureBundleSource,
   createBoardWebGPUHarness,

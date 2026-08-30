@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Scene3D scene normalization: named materials, material profiles, CPU compute
 // particles, live point buffers, update transitions and mesh raycasting.
 //
@@ -34,7 +36,7 @@ test("bootstrap guards WebGPU points shaders against zero/stale viewport uniform
   // shaders adopt the same clamp-to-1 form the thick-line shader uses, and
   // that neither still divides by the unguarded frame.viewportWidth /
   // frame.viewportHeight fields directly.
-  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   const pointsVertexStart = source.indexOf("var WGSL_POINTS_VERTEX = [");
   const pointsInstancedStart = source.indexOf("var WGSL_POINTS_INSTANCED_VERTEX = [");

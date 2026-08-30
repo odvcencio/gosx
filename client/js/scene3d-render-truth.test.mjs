@@ -16,6 +16,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -25,8 +28,8 @@ function readSrc(name) {
 }
 
 const sharedSource = readSrc("15a-scene-postfx-shared.ts");
-const webglSource = readSrc("../runtime/scene3d/webgl.ts");
-const webgpuSource = readSrc("../runtime/scene3d/webgpu.ts");
+const webglSource = readSceneRendererBackendSrc("webgl");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
 // sceneRenderBackendTruth and its DOM surface live in
 // 20b-scene-mount-webgl-chunk.js, not 20-scene-mount.js: applySceneRendererState
 // (its only caller) moved there when the former single 20-scene-mount.js split

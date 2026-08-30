@@ -24,6 +24,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -32,7 +35,7 @@ function readSource(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const webgpuSource = readSource("../runtime/scene3d/webgpu.ts");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
 const computeSource = readSource("../runtime/scene3d/compute.ts");
 const computeBridgeSource = readSource("26e1-feature-scene3d-webgpu-compute-bridge.ts");
 

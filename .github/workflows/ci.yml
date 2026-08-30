@@ -113,7 +113,7 @@ jobs:
         run: make test-fuzz-smoke
 
       # The desktop host holds 3520 lines behind a windows build tag against 62
-      # lines of windows-gated test, and this runner is Linux. release.yml
+      # lines of windows-gated test, and this runner is Linux. release-governed.yml
       # cross-compiles the binary, but nothing compiled the windows TEST
       # binaries, so a broken desktop test could not fail anywhere. This runs the
       # portable tests and links both windows test binaries.
@@ -349,16 +349,24 @@ jobs:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
-  # test: kept as a lightweight aggregate so the `test` check name still
-  # exists for any external required-check configuration that references it
-  # by name. As of this split, `main` branch protection on this repo has no
-  # required_status_checks configured (verified via `gh api
-  # repos/odvcencio/gosx/branches/main/protection`), so nothing currently
-  # depends on this name — this job is defensive insurance, not a fix for a
-  # known break.
+      - name: Upload perf budget failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-budget-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/perf-report.json
+            build/perf-server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # test: kept as the lightweight aggregate required-check surface. It must
+  # include release-gate so branch protection on the aggregate `test` check also
+  # gates release policy and governed workflow topology.
   test:
     runs-on: ubuntu-latest
     needs:
+      - release-gate
       - go-tests
       - go-race-tests
       - go-cli-tests
@@ -369,7 +377,7 @@ jobs:
 
     steps:
       - name: All test jobs passed
-        run: echo "go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
+        run: echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

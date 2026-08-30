@@ -27,7 +27,11 @@ component Page() {
 			<ContractRow label="Runtime" value="server HTML" />
 		</ul>
 		<p className="typed-proof__boundary">
-			The strict form is deliberately server-only in v0.39. Routes that need loader data, control flow, islands, or engines continue to use the legacy Go-function style.
+			Strict components render on the server, and a strict component marked
+			<span className="inline-code">//gosx:island</span>
+			may hydrate the supported island VM subset. Strict engine declarations remain preview/post-v1; use programmatic
+			<span className="inline-code">engine.Config</span>
+			for the v1 engine surface.
 		</p>
 		<a
 			className="typed-proof__source"

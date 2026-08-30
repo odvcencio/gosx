@@ -123,6 +123,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 				// page has to name them, or it contradicts README.md.
 				"typed legacy",
 				"untyped legacy",
+				"A strict component may hydrate client-side as an island",
 				"gosx export .",
 			},
 			forbidden: []string{
@@ -133,6 +134,8 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 				// stated. A typed legacy component now takes part in strict
 				// calls in both directions.
 				"v0.39 keeps component calls within the same style",
+				"Strict islands are not supported yet",
+				"Islands, engines, and loader-bound routes still need it",
 			},
 		},
 		{

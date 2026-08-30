@@ -88,6 +88,9 @@ func cmdPerf() {
 
 	report, err := perf.RunScenario(scenario)
 	if err != nil {
+		if *jsonOut {
+			emitPartialPerfReportJSON(report)
+		}
 		fatal("gosx perf: %v", err)
 	}
 
@@ -150,6 +153,18 @@ func cmdPerf() {
 			os.Exit(1)
 		}
 	}
+}
+
+func emitPartialPerfReportJSON(report *perf.Report) {
+	if report == nil || len(report.Pages) == 0 {
+		return
+	}
+	data, err := perf.FormatJSON(report)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gosx perf: partial json: %v\n", err)
+		return
+	}
+	fmt.Println(string(data))
 }
 
 // cmdPerfCompare implements `gosx perf compare baseline.json candidate.json`.

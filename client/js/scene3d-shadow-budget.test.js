@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Scene3D cascaded-shadow texture-unit budget regressions.
 //
 // These tests drive the PRODUCTION webgl.ts upload/render path and assert on
@@ -59,7 +61,7 @@ function callIn(context, expression) {
 // --- direct upload path (production functions inside a vm sandbox) ---------
 
 function setupUploadContext() {
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
   const context = vm.createContext({ console, window: {} });
   runFragment(context,
     "function sceneFiniteNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }" +

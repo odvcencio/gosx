@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // The WASM motion mixer, the managed fluid controls, and the shared-signal
 // bindings for camera, selection, gizmo, cursor and hub output.
 //
@@ -14,7 +16,7 @@ const vm = require("node:vm");
 
 const {
   bootstrapSource,
-  bootstrapScene3DWebGPUSourceFile,
+  scene3DWebGPUBackendSource,
   FakeElement,
   buildSkinnedGLBBytes,
   createContext,
@@ -375,22 +377,22 @@ test("P4-M3 motion mixer: grow-and-retick passes dt=0 to avoid double clock adva
 
 test("Scene3D WebGPU water retires replaced systems after submitted work drains", () => {
   assert.match(
-    bootstrapScene3DWebGPUSourceFile,
+    scene3DWebGPUBackendSource,
     /function retireWaterSystem\(system\) \{/,
     "water runtime should centralize delayed disposal for replaced systems"
   );
   assert.match(
-    bootstrapScene3DWebGPUSourceFile,
+    scene3DWebGPUBackendSource,
     /device\.queue\.onSubmittedWorkDone\(\)\.then\(function\(\) \{\s*system\.dispose\(\);/s,
     "replaced water resources should be retired after submitted WebGPU work drains"
   );
   assert.match(
-    bootstrapScene3DWebGPUSourceFile,
+    scene3DWebGPUBackendSource,
     /retireWaterSystem\(record\.system\);/,
     "syncWaterSystems should not immediately destroy resources for signature changes"
   );
   assert.match(
-    bootstrapScene3DWebGPUSourceFile,
+    scene3DWebGPUBackendSource,
     /if \(system\._gosxDisposed\) return;/,
     "water resource disposal must be idempotent across deferred and renderer teardown paths"
   );
@@ -2017,7 +2019,7 @@ test("P1 hub outbound binding: signal publishes to socket and in-binding still w
 });
 
 test("Selena context-class fields resolve to live per-frame scene state on WebGL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   // The per-frame updater exists and derives every reserved name from real
   // scene state: camera, the

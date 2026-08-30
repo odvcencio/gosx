@@ -35,17 +35,21 @@ component WelcomePage() {
     return <main><Greeting name="GoSX" /></main>
 }
 
-// Islands hydrate client-side, so they still use the Go-function form.
-// See "Legacy component syntax" below.
+type CounterProps struct {
+    Initial int
+}
+
+// Strict islands keep the same typed component boundary, then hydrate the
+// supported signal/handler subset in the shared browser VM.
 //gosx:island
-func Counter(initial int) Node {
-    count := signal.New(initial)
-    increment := func() { count.Update(func(n int) int { return n + 1 }) }
-    decrement := func() { count.Update(func(n int) int { return n - 1 }) }
+component Counter(props: CounterProps) {
+    count := signal.New(props.Initial)
+    increment := func() { count.Set(count.Get() + 1) }
+    decrement := func() { count.Set(count.Get() - 1) }
 
     return <div class="counter">
         <button onClick={decrement}>-</button>
-        <span>{count}</span>
+        <span>{count.Get()}</span>
         <button onClick={increment}>+</button>
     </div>
 }
@@ -98,14 +102,17 @@ A strict `component Name` compiles to a package-level Go `func Name`, and a
 sibling `.go` file in the same package already declares, naming both
 declarations and their positions.
 
-### Islands and engines still use the function form
+### Islands are strict-capable; engines use the programmatic v1 surface
 
-In v0.49, islands and engines have no strict spelling; both continue to use
-`func Name(...) Node`. The `//gosx:island` directive marks a component for
-client-side hydration. The compiler extracts signals, computed values, and
-handlers from the Go source, compiles expressions to VM instructions, and
-serializes an island program. Server components emit static HTML with no
-client-side cost.
+The `//gosx:island` directive may mark a strict `component Name(...)` or a
+legacy function component for client-side hydration. The compiler extracts
+supported signals, computed values, and handlers, compiles expressions to VM
+instructions, and serializes an island program. Server components emit static
+HTML with no client-side cost.
+
+Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
+discovery remain preview/post-v1. The v1 engine contract is the programmatic
+`engine.Config` / `ctx.Engine` surface described below.
 
 ### Legacy component syntax (deprecated)
 
@@ -152,9 +159,10 @@ component either. An untyped legacy render frame binds `props` to a
 composition fails on every render. Converting the callee to a typed legacy
 or strict component removes the restriction.
 
-An island or an engine component cannot convert to strict syntax today (see
-"Islands and engines still use the function form" above). Leave its
-declaration as `func Name(...) Node`, whether or not its props are typed.
+An island can convert to strict syntax when its props and browser behavior fit
+the strict island subset. A `.gsx` engine component cannot convert to strict
+syntax today; keep `.gsx //gosx:engine` discovery out of the v1 contract and
+use programmatic `engine.Config` / `ctx.Engine` for v1 engine work.
 
 ## Philosophy
 

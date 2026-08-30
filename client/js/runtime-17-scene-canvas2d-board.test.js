@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // The canvas2d surface kind: placeholder discovery, the paint loop, the 2D
 // painter and the orthographic 2D camera golden vectors.
 //
@@ -327,10 +329,7 @@ test("bootstrap Scene3D ortho-2D helpers apply the native defaults (zoom<=0→1,
 });
 
 test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D camera normalizer", () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"),
-    "utf8",
-  );
+  const source = readSceneRendererBackendSrc("webgpu");
   const start = source.indexOf("function uploadFrameUniforms(");
   const end = source.indexOf("function uploadLights(");
   assert.notEqual(start, -1, "uploadFrameUniforms must exist in 16a");

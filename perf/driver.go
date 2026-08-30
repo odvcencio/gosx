@@ -221,10 +221,27 @@ func (d *Driver) BindTarget() error {
 
 // WithOperationContext returns a shallow Driver that uses a derived CDP context.
 func (d *Driver) WithOperationContext(parent context.Context, timeout time.Duration) (*Driver, context.CancelFunc) {
-	opCtx := d.ctx
-	var cancel context.CancelFunc
+	if parent == nil {
+		parent = context.Background()
+	}
+	baseCtx := d.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	now := time.Now()
+	deadline, hasDeadline := earliestContextDeadline(baseCtx, parent)
 	if timeout > 0 {
-		opCtx, cancel = context.WithTimeout(opCtx, timeout)
+		timeoutDeadline := now.Add(timeout)
+		if !hasDeadline || timeoutDeadline.Before(deadline) {
+			deadline = timeoutDeadline
+			hasDeadline = true
+		}
+	}
+
+	opCtx := baseCtx
+	var cancel context.CancelFunc
+	if hasDeadline {
+		opCtx, cancel = context.WithDeadline(opCtx, deadline)
 	} else {
 		opCtx, cancel = context.WithCancel(opCtx)
 	}
@@ -232,6 +249,12 @@ func (d *Driver) WithOperationContext(parent context.Context, timeout time.Durat
 	go func() {
 		select {
 		case <-parent.Done():
+			if parentDeadline, ok := parent.Deadline(); ok &&
+				parent.Err() == context.DeadlineExceeded &&
+				hasDeadline &&
+				parentDeadline.Equal(deadline) {
+				return
+			}
 			cancel()
 		case <-opCtx.Done():
 		case <-done:
@@ -248,6 +271,25 @@ func (d *Driver) WithOperationContext(parent context.Context, timeout time.Durat
 			cancel()
 		})
 	}
+}
+
+func earliestContextDeadline(contexts ...context.Context) (time.Time, bool) {
+	var earliest time.Time
+	found := false
+	for _, ctx := range contexts {
+		if ctx == nil {
+			continue
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			continue
+		}
+		if !found || deadline.Before(earliest) {
+			earliest = deadline
+			found = true
+		}
+	}
+	return earliest, found
 }
 
 // Close shuts down the browser and cleans up all contexts.
