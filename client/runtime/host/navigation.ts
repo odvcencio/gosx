@@ -103,6 +103,12 @@
   // region manual refresh" comment ahead of setupLiveRegions below.
   const LIVE_SIGNAL_ATTR = "data-gosx-live-signal";
   const LIVE_ON_ATTR = "data-gosx-live-on";
+  // LIVE_MODE_ATTR (gosx#217 extension) selects event mode:
+  // data-gosx-live-mode="event" applies a matching gosx:hub:event's own
+  // object payload directly to the binds under root, with no fetch at
+  // all — data-gosx-live-src becomes optional in that mode, serving only
+  // the public window.__gosx.live.refresh(element) manual-refresh path.
+  const LIVE_MODE_ATTR = "data-gosx-live-mode";
   // Declarative list filter (data-gosx-filter, gosx#215). See "Declarative
   // list filter" below for the full contract; these are the attribute,
   // class-hook, and timing constants it reads and writes.
@@ -5734,6 +5740,7 @@
           || node.hasAttribute(LIVE_INTERVAL_ATTR)
           || node.hasAttribute(LIVE_SIGNAL_ATTR)
           || node.hasAttribute(LIVE_ON_ATTR)
+          || node.hasAttribute(LIVE_MODE_ATTR)
         )
       ) {
         found.push(node);
@@ -5854,19 +5861,42 @@
   // submission later trusts. Every other data-* and aria-* name is read
   // only by the consumer's own code; the runtime reads none of them.
   const LIVE_BIND_ATTR_NAME_PATTERN = /^[A-Za-z_][-A-Za-z0-9_.]*$/;
-  const LIVE_BIND_PLAIN_TARGETS = { title: true, value: true, datetime: true, disabled: true, hidden: true };
-  const LIVE_BIND_BOOLEAN_TARGETS = { disabled: true, hidden: true };
-  const LIVE_BIND_URL_TARGETS = { href: true };
-  const LIVE_BIND_REFUSED_DATA_TARGETS = { "data-csrf-token": true, "data-csrf": true };
+  // Every one of these four target maps is built with Object.create(null)
+  // and checked through liveBindTargetMapHas rather than a bracket lookup
+  // or bare truthiness test — the same pattern findCountdownSegments
+  // documents in full above (gosx#178 review finding B2): a bind target
+  // is untrusted, author-controlled attribute data, and a plain object
+  // literal answers a lookup like map["constructor"], map["__proto__"],
+  // or map["hasOwnProperty"] truthy without that name ever having been
+  // added to the map. Every one of those three is refused TODAY only by
+  // the accident of which check in liveBindAttrTargetAllowed happens to
+  // run first (LIVE_BIND_REFUSED_DATA_TARGETS's own inherited-property
+  // lookup returns a truthy function/object for each of them, which this
+  // function's "if refused, return false" branch happens to treat as a
+  // refusal) — not because any of these maps was designed to reject them.
+  // A null-prototype object removes the whole class of accident: it has
+  // no inherited properties for an untrusted key to ever collide with.
+  function liveBindTargetMap(names) {
+    const map = Object.create(null);
+    for (const name of names) map[name] = true;
+    return map;
+  }
+  function liveBindTargetMapHas(map, name) {
+    return Object.prototype.hasOwnProperty.call(map, name);
+  }
+  const LIVE_BIND_PLAIN_TARGETS = liveBindTargetMap(["title", "value", "datetime", "disabled", "hidden"]);
+  const LIVE_BIND_BOOLEAN_TARGETS = liveBindTargetMap(["disabled", "hidden"]);
+  const LIVE_BIND_URL_TARGETS = liveBindTargetMap(["href"]);
+  const LIVE_BIND_REFUSED_DATA_TARGETS = liveBindTargetMap(["data-csrf-token", "data-csrf"]);
 
   function liveBindAttrTargetAllowed(node, target, value) {
     const name = String(target || "").toLowerCase();
     if (!name || !LIVE_BIND_ATTR_NAME_PATTERN.test(name)) return false;
     if (name === COUNTDOWN_ATTR) return !(node && node.hasAttribute && node.hasAttribute(COUNTDOWN_THEN_ATTR));
     if (name.indexOf("data-gosx-") === 0) return false;
-    if (LIVE_BIND_REFUSED_DATA_TARGETS[name]) return false;
-    if (name.indexOf("data-") === 0 || name.indexOf("aria-") === 0 || LIVE_BIND_PLAIN_TARGETS[name]) return true;
-    if (LIVE_BIND_URL_TARGETS[name]) {
+    if (liveBindTargetMapHas(LIVE_BIND_REFUSED_DATA_TARGETS, name)) return false;
+    if (name.indexOf("data-") === 0 || name.indexOf("aria-") === 0 || liveBindTargetMapHas(LIVE_BIND_PLAIN_TARGETS, name)) return true;
+    if (liveBindTargetMapHas(LIVE_BIND_URL_TARGETS, name)) {
       // Browsers drop ASCII whitespace and control characters inside a URL
       // before resolving its scheme ("java\tscript:" runs), so strip every
       // code point <= 0x20 before the scheme test. Browsers also map a
@@ -5934,7 +5964,7 @@
       }
       for (const pair of parseLiveBindPairs(node.getAttribute(LIVE_BIND_ATTRIBUTE_ATTR))) {
         const raw = resolveLiveBindValue(payload, pair.key);
-        if (LIVE_BIND_BOOLEAN_TARGETS[String(pair.target || "").toLowerCase()]) {
+        if (liveBindTargetMapHas(LIVE_BIND_BOOLEAN_TARGETS, String(pair.target || "").toLowerCase())) {
           const active = liveBindBooleanValue(raw);
           if (active == null || !liveBindAttrTargetAllowed(node, pair.target, raw)) continue;
           if (active) {
@@ -5956,14 +5986,22 @@
     }
   }
 
-  // createLiveRegionRecord validates root's LIVE_SRC_ATTR (always required)
-  // and returns a fresh per-region record, or null (logging one console
-  // warning) when it is missing or cross-origin — the same "disabled, not
-  // an error" handling setupPageRevalidation gives a bad
-  // data-gosx-revalidate-interval. LIVE_INTERVAL_ATTR is now optional
-  // (gosx#228): an invalid value disables only the periodic-poll trigger
-  // (warns, leaves intervalMs null) rather than the whole region, so a
-  // malformed -interval never silently breaks a working -signal or -on
+  // createLiveRegionRecord validates root's LIVE_SRC_ATTR and returns a
+  // fresh per-region record, or null (logging one console warning) when
+  // both LIVE_SRC_ATTR and event mode are absent, or LIVE_SRC_ATTR is
+  // present but cross-origin or unparseable — the same "disabled, not an
+  // error" handling setupPageRevalidation gives a bad
+  // data-gosx-revalidate-interval. LIVE_SRC_ATTR is optional in event mode
+  // (LIVE_MODE_ATTR === "event", gosx#217 extension): an event-mode-only
+  // root applies a matching hub event's payload directly to its binds and
+  // never fetches on its own, so it needs no src at all — src still stores
+  // as "" on its record, since window.__gosx.live.refresh(element) (an
+  // explicit, discrete, user-caused trigger, not a background poll) still
+  // needs one to serve a manual refresh. LIVE_INTERVAL_ATTR is optional
+  // (gosx#228): an invalid value, or one given on a root with no src at
+  // all, disables only the periodic-poll trigger (warns, leaves
+  // intervalMs null) rather than the whole region, so a malformed
+  // -interval never silently breaks a working -signal, -on, or event-mode
   // trigger on the same root. LIVE_SIGNAL_ATTR/LIVE_ON_ATTR need no
   // validation of their own here, the same way RegionSignalAttr/
   // RegionEventsAttr need none in regions.ts — an absent or unmatched
@@ -5971,39 +6009,50 @@
   // connects.
   function createLiveRegionRecord(root) {
     const rawSrc = root.getAttribute(LIVE_SRC_ATTR);
-    if (!rawSrc) {
+    const eventMode = root.getAttribute(LIVE_MODE_ATTR) === "event";
+    if (!rawSrc && !eventMode) {
       console.warn(
         "[gosx] a live region requires " + LIVE_SRC_ATTR + " on the same element; "
         + "this live region is disabled",
       );
       return null;
     }
-    if (!isSameOriginNavigation(rawSrc, windowLocationHref())) {
-      console.warn(
-        "[gosx] " + LIVE_SRC_ATTR + " must be same-origin: " + JSON.stringify(String(rawSrc))
-        + "; this live region is disabled",
-      );
-      return null;
+    let src = "";
+    if (rawSrc) {
+      if (!isSameOriginNavigation(rawSrc, windowLocationHref())) {
+        console.warn(
+          "[gosx] " + LIVE_SRC_ATTR + " must be same-origin: " + JSON.stringify(String(rawSrc))
+          + "; this live region is disabled",
+        );
+        return null;
+      }
+      const parsedSrc = navigationURLParts(rawSrc);
+      src = parsedSrc ? parsedSrc.href : "";
+      if (!src) return null;
     }
-    const parsedSrc = navigationURLParts(rawSrc);
-    const src = parsedSrc ? parsedSrc.href : "";
-    if (!src) return null;
     const rawInterval = root.getAttribute(LIVE_INTERVAL_ATTR);
     let intervalMs = null;
     if (rawInterval) {
-      intervalMs = parseRevalidateInterval(rawInterval);
-      if (intervalMs == null) {
+      if (!src) {
         console.warn(
-          "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval))
-          + "; periodic refresh is disabled for this live region",
+          "[gosx] " + LIVE_INTERVAL_ATTR + " has no effect without " + LIVE_SRC_ATTR + " on the same element",
         );
-      } else if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) {
-        intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+      } else {
+        intervalMs = parseRevalidateInterval(rawInterval);
+        if (intervalMs == null) {
+          console.warn(
+            "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval))
+            + "; periodic refresh is disabled for this live region",
+          );
+        } else if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) {
+          intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+        }
       }
     }
     return {
       root: root,
       src: src,
+      eventMode: eventMode,
       intervalMs: intervalMs,
       signalName: root.getAttribute(LIVE_SIGNAL_ATTR) || "",
       onEvents: splitLiveEvents(root.getAttribute(LIVE_ON_ATTR)),
@@ -6036,7 +6085,13 @@
   // response instead of writing it into a record no longer on
   // liveRegionRecords.
   async function runLiveRegionFetch(record) {
-    if (record.disposed || record.inFlight) return;
+    // record.src === "" is an event-mode-only record (no LIVE_SRC_ATTR at
+    // all, see createLiveRegionRecord's own doc comment): there is
+    // nothing to fetch, so every trigger that would otherwise call this
+    // — the interval, a signal, a non-event-mode gosx:hub:event, and the
+    // public window.__gosx.live.refresh(element) API — is a silent no-op
+    // instead of a network error.
+    if (record.disposed || record.inFlight || record.src === "") return;
     record.inFlight = true;
     try {
       const headers = { Accept: "application/json" };
@@ -6130,7 +6185,12 @@
       const record = createLiveRegionRecord(root);
       if (!record) continue;
       records.push(record);
-      if (record.signalName && typeof window.__gosx_subscribe_shared_signal === "function") {
+      // A src-less record (event mode with no LIVE_SRC_ATTR,
+      // createLiveRegionRecord's own doc comment) has nothing a signal
+      // trigger could usefully fetch — runLiveRegionFetch would already
+      // no-op for it, but skipping the subscription itself avoids
+      // registering a listener that can only ever fire and do nothing.
+      if (record.src && record.signalName && typeof window.__gosx_subscribe_shared_signal === "function") {
         record.unsubscribe = window.__gosx_subscribe_shared_signal(
           record.signalName,
           function() { runLiveRegionFetch(record); },
@@ -6138,9 +6198,23 @@
         );
       }
       if (record.onEvents.length) {
+        // A matched event either fetches (the ordinary, non-event-mode
+        // path this record always used before gosx#217) or, in event
+        // mode, applies the event's own object payload to this root's
+        // binds directly with no fetch at all — see LIVE_MODE_ATTR's own
+        // doc comment for why data-gosx-live-src is optional there. A
+        // non-object payload (missing, a primitive, or an array) is
+        // silently ignored, the same "malformed input, next trigger tries
+        // again" contract applyLiveBindPayload's own JSON.parse failure
+        // follows for the ordinary fetch path.
         record.hubListener = function(event) {
-          const eventName = event && event.detail && event.detail.event;
-          if (eventName && record.onEvents.indexOf(eventName) >= 0) runLiveRegionFetch(record);
+          const detail = event && event.detail;
+          const eventName = detail && detail.event;
+          if (!eventName || record.onEvents.indexOf(eventName) < 0) return;
+          if (!record.eventMode) { runLiveRegionFetch(record); return; }
+          const data = detail.data;
+          if (!data || typeof data !== "object" || Array.isArray(data)) return;
+          try { applyLiveBindObject(record.root, data); } catch (error) { reportNavigationFailure("live region apply", error, { source: eventName }); }
         };
         document.addEventListener("gosx:hub:event", record.hubListener);
       }

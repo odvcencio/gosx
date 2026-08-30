@@ -96,6 +96,11 @@ for (const [target, value] of [
   // csrfTokenFromElement reads both for CSRF token resolution, so a bind
   // must never be able to rewrite either one.
   ["data-csrf-token", "evil-token"], ["data-csrf", "evil-token"],
+  // Every target map liveBindAttrTargetAllowed reads is built with
+  // Object.create(null): a plain object literal answers a lookup for any
+  // one of these three names truthy through Object.prototype alone, with
+  // no entry for the name ever having been added.
+  ["constructor", "x"], ["__proto__", "x"], ["hasOwnProperty", "x"],
 ]) {
   test("an attribute bind refuses " + target + "=" + JSON.stringify(value), async () => {
     const { root, node } = liveRoot(target + ":v");

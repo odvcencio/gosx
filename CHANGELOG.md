@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added: live binds that need no fetch, attributes and classes, and regions that grow
+- `data-gosx-live-bind-attr` sets a named attribute from a bind key; `data-gosx-live-bind-class` toggles a named class from a boolean. An attribute bind passes a POSITIVE allowlist: never an `on*` handler, `style`, `srcdoc`, a script or data URL, or a runtime `data-gosx-*` attribute other than `data-gosx-countdown` (refused on a node that also declares `data-gosx-countdown-then`). `hidden` and `disabled` toggle by attribute presence, not by writing the text `"true"`/`"false"`.
+- `data-gosx-live-mode="event"` applies a hub event's object payload to `data-gosx-live-bind` keys without a fetch; `data-gosx-live-src` is optional in that mode.
+- `data-gosx-region-mode="append|prepend"` inserts a fetched fragment beside existing children; `data-gosx-region-key` drops duplicates; `data-gosx-region-cursor` fills `{cursor}` in the URL.
+- A countdown re-reads a changed `data-gosx-countdown`; `window.__gosx.countdown.retarget(root)` restarts the shared timer after an expiry.
+
+### Changed: hub reconnect uses exponential backoff
+- 500 ms to 15 s with 25 percent jitter, reset on a successful open.
+
 ## v0.53.9 (2026-08-29)
 
 ### Fixed: countdowns, watchers, and filters keep working after a region swap

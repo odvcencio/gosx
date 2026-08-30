@@ -204,6 +204,14 @@ const (
 	NavigationLiveFlashClassAttr = "data-gosx-live-flash-class"
 	NavigationLiveSignalAttr     = "data-gosx-live-signal"
 	NavigationLiveOnAttr         = "data-gosx-live-on"
+	// NavigationLiveModeAttr selects event mode: "event" applies a matched
+	// gosx:hub:event's own object payload directly to the binds under the
+	// same root, with no fetch at all. NavigationLiveSrcAttr becomes
+	// optional in that mode — it still serves the public
+	// window.__gosx.live.refresh(element) manual-refresh API, but nothing
+	// else, since an event-mode-only root never polls and never fetches on
+	// its own.
+	NavigationLiveModeAttr = "data-gosx-live-mode"
 	// NavigationLiveBindAttrAttr sets a named element attribute from a
 	// live-bind key, and NavigationLiveBindClassAttr toggles a named class
 	// from a boolean live-bind value. Both share NavigationLiveBindAttr's
