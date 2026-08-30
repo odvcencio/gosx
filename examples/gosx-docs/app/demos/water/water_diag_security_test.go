@@ -10,11 +10,159 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
 )
+
+type chromeStartupState int
+
+const (
+	chromeStartupPending chromeStartupState = iota
+	chromeStartupBound
+	chromeStartupFailed
+	chromeStartupTimedOut
+)
+
+type chromeStartupDeadline struct {
+	mu              sync.Mutex
+	state           chromeStartupState
+	cancelBrowser   context.CancelFunc
+	timer           *time.Timer
+	timerDone       chan struct{}
+	stopOnce        sync.Once
+	beforeTimerWins func()
+	beforeTimerJoin func()
+}
+
+func newChromeStartupDeadline(timeout time.Duration, cancelBrowser context.CancelFunc) *chromeStartupDeadline {
+	return newChromeStartupDeadlineForTest(timeout, cancelBrowser, nil, nil)
+}
+
+func newChromeStartupDeadlineForTest(timeout time.Duration, cancelBrowser context.CancelFunc, beforeTimerWins func(), beforeTimerJoin func()) *chromeStartupDeadline {
+	deadline := &chromeStartupDeadline{
+		state:           chromeStartupPending,
+		cancelBrowser:   cancelBrowser,
+		timerDone:       make(chan struct{}),
+		beforeTimerWins: beforeTimerWins,
+		beforeTimerJoin: beforeTimerJoin,
+	}
+	deadline.timer = time.AfterFunc(timeout, func() {
+		defer close(deadline.timerDone)
+		if deadline.beforeTimerWins != nil {
+			deadline.beforeTimerWins()
+		}
+		deadline.mu.Lock()
+		defer deadline.mu.Unlock()
+		if deadline.state != chromeStartupPending {
+			return
+		}
+		deadline.state = chromeStartupTimedOut
+		deadline.cancelBrowser()
+	})
+	return deadline
+}
+
+func (deadline *chromeStartupDeadline) finish(success bool) chromeStartupState {
+	deadline.stopOnce.Do(func() {
+		if !deadline.timer.Stop() {
+			if deadline.beforeTimerJoin != nil {
+				deadline.beforeTimerJoin()
+			}
+			<-deadline.timerDone
+		}
+	})
+	deadline.mu.Lock()
+	defer deadline.mu.Unlock()
+	if deadline.state == chromeStartupPending {
+		if success {
+			deadline.state = chromeStartupBound
+		} else {
+			deadline.state = chromeStartupFailed
+		}
+	}
+	return deadline.state
+}
+
+func requireChromeStartupTestSignal(t *testing.T, ch <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for chrome startup test signal %q", name)
+	}
+}
+
+func requireChromeStartupTestState(t *testing.T, ch <-chan chromeStartupState, name string) chromeStartupState {
+	t.Helper()
+	select {
+	case state := <-ch:
+		return state
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for chrome startup test state %q", name)
+		return chromeStartupPending
+	}
+}
+
+func TestChromeStartupDeadlineJoinsTimerBeforeSuccess(t *testing.T) {
+	cancelled := make(chan struct{})
+	cancelBrowser := func() {
+		close(cancelled)
+	}
+	timerEntered := make(chan struct{})
+	joinStarted := make(chan struct{})
+	releaseTimer := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseTimer)
+		})
+	}
+	defer release()
+	deadline := newChromeStartupDeadlineForTest(0, cancelBrowser, func() {
+		close(timerEntered)
+		<-releaseTimer
+	}, func() {
+		close(joinStarted)
+	})
+	requireChromeStartupTestSignal(t, timerEntered, "timer callback entered")
+
+	finished := make(chan chromeStartupState, 1)
+	go func() {
+		finished <- deadline.finish(true)
+	}()
+
+	requireChromeStartupTestSignal(t, joinStarted, "finish reached timer callback join")
+	select {
+	case state := <-finished:
+		t.Fatalf("startup finish returned %v before joining in-flight timer callback", state)
+	default:
+	}
+
+	release()
+	if state := requireChromeStartupTestState(t, finished, "finish after timer release"); state != chromeStartupTimedOut {
+		t.Fatalf("startup boundary did not fail closed after timer won; state=%v", state)
+	}
+	requireChromeStartupTestSignal(t, cancelled, "browser canceled by startup timeout")
+	if state := deadline.finish(true); state != chromeStartupTimedOut {
+		t.Fatalf("startup timeout state was not terminal; got %v", state)
+	}
+}
+
+func TestChromeStartupDeadlineSuccessIsTerminal(t *testing.T) {
+	cancelBrowser := func() {
+		t.Fatal("startup timer canceled browser after successful bind")
+	}
+	deadline := newChromeStartupDeadline(time.Hour, cancelBrowser)
+	if state := deadline.finish(true); state != chromeStartupBound {
+		t.Fatalf("startup success was not recorded; state=%v", state)
+	}
+	if state := deadline.finish(false); state != chromeStartupBound {
+		t.Fatalf("startup success state was not terminal; got %v", state)
+	}
+}
 
 func waterDiagSource(t *testing.T) []byte {
 	t.Helper()
@@ -44,6 +192,11 @@ func TestWaterDiagAvoidsHTMLParsingSinks(t *testing.T) {
 }
 
 func TestWaterDiagRendersQueryAndAttributeValuesAsText(t *testing.T) {
+	const (
+		chromeStartupTimeout = 30 * time.Second
+		assertionTimeout     = 15 * time.Second
+	)
+
 	chromePath := ""
 	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
 		if path, err := exec.LookPath(name); err == nil {
@@ -90,8 +243,26 @@ func TestWaterDiagRendersQueryAndAttributeValuesAsText(t *testing.T) {
 	defer cancelAlloc()
 	browserContext, cancelBrowser := chromedp.NewContext(allocContext)
 	defer cancelBrowser()
-	ctx, cancelTimeout := context.WithTimeout(browserContext, 15*time.Second)
-	defer cancelTimeout()
+
+	// Bind the browser under a separate startup deadline. The deadline protocol
+	// joins any in-flight timeout callback before the test proceeds, so startup
+	// success cannot be canceled later by a timer that already began firing. The
+	// security assertion below keeps its own fixed deadline, so a slow CI Chrome
+	// launch cannot spend the entire payload-rendering/XSS assertion budget
+	// before navigation starts.
+	startupDeadline := newChromeStartupDeadline(chromeStartupTimeout, cancelBrowser)
+	if err := chromedp.Run(browserContext); err != nil {
+		if startupDeadline.finish(false) == chromeStartupTimedOut {
+			t.Fatalf("start Chrome for water diagnostics within %s: %v", chromeStartupTimeout, err)
+		}
+		t.Fatalf("start Chrome for water diagnostics: %v", err)
+	}
+	if startupDeadline.finish(true) == chromeStartupTimedOut {
+		t.Fatalf("start Chrome for water diagnostics within %s: startup timer fired while binding browser", chromeStartupTimeout)
+	}
+
+	ctx, cancelAssertion := context.WithTimeout(browserContext, assertionTimeout)
+	defer cancelAssertion()
 
 	var got struct {
 		Text            string `json:"text"`
