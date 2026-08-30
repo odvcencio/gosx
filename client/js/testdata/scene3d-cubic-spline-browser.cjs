@@ -1119,6 +1119,7 @@ async function runCase(send, c, sessionId) {
 // ---- Owned resources, report, watchdog, and central cleanup ----
 const CASE_EVIDENCE = [];
 let BASE = '';
+let SELECTED_BROWSER = null;
 let finished = false;
 let exitCode = 0;
 let reportWriteFailed = false;
@@ -1127,6 +1128,7 @@ function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, intentionalNoContent,
     clientEventResponses,
+    selectedBrowser: SELECTED_BROWSER,
     nativeCaps: global.__caps || null, mutation: MUTATION || null,
     restoreAtomicGapMS: RESTORE_ATOMIC_GAP_MS, cases: CASE_EVIDENCE,
   }, extra || {});
@@ -1229,6 +1231,16 @@ const watchdog = setTimeout(() => {
     ws.onerror = () => { clearTimeout(t); rej(new Error('ws error')); };
   });
   ws.onmessage = (evData) => dispatch(evData.data);
+
+  // Release-pin the proof to the browser that actually owns the CDP session.
+  // The four-mode matrix cross-checks this against the one selected binary.
+  SELECTED_BROWSER = await cdpSend('Browser.getVersion', null, null, STEP_MS);
+  if (!SELECTED_BROWSER || typeof SELECTED_BROWSER.product !== 'string') {
+    throw new Error('Browser.getVersion did not return a product/version');
+  }
+  console.log('selected browser: ' + SELECTED_BROWSER.product +
+    ' (protocol ' + SELECTED_BROWSER.protocolVersion + ', revision ' +
+    SELECTED_BROWSER.revision + ')');
 
   // Native capability gate on a real served loopback origin: BOTH WebGL2 and
   // WebGPU are required. No fallback, no skips. This target is deliberately

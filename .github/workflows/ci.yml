@@ -290,9 +290,9 @@ jobs:
       - name: Build WASM runtime
         run: make build-runtime
 
-  # scene3d-v1-browser-proof: one bounded renderer-contract proof with its own
-  # check name and timeout. Successful runs trap-clean artifacts immediately;
-  # failed runs upload the report and PNGs before the always cleanup step.
+  # scene3d-v1-browser-proof: one bounded four-mode renderer-contract matrix
+  # with its own check name and timeout. Successful runs trap-clean artifacts
+  # immediately; failed runs upload every mode before the always cleanup step.
   scene3d-v1-browser-proof:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -301,16 +301,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Chrome
+      - name: Set up stable Chrome for Testing
         id: chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Run Scene3D CUBICSPLINE browser proof
+      - name: Run Scene3D CUBICSPLINE browser-proof matrix
         env:
           GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: |
@@ -325,11 +327,11 @@ jobs:
           proof_status=0
           trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
           set +e
-          node client/js/testdata/scene3d-cubic-spline-browser.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+          node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
           proof_status=$?
           set -e
-          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/report.json" ]; then
-            cat "$artifact_dir/report.json"
+          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/matrix-report.json" ]; then
+            cat "$artifact_dir/matrix-report.json"
           fi
           exit "$proof_status"
 
