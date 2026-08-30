@@ -1,90 +1,136 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing semantic-version tag to release"
+        description: "Stable vMAJOR.MINOR.PATCH tag to create or rerun"
         required: true
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
-# Verification is split into parallel jobs so release wall-clock tracks the
-# slowest partition instead of the serial sum. Platform builds start after
-# validate alone; publish is the gate that requires every test job.
+# The workflow file and release policy scripts are always evaluated from the
+# repository default branch. The release source is checked out separately under
+# source/ so historical tag reruns do not depend on policy files existing in the
+# historical tree.
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.prepare.outputs.mode }}
+      source_ref: ${{ steps.prepare.outputs.source_ref }}
+      commit: ${{ steps.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Require default-branch workflow dispatch
+        run: |
+          set -euo pipefail
+          sh scripts/check-release-workflow-ref.sh \
+            --workflow-ref-type "${GITHUB_REF_TYPE}" \
+            --workflow-ref-name "${GITHUB_REF_NAME}" \
+            --workflow-ref "${GITHUB_REF}" \
+            --default-branch "${RELEASE_DEFAULT_BRANCH}"
+
+      - name: Prepare release source ref
+        id: prepare
+        run: |
+          set -euo pipefail
+          sh scripts/prepare-release-tag.sh \
+            --tag "${RELEASE_TAG}" \
+            --default-branch "${RELEASE_DEFAULT_BRANCH}" \
+            --github-output "${GITHUB_OUTPUT}"
+
   validate:
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: source/go.mod
           cache: true
 
-      - name: Validate tag, release truth, and vanity module path
-        env:
-          GITHUB_REF_TYPE: tag
-          GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
+      - name: Validate release source truth and vanity module path
         run: |
           set -euo pipefail
-          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "release tag must be semantic versioning: ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-          test "$(git describe --tags --exact-match)" = "${RELEASE_TAG}"
+          sh scripts/check-release-tag-grammar.sh "${RELEASE_TAG}"
+          sh scripts/check-release-source-truth.sh --root source --tag "${RELEASE_TAG}"
+          cd source
+          GITHUB_REF_TYPE=tag \
+            GITHUB_REF_NAME="${RELEASE_TAG}" \
+            GITHUB_REF="refs/tags/${RELEASE_TAG}" \
+            go run ./cmd/gosx release check --root .
           test "$(go list -m)" = "m31labs.dev/gosx"
-          go run ./cmd/gosx release check --root .
           curl --fail --silent --show-error 'https://m31labs.dev/gosx?go-get=1' \
             | grep -F 'm31labs.dev/gosx git https://github.com/odvcencio/gosx'
 
   test-unit:
+    needs: [prepare, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: source/go.mod
           cache: true
 
       # Keep release verification aligned with the CI package partition.
       - name: Partition validation and unit tests
+        working-directory: source
         run: |
           set -euo pipefail
           make test-ci-partitions
           make test-unit
 
   test-cli:
+    needs: [prepare, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: source/go.mod
           cache: true
 
       - name: Install TinyGo
@@ -120,26 +166,31 @@ jobs:
       # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
       # silently restores Go's 10-minute package timeout.
       - name: CLI production-build tests
+        working-directory: source
         run: |
           set -euo pipefail
           make test-cli
           CGO_ENABLED=0 go build ./cmd/gosx
 
   vet:
+    needs: [prepare, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: source/go.mod
           cache: true
 
       # Generated Danmuji test cases run under go test; vet production files only.
       - name: Vet production files
+        working-directory: source
         run: |
           set -euo pipefail
           while IFS= read -r pkg; do
@@ -151,7 +202,7 @@ jobs:
           done < <(GOFLAGS=-buildvcs=false go list ./...)
 
   build:
-    needs: validate
+    needs: [prepare, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -162,13 +213,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: source/go.mod
 
       - name: Build gosx
+        working-directory: source
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -184,16 +238,79 @@ jobs:
         with:
           name: gosx-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 7
-          path: release-artifacts/
+          path: source/release-artifacts/
 
   publish:
-    needs: [validate, test-unit, test-cli, vet, build]
+    needs: [prepare, validate, test-unit, test-cli, vet, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: governed-release
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - name: Ensure release tag exists
+        env:
+          GOSX_RELEASE_TAG_DEPLOY_KEY: ${{ secrets.GOSX_RELEASE_TAG_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GOSX_RELEASE_TAG_DEPLOY_KEY}" ]]; then
+            echo "release tag deploy key secret is empty" >&2
+            exit 1
+          fi
+          if [[ -z "${RUNNER_TEMP:-}" ]]; then
+            echo "RUNNER_TEMP is required for release SSH material" >&2
+            exit 1
+          fi
+          if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
+            echo "GITHUB_REPOSITORY is required for release SSH remote" >&2
+            exit 1
+          fi
+          release_ssh_dir="$(mktemp -d "${RUNNER_TEMP}/gosx-release-ssh.XXXXXX")"
+          key_file="${release_ssh_dir}/deploy_key"
+          known_hosts_file="${release_ssh_dir}/known_hosts"
+          cleanup_release_ssh() {
+            git -C source remote remove release-origin >/dev/null 2>&1 || true
+            if [[ -f "${key_file}" ]]; then
+              chmod 600 "${key_file}" >/dev/null 2>&1 || true
+              shred -u "${key_file}" >/dev/null 2>&1 || rm -f "${key_file}"
+            fi
+            rm -f "${known_hosts_file}"
+            rmdir "${release_ssh_dir}" >/dev/null 2>&1 || rm -rf "${release_ssh_dir}"
+          }
+          trap cleanup_release_ssh EXIT
+          chmod 700 "${release_ssh_dir}"
+          umask 077
+          printf '%s\n' "${GOSX_RELEASE_TAG_DEPLOY_KEY}" >"${key_file}"
+          chmod 600 "${key_file}"
+          test -s "${key_file}"
+          curl --fail --silent --show-error --location https://api.github.com/meta \
+            | python3 -c 'import json, sys; data=json.load(sys.stdin); keys=[k.strip() for k in (data.get("ssh_keys") or []) if k.strip()]; sys.exit("github meta response did not include ssh_keys") if not keys else None; print("\n".join("github.com " + key for key in keys))' >"${known_hosts_file}"
+          test -s "${known_hosts_file}"
+          chmod 600 "${known_hosts_file}"
+          git -C source remote add release-origin "git@github.com:${GITHUB_REPOSITORY}.git"
+          git -C source config user.name "github-actions[bot]"
+          git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          GIT_SSH_COMMAND="ssh -i ${key_file} -o IdentitiesOnly=yes -o UserKnownHostsFile=${known_hosts_file} -o StrictHostKeyChecking=yes" \
+            sh scripts/prepare-release-tag.sh \
+            --root source \
+            --remote release-origin \
+            --tag "${RELEASE_TAG}" \
+            --default-branch "${RELEASE_DEFAULT_BRANCH}" \
+            --expected-commit "${{ needs.prepare.outputs.commit }}" \
+            --create
 
       - uses: actions/download-artifact@v4
         with:
@@ -234,7 +351,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: source/go.mod
 
       - name: Verify vanity-path install
         env:
