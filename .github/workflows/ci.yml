@@ -384,8 +384,11 @@ jobs:
 
   # test: kept as the lightweight aggregate required-check surface. It must
   # include release-gate so branch protection on the aggregate `test` check also
-  # gates release policy and governed workflow topology.
+  # gates release policy and governed workflow topology. `always()` makes the
+  # aggregate run after a failed/skipped dependency; the step then fails closed
+  # unless every required dependency reports success.
   test:
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
       - release-gate
@@ -399,7 +402,34 @@ jobs:
 
     steps:
       - name: All test jobs passed
-        run: echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
+        env:
+          RELEASE_GATE_RESULT: ${{ needs.release-gate.result }}
+          GO_TESTS_RESULT: ${{ needs.go-tests.result }}
+          GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
+          GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
+          JS_TESTS_RESULT: ${{ needs.js-tests.result }}
+          WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
+          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}
+        run: |
+          set -eu
+          for result in \
+            "release-gate=$RELEASE_GATE_RESULT" \
+            "go-tests=$GO_TESTS_RESULT" \
+            "go-race-tests=$GO_RACE_TESTS_RESULT" \
+            "go-cli-tests=$GO_CLI_TESTS_RESULT" \
+            "js-tests=$JS_TESTS_RESULT" \
+            "wasm-tests=$WASM_TESTS_RESULT" \
+            "browser-tests=$BROWSER_TESTS_RESULT"
+          do
+            case "$result" in
+              *=success) ;;
+              *)
+                echo "required test job did not succeed: $result" >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

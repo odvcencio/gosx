@@ -21,22 +21,23 @@ const (
 	stableJobName  = "scene3d-v1-browser-renderer-proof"
 	testJobName    = "test"
 
-	latestSetupName  = "Set up Chrome"
-	checkoutName     = "Check out repository"
-	goSetupName      = "Set up Go"
-	tinyGoName       = "Install TinyGo"
-	docsName         = "Browser docs E2E gate"
-	ouroborosName    = "Ouroboros media metadata browser smoke"
-	driverName       = "Perf driver browser tests"
-	pinnedSetupName  = "Set up pinned Chromium for perf budget"
-	identityName     = "Verify pinned perf browser identity"
-	budgetName       = "Perf budget gate"
-	uploadName       = "Upload perf budget failure diagnostics"
-	stableSetupName  = "Set up stable Chrome for Testing"
-	stableNodeName   = "Set up Node.js"
-	stableProofName  = "Run Scene3D CUBICSPLINE browser renderer proof"
-	stableUploadName = "Upload Scene3D proof diagnostics"
-	stableCleanName  = "Clean Scene3D proof artifacts"
+	latestSetupName   = "Set up Chrome"
+	checkoutName      = "Check out repository"
+	goSetupName       = "Set up Go"
+	tinyGoName        = "Install TinyGo"
+	docsName          = "Browser docs E2E gate"
+	ouroborosName     = "Ouroboros media metadata browser smoke"
+	driverName        = "Perf driver browser tests"
+	pinnedSetupName   = "Set up pinned Chromium for perf budget"
+	identityName      = "Verify pinned perf browser identity"
+	budgetName        = "Perf budget gate"
+	uploadName        = "Upload perf budget failure diagnostics"
+	stableSetupName   = "Set up stable Chrome for Testing"
+	stableNodeName    = "Set up Node.js"
+	stableProofName   = "Run Scene3D CUBICSPLINE browser renderer proof"
+	stableUploadName  = "Upload Scene3D proof diagnostics"
+	stableCleanName   = "Clean Scene3D proof artifacts"
+	aggregateStepName = "All test jobs passed"
 
 	latestChromePath = "${{ steps.chrome.outputs.chrome-path }}"
 	pinnedChromePath = "${{ steps.perf-chrome.outputs.chrome-path }}"
@@ -613,8 +614,11 @@ func validateStableJob(node *yaml.Node) error {
 
 func validateAggregateJob(node *yaml.Node, hasStableJob bool) error {
 	const label = "aggregate test job"
-	job, err := exactMapping(node, label, "runs-on", "needs", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "needs", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", "${{ always() }}"); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -627,10 +631,7 @@ func validateAggregateJob(node *yaml.Node, hasStableJob bool) error {
 	if needsNode.Kind != yaml.SequenceNode {
 		return fmt.Errorf("%s.needs: expected sequence", label)
 	}
-	want := slices.Clone(baseAggregateNeeds)
-	if hasStableJob {
-		want = slices.Insert(want, len(want)-1, stableJobName)
-	}
+	want := aggregateNeeds(hasStableJob)
 	got := make([]string, 0, len(needsNode.Content))
 	seen := make(map[string]struct{}, len(needsNode.Content))
 	for i, need := range needsNode.Content {
@@ -643,18 +644,77 @@ func validateAggregateJob(node *yaml.Node, hasStableJob bool) error {
 		seen[need.Value] = struct{}{}
 		got = append(got, need.Value)
 	}
-	if len(got) != len(want) {
-		return fmt.Errorf("%s.needs: got %v, want exact governed membership %v", label, got, want)
+	if !slices.Equal(got, want) {
+		return fmt.Errorf("%s.needs: got %v, want exact governed order %v", label, got, want)
 	}
-	for _, required := range want {
-		if _, ok := seen[required]; !ok {
-			return fmt.Errorf("%s.needs: missing required job %q", label, required)
+	contract := stepContract{
+		name:  aggregateStepName,
+		label: "aggregate dependency assertion",
+		validate: func(step *yaml.Node) error {
+			return validateAggregateStep(step, want)
+		},
+	}
+	return validateExactStepRoster(job["steps"], label+".steps", []stepContract{contract})
+}
+
+func validateAggregateStep(node *yaml.Node, needs []string) error {
+	const label = "aggregate dependency assertion"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactString(step["name"], label+".name", aggregateStepName); err != nil {
+		return err
+	}
+	expectedEnv := make(map[string]string, len(needs))
+	for _, need := range needs {
+		expectedEnv[aggregateResultEnv(need)] = fmt.Sprintf("${{ needs.%s.result }}", need)
+	}
+	if err := exactStringMap(step["env"], label+".env", expectedEnv); err != nil {
+		return err
+	}
+	return exactString(step["run"], label+".run", aggregateRun(needs))
+}
+
+func aggregateNeeds(hasStableJob bool) []string {
+	needs := slices.Clone(baseAggregateNeeds)
+	if hasStableJob {
+		// The stable proof is optional only as a workflow composition. Once
+		// present, its exact job has no skip condition and is a required success.
+		needs = slices.Insert(needs, len(needs)-1, stableJobName)
+	}
+	return needs
+}
+
+func aggregateResultEnv(need string) string {
+	return strings.ToUpper(strings.ReplaceAll(need, "-", "_")) + "_RESULT"
+}
+
+func aggregateRun(needs []string) string {
+	var run strings.Builder
+	run.WriteString("set -eu\nfor result in \\\n")
+	for index, need := range needs {
+		suffix := " \\\n"
+		if index == len(needs)-1 {
+			suffix = "\n"
 		}
+		fmt.Fprintf(&run, "  \"%s=$%s\"%s", need, aggregateResultEnv(need), suffix)
 	}
-	if job["steps"].Kind != yaml.SequenceNode || len(job["steps"].Content) == 0 {
-		return fmt.Errorf("%s.steps: expected non-empty sequence", label)
-	}
-	return nil
+	run.WriteString(`do
+  case "$result" in
+    *=success) ;;
+    *)
+      echo "required test job did not succeed: $result" >&2
+      exit 1
+      ;;
+  esac
+done
+echo "`)
+	run.WriteString(strings.Join(needs[:len(needs)-1], ", "))
+	run.WriteString(", and ")
+	run.WriteString(needs[len(needs)-1])
+	run.WriteString(" all passed\"\n")
+	return run.String()
 }
 
 type namedStep struct {

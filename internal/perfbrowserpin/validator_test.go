@@ -2,6 +2,7 @@ package perfbrowserpin
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -47,10 +48,10 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want: "perf budget gate.env.CHROME_PATH",
 		},
 		{
-			name: "driver uses pinned browser",
+			name: "driver uses ungoverned browser output",
 			mutate: replace(
 				"      - name: Perf driver browser tests\n        env:\n          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}",
-				"      - name: Perf driver browser tests\n        env:\n          CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}",
+				"      - name: Perf driver browser tests\n        env:\n          CHROME_PATH: ${{ steps.chrome.outputs.chrome-version }}",
 			),
 			want: "perf driver browser tests.env.CHROME_PATH",
 		},
@@ -218,12 +219,9 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want:   "perf failure diagnostic upload: unexpected field \"env\"",
 		},
 		{
-			name: "aggregate browser need removed",
-			mutate: replace(
-				"      - browser-tests\n",
-				"",
-			),
-			want: "aggregate test job.needs",
+			name:   "aggregate browser need removed",
+			mutate: removeBrowserAggregateContract,
+			want:   "aggregate test job.needs",
 		},
 		{
 			name: "latest driver skipped",
@@ -266,12 +264,105 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want: "duplicate step name \"Set up Chrome\"",
 		},
 		{
-			name: "aggregate job skipped",
-			mutate: insertAfter(
-				"  test:\n",
-				"    \"if\": false\n",
+			name: "aggregate always weakened",
+			mutate: replace(
+				"    if: ${{ always() }}\n    runs-on: ubuntu-latest\n    needs:",
+				"    if: ${{ success() }}\n    runs-on: ubuntu-latest\n    needs:",
 			),
-			want: "aggregate test job: unexpected field \"if\"",
+			want: "aggregate test job.if",
+		},
+		{
+			name: "aggregate always omitted",
+			mutate: replace(
+				"  test:\n    if: ${{ always() }}\n    runs-on:",
+				"  test:\n    runs-on:",
+			),
+			want: "aggregate test job: missing field \"if\"",
+		},
+		{
+			name: "aggregate always made conditional",
+			mutate: replace(
+				"    if: ${{ always() }}\n    runs-on: ubuntu-latest\n    needs:",
+				"    if: ${{ always() && needs.browser-tests.result == 'success' }}\n    runs-on: ubuntu-latest\n    needs:",
+			),
+			want: "aggregate test job.if",
+		},
+		{
+			name: "aggregate needs reordered",
+			mutate: replace(
+				"      - go-tests\n      - go-race-tests\n",
+				"      - go-race-tests\n      - go-tests\n",
+			),
+			want: "aggregate test job.needs",
+		},
+		{
+			name: "aggregate result binding omitted",
+			mutate: replace(
+				"          GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}\n",
+				"",
+			),
+			want: "aggregate dependency assertion.env: missing field \"GO_RACE_TESTS_RESULT\"",
+		},
+		{
+			name: "aggregate result binding redirected",
+			mutate: replace(
+				"          GO_TESTS_RESULT: ${{ needs.go-tests.result }}\n",
+				"          GO_TESTS_RESULT: ${{ needs.browser-tests.result }}\n",
+			),
+			want: "aggregate dependency assertion.env.GO_TESTS_RESULT",
+		},
+		{
+			name: "aggregate failure exit weakened",
+			mutate: replace(
+				"                exit 1\n                ;;\n",
+				"                exit 0\n                ;;\n",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+		{
+			name: "aggregate skipped result allowed",
+			mutate: replace(
+				"              *=success) ;;\n",
+				"              *=success|*=skipped) ;;\n",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+		{
+			name: "aggregate assertion reordered",
+			mutate: replace(
+				"            \"go-tests=$GO_TESTS_RESULT\" \\\n            \"go-race-tests=$GO_RACE_TESTS_RESULT\" \\\n",
+				"            \"go-race-tests=$GO_RACE_TESTS_RESULT\" \\\n            \"go-tests=$GO_TESTS_RESULT\" \\\n",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+		{
+			name: "aggregate assertion continue on error",
+			mutate: insertAfter(
+				"      - name: All test jobs passed\n",
+				"        continue-on-error: true\n",
+			),
+			want: "aggregate dependency assertion: unexpected field \"continue-on-error\"",
+		},
+		{
+			name: "aggregate assertion skipped",
+			mutate: insertAfter(
+				"      - name: All test jobs passed\n",
+				"        if: false\n",
+			),
+			want: "aggregate dependency assertion: unexpected field \"if\"",
+		},
+		{
+			name: "aggregate assertion custom shell",
+			mutate: insertAfter(
+				"      - name: All test jobs passed\n",
+				"        shell: bash -c '{0}; exit 0'\n",
+			),
+			want: "aggregate dependency assertion: unexpected field \"shell\"",
+		},
+		{
+			name:   "aggregate extra bypass step",
+			mutate: insertAggregateBypassStep,
+			want:   "aggregate test job.steps: got 2 steps, want exact governed roster of 1",
 		},
 		{
 			name: "workflow default shell masks exits",
@@ -309,6 +400,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 
 func TestStableRendererProofComposition(t *testing.T) {
 	stable := ensureStableProof(t, string(repositoryWorkflow(t)))
+	assertActionlintValid(t, stable)
 	if err := Validate([]byte(stable)); err != nil {
 		t.Fatalf("Validate(stable composition): %v", err)
 	}
@@ -364,12 +456,41 @@ func TestStableRendererProofComposition(t *testing.T) {
 			want: "stable Scene3D renderer proof job: unexpected field \"env\"",
 		},
 		{
-			name: "stable aggregate need removed",
+			name:   "stable aggregate need removed",
+			mutate: removeStableAggregateContract,
+			want:   "aggregate test job.needs",
+		},
+		{
+			name: "stable aggregate need reordered",
 			mutate: replace(
-				"      - scene3d-v1-browser-renderer-proof\n",
-				"",
+				"      - scene3d-v1-browser-renderer-proof\n      - browser-tests\n",
+				"      - browser-tests\n      - scene3d-v1-browser-renderer-proof\n",
 			),
 			want: "aggregate test job.needs",
+		},
+		{
+			name: "stable aggregate result omitted",
+			mutate: replace(
+				"          SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}\n",
+				"",
+			),
+			want: "aggregate dependency assertion.env: missing field \"SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\"",
+		},
+		{
+			name: "stable aggregate result redirected",
+			mutate: replace(
+				"          SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}\n",
+				"          SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.browser-tests.result }}\n",
+			),
+			want: "aggregate dependency assertion.env.SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT",
+		},
+		{
+			name: "stable aggregate skipped result allowed",
+			mutate: replace(
+				"              *=success) ;;\n",
+				"              *=success|scene3d-v1-browser-renderer-proof=skipped) ;;\n",
+			),
+			want: "aggregate dependency assertion.run",
 		},
 	}
 	for _, test := range tests {
@@ -377,6 +498,54 @@ func TestStableRendererProofComposition(t *testing.T) {
 			assertCausalRejection(t, test.mutate(t, stable), test.want)
 		})
 	}
+}
+
+func TestAggregateRunFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("aggregate shell contract runs on the governed ubuntu-latest job")
+	}
+	for _, hasStableJob := range []bool{false, true} {
+		needs := aggregateNeeds(hasStableJob)
+		name := "base"
+		if hasStableJob {
+			name = "stable-composition"
+		}
+		t.Run(name+"/success", func(t *testing.T) {
+			output, err := runAggregate(t, needs, "", "")
+			if err != nil {
+				t.Fatalf("aggregate success: %v\n%s", err, output)
+			}
+		})
+		for _, need := range needs {
+			for _, result := range []string{"failure", "cancelled", "skipped", ""} {
+				need, result := need, result
+				t.Run(name+"/"+need+"/"+result, func(t *testing.T) {
+					output, err := runAggregate(t, needs, need, result)
+					if err == nil {
+						t.Fatalf("aggregate unexpectedly accepted %s=%q\n%s", need, result, output)
+					}
+					if want := "required test job did not succeed: " + need + "=" + result; !strings.Contains(output, want) {
+						t.Fatalf("aggregate output %q does not contain %q", output, want)
+					}
+				})
+			}
+		}
+	}
+}
+
+func runAggregate(t *testing.T, needs []string, changedNeed, changedResult string) (string, error) {
+	t.Helper()
+	command := exec.Command("sh", "-c", aggregateRun(needs))
+	command.Env = append([]string{}, os.Environ()...)
+	for _, need := range needs {
+		result := "success"
+		if need == changedNeed {
+			result = changedResult
+		}
+		command.Env = append(command.Env, aggregateResultEnv(need)+"="+result)
+	}
+	output, err := command.CombinedOutput()
+	return string(output), err
 }
 
 func repositoryWorkflow(t *testing.T) []byte {
@@ -398,12 +567,26 @@ func assertCausalRejection(t *testing.T, mutated, want string) {
 	if _, err := decode([]byte(mutated)); err != nil {
 		t.Fatalf("mutation is not valid YAML: %v", err)
 	}
+	assertActionlintValid(t, mutated)
 	err := Validate([]byte(mutated))
 	if err == nil {
 		t.Fatal("mutation unexpectedly passed structural validation")
 	}
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("rejection %q does not contain causal diagnostic %q", err, want)
+	}
+}
+
+func assertActionlintValid(t *testing.T, workflow string) {
+	t.Helper()
+	actionlint, err := exec.LookPath("actionlint")
+	if err != nil {
+		return
+	}
+	command := exec.Command(actionlint, "-")
+	command.Stdin = strings.NewReader(workflow)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("mutation must remain actionlint-valid: %v\n%s", err, output)
 	}
 }
 
@@ -445,7 +628,11 @@ func replaceStableOnce(old, replacement string) func(*testing.T, string) string 
 		if stableStart < 0 {
 			t.Fatal("stable Scene3D renderer proof job is missing")
 		}
-		return source[:stableStart] + replaceOnce(t, source[stableStart:], old, replacement)
+		stableEnd := len(source)
+		if relativeEnd := strings.Index(source[stableStart:], "\n  # browser-tests:"); relativeEnd >= 0 {
+			stableEnd = stableStart + relativeEnd
+		}
+		return source[:stableStart] + replaceOnce(t, source[stableStart:stableEnd], old, replacement) + source[stableEnd:]
 	}
 }
 
@@ -496,6 +683,50 @@ func displaceArtifactRetention(t *testing.T, source string) string {
 	)
 }
 
+func removeBrowserAggregateContract(t *testing.T, source string) string {
+	t.Helper()
+	source = replaceOnce(t, source, "      - browser-tests\n", "")
+	source = replaceOnce(t, source,
+		"          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}\n",
+		"",
+	)
+	previous := "            \"wasm-tests=$WASM_TESTS_RESULT\" \\\n"
+	if strings.Contains(source, "            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n") {
+		previous = "            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n"
+	}
+	source = replaceOnce(t, source,
+		previous+"            \"browser-tests=$BROWSER_TESTS_RESULT\"\n",
+		strings.TrimSuffix(previous, " \\\n")+"\n",
+	)
+	return replaceOnce(t, source, ", and browser-tests all passed\"\n", " all passed\"\n")
+}
+
+func insertAggregateBypassStep(t *testing.T, source string) string {
+	t.Helper()
+	anchor := "          echo \"release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed\"\n"
+	if strings.Contains(source, stableJobName+", and browser-tests all passed\"\n") {
+		anchor = "          echo \"release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, " + stableJobName + ", and browser-tests all passed\"\n"
+	}
+	return replaceOnce(t, source, anchor, anchor+"\n      - name: Mask aggregate result\n        run: echo masked\n")
+}
+
+func removeStableAggregateContract(t *testing.T, source string) string {
+	t.Helper()
+	source = replaceOnce(t, source, "      - scene3d-v1-browser-renderer-proof\n", "")
+	source = replaceOnce(t, source,
+		"          SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}\n",
+		"",
+	)
+	source = replaceOnce(t, source,
+		"            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n",
+		"",
+	)
+	return replaceOnce(t, source,
+		"wasm-tests, scene3d-v1-browser-renderer-proof, and browser-tests all passed\"\n",
+		"wasm-tests, and browser-tests all passed\"\n",
+	)
+}
+
 func ensureStableProof(t *testing.T, source string) string {
 	t.Helper()
 	if strings.Contains(source, "  scene3d-v1-browser-renderer-proof:\n") {
@@ -504,6 +735,18 @@ func ensureStableProof(t *testing.T, source string) string {
 	source = replaceOnce(t, source,
 		"      - browser-tests\n",
 		"      - scene3d-v1-browser-renderer-proof\n      - browser-tests\n",
+	)
+	source = replaceOnce(t, source,
+		"          WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}\n          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}\n",
+		"          WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}\n          SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}\n          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}\n",
+	)
+	source = replaceOnce(t, source,
+		"            \"wasm-tests=$WASM_TESTS_RESULT\" \\\n            \"browser-tests=$BROWSER_TESTS_RESULT\"\n",
+		"            \"wasm-tests=$WASM_TESTS_RESULT\" \\\n            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n            \"browser-tests=$BROWSER_TESTS_RESULT\"\n",
+	)
+	source = replaceOnce(t, source,
+		"wasm-tests, and browser-tests all passed\"\n",
+		"wasm-tests, scene3d-v1-browser-renderer-proof, and browser-tests all passed\"\n",
 	)
 	return source + `
 
