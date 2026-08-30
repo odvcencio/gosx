@@ -36,8 +36,16 @@ const HARNESS = path.join(REPO, 'client', 'js', 'testdata',
 const fixture = require(path.join(REPO, 'client', 'js', 'testdata',
   'cubic-spline-fixture.cjs'));
 const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
+const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
+const IDENTITY_SELF_CHECK_ENV = 'GOSX_SCENE3D_CUBIC_IDENTITY_SELF_CHECK_ONLY';
+const IDENTITY_SELF_CHECK_ONLY = process.env[IDENTITY_SELF_CHECK_ENV] || '';
 const MODE_TIMEOUT_MS = 115000;
 const MATRIX_REPORT = path.join(ART, 'matrix-report.json');
+
+if (IDENTITY_SELF_CHECK_ONLY && IDENTITY_SELF_CHECK_ONLY !== 'wrong-product-same-version') {
+  console.error('unsupported ' + IDENTITY_SELF_CHECK_ENV + ': ' + IDENTITY_SELF_CHECK_ONLY);
+  process.exit(2);
+}
 
 const MODES = [
   { name: 'positive', mutation: '', gapMS: 0, expectedExitCode: 0 },
@@ -68,9 +76,17 @@ function digestFile(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-function versionNumber(value) {
-  const match = String(value || '').match(/\b(\d+\.\d+\.\d+\.\d+)\b/);
-  return match ? match[1] : '';
+const FOUR_PART_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
+const CHROME_CLI_PRODUCT = /^(Google Chrome|Google Chrome for Testing) (\d+\.\d+\.\d+\.\d+)$/;
+
+function parseChromeCLI(invocation) {
+  const match = CHROME_CLI_PRODUCT.exec(invocation);
+  if (!match) {
+    throw new Error('selected browser CLI identity must be exactly ' +
+      'Google Chrome <four-part> or Google Chrome for Testing <four-part>; got ' +
+      JSON.stringify(invocation));
+  }
+  return { product: match[1], version: match[2] };
 }
 
 function selectedBrowser() {
@@ -83,13 +99,26 @@ function selectedBrowser() {
       String(probe.error && probe.error.message || probe.stderr || probe.status));
   }
   const invocation = String(probe.stdout || probe.stderr || '').trim();
-  const version = versionNumber(invocation);
-  if (!version) throw new Error('selected Chrome version was not parseable: ' + invocation);
+  const cli = parseChromeCLI(invocation);
+  const expectedIsSet = Object.prototype.hasOwnProperty.call(process.env, EXPECTED_VERSION_ENV);
+  const actionVersion = expectedIsSet ? process.env[EXPECTED_VERSION_ENV] : null;
+  if (expectedIsSet && !FOUR_PART_VERSION.test(actionVersion)) {
+    throw new Error(EXPECTED_VERSION_ENV + ' must be an exact four-part version; got ' +
+      JSON.stringify(actionVersion));
+  }
+  const expectedVersion = expectedIsSet ? actionVersion : cli.version;
+  if (cli.version !== expectedVersion) {
+    throw new Error('selected browser CLI version ' + cli.version +
+      ' does not equal expected action version ' + expectedVersion);
+  }
   return {
     configuredPath: CHROME_BIN,
     realPath: fs.realpathSync(CHROME_BIN),
     invocation,
-    version,
+    cliProduct: cli.product,
+    version: cli.version,
+    expectedVersion,
+    expectedVersionSource: expectedIsSet ? EXPECTED_VERSION_ENV : 'anchored-cli',
   };
 }
 
@@ -114,6 +143,45 @@ function check(failures, condition, message) {
 function exact(failures, actual, expected, label) {
   check(failures, util.isDeepStrictEqual(actual, expected), label + ': got ' +
     JSON.stringify(actual) + ', want ' + JSON.stringify(expected));
+}
+
+function checkCDPBrowserIdentity(failures, value, browser, label) {
+  exact(failures, value && value.product, 'Chrome/' + browser.expectedVersion,
+    label + '.product');
+  check(failures, value && typeof value.protocolVersion === 'string' &&
+    value.protocolVersion.trim() !== '', label + '.protocolVersion must be non-empty');
+  check(failures, value && typeof value.revision === 'string' &&
+    value.revision.trim() !== '', label + '.revision must be non-empty');
+}
+
+function browserIdentitySelfCheck(browser) {
+  const wrongCDPProduct = 'NotChrome/' + browser.expectedVersion;
+  const cdpFailures = [];
+  checkCDPBrowserIdentity(cdpFailures, {
+    product: wrongCDPProduct, protocolVersion: '1.3', revision: '@adversarial-mutation',
+  }, browser, 'wrongSameVersionCDP');
+  if (cdpFailures.length !== 1 ||
+      !cdpFailures[0].includes('wrongSameVersionCDP.product')) {
+    throw new Error('same-version wrong CDP product was not rejected exactly: ' +
+      JSON.stringify(cdpFailures));
+  }
+
+  const wrongCLIInvocation = 'Chromium ' + browser.expectedVersion;
+  let wrongCLIError = '';
+  try { parseChromeCLI(wrongCLIInvocation); }
+  catch (error) { wrongCLIError = String(error && error.message || error); }
+  if (!wrongCLIError) {
+    throw new Error('same-version wrong CLI product was accepted: ' + wrongCLIInvocation);
+  }
+  return {
+    mutation: 'wrong-product-same-version',
+    wrongCDPProduct,
+    wrongCDPRejected: true,
+    wrongCDPFailures: cdpFailures,
+    wrongCLIInvocation,
+    wrongCLIRejected: true,
+    wrongCLIError,
+  };
 }
 
 function closeArray(failures, actual, expected, label, tolerance) {
@@ -320,13 +388,8 @@ function checkTopLevel(failures, report, mode, browser) {
   check(failures, !Object.prototype.hasOwnProperty.call(report, 'fatal'),
     'report unexpectedly contains fatal: ' + JSON.stringify(report.fatal));
 
-  const cdpProduct = report.selectedBrowser && report.selectedBrowser.product;
-  exact(failures, versionNumber(cdpProduct), browser.version,
-    'report.selectedBrowser.product version');
-  check(failures, report.selectedBrowser &&
-    typeof report.selectedBrowser.protocolVersion === 'string' &&
-    typeof report.selectedBrowser.revision === 'string',
-  'report.selectedBrowser is incomplete: ' + JSON.stringify(report.selectedBrowser));
+  checkCDPBrowserIdentity(failures, report.selectedBrowser, browser,
+    'report.selectedBrowser');
 
   const expectedErrors = NEGATIVE_ERRORS[mode.name] || [];
   exact(failures, report.errors, expectedErrors, 'report.errors');
@@ -344,6 +407,33 @@ function verifyReport(report, mode, browser) {
   checkGL(failures, gl);
   checkWG(failures, wg, mode);
   return failures;
+}
+
+function verifyWrongProductReportMutation(browser) {
+  const reportPath = path.join(ART, 'positive', 'report.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const baselineFailures = verifyReport(report, MODES[0], browser);
+  if (baselineFailures.length !== 0) {
+    throw new Error('positive report was not green before identity mutation: ' +
+      JSON.stringify(baselineFailures));
+  }
+  const mutated = JSON.parse(JSON.stringify(report));
+  const wrongProduct = 'NotChrome/' + browser.expectedVersion;
+  mutated.selectedBrowser.product = wrongProduct;
+  const mutationFailures = verifyReport(mutated, MODES[0], browser);
+  if (mutationFailures.length !== 1 ||
+      !mutationFailures[0].includes('report.selectedBrowser.product')) {
+    throw new Error('same-version wrong-product report mutation was not rejected exactly: ' +
+      JSON.stringify(mutationFailures));
+  }
+  return {
+    mutation: 'wrong-product-same-version',
+    sourceReport: path.relative(ART, reportPath),
+    sourceReportSHA256: digestFile(reportPath),
+    wrongProduct,
+    rejected: true,
+    verificationFailures: mutationFailures,
+  };
 }
 
 function runMode(mode, browser) {
@@ -429,7 +519,18 @@ function runMode(mode, browser) {
   receipt.selectedBrowser = selectedBrowser();
   console.log('selected browser binary: ' + receipt.selectedBrowser.realPath);
   console.log('selected browser version: ' + receipt.selectedBrowser.invocation);
+  console.log('expected browser version: ' + receipt.selectedBrowser.expectedVersion +
+    ' (' + receipt.selectedBrowser.expectedVersionSource + ')');
+  receipt.browserIdentitySelfCheck = browserIdentitySelfCheck(receipt.selectedBrowser);
+  receipt.identitySelfCheckOnly = IDENTITY_SELF_CHECK_ONLY || null;
   writeReceipt();
+  if (IDENTITY_SELF_CHECK_ONLY) {
+    receipt.finishedAt = new Date().toISOString();
+    receipt.verified = true;
+    writeReceipt();
+    console.log('browser identity wrong-product mutation rejected');
+    return;
+  }
   for (const mode of MODES) {
     const entry = await runMode(mode, receipt.selectedBrowser);
     receipt.modes.push(entry);
@@ -438,6 +539,8 @@ function runMode(mode, browser) {
     }
     writeReceipt();
   }
+  receipt.browserIdentityReportMutation = verifyWrongProductReportMutation(
+    receipt.selectedBrowser);
   receipt.finishedAt = new Date().toISOString();
   receipt.verified = receipt.errors.length === 0 && receipt.modes.length === MODES.length;
   writeReceipt();

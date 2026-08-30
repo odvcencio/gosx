@@ -109,7 +109,7 @@
       "targetBackends": ["webgpu", "webgl2"],
       "ciOwners": [
         {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"},
-        {"label": "scene3d-v1-browser-proof", "job": "scene3d-v1-browser-proof", "step": "Run Scene3D CUBICSPLINE browser proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
+        {"label": "scene3d-v1-browser-proof", "job": "scene3d-v1-browser-proof", "step": "Run Scene3D CUBICSPLINE browser proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
       ],
       "evidence": [
         {"kind": "node-test", "path": "client/js/scene3d-cubic-spline.test.mjs", "contains": "CUBICSPLINE translation Hermite-interpolates with interval-scaled tangents", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},

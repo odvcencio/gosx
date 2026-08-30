@@ -312,9 +312,10 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run Scene3D CUBICSPLINE browser-proof matrix
+      - name: Run Scene3D CUBICSPLINE browser proof
         env:
           GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}
         run: |
           set -eu
           if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
