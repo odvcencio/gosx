@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -351,7 +351,9 @@ build-runtime:
 #      contract accepts canonical release commits and rejects side-branch tags.
 #   8. live release tag ancestry - when a release tag is present, that exact tag
 #      commit must already be reachable from the fresh remote default branch.
-#   9. module-zip smoke (`git archive --format=zip`) - reproduces the exact
+#   9. perf budget CI wrapper - proves browser-lane failures preserve the
+#      partial report/server log without hiding budget failures.
+#   10. module-zip smoke (`git archive --format=zip`) - reproduces the exact
 #      operation that broke v0.29.0 so a zip-breaking commit fails fast.
 test-docs-deploy:
 	sh scripts/deploy-gosx-docs-concurrency-test.sh
@@ -367,32 +369,37 @@ test-repo-hygiene:
 	sh scripts/check-repo-hygiene.sh --root .
 	sh scripts/check-repo-hygiene-test.sh
 
+test-perf-budget-ci:
+	sh scripts/perf-budget-ci-test.sh
+
 release-gate:
-	@echo "release-gate (1/9): go run ./cmd/gosx release check"
+	@echo "release-gate (1/10): go run ./cmd/gosx release check"
 	$(GO) run ./cmd/gosx release check
-	@echo "release-gate (2/9): go.mod replace-directive scan"
+	@echo "release-gate (2/10): go.mod replace-directive scan"
 	@if grep -E '^replace ' go.mod; then \
 		echo "release-gate: go.mod has a replace directive; 'go run mod@version' fails with any replace present (this is why v0.27.0 was a bad tag). Remove it before release."; \
 		exit 1; \
 	fi
-	@echo "release-gate (3/9): tracked-filename scan"
+	@echo "release-gate (3/10): tracked-filename scan"
 	@bad="$$(git ls-files | grep -E '[:"|<>?*[:cntrl:]]' || true)"; \
 	if [ -n "$$bad" ]; then \
 		echo "release-gate: tracked filenames contain characters Go's module zip format rejects (a file like this broke v0.29.0's module zip and forced its retraction):"; \
 		echo "$$bad"; \
 		exit 1; \
 	fi
-	@echo "release-gate (4/9): repository hygiene"
+	@echo "release-gate (4/10): repository hygiene"
 	@$(MAKE) --no-print-directory test-repo-hygiene
-	@echo "release-gate (5/9): docs deploy transaction regression"
+	@echo "release-gate (5/10): docs deploy transaction regression"
 	@$(MAKE) --no-print-directory test-docs-deploy
-	@echo "release-gate (6/9): governed release workflow topology"
+	@echo "release-gate (6/10): governed release workflow topology"
 	@$(MAKE) --no-print-directory test-release-workflow
-	@echo "release-gate (7/9): release tag ancestry regression"
+	@echo "release-gate (7/10): release tag ancestry regression"
 	@$(MAKE) --no-print-directory test-release-ancestry
-	@echo "release-gate (8/9): live release tag ancestry"
+	@echo "release-gate (8/10): live release tag ancestry"
 	@sh scripts/check-release-tag-ancestry.sh --root .
-	@echo "release-gate (9/9): module-zip smoke (git archive --format=zip)"
+	@echo "release-gate (9/10): perf budget CI wrapper regression"
+	@$(MAKE) --no-print-directory test-perf-budget-ci
+	@echo "release-gate (10/10): module-zip smoke (git archive --format=zip)"
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
