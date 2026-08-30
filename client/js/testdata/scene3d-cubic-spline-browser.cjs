@@ -48,7 +48,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const REPO = process.argv[2];
 const ART = process.argv[3];
@@ -83,6 +83,15 @@ if (!Number.isInteger(RESTORE_ATOMIC_GAP_MS) || RESTORE_ATOMIC_GAP_MS < 0 ||
   console.error('GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS must be an integer from 0 to 1000');
   process.exit(2);
 }
+const sourceProbe = spawnSync('git', ['rev-parse', 'HEAD'], {
+  cwd: REPO, encoding: 'utf8', timeout: 10000,
+});
+if (sourceProbe.error || sourceProbe.status !== 0 ||
+    !/^[0-9a-f]{40}$/.test(String(sourceProbe.stdout || '').trim())) {
+  console.error('unable to pin browser proof to source commit');
+  process.exit(2);
+}
+const SOURCE_COMMIT = sourceProbe.stdout.trim();
 const errors = [];
 const warnings = [];
 const fail = (m) => { errors.push(m); };
@@ -1374,6 +1383,21 @@ function affinePickExpr() {
     'return true;})()';
 }
 
+function affineScalePolicyExpr() {
+  return '(function(){' +
+    'function hit(matrix,origin,dir){var mesh={id:"scaled",kind:"sphere",radius:1,count:1,pickable:true,transforms:new Float32Array(matrix)};' +
+      'var h=window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes({origin:origin,dir:dir},[mesh],0);' +
+      'return h&&{distance:h.distance,local:h.localPosition};}' +
+    'function uniform(s){return hit([s,0,0,0,0,s,0,0,0,0,s,0,0,0,0,1],{x:0,y:0,z:2*s},{x:0,y:0,z:-1});}' +
+    'function shear(s){var n=Math.SQRT1_2,len=s*Math.sqrt(5),x=-s*n,y=3*s*n;' +
+      'return {expected:len,hit:hit([-2*s,0,0,0,s,3*s,0,0,0,0,4*s,0,0,0,0,1],{x:2*x,y:2*y,z:0},{x:-x/len,y:-y/len,z:0})};}' +
+    'var near=[9e307,-9e307,0,0,9e307,9e307,0,0,0,0,9e307,0,0,0,0,1],inv=new Float64Array(12);' +
+    'return {uniformCutoff:uniform(1e6),uniformLarge:uniform(1e9),uniformSmall:uniform(1e-9),shearedLarge:shear(1e9),shearedSmall:shear(1e-9),' +
+      'nearMax:{determinant:window.__gosx_scene3d_api.sceneAffineDeterminant(near,0,inv),inverse:Array.from(inv)},' +
+      'overflow:window.__gosx_scene3d_api.sceneAffineDeterminant([1e-308,0,0,0,0,1e-308,0,0,0,0,2e-320,0,0,0,0,1],0,new Float64Array(12)),' +
+      'singular:window.__gosx_scene3d_api.sceneAffineDeterminant([1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],0,new Float64Array(12))};})()';
+}
+
 function affineEvidenceExpr() {
   return '(function(){var r=window.__affineRefs;if(!r)return null;' +
     'var local=' + JSON.stringify(AFFINE_LOCAL_POSITIONS) + ',model=' + JSON.stringify(AFFINE_MODEL_MATRIX) + ';' +
@@ -1621,6 +1645,13 @@ function assertClose(actual, expected, label, tol) {
   }
 }
 
+function assertRelative(actual, expected, label, tolerance) {
+  const value = Number(actual);
+  if (!Number.isFinite(value) || Math.abs(value - expected) > Math.abs(expected) * tolerance) {
+    fail(label + '=' + actual + ' want ' + expected + ' (relative tolerance ' + tolerance + ')');
+  }
+}
+
 function transformAffinePositions(local, matrix) {
   const out = [];
   for (let i = 0; i + 2 < local.length; i += 3) {
@@ -1712,6 +1743,7 @@ async function runAffineCase(send, c, sessionId) {
 
   const evidence = await evalSend(send, affineEvidenceExpr());
   ev.affine = evidence;
+  ev.scalePolicy = await evalSend(send, affineScalePolicyExpr());
   if (!evidence) {
     fail('[' + c.name + '] affine GPU/pick evidence unavailable');
   } else {
@@ -1792,6 +1824,33 @@ async function runAffineCase(send, c, sessionId) {
       if (Math.abs(Number(pick.depth) - 2) >= 2e-4) {
         fail('[' + c.name + '] actual affine pick distance=' + pick.depth + ' want 2');
       }
+    }
+  }
+  const scalePolicy = ev.scalePolicy;
+  if (!scalePolicy || !scalePolicy.uniformCutoff || !scalePolicy.uniformLarge || !scalePolicy.uniformSmall ||
+      !scalePolicy.shearedLarge || !scalePolicy.shearedLarge.hit ||
+      !scalePolicy.shearedSmall || !scalePolicy.shearedSmall.hit) {
+    fail('[' + c.name + '] affine scale-policy proof missing: ' + JSON.stringify(scalePolicy));
+  } else {
+    assertRelative(scalePolicy.uniformCutoff.distance, 1e6,
+      '[' + c.name + '] exact former-cutoff instanced pick distance', 1e-12);
+    assertRelative(scalePolicy.uniformLarge.distance, 1e9,
+      '[' + c.name + '] exact 1e9 instanced pick distance', 1e-12);
+    assertRelative(scalePolicy.uniformSmall.distance, 1e-9,
+      '[' + c.name + '] small instanced pick distance', 1e-6);
+    assertRelative(scalePolicy.shearedLarge.hit.distance, scalePolicy.shearedLarge.expected,
+      '[' + c.name + '] large sheared/reflected pick distance', 1e-6);
+    assertRelative(scalePolicy.shearedSmall.hit.distance, scalePolicy.shearedSmall.expected,
+      '[' + c.name + '] small sheared/reflected pick distance', 1e-6);
+    const nearInverse = scalePolicy.nearMax && scalePolicy.nearMax.inverse;
+    if (!scalePolicy.nearMax || scalePolicy.nearMax.determinant !== 2 ||
+        !Array.isArray(nearInverse) || !nearInverse.every(Number.isFinite) ||
+        !nearInverse.some((value) => value !== 0)) {
+      fail('[' + c.name + '] near-max affine inverse invalid: ' + JSON.stringify(scalePolicy.nearMax));
+    }
+    if (scalePolicy.overflow !== 0 || scalePolicy.singular !== 0) {
+      fail('[' + c.name + '] invalid affine inverse did not fail closed: ' +
+        JSON.stringify({ overflow: scalePolicy.overflow, singular: scalePolicy.singular }));
     }
   }
 
@@ -2156,6 +2215,7 @@ function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, intentionalNoContent,
     clientEventResponses,
+    sourceCommit: SOURCE_COMMIT,
     selectedBrowser: SELECTED_BROWSER,
     webgpuProofTarget: PROOF_TARGET,
     renderTargetKind: 'proof-private-gpu-texture',

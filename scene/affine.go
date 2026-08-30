@@ -101,7 +101,12 @@ func inverseAffine(matrix affineMatrix) (affineMatrix, bool) {
 	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
 	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
 	determinant := a*c00 + b*c01 + c*c02
-	invDet := 1 / (determinant * scale)
+	// Divide in this order so a finite scale near MaxFloat does not overflow
+	// the otherwise representable determinant*scale product.
+	invDet := 1 / determinant / scale
+	if invDet == 0 || math.IsNaN(invDet) || math.IsInf(invDet, 0) {
+		return affineMatrix{}, false
+	}
 	out := affineMatrix{
 		c00 * invDet, c01 * invDet, c02 * invDet, 0,
 		c10 * invDet, c11 * invDet, c12 * invDet, 0,
@@ -110,10 +115,17 @@ func inverseAffine(matrix affineMatrix) (affineMatrix, bool) {
 	}
 	translation := affineVector(out, Vector3{X: matrix[12], Y: matrix[13], Z: matrix[14]})
 	out[12], out[13], out[14] = -translation.X, -translation.Y, -translation.Z
-	for _, value := range out {
+	linearNonZero := false
+	for index, value := range out {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return affineMatrix{}, false
 		}
+		if index < 12 && index%4 != 3 && value != 0 {
+			linearNonZero = true
+		}
+	}
+	if !linearNonZero {
+		return affineMatrix{}, false
 	}
 	return out, true
 }

@@ -61,17 +61,24 @@ func TestValidateParentMatrixRejectsTypedNonFiniteValues(t *testing.T) {
 }
 
 func TestValidateParentMatrixRequiresAffineAndScaleInvariantInvertible(t *testing.T) {
+	const nearMax = 9e307
 	validSmall := []float64{
 		1e-6, 0, 0, 0,
 		1e-6, 2e-6, 0, 0,
 		0, 0, -3e-6, 0,
 		4, 5, 6, 1,
 	}
-	for name, matrix := range map[string][]float64{
-		"valid small shear reflection": validSmall,
-		"non affine bottom row":        append([]float64(nil), validSmall...),
-		"singular":                     append([]float64(nil), validSmall...),
+	for name, testCase := range map[string]struct {
+		matrix []float64
+		valid  bool
+	}{
+		"valid small shear reflection": {matrix: validSmall, valid: true},
+		"valid large shear reflection": {matrix: []float64{-2e150, 0, 0, 0, 1e150, 3e150, 0, 0, 0, 0, 4e150, 0, 4, 5, 6, 1}, valid: true},
+		"valid near max finite":        {matrix: []float64{nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1}, valid: true},
+		"non affine bottom row":        {matrix: append([]float64(nil), validSmall...)},
+		"singular":                     {matrix: append([]float64(nil), validSmall...)},
 	} {
+		matrix := testCase.matrix
 		switch name {
 		case "non affine bottom row":
 			matrix[3] = 1
@@ -80,7 +87,7 @@ func TestValidateParentMatrixRequiresAffineAndScaleInvariantInvertible(t *testin
 		}
 		report := Report{}
 		validateDocument(&report, Document{Objects: []scene.ObjectIR{{ID: name, Kind: "box", ParentMatrix: matrix}}}, Options{})
-		if gotValid := !hasError(report.Diagnostics); gotValid != (name == "valid small shear reflection") {
+		if gotValid := !hasError(report.Diagnostics); gotValid != testCase.valid {
 			t.Fatalf("%s validity = %v, diagnostics: %+v", name, gotValid, report.Diagnostics)
 		}
 	}

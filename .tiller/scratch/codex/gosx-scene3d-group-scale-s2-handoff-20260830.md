@@ -2,12 +2,138 @@
 
 Date: 2026-08-30
 
-Verdict: the six P1 implementation groups from the independent review are
-closed on the explicitly mandated direct S0+S1 base. The candidate is green
-under every gate available on that ancestry and is ready for independent
-rereview. This is not landing approval: the mandated base does not contain R0,
-and hardware-native renderer-consumed evidence has not been produced. Both are
-explicit post-replay integration obligations.
+Verdict: the final independent rereview's remaining scale-policy defect is
+repaired on top of the exact reviewed checkpoint. The candidate is green under
+the focused affine/race/TinyGo/browser matrix and the complete Go, JavaScript,
+generation, size, formatting, and release gates available on this ancestry. It
+is ready for a fresh independent rereview. This is not landing approval: the
+mandated base does not contain R0, and hardware-native renderer-consumed
+evidence has not been produced. Both remain explicit post-replay integration
+obligations.
+
+## Post-rereview scale-policy correction
+
+The correction started from exact HEAD
+`d5eb19a1a557ce78c6afb298d4210d76a227f4d2`, tree
+`969c30e190a84365ef569e847824ab930d4bd408`. The independent rereview was
+`/home/draco/work/gosx/.tiller/scratch/codex/gosx-scene3d-group-scale-s2-final-independent-rereview-20260830.md`,
+SHA-256
+`0ec73ea505b84c4b2be24b5372cb15841cbf0596604fee873a34c8e9ed68b06d`.
+The final correction commit follows this tracked report, so its exact commit
+and tree are supplied in the parent handoff rather than recursively embedded
+here.
+
+### Root cause and repair
+
+- The browser instanced picker applied the accepted affine inverse, then
+  rejected transformed ray directions with an absolute squared-length cutoff
+  (`a <= 1e-12`). A condition-number-one uniform scale of `1e6` therefore
+  became unpickable, and `1e9` was rejected even though the declared validator
+  accepts it.
+- The picker now obtains the transformed direction length with `Math.hypot`,
+  rejects only zero/non-finite lengths, normalizes the local direction for the
+  quadratic, and divides the local root by that length. The resulting value is
+  the original world-ray parameter, so world distance/point semantics and
+  non-orthogonal shear correctness are preserved. Local hit coordinates use
+  the normalized direction and local root.
+- Go and browser affine inversion previously formed `determinant * scale`
+  before taking its reciprocal. That intermediate overflows for a valid basis
+  near `9e307`, manufacturing an all-zero inverse while the browser reported
+  success. Both implementations now divide in stable order
+  (`1 / determinant / scale`) and fail closed on a zero or non-finite
+  reciprocal, non-finite output, or an all-zero linear inverse.
+- Validation acceptance was not narrowed or forked. Go, typed/raw schema,
+  strict browser schema, and VM still share the same finite affine-bottom-row
+  and scale-normalized determinant policy. Singular, non-finite, and
+  unrepresentable inverse results fail closed at the inverse consumer.
+
+### Adversarial coverage
+
+- The production JavaScript picker is exercised at the exact former `1e6`
+  cutoff, at `1e9` with exact expected world parameter `1e9`, and at `1e-9`.
+- Reflected/sheared bases at `1e9` and `1e-9` preserve analytic world
+  parameters and local hit coordinates under the same production picker.
+- Go, browser schema, strict JavaScript schema, and VM accept uniform,
+  reflected/sheared large and small finite bases plus the valid near-MaxFloat
+  basis.
+- Go and JavaScript produce finite, nonzero inverse coefficients for the
+  `9e307` basis (normalized determinant `2`). Singular, non-finite, inverse-
+  coefficient-overflow, and inverse-translation-overflow cases fail closed.
+- The native Chrome harness runs the same production API for both the WebGL2
+  and WebGPU affine cases and records the selected browser and source commit in
+  `report.json`.
+
+### Fresh browser receipt
+
+Pre-commit receipt:
+`/tmp/gosx-s2-affine-scale-policy-precommit.xeGJa1/report.json`, SHA-256
+`bb7a49d149cd494a6682b982530ea247926ff1e714196ec8ad59396caa19c8bb`.
+It records Chrome `143.0.7499.169` revision
+`@164b20aab62509dad21fd46383951aeec084ad1e`, native WebGL2 and WebGPU,
+zero errors/warnings/404s/unexpected requests/network failures, and successful
+GL2/WebGPU affine plus CUBICSPLINE cases. Both affine backends record:
+
+- former-cutoff hit distance `1000000`;
+- `1e9` hit distance `999999999.9999999` and local `z=1`;
+- small hit distance `1.0000000282819316e-9`;
+- reflected/sheared large hit `2236067977.49979` against analytic
+  `2236067977.4997897`;
+- reflected/sheared small hit `2.236067978676758e-9` against analytic
+  `2.2360679774997897e-9`;
+- near-MaxFloat determinant `2` with nonzero subnormal inverse coefficients;
+- singular and inverse-overflow results `0`.
+
+The WebGL affine case records one retained draw and no world-baked vertices.
+The WebGPU affine case records two passes, two submits, executed bundle `1`,
+one retained object, and no world-baked vertices. One earlier fresh-context
+attempt is preserved at
+`/tmp/gosx-s2-affine-scale-policy-precommit.MCQYwP/report.json`: its scale
+receipts were green, but the first WebGPU feature-chunk request alone was
+canceled by Chrome while the later WebGPU case loaded and ran. A subsequent
+fresh-context run above had no network failure; no source change or weakened
+assertion separated the two attempts.
+
+### Correction verification
+
+| Command / evidence | Result |
+| --- | --- |
+| `GOWORK=off go test -count=1 ./internal/sceneaffine ./scene ./scene/schema ./client/vm ./render/bundle ./render/gpu/headless ./scene/harness ./scene/capability` | PASS |
+| Same touched package set with `-race -count=1` | PASS |
+| `GOWORK=off go test -count=1 ./cmd/gosx -run 'TestTinyGoWASMDependencyClosure(PrunesHostShaderCompiler\|ExcludesGoTreeSitterAndGob)$'` | PASS |
+| `GOWORK=off go test -count=1 ./scene/harness -run '^TestV1CorpusContract$'` | PASS |
+| Focused affine/pick Node suite | PASS, 27/27 |
+| Complete client/runtime Node suite | PASS, 1,505/1,505 |
+| `cmd/buildbootstrap` tagged test and `--check` | PASS; deterministic |
+| TypeScript 5.9.3 typecheck | PASS |
+| Focused `go vet` and `make fmt-check` | PASS; 81 files verified |
+| `client/js/bootstrap-size.test.mjs` | PASS, 4/4 |
+| `make release-gate` | PASS, all five aggregate checks |
+| `go test -count=1 ./...` in the repository's normal environment | PASS; `cmd/gosx` 434.316s, `perf/ouroboros` 541.001s |
+| Native Chrome WebGL2/WebGPU affine+CUBICSPLINE proof | PASS; exact receipt above |
+
+An exploratory full run with `GOWORK=off` was not counted as an aggregate
+result: it predictably made untouched
+`TestVersionSkewResolveProjectWorkspace` ignore the `go.work` that the test
+creates. The exact test passed under the normal environment, followed by the
+complete green normal-environment run above.
+
+### Unchanged budgets and generated identity
+
+No cap, exception, manifest, workflow, governance, or dependency file changed.
+
+- Production non-test Go versus `e920d5d5`: 848 additions, 251 deletions, net
+  `+597` against the unchanged `+700` ceiling (103 lines spare).
+- Authored production bootstrap/runtime TypeScript: 513 additions, 762
+  deletions, net `-249` against the unchanged `+250` ceiling.
+- `client/runtime/scene3d/mount-webgl.ts`: 4,797 lines against 4,879.
+- Minimal WebGPU route: 1,086,044 raw / 287,031 gzip / 240,453 Brotli against
+  unchanged 1,090,039 / 287,220 / 240,514 caps (3,995 / 189 / 61 spare).
+- Full generated inventory: 64 paths, 17,813,033 bytes, digest
+  `0282666e5ede7c9c68492ffb16a52fd8324adc08dc68a74193a00ef344771696`.
+- Exactly eight generated outputs changed from `d5eb19a1`: the `.js`, `.gz`,
+  `.br`, and `.map` siblings of `bootstrap-feature-scene3d` and `bootstrap`.
+  Their aggregate digest is
+  `19f5e106a4ea967c96d047c235efdd1b86e8e66a28d2faa7ad0c5ce0dcfdbe2c`.
 
 ## Provenance and exact tree
 

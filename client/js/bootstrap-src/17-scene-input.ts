@@ -705,15 +705,18 @@
         sceneMatrixTransformInto(localDir, inverse, ray.dir.x, ray.dir.y, ray.dir.z, 4, false);
         var ox = localOrigin.x, oy = localOrigin.y, oz = localOrigin.z;
         var dx = localDir.x, dy = localDir.y, dz = localDir.z;
-        var a = dx * dx + dy * dy + dz * dz;
+        var directionLength = Math.hypot(dx, dy, dz);
+        if (!(directionLength > 0) || !Number.isFinite(directionLength)) continue;
+        dx /= directionLength; dy /= directionLength; dz /= directionLength;
         var b = ox * dx + oy * dy + oz * dz;
         var c = ox * ox + oy * oy + oz * oz - radius * radius;
-        var discriminant = b * b - a * c;
-        if (a <= 1e-12 || !Number.isFinite(discriminant) || discriminant < 0) continue;
+        var discriminant = b * b - c;
+        if (!Number.isFinite(discriminant) || discriminant < 0) continue;
         var root = Math.sqrt(discriminant);
-        var distance = (-b - root) / a;
-        if (distance < 0) distance = (-b + root) / a;
-        if (distance < 0 || (closest && distance >= closest.distance)) continue;
+        var localDistance = -b - root;
+        if (localDistance < 0) localDistance = -b + root;
+        var distance = localDistance / directionLength;
+        if (!Number.isFinite(distance) || distance < 0 || (closest && distance >= closest.distance)) continue;
         var point = {
           x: ray.origin.x + ray.dir.x * distance,
           y: ray.origin.y + ray.dir.y * distance,
@@ -729,9 +732,9 @@
           point: point,
           worldPosition: point,
           localPosition: {
-            x: ox + dx * distance,
-            y: oy + dy * distance,
-            z: oz + dz * distance,
+            x: ox + dx * localDistance,
+            y: oy + dy * localDistance,
+            z: oz + dz * localDistance,
           },
           instanceIndex: instanceIndex,
           primitiveIndex: -1,

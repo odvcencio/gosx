@@ -31,3 +31,30 @@ func TestValidParentMatrixContract(t *testing.T) {
 		t.Fatal("short matrix was accepted")
 	}
 }
+
+func TestValidParentMatrixScaleInvariantExtremes(t *testing.T) {
+	const nearMax = 9e307
+	for name, matrix := range map[string][]float64{
+		"uniform large": {
+			1e150, 0, 0, 0, 0, 1e150, 0, 0, 0, 0, 1e150, 0, 0, 0, 0, 1,
+		},
+		"uniform small": {
+			1e-150, 0, 0, 0, 0, 1e-150, 0, 0, 0, 0, 1e-150, 0, 0, 0, 0, 1,
+		},
+		"sheared reflected large": {
+			-2e150, 0, 0, 0, 1e150, 3e150, 0, 0, 0, 0, 4e150, 0, 5, 6, 7, 1,
+		},
+		"sheared reflected small": {
+			-2e-150, 0, 0, 0, 1e-150, 3e-150, 0, 0, 0, 0, 4e-150, 0, 5, 6, 7, 1,
+		},
+		"near max finite": {
+			nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !ValidParentMatrix(matrix) {
+				t.Fatal("valid finite affine matrix was rejected")
+			}
+		})
+	}
+}

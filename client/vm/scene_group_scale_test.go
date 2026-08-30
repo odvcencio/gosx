@@ -86,6 +86,21 @@ func TestSceneParentMatrixResolverCopiesAndRejectsInvalidValues(t *testing.T) {
 	if _, ok := sceneParentMatrixFromAny(values); ok {
 		t.Fatal("singular parent matrix accepted")
 	}
+
+	const nearMax = 9e307
+	for name, valid := range map[string][]float64{
+		"uniform large":           {1e150, 0, 0, 0, 0, 1e150, 0, 0, 0, 0, 1e150, 0, 0, 0, 0, 1},
+		"uniform small":           {1e-150, 0, 0, 0, 0, 1e-150, 0, 0, 0, 0, 1e-150, 0, 0, 0, 0, 1},
+		"sheared reflected large": {-2e150, 0, 0, 0, 1e150, 3e150, 0, 0, 0, 0, 4e150, 0, 5, 6, 7, 1},
+		"sheared reflected small": {-2e-150, 0, 0, 0, 1e-150, 3e-150, 0, 0, 0, 0, 4e-150, 0, 5, 6, 7, 1},
+		"near max finite":         {nearMax, -nearMax, 0, 0, nearMax, nearMax, 0, 0, 0, 0, nearMax, 0, 0, 0, 0, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := sceneParentMatrixFromAny(valid); !ok {
+				t.Fatal("valid affine parent matrix rejected")
+			}
+		})
+	}
 }
 
 func TestReflectedParentBakeKeepsAuthoredFrontFaceAndNormal(t *testing.T) {
