@@ -343,8 +343,9 @@ build-runtime:
 #      Go module zip creation and forced the v0.29.0 retraction.
 #   4. repository hygiene - rejects tracked build artifacts, top-level scratch
 #      outputs, and accidental binary/manifests that should not ship in the module.
-#   5. docs deploy transaction - prevents an overlapping deployment or rollback
-#      from overwriting a newer successful docs release.
+#   5. docs deploy identity and transaction - prevents stale docs revisions,
+#      overlapping deployment, or rollback from overwriting a newer successful
+#      docs release.
 #   6. governed release workflow topology - proves deploy-key material is scoped
 #      to the tag step and the retired release workflow stays retired.
 #   7. release tag ancestry regression - proves the default-branch lineage
@@ -358,6 +359,10 @@ build-runtime:
 test-docs-deploy:
 	sh scripts/deploy-gosx-docs-concurrency-test.sh
 	sh scripts/deploy-gosx-docs-public-test.sh
+	sh scripts/check-gosx-docs-deploy-source-test.sh
+	sh scripts/check-gosx-docs-built-identity-test.sh
+	sh scripts/deploy-gosx-docs-order-test.sh
+	sh scripts/deploy-gosx-docs-gate-test.sh
 
 test-release-workflow:
 	sh scripts/check-release-workflow-topology.sh
@@ -389,7 +394,7 @@ release-gate:
 	fi
 	@echo "release-gate (4/10): repository hygiene"
 	@$(MAKE) --no-print-directory test-repo-hygiene
-	@echo "release-gate (5/10): docs deploy transaction regression"
+	@echo "release-gate (5/10): docs deploy identity and transaction regression"
 	@$(MAKE) --no-print-directory test-docs-deploy
 	@echo "release-gate (6/10): governed release workflow topology"
 	@$(MAKE) --no-print-directory test-release-workflow
