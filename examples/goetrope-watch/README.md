@@ -15,8 +15,8 @@ The example is intentionally isolated. It does not wire into production Goetrope
 
 - `app/layout.gsx` defines the shared shell
 - `app/page.server.go` and `app/page.gsx` render the landing surface
-- `app/watch/[code]/page.server.go` and `app/watch/[code]/page.gsx` render a room snapshot
-- `app/watch/[code]/player.gsx` contains the transport shell placeholder
+- `app/watch/page.server.go` and `app/watch/[code]/page.gsx` render a room snapshot
+- `app/watch/components/components.gsx` contains the shared queue, moment, and transport-shell components
 - `public/watch.css` carries the visual system
 
 ## Run

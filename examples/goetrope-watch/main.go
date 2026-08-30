@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"m31labs.dev/gosx"
+	_ "m31labs.dev/gosx/examples/goetrope-watch/modules"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
 )
@@ -13,10 +14,19 @@ import (
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := server.ResolveAppRoot(thisFile)
-
-	layout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
+	app, err := newGoetropeWatchApp(root)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	log.Printf("goetrope-watch prototype at http://localhost:8080")
+	log.Fatal(app.ListenAndServe(":8080"))
+}
+
+func newGoetropeWatchApp(root string) (*server.App, error) {
+	layout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
+	if err != nil {
+		return nil, err
 	}
 
 	router := route.NewRouter()
@@ -26,7 +36,7 @@ func main() {
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	app := server.New()
@@ -35,10 +45,8 @@ func main() {
 	app.SetPublicDir(filepath.Join(root, "public"))
 	rootHandler, err := router.BuildChecked()
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	app.Mount("/", rootHandler)
-
-	log.Printf("goetrope-watch prototype at http://localhost:8080")
-	log.Fatal(app.ListenAndServe(":8080"))
+	return app, nil
 }
