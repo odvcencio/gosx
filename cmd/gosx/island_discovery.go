@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/parser"
@@ -791,16 +792,23 @@ func runGoListPackageReadOnly(commandDir, importPath string, tolerateErrors bool
 	cmd := exec.Command("go", args...)
 	cmd.Dir = commandDir
 	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=readonly -buildvcs=false", "GOWORK=off")
-	out, err := cmd.CombinedOutput()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err != nil {
-		detail := strings.TrimSpace(string(out))
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
 		if detail == "" {
 			detail = err.Error()
 		}
 		return goListPackageInfo{}, fmt.Errorf("resolve Go package %s from %s without modifying go.mod/go.sum: %s", importPath, commandDir, detail)
 	}
 	var info goListPackageInfo
-	if err := json.Unmarshal(out, &info); err != nil {
+	if err := json.Unmarshal(stdout.Bytes(), &info); err != nil {
 		return goListPackageInfo{}, fmt.Errorf("decode go list for %s: %w", importPath, err)
 	}
 	return info, nil

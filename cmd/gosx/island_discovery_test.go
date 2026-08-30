@@ -181,6 +181,66 @@ func TestIslandPackageResolverDistinguishesStandardLibraryWithGoMetadata(t *test
 	}
 }
 
+func TestRunGoListPackageReadOnlyParsesSuccessfulJSONWithStderrChatter(t *testing.T) {
+	installFakeGoListCommand(t)
+	t.Setenv("FAKE_GO_STDOUT", `{"Dir":"/tmp/fake-package","ImportPath":"corp/fake","Name":"fake","GoFiles":["active.go"]}`)
+	t.Setenv("FAKE_GO_STDERR", "go: downloading corp/dependency v1.2.3\n")
+	t.Setenv("FAKE_GO_EXIT", "0")
+
+	info, err := runGoListPackageReadOnly(t.TempDir(), ".", false)
+	if err != nil {
+		t.Fatalf("successful go list with stderr chatter: %v", err)
+	}
+	if info.Dir != "/tmp/fake-package" || info.ImportPath != "corp/fake" || info.Name != "fake" || !reflect.DeepEqual(info.GoFiles, []string{"active.go"}) {
+		t.Fatalf("go list metadata = %#v, want parsed stdout JSON", info)
+	}
+}
+
+func TestRunGoListPackageReadOnlyFailureRetainsStderrDiagnostics(t *testing.T) {
+	installFakeGoListCommand(t)
+	t.Setenv("FAKE_GO_STDOUT", `{"Dir":"/tmp/incomplete"}`)
+	t.Setenv("FAKE_GO_STDERR", "go: corp/missing@v1.2.3: module lookup failed\n")
+	t.Setenv("FAKE_GO_EXIT", "1")
+
+	_, err := runGoListPackageReadOnly(t.TempDir(), "corp/missing", false)
+	if err == nil {
+		t.Fatal("failed go list returned no error")
+	}
+	if !strings.Contains(err.Error(), "module lookup failed") || !strings.Contains(err.Error(), "without modifying go.mod/go.sum") {
+		t.Fatalf("failed go list error = %q, want stderr diagnostics and read-only context", err)
+	}
+}
+
+func installFakeGoListCommand(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake go command fixture requires a POSIX shell")
+	}
+	fakeBin := t.TempDir()
+	fakeGo := filepath.Join(fakeBin, "go")
+	script := `#!/bin/sh
+if [ "$GOFLAGS" != "-mod=readonly -buildvcs=false" ]; then
+	echo "unexpected GOFLAGS: $GOFLAGS" >&2
+	exit 91
+fi
+if [ "$GOWORK" != "off" ]; then
+	echo "unexpected GOWORK: $GOWORK" >&2
+	exit 92
+fi
+if [ "$1" != "list" ] || [ "$2" != "-json" ]; then
+	echo "unexpected go arguments: $*" >&2
+	exit 93
+fi
+printf '%s' "$FAKE_GO_STDOUT"
+printf '%s' "$FAKE_GO_STDERR" >&2
+exit "$FAKE_GO_EXIT"
+`
+	if err := os.WriteFile(fakeGo, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake go command: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestCollectProjectIslandProgramsHonorsActivePlatformGoFiles(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("platform fixture exercises the Linux/amd64 active-file set")
