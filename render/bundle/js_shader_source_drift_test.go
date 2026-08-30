@@ -45,10 +45,12 @@ func readJSWebGLRenderer(t *testing.T) string {
 // jsShaderSource resolves one shader constant in the browser WebGPU renderer to
 // the WGSL text the browser compiles.
 //
-// The renderer declares each shader as `var NAME = [ "line", OTHER_NAME, ...
-// ].join("\n")`. This function finds NAME, walks its array, unquotes every
-// string element, and resolves every bare identifier element by recursion. The
-// result is the same string the JS `.join("\n")` produces.
+// The renderer normally declares each shader as `var NAME = [ "line",
+// OTHER_NAME, ... ].join("\n")`. Shared snippets may instead use one compact
+// quoted string to avoid shipping line-array punctuation. This function
+// resolves either form to the exact WGSL text the browser compiles. For arrays
+// it walks every element, unquotes string elements, and resolves bare
+// identifier elements by recursion.
 func jsShaderSource(t *testing.T, file, name string) string {
 	t.Helper()
 	return jsShaderSourceAt(t, file, name, 0)
@@ -58,6 +60,9 @@ func jsShaderSourceAt(t *testing.T, file, name string, depth int) string {
 	t.Helper()
 	if depth > 8 {
 		t.Fatalf("shader constant %s in %s nests more than 8 levels; suspect a reference cycle", name, jsWebGPURendererFile)
+	}
+	if source, ok := jsQuotedShaderSource(t, file, name); ok {
+		return source
 	}
 	body := jsArrayBody(t, file, name)
 	parts := make([]string, 0, 256)
@@ -69,6 +74,40 @@ func jsShaderSourceAt(t *testing.T, file, name string, depth int) string {
 		parts = append(parts, elem.text)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// jsQuotedShaderSource resolves `var NAME = "..."` declarations. It returns
+// false when NAME is not a compact quoted shader so the array reader can try
+// the normal representation.
+func jsQuotedShaderSource(t *testing.T, file, name string) (string, bool) {
+	t.Helper()
+	for _, keyword := range []string{"var ", "const ", "let "} {
+		needle := keyword + name + " = "
+		idx := strings.Index(file, needle)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(needle)
+		if start >= len(file) || file[start] != '"' {
+			return "", false
+		}
+		for i := start + 1; i < len(file); i++ {
+			if file[i] == '\\' {
+				i++
+				continue
+			}
+			if file[i] != '"' {
+				continue
+			}
+			value, err := strconv.Unquote(file[start : i+1])
+			if err != nil {
+				t.Fatalf("decode quoted shader constant %s in %s: %v", name, jsWebGPURendererFile, err)
+			}
+			return value, true
+		}
+		t.Fatalf("quoted shader constant %s in %s has no closing quote", name, jsWebGPURendererFile)
+	}
+	return "", false
 }
 
 // jsArrayBody returns the text between the brackets of `var NAME = [ ... ]`.

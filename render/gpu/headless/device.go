@@ -1009,14 +1009,15 @@ func runCullFrustum(bg *BindGroup) {
 // cullInstanceVisible mirrors the per-thread body of cullWGSL for one packed
 // instance record.
 func cullInstanceVisible(record []byte, planes [cullPlaneCount][4]float32, baseRadius float32) bool {
-	// Column-major mat4: column c starts at byte c*16.
-	scale := columnScale(record, 0)
-	if s := columnScale(record, 1); s > scale {
-		scale = s
+	// Frobenius norm bounds the largest singular value under shear.
+	scaleSquared := float32(0)
+	for column := 0; column < 3; column++ {
+		for row := 0; row < 3; row++ {
+			value := readFloat32(record, column*16+row*4)
+			scaleSquared += value * value
+		}
 	}
-	if s := columnScale(record, 2); s > scale {
-		scale = s
-	}
+	scale := float32(math.Sqrt(float64(scaleSquared)))
 	radius := baseRadius
 	if scale > 0 {
 		radius = baseRadius * scale
@@ -1031,13 +1032,6 @@ func cullInstanceVisible(record []byte, planes [cullPlaneCount][4]float32, baseR
 		}
 	}
 	return true
-}
-
-func columnScale(record []byte, column int) float32 {
-	x := readFloat32(record, column*16+0)
-	y := readFloat32(record, column*16+4)
-	z := readFloat32(record, column*16+8)
-	return float32(math.Sqrt(float64(x*x + y*y + z*z)))
 }
 
 func runParticleUpdate(bg *BindGroup, maxInvocations int) {

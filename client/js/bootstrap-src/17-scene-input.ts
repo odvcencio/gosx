@@ -688,6 +688,7 @@
   function sceneRaycastPickInstancedMeshes(ray, meshes, indexOffset) {
     if (!Array.isArray(meshes) || !meshes.length || !ray) return null;
     var closest = null;
+    var localOrigin = {}, localDir = {};
     var safeIndexOffset = Math.max(0, Math.floor(sceneNumber(indexOffset, 0)));
     for (var meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
       var mesh = meshes[meshIndex];
@@ -696,33 +697,19 @@
       if (!transforms || typeof transforms.length !== "number") continue;
       var count = Math.min(Math.max(0, Math.floor(sceneNumber(mesh.count, 0))), Math.floor(transforms.length / 16));
       var radius = sceneInstancedPickRadius(mesh);
+      var inverse = _sceneAffineInverseScratch;
       for (var instanceIndex = 0; instanceIndex < count; instanceIndex++) {
         var base = instanceIndex * 16;
-        var cx = sceneNumber(transforms[base + 12], 0);
-        var cy = sceneNumber(transforms[base + 13], 0);
-        var cz = sceneNumber(transforms[base + 14], 0);
-        var ox = ray.origin.x - cx;
-        var oy = ray.origin.y - cy;
-        var oz = ray.origin.z - cz;
-        var localOrigin = [0, 0, 0];
-        var localDir = [0, 0, 0];
-        var valid = true;
-        for (var column = 0; column < 3; column++) {
-          var offset = base + column * 4;
-          var bx = sceneNumber(transforms[offset], 0);
-          var by = sceneNumber(transforms[offset + 1], 0);
-          var bz = sceneNumber(transforms[offset + 2], 0);
-          var scaleSquared = bx * bx + by * by + bz * bz;
-          if (scaleSquared <= 1e-12) { valid = false; break; }
-          localOrigin[column] = (ox * bx + oy * by + oz * bz) / scaleSquared;
-          localDir[column] = (ray.dir.x * bx + ray.dir.y * by + ray.dir.z * bz) / scaleSquared;
-        }
-        if (!valid) continue;
-        var a = localDir[0] * localDir[0] + localDir[1] * localDir[1] + localDir[2] * localDir[2];
-        var b = localOrigin[0] * localDir[0] + localOrigin[1] * localDir[1] + localOrigin[2] * localDir[2];
-        var c = localOrigin[0] * localOrigin[0] + localOrigin[1] * localOrigin[1] + localOrigin[2] * localOrigin[2] - radius * radius;
+        if (!sceneAffineDeterminant(transforms, base, inverse)) continue;
+        sceneMatrixTransformInto(localOrigin, inverse, ray.origin.x - transforms[base + 12], ray.origin.y - transforms[base + 13], ray.origin.z - transforms[base + 14], 4, false);
+        sceneMatrixTransformInto(localDir, inverse, ray.dir.x, ray.dir.y, ray.dir.z, 4, false);
+        var ox = localOrigin.x, oy = localOrigin.y, oz = localOrigin.z;
+        var dx = localDir.x, dy = localDir.y, dz = localDir.z;
+        var a = dx * dx + dy * dy + dz * dz;
+        var b = ox * dx + oy * dy + oz * dz;
+        var c = ox * ox + oy * oy + oz * oz - radius * radius;
         var discriminant = b * b - a * c;
-        if (a <= 1e-12 || discriminant < 0) continue;
+        if (a <= 1e-12 || !Number.isFinite(discriminant) || discriminant < 0) continue;
         var root = Math.sqrt(discriminant);
         var distance = (-b - root) / a;
         if (distance < 0) distance = (-b + root) / a;
@@ -742,9 +729,9 @@
           point: point,
           worldPosition: point,
           localPosition: {
-            x: localOrigin[0] + localDir[0] * distance,
-            y: localOrigin[1] + localDir[1] * distance,
-            z: localOrigin[2] + localDir[2] * distance,
+            x: ox + dx * distance,
+            y: oy + dy * distance,
+            z: oz + dz * distance,
           },
           instanceIndex: instanceIndex,
           primitiveIndex: -1,

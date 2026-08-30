@@ -993,9 +993,11 @@ test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-ski
   const webgl = readSceneRendererBackendSrc("webgl");
   const match = webgl.match(/function scenePBRSelenaSkinAugmentVertex\(source\)\s*\{([\s\S]*?)\n  \}/);
   assert.ok(match, "scenePBRSelenaSkinAugmentVertex must be extractable from 16-scene-webgl.js source");
+  const affineMatch = webgl.match(/const SCENE_GLSL_AFFINE_NORMAL = ("(?:\\.|[^"])*");/);
+  assert.ok(affineMatch, "the extracted skin augmenter requires the shared affine normal helper");
 
   const fnSrc = "function scenePBRSelenaSkinAugmentVertex(source) {" + match[1] + "\n  }";
-  const augment = new Function("return (" + fnSrc + ")")();
+  const augment = new Function("SCENE_GLSL_AFFINE_NORMAL", "return (" + fnSrc + ")")(JSON.parse(affineMatch[1]));
 
   // Non-skinnable shapes (no `position` attribute in the expected form) must
   // return null so the caller safely falls back to the standard PBR path.
@@ -1022,7 +1024,8 @@ test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-ski
   // untouched original body (which still does `mvp * vec4(position, 1.0)`
   // and `normalMatrix * normal` — both now resolve to the injected locals).
   assert.match(out, /vec3 position = selenaSkinWorldPos4\.xyz;/);
-  assert.match(out, /vec3 normal = normalize\(mat3\(u_modelMatrix\) \* \(mat3\(selenaSkinMatrix\) \* a_normal\)\);/);
+  assert.match(out, /vec4 gosxAffineNormal\(/);
+  assert.match(out, /vec3 normal = gosxAffineNormal\(mat3\(u_modelMatrix \* selenaSkinMatrix\), a_normal\)\.xyz;/);
   assert.match(out, /gl_Position = \(mvp \* vec4\(position, 1\.0\)\);/);
   assert.match(out, /vWorldNormal = normalize\(\(normalMatrix \* normal\)\);/);
 

@@ -35,8 +35,8 @@ func readBrowserSceneSource(t *testing.T, name string) string {
 func TestBrowserWorldBakeTransformContract(t *testing.T) {
 	core := readBrowserSceneSource(t, "10-runtime-scene-core.ts")
 	for _, needle := range []string{
-		"const determinant = a * c00 + b * c01 + c * c02;",
-		"const orientation = determinant < -1e-12 ? -1 : 1;",
+		"const determinant = sceneAffineDeterminant(modelMatrix, 0);",
+		"out[9] = determinant < 0 ? -1 : 1;",
 		"normal, normalTransform, normal.x, normal.y, normal.z, 3, false,",
 		"sceneMatrixTransformInto(tangent, modelMatrix, tangent.x, tangent.y, tangent.z, 4, false);",
 		"w: tangent.w * orientation,",

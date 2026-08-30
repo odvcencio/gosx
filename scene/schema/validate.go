@@ -501,12 +501,8 @@ func validateParentMatrix(report *Report, ownerID, path string, matrix []float64
 	if matrix == nil {
 		return
 	}
-	if len(matrix) != 16 {
-		report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix must contain exactly 16 values", path, ownerID, map[string]any{"values": len(matrix)})
-		return
-	}
-	for index, value := range matrix {
-		validateFiniteFloat(report, ownerID, fmt.Sprintf("%s[%d]", path, index), value)
+	if !scene.ValidParentMatrix(matrix) {
+		report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix must be a finite, nonsingular affine 4x4 matrix", path, ownerID, map[string]any{"values": len(matrix)})
 	}
 }
 

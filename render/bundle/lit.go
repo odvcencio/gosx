@@ -85,6 +85,30 @@ struct Material {
 @group(1) @binding(6) var          metalnessMapTex   : texture_2d<f32>;
 @group(1) @binding(7) var          emissiveMapTex    : texture_2d<f32>;
 
+struct AffineNormalResult {
+  normal : vec3<f32>,
+  orientation : f32,
+};
+
+fn affineNormal(model : mat4x4<f32>, localNormal : vec3<f32>) -> AffineNormalResult {
+  let linearScale = max(max(max(abs(model[0].x), abs(model[0].y)), max(abs(model[0].z), abs(model[1].x))), max(max(abs(model[1].y), abs(model[1].z)), max(max(abs(model[2].x), abs(model[2].y)), abs(model[2].z))));
+  if (linearScale == 0.0) {
+    return AffineNormalResult(normalize(localNormal), 1.0);
+  }
+  let c0 = model[0].xyz / linearScale;
+  let c1 = model[1].xyz / linearScale;
+  let c2 = model[2].xyz / linearScale;
+  let co0 = cross(c1, c2);
+  let co1 = cross(c2, c0);
+  let co2 = cross(c0, c1);
+  let determinant = dot(c0, co0);
+  if (abs(determinant) <= 1e-12) {
+    return AffineNormalResult(normalize(localNormal), 1.0);
+  }
+  let orientation = select(-1.0, 1.0, determinant > 0.0);
+  return AffineNormalResult(normalize(mat3x3<f32>(co0, co1, co2) * localNormal * orientation), orientation);
+}
+
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
   @location(0) color    : vec3<f32>,
@@ -93,6 +117,7 @@ struct VSOut {
   @location(3) viewZ    : f32,
   @location(4) uv       : vec2<f32>,
   @location(5) @interpolate(flat) pickId : u32,
+  @location(6) @interpolate(flat) orientation : f32,
 };
 
 struct FSOut {
@@ -114,7 +139,8 @@ fn vs_main(
 ) -> VSOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
-  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);
+  let affine = affineNormal(model, normal);
+  let worldNormal = affine.normal;
 
   var out : VSOut;
   out.pos      = scene.viewProj * world;
@@ -129,6 +155,7 @@ fn vs_main(
   out.viewZ    = length(toCam);
   out.uv       = uv;
   out.pickId   = pickData.x;
+  out.orientation = affine.orientation;
   return out;
 }
 
@@ -230,7 +257,8 @@ fn perturbNormal(geomN : vec3<f32>, worldPos : vec3<f32>, uv : vec2<f32>) -> vec
 }
 
 @fragment
-fn fs_main(in : VSOut) -> FSOut {
+fn fs_main(in : VSOut, @builtin(front_facing) frontFacing : bool) -> FSOut {
+  if (frontFacing != (in.orientation > 0.0)) { discard; }
   let geomN = normalize(in.worldNrm);
   let mappedN = perturbNormal(geomN, in.worldPos, in.uv);
   let hasNormalMap = step(0.5, material.textureParams.y);
@@ -480,13 +508,15 @@ func skinnedLitWGSL() string {
 ) -> VSOut {`
 	const rigidTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
-  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);`
+  let affine = affineNormal(model, normal);
+  let worldNormal = affine.normal;`
 	const skinnedTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let bindPose = mat4x4<f32>(b0, b1, b2, b3);
   let skinnedLocal = bindPose * applySkinning(pos, joints, weights);
-  let skinnedNormal = normalize((bindPose * vec4<f32>(applySkinningNormal(normal, joints, weights), 0.0)).xyz);
+  let skinnedNormal = affineNormal(bindPose, applySkinningNormal(normal, joints, weights)).normal;
   let world = model * skinnedLocal;
-  let worldNormal = normalize((model * vec4<f32>(skinnedNormal, 0.0)).xyz);`
+  let affine = affineNormal(model, skinnedNormal);
+  let worldNormal = affine.normal;`
 	src := strings.Replace(litWGSL, signature, skinnedSignature, 1)
 	src = strings.Replace(src, rigidTransform, skinnedTransform, 1)
 	return skinningWGSL + "\n" + src
@@ -502,6 +532,11 @@ struct ShadowUniforms {
 
 @group(0) @binding(0) var<uniform> shadowU : ShadowUniforms;
 
+struct ShadowOut {
+  @builtin(position) position : vec4<f32>,
+  @location(0) @interpolate(flat) orientation : f32,
+};
+
 @vertex
 fn vs_main(
   @location(0) pos : vec3<f32>,
@@ -509,8 +544,25 @@ fn vs_main(
   @location(2) m1  : vec4<f32>,
   @location(3) m2  : vec4<f32>,
   @location(4) m3  : vec4<f32>,
-) -> @builtin(position) vec4<f32> {
+) -> ShadowOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
-  return shadowU.lightViewProj * model * vec4<f32>(pos, 1.0);
+  let linearScale = max(max(max(abs(model[0].x), abs(model[0].y)), max(abs(model[0].z), abs(model[1].x))), max(max(abs(model[1].y), abs(model[1].z)), max(max(abs(model[2].x), abs(model[2].y)), abs(model[2].z))));
+  var orientation = 1.0;
+  if (linearScale > 0.0) {
+    let c0 = model[0].xyz / linearScale;
+    let c1 = model[1].xyz / linearScale;
+    let c2 = model[2].xyz / linearScale;
+    let determinant = dot(c0, cross(c1, c2));
+    if (abs(determinant) > 1e-12) { orientation = select(-1.0, 1.0, determinant > 0.0); }
+  }
+  var out : ShadowOut;
+  out.position = shadowU.lightViewProj * model * vec4<f32>(pos, 1.0);
+  out.orientation = orientation;
+  return out;
+}
+
+@fragment
+fn fs_main(in : ShadowOut, @builtin(front_facing) frontFacing : bool) {
+  if (frontFacing != (in.orientation > 0.0)) { discard; }
 }
 `

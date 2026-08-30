@@ -185,7 +185,13 @@
     },
     "affineMatrix": {
       "type": "array",
-      "items": { "type": "number" },
+      "prefixItems": [
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 0 },
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 0 },
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 0 },
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 1 }
+      ],
+      "items": false,
       "minItems": 16,
       "maxItems": 16
     },

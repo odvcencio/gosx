@@ -508,11 +508,12 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   assert.match(body, /colorFormats: \[targetFormat\]/);
   assert.match(body, /depthStencilFormat: "depth24plus"/);
   assert.match(body, /sampleCount: sampleCount/);
-  // The PBR pipelines are keyed on exactly these three values, so a bundle
-  // built from them is compatible with the pass by construction.
+  // The PBR pipelines are keyed on the same render-target values plus the
+  // determinant-selected front-face variant, so a bundle built from them is
+  // compatible with the pass by construction.
   assert.match(
     webgpuSource,
-    /wgpuPipelineKey\("pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
+    /wgpuPipelineKey\(reflected \? "pbr-cw" : "pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
   );
 });
 

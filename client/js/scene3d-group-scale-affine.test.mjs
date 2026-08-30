@@ -27,7 +27,8 @@ function createCoreContext({ mount = false } = {}) {
   const sandbox = {
     console: { warn() {}, error() {}, log() {} },
     Math, JSON, Number, Object, Array, Map, Set, WeakMap,
-    Float32Array, Float64Array, Uint8Array, Uint32Array, ArrayBuffer,
+    Float32Array, Float64Array, Uint8Array, Uint16Array, Uint32Array,
+    Int8Array, Int16Array, ArrayBuffer, DataView, TextDecoder, Error,
     String, Boolean, isFinite,
   };
   sandbox.window = sandbox;
@@ -67,6 +68,9 @@ test("parent matrices are exact finite clones and explicit null resets fallback 
       short: sceneNormalizeParentMatrix(raw.slice(0, 15), null),
       stringValue: sceneNormalizeParentMatrix([2,0,0,0, 1,3,0,0, 0,0,-4,0, 10,20,30,"1"], null),
       nullValue: sceneNormalizeParentMatrix([2,0,0,0, 1,3,0,0, 0,0,-4,0, 10,20,30,null], null),
+      projective: sceneNormalizeParentMatrix([2,0,0,1, 1,3,0,0, 0,0,-4,0, 10,20,30,1], null),
+      singular: sceneNormalizeParentMatrix([1,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,1], null),
+      small: sceneNormalizeParentMatrix([1e-6,0,0,0, 1e-6,2e-6,0,0, 0,0,-3e-6,0, 0,0,0,1], null),
     };
   })()`);
   assert.equal(result.cloned, true);
@@ -76,6 +80,9 @@ test("parent matrices are exact finite clones and explicit null resets fallback 
   assert.equal(result.short, null);
   assert.equal(result.stringValue, null);
   assert.equal(result.nullValue, null);
+  assert.equal(result.projective, null);
+  assert.equal(result.singular, null);
+  assert.equal(result.small.length, 16);
 });
 
 test("browser mesh transform keeps live leaf motion inside the affine parent", () => {
@@ -173,12 +180,31 @@ test("strict browser schema validates every parent matrix carrier", () => {
       `[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,"1"]`,
       `[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,null]`,
       `[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,NaN]`,
+      `[1,0,0,1,0,1,0,0,0,0,1,0,0,0,0,1]`,
+      `[1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1]`,
     ]) {
       context.__matrix = vm.runInContext(invalid, context);
       const diagnostics = vm.runInContext(`__gosx_validate_scene_ir_strict(${family}, {strict:true}).diagnostics`, context);
       assert.ok(diagnostics.some((item) => item.code === "scene.transform.invalid_parent_matrix"), `${family} accepted ${invalid}`);
     }
   }
+});
+
+test("instanced CPU picking inverts a sheared basis exactly", () => {
+  const context = createCoreContext();
+  vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
+  const result = runJSON(context, `(() => {
+    const s = Math.SQRT1_2;
+    const transforms = new Float64Array([2*s,s,0,0, -2*s,s,0,0, 0,0,1,0, 0,0,0,1]);
+    const mesh = {id:"sheared",kind:"sphere",radius:1,count:1,pickable:true,transforms};
+    const hit = sceneRaycastPickInstancedMeshes({origin:{x:1.3,y:0.7,z:3},dir:{x:0,y:0,z:-1}}, [mesh], 0);
+    const miss = sceneRaycastPickInstancedMeshes({origin:{x:2.2,y:0,z:3},dir:{x:0,y:0,z:-1}}, [mesh], 0);
+    return {hit:!!hit, miss:!!miss, point:hit && hit.point};
+  })()`);
+  assert.equal(result.hit, true);
+  assert.equal(result.miss, false);
+  assert.ok(Math.abs(result.point.x - 1.3) < 1e-12);
+  assert.ok(Math.abs(result.point.y - 0.7) < 1e-12);
 });
 
 test("WebGL2 and WebGPU Points upload parent times live-local through the shared multiply", () => {
@@ -188,4 +214,113 @@ test("WebGL2 and WebGPU Points upload parent times live-local through the shared
   assert.match(webgl, /uniformMatrix4fv\(pp\.uniforms\.modelMatrix, false, entry\.parentMatrix \? _pointsTilt : _pointsModelMat\)/);
   assert.match(webgpu, /sceneMat4MultiplyInto\(_pointsTilt, entry\.parentMatrix, _pointsModelMat\)/);
   assert.match(webgpu, /puF\.set\(pointsModelMat, 0\)/);
+});
+
+test("shared affine normal matrix is scale-stable and singular-neutral", () => {
+  const context = createCoreContext();
+  const result = runJSON(context, `(() => {
+    const tiny = [2e-6,0,0,0, 1e-6,3e-6,0,0, 0,0,-4e-6,0, 5,6,7,1];
+    const normalMatrix = sceneAffineNormalMatrix(tiny);
+    const x = normalMatrix[0], y = normalMatrix[1], z = normalMatrix[2];
+    const length = Math.hypot(x,y,z);
+    return {
+      normal:[x/length,y/length,z/length],
+      singular:sceneAffineNormalMatrix([1,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,1]),
+    };
+  })()`);
+  assert.ok(Math.abs(result.normal[0] - 3 / Math.sqrt(10)) < 1e-12);
+  assert.ok(Math.abs(result.normal[1] + 1 / Math.sqrt(10)) < 1e-12);
+  assert.ok(Math.abs(result.normal[2]) < 1e-12);
+  assert.deepEqual(result.singular, [1, 0, 0, 0, 1, 0, 0, 0, 1]);
+});
+
+test("browser direct, instanced, skinned and morph shaders share affine normal semantics", () => {
+  const webgl = readRuntime("webgl.ts");
+  const webgpu = readRuntime("webgpu.ts");
+  const selena = readSource("16a1-scene-webgpu-selena-uniforms.ts");
+  function assertContract(gl, gpu, uniforms) {
+    assert.match(gl, /vec4 q=gosxAffineNormal\(m,a_normal\)/);
+    assert.match(gl, /gosxAffineNormal\(m,gosxNormal\)/);
+    assert.match(gl, /gosxAffineNormal\(mat3\(u_modelMatrix \* selenaSkinMatrix\), a_normal\)/);
+    assert.match(gpu, /gosxAffineNormal\(material\.modelMatrix, in\.normal\)/);
+    assert.equal((gpu.match(/gosxAffineNormal\(model, in\.normal\)/g) || []).length, 1);
+    assert.match(gpu, /WGSL_PBR_INSTANCED_CULL_VERTEX = WGSL_PBR_INSTANCED_VERTEX/);
+    assert.match(gpu, /let an = gosxAffineNormal\(morph\.model, localNormal\)/);
+    assert.match(gpu, /outTangents\[t \+ 3u\].*an\.w/);
+    assert.match(uniforms, /sceneAffineNormalMatrix\(webGPUObjectModelMatrix\(owner\)\)/);
+    assert.match(gl, /var reflectedDirect = directVertices && sceneAffineDeterminant\(obj\.modelMatrix, 0\) < 0;/);
+    assert.match(gl, /if \(reflectedDirect\) gl\.frontFace\(gl\.CW\);[\s\S]*if \(reflectedDirect\) gl\.frontFace\(gl\.CCW\);/);
+    assert.match(gpu, /function bindPBRPipeline\(reflected\)/);
+    assert.match(gpu, /getPBRPipeline\(blendMode, depthWrite, reflected \? "cw" : "ccw"\)/);
+    assert.doesNotMatch(gl, /normalize\(mat3\(u_modelMatrix\) \* \(mat3\(selenaSkinMatrix\) \* a_normal\)\)/);
+    assert.doesNotMatch(gpu, /morph\.model \* vec4<f32>\(localNormal, 0\.0\)/);
+  }
+  assertContract(webgl, webgpu, selena);
+  assert.throws(() => assertContract(webgl.replaceAll("gosxAffineNormal(m,a_normal)", "vec4(normalize(m*a_normal),1.0)"), webgpu, selena));
+  assert.throws(() => assertContract(webgl, webgpu.replace("gosxAffineNormal(material.modelMatrix, in.normal)", "vec4f(normalize(in.normal),1.0)"), selena));
+  assert.throws(() => assertContract(webgl.replaceAll("gl.frontFace(gl.CW)", "gl.frontFace(gl.CCW)"), webgpu, selena));
+  assert.throws(() => assertContract(webgl, webgpu.replaceAll('reflected ? "cw" : "ccw"', '"ccw"'), selena));
+});
+
+test("glTF POINTS and LINES modes 0-3 retain exact affine through animation", () => {
+  const context = createCoreContext({ mount: true });
+  vm.runInContext(readRuntime("gltf.ts"), context, { filename: "gltf.ts" });
+  const result = runJSON(context, `(() => {
+    const buffer = new ArrayBuffer(80);
+    new Float32Array(buffer).set([
+      1,0,0, 2,0,0, 2,1,0, 1,1,0,
+      0,1,
+      2,0,0, 0,4,0,
+    ]);
+    const doc = {
+      asset:{version:"2.0"}, buffers:[{byteLength:80}],
+      bufferViews:[{buffer:0,byteOffset:0,byteLength:80}],
+      accessors:[
+        {bufferView:0,byteOffset:0,componentType:5126,count:4,type:"VEC3"},
+        {bufferView:0,byteOffset:48,componentType:5126,count:2,type:"SCALAR"},
+        {bufferView:0,byteOffset:56,componentType:5126,count:2,type:"VEC3"},
+      ],
+      meshes:[{name:"affine-modes",primitives:[0,1,2,3].map(mode=>({mode,attributes:{POSITION:0}}))}],
+      nodes:[{mesh:0,translation:[2,0,0]}], scenes:[{nodes:[0]}],
+      animations:[{samplers:[{input:1,output:2,interpolation:"LINEAR"}],channels:[{sampler:0,target:{node:0,path:"translation"}}]}],
+    };
+    const asset = gltfExtractScene(doc, buffer);
+    const model = {x:0,y:0,z:0,rotationX:0,rotationY:0,rotationZ:0,scaleX:1,scaleY:1,scaleZ:1,
+      parentMatrix:new Float64Array([-2,0,0,0, 1,3,0,0, 0,0,1,0, 10,20,30,1])};
+    const point = sceneInstantiateModelPointsEntry(asset.points[0], model, "model", 0);
+    const lines = asset.objects.map((object,index)=>sceneInstantiateModelObject(object,model,"model",index,null));
+    const entries = [point._nodeAnimLive].concat(lines.map(object=>object._nodeAnimLive));
+    const root = sceneModelTransformMatrix(model);
+    entries.forEach(entry=>{entry.modelMatrix=root; entry.model=model;});
+    function firstWorld(object, isPoints) {
+      const value = isPoints
+        ? {x:object.positions[0],y:object.positions[1],z:object.positions[2]}
+        : object.points[0];
+      const out = {};
+      translateScenePointInto(out,value.x,value.y,value.z,object,0);
+      return out;
+    }
+    const initial = [firstWorld(point,true)].concat(lines.map(object=>firstWorld(object,false)));
+    const oldPointPositions = point.positions;
+    const animated = sceneTRSToMat4([0,4,0],[0,0,0,1],[1,1,1]);
+    gltfApplyNodeAnimPose(entries,new Map([[0,animated]]));
+    return {
+      ids:[point.id].concat(lines.map(object=>object.id)),
+      matrices:[point.parentMatrix].concat(lines.map(object=>object.parentMatrix)).map(value=>Array.from(value)),
+      initial,
+      animated:[firstWorld(point,true)].concat(lines.map(object=>firstWorld(object,false))),
+      uploadedFresh:oldPointPositions!==point.positions,
+    };
+  })()`);
+  assert.deepEqual(result.ids, [
+    "model/affine-modes-points-0",
+    "model/affine-modes-lines-1",
+    "model/affine-modes-lines-2",
+    "model/affine-modes-lines-3",
+  ]);
+  const matrix = [-2,0,0,0, 1,3,0,0, 0,0,1,0, 10,20,30,1];
+  for (const carried of result.matrices) assert.deepEqual(carried, matrix);
+  for (const world of result.initial) assert.deepEqual(world, {x:4,y:20,z:30});
+  for (const world of result.animated) assert.deepEqual(world, {x:12,y:32,z:30});
+  assert.equal(result.uploadedFresh, true);
 });

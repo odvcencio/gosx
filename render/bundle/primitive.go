@@ -169,25 +169,18 @@ func torusGeometry(majorRadius, tubeRadius float64, radialSegments, tubularSegme
 // primitive, so an instance scaled up 10x needs a radius 10x larger or the cull
 // drops it while it is still on screen.
 //
-// The largest of the three column lengths is the conservative choice for
-// non-uniform scale: it never under-estimates the sphere, so an instance is
-// never wrongly culled. Skew from a sheared matrix inflates the radius, which
-// is safe.
+// The Frobenius norm bounds the largest singular value even when the columns
+// are not orthogonal. A largest-column bound under-estimates shear.
 //
 // cullWGSL runs the same calculation per thread on the GPU. Keep the two in
 // step: this function is the CPU oracle the headless backend and the pick
 // bounding test share.
 func instanceCullRadius(baseRadius float32, model mat4) float32 {
-	sx := columnLength(model[0], model[1], model[2])
-	sy := columnLength(model[4], model[5], model[6])
-	sz := columnLength(model[8], model[9], model[10])
-	scale := sx
-	if sy > scale {
-		scale = sy
-	}
-	if sz > scale {
-		scale = sz
-	}
+	scale := columnLength(
+		columnLength(model[0], model[1], model[2]),
+		columnLength(model[4], model[5], model[6]),
+		columnLength(model[8], model[9], model[10]),
+	)
 	if scale <= 0 {
 		return baseRadius
 	}

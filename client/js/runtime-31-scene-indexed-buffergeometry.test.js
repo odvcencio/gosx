@@ -479,10 +479,12 @@ test("backends wire uint32 index buffers and indexed draws for indexed direct me
   assert.match(webgpu, /pass\.drawIndexed\(skinnedPBRIndexCount\)/);
 
   const mountWebGL = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");
-  assert.match(mountWebGL, /function sceneCloneModelMeshIndices\(indices\)/);
+  assert.match(mountWebGL, /function sceneCloneModelMeshIndices\(indices, reverseTriangles, count\)/);
   assert.equal(
-    (mountWebGL.match(/indices: sceneCloneModelMeshIndices\(vertices\.indices\)/g) || []).length,
+    (mountWebGL.match(/indices: sceneCloneModelMeshIndices\(vertices\.indices/g) || []).length,
     3,
     "skinned, transformed, and model-local clones must all preserve topology",
   );
+  assert.match(mountWebGL, /sceneCloneModelMeshIndices\(vertices\.indices, modelOrientation < 0, vertexCount\)/,
+    "a reflected unindexed primitive must gain determinant-correct indices");
 });

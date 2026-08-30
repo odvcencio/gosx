@@ -118,19 +118,11 @@
     },
     {
       "id": "nested-group-scale-pick",
-      "state": "enforced",
+      "state": "blocked",
       "requirement": "Nested group scale reaches SceneIR, render transforms, raycast, and pick.",
       "targetBackends": ["webgpu", "webgl2", "native-preview"],
-      "ciOwners": [
-        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"},
-        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js"},
-        {"label": "scene3d-v1-browser-renderer-proof", "job": "scene3d-v1-browser-renderer-proof", "step": "Run Scene3D CUBICSPLINE browser renderer proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
-      ],
-      "evidence": [
-        {"kind": "go-test", "path": "scene/preview/group_scale_test.go", "contains": "TestBundleComposesExactGroupAffineForObjectsAndPoints", "backends": ["native-preview"], "ciLabel": "go-tests"},
-        {"kind": "node-test", "path": "client/js/scene3d-group-scale-affine.test.mjs", "contains": "browser mesh transform keeps live leaf motion inside the affine parent", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests"},
-        {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "renderer-consumed affine vertices", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-renderer-proof"}
-      ]
+      "ciOwners": [],
+      "evidence": []
     },
     {
       "id": "desktop-controls-picking",

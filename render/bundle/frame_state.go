@@ -33,7 +33,7 @@ type meshFrameState struct {
 	haveFP bool
 
 	// radius is the unscaled bounding-sphere radius of the primitive. The cull
-	// shader multiplies it by each instance's largest axis scale.
+	// shader multiplies it by each instance's conservative Frobenius bound.
 	radius        float32
 	pickBase      uint32
 	instanceCount int

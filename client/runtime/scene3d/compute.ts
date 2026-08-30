@@ -1306,16 +1306,15 @@
 
   // SCENE_INSTANCED_CULL_BUILTIN_WGSL is the renderer's own frustum-cull
   // kernel. It mirrors cullWGSL in render/bundle/cull.go term for term, and it
-  // scales the bounding radius PER INSTANCE by the largest of the three
-  // upper-left column lengths of the instance transform.
+  // scales the bounding radius PER INSTANCE by the Frobenius norm of the
+  // upper-left 3x3 instance transform.
   //
   // The scale term is a correctness requirement, not a tuning knob. A constant
   // radius drops an instance that its transform scales up, so the instance
-  // disappears while it is plainly on screen. The largest column length never
-  // under-estimates the sphere, so an instance is never wrongly culled. Shear
-  // inflates the radius, which is safe.
+  // disappears while it is plainly on screen. The Frobenius norm never
+  // under-estimates the largest singular value, including under shear.
   //
-  // Cost: three length() calls and two comparisons per thread.
+  // Cost: nine multiplies, eight additions, and one square root per thread.
   //
   // The thread guard bounds on the LIVE instance count, not on arrayLength. The
   // input buffer's capacity runs 25% past the instance count, and WebGPU
@@ -1352,7 +1351,7 @@
     "  if (index >= min(cull.instanceCount, arrayLength(&src))) { return; }",
     "  let m = src[index].model;",
     "  let centre = m[3].xyz;",
-    "  let scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));",
+    "  let scale = sqrt(dot(m[0].xyz, m[0].xyz) + dot(m[1].xyz, m[1].xyz) + dot(m[2].xyz, m[2].xyz));",
     "  var radius = cull.radius;",
     "  if (scale > 0.0) { radius = radius * scale; }",
     "  for (var p = 0u; p < 6u; p = p + 1u) {",
@@ -1365,19 +1364,14 @@
     "}",
   ].join("\n");
 
-  // sceneInstanceColumnScale returns the largest of the three upper-left column
-  // lengths of a column-major mat4 stored at `base` in `transforms`. It is the
-  // CPU oracle for the GPU kernel's scale term, and it mirrors
-  // instanceCullRadius in render/bundle/primitive.go.
+  // Kept under its public name for compatibility; now returns the Frobenius
+  // bound required for non-orthogonal (sheared) columns.
   function sceneInstanceColumnScale(transforms, base) {
     if (!transforms || base < 0 || base + 11 >= transforms.length) return 0;
     var x0 = transforms[base + 0], y0 = transforms[base + 1], z0 = transforms[base + 2];
     var x1 = transforms[base + 4], y1 = transforms[base + 5], z1 = transforms[base + 6];
     var x2 = transforms[base + 8], y2 = transforms[base + 9], z2 = transforms[base + 10];
-    var s0 = Math.sqrt(x0 * x0 + y0 * y0 + z0 * z0);
-    var s1 = Math.sqrt(x1 * x1 + y1 * y1 + z1 * z1);
-    var s2 = Math.sqrt(x2 * x2 + y2 * y2 + z2 * z2);
-    return Math.max(s0, Math.max(s1, s2));
+    return Math.sqrt(x0*x0 + y0*y0 + z0*z0 + x1*x1 + y1*y1 + z1*z1 + x2*x2 + y2*y2 + z2*z2);
   }
 
   // sceneInstanceCullRadius scales one base radius by one instance transform.
