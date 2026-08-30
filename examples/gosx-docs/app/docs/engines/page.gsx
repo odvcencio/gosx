@@ -48,6 +48,13 @@ func Page() Node {
 			.
 		</p>
 		<p>
+			This programmatic
+			<span class="inline-code">engine.Config</span>
+			path is the v1 engine surface. Strict engine declarations and automatic
+			<span class="inline-code">.gsx //gosx:engine</span>
+			discovery remain preview/post-v1.
+		</p>
+		<p>
 			Engines own only their declared mount and communicate through props and events. They are separate from island DOM state and from the shared island VM.
 		</p>
 		<h2 id="mounting">Mounting an engine</h2>

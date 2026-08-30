@@ -3,6 +3,7 @@ package dev
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,8 +30,24 @@ const (
 )
 
 type snapshotEntry struct {
-	ModTime time.Time
-	Size    int64
+	ModTime        time.Time
+	Size           int64
+	Info           os.FileInfo
+	ContentHash    [sha256.Size]byte
+	HasContentHash bool
+}
+
+// dependencyWatchTargets keeps the distinct permissions needed outside the
+// recursive project root. dirs allow bounded direct .gsx discovery in an
+// imported package root; files allow only an exact canonical discovered
+// source whose physical parent may be nested below that root; goFiles is the
+// exact active-Go subset selected upstream by the Go tool. Kernel watch
+// directories are derived from files, but event and polling filters retain
+// the narrower active-input distinction.
+type dependencyWatchTargets struct {
+	dirs    []string
+	files   []string
+	goFiles []string
 }
 
 type sseEvent struct {
@@ -45,14 +63,37 @@ type sseEvent struct {
 //   - watches Dir for source changes, runs PreflightChange for every batch, and
 //     triggers OnChange for batches that require a full restart
 type Server struct {
-	Dir             string
-	BuildDir        string
-	ProxyTarget     string
-	PreflightChange func([]string) error
-	OnChange        func() error
-	PollInterval    time.Duration
-	SceneInspector  bool
-	Logf            func(format string, args ...any)
+	Dir      string
+	BuildDir string
+	// WatchDirs is an explicit allowlist of package directories outside Dir.
+	// Their direct .gsx sources participate in island discovery; Go sources are
+	// admitted only through WatchGoFiles. It never broadens the recursive
+	// project-root watcher to arbitrary external paths.
+	WatchDirs []string
+	// WatchFiles is an exact allowlist of canonical discovered sources. It is
+	// used only when a source's physical parent differs from its package root;
+	// watching that parent does not allow changes to any sibling file.
+	WatchFiles []string
+	// WatchGoFiles is the exact active-Go subset of WatchFiles, already selected
+	// from GoFiles/CgoFiles by the Go tool. Dev hashes and observes only these Go
+	// inputs and never reimplements GOOS/GOARCH/cgo/build-tag selection.
+	WatchGoFiles []string
+	// RefreshWatchDirs recomputes the dependency closure after a handled
+	// change, so newly imported packages become watched without restarting the
+	// dev proxy. A partial invalid closure is unioned with the last valid
+	// allowlist so edits in the new package can recover the quarantined app.
+	// It remains as a compatibility seam for directory-only callers.
+	RefreshWatchDirs func() ([]string, error)
+	// RefreshWatchTargets atomically recomputes package roots, exact canonical
+	// source files, and the active-Go subset. New GoSX callers use this seam so
+	// build selection and accepted nested physical sources cannot diverge.
+	RefreshWatchTargets func() ([]string, []string, []string, error)
+	ProxyTarget         string
+	PreflightChange     func([]string) error
+	OnChange            func() error
+	PollInterval        time.Duration
+	SceneInspector      bool
+	Logf                func(format string, args ...any)
 
 	mu          sync.RWMutex
 	clients     map[chan sseEvent]struct{}
@@ -406,7 +447,12 @@ func (s *Server) watchLoop(stop <-chan struct{}) {
 }
 
 func (s *Server) watchWithPolling(stop <-chan struct{}) {
-	snapshot, err := projectSnapshot(s.Dir)
+	targets, err := normalizeDependencyWatchTargets(s.Dir, s.WatchDirs, s.WatchFiles, s.WatchGoFiles)
+	if err != nil {
+		s.logf("normalize dependency watch targets: %v", err)
+		return
+	}
+	snapshot, err := watchedSourceSnapshotForTargets(s.Dir, targets)
 	if err != nil {
 		s.logf("initial snapshot failed: %v", err)
 		return
@@ -419,23 +465,35 @@ func (s *Server) watchWithPolling(stop <-chan struct{}) {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	refreshFailed := false
 
 	for {
 		select {
 		case <-stop:
 			return
 		case <-ticker.C:
-			next, err := projectSnapshot(s.Dir)
+			nextTargets, refreshErr := s.refreshDependencyWatchTargetsWithError(targets)
+			refreshTransition := (refreshErr != nil) != refreshFailed
+			refreshFailed = refreshErr != nil
+			targets = nextTargets
+			next, err := watchedSourceSnapshotForTargets(s.Dir, targets)
 			if err != nil {
 				s.logf("snapshot failed: %v", err)
 				continue
 			}
-			changed := changedPaths(s.Dir, snapshot, next)
+			changed := changedWatchedPaths(snapshot, next)
+			if refreshTransition {
+				changed = sortedStringUnion(changed, []string{dependencyRefreshMarker(s.Dir, targets)})
+			}
 			if len(changed) == 0 {
 				continue
 			}
+			// Acknowledge exactly the filesystem state that produced this
+			// callback before invoking a potentially blocking rebuild. A second
+			// mutation during OnChange then remains different from this baseline
+			// and is delivered on the next poll instead of being absorbed into a
+			// post-handler snapshot.
 			snapshot = next
-
 			s.handleProjectChange(changed)
 		}
 	}
@@ -451,11 +509,25 @@ func (s *Server) watchWithFSNotify(stop <-chan struct{}) error {
 	if err := addProjectWatchDirs(s.Dir, watcher.Add); err != nil {
 		return err
 	}
+	targets, err := normalizeDependencyWatchTargets(s.Dir, s.WatchDirs, s.WatchFiles, s.WatchGoFiles)
+	if err != nil {
+		return fmt.Errorf("normalize dependency watch targets: %w", err)
+	}
+	for _, dir := range dependencyKernelWatchDirs(targets) {
+		if err := watcher.Add(dir); err != nil {
+			return fmt.Errorf("watch dependency directory %s: %w", dir, err)
+		}
+	}
+	dependencySnapshot, err := dependencySourceSnapshotForTargets(targets)
+	if err != nil {
+		return fmt.Errorf("initial dependency snapshot: %w", err)
+	}
 
 	var (
-		timer   *time.Timer
-		timerC  <-chan time.Time
-		pending = make(map[string]struct{})
+		timer         *time.Timer
+		timerC        <-chan time.Time
+		pending       = make(map[string]struct{})
+		refreshFailed bool
 	)
 	stopTimer := func() {
 		if timer == nil {
@@ -475,12 +547,55 @@ func (s *Server) watchWithFSNotify(stop <-chan struct{}) error {
 		timer = time.NewTimer(defaultWatchDebounce)
 		timerC = timer.C
 	}
+	addPending := func(paths []string) bool {
+		added := false
+		for _, path := range paths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				continue
+			}
+			path = filepath.Clean(path)
+			if _, exists := pending[path]; !exists {
+				added = true
+			}
+			pending[path] = struct{}{}
+		}
+		return added
+	}
+	queuePending := func(paths []string) {
+		if addPending(paths) {
+			resetTimer()
+		}
+	}
 	defer stopTimer()
+	repairInterval := s.PollInterval
+	if repairInterval <= 0 {
+		repairInterval = defaultPollInterval
+	}
+	repairTicker := time.NewTicker(repairInterval)
+	defer repairTicker.Stop()
 
 	for {
 		select {
 		case <-stop:
 			return nil
+		case <-repairTicker.C:
+			previousRefreshFailed := refreshFailed
+			nextTargets, refreshErr := s.reconcileDependencyWatchTargetsWithError(watcher, targets)
+			targets = nextTargets
+			refreshFailed = refreshErr != nil
+			s.repairDependencyTargetWatches(watcher, targets)
+			nextSnapshot, snapshotErr := dependencySourceSnapshotForTargets(targets)
+			if snapshotErr != nil {
+				s.logf("dependency catch-up snapshot failed: %v", snapshotErr)
+				continue
+			}
+			changed := changedWatchedPaths(dependencySnapshot, nextSnapshot)
+			if refreshFailed != previousRefreshFailed {
+				changed = sortedStringUnion(changed, []string{dependencyRefreshMarker(s.Dir, targets)})
+			}
+			dependencySnapshot = nextSnapshot
+			queuePending(changed)
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return nil
@@ -493,23 +608,231 @@ func (s *Server) watchWithFSNotify(stop <-chan struct{}) error {
 			if event.Op&fsnotify.Create != 0 {
 				s.watchCreatedDirs(event.Name, watcher.Add)
 			}
-			if !isProjectWatchEvent(s.Dir, event) {
+			if isDirectDependencyGoEvent(targets, event) {
+				previousRefreshFailed := refreshFailed
+				nextTargets, refreshErr := s.reconcileDependencyWatchTargetsWithError(watcher, targets)
+				targets = nextTargets
+				refreshFailed = refreshErr != nil
+				nextSnapshot, snapshotErr := dependencySourceSnapshotForTargets(targets)
+				if snapshotErr != nil {
+					s.logf("dependency Go-event snapshot failed: %v", snapshotErr)
+					queuePending([]string{filepath.Clean(event.Name)})
+					continue
+				}
+				changed := changedWatchedPaths(dependencySnapshot, nextSnapshot)
+				if refreshErr != nil {
+					// The Go tool could not select the new package state. Deliver the
+					// safe direct logical path so strict preflight quarantines it.
+					changed = sortedStringUnion(changed, []string{filepath.Clean(event.Name)})
+				} else if refreshFailed != previousRefreshFailed {
+					changed = sortedStringUnion(changed, []string{dependencyRefreshMarker(s.Dir, targets)})
+				}
+				dependencySnapshot = nextSnapshot
+				queuePending(changed)
 				continue
 			}
-			pending[event.Name] = struct{}{}
-			resetTimer()
+			if !isWatchedSourceEventForTargets(s.Dir, targets, event) {
+				continue
+			}
+			queuePending([]string{canonicalWatchEventPath(event.Name)})
 		case <-timerC:
 			timer = nil
 			timerC = nil
 			if len(pending) == 0 {
 				continue
 			}
+			// Refresh and install newly authorized package/physical-parent
+			// watches before invoking a potentially blocking rebuild. Compare the
+			// bounded dependency snapshot after installation so mutations which
+			// landed between the triggering event and the new kernel watch are
+			// folded into this batch.
+			previousRefreshFailed := refreshFailed
+			nextTargets, refreshErr := s.reconcileDependencyWatchTargetsWithError(watcher, targets)
+			targets = nextTargets
+			refreshFailed = refreshErr != nil
+			if refreshFailed != previousRefreshFailed {
+				addPending([]string{dependencyRefreshMarker(s.Dir, targets)})
+			}
+			nextSnapshot, snapshotErr := dependencySourceSnapshotForTargets(targets)
+			if snapshotErr != nil {
+				s.logf("dependency pre-change catch-up snapshot failed: %v", snapshotErr)
+			} else {
+				addPending(changedWatchedPaths(dependencySnapshot, nextSnapshot))
+				dependencySnapshot = nextSnapshot
+			}
 			paths := make([]string, 0, len(pending))
 			for path := range pending {
 				paths = append(paths, path)
 			}
+			sort.Strings(paths)
 			pending = make(map[string]struct{})
 			s.handleProjectChange(paths)
+
+			// Hooks or a second filesystem mutation may change the authoritative
+			// closure while OnChange is blocked. Reconcile again, then queue a
+			// deterministic catch-up batch before returning to the event loop.
+			previousRefreshFailed = refreshFailed
+			nextTargets, refreshErr = s.reconcileDependencyWatchTargetsWithError(watcher, targets)
+			targets = nextTargets
+			refreshFailed = refreshErr != nil
+			nextSnapshot, snapshotErr = dependencySourceSnapshotForTargets(targets)
+			if snapshotErr != nil {
+				s.logf("dependency post-change catch-up snapshot failed: %v", snapshotErr)
+				continue
+			}
+			changed := changedWatchedPaths(dependencySnapshot, nextSnapshot)
+			if refreshFailed != previousRefreshFailed {
+				changed = sortedStringUnion(changed, []string{dependencyRefreshMarker(s.Dir, targets)})
+			}
+			dependencySnapshot = nextSnapshot
+			queuePending(changed)
+		}
+	}
+}
+
+// refreshDependencyWatchTargets asks the caller for the latest validated
+// island dependency closure. An unresolved closure preserves the last
+// known-good allowlist; a safely resolved but source-invalid partial closure
+// is unioned with it so the invalid package and its exact physical sources
+// remain observable for recovery.
+func (s *Server) refreshDependencyWatchTargets(current dependencyWatchTargets) dependencyWatchTargets {
+	next, _ := s.refreshDependencyWatchTargetsWithError(current)
+	return next
+}
+
+func (s *Server) refreshDependencyWatchTargetsWithError(current dependencyWatchTargets) (dependencyWatchTargets, error) {
+	var (
+		dirs       []string
+		files      []string
+		goFiles    []string
+		refreshErr error
+	)
+	switch {
+	case s.RefreshWatchTargets != nil:
+		dirs, files, goFiles, refreshErr = s.RefreshWatchTargets()
+	case s.RefreshWatchDirs != nil:
+		dirs, refreshErr = s.RefreshWatchDirs()
+		// A directory-only refresh cannot safely recalculate exact source
+		// membership, so preserve any explicit initial files.
+		files = current.files
+		goFiles = current.goFiles
+	default:
+		return current, nil
+	}
+	if refreshErr != nil && len(dirs) == 0 && len(files) == 0 && len(goFiles) == 0 {
+		s.logf("refresh dependency watch targets failed: %v", refreshErr)
+		return current, refreshErr
+	}
+	// A source-invalid partial closure deliberately omits the unsafe source
+	// identity that caused discovery to fail. Normalize its already-canonical
+	// roots and exact safe files without re-deriving the same invalid direct
+	// symlink; the package root must remain watched so retargeting that logical
+	// entry can recover the app. Fully valid refreshes retain strict derivation.
+	normalized, normalizeErr := normalizeDependencyWatchTargetsInternal(s.Dir, dirs, files, goFiles, refreshErr == nil)
+	if normalizeErr != nil {
+		s.logf("normalize refreshed dependency watch targets failed: %v", normalizeErr)
+		return current, normalizeErr
+	}
+	if refreshErr != nil {
+		s.logf("refresh dependency watch targets found an invalid closure: %v", refreshErr)
+		normalized.dirs = sortedStringUnion(current.dirs, normalized.dirs)
+		normalized.files = sortedStringUnion(current.files, normalized.files)
+		normalized.goFiles = sortedStringUnion(current.goFiles, normalized.goFiles)
+	}
+	return normalized, refreshErr
+}
+
+// refreshDependencyWatchDirs preserves the directory-only test/API seam.
+func (s *Server) refreshDependencyWatchDirs(current []string) []string {
+	return s.refreshDependencyWatchTargets(dependencyWatchTargets{dirs: current}).dirs
+}
+
+func sortedStringUnion(values ...[]string) []string {
+	set := map[string]struct{}{}
+	for _, list := range values {
+		for _, value := range list {
+			set[value] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for value := range set {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func dependencyRefreshMarker(root string, targets dependencyWatchTargets) string {
+	if len(targets.dirs) > 0 {
+		return filepath.Clean(targets.dirs[0])
+	}
+	return filepath.Clean(root)
+}
+
+func dependencyKernelWatchDirs(targets dependencyWatchTargets) []string {
+	parents := make([]string, 0, len(targets.files))
+	for _, file := range targets.files {
+		parents = append(parents, filepath.Clean(filepath.Dir(file)))
+	}
+	return sortedStringUnion(targets.dirs, parents)
+}
+
+func (s *Server) reconcileDependencyWatchTargetsWithError(watcher *fsnotify.Watcher, current dependencyWatchTargets) (dependencyWatchTargets, error) {
+	next, refreshErr := s.refreshDependencyWatchTargetsWithError(current)
+	s.syncDependencyWatches(watcher, dependencyKernelWatchDirs(current), dependencyKernelWatchDirs(next))
+	return next, refreshErr
+}
+
+func (s *Server) reconcileDependencyWatchDirs(watcher *fsnotify.Watcher, current []string) []string {
+	currentTargets := dependencyWatchTargets{dirs: current}
+	return s.reconcileDependencyWatchTargets(watcher, currentTargets).dirs
+}
+
+func (s *Server) reconcileDependencyWatchTargets(watcher *fsnotify.Watcher, current dependencyWatchTargets) dependencyWatchTargets {
+	next, _ := s.reconcileDependencyWatchTargetsWithError(watcher, current)
+	return next
+}
+
+// repairDependencyWatches restores kernel watches for logically desired
+// dependency directories. Linux drops a directory watch when that directory
+// is removed; retaining the logical path and checking WatchList lets a later
+// recreation be re-added even though the dependency closure did not change.
+func (s *Server) repairDependencyWatches(watcher *fsnotify.Watcher, desired []string) {
+	s.syncDependencyWatches(watcher, desired, desired)
+}
+
+func (s *Server) repairDependencyTargetWatches(watcher *fsnotify.Watcher, desired dependencyWatchTargets) {
+	dirs := dependencyKernelWatchDirs(desired)
+	s.syncDependencyWatches(watcher, dirs, dirs)
+}
+
+func (s *Server) syncDependencyWatches(watcher *fsnotify.Watcher, current, next []string) {
+	liveSet := make(map[string]struct{})
+	for _, dir := range watcher.WatchList() {
+		liveSet[filepath.Clean(dir)] = struct{}{}
+	}
+	nextSet := stringSet(next)
+	for _, dir := range next {
+		dir = filepath.Clean(dir)
+		if _, ok := liveSet[dir]; ok {
+			continue
+		}
+		if err := watcher.Add(dir); err != nil {
+			s.logf("watch dependency directory %s failed: %v", dir, err)
+			continue
+		}
+		liveSet[dir] = struct{}{}
+	}
+	for _, dir := range current {
+		dir = filepath.Clean(dir)
+		if _, ok := nextSet[dir]; ok {
+			continue
+		}
+		if _, ok := liveSet[dir]; !ok {
+			continue
+		}
+		if err := watcher.Remove(dir); err != nil {
+			s.logf("unwatch dependency directory %s failed: %v", dir, err)
 		}
 	}
 }
@@ -604,6 +927,331 @@ func isProjectWatchEvent(root string, event fsnotify.Event) bool {
 	return shouldWatchProjectFile(filepath.ToSlash(rel))
 }
 
+func isWatchedSourceEvent(root string, dependencyDirs []string, event fsnotify.Event) bool {
+	return isWatchedSourceEventForTargets(root, dependencyWatchTargets{dirs: dependencyDirs}, event)
+}
+
+func isWatchedSourceEventForTargets(root string, targets dependencyWatchTargets, event fsnotify.Event) bool {
+	if isProjectWatchEvent(root, event) {
+		return true
+	}
+	if event.Name == "" || !isRelevantWatchOp(event.Op) {
+		return false
+	}
+	path := canonicalWatchEventPath(event.Name)
+	if path == "" {
+		return false
+	}
+	for _, dir := range targets.dirs {
+		if path == filepath.Clean(dir) && event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+			return true
+		}
+	}
+	for _, dir := range dependencyKernelWatchDirs(targets) {
+		if path == filepath.Clean(dir) && event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+			return true
+		}
+	}
+	if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+		return false
+	}
+	// Exact physical identities cover active Go files and accepted nested GSX
+	// targets. Same-file comparison keeps an authoritative inode observable
+	// through a hardlink without granting permission to unrelated siblings.
+	if eventMatchesExactWatchFile(path, event.Name, targets.files) {
+		return true
+	}
+	if !shouldWatchDependencyGSXFile(event.Name) {
+		return false
+	}
+
+	// Test the logical parent separately from the fully resolved source path.
+	// This keeps every direct package-root GSX source observable even when a new
+	// symlink is invalid; strict rediscovery can then quarantine it. Go inputs do
+	// not inherit this root-wide permission: they must be in the active exact set.
+	// Physical edits below a package root still require an exact match above.
+	logicalParent := canonicalWatchEventPath(filepath.Dir(event.Name))
+	for _, dir := range targets.dirs {
+		if logicalParent == filepath.Clean(dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDirectDependencyGoEvent(targets dependencyWatchTargets, event fsnotify.Event) bool {
+	if event.Name == "" || !isRelevantWatchOp(event.Op) || strings.ToLower(filepath.Ext(event.Name)) != ".go" {
+		return false
+	}
+	logicalParent := canonicalWatchEventPath(filepath.Dir(event.Name))
+	for _, dir := range targets.dirs {
+		if logicalParent == filepath.Clean(dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func eventMatchesExactWatchFile(path, logical string, files []string) bool {
+	for _, file := range files {
+		if path == filepath.Clean(file) {
+			return true
+		}
+	}
+	info, err := os.Stat(logical)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	for _, file := range files {
+		candidate, err := os.Stat(file)
+		if err == nil && candidate.Mode().IsRegular() && os.SameFile(info, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeDependencyWatchDirs converts the discovery result into a minimal
+// physical allowlist. Project-owned directories are already covered by the
+// recursive root watcher, while external package directories are watched only
+// at their top level.
+func normalizeDependencyWatchDirs(root string, dirs []string) ([]string, error) {
+	canonicalRoot, err := canonicalExistingWatchDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project watch root: %w", err)
+	}
+	var (
+		out        []string
+		identities []os.FileInfo
+	)
+	for _, candidate := range dirs {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		canonical, err := canonicalExistingWatchDir(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("resolve dependency watch directory %s: %w", candidate, err)
+		}
+		if pathWithinWatchRoot(canonical, canonicalRoot) {
+			continue
+		}
+		info, err := os.Stat(canonical)
+		if err != nil {
+			return nil, err
+		}
+		duplicate := false
+		for _, previous := range identities {
+			if os.SameFile(info, previous) {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		identities = append(identities, info)
+		out = append(out, canonical)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func normalizeDependencyWatchTargets(root string, dirs, files, goFiles []string) (dependencyWatchTargets, error) {
+	return normalizeDependencyWatchTargetsInternal(root, dirs, files, goFiles, true)
+}
+
+func normalizeDependencyWatchTargetsInternal(root string, dirs, files, goFiles []string, deriveDirectSymlinks bool) (dependencyWatchTargets, error) {
+	normalizedDirs, err := normalizeDependencyWatchDirs(root, dirs)
+	if err != nil {
+		return dependencyWatchTargets{}, err
+	}
+	if deriveDirectSymlinks {
+		// Preserve directory-only callers for GSX by deriving exact physical
+		// targets from safe direct .gsx symlinks. Active Go files must always be
+		// supplied explicitly from GoFiles/CgoFiles; this fallback never guesses
+		// build selection and never walks a nested tree.
+		derivedFiles, err := directDependencySymlinkTargets(normalizedDirs)
+		if err != nil {
+			return dependencyWatchTargets{}, err
+		}
+		files = append(append([]string(nil), files...), derivedFiles...)
+	}
+	// Every active Go input is also an exact source target. Keep the separately
+	// normalized subset for admission while deriving kernel parents from the
+	// complete exact-file set.
+	files = append(append([]string(nil), files...), goFiles...)
+	canonicalRoot, err := canonicalExistingWatchDir(root)
+	if err != nil {
+		return dependencyWatchTargets{}, fmt.Errorf("resolve project watch root: %w", err)
+	}
+	normalizedFiles, err := normalizeDependencyWatchFiles(canonicalRoot, normalizedDirs, files)
+	if err != nil {
+		return dependencyWatchTargets{}, err
+	}
+	normalizedGoFiles, err := normalizeDependencyWatchFiles(canonicalRoot, normalizedDirs, goFiles)
+	if err != nil {
+		return dependencyWatchTargets{}, err
+	}
+	return dependencyWatchTargets{dirs: normalizedDirs, files: normalizedFiles, goFiles: normalizedGoFiles}, nil
+}
+
+func normalizeDependencyWatchFiles(canonicalRoot string, normalizedDirs, files []string) ([]string, error) {
+	var (
+		normalizedFiles []string
+		identities      []os.FileInfo
+	)
+	for _, candidate := range files {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		canonical, info, err := canonicalExistingWatchFile(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("resolve dependency watch source %s: %w", candidate, err)
+		}
+		if pathWithinWatchRoot(canonical, canonicalRoot) {
+			continue
+		}
+		contained := false
+		for _, dir := range normalizedDirs {
+			if pathWithinWatchRoot(canonical, dir) {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			return nil, fmt.Errorf("dependency watch source %s resolves outside every allowlisted package directory", candidate)
+		}
+		duplicate := false
+		for _, previous := range identities {
+			if os.SameFile(info, previous) {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		identities = append(identities, info)
+		normalizedFiles = append(normalizedFiles, canonical)
+	}
+	sort.Strings(normalizedFiles)
+	return normalizedFiles, nil
+}
+
+func directDependencySymlinkTargets(dirs []string) ([]string, error) {
+	var targets []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("inspect dependency watch directory %s: %w", dir, err)
+		}
+		for _, entry := range entries {
+			if !shouldWatchDependencyGSXFile(entry.Name()) {
+				continue
+			}
+			entryInfo, err := entry.Info()
+			if err != nil {
+				return nil, fmt.Errorf("inspect dependency source %s: %w", filepath.Join(dir, entry.Name()), err)
+			}
+			if entryInfo.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
+			logical := filepath.Join(dir, entry.Name())
+			canonical, _, err := canonicalExistingWatchFile(logical)
+			if os.IsNotExist(err) {
+				// A broken target is represented by the prior refreshed allowlist,
+				// if any; there is no new physical identity to authorize here.
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("resolve dependency source %s: %w", logical, err)
+			}
+			if !pathWithinWatchRoot(canonical, dir) {
+				return nil, fmt.Errorf("dependency source %s resolves outside allowlisted package directory %s", logical, dir)
+			}
+			targets = append(targets, canonical)
+		}
+	}
+	sort.Strings(targets)
+	return targets, nil
+}
+
+func canonicalExistingWatchDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", path)
+	}
+	return filepath.Clean(canonical), nil
+}
+
+func canonicalExistingWatchFile(path string) (string, os.FileInfo, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", nil, err
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", nil, err
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return filepath.Clean(canonical), info, nil
+}
+
+func canonicalWatchEventPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	if canonical, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(canonical)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Join(parent, filepath.Base(abs))
+}
+
+func pathWithinWatchRoot(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && !relOutsideRoot(rel)
+}
+
+func shouldWatchDependencyGSXFile(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".gsx")
+}
+
+func stringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
 func isRelevantWatchOp(op fsnotify.Op) bool {
 	return op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) != 0
 }
@@ -637,10 +1285,158 @@ func projectSnapshot(dir string) (map[string]snapshotEntry, error) {
 		out[rel] = snapshotEntry{
 			ModTime: info.ModTime(),
 			Size:    info.Size(),
+			Info:    info,
 		}
 		return nil
 	})
 	return out, err
+}
+
+// watchedSourceSnapshot uses absolute physical paths so project and external
+// package changes share one deterministic diff without granting recursive
+// access outside the project root.
+func watchedSourceSnapshot(root string, dependencyDirs []string) (map[string]snapshotEntry, error) {
+	files, err := directDependencySymlinkTargets(dependencyDirs)
+	if err != nil {
+		return nil, err
+	}
+	return watchedSourceSnapshotForTargets(root, dependencyWatchTargets{dirs: dependencyDirs, files: files})
+}
+
+func watchedSourceSnapshotForTargets(root string, targets dependencyWatchTargets) (map[string]snapshotEntry, error) {
+	project, err := projectSnapshot(root)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]snapshotEntry, len(project))
+	for rel, entry := range project {
+		out[filepath.Join(root, filepath.FromSlash(rel))] = entry
+	}
+	dependency, err := dependencySourceSnapshotForTargets(targets)
+	if err != nil {
+		return nil, err
+	}
+	for path, entry := range dependency {
+		out[path] = entry
+	}
+	return out, nil
+}
+
+// dependencySourceSnapshotForTargets performs a bounded top-level GSX scan of
+// allowlisted package roots, then reads only the exact active Go identities
+// selected upstream by the Go tool. A direct GSX symlink may move between
+// nested targets inside its canonical package root without first appearing in
+// the stale exact-file set. Go sources receive no equivalent root-wide
+// permission: GOOS/GOARCH/cgo/build-tag-inactive files never enter this
+// snapshot. Periodic content hashing still observes accepted GSX and active Go
+// inodes through unenumerated hardlink aliases even when size and mtime are
+// restored. No nested sibling is enumerated or admitted.
+func dependencySourceSnapshotForTargets(targets dependencyWatchTargets) (map[string]snapshotEntry, error) {
+	out := make(map[string]snapshotEntry)
+	for _, dir := range targets.dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot dependency directory %s: %w", dir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !shouldWatchDependencyGSXFile(entry.Name()) {
+				continue
+			}
+			logical := filepath.Join(dir, entry.Name())
+			canonical, snapshot, present, err := snapshotDependencySource(logical, dir)
+			if err != nil {
+				return nil, err
+			}
+			if present {
+				mergeDependencySnapshot(out, canonical, snapshot)
+			}
+		}
+	}
+	for _, file := range targets.goFiles {
+		dir := containingDependencyWatchDir(file, targets.dirs)
+		if dir == "" {
+			return nil, fmt.Errorf("active Go dependency source %s is outside every allowlisted package directory", file)
+		}
+		canonical, snapshot, present, err := snapshotDependencySource(file, dir)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			mergeDependencySnapshot(out, canonical, snapshot)
+		}
+	}
+	return out, nil
+}
+
+func containingDependencyWatchDir(path string, dirs []string) string {
+	path = filepath.Clean(path)
+	for _, dir := range dirs {
+		if pathWithinWatchRoot(path, filepath.Clean(dir)) {
+			return filepath.Clean(dir)
+		}
+	}
+	return ""
+}
+
+func snapshotDependencySource(logical, dir string) (string, snapshotEntry, bool, error) {
+	canonical := canonicalWatchEventPath(logical)
+	if canonical == "" {
+		return "", snapshotEntry{}, false, fmt.Errorf("resolve dependency source %s", logical)
+	}
+	if !pathWithinWatchRoot(canonical, filepath.Clean(dir)) {
+		return "", snapshotEntry{}, false, fmt.Errorf("dependency source %s resolves outside allowlisted package directory %s", logical, dir)
+	}
+	info, err := os.Stat(logical)
+	if os.IsNotExist(err) {
+		// A removed target is absent from the next snapshot. Polling reports the
+		// transition and refresh can later authorize its recreated identity.
+		return canonical, snapshotEntry{}, false, nil
+	}
+	if err != nil {
+		return "", snapshotEntry{}, false, fmt.Errorf("snapshot dependency source %s: %w", logical, err)
+	}
+	if !info.Mode().IsRegular() {
+		return canonical, snapshotEntry{}, false, nil
+	}
+	data, err := os.ReadFile(logical)
+	if err != nil {
+		return "", snapshotEntry{}, false, fmt.Errorf("read dependency source %s: %w", logical, err)
+	}
+	return canonical, snapshotEntry{
+		ModTime:        info.ModTime(),
+		Size:           info.Size(),
+		Info:           info,
+		ContentHash:    sha256.Sum256(data),
+		HasContentHash: true,
+	}, true, nil
+}
+
+func mergeDependencySnapshot(out map[string]snapshotEntry, path string, next snapshotEntry) {
+	if current, ok := out[path]; ok && current.HasContentHash && !next.HasContentHash {
+		return
+	}
+	out[path] = next
+}
+
+func changedWatchedPaths(prev map[string]snapshotEntry, next map[string]snapshotEntry) []string {
+	changed := make(map[string]struct{})
+	for path, prevEntry := range prev {
+		nextEntry, ok := next[path]
+		if !ok || !sameSnapshotEntry(prevEntry, nextEntry) {
+			changed[path] = struct{}{}
+		}
+	}
+	for path := range next {
+		if _, ok := prev[path]; !ok {
+			changed[path] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(changed))
+	for path := range changed {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func snapshotChanged(prev map[string]snapshotEntry, next map[string]snapshotEntry) bool {
@@ -652,7 +1448,7 @@ func snapshotChanged(prev map[string]snapshotEntry, next map[string]snapshotEntr
 		if !ok {
 			return true
 		}
-		if !prevEntry.ModTime.Equal(nextEntry.ModTime) || prevEntry.Size != nextEntry.Size {
+		if !sameSnapshotEntry(prevEntry, nextEntry) {
 			return true
 		}
 	}
@@ -667,7 +1463,7 @@ func changedPaths(root string, prev map[string]snapshotEntry, next map[string]sn
 	changed := make(map[string]struct{})
 	for rel, prevEntry := range prev {
 		nextEntry, ok := next[rel]
-		if !ok || !prevEntry.ModTime.Equal(nextEntry.ModTime) || prevEntry.Size != nextEntry.Size {
+		if !ok || !sameSnapshotEntry(prevEntry, nextEntry) {
 			changed[rel] = struct{}{}
 		}
 	}
@@ -680,7 +1476,21 @@ func changedPaths(root string, prev map[string]snapshotEntry, next map[string]sn
 	for rel := range changed {
 		paths = append(paths, filepath.Join(root, filepath.FromSlash(rel)))
 	}
+	sort.Strings(paths)
 	return paths
+}
+
+func sameSnapshotEntry(left, right snapshotEntry) bool {
+	if !left.ModTime.Equal(right.ModTime) || left.Size != right.Size {
+		return false
+	}
+	if left.Info != nil && right.Info != nil && !os.SameFile(left.Info, right.Info) {
+		return false
+	}
+	if left.HasContentHash != right.HasContentHash || (left.HasContentHash && left.ContentHash != right.ContentHash) {
+		return false
+	}
+	return true
 }
 
 func shouldWatchProjectFile(path string) bool {

@@ -107,9 +107,13 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 		return runDesktopHost(options)
 	}
 
-	absDir, err := filepath.Abs(dir)
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	discovery, err := collectProjectIslandDiscovery(absDir)
+	if err != nil {
+		return err
 	}
 	isMain, err := isMainPackage(absDir)
 	if err != nil {
@@ -118,7 +122,7 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	if !isMain {
 		return fmt.Errorf("gosx desktop requires a runnable app directory (package main): %s", absDir)
 	}
-	if err := prepareDesktopDevProject(context.Background(), absDir); err != nil {
+	if err := prepareDesktopDevProjectAfterDiscovery(context.Background(), absDir, discovery); err != nil {
 		return err
 	}
 
@@ -159,9 +163,12 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	publicURL := displayListenURL(publicAddr)
 	buildDir := filepath.Join(absDir, "build")
 	devServer := &dev.Server{
-		Dir:         absDir,
-		BuildDir:    buildDir,
-		ProxyTarget: internalBaseURL,
+		Dir:          absDir,
+		BuildDir:     buildDir,
+		WatchDirs:    discovery.WatchDirs,
+		WatchFiles:   discovery.WatchFiles,
+		WatchGoFiles: discovery.WatchGoFiles,
+		ProxyTarget:  internalBaseURL,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx desktop: "+format+"\n", args...)
 		},
@@ -177,6 +184,9 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 				fmt.Fprintf(os.Stderr, "gosx desktop: host reload notification failed: %v\n", err)
 			}
 			return nil
+		},
+		RefreshWatchTargets: func() ([]string, []string, []string, error) {
+			return collectProjectIslandWatchTargets(absDir)
 		},
 	}
 
@@ -261,6 +271,27 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 }
 
 func prepareDesktopDevProject(ctx context.Context, dir string) error {
+	_, err := prepareDesktopDevProjectWithDiscovery(ctx, dir)
+	return err
+}
+
+func prepareDesktopDevProjectWithDiscovery(ctx context.Context, dir string) (*islandDiscoveryResult, error) {
+	canonicalDir, err := canonicalExistingDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project dir: %w", err)
+	}
+	dir = canonicalDir
+	discovery, err := collectProjectIslandDiscovery(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareDesktopDevProjectAfterDiscovery(ctx, dir, discovery); err != nil {
+		return nil, err
+	}
+	return discovery, nil
+}
+
+func prepareDesktopDevProjectAfterDiscovery(ctx context.Context, dir string, discovery *islandDiscoveryResult) error {
 	if err := syncModulesPackage(dir); err != nil {
 		return err
 	}
@@ -273,7 +304,7 @@ func prepareDesktopDevProject(ctx context.Context, dir string) error {
 	if err := checkStrictProject(ctx, dir); err != nil {
 		return fmt.Errorf("check strict components: %w", err)
 	}
-	if err := prepareDevAssets(dir); err != nil {
+	if err := prepareDevAssetsWithPrograms(dir, discovery.Programs); err != nil {
 		return err
 	}
 	return nil

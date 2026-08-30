@@ -18,16 +18,22 @@ import (
 // runtime compile RunBuildWithOptions also performs. See
 // TestWarnStaleIslandsEndToEndAfterRealBuildPipeline.
 func islandManifestStage(dir string, dev bool) (*BuildManifest, string, error) {
+	canonicalDir, err := canonicalExistingDir(dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve project dir: %w", err)
+	}
+	dir = canonicalDir
+	islandProgs, _, err := collectProjectIslandPrograms(dir)
+	if err != nil {
+		return nil, "", err
+	}
+
 	distDir := filepath.Join(dir, "dist")
 	islandDir := filepath.Join(distDir, "assets", "islands")
 	if err := os.MkdirAll(islandDir, 0755); err != nil {
 		return nil, "", fmt.Errorf("create island output directory %s: %w", islandDir, err)
 	}
 
-	islandProgs, _, err := collectProjectIslandPrograms(dir)
-	if err != nil {
-		return nil, "", err
-	}
 	islandAssets, err := writeIslandManifestAssets(dir, islandDir, dev, islandProgs)
 	if err != nil {
 		return nil, "", err
@@ -44,6 +50,9 @@ func islandManifestStage(dir string, dev bool) (*BuildManifest, string, error) {
 // writeBuildManifest marshals manifest and writes it to distDir/build.json —
 // the same write RunBuildWithOptions performs for the full manifest.
 func writeBuildManifest(distDir string, manifest *BuildManifest) (string, error) {
+	if err := manifest.ValidateIslandAssets(); err != nil {
+		return "", fmt.Errorf("validate manifest: %w", err)
+	}
 	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal manifest: %w", err)

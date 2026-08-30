@@ -448,6 +448,93 @@ func TestProjectBuildHooksLoadAndRun(t *testing.T) {
 	}
 }
 
+func TestPreBuildHookRefreshesIslandDiscoveryForMutationGenerationAndDeletion(t *testing.T) {
+	t.Run("mutation", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+		mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+		before, err := collectProjectIslandDiscovery(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated := strings.Replace(testIslandSource("main", "Counter"), "signal.New(0)", "signal.New(7)", 1)
+		mustWriteFile(t, filepath.Join(dir, "counter.after"), mutated)
+
+		after, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, []string{"cp counter.after counter.gsx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(before.Programs) != 1 || len(after.Programs) != 1 || before.Programs[0].SourceHash == after.Programs[0].SourceHash {
+			t.Fatalf("post-hook mutation reused stale program: before=%v after=%v", before.Programs, after.Programs)
+		}
+	})
+
+	t.Run("generation", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+		mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+		mustWriteFile(t, filepath.Join(dir, "badge.source"), testIslandSource("main", "Badge"))
+		if _, err := collectProjectIslandDiscovery(dir); err != nil {
+			t.Fatal(err)
+		}
+
+		after, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, []string{"cp badge.source badge.gsx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := islandProgramIdentities(after.Programs), []string{"corp/app#Badge", "corp/app#Counter"}; !slices.Equal(got, want) {
+			t.Fatalf("post-hook generated programs = %#v, want %#v", got, want)
+		}
+		if len(after.GSXFiles) != 2 {
+			t.Fatalf("post-hook GSX files = %#v, want generated and original sources", after.GSXFiles)
+		}
+	})
+
+	t.Run("deletion", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+		mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+		if _, err := collectProjectIslandDiscovery(dir); err != nil {
+			t.Fatal(err)
+		}
+
+		after, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, []string{"rm counter.gsx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after.Programs) != 0 || len(after.GSXFiles) != 0 {
+			t.Fatalf("post-hook deletion retained stale discovery: programs=%v files=%v", after.Programs, after.GSXFiles)
+		}
+	})
+}
+
+func TestRunBuildRejectsHookCreatedIslandAmbiguityBeforeReplacingDist(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+	mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+	mustWriteFile(t, filepath.Join(dir, "duplicate.source"), testIslandSource("main", "Counter"))
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{
+  "build": {
+    "hooks": {
+      "pre": ["cp duplicate.source duplicate.gsx"]
+    }
+  }
+}`)
+	sentinel := filepath.Join(dir, "dist", "sentinel.txt")
+	mustWriteFile(t, sentinel, "keep")
+
+	err := RunBuildWithOptions(dir, BuildOptions{Dev: true})
+	if err == nil || !strings.Contains(err.Error(), `ambiguous island program "Counter"`) {
+		t.Fatalf("RunBuildWithOptions error = %v, want hook-created ambiguity", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "duplicate.gsx")); statErr != nil {
+		t.Fatalf("pre-build hook did not run: %v", statErr)
+	}
+	if got := readFile(t, sentinel); got != "keep" {
+		t.Fatalf("post-hook validation replaced existing dist before failing: %q", got)
+	}
+}
+
 func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 	distDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -824,6 +911,27 @@ func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
 		t.Fatalf("strict gate wrote dist before failing: %v", statErr)
+	}
+}
+
+func TestRunBuildRejectsAmbiguousImportedIslandNamesBeforeDistWrites(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+	writeTempFile(t, dir, "gosx.config.json", `{
+  "build": {
+    "hooks": {
+      "pre": ["printf ran > pre-build-hook-ran.txt"]
+    }
+  }
+}`)
+
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("RunBuild error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"dist", "modules/modules.go", "pre-build-hook-ran.txt"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island preflight created %s before failing: %v", output, statErr)
+		}
 	}
 }
 

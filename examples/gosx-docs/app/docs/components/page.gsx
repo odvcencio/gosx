@@ -18,7 +18,7 @@ func Page() Node {
 			<span class="inline-code">component Name(props: Type)</span>
 			. GoSX still runs the older Go-function spelling,
 			<span class="inline-code">func Name(...) Node</span>
-			, for islands, engines, and loader-bound routes. See "Legacy components (deprecated)" below for that spelling. This page does not teach it to a new author.
+			, for existing applications, engines, and loader-bound routes. Strict components can hydrate as islands when they stay within the supported island VM subset. See "Legacy components (deprecated)" below for the older spelling. This page does not teach it to a new author.
 		</p>
 		<section class="feature-grid">
 			<div class="card">
@@ -33,7 +33,7 @@ func Page() Node {
 				<strong>Legacy (deprecated)</strong>
 				<p>
 					<span class="inline-code">func Name(...) Node</span>
-					still runs, but it is deprecated for ordinary server components. Islands, engines, and loader-bound routes still need it. See below.
+					still runs, but it is deprecated for ordinary server components. Engines and loader-bound routes still need it; supported strict islands do not. See below.
 				</p>
 			</div>
 		</section>
@@ -216,7 +216,11 @@ func Page() Node {
 			<span class="inline-code">If</span>
 			, and
 			<span class="inline-code">Slot</span>
-			structural builtins. Islands and engines also use this form in v0.39; strict client directives fail closed until their browser and server paths can preserve the typed contract.
+			structural builtins. Islands may instead use the strict component form when they stay within the supported island VM subset. Strict engine declarations and automatic
+			<span class="inline-code">.gsx //gosx:engine</span>
+			discovery remain preview/post-v1; programmatic
+			<span class="inline-code">engine.Config</span>
+			is the v1 engine surface.
 		</p>
 		<h2 id="attributes">Elements and attributes</h2>
 		<p>
@@ -293,18 +297,18 @@ func Page() Node {
 		<p>
 			Declare every new server component with
 			<span class="inline-code">component Name(props: Type)</span>
-			. The legacy Go-function form remains necessary in three cases only, all structural limits of the current release, not a style choice.
+			. The legacy Go-function form remains necessary in two cases only, both structural limits of the current release, not a style choice.
 		</p>
 		<ul>
 			<li>
 				A route reads loader data, route params, structural control flow, or a helper-rich body that the strict expression subset does not cover yet.
 			</li>
 			<li>
-				A component hydrates client-side as an island. Strict islands are not supported yet.
-			</li>
-			<li>
 				A component runs as an engine (canvas, WebGL, WebGPU, or a background worker). Strict engines are not supported yet.
 			</li>
 		</ul>
+		<p>
+			A strict component may hydrate client-side as an island when its body stays within the supported island VM subset. Project-aware checks fail closed when an island uses an unsupported expression or client operation.
+		</p>
 	</article>
 }

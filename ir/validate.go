@@ -117,11 +117,11 @@ func ValidateWarnings(prog *Program) []Diagnostic {
 // TYPED legacy component whose props struct is declared in this file
 // (Component.PropsTyped), is excluded — see the zero-props census in
 // gosx's untyped-legacy-warning change for why zero-props legacy functions
-// stay silent here. An engine or island component is excluded too, because
-// strict syntax rejects both outright today (see the "strict engine
-// declarations are not supported" and "strict island declarations are not
-// supported" diagnostics in lowerStrictComponentDecl) — the warning must
-// never recommend a form the compiler itself refuses.
+// stay silent here. Engine and island components are also excluded by the
+// current migration-warning policy. Strict islands are supported; extending
+// this legacy retirement warning to them is a separate v1 migration change.
+// Strict engines remain unsupported and automatic .gsx engine discovery is
+// preview/post-v1.
 func untypedLegacyPropsWarning(comp *Component) []Diagnostic {
 	if comp.Syntax != ComponentSyntaxLegacy || comp.PropsTyped || comp.IsEngine || comp.IsIsland {
 		return nil
