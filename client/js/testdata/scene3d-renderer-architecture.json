@@ -796,9 +796,9 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 821021,
-      "gzip": 231683,
-      "brotli": 194407
+      "raw": 821410,
+      "gzip": 231891,
+      "brotli": 194586
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -807,9 +807,9 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 993737,
-      "gzip": 266158,
-      "brotli": 222521
+      "raw": 994126,
+      "gzip": 266366,
+      "brotli": 222700
     }
   },
   "rendererABI": {
