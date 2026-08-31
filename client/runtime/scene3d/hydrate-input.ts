@@ -1,6 +1,5 @@
 // Strict Scene3D initial-hydrate envelope boundary. Loaded only when a shared
-// Scene3D runtime has an initial program; bootstrap.js carries the same API
-// inline so the legacy monolith never fetches a second script.
+// runtime has an initial program; bootstrap.js carries this API inline.
 // @ts-check
 
 (function() {
@@ -85,8 +84,6 @@
     return commands;
   }
 
-  // Reuse the governed runtime namespace rather than adding a new browser-root
-  // compatibility name. bootstrap-runtime.js publishes this object before any
-  // deferred feature chunk; bootstrap.js publishes it earlier in its IIFE.
+  // Reuse the governed runtime namespace; bootstrap/runtime publish it first.
   window.__gosx_runtime_api.scene3DHydrateInitialProgram = hydrateScene3DInitialProgram;
 })();

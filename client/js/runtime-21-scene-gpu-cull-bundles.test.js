@@ -1458,7 +1458,7 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
   const fnSource = mountSrc.slice(fnStart, fnEnd);
 
   const ctx = vm.createContext({
-    window: {},
+    window: { __gosx_runtime_api: {} },
     document: {
       querySelector(sel) { if (sel === "[data-gosx-scene3d-mounted]") return mount; return null; },
     },
@@ -1507,7 +1507,7 @@ test("telemetry T2: __gosx_scene3d_telemetry(null) returns null when no mounted 
   const fnSource = mountSrc.slice(fnStart, fnEnd);
 
   const ctx = vm.createContext({
-    window: {},
+    window: { __gosx_runtime_api: {} },
     document: {
       querySelector() { return null; },
     },
@@ -1572,6 +1572,7 @@ test("telemetry T2a: explicit page scope exposes every registered mount and stan
   let webgpuProbeCalls = 0;
   const ctx = vm.createContext({
     window: {
+      __gosx_runtime_api: {},
       __gosx_scene3d_debug_registry: registry,
       __gosx_scene3d_webgpu_diagnostics() {
         webgpuProbeCalls += 1;
@@ -1642,7 +1643,7 @@ test("telemetry T2b: strict typed parsing surfaces invalid values and malformed 
   const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
   const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
   const ctx = vm.createContext({
-    window: {},
+    window: { __gosx_runtime_api: {} },
     document: {querySelector() { return mount; }},
     JSON,
     parseFloat,
@@ -1693,6 +1694,7 @@ test("telemetry T2c: missing attributes stay quiet while producer failures are c
   let webgpuProbeFails = true;
   const ctx = vm.createContext({
     window: {
+      __gosx_runtime_api: {},
       __gosx_scene3d_debug_registry: registry,
       __gosx_scene3d_webgpu_diagnostics() {
         webgpuProbeCalls += 1;
