@@ -31,11 +31,35 @@ function queueFenceExpressionBuilder() {
   return vm.runInNewContext(browserProof.slice(start, end) + "; webGPUQueueFenceExpr");
 }
 
+function readinessPollHelper() {
+  const start = browserProof.indexOf("async function evalSend(send, expression, extra) {");
+  const end = browserProof.indexOf("\nconst PRELOAD", start);
+  assert.ok(start >= 0 && end > start, "browser proof readiness poll must remain extractable");
+  const state = { now: 0, sleepCalls: 0 };
+  const context = {
+    Date: { now() { state.now += 1; return state.now; } },
+    Error,
+    JSON,
+    MOUNT_MS: 40000,
+    Object,
+    sleep: async () => { state.sleepCalls += 1; state.now += 50; },
+  };
+  const poll = vm.runInNewContext(browserProof.slice(start, end) + "; poll", context);
+  return { poll, state };
+}
+
 function failureReceiptExpressionBuilder() {
   const start = browserProof.indexOf("function webGPUFailureReceiptExpr(c, phase) {");
   const end = browserProof.indexOf("\nasync function captureWebGPUFailureReceipt", start);
   assert.ok(start >= 0 && end > start, "browser proof WebGPU failure receipt helper must remain extractable");
   return vm.runInNewContext(browserProof.slice(start, end) + "; webGPUFailureReceiptExpr");
+}
+
+function runtimeSendFor(context) {
+  return async (method, params) => {
+    assert.equal(method, "Runtime.evaluate");
+    return { result: { value: vm.runInContext(params.expression, context) } };
+  };
 }
 
 function caseEvidenceRetainer() {
@@ -90,14 +114,16 @@ function browserContext() {
   const queue = new context.GPUQueue();
   const device = new context.GPUDevice(queue);
   const probe = { ready: true, adapter: {}, device, error: "", lost: null, warnings: [] };
+  const diagnostics = { renderer: "webgpu", ready: true, deviceLost: false };
   context.__gosx_scene3d_webgpu_probe = () => probe;
-  context.__gosx_scene3d_webgpu_diagnostics = () => ({ renderer: "webgpu", ready: true, deviceLost: false });
+  context.__gosx_scene3d_webgpu_diagnostics = () => diagnostics;
   return {
     context,
     encoder: new context.GPUCommandEncoder(),
     queue,
     device,
     probe,
+    diagnostics,
     mount,
     onSubmittedWorkDoneCalls() { return onSubmittedWorkDoneCalls; },
     pendingSubmittedWork() { return submittedWork.length; },
@@ -202,6 +228,62 @@ test("WebGPU browser-proof readiness rejects depth-only and pre-command color su
   assert.equal(staleState.ready, false, "a visible frame with stale command state must not satisfy the post-command capture gate");
   assert.equal(staleState.predicates.commandState, false);
   assert.equal(fixture.pendingSubmittedWork(), 0, "all explicit queue fences must be settled");
+});
+
+test("WebGPU browser-proof readiness exits promptly on device-loss fallback before queue fence", async () => {
+  const buildExpression = presentExpressionBuilder();
+  const buildReceipt = failureReceiptExpressionBuilder();
+  const { poll, state } = readinessPollHelper();
+  const fixture = browserContext();
+  const c = { mount: "scene3d-adapter-hydrate-browser-test" };
+
+  fixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
+  fixture.queue.submit([]);
+  fixture.mount.attributes["data-gosx-scene3d-renderer"] = "webgl";
+  fixture.mount.attributes["data-gosx-scene3d-renderer-fallback"] = "webgpu-device-lost";
+  fixture.probe.lost = { reason: "destroyed", message: "test loss before explicit fence" };
+  fixture.diagnostics.deviceLost = true;
+
+  await assert.rejects(
+    poll(runtimeSendFor(fixture.context), buildExpression(c, 0, 0, undefined, false),
+      "wg first frame submitted scene color frame", 500),
+    (caught) => {
+      assert.equal(caught.terminal, true);
+      assert.equal(caught.classification, "device-lost-after-color-pass");
+      assert.equal(caught.phase, "wg first frame submitted scene color frame");
+      assert.equal(caught.lastPredicate.terminal, true);
+      assert.equal(caught.lastPredicate.predicates.fallback, "webgpu-device-lost");
+      assert.equal(caught.lastPredicate.predicates.probeLost, true);
+      return true;
+    }
+  );
+  assert.equal(state.sleepCalls, 0, "terminal device-loss fallback must not burn the readiness timeout");
+  assert.equal(fixture.onSubmittedWorkDoneCalls(), 0, "terminal polling must not create the explicit queue fence");
+  assert.equal(fixture.pendingSubmittedWork(), 0);
+
+  const receipt = vm.runInContext(buildReceipt(c, "webgpu-first-presentation-readiness"), fixture.context);
+  assert.equal(receipt.classification, "device-lost-after-color-pass");
+  assert.equal(receipt.mount.fallback, "webgpu-device-lost");
+
+  const slowFixture = browserContext();
+  slowFixture.mount.attributes["data-gosx-scene3d-renderer"] = "webgl";
+  const slow = vm.runInContext(buildExpression(c, 0, 0, undefined, false), slowFixture.context);
+  assert.equal(slow.ready, false);
+  assert.equal(slow.terminal, false, "ordinary WebGL/no-WebGPU readiness lag must not be terminal in the WG proof");
+  assert.equal(slow.classification, "predicate-not-ready");
+
+  const slowPoll = readinessPollHelper();
+  await assert.rejects(
+    slowPoll.poll(runtimeSendFor(slowFixture.context), buildExpression(c, 0, 0, undefined, false),
+      "wg slow nonterminal readiness", 5),
+    (caught) => {
+      assert.match(caught.message, /^timeout waiting for wg slow nonterminal readiness/);
+      assert.equal(caught.terminal, undefined);
+      assert.equal(caught.lastPredicate.terminal, false);
+      return true;
+    }
+  );
+  assert.ok(slowPoll.state.sleepCalls > 0, "slow nonterminal readiness remains a bounded poll, not a terminal exit");
 });
 
 test("WebGPU browser-proof failure receipt survives a timeout and classifies observable causes", async () => {

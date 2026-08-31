@@ -559,6 +559,16 @@ async function poll(send, expression, label, timeoutMs) {
   while (Date.now() < deadline) {
     value = await evalSend(send, expression);
     if (value && (value.ready === undefined || value.ready === true)) return value;
+    if (value && value.terminal === true) {
+      const classification = value.classification || value.terminalClassification || 'terminal-predicate';
+      const error = new Error('terminal waiting for ' + label + ': ' + classification +
+        ' (last=' + JSON.stringify(value) + ')');
+      error.lastPredicate = value;
+      error.phase = label;
+      error.classification = classification;
+      error.terminal = true;
+      throw error;
+    }
     await sleep(50);
   }
   const error = new Error('timeout waiting for ' + label + ' (last=' + JSON.stringify(value) + ')');
@@ -808,6 +818,10 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
     var mount = document.getElementById(${JSON.stringify(c.mount)});
     var state = mount && mount.__gosxScene3DState;
     var object = state && state.objects && state.objects.get('1');
+    var probe = null;
+    try { probe = typeof window.__gosx_scene3d_webgpu_probe === 'function' ? window.__gosx_scene3d_webgpu_probe() : null; } catch (_error) { probe = null; }
+    var diagnostics = null;
+    try { diagnostics = typeof window.__gosx_scene3d_webgpu_diagnostics === 'function' ? window.__gosx_scene3d_webgpu_diagnostics() : null; } catch (_error) { diagnostics = null; }
     // A scene color pass is distinct from the depth-only dummy-shadow
     // initialization pass. Completion of that color submission is deliberately
     // required before capturing the compositor surface; the pixel assertions
@@ -828,6 +842,9 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
       queueFenceCalls: window.__adapterWGQueueFenceCalls,
       queueFencePending: window.__adapterWGCompletionFencePending,
       queueFenceError: window.__adapterWGCompletionFenceError,
+      fallback: mount && mount.getAttribute('data-gosx-scene3d-renderer-fallback') || '',
+      probeLost: !!(probe && probe.lost),
+      diagnosticsDeviceLost: !!(diagnostics && diagnostics.deviceLost),
       expectedObjectX: expectedX,
       objectX: object && object.x
     };
@@ -838,8 +855,14 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
     var ready = predicates.mountFound && predicates.rendererWebGPU && predicates.mounted &&
       predicates.freshColorPass && predicates.failedSubmits === 0 && predicates.commandState &&
       (!needsCompletion || (predicates.freshCompletedColorPass && predicates.completedSubmits > 0));
+    var deviceLost = predicates.fallback === 'webgpu-device-lost' || predicates.probeLost || predicates.diagnosticsDeviceLost;
+    var classification = deviceLost && predicates.colorPasses === 0 ? 'device-lost-before-color-pass' :
+      (deviceLost ? 'device-lost-after-color-pass' : 'predicate-not-ready');
+    var terminal = !!(predicates.mountFound && deviceLost);
     return {
       ready: ready,
+      terminal: !ready && terminal,
+      classification: classification,
       predicates: predicates,
       passes: window.__adapterWGPasses,
       colorPasses: window.__adapterWGColorPasses,
@@ -1039,14 +1062,15 @@ function webGPUFailureReceiptExpr(c, phase) {
       backendIsWebGPU: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'webgpu'
     };
     var classification = 'predicate-not-ready';
-    var deviceLost = !!((probe && probe.lost) || (diagnostics && diagnostics.deviceLost));
+    var fallback = mount && mount.getAttribute('data-gosx-scene3d-renderer-fallback') || '';
+    var deviceLost = fallback === 'webgpu-device-lost' || !!((probe && probe.lost) || (diagnostics && diagnostics.deviceLost));
     if (identity.wrappedQueueMatchesProbe === false || identity.encoderDeviceMatchesProbe === false || identity.configuredDeviceMatchesProbe === false) classification = 'instrumented-queue-or-device-mismatch';
     else if (deviceLost && wrappers.colorPasses === 0) classification = 'device-lost-before-color-pass';
     else if (wrappers.colorPasses === 0) classification = 'no-scene-color-pass';
     else if (wrappers.submitFailures > 0) classification = 'queue-submit-rejected';
     else if (wrappers.failedSubmits > 0) classification = 'queue-completion-rejected';
-    else if (wrappers.completedColorPasses === 0) classification = 'color-submitted-awaiting-queue';
     else if (deviceLost) classification = 'device-lost-after-color-pass';
+    else if (wrappers.completedColorPasses === 0) classification = 'color-submitted-awaiting-queue';
     return bounded({
       capturedAtMS: Date.now(),
       phase: ${JSON.stringify(phase)},
