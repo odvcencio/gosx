@@ -55,6 +55,7 @@ const STEP_MS = 20000;
 const MOUNT_MS = 40000;
 const OVERALL_MS = 420000;
 const BUILD_MS = 240000;
+const DIAGNOSTIC_CAPTURE_MS = 2000;
 const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
 const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
 const FOUR_PART_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
@@ -557,10 +558,13 @@ async function poll(send, expression, label, timeoutMs) {
   let value = null;
   while (Date.now() < deadline) {
     value = await evalSend(send, expression);
-    if (value) return value;
+    if (value && (value.ready === undefined || value.ready === true)) return value;
     await sleep(50);
   }
-  throw new Error('timeout waiting for ' + label + ' (last=' + JSON.stringify(value) + ')');
+  const error = new Error('timeout waiting for ' + label + ' (last=' + JSON.stringify(value) + ')');
+  error.lastPredicate = value;
+  error.phase = label;
+  throw error;
 }
 
 const PRELOAD = `
@@ -570,9 +574,21 @@ window.__adapterWGPasses = 0;
 window.__adapterWGColorPasses = 0;
 window.__adapterWGDraws = 0;
 window.__adapterWGSubmits = 0;
+window.__adapterWGSubmitFailures = 0;
 window.__adapterWGCompletedSubmits = 0;
 window.__adapterWGFailedSubmits = 0;
 window.__adapterWGCompletedColorPasses = 0;
+window.__adapterWGEncoders = 0;
+window.__adapterWGConfigureSuccesses = 0;
+window.__adapterWGConfigureFailures = 0;
+window.__adapterWGCurrentTextureSuccesses = 0;
+window.__adapterWGCurrentTextureFailures = 0;
+window.__adapterWGConfigureError = '';
+window.__adapterWGCurrentTextureError = '';
+window.__adapterWGSubmitError = '';
+window.__adapterWGLatestQueue = null;
+window.__adapterWGLatestEncoderDevice = null;
+window.__adapterWGLatestConfiguredDevice = null;
 (function () {
   function wrapGL(proto) {
     if (!proto) return;
@@ -620,7 +636,15 @@ window.__adapterWGCompletedColorPasses = 0;
   if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype.submit) {
     var originalSubmit = GPUQueue.prototype.submit;
     GPUQueue.prototype.submit = function () {
-      var result = originalSubmit.apply(this, arguments);
+      window.__adapterWGLatestQueue = this;
+      var result;
+      try {
+        result = originalSubmit.apply(this, arguments);
+      } catch (error) {
+        window.__adapterWGSubmitFailures += 1;
+        window.__adapterWGSubmitError = String(error && (error.message || error) || 'submit failed').slice(0, 240);
+        throw error;
+      }
       window.__adapterWGSubmits += 1;
       // onSubmittedWorkDone covers every command submitted before this call.
       // Count completion separately from submission so a screenshot cannot
@@ -640,6 +664,45 @@ window.__adapterWGCompletedColorPasses = 0;
       }
       return result;
     };
+  }
+  if (typeof GPUDevice !== 'undefined' && GPUDevice.prototype.createCommandEncoder) {
+    var originalCreateCommandEncoder = GPUDevice.prototype.createCommandEncoder;
+    GPUDevice.prototype.createCommandEncoder = function () {
+      window.__adapterWGLatestEncoderDevice = this;
+      window.__adapterWGEncoders += 1;
+      return originalCreateCommandEncoder.apply(this, arguments);
+    };
+  }
+  if (typeof GPUCanvasContext !== 'undefined' && GPUCanvasContext.prototype) {
+    if (GPUCanvasContext.prototype.configure) {
+      var originalConfigure = GPUCanvasContext.prototype.configure;
+      GPUCanvasContext.prototype.configure = function (descriptor) {
+        try {
+          var result = originalConfigure.apply(this, arguments);
+          window.__adapterWGLatestConfiguredDevice = descriptor && descriptor.device || null;
+          window.__adapterWGConfigureSuccesses += 1;
+          return result;
+        } catch (error) {
+          window.__adapterWGConfigureFailures += 1;
+          window.__adapterWGConfigureError = String(error && (error.message || error) || 'configure failed').slice(0, 240);
+          throw error;
+        }
+      };
+    }
+    if (GPUCanvasContext.prototype.getCurrentTexture) {
+      var originalGetCurrentTexture = GPUCanvasContext.prototype.getCurrentTexture;
+      GPUCanvasContext.prototype.getCurrentTexture = function () {
+        try {
+          var result = originalGetCurrentTexture.apply(this, arguments);
+          window.__adapterWGCurrentTextureSuccesses += 1;
+          return result;
+        } catch (error) {
+          window.__adapterWGCurrentTextureFailures += 1;
+          window.__adapterWGCurrentTextureError = String(error && (error.message || error) || 'getCurrentTexture failed').slice(0, 240);
+          throw error;
+        }
+      };
+    }
   }
 })();
 `;
@@ -717,33 +780,48 @@ function winnerExpr(c, remember) {
 function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expectedObjectX) {
   return `(function () {
     var mount = document.getElementById(${JSON.stringify(c.mount)});
-    if (!mount || mount.getAttribute('data-gosx-scene3d-renderer') !== 'webgpu') return null;
-    var state = mount.__gosxScene3DState;
+    var state = mount && mount.__gosxScene3DState;
     var object = state && state.objects && state.objects.get('1');
     // A scene color pass is distinct from the depth-only dummy-shadow
     // initialization pass. Completion of that color submission is deliberately
     // required before capturing the compositor surface; the pixel assertions
     // below remain the proof that the scene itself is visible.
-    if (mount.getAttribute('data-gosx-scene3d-mounted') !== 'true' ||
-        !(window.__adapterWGColorPasses > ${JSON.stringify(afterColorPasses || 0)}) ||
-        !(window.__adapterWGCompletedColorPasses > ${JSON.stringify(afterColorPasses || 0)}) ||
-        !(window.__adapterWGCompletedColorPasses > ${JSON.stringify(afterCompletedColorPasses || 0)}) ||
-        !(window.__adapterWGCompletedSubmits > 0) || window.__adapterWGFailedSubmits !== 0 ||
-        (${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)} !== null &&
-          (!object || object.x !== ${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)}))) return null;
+    var expectedX = ${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)};
+    var predicates = {
+      mountFound: !!mount,
+      rendererWebGPU: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'webgpu',
+      mounted: !!mount && mount.getAttribute('data-gosx-scene3d-mounted') === 'true',
+      colorPasses: window.__adapterWGColorPasses,
+      colorPassBaseline: ${JSON.stringify(afterColorPasses || 0)},
+      completedColorPasses: window.__adapterWGCompletedColorPasses,
+      completedColorPassBaseline: ${JSON.stringify(afterCompletedColorPasses || 0)},
+      completedSubmits: window.__adapterWGCompletedSubmits,
+      failedSubmits: window.__adapterWGFailedSubmits,
+      expectedObjectX: expectedX,
+      objectX: object && object.x
+    };
+    predicates.freshColorPass = predicates.colorPasses > predicates.colorPassBaseline;
+    predicates.freshCompletedColorPass = predicates.completedColorPasses > predicates.colorPassBaseline &&
+      predicates.completedColorPasses > predicates.completedColorPassBaseline;
+    predicates.commandState = expectedX === null || predicates.objectX === expectedX;
+    var ready = predicates.mountFound && predicates.rendererWebGPU && predicates.mounted &&
+      predicates.freshColorPass && predicates.freshCompletedColorPass &&
+      predicates.completedSubmits > 0 && predicates.failedSubmits === 0 && predicates.commandState;
     return {
+      ready: ready,
+      predicates: predicates,
       passes: window.__adapterWGPasses,
       colorPasses: window.__adapterWGColorPasses,
       draws: window.__adapterWGDraws,
       submits: window.__adapterWGSubmits,
       completedSubmits: window.__adapterWGCompletedSubmits,
       objectX: object && object.x,
-      commandRevision: mount.getAttribute('data-gosx-scene3d-command-revision'),
-      commandAppliedRevision: mount.getAttribute('data-gosx-scene3d-command-applied-revision'),
-      meshObjects: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-objects'),
-      meshDrawCalls: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-draw-calls'),
-      meshViewCulled: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-view-culled'),
-      meshUndrawable: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-undrawable')
+      commandRevision: mount && mount.getAttribute('data-gosx-scene3d-command-revision'),
+      commandAppliedRevision: mount && mount.getAttribute('data-gosx-scene3d-command-applied-revision'),
+      meshObjects: mount && mount.getAttribute('data-gosx-scene3d-webgpu-mesh-objects'),
+      meshDrawCalls: mount && mount.getAttribute('data-gosx-scene3d-webgpu-mesh-draw-calls'),
+      meshViewCulled: mount && mount.getAttribute('data-gosx-scene3d-webgpu-mesh-view-culled'),
+      meshUndrawable: mount && mount.getAttribute('data-gosx-scene3d-webgpu-mesh-undrawable')
     };
   })()`;
 }
@@ -757,6 +835,217 @@ async function waitForWebGPUPresentation(send, c, label, afterColorPasses, after
   // consume that finished canvas texture before Page.captureScreenshot.
   await evalSend(send, settleFramesExpr(2), { awaitPromise: true });
   return evidence;
+}
+
+function boundedValue(value, depth, seen) {
+  const level = depth || 0;
+  if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number') return value;
+  if (typeof value === 'string') return value.length > 480 ? value.slice(0, 480) + '…' : value;
+  if (typeof value === 'function') return '[function]';
+  if (level >= 4) return '[truncated]';
+  if (typeof value === 'object') {
+    const visited = seen || [];
+    if (visited.includes(value)) return '[cycle]';
+    let keys;
+    try { keys = Object.getOwnPropertyNames(value).sort().slice(0, 48); }
+    catch (_error) { return '[uninspectable]'; }
+    const out = Array.isArray(value) ? [] : {};
+    const nextSeen = visited.concat([value]);
+    for (const key of keys) {
+      if (key === 'length') continue;
+      let descriptor;
+      try { descriptor = Object.getOwnPropertyDescriptor(value, key); }
+      catch (_error) { out[key] = '[unreadable]'; continue; }
+      if (!descriptor) continue;
+      out[key] = Object.prototype.hasOwnProperty.call(descriptor, 'value')
+        ? boundedValue(descriptor.value, level + 1, nextSeen)
+        : '[accessor]';
+    }
+    return out;
+  }
+  try { return String(value).slice(0, 480); }
+  catch (_error) { return '[unstringifiable]'; }
+}
+
+function boundedMessages(entries) {
+  const out = [];
+  const start = Math.max(0, entries.length - 24);
+  for (let index = start; index < entries.length; index += 1) out.push(boundedValue(entries[index]));
+  return out;
+}
+
+function safeOwnDataValue(value, key) {
+  if (value === null || value === undefined) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : undefined;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function safeErrorSnapshot(error) {
+  return {
+    kind: error === null ? 'null' : typeof error,
+    name: boundedValue(safeOwnDataValue(error, 'name')),
+    message: boundedValue(safeOwnDataValue(error, 'message')),
+    stack: boundedValue(safeOwnDataValue(error, 'stack')),
+  };
+}
+
+function recordDiagnosticFailure(evidence, stage, error) {
+  try {
+    let failures = safeOwnDataValue(evidence, 'diagnosticFailures');
+    if (!Array.isArray(failures)) {
+      failures = [];
+      evidence.diagnosticFailures = failures;
+    }
+    if (failures.length >= 8) failures.shift();
+    failures.push({ stage, atMS: Date.now(), error: safeErrorSnapshot(error) });
+  } catch (_error) {}
+}
+
+async function captureDiagnosticBestEffort(evidence, stage, callback) {
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      recordDiagnosticFailure(evidence, stage + '-timeout', new Error('diagnostic capture exceeded ' + DIAGNOSTIC_CAPTURE_MS + 'ms'));
+      finish();
+    }, DIAGNOSTIC_CAPTURE_MS);
+    Promise.resolve().then(callback).then(finish, (error) => {
+      recordDiagnosticFailure(evidence, stage, error);
+      finish();
+    });
+  });
+}
+
+function webGPUFailureReceiptExpr(c, phase) {
+  return `(function () {
+    function bounded(value, depth) {
+      var level = depth || 0;
+      if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number') return value;
+      if (typeof value === 'string') return value.length > 480 ? value.slice(0, 480) + '…' : value;
+      if (level >= 3) return '[truncated]';
+      if (Array.isArray(value)) return value.slice(0, 24).map(function (entry) { return bounded(entry, level + 1); });
+      if (typeof value === 'object') {
+        var out = {}, keys = [];
+        try { keys = Object.keys(value).sort().slice(0, 48); } catch (_error) { return '[uninspectable]'; }
+        for (var i = 0; i < keys.length; i += 1) {
+          try { out[keys[i]] = bounded(value[keys[i]], level + 1); } catch (_error) { out[keys[i]] = '[unreadable]'; }
+        }
+        return out;
+      }
+      return String(value).slice(0, 480);
+    }
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var state = mount && mount.__gosxScene3DState;
+    var handle = mount && mount.__gosxScene3DHandle;
+    var object = state && state.objects && state.objects.get('1');
+    var probe = null;
+    try { probe = typeof window.__gosx_scene3d_webgpu_probe === 'function' ? window.__gosx_scene3d_webgpu_probe() : null; } catch (error) { probe = { probeCallError: String(error && (error.message || error) || error) }; }
+    var diagnostics = null;
+    try { diagnostics = typeof window.__gosx_scene3d_webgpu_diagnostics === 'function' ? window.__gosx_scene3d_webgpu_diagnostics() : null; } catch (error) { diagnostics = { diagnosticsCallError: String(error && (error.message || error) || error) }; }
+    var probeDevice = probe && probe.device || null;
+    var probeQueue = probeDevice && probeDevice.queue || null;
+    var queue = window.__adapterWGLatestQueue || null;
+    var encoderDevice = window.__adapterWGLatestEncoderDevice || null;
+    var configuredDevice = window.__adapterWGLatestConfiguredDevice || null;
+    var wrappers = {
+      encoders: window.__adapterWGEncoders || 0,
+      passes: window.__adapterWGPasses || 0,
+      colorPasses: window.__adapterWGColorPasses || 0,
+      draws: window.__adapterWGDraws || 0,
+      submits: window.__adapterWGSubmits || 0,
+      submitFailures: window.__adapterWGSubmitFailures || 0,
+      submitError: window.__adapterWGSubmitError || '',
+      completedSubmits: window.__adapterWGCompletedSubmits || 0,
+      failedSubmits: window.__adapterWGFailedSubmits || 0,
+      completedColorPasses: window.__adapterWGCompletedColorPasses || 0,
+      configureSuccesses: window.__adapterWGConfigureSuccesses || 0,
+      configureFailures: window.__adapterWGConfigureFailures || 0,
+      configureError: window.__adapterWGConfigureError || '',
+      currentTextureSuccesses: window.__adapterWGCurrentTextureSuccesses || 0,
+      currentTextureFailures: window.__adapterWGCurrentTextureFailures || 0,
+      currentTextureError: window.__adapterWGCurrentTextureError || ''
+    };
+    var identity = {
+      wrappedQueueObserved: !!queue,
+      probeDeviceObserved: !!probeDevice,
+      probeQueueObserved: !!probeQueue,
+      wrappedQueueMatchesProbe: queue && probeQueue ? queue === probeQueue : null,
+      encoderDeviceMatchesProbe: encoderDevice && probeDevice ? encoderDevice === probeDevice : null,
+      configuredDeviceMatchesProbe: configuredDevice && probeDevice ? configuredDevice === probeDevice : null,
+      backendIsWebGPU: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'webgpu'
+    };
+    var classification = 'predicate-not-ready';
+    var deviceLost = !!((probe && probe.lost) || (diagnostics && diagnostics.deviceLost));
+    if (identity.wrappedQueueMatchesProbe === false || identity.encoderDeviceMatchesProbe === false || identity.configuredDeviceMatchesProbe === false) classification = 'instrumented-queue-or-device-mismatch';
+    else if (deviceLost && wrappers.colorPasses === 0) classification = 'device-lost-before-color-pass';
+    else if (wrappers.colorPasses === 0) classification = 'no-scene-color-pass';
+    else if (wrappers.submitFailures > 0) classification = 'queue-submit-rejected';
+    else if (wrappers.failedSubmits > 0) classification = 'queue-completion-rejected';
+    else if (wrappers.completedColorPasses === 0) classification = 'color-submitted-awaiting-queue';
+    else if (deviceLost) classification = 'device-lost-after-color-pass';
+    return bounded({
+      capturedAtMS: Date.now(),
+      phase: ${JSON.stringify(phase)},
+      classification: classification,
+      mount: mount ? {
+        mounted: mount.getAttribute('data-gosx-scene3d-mounted'),
+        renderer: mount.getAttribute('data-gosx-scene3d-renderer'),
+        fallback: mount.getAttribute('data-gosx-scene3d-renderer-fallback'),
+        commandReady: mount.getAttribute('data-gosx-scene3d-command-ready'),
+        revision: mount.getAttribute('data-gosx-scene3d-command-revision'),
+        appliedRevision: mount.getAttribute('data-gosx-scene3d-command-applied-revision'),
+        objectX: object && object.x,
+        hasState: !!state,
+        hasHandle: !!handle,
+        stats: mount.__gosxScene3DWebGPUStats || null
+      } : null,
+      wrappers: wrappers,
+      identity: identity,
+      factory: {
+        error: window.__gosx_scene3d_webgpu_factory_error || '',
+        context: window.__gosx_scene3d_webgpu_factory_context || null
+      },
+      probe: probe ? {
+        ready: !!probe.ready,
+        error: probe.error || '',
+        lost: probe.lost || null,
+        retryCount: probe.retryCount || 0,
+        lostProbeCount: probe.lostProbeCount || 0,
+        warnings: probe.warnings || []
+      } : null,
+      diagnostics: diagnostics
+    });
+  })()`;
+}
+
+async function captureWebGPUFailureReceipt(send, c, phase) {
+  return boundedValue(await evalSend(send, webGPUFailureReceiptExpr(c, phase)));
+}
+
+async function retainCaseEvidence(sink, evidence, work, onFailure) {
+  try {
+    return await work();
+  } catch (error) {
+    await captureDiagnosticBestEffort(evidence, 'case-failure-receipt', () => onFailure(error));
+    throw error;
+  } finally {
+    try {
+      evidence.finishedAt = new Date().toISOString();
+      evidence.finishedAtMS = Date.now();
+      sink.push(evidence);
+    } catch (diagnosticError) {
+      recordDiagnosticFailure(evidence, 'case-evidence-append', diagnosticError);
+    }
+  }
 }
 
 function identityExpr(c) {
@@ -924,11 +1213,24 @@ function assertEnvelope(call, c, generation, programName, commandIDs) {
 }
 
 async function runCase(send, c) {
-  const evidence = { name: c.name, backend: c.webgpu ? 'webgpu' : 'webgl2' };
+  const evidence = {
+    name: c.name,
+    backend: c.webgpu ? 'webgpu' : 'webgl2',
+    startedAt: new Date().toISOString(),
+    startedAtMS: Date.now(),
+    phases: [],
+  };
+  const phase = (name) => {
+    evidence.phase = name;
+    evidence.phases.push({ name, at: new Date().toISOString(), atMS: Date.now() });
+  };
+  return retainCaseEvidence(caseEvidence, evidence, async () => {
+  phase('navigate');
   const loaded = waitForEvent('Page.loadEventFired', MOUNT_MS);
   await send('Page.navigate', { url: BASE + '/case/' + c.name });
   await loaded;
 
+  phase('preflight-readiness');
   evidence.preflight = await poll(send, preflightExpr(c), c.name + ' first blocked hydrate');
   const pre = evidence.preflight;
   if (pre.bootErrors.length || !pre.runtimeReady || pre.runtimeExited || !pre.firstPending) {
@@ -942,6 +1244,7 @@ async function runCase(send, c) {
   }
   assertEnvelope(pre.hydrates[0], c, 1, 'AdapterStaleA', [0]);
 
+  phase('winning-generation-readiness');
   await evalSend(send, 'window.__gosx_runtime_ready(); true');
   evidence.winner = await poll(send, winnerExpr(c, true), c.name + ' winning generation');
   assertEnvelope(evidence.winner.hydrates[1], c, 2, 'AdapterWinnerB', [0, 1, 2]);
@@ -959,6 +1262,7 @@ async function runCase(send, c) {
     fail('[' + c.name + '] replaced adapter disposal mismatch: ' + JSON.stringify(winner.disposes));
   }
 
+  phase('stale-generation-release');
   await evalSend(send, 'window.__adapterReleaseFirst(); true');
   await evalSend(send, settleFramesExpr(12), { awaitPromise: true });
   evidence.afterStaleRelease = await evalSend(send, identityExpr(c));
@@ -970,9 +1274,11 @@ async function runCase(send, c) {
   }
 
   if (c.webgpu) {
+    phase('webgpu-first-presentation-readiness');
     evidence.webgpuPresentation = await waitForWebGPUPresentation(send, c, c.name + ' first frame');
   }
 
+  phase('first-capture');
   evidence.firstFrame = await capture(send, c, 'first-frame');
   const metrics = evidence.firstFrame.metrics;
   assertVisibleFrame(c, 'first frame', metrics);
@@ -1004,6 +1310,7 @@ async function runCase(send, c) {
     fail('[wg] native WebGPU render evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
   }
 
+  phase('hub-command');
   evidence.hubCommand = await evalSend(send, hubCommandExpr(c), { awaitPromise: true });
   if (!evidence.hubCommand || evidence.hubCommand.beforeX !== 0 || evidence.hubCommand.afterX !== 1.25 ||
       !evidence.hubCommand.sameState || !evidence.hubCommand.sameHandle ||
@@ -1014,6 +1321,7 @@ async function runCase(send, c) {
   }
   await evalSend(send, settleFramesExpr(4), { awaitPromise: true });
   if (c.webgpu) {
+    phase('webgpu-post-command-presentation-readiness');
     evidence.webgpuAfterHubPresentation = await waitForWebGPUPresentation(
       send, c, c.name + ' after hub command', evidence.hubCommand.webgpuColorPassBaseline,
       evidence.hubCommand.webgpuCompletedColorPassBaseline, 1.25
@@ -1025,9 +1333,11 @@ async function runCase(send, c) {
         JSON.stringify(evidence.webgpuAfterHubPresentation));
     }
   }
+  phase('post-command-capture');
   evidence.afterHub = await capture(send, c, 'after-hub-command');
   assertVisibleFrame(c, 'after hub command', evidence.afterHub.metrics);
 
+  phase('disposal');
   evidence.disposed = await evalSend(send, `(function () {
     window.__gosx_dispose_engine(${JSON.stringify(c.engine)});
     var mount=document.getElementById(${JSON.stringify(c.mount)});
@@ -1043,6 +1353,7 @@ async function runCase(send, c) {
     fail('[' + c.name + '] final disposal mismatch: ' + JSON.stringify(evidence.disposed));
   }
 
+  phase('telemetry-drain');
   await evalSend(send, `(async function () {
     if(typeof window.__gosx_telemetry_flush!=='function'||typeof window.__gosx_telemetry_snapshot!=='function')return null;
     window.__gosx_telemetry_flush({drain:true});
@@ -1052,8 +1363,28 @@ async function runCase(send, c) {
       await new Promise(function(resolve){setTimeout(resolve,25);});}
     return last;
   })()`, { awaitPromise: true });
+  phase('network-idle');
   await waitNetworkIdle(c.name);
+  phase('complete');
   return evidence;
+  }, async (error) => {
+    evidence.failure = {
+      phase: evidence.phase || 'before-case-phase',
+      at: new Date().toISOString(),
+      atMS: Date.now(),
+      error: safeErrorSnapshot(error),
+      lastPredicate: boundedValue(safeOwnDataValue(error, 'lastPredicate')),
+      errorsAtFailure: boundedMessages(errors),
+      warningsAtFailure: boundedMessages(warnings),
+    };
+    if (c.webgpu) {
+      try {
+        evidence.webgpuFailureReceipt = await captureWebGPUFailureReceipt(send, c, evidence.failure.phase);
+      } catch (receiptError) {
+        evidence.failure.webgpuReceiptError = safeErrorSnapshot(receiptError);
+      }
+    }
+  });
 }
 
 const caseEvidence = [];
@@ -1185,7 +1516,7 @@ const watchdog = setTimeout(() => {
     throw new Error('native WebGL2 and WebGPU are both required; got ' + JSON.stringify(nativeCaps));
   }
 
-  for (const c of CASES) caseEvidence.push(await runCase(send, c));
+  for (const c of CASES) await runCase(send, c);
   for (const c of CASES) {
     if (programRequests.get('/program/' + c.name + '.json') !== 2) {
       fail('[' + c.name + '] expected exactly two program fetches, got ' +
