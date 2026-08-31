@@ -578,6 +578,11 @@ window.__adapterWGSubmitFailures = 0;
 window.__adapterWGCompletedSubmits = 0;
 window.__adapterWGFailedSubmits = 0;
 window.__adapterWGCompletedColorPasses = 0;
+window.__adapterWGSubmittedColorPasses = 0;
+window.__adapterWGQueueFenceCalls = 0;
+window.__adapterWGCompletionFencePending = false;
+window.__adapterWGCompletionFenceError = '';
+window.__adapterWGCompletionFencePromise = null;
 window.__adapterWGEncoders = 0;
 window.__adapterWGConfigureSuccesses = 0;
 window.__adapterWGConfigureFailures = 0;
@@ -646,23 +651,44 @@ window.__adapterWGLatestConfiguredDevice = null;
         throw error;
       }
       window.__adapterWGSubmits += 1;
-      // onSubmittedWorkDone covers every command submitted before this call.
-      // Count completion separately from submission so a screenshot cannot
-      // race the GPU queue merely because an encoder was submitted.
-      if (typeof this.onSubmittedWorkDone === 'function') {
-        var submittedColorPasses = window.__adapterWGColorPasses;
-        try {
-          Promise.resolve(this.onSubmittedWorkDone()).then(function () {
-            window.__adapterWGCompletedSubmits += 1;
-            window.__adapterWGCompletedColorPasses = Math.max(window.__adapterWGCompletedColorPasses, submittedColorPasses);
-          }, function () {
-            window.__adapterWGFailedSubmits += 1;
-          });
-        } catch (_error) {
-          window.__adapterWGFailedSubmits += 1;
-        }
-      }
+      window.__adapterWGSubmittedColorPasses = Math.max(
+        window.__adapterWGSubmittedColorPasses,
+        window.__adapterWGColorPasses
+      );
       return result;
+    };
+    window.__adapterWGAwaitSubmittedWork = function () {
+      var queue = window.__adapterWGLatestQueue;
+      if (!queue || typeof queue.onSubmittedWorkDone !== 'function') {
+        return Promise.resolve({ ready: false, reason: 'queue-unavailable' });
+      }
+      if (window.__adapterWGCompletionFencePromise) return window.__adapterWGCompletionFencePromise;
+      var targetSubmits = window.__adapterWGSubmits;
+      var targetColorPasses = window.__adapterWGSubmittedColorPasses;
+      window.__adapterWGQueueFenceCalls += 1;
+      window.__adapterWGCompletionFencePending = true;
+      window.__adapterWGCompletionFenceError = '';
+      var fence;
+      try {
+        fence = Promise.resolve(queue.onSubmittedWorkDone()).then(function () {
+          window.__adapterWGCompletedSubmits = Math.max(window.__adapterWGCompletedSubmits, targetSubmits);
+          window.__adapterWGCompletedColorPasses = Math.max(window.__adapterWGCompletedColorPasses, targetColorPasses);
+          return { ready: true, targetSubmits: targetSubmits, targetColorPasses: targetColorPasses };
+        }, function (error) {
+          window.__adapterWGFailedSubmits += 1;
+          window.__adapterWGCompletionFenceError = String(error && (error.message || error) || 'queue completion rejected').slice(0, 240);
+          throw error;
+        });
+      } catch (error) {
+        window.__adapterWGFailedSubmits += 1;
+        window.__adapterWGCompletionFenceError = String(error && (error.message || error) || 'queue completion rejected').slice(0, 240);
+        return Promise.reject(error);
+      }
+      window.__adapterWGCompletionFencePromise = fence.finally(function () {
+        window.__adapterWGCompletionFencePending = false;
+        window.__adapterWGCompletionFencePromise = null;
+      });
+      return window.__adapterWGCompletionFencePromise;
     };
   }
   if (typeof GPUDevice !== 'undefined' && GPUDevice.prototype.createCommandEncoder) {
@@ -777,7 +803,7 @@ function winnerExpr(c, remember) {
   })()`;
 }
 
-function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expectedObjectX) {
+function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expectedObjectX, requireCompleted) {
   return `(function () {
     var mount = document.getElementById(${JSON.stringify(c.mount)});
     var state = mount && mount.__gosxScene3DState;
@@ -787,16 +813,21 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
     // required before capturing the compositor surface; the pixel assertions
     // below remain the proof that the scene itself is visible.
     var expectedX = ${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)};
+    var needsCompletion = ${JSON.stringify(requireCompleted !== false)};
     var predicates = {
       mountFound: !!mount,
       rendererWebGPU: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'webgpu',
       mounted: !!mount && mount.getAttribute('data-gosx-scene3d-mounted') === 'true',
       colorPasses: window.__adapterWGColorPasses,
+      submittedColorPasses: window.__adapterWGSubmittedColorPasses,
       colorPassBaseline: ${JSON.stringify(afterColorPasses || 0)},
       completedColorPasses: window.__adapterWGCompletedColorPasses,
       completedColorPassBaseline: ${JSON.stringify(afterCompletedColorPasses || 0)},
       completedSubmits: window.__adapterWGCompletedSubmits,
       failedSubmits: window.__adapterWGFailedSubmits,
+      queueFenceCalls: window.__adapterWGQueueFenceCalls,
+      queueFencePending: window.__adapterWGCompletionFencePending,
+      queueFenceError: window.__adapterWGCompletionFenceError,
       expectedObjectX: expectedX,
       objectX: object && object.x
     };
@@ -805,16 +836,20 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
       predicates.completedColorPasses > predicates.completedColorPassBaseline;
     predicates.commandState = expectedX === null || predicates.objectX === expectedX;
     var ready = predicates.mountFound && predicates.rendererWebGPU && predicates.mounted &&
-      predicates.freshColorPass && predicates.freshCompletedColorPass &&
-      predicates.completedSubmits > 0 && predicates.failedSubmits === 0 && predicates.commandState;
+      predicates.freshColorPass && predicates.failedSubmits === 0 && predicates.commandState &&
+      (!needsCompletion || (predicates.freshCompletedColorPass && predicates.completedSubmits > 0));
     return {
       ready: ready,
       predicates: predicates,
       passes: window.__adapterWGPasses,
       colorPasses: window.__adapterWGColorPasses,
+      submittedColorPasses: window.__adapterWGSubmittedColorPasses,
       draws: window.__adapterWGDraws,
       submits: window.__adapterWGSubmits,
       completedSubmits: window.__adapterWGCompletedSubmits,
+      queueFenceCalls: window.__adapterWGQueueFenceCalls,
+      queueFencePending: window.__adapterWGCompletionFencePending,
+      queueFenceError: window.__adapterWGCompletionFenceError,
       objectX: object && object.x,
       commandRevision: mount && mount.getAttribute('data-gosx-scene3d-command-revision'),
       commandAppliedRevision: mount && mount.getAttribute('data-gosx-scene3d-command-applied-revision'),
@@ -826,11 +861,27 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
   })()`;
 }
 
+function webGPUQueueFenceExpr(c, label) {
+  const proofLabel = label || c.name || 'scene';
+  return `(async function () {
+    if (typeof window.__adapterWGAwaitSubmittedWork !== 'function') {
+      throw new Error('WebGPU queue fence helper unavailable for ' + ${JSON.stringify(proofLabel)});
+    }
+    return await window.__adapterWGAwaitSubmittedWork();
+  })()`;
+}
+
 async function waitForWebGPUPresentation(send, c, label, afterColorPasses, afterCompletedColorPasses, expectedObjectX) {
+  await poll(
+    send, webGPUPresentExpr(c, afterColorPasses || 0, afterCompletedColorPasses || 0, expectedObjectX, false),
+    label + ' submitted scene color frame'
+  );
+  const queueFence = await evalSend(send, webGPUQueueFenceExpr(c, label), { awaitPromise: true });
   const evidence = await poll(
-    send, webGPUPresentExpr(c, afterColorPasses || 0, afterCompletedColorPasses || 0, expectedObjectX),
+    send, webGPUPresentExpr(c, afterColorPasses || 0, afterCompletedColorPasses || 0, expectedObjectX, true),
     label + ' completed scene color frame'
   );
+  evidence.queueFence = queueFence;
   // GPU completion precedes presentation; allow the browser compositor to
   // consume that finished canvas texture before Page.captureScreenshot.
   await evalSend(send, settleFramesExpr(2), { awaitPromise: true });
@@ -960,6 +1011,7 @@ function webGPUFailureReceiptExpr(c, phase) {
       encoders: window.__adapterWGEncoders || 0,
       passes: window.__adapterWGPasses || 0,
       colorPasses: window.__adapterWGColorPasses || 0,
+      submittedColorPasses: window.__adapterWGSubmittedColorPasses || 0,
       draws: window.__adapterWGDraws || 0,
       submits: window.__adapterWGSubmits || 0,
       submitFailures: window.__adapterWGSubmitFailures || 0,
@@ -967,6 +1019,9 @@ function webGPUFailureReceiptExpr(c, phase) {
       completedSubmits: window.__adapterWGCompletedSubmits || 0,
       failedSubmits: window.__adapterWGFailedSubmits || 0,
       completedColorPasses: window.__adapterWGCompletedColorPasses || 0,
+      queueFenceCalls: window.__adapterWGQueueFenceCalls || 0,
+      queueFencePending: window.__adapterWGCompletionFencePending === true,
+      queueFenceError: window.__adapterWGCompletionFenceError || '',
       configureSuccesses: window.__adapterWGConfigureSuccesses || 0,
       configureFailures: window.__adapterWGConfigureFailures || 0,
       configureError: window.__adapterWGConfigureError || '',

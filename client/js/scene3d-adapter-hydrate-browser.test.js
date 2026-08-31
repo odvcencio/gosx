@@ -18,10 +18,17 @@ function preloadSource() {
 }
 
 function presentExpressionBuilder() {
-  const start = browserProof.indexOf("function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expectedObjectX) {");
-  const end = browserProof.indexOf("\nasync function waitForWebGPUPresentation", start);
+  const start = browserProof.indexOf("function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expectedObjectX, requireCompleted) {");
+  const end = browserProof.indexOf("\nfunction webGPUQueueFenceExpr", start);
   assert.ok(start >= 0 && end > start, "browser proof WebGPU readiness helper must remain extractable");
   return vm.runInNewContext(browserProof.slice(start, end) + "; webGPUPresentExpr");
+}
+
+function queueFenceExpressionBuilder() {
+  const start = browserProof.indexOf("function webGPUQueueFenceExpr(c, label) {");
+  const end = browserProof.indexOf("\nasync function waitForWebGPUPresentation", start);
+  assert.ok(start >= 0 && end > start, "browser proof WebGPU queue fence helper must remain extractable");
+  return vm.runInNewContext(browserProof.slice(start, end) + "; webGPUQueueFenceExpr");
 }
 
 function failureReceiptExpressionBuilder() {
@@ -41,8 +48,8 @@ function caseEvidenceRetainer() {
 }
 
 function browserContext() {
-  let resolveSubmittedWork;
-  let rejectSubmittedWork;
+  const submittedWork = [];
+  let onSubmittedWorkDoneCalls = 0;
   function GPUCommandEncoder() {}
   GPUCommandEncoder.prototype.beginRenderPass = function () { return { end() {} }; };
   function GPURenderPassEncoder() {}
@@ -51,7 +58,8 @@ function browserContext() {
   function GPUQueue() {}
   GPUQueue.prototype.submit = function () {};
   GPUQueue.prototype.onSubmittedWorkDone = function () {
-    return new Promise((resolve, reject) => { resolveSubmittedWork = resolve; rejectSubmittedWork = reject; });
+    onSubmittedWorkDoneCalls += 1;
+    return new Promise((resolve, reject) => { submittedWork.push({ resolve, reject }); });
   };
   function GPUDevice(queue) { this.queue = queue; }
   GPUDevice.prototype.createCommandEncoder = function () { return new GPUCommandEncoder(); };
@@ -91,42 +99,65 @@ function browserContext() {
     device,
     probe,
     mount,
-    resolveSubmittedWork() { resolveSubmittedWork(); },
-    rejectSubmittedWork(error) { rejectSubmittedWork(error); },
+    onSubmittedWorkDoneCalls() { return onSubmittedWorkDoneCalls; },
+    pendingSubmittedWork() { return submittedWork.length; },
+    resolveSubmittedWork() {
+      const entry = submittedWork.shift();
+      assert.ok(entry, "expected pending submitted-work fence");
+      entry.resolve();
+    },
+    rejectSubmittedWork(error) {
+      const entry = submittedWork.shift();
+      assert.ok(entry, "expected pending submitted-work fence");
+      entry.reject(error);
+    },
   };
-}
-
-async function settlePromiseCallbacks() {
-  await Promise.resolve();
-  await Promise.resolve();
 }
 
 test("WebGPU browser-proof readiness rejects depth-only and pre-command color submits", async () => {
   const buildExpression = presentExpressionBuilder();
+  const buildFence = queueFenceExpressionBuilder();
   const fixture = browserContext();
   const c = { mount: "scene3d-adapter-hydrate-browser-test" };
 
   fixture.encoder.beginRenderPass({ colorAttachments: [] }).end();
   fixture.queue.submit([]);
-  fixture.resolveSubmittedWork();
-  await settlePromiseCallbacks();
 
   assert.equal(fixture.context.__adapterWGPasses, 1);
   assert.equal(fixture.context.__adapterWGColorPasses, 0);
   assert.equal(fixture.context.__adapterWGCompletedColorPasses, 0);
-  const depthOnly = vm.runInContext(buildExpression(c, 0, 0), fixture.context);
+  assert.equal(fixture.context.__adapterWGQueueFenceCalls, 0, "submit instrumentation must not create queue fences");
+  assert.equal(fixture.pendingSubmittedWork(), 0);
+  const depthOnly = vm.runInContext(buildExpression(c, 0, 0, undefined, false), fixture.context);
   assert.equal(depthOnly.ready, false, "the depth-only dummy-shadow pass must never make a blank first frame ready");
   assert.equal(depthOnly.predicates.freshColorPass, false);
   assert.equal(depthOnly.predicates.completedColorPasses, 0);
 
   fixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
   fixture.queue.submit([]);
+  const submitted = vm.runInContext(buildExpression(c, 0, 0, undefined, false), fixture.context);
+  assert.equal(submitted.ready, true, "a fresh color submit may arm the capture-time queue fence");
+  assert.equal(submitted.completedSubmits, 0);
+  assert.equal(fixture.onSubmittedWorkDoneCalls(), 0);
+  const firstFence = vm.runInContext(buildFence(c, "first frame"), fixture.context);
+  const reusedFence = vm.runInContext(buildFence(c, "first frame"), fixture.context);
+  assert.equal(fixture.context.__adapterWGQueueFenceCalls, 1, "one pending readiness epoch must share one queue fence");
+  assert.equal(fixture.onSubmittedWorkDoneCalls(), 1);
+  assert.equal(fixture.pendingSubmittedWork(), 1);
   fixture.resolveSubmittedWork();
-  await settlePromiseCallbacks();
+  const firstFenceResult = await firstFence;
+  const reusedFenceResult = await reusedFence;
+  assert.equal(firstFenceResult.ready, true);
+  assert.equal(firstFenceResult.targetSubmits, 2);
+  assert.equal(firstFenceResult.targetColorPasses, 1);
+  assert.equal(reusedFenceResult.ready, true);
+  assert.equal(reusedFenceResult.targetSubmits, 2);
+  assert.equal(reusedFenceResult.targetColorPasses, 1);
 
-  const ready = vm.runInContext(buildExpression(c, 0, 0), fixture.context);
+  const ready = vm.runInContext(buildExpression(c, 0, 0, undefined, true), fixture.context);
   assert.equal(ready.colorPasses, 1);
   assert.equal(ready.completedSubmits, 2);
+  assert.equal(ready.queueFenceCalls, 1);
   assert.equal(ready.meshDrawCalls, "1");
 
   // Model an old-state rAF that completes before command application. The
@@ -134,39 +165,48 @@ test("WebGPU browser-proof readiness rejects depth-only and pre-command color su
   // x=1.25, so this pass is intentionally included in the baseline.
   fixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
   fixture.queue.submit([]);
+  const baselineFence = vm.runInContext(buildFence(c, "pre-command baseline"), fixture.context);
+  assert.equal(fixture.context.__adapterWGQueueFenceCalls, 2, "a later readiness epoch gets one new queue fence");
   fixture.resolveSubmittedWork();
-  await settlePromiseCallbacks();
+  await baselineFence;
   const postCommandBaseline = fixture.context.__adapterWGColorPasses;
   fixture.mount.__gosxScene3DState.objects.get("1").x = 1.25;
 
   const completedPostCommandBaseline = fixture.context.__adapterWGCompletedColorPasses;
   const staleColor = vm.runInContext(
-    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25), fixture.context
+    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25, true), fixture.context
   );
   assert.equal(staleColor.ready, false, "a completed pre-command color pass must not satisfy the post-command capture gate");
   assert.equal(staleColor.predicates.freshColorPass, false);
 
   fixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
   fixture.queue.submit([]);
+  const pendingPostCommand = vm.runInContext(
+    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25, true), fixture.context
+  );
+  assert.equal(pendingPostCommand.ready, false, "a fresh post-command submit still waits for its capture-time fence");
+  const postCommandFence = vm.runInContext(buildFence(c, "after hub command"), fixture.context);
   fixture.resolveSubmittedWork();
-  await settlePromiseCallbacks();
+  await postCommandFence;
 
   const postCommandReady = vm.runInContext(
-    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25), fixture.context
+    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25, true), fixture.context
   );
   assert.equal(postCommandReady.colorPasses, postCommandBaseline + 1);
   assert.equal(postCommandReady.objectX, 1.25);
 
   fixture.mount.__gosxScene3DState.objects.get("1").x = 0;
   const staleState = vm.runInContext(
-    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25), fixture.context
+    buildExpression(c, postCommandBaseline, completedPostCommandBaseline, 1.25, true), fixture.context
   );
   assert.equal(staleState.ready, false, "a visible frame with stale command state must not satisfy the post-command capture gate");
   assert.equal(staleState.predicates.commandState, false);
+  assert.equal(fixture.pendingSubmittedWork(), 0, "all explicit queue fences must be settled");
 });
 
 test("WebGPU browser-proof failure receipt survives a timeout and classifies observable causes", async () => {
   const buildReceipt = failureReceiptExpressionBuilder();
+  const buildFence = queueFenceExpressionBuilder();
   const fixture = browserContext();
   const c = { mount: "scene3d-adapter-hydrate-browser-test" };
 
@@ -199,18 +239,23 @@ test("WebGPU browser-proof failure receipt survives a timeout and classifies obs
   assert.equal(waiting.wrappers.colorPasses, 1);
   assert.equal(waiting.wrappers.completedColorPasses, 0);
 
+  const rejectedFence = vm.runInContext(buildFence(c, "first frame"), fixture.context);
   fixture.rejectSubmittedWork(new Error("adversarial queue rejection"));
-  await settlePromiseCallbacks();
+  await assert.rejects(rejectedFence, (caught) => caught.message === "adversarial queue rejection");
   const rejected = vm.runInContext(buildReceipt(c, "webgpu-first-presentation-readiness"), fixture.context);
   assert.equal(rejected.classification, "queue-completion-rejected");
   assert.equal(rejected.wrappers.failedSubmits, 1);
+  assert.equal(rejected.wrappers.queueFenceError, "adversarial queue rejection");
+  assert.equal(fixture.context.__adapterWGCompletionFencePending, false);
+  assert.equal(fixture.context.__adapterWGCompletionFencePromise, null);
 
   const lostFixture = browserContext();
   lostFixture.device.createCommandEncoder();
   lostFixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
   lostFixture.queue.submit([]);
+  const lostFence = vm.runInContext(buildFence(c, "lost frame"), lostFixture.context);
   lostFixture.resolveSubmittedWork();
-  await settlePromiseCallbacks();
+  await lostFence;
   lostFixture.probe.lost = { reason: "destroyed", message: "test loss" };
   const lost = vm.runInContext(buildReceipt(c, "webgpu-first-presentation-readiness"), lostFixture.context);
   assert.equal(lost.classification, "device-lost-after-color-pass");
