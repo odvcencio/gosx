@@ -87,6 +87,12 @@ type symbolPlacement struct {
 // records a split the repository made on purpose, with the cost it removed.
 var shippedSymbolPlacements = []symbolPlacement{
 	{
+		symbol: "hydrateScene3DInitialProgram",
+		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-hydrate.js"},
+		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-command.js", "bootstrap-runtime.js"},
+		why:    "strict initial-hydrate decoding is fetched only for a shared-runtime Scene3D entry with a program reference; static routes and the public command bridge must not carry it",
+	},
+	{
 		symbol: "SCENE_PBR_FRAGMENT_SOURCE",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-webgl.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-webgpu.js"},

@@ -64,6 +64,7 @@
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-telemetry.ts",
+        "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
@@ -227,6 +228,12 @@
       "name": "bootstrap-feature-scene3d-command.js",
       "sources": [
         "../runtime/scene3d/command-runtime.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-hydrate.js",
+      "sources": [
+        "../runtime/scene3d/hydrate-input.ts"
       ]
     },
     {

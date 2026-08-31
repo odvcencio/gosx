@@ -19,6 +19,7 @@ import (
 const (
 	browserJobName = "browser-tests"
 	stableJobName  = "scene3d-v1-browser-renderer-proof"
+	adapterJobName = "scene3d-v1-adapter-proof"
 	testJobName    = "test"
 
 	latestSetupName   = "Set up Chrome"
@@ -37,6 +38,10 @@ const (
 	stableProofName   = "Run Scene3D CUBICSPLINE browser renderer proof"
 	stableUploadName  = "Upload Scene3D proof diagnostics"
 	stableCleanName   = "Clean Scene3D proof artifacts"
+	adapterSetupName  = "Set up stable Chrome for adapter proof"
+	adapterProofName  = "Run Scene3D adapter hydrate browser proof"
+	adapterUploadName = "Upload Scene3D adapter proof diagnostics"
+	adapterCleanName  = "Clean Scene3D adapter proof artifacts"
 	aggregateStepName = "All test jobs passed"
 
 	latestChromePath = "${{ steps.chrome.outputs.chrome-path }}"
@@ -82,6 +87,32 @@ if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
   exit 2
 fi
 rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
+`
+	adapterProofRun = `set -eu
+if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+  echo "unsafe RUNNER_TEMP" >&2
+  exit 2
+fi
+artifact_dir="${RUNNER_TEMP}/gosx-adapter-proof"
+rm -rf -- "$artifact_dir"
+mkdir -p "$artifact_dir"
+proof_status=0
+trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+set +e
+node client/js/testdata/scene3d-adapter-hydrate-browser.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+proof_status=$?
+set -e
+if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/report.json" ]; then
+  cat "$artifact_dir/report.json"
+fi
+exit "$proof_status"
+`
+	adapterCleanRun = `set -eu
+if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+  echo "unsafe RUNNER_TEMP" >&2
+  exit 2
+fi
+rm -rf -- "${RUNNER_TEMP}/gosx-adapter-proof"
 `
 )
 
@@ -136,6 +167,13 @@ func Validate(source []byte) error {
 		if err := validateStableJob(jobs[stableJobName]); err != nil {
 			return err
 		}
+	}
+	adapterJob, hasAdapterJob := jobs[adapterJobName]
+	if !hasAdapterJob {
+		return errors.New("workflow.jobs: scene3d-v1-adapter-proof job is missing")
+	}
+	if err := validateAdapterJob(adapterJob); err != nil {
+		return err
 	}
 
 	testJob, ok := jobs[testJobName]
@@ -252,6 +290,18 @@ func stableStepContracts() []stepContract {
 		{stableProofName, "stable Scene3D renderer proof", validateStableProof},
 		{stableUploadName, "stable Scene3D diagnostic upload", validateStableUpload},
 		{stableCleanName, "stable Scene3D artifact cleanup", validateStableCleanup},
+	}
+}
+
+func adapterStepContracts() []stepContract {
+	return []stepContract{
+		{checkoutName, "Scene3D adapter proof checkout", validateCheckout},
+		{goSetupName, "Scene3D adapter proof Go setup", validateGoSetup},
+		{adapterSetupName, "Scene3D adapter proof browser setup", validateAdapterSetup},
+		{stableNodeName, "Scene3D adapter proof Node setup", validateStableNode},
+		{adapterProofName, "Scene3D adapter proof", validateAdapterProof},
+		{adapterUploadName, "Scene3D adapter diagnostic upload", validateAdapterUpload},
+		{adapterCleanName, "Scene3D adapter artifact cleanup", validateAdapterCleanup},
 	}
 }
 
@@ -612,6 +662,105 @@ func validateStableJob(node *yaml.Node) error {
 	return nil
 }
 
+func validateAdapterSetup(node *yaml.Node) error {
+	const label = "Scene3D adapter proof browser setup"
+	step, err := exactMapping(node, label, "name", "id", "uses", "with")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": adapterSetupName,
+		"id":   "chrome",
+		"uses": "browser-actions/setup-chrome@v2",
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["with"], label+".with", map[string]string{
+		"chrome-version": "stable",
+	})
+}
+
+func validateAdapterProof(node *yaml.Node) error {
+	const label = "Scene3D adapter proof"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": adapterProofName,
+		"run":  adapterProofRun,
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["env"], label+".env", map[string]string{
+		"GOSX_CHROME_BIN":              latestChromePath,
+		"GOSX_EXPECTED_CHROME_VERSION": "${{ steps.chrome.outputs.chrome-version }}",
+	})
+}
+
+func validateAdapterUpload(node *yaml.Node) error {
+	const label = "Scene3D adapter diagnostic upload"
+	step, err := exactMapping(node, label, "name", "if", "uses", "with")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": adapterUploadName,
+		"if":   "${{ failure() }}",
+		"uses": "actions/upload-artifact@v4",
+	}); err != nil {
+		return err
+	}
+	with, err := exactMapping(step["with"], label+".with", "name", "path", "if-no-files-found", "retention-days")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(with, label+".with", map[string]string{
+		"name":              "scene3d-v1-adapter-proof-${{ github.run_id }}-${{ github.run_attempt }}",
+		"path":              "${{ runner.temp }}/gosx-adapter-proof",
+		"if-no-files-found": "ignore",
+	}); err != nil {
+		return err
+	}
+	return exactInt(with["retention-days"], label+".with.retention-days", "7")
+}
+
+func validateAdapterCleanup(node *yaml.Node) error {
+	const label = "Scene3D adapter artifact cleanup"
+	step, err := exactMapping(node, label, "name", "if", "run")
+	if err != nil {
+		return err
+	}
+	return exactStrings(step, label, map[string]string{
+		"name": adapterCleanName,
+		"if":   "${{ always() }}",
+		"run":  adapterCleanRun,
+	})
+}
+
+func validateAdapterJob(node *yaml.Node) error {
+	const label = "Scene3D adapter proof job"
+	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	if err != nil {
+		return err
+	}
+	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
+		return err
+	}
+	if err := exactInt(job["timeout-minutes"], label+".timeout-minutes", "12"); err != nil {
+		return err
+	}
+	if err := validateExactStepRoster(job["steps"], label+".steps", adapterStepContracts()); err != nil {
+		return err
+	}
+	for _, forbidden := range []string{pinnedSnapshot, productVersion, "perf-chrome"} {
+		if got := countContainingScalar(node, forbidden); got != 0 {
+			return fmt.Errorf("%s: forbidden perf fixture %q occurs %d times", label, forbidden, got)
+		}
+	}
+	return nil
+}
+
 func validateAggregateJob(node *yaml.Node, hasStableJob bool) error {
 	const label = "aggregate test job"
 	job, err := exactMapping(node, label, "if", "runs-on", "needs", "timeout-minutes", "steps")
@@ -683,6 +832,7 @@ func aggregateNeeds(hasStableJob bool) []string {
 		// present, its exact job has no skip condition and is a required success.
 		needs = slices.Insert(needs, len(needs)-1, stableJobName)
 	}
+	needs = slices.Insert(needs, len(needs)-1, adapterJobName)
 	return needs
 }
 

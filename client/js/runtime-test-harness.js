@@ -34,6 +34,7 @@ const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DCommandSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-command.js"), "utf8");
+const bootstrapFeatureScene3DHydrateSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-hydrate.js"), "utf8");
 const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-compute.js"), "utf8");
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
@@ -4288,10 +4289,10 @@ function readBootstrapSrc(...names) {
     .join("\n");
 }
 
-// readSceneMountSrc joins every 20x-scene-mount*.js file in build order. The
+// readSceneMountSrc joins the Scene3D mount authorities in build order. The
 // old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
-// Scene3D chunk; it is now nine files. A source assertion about the mount path
-// must read them all.
+// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is now ten
+// governed sources. A source assertion about that path must read them all.
 function readSceneMountSrc() {
   return readBootstrapSrc(
     "../runtime/scene3d/mount-backend.ts",
@@ -4302,6 +4303,7 @@ function readSceneMountSrc() {
     "../runtime/scene3d/overlay-dom.ts",
     "../runtime/scene3d/mount-controls.ts",
     "../runtime/scene3d/mount-telemetry.ts",
+    "../runtime/scene3d/hydrate-input.ts",
     "../runtime/scene3d/mount.ts",
   );
 }
@@ -5660,6 +5662,7 @@ module.exports = {
   bootstrapFeatureHubsSource,
   bootstrapFeatureScene3DSource,
   bootstrapFeatureScene3DCommandSource,
+  bootstrapFeatureScene3DHydrateSource,
   bootstrapFeatureScene3DComputeSource,
   bootstrapFeatureScene3DDecompressSource,
   bootstrapFeatureScene3DWebGLSource,

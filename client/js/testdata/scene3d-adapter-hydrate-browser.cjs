@@ -26,7 +26,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const REPO = path.resolve(process.argv[2] || '');
 const ART = path.resolve(process.argv[3] || '');
@@ -55,11 +55,79 @@ const STEP_MS = 20000;
 const MOUNT_MS = 40000;
 const OVERALL_MS = 420000;
 const BUILD_MS = 240000;
+const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
+const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
+const FOUR_PART_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
+const CHROME_CLI_PRODUCT = /^(Google Chrome|Google Chrome for Testing) (\d+\.\d+\.\d+\.\d+)$/;
 
 const CASES = [
   { name: 'gl', webgpu: false, engine: 'gosx-engine-adapter-gl', mount: 'scene-adapter-gl' },
   { name: 'wg', webgpu: true, engine: 'gosx-engine-adapter-wg', mount: 'scene-adapter-wg' },
 ];
+
+function selectedBrowser() {
+  if (!fs.existsSync(CHROME_BIN)) throw new Error('chrome binary not found: ' + CHROME_BIN);
+  const probe = spawnSync(CHROME_BIN, ['--version'], {
+    encoding: 'utf8', timeout: 10000, windowsHide: true,
+  });
+  if (probe.error || probe.status !== 0) {
+    throw new Error('selected Chrome --version failed: ' +
+      String(probe.error && probe.error.message || probe.stderr || probe.status));
+  }
+  const invocation = String(probe.stdout || probe.stderr || '').trim();
+  const match = CHROME_CLI_PRODUCT.exec(invocation);
+  if (!match) {
+    throw new Error('selected browser CLI identity must be exactly Google Chrome <four-part> ' +
+      'or Google Chrome for Testing <four-part>; got ' + JSON.stringify(invocation));
+  }
+  const expectedIsSet = Object.prototype.hasOwnProperty.call(process.env, EXPECTED_VERSION_ENV);
+  const actionVersion = expectedIsSet ? process.env[EXPECTED_VERSION_ENV] : null;
+  if (expectedIsSet && !FOUR_PART_VERSION.test(actionVersion)) {
+    throw new Error(EXPECTED_VERSION_ENV + ' must be an exact four-part version; got ' +
+      JSON.stringify(actionVersion));
+  }
+  const expectedVersion = expectedIsSet ? actionVersion : match[2];
+  if (match[2] !== expectedVersion) {
+    throw new Error('selected browser CLI version ' + match[2] +
+      ' does not equal expected action version ' + expectedVersion);
+  }
+  return {
+    configuredPath: CHROME_BIN,
+    realPath: fs.realpathSync(CHROME_BIN),
+    invocation,
+    cliProduct: match[1],
+    version: match[2],
+    expectedVersion,
+    expectedVersionSource: expectedIsSet ? EXPECTED_VERSION_ENV : 'anchored-cli',
+    cdp: null,
+    selfCheck: null,
+  };
+}
+
+function verifyCDPBrowserIdentity(value, browser, label) {
+  if (!value || value.product !== 'Chrome/' + browser.expectedVersion) {
+    throw new Error(label + '.product: got ' + JSON.stringify(value && value.product) +
+      ', want ' + JSON.stringify('Chrome/' + browser.expectedVersion));
+  }
+  for (const field of ['protocolVersion', 'revision']) {
+    if (typeof value[field] !== 'string' || value[field].trim() === '') {
+      throw new Error(label + '.' + field + ' must be non-empty');
+    }
+  }
+}
+
+function browserIdentitySelfCheck(browser) {
+  const wrongProduct = { product: 'NotChrome/' + browser.expectedVersion,
+    protocolVersion: '1.3', revision: '@adversarial-mutation' };
+  let rejection = '';
+  try { verifyCDPBrowserIdentity(wrongProduct, browser, 'wrongSameVersionCDP'); }
+  catch (error) { rejection = String(error && error.message || error); }
+  if (!rejection.includes('wrongSameVersionCDP.product')) {
+    throw new Error('same-version wrong CDP product was not rejected exactly: ' + rejection);
+  }
+  return { mutation: 'wrong-product-same-version', product: wrongProduct.product,
+    rejected: true, rejection };
+}
 
 function expr(op, value, type) {
   return { op, operands: null, value: String(value), type };
@@ -115,6 +183,7 @@ const ASSETS = new Map([
   ['/gosx/bootstrap-feature-scene3d-webgl.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-webgl.js')],
   ['/gosx/bootstrap-feature-scene3d-webgpu.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-webgpu.js')],
   ['/gosx/bootstrap-feature-scene3d-command.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-command.js')],
+  ['/gosx/bootstrap-feature-scene3d-hydrate.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-hydrate.js')],
 ]);
 for (const asset of ASSETS.values()) {
   if (!fs.existsSync(asset)) {
@@ -835,6 +904,7 @@ async function runCase(send, c) {
 
 const caseEvidence = [];
 let nativeCaps = null;
+let browserReceipt = null;
 let finished = false;
 let reportWriteFailed = false;
 
@@ -844,6 +914,7 @@ function writeReport(extra) {
     abi: 3,
     runtimeArtifact,
     hubGate,
+    selectedBrowser: browserReceipt,
     nativeCaps,
     cases: caseEvidence,
     errors,
@@ -908,9 +979,9 @@ const watchdog = setTimeout(() => {
   BASE = 'http://127.0.0.1:' + server.address().port;
 
   profile = fs.mkdtempSync(path.join(os.tmpdir(), 'gosx-adapter-chrome-'));
-  const chromeBin = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
-  if (!fs.existsSync(chromeBin)) throw new Error('chrome binary not found: ' + chromeBin);
-  chrome = spawn(chromeBin, [
+  browserReceipt = selectedBrowser();
+  browserReceipt.selfCheck = browserIdentitySelfCheck(browserReceipt);
+  chrome = spawn(browserReceipt.realPath, [
     '--headless=new', '--no-sandbox', '--use-gl=angle', '--use-angle=gl-egl',
     '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader', '--enable-unsafe-webgpu',
     '--disable-dev-shm-usage', '--user-data-dir=' + profile,
@@ -940,6 +1011,8 @@ const watchdog = setTimeout(() => {
     ws.onerror = () => { clearTimeout(timer); reject(new Error('CDP WebSocket error')); };
   });
   ws.onmessage = (event) => dispatch(event.data);
+  browserReceipt.cdp = await cdpSend('Browser.getVersion');
+  verifyCDPBrowserIdentity(browserReceipt.cdp, browserReceipt, 'selectedBrowser.cdp');
 
   const target = await cdpSend('Target.createTarget', { url: 'about:blank' });
   const attached = await cdpSend('Target.attachToTarget', { targetId: target.targetId, flatten: true });

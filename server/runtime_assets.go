@@ -286,6 +286,7 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"bootstrap-feature-textlayout.js":      filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
 		"bootstrap-feature-scene3d.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
 		"bootstrap-feature-scene3d-command.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
+		"bootstrap-feature-scene3d-hydrate.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"),
 		"patch.js":                             filepath.Join(buildDir, "patch.js"),
 		"hls.min.js":                           filepath.Join(buildDir, "hls.min.js"),
 		"stripe-bridge.js":                     filepath.Join(buildDir, "stripe-bridge.js"),
@@ -384,6 +385,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "bootstrap-feature-scene3d-command.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCommand.File)
+	case "bootstrap-feature-scene3d-hydrate.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
 	case "bootstrap-feature-scene3d-webgpu.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "bootstrap-feature-scene3d-webgl.js":

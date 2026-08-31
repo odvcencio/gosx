@@ -412,12 +412,12 @@ func TestStableRendererProofComposition(t *testing.T) {
 	}{
 		{
 			name:   "numeric fixture leaks into stable lane",
-			mutate: replace("          chrome-version: stable", "          chrome-version: '1688711'"),
+			mutate: replaceStableOnce("          chrome-version: stable", "          chrome-version: '1688711'"),
 			want:   "stable Scene3D renderer proof setup.with.chrome-version",
 		},
 		{
 			name: "stable input displaced into env decoy",
-			mutate: replace(
+			mutate: replaceStableOnce(
 				"        with:\n          chrome-version: stable\n",
 				"        with:\n          chrome-version: latest\n        env:\n          chrome-version: stable\n",
 			),
@@ -463,8 +463,8 @@ func TestStableRendererProofComposition(t *testing.T) {
 		{
 			name: "stable aggregate need reordered",
 			mutate: replace(
-				"      - scene3d-v1-browser-renderer-proof\n      - browser-tests\n",
-				"      - browser-tests\n      - scene3d-v1-browser-renderer-proof\n",
+				"      - scene3d-v1-browser-renderer-proof\n      - scene3d-v1-adapter-proof\n",
+				"      - scene3d-v1-adapter-proof\n      - scene3d-v1-browser-renderer-proof\n",
 			),
 			want: "aggregate test job.needs",
 		},
@@ -496,6 +496,124 @@ func TestStableRendererProofComposition(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assertCausalRejection(t, test.mutate(t, stable), test.want)
+		})
+	}
+}
+
+func TestAdapterProofComposition(t *testing.T) {
+	base := string(repositoryWorkflow(t))
+	assertActionlintValid(t, base)
+	if err := Validate([]byte(base)); err != nil {
+		t.Fatalf("Validate(adapter composition): %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, string) string
+		want   string
+	}{
+		{
+			name:   "adapter job and aggregate removed together",
+			mutate: removeAdapterJobAndAggregate,
+			want:   "workflow.jobs: scene3d-v1-adapter-proof job is missing",
+		},
+		{
+			name: "adapter setup action regresses",
+			mutate: replaceAdapterOnce(
+				"        uses: browser-actions/setup-chrome@v2",
+				"        uses: browser-actions/setup-chrome@v1",
+			),
+			want: "Scene3D adapter proof browser setup.uses",
+		},
+		{
+			name: "adapter stable input displaced into env decoy",
+			mutate: replaceAdapterOnce(
+				"        with:\n          chrome-version: stable\n",
+				"        with:\n          chrome-version: latest\n        env:\n          chrome-version: stable\n",
+			),
+			want: "Scene3D adapter proof browser setup: unexpected field \"env\"",
+		},
+		{
+			name: "adapter job skipped",
+			mutate: insertAfter(
+				"  scene3d-v1-adapter-proof:\n",
+				"    if: false\n",
+			),
+			want: "Scene3D adapter proof job: unexpected field \"if\"",
+		},
+		{
+			name: "adapter checkout redirects to main",
+			mutate: replaceAdapterOnce(
+				"      - name: Check out repository\n        uses: actions/checkout@v4\n",
+				"      - name: Check out repository\n        uses: actions/checkout@v4\n        with:\n          ref: main\n",
+			),
+			want: "repository checkout: unexpected field \"with\"",
+		},
+		{
+			name: "adapter proof skipped",
+			mutate: insertAfter(
+				"      - name: Run Scene3D adapter hydrate browser proof\n",
+				"        if: false\n",
+			),
+			want: "Scene3D adapter proof: unexpected field \"if\"",
+		},
+		{
+			name: "adapter expected browser version omitted",
+			mutate: replaceAdapterOnce(
+				"          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}\n",
+				"",
+			),
+			want: "Scene3D adapter proof.env: missing field \"GOSX_EXPECTED_CHROME_VERSION\"",
+		},
+		{
+			name: "adapter upload condition suppressed",
+			mutate: replaceAdapterOnce(
+				"        if: ${{ failure() }}",
+				"        if: ${{ failure() && false }}",
+			),
+			want: "Scene3D adapter diagnostic upload.if",
+		},
+		{
+			name: "adapter cleanup condition weakened",
+			mutate: replaceAdapterOnce(
+				"        if: ${{ always() }}",
+				"        if: ${{ success() }}",
+			),
+			want: "Scene3D adapter artifact cleanup.if",
+		},
+		{
+			name: "adapter extra shell step",
+			mutate: replaceAdapterOnce(
+				"      - name: Clean Scene3D adapter proof artifacts\n",
+				"      - name: Unreviewed adapter prelude\n        run: echo bypass\n\n      - name: Clean Scene3D adapter proof artifacts\n",
+			),
+			want: "Scene3D adapter proof job.steps: got 8 steps, want exact governed roster of 7",
+		},
+		{
+			name:   "adapter aggregate need removed",
+			mutate: removeAdapterAggregateContract,
+			want:   "aggregate test job.needs",
+		},
+		{
+			name: "adapter aggregate result redirected",
+			mutate: replace(
+				"          SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.scene3d-v1-adapter-proof.result }}\n",
+				"          SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.browser-tests.result }}\n",
+			),
+			want: "aggregate dependency assertion.env.SCENE3D_V1_ADAPTER_PROOF_RESULT",
+		},
+		{
+			name: "adapter skipped result allowed",
+			mutate: replace(
+				"              *=success) ;;\n",
+				"              *=success|scene3d-v1-adapter-proof=skipped) ;;\n",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertCausalRejection(t, test.mutate(t, base), test.want)
 		})
 	}
 }
@@ -629,10 +747,25 @@ func replaceStableOnce(old, replacement string) func(*testing.T, string) string 
 			t.Fatal("stable Scene3D renderer proof job is missing")
 		}
 		stableEnd := len(source)
-		if relativeEnd := strings.Index(source[stableStart:], "\n  # browser-tests:"); relativeEnd >= 0 {
+		if relativeEnd := strings.Index(source[stableStart:], "\n  # scene3d-v1-adapter-proof:"); relativeEnd >= 0 {
 			stableEnd = stableStart + relativeEnd
 		}
 		return source[:stableStart] + replaceOnce(t, source[stableStart:stableEnd], old, replacement) + source[stableEnd:]
+	}
+}
+
+func replaceAdapterOnce(old, replacement string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		adapterStart := strings.Index(source, "  scene3d-v1-adapter-proof:\n")
+		if adapterStart < 0 {
+			t.Fatal("Scene3D adapter proof job is missing")
+		}
+		adapterEnd := len(source)
+		if relativeEnd := strings.Index(source[adapterStart:], "\n  # browser-tests:"); relativeEnd >= 0 {
+			adapterEnd = adapterStart + relativeEnd
+		}
+		return source[:adapterStart] + replaceOnce(t, source[adapterStart:adapterEnd], old, replacement) + source[adapterEnd:]
 	}
 }
 
@@ -694,6 +827,9 @@ func removeBrowserAggregateContract(t *testing.T, source string) string {
 	if strings.Contains(source, "            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n") {
 		previous = "            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n"
 	}
+	if strings.Contains(source, "            \"scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT\" \\\n") {
+		previous = "            \"scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT\" \\\n"
+	}
 	source = replaceOnce(t, source,
 		previous+"            \"browser-tests=$BROWSER_TESTS_RESULT\"\n",
 		strings.TrimSuffix(previous, " \\\n")+"\n",
@@ -703,10 +839,7 @@ func removeBrowserAggregateContract(t *testing.T, source string) string {
 
 func insertAggregateBypassStep(t *testing.T, source string) string {
 	t.Helper()
-	anchor := "          echo \"release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed\"\n"
-	if strings.Contains(source, stableJobName+", and browser-tests all passed\"\n") {
-		anchor = "          echo \"release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, " + stableJobName + ", and browser-tests all passed\"\n"
-	}
+	anchor := "          echo \"" + strings.Join(aggregateNeeds(strings.Contains(source, "  "+stableJobName+":\n"))[:len(aggregateNeeds(strings.Contains(source, "  "+stableJobName+":\n")))-1], ", ") + ", and browser-tests all passed\"\n"
 	return replaceOnce(t, source, anchor, anchor+"\n      - name: Mask aggregate result\n        run: echo masked\n")
 }
 
@@ -722,9 +855,37 @@ func removeStableAggregateContract(t *testing.T, source string) string {
 		"",
 	)
 	return replaceOnce(t, source,
-		"wasm-tests, scene3d-v1-browser-renderer-proof, and browser-tests all passed\"\n",
-		"wasm-tests, and browser-tests all passed\"\n",
+		"wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed\"\n",
+		"wasm-tests, scene3d-v1-adapter-proof, and browser-tests all passed\"\n",
 	)
+}
+
+func removeAdapterAggregateContract(t *testing.T, source string) string {
+	t.Helper()
+	source = replaceOnce(t, source, "      - scene3d-v1-adapter-proof\n", "")
+	source = replaceOnce(t, source,
+		"          SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.scene3d-v1-adapter-proof.result }}\n",
+		"",
+	)
+	source = replaceOnce(t, source,
+		"            \"scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT\" \\\n",
+		"",
+	)
+	return replaceOnce(t, source,
+		"wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed\"\n",
+		"wasm-tests, scene3d-v1-browser-renderer-proof, and browser-tests all passed\"\n",
+	)
+}
+
+func removeAdapterJobAndAggregate(t *testing.T, source string) string {
+	t.Helper()
+	source = removeAdapterAggregateContract(t, source)
+	start := strings.Index(source, "  # scene3d-v1-adapter-proof:")
+	end := strings.Index(source, "\n  # browser-tests:")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("Scene3D adapter proof job block is missing")
+	}
+	return source[:start] + source[end:]
 }
 
 func ensureStableProof(t *testing.T, source string) string {

@@ -780,8 +780,8 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
     assert.match(scene3dPrefix, new RegExp(`var ${name} = runtimeApi\\.${name}`), `${name} must be bridged`);
     assert.match(published, new RegExp(`\\b${name},`), `${name} must be published`);
   }
-  assert.match(scene3dPrefix, /var gosxOwnDataArray = runtimeApi\.ownDataArray/);
-  assert.match(published, /ownDataArray: gosxOwnDataArray/);
+  assert.doesNotMatch(scene3dPrefix, /gosxOwnDataArray|ownDataArray/);
+  assert.doesNotMatch(published, /gosxOwnDataArray|ownDataArray/);
   assert.doesNotMatch(core, /function sceneBool\(/);
   assert.doesNotMatch(core, /function clearChildren\(/);
   assert.match(primitives, /function sceneBool\(/);

@@ -55,6 +55,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureTextlayout        HashedAsset                    `json:"bootstrapFeatureTextlayout,omitempty"`
 	BootstrapFeatureScene3D           HashedAsset                    `json:"bootstrapFeatureScene3d,omitempty"`
 	BootstrapFeatureScene3DCommand    HashedAsset                    `json:"bootstrapFeatureScene3dCommand,omitempty"`
+	BootstrapFeatureScene3DHydrate    HashedAsset                    `json:"bootstrapFeatureScene3dHydrate,omitempty"`
 	BootstrapFeatureScene3DWebGPU     HashedAsset                    `json:"bootstrapFeatureScene3dWebgpu,omitempty"`
 	BootstrapFeatureScene3DWebGL      HashedAsset                    `json:"bootstrapFeatureScene3dWebgl,omitempty"`
 	BootstrapFeatureScene3DGLTF       HashedAsset                    `json:"bootstrapFeatureScene3dGltf,omitempty"`
@@ -175,6 +176,7 @@ type RuntimePaths struct {
 	BootstrapFeatureTextlayout        string
 	BootstrapFeatureScene3D           string
 	BootstrapFeatureScene3DCommand    string
+	BootstrapFeatureScene3DHydrate    string
 	BootstrapFeatureScene3DWebGPU     string
 	BootstrapFeatureScene3DWebGL      string
 	BootstrapFeatureScene3DGLTF       string
@@ -226,6 +228,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureTextlayout:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureTextlayout.File),
 		BootstrapFeatureScene3D:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3D.File),
 		BootstrapFeatureScene3DCommand:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCommand.File),
+		BootstrapFeatureScene3DHydrate:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DHydrate.File),
 		BootstrapFeatureScene3DWebGPU:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGPU.File),
 		BootstrapFeatureScene3DWebGL:      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGL.File),
 		BootstrapFeatureScene3DGLTF:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DGLTF.File),

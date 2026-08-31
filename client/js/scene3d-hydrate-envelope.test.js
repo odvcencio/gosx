@@ -8,6 +8,7 @@ const vm = require("node:vm");
 
 const {
   bootstrapSource,
+  bootstrapFeatureScene3DHydrateSource,
   FakeElement,
   createContext,
   runScript,
@@ -49,6 +50,62 @@ function createDeferredRoute() {
   });
   return { promise, resolve };
 }
+
+function createHydrateChunkContext() {
+  const context = vm.createContext({ console, setTimeout, clearTimeout });
+  context.window = context;
+  context.__gosx_runtime_api = {};
+  runScript(bootstrapFeatureScene3DHydrateSource, context, "bootstrap-feature-scene3d-hydrate.js");
+  return context;
+}
+
+test("standalone Scene3D hydrate chunk publishes the strict initial boundary", async () => {
+  const context = createHydrateChunkContext();
+  runScript(`window.__hydrateEnvelope = ${JSON.stringify(createEnvelope([createCommand(3)]))};`, context, "hydrate-fixture.js");
+  const ctx = {
+    id: targetID,
+    _ssr: true,
+    isCurrent: () => true,
+    runtime: {
+      available: () => true,
+      hydrateFromProgramRef: () => Promise.resolve(context.__hydrateEnvelope),
+    },
+  };
+
+  assert.equal(typeof context.__gosx_runtime_api.scene3DHydrateInitialProgram, "function");
+  const commands = await context.__gosx_runtime_api.scene3DHydrateInitialProgram(ctx);
+  assert.equal(JSON.stringify(commands), JSON.stringify([createCommand(3)]));
+  assert.equal(ctx._ssr, false);
+});
+
+test("standalone Scene3D hydrate chunk fences stale output before descriptor access", async () => {
+  const context = createHydrateChunkContext();
+  const deferred = createDeferredRoute();
+  let current = true;
+  let ownKeyReads = 0;
+  const output = new Proxy({}, {
+    ownKeys() {
+      ownKeyReads += 1;
+      return [];
+    },
+  });
+  const ctx = {
+    id: targetID,
+    _ssr: true,
+    isCurrent: () => current,
+    runtime: {
+      available: () => true,
+      hydrateFromProgramRef: () => deferred.promise,
+    },
+  };
+
+  const pending = context.__gosx_runtime_api.scene3DHydrateInitialProgram(ctx);
+  current = false;
+  deferred.resolve(output);
+  assert.equal(await pending, null);
+  assert.equal(ownKeyReads, 0);
+  assert.equal(ctx._ssr, true);
+});
 
 function modelAssetResponse(id) {
   return {

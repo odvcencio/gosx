@@ -375,9 +375,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Chrome
+      - name: Set up stable Chrome for adapter proof
         id: chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -387,6 +389,7 @@ jobs:
       - name: Run Scene3D adapter hydrate browser proof
         env:
           GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}
         run: |
           set -eu
           if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then

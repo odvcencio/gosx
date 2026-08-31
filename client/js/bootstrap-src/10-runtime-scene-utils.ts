@@ -1212,18 +1212,6 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
-  // Snapshot an array without executing an index accessor, custom iterator,
-  // or coercion hook. The caller validates each copied value separately.
-  function gosxOwnDataArray(value) {
-    const items = Object.getOwnPropertyDescriptors(value);
-    const length = items.length.value;
-    if (Reflect.ownKeys(items).length - 1 !== length) return null;
-    return Array.from({ length }, function(_, index) {
-      const item = items[index];
-      return item && item.enumerable && "value" in item && item.value;
-    });
-  }
-
   // Publish the helpers the lazily fetched Scene3D chunk reads. That chunk
   // runs in its own IIFE and cannot reach this scope, so it used to carry a
   // second copy of this whole file: the Chromium Scene3D route downloaded
@@ -1248,6 +1236,5 @@
       queueInputSignal,
       runtimeCapabilityStatus,
       sceneNumber,
-      ownDataArray: gosxOwnDataArray,
     });
   }

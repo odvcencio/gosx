@@ -1356,6 +1356,9 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap-feature-scene3d-command.5555.js"), []byte("window.__gosx_scene3d_command_bridge = {};"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap-feature-scene3d-hydrate.6666.js"), []byte("window.__gosx_runtime_api.scene3DHydrateInitialProgram = function() {};"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(assetsDir, "standard-go-wasm_exec.4444.js"), []byte("window.__gosx_standard_go_wasm_ctor = class {};"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1375,6 +1378,11 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 				File: "bootstrap-feature-scene3d-command.5555.js",
 				Hash: "5555",
 				Size: 38,
+			},
+			BootstrapFeatureScene3DHydrate: buildmanifest.HashedAsset{
+				File: "bootstrap-feature-scene3d-hydrate.6666.js",
+				Hash: "6666",
+				Size: 47,
 			},
 		},
 	}
@@ -1425,6 +1433,16 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 	if body := w.Body.String(); !strings.Contains(body, "__gosx_scene3d_command_bridge") {
 		t.Fatalf("unexpected scene3d command runtime body %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/bootstrap-feature-scene3d-hydrate.js?v=6666", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected scene3d hydrate runtime 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "scene3DHydrateInitialProgram") {
+		t.Fatalf("unexpected scene3d hydrate runtime body %q", body)
 	}
 }
 

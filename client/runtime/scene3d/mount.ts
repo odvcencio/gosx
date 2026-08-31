@@ -1,75 +1,6 @@
 // mount.ts — the GoSXScene3D engine factory.
 // @ts-check
-//
-// This is the mount closure: it builds the canvas, drives the render loop,
-// applies live scene updates, and disposes everything on teardown. It reads
-// every other 20x file.
-//
-// The former single 20-scene-mount.js was 10_127 lines and 43 percent of the
-// base Scene3D chunk. Backend selection (20a), the WebGL chunk loader (20b),
-// the quality ladder (20c), the development overlays (20d), the viewport
-// observers (20e), the DOM overlay (20f), the camera controls (20g) and the
-// telemetry globals (20h) are now files. Four of them are gate candidates:
-// the server already knows whether a scene needs them.
-
-  function scene3DHydrateRecord(value) {
-    if (!sceneIsPlainObject(value)) return false;
-    const proto = Object.getPrototypeOf(value);
-    if (proto === null) return true;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, "constructor");
-    const constructor = descriptor && descriptor.value;
-    const prototype = typeof constructor === "function" &&
-      Object.getOwnPropertyDescriptor(constructor, "prototype");
-    return Object.getPrototypeOf(proto) === null && prototype && prototype.value === proto &&
-      Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object);
-  }
-
-  function scene3DHydrateShape(value, keys) {
-    const fields = [];
-    return scene3DHydrateRecord(value) && Reflect.ownKeys(value).length === keys.length && keys.every(function(key) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      return descriptor && descriptor.enumerable && !("get" in descriptor) && (fields.push(descriptor.value), true);
-    }) ? fields : null;
-  }
-
-  function scene3DHydrateFail() {
-    throw new Error("invalid Scene3D hydrate envelope");
-  }
-
-  function decodeScene3DInitialHydrateEnvelope(value, targetID) {
-    const envelope = scene3DHydrateShape(value, ["version", "surfaceKind", "outputKind", "targetId", "mode", "commands"]);
-    if (!envelope || envelope[0] !== 1 || envelope[1] !== "scene3d" ||
-        envelope[2] !== "scene3d.commands" || envelope[3] !== targetID ||
-        envelope[4] !== "initial" || !Array.isArray(envelope[5])) scene3DHydrateFail();
-    const commands = gosxOwnDataArray(envelope[5]);
-    if (!commands) scene3DHydrateFail();
-    for (let index = 0; index < commands.length; index += 1) {
-      let command = scene3DHydrateShape(commands[index], ["kind", "objectId"]);
-      if (!command) command = scene3DHydrateShape(commands[index], ["kind", "objectId", "data"]);
-      const kind = command && command[0];
-      if (!command || (kind === 1) !== (command.length === 2) ||
-          !Number.isInteger(kind) || kind < 0 || kind > 6 ||
-          !Number.isInteger(command[1]) || command[1] < 0) scene3DHydrateFail();
-      const data = command[2];
-      commands[index] = { kind, objectId: command[1], data };
-      if (kind === 1) continue;
-      if (kind === 6) {
-        if (!scene3DHydrateRecord(data) && !(Array.isArray(data) && data.every(scene3DHydrateRecord))) {
-          scene3DHydrateFail();
-        }
-        continue;
-      }
-      if (!scene3DHydrateRecord(data)) scene3DHydrateFail();
-      if (kind === 0) {
-        const create = scene3DHydrateShape(data, ["kind", "geometry", "material", "props", "children", "static"]);
-        if (!create || typeof create[0] !== "string" || !create[0] || typeof create[1] !== "string" ||
-            typeof create[2] !== "string" || create[3] !== null && !scene3DHydrateRecord(create[3]) ||
-            create[4] !== null && (!Array.isArray(create[4]) || !create[4].every(function(child) { return Number.isInteger(child) && child >= 0; })) ||
-            typeof create[5] !== "boolean") scene3DHydrateFail();
-      }
-    }
-    return commands;
-  }
+// Mount closure: canvas, render loop, live updates, teardown, and gateable authorities.
 
 /**
  * @typedef {object} GoSXSceneEngineMountContext
@@ -92,43 +23,31 @@
     let initialRuntimeCommands = null;
     if (runtimeScene) {
       ctx._ssr = true;
-      if (!ctx.runtime || !ctx.runtime.available()) scene3DHydrateFail();
-      const output = await ctx.runtime.hydrateFromProgramRef();
+      const hydrateInitial = window.__gosx_runtime_api &&
+        window.__gosx_runtime_api.scene3DHydrateInitialProgram;
+      if (typeof hydrateInitial !== "function") {
+        throw new Error("invalid Scene3D hydrate envelope");
+      }
+      initialRuntimeCommands = await hydrateInitial(ctx);
       if (!scene3DFactoryCurrent()) return {};
-      initialRuntimeCommands = decodeScene3DInitialHydrateEnvelope(output, ctx.id);
-      ctx._ssr = false;
     }
     const sceneAttr = name => "data-gosx-scene3d-" + name;
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
-    // createSceneState decodes every compressed array as its first statement,
-    // so the decompress chunk must land first. A scene with plain float arrays
-    // and no generator descriptor fetches nothing and resolves at once.
+    // Settle decompression and the shared glTF/KTX2 IBL reader before state/resource creation.
     await settleSceneDecompressFeature(props);
     if (!scene3DFactoryCurrent()) return {};
-    // The assetpipe IBL contract points at KTX2 half-float products. Its reader
-    // currently shares the glTF sub-feature chunk, so settle that tiny upload
-    // dependency before either renderer freezes its resource layouts.
     await settleSceneIBLFeature(props);
     if (!scene3DFactoryCurrent()) return {};
     const sceneState = createSceneState(props, capability);
-    // Allocate the glTF texture-variant scope while the state is still private.
-    // Model hydration begins only after all awaited feature/backend stages pass
-    // their generation fences.
+    // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
     await settlePreferredWebGPUBackend(props, capability);
     if (!scene3DFactoryCurrent()) return {};
-    // WebGL now lives in its own chunk. Settle it too, so a WebGL page has the
-    // renderer, the registry entry and the water runtime before the first
-    // createSceneRenderer call. This resolves immediately on a WebGPU page and
-    // on the monolith.
+    // Settle lazy WebGL and compute before first renderer creation/fallback.
     await settlePreferredWebGLBackend(props, capability);
     if (!scene3DFactoryCurrent()) return {};
-    // The compute chunk carries the particle systems and the GPU instanced
-    // cull. Settle it too, so a particle scene draws its particles on the
-    // first frame instead of skipping them. A scene with no particles and no
-    // instanced mesh resolves immediately and fetches nothing.
     await settleSceneComputeFeature(sceneState);
     if (!scene3DFactoryCurrent()) return {};
     if (initialRuntimeCommands) {
@@ -143,8 +62,7 @@
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
-    // The manifest is immutable for the lifetime of an engine mount. Parse its
-    // large inline shader payload once instead of once per rendered frame.
+    // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
       typeof window.__gosx_scene3d_water_shader_sources_by_id === "object"

@@ -201,6 +201,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
+			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			// 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
 			// engine the video factory (in 30b) uses on the brain-absent path. It
@@ -468,6 +469,14 @@ var outputs = []output{
 		name: "bootstrap-feature-scene3d-command.js",
 		sources: []source{
 			sourceFile("../runtime/scene3d/command-runtime.ts"),
+		},
+	},
+	{
+		// Strict initial-hydrate decoding is fetched only by a shared-runtime
+		// Scene3D mount with a program reference. Static scenes never pay for it.
+		name: "bootstrap-feature-scene3d-hydrate.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 		},
 	},
 	{
