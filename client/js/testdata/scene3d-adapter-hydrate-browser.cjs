@@ -567,7 +567,12 @@ const PRELOAD = `
 window.__adapterGLDraws = 0;
 window.__adapterGLContext = '';
 window.__adapterWGPasses = 0;
+window.__adapterWGColorPasses = 0;
+window.__adapterWGDraws = 0;
 window.__adapterWGSubmits = 0;
+window.__adapterWGCompletedSubmits = 0;
+window.__adapterWGFailedSubmits = 0;
+window.__adapterWGCompletedColorPasses = 0;
 (function () {
   function wrapGL(proto) {
     if (!proto) return;
@@ -585,16 +590,55 @@ window.__adapterWGSubmits = 0;
   wrapGL(typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext.prototype : null);
   if (typeof GPUCommandEncoder !== 'undefined' && GPUCommandEncoder.prototype.beginRenderPass) {
     var originalPass = GPUCommandEncoder.prototype.beginRenderPass;
-    GPUCommandEncoder.prototype.beginRenderPass = function () {
+    GPUCommandEncoder.prototype.beginRenderPass = function (descriptor) {
       window.__adapterWGPasses += 1;
+      // The renderer creates one depth-only pass while initializing its dummy
+      // shadow resource. It proves neither a scene color pass nor a frame a
+      // compositor can present, so keep it distinct from color submissions.
+      var colors = descriptor && descriptor.colorAttachments;
+      if (colors && typeof colors.length === 'number') {
+        for (var index = 0; index < colors.length; index += 1) {
+          if (colors[index] && colors[index].view) {
+            window.__adapterWGColorPasses += 1;
+            break;
+          }
+        }
+      }
       return originalPass.apply(this, arguments);
     };
+  }
+  if (typeof GPURenderPassEncoder !== 'undefined' && GPURenderPassEncoder.prototype) {
+    ['draw', 'drawIndexed'].forEach(function (name) {
+      var originalDraw = GPURenderPassEncoder.prototype[name];
+      if (!originalDraw) return;
+      GPURenderPassEncoder.prototype[name] = function () {
+        window.__adapterWGDraws += 1;
+        return originalDraw.apply(this, arguments);
+      };
+    });
   }
   if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype.submit) {
     var originalSubmit = GPUQueue.prototype.submit;
     GPUQueue.prototype.submit = function () {
+      var result = originalSubmit.apply(this, arguments);
       window.__adapterWGSubmits += 1;
-      return originalSubmit.apply(this, arguments);
+      // onSubmittedWorkDone covers every command submitted before this call.
+      // Count completion separately from submission so a screenshot cannot
+      // race the GPU queue merely because an encoder was submitted.
+      if (typeof this.onSubmittedWorkDone === 'function') {
+        var submittedColorPasses = window.__adapterWGColorPasses;
+        try {
+          Promise.resolve(this.onSubmittedWorkDone()).then(function () {
+            window.__adapterWGCompletedSubmits += 1;
+            window.__adapterWGCompletedColorPasses = Math.max(window.__adapterWGCompletedColorPasses, submittedColorPasses);
+          }, function () {
+            window.__adapterWGFailedSubmits += 1;
+          });
+        } catch (_error) {
+          window.__adapterWGFailedSubmits += 1;
+        }
+      }
+      return result;
     };
   }
 })();
@@ -656,9 +700,63 @@ function winnerExpr(c, remember) {
       glDraws: window.__adapterGLDraws,
       glContext: window.__adapterGLContext,
       wgPasses: window.__adapterWGPasses,
-      wgSubmits: window.__adapterWGSubmits
+      wgColorPasses: window.__adapterWGColorPasses,
+      wgDraws: window.__adapterWGDraws,
+      wgSubmits: window.__adapterWGSubmits,
+      wgCompletedSubmits: window.__adapterWGCompletedSubmits,
+      wgFailedSubmits: window.__adapterWGFailedSubmits,
+      wgCompletedColorPasses: window.__adapterWGCompletedColorPasses,
+      webgpuMeshObjects: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-objects'),
+      webgpuMeshDrawCalls: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-draw-calls'),
+      webgpuMeshViewCulled: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-view-culled'),
+      webgpuMeshUndrawable: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-undrawable')
     };
   })()`;
+}
+
+function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expectedObjectX) {
+  return `(function () {
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    if (!mount || mount.getAttribute('data-gosx-scene3d-renderer') !== 'webgpu') return null;
+    var state = mount.__gosxScene3DState;
+    var object = state && state.objects && state.objects.get('1');
+    // A scene color pass is distinct from the depth-only dummy-shadow
+    // initialization pass. Completion of that color submission is deliberately
+    // required before capturing the compositor surface; the pixel assertions
+    // below remain the proof that the scene itself is visible.
+    if (mount.getAttribute('data-gosx-scene3d-mounted') !== 'true' ||
+        !(window.__adapterWGColorPasses > ${JSON.stringify(afterColorPasses || 0)}) ||
+        !(window.__adapterWGCompletedColorPasses > ${JSON.stringify(afterColorPasses || 0)}) ||
+        !(window.__adapterWGCompletedColorPasses > ${JSON.stringify(afterCompletedColorPasses || 0)}) ||
+        !(window.__adapterWGCompletedSubmits > 0) || window.__adapterWGFailedSubmits !== 0 ||
+        (${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)} !== null &&
+          (!object || object.x !== ${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)}))) return null;
+    return {
+      passes: window.__adapterWGPasses,
+      colorPasses: window.__adapterWGColorPasses,
+      draws: window.__adapterWGDraws,
+      submits: window.__adapterWGSubmits,
+      completedSubmits: window.__adapterWGCompletedSubmits,
+      objectX: object && object.x,
+      commandRevision: mount.getAttribute('data-gosx-scene3d-command-revision'),
+      commandAppliedRevision: mount.getAttribute('data-gosx-scene3d-command-applied-revision'),
+      meshObjects: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-objects'),
+      meshDrawCalls: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-draw-calls'),
+      meshViewCulled: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-view-culled'),
+      meshUndrawable: mount.getAttribute('data-gosx-scene3d-webgpu-mesh-undrawable')
+    };
+  })()`;
+}
+
+async function waitForWebGPUPresentation(send, c, label, afterColorPasses, afterCompletedColorPasses, expectedObjectX) {
+  const evidence = await poll(
+    send, webGPUPresentExpr(c, afterColorPasses || 0, afterCompletedColorPasses || 0, expectedObjectX),
+    label + ' completed scene color frame'
+  );
+  // GPU completion precedes presentation; allow the browser compositor to
+  // consume that finished canvas texture before Page.captureScreenshot.
+  await evalSend(send, settleFramesExpr(2), { awaitPromise: true });
+  return evidence;
 }
 
 function identityExpr(c) {
@@ -694,15 +792,39 @@ function hubCommandExpr(c) {
       [{kind:2,objectId:'1',data:{x:1.25}}],
       {engineID:${JSON.stringify(c.engine)},timeoutMS:5000}
     );
-    var after = state && state.objects && state.objects.get('1');
+    var deadline = Date.now() + 5000;
+    var after = null;
+    var revision = null;
+    var appliedRevision = null;
+    var commandApplied = false;
+    // dispatchCommands normally applies synchronously, but the proof has to
+    // tolerate an asynchronous engine. Once the command state is observed,
+    // sample the color-pass baseline in this same task so an old-state rAF
+    // cannot create the pass that satisfies the post-command freshness gate.
+    while (Date.now() < deadline) {
+      after = state && state.objects && state.objects.get('1');
+      revision = mount.getAttribute('data-gosx-scene3d-command-revision');
+      appliedRevision = mount.getAttribute('data-gosx-scene3d-command-applied-revision');
+      if (after && after.x === 1.25 && state === mount.__gosxScene3DState &&
+          handle === mount.__gosxScene3DHandle && revision && revision === appliedRevision) {
+        commandApplied = true;
+        break;
+      }
+      await new Promise(function(resolve) { setTimeout(resolve, 25); });
+    }
+    var colorPassBaseline = window.__adapterWGColorPasses;
+    var completedColorPassBaseline = window.__adapterWGCompletedColorPasses;
     return {
       result: result,
       beforeX: beforeX,
       afterX: after && after.x,
       sameState: state === mount.__gosxScene3DState,
       sameHandle: handle === mount.__gosxScene3DHandle,
-      revision: mount.getAttribute('data-gosx-scene3d-command-revision'),
-      appliedRevision: mount.getAttribute('data-gosx-scene3d-command-applied-revision')
+      revision: revision,
+      appliedRevision: appliedRevision,
+      commandApplied: commandApplied,
+      webgpuColorPassBaseline: colorPassBaseline,
+      webgpuCompletedColorPassBaseline: completedColorPassBaseline
     };
   })()`;
 }
@@ -769,6 +891,14 @@ async function waitNetworkIdle(label) {
     await sleep(25);
   }
   fail('[' + label + '] network did not become idle: ' + JSON.stringify(Array.from(networkRequests.values())));
+}
+
+function assertVisibleFrame(c, label, metrics) {
+  if (!metrics || metrics.error || metrics.width !== W || metrics.height !== H ||
+      !(metrics.foregroundFraction >= FG_COVERAGE) || !(metrics.maxDelta >= FG_THRESHOLD) ||
+      !(metrics.restFraction >= REST_COVERAGE)) {
+    fail('[' + c.name + '] ' + label + ' nonblank/rest-pixel integrity failed: ' + JSON.stringify(metrics));
+  }
 }
 
 function assertEnvelope(call, c, generation, programName, commandIDs) {
@@ -839,20 +969,29 @@ async function runCase(send, c) {
     fail('[' + c.name + '] stale output applied or republished: ' + JSON.stringify(identity));
   }
 
+  if (c.webgpu) {
+    evidence.webgpuPresentation = await waitForWebGPUPresentation(send, c, c.name + ' first frame');
+  }
+
   evidence.firstFrame = await capture(send, c, 'first-frame');
   const metrics = evidence.firstFrame.metrics;
-  if (!metrics || metrics.error || metrics.width !== W || metrics.height !== H ||
-      !(metrics.foregroundFraction >= FG_COVERAGE) || !(metrics.maxDelta >= FG_THRESHOLD) ||
-      !(metrics.restFraction >= REST_COVERAGE)) {
-    fail('[' + c.name + '] nonblank/rest-pixel integrity failed: ' + JSON.stringify(metrics));
-  }
+  assertVisibleFrame(c, 'first frame', metrics);
   const drawState = await evalSend(send, winnerExpr(c, false));
   evidence.nativeRenderer = {
     mounted: drawState.mounted,
     glDraws: drawState.glDraws,
     glContext: drawState.glContext,
     webgpuPasses: drawState.wgPasses,
+    webgpuColorPasses: drawState.wgColorPasses,
+    webgpuDraws: drawState.wgDraws,
     webgpuSubmits: drawState.wgSubmits,
+    webgpuCompletedSubmits: drawState.wgCompletedSubmits,
+    webgpuFailedSubmits: drawState.wgFailedSubmits,
+    webgpuCompletedColorPasses: drawState.wgCompletedColorPasses,
+    webgpuMeshObjects: drawState.webgpuMeshObjects,
+    webgpuMeshDrawCalls: drawState.webgpuMeshDrawCalls,
+    webgpuMeshViewCulled: drawState.webgpuMeshViewCulled,
+    webgpuMeshUndrawable: drawState.webgpuMeshUndrawable,
   };
   if (drawState.mounted !== 'true') {
     fail('[' + c.name + '] first frame never published mounted readiness: ' + JSON.stringify(evidence.nativeRenderer));
@@ -860,19 +999,34 @@ async function runCase(send, c) {
   if (!c.webgpu && (!(drawState.glDraws > 0) || drawState.glContext !== 'webgl2')) {
     fail('[gl] native WebGL2 draw evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
   }
-  if (c.webgpu && (!(drawState.wgPasses > 0) || !(drawState.wgSubmits > 0))) {
+  if (c.webgpu && (!(drawState.wgColorPasses > 0) || !(drawState.wgCompletedColorPasses > 0) ||
+      !(drawState.wgCompletedSubmits > 0) || drawState.wgFailedSubmits !== 0)) {
     fail('[wg] native WebGPU render evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
   }
 
   evidence.hubCommand = await evalSend(send, hubCommandExpr(c), { awaitPromise: true });
   if (!evidence.hubCommand || evidence.hubCommand.beforeX !== 0 || evidence.hubCommand.afterX !== 1.25 ||
       !evidence.hubCommand.sameState || !evidence.hubCommand.sameHandle ||
-      !evidence.hubCommand.revision || evidence.hubCommand.revision !== evidence.hubCommand.appliedRevision) {
+      !evidence.hubCommand.commandApplied || !evidence.hubCommand.revision ||
+      evidence.hubCommand.revision !== evidence.hubCommand.appliedRevision) {
     fail('[' + c.name + '] explicit hub-wire command did not reach winning handle: ' +
       JSON.stringify(evidence.hubCommand));
   }
   await evalSend(send, settleFramesExpr(4), { awaitPromise: true });
+  if (c.webgpu) {
+    evidence.webgpuAfterHubPresentation = await waitForWebGPUPresentation(
+      send, c, c.name + ' after hub command', evidence.hubCommand.webgpuColorPassBaseline,
+      evidence.hubCommand.webgpuCompletedColorPassBaseline, 1.25
+    );
+    if (evidence.webgpuAfterHubPresentation.objectX !== 1.25 ||
+        !evidence.webgpuAfterHubPresentation.commandRevision ||
+        evidence.webgpuAfterHubPresentation.commandRevision !== evidence.webgpuAfterHubPresentation.commandAppliedRevision) {
+      fail('[wg] post-command frame did not retain applied command state: ' +
+        JSON.stringify(evidence.webgpuAfterHubPresentation));
+    }
+  }
   evidence.afterHub = await capture(send, c, 'after-hub-command');
+  assertVisibleFrame(c, 'after hub command', evidence.afterHub.metrics);
 
   evidence.disposed = await evalSend(send, `(function () {
     window.__gosx_dispose_engine(${JSON.stringify(c.engine)});
