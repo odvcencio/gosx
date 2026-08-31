@@ -1967,9 +1967,18 @@ const routeBudgets = [
     // 240_514 -> 241_000 for event-mode live binds, region append/prepend,
     // and hub reconnect backoff (gosx#217 extension). Measured:
     // 1_090_507 / 287_567 / 240_809, plus narrow rounding headroom.
+    // Group.Scale replay: merged main measured 1_090_791 / 287_737 / 240_976
+    // (24 B Brotli spare). The affine renderer composition initially measured
+    // 1_087_665 / 287_600 / 241_075; two semantics-preserving Selena pipeline
+    // deduplications reduce that to 1_087_427 / 287_618 / 241_009. The fully
+    // R0-compliant extraction (including point-parent and pipeline-signature
+    // helpers) finishes at 1_087_602 / 287_646 / 241_071. Move only Brotli to
+    // the next 100-byte boundary (29 B headroom); raw/gzip stay fixed. The
+    // overlapping R0 base+WebGPU renderer set moves 205_089 -> 205_200 from
+    // its exact-zero main margin to cover the same 205_182 composition (18 B).
     raw: 1_091_500,
     gzip: 287_800,
-    brotli: 241_000,
+    brotli: 241_100,
   },
 
 ];

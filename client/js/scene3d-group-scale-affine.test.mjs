@@ -4,6 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -319,8 +322,8 @@ test("instanced CPU picking preserves world distance across large and small affi
 });
 
 test("WebGL2 and WebGPU Points upload parent times live-local through the shared multiply", () => {
-  const webgl = readRuntime("webgl.ts");
-  const webgpu = readRuntime("webgpu.ts");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   assert.match(webgl, /sceneMat4MultiplyInto\(_pointsTilt, entry\.parentMatrix, _pointsModelMat\)/);
   assert.match(webgl, /uniformMatrix4fv\(pp\.uniforms\.modelMatrix, false, entry\.parentMatrix \? _pointsTilt : _pointsModelMat\)/);
   assert.match(webgpu, /sceneMat4MultiplyInto\(_pointsTilt, entry\.parentMatrix, _pointsModelMat\)/);
@@ -346,9 +349,8 @@ test("shared affine normal matrix is scale-stable and singular-neutral", () => {
 });
 
 test("browser direct, instanced, skinned and morph shaders share affine normal semantics", () => {
-  const webgl = readRuntime("webgl.ts");
-  const webgpu = readRuntime("webgpu.ts");
-  const selena = readSource("16a1-scene-webgpu-selena-uniforms.ts");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   function assertContract(gl, gpu, uniforms) {
     assert.match(gl, /vec4 q=gosxAffineNormal\(m,a_normal\)/);
     assert.match(gl, /gosxAffineNormal\(m,gosxNormal\)/);
@@ -366,11 +368,11 @@ test("browser direct, instanced, skinned and morph shaders share affine normal s
     assert.doesNotMatch(gl, /normalize\(mat3\(u_modelMatrix\) \* \(mat3\(selenaSkinMatrix\) \* a_normal\)\)/);
     assert.doesNotMatch(gpu, /morph\.model \* vec4<f32>\(localNormal, 0\.0\)/);
   }
-  assertContract(webgl, webgpu, selena);
-  assert.throws(() => assertContract(webgl.replaceAll("gosxAffineNormal(m,a_normal)", "vec4(normalize(m*a_normal),1.0)"), webgpu, selena));
-  assert.throws(() => assertContract(webgl, webgpu.replace("gosxAffineNormal(material.modelMatrix, in.normal)", "vec4f(normalize(in.normal),1.0)"), selena));
-  assert.throws(() => assertContract(webgl.replaceAll("gl.frontFace(gl.CW)", "gl.frontFace(gl.CCW)"), webgpu, selena));
-  assert.throws(() => assertContract(webgl, webgpu.replaceAll('reflected ? "cw" : "ccw"', '"ccw"'), selena));
+  assertContract(webgl, webgpu, webgpu);
+  assert.throws(() => assertContract(webgl.replaceAll("gosxAffineNormal(m,a_normal)", "vec4(normalize(m*a_normal),1.0)"), webgpu, webgpu));
+  assert.throws(() => assertContract(webgl, webgpu.replace("gosxAffineNormal(material.modelMatrix, in.normal)", "vec4f(normalize(in.normal),1.0)"), webgpu));
+  assert.throws(() => assertContract(webgl.replaceAll("gl.frontFace(gl.CW)", "gl.frontFace(gl.CCW)"), webgpu, webgpu));
+  assert.throws(() => assertContract(webgl, webgpu.replaceAll('reflected ? "cw" : "ccw"', '"ccw"'), webgpu));
 });
 
 test("glTF POINTS and LINES modes 0-3 retain exact affine through animation", () => {

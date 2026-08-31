@@ -68,12 +68,14 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /function wgpuCreatePBRPipeline/);
-  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none", frontFace: frontFace \|\| "ccw" \}/);
+  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 \? "cw" : "ccw" \}/);
+  assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(Math\.abs\(signedSampleCount\) \|\| 1\)\) \}/);
   assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
   assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.match(webgpu, /bindPBRPipeline\(reflectedDirect\)/);
+  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -activeSampleCount : activeSampleCount\)/);
   assert.match(webgpu, /getPBRPipeline\(blendMode, depthWrite, reflected \? "cw" : "ccw"\)/);
 });
 

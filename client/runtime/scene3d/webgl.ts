@@ -6603,6 +6603,34 @@
 
   // --- Renderer ---
 
+  function sceneWebGLObjectReflected(obj, directVertices) {
+    var reflectedDirect = directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
+    return reflectedDirect;
+  }
+
+  function sceneWebGLBeginReflectedFrontFace(gl, reflectedDirect) {
+    if (reflectedDirect) gl.frontFace(gl.CW);
+  }
+
+  function sceneWebGLEndReflectedFrontFace(gl, reflectedDirect) {
+    if (reflectedDirect) gl.frontFace(gl.CCW);
+  }
+
+  function sceneWebGLUploadPointModelMatrix(gl, pp, entry, _pointsTilt, _pointsModelMat) {
+    if (entry.parentMatrix) {
+      sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
+    }
+    gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, entry.parentMatrix ? _pointsTilt : _pointsModelMat);
+  }
+
+  // Check if an object has skinning data attached.
+  function objectIsSkinned(obj) {
+    return Boolean(
+      obj && obj.skin &&
+      obj.vertices && obj.vertices.joints && obj.vertices.weights
+    );
+  }
+
   function createScenePBRRenderer(gl, canvas) {
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -7732,14 +7760,6 @@
       }
     }
 
-    // Check if an object has skinning data attached.
-    function objectIsSkinned(obj) {
-      return Boolean(
-        obj && obj.skin &&
-        obj.vertices && obj.vertices.joints && obj.vertices.weights
-      );
-    }
-
 	    // Ensure the skinned PBR program is compiled (lazy init).
 	    function ensureSkinnedProgram() {
 	      if (skinnedProgram) return skinnedProgram;
@@ -8279,14 +8299,14 @@
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
           }
           const selenaIndexCount = bindScenePBRDirectIndexBuffer(selenaDirectVertices ? obj : null);
-          var selenaReflected = selenaDirectVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
-          if (selenaReflected) gl.frontFace(gl.CW);
+          var selenaReflected = sceneWebGLObjectReflected(obj, selenaDirectVertices);
+          sceneWebGLBeginReflectedFrontFace(gl, selenaReflected);
           if (selenaIndexCount > 0) {
             gl.drawElements(gl.TRIANGLES, selenaIndexCount, gl.UNSIGNED_INT, 0);
           } else {
             gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
           }
-          if (selenaReflected) gl.frontFace(gl.CCW);
+          sceneWebGLEndReflectedFrontFace(gl, selenaReflected);
           webglRenderTruthStats.meshDrawn += 1;
 
           if (selenaDepthWriteOverride) {
@@ -8474,14 +8494,14 @@
         }
 
         const directIndexCount = bindScenePBRDirectIndexBuffer(directVertices ? obj : null);
-        var reflectedDirect = directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
-        if (reflectedDirect) gl.frontFace(gl.CW);
+        var reflectedDirect = sceneWebGLObjectReflected(obj, directVertices);
+        sceneWebGLBeginReflectedFrontFace(gl, reflectedDirect);
         if (directIndexCount > 0) {
           gl.drawElements(gl.TRIANGLES, directIndexCount, gl.UNSIGNED_INT, 0);
         } else {
           gl.drawArrays(gl.TRIANGLES, 0, count);
         }
-        if (reflectedDirect) gl.frontFace(gl.CCW);
+        sceneWebGLEndReflectedFrontFace(gl, reflectedDirect);
         webglRenderTruthStats.meshDrawn += 1;
 
         // Restore depth mask if overridden by per-object control.
@@ -8874,10 +8894,7 @@
           // No spin — just static rotation + translation.
           sceneEulerMatrixInto(_pointsModelMat, rx, ry, rz, px, py, pz);
         }
-        if (entry.parentMatrix) {
-          sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
-        }
-        gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, entry.parentMatrix ? _pointsTilt : _pointsModelMat);
+        sceneWebGLUploadPointModelMatrix(gl, pp, entry, _pointsTilt, _pointsModelMat);
         var count = sceneNumber(entry.count, 0);
         webglRenderTruthStats.pointInstancesSubmitted += Math.max(0, count);
         if (count <= 0) continue;

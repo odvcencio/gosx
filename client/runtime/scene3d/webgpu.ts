@@ -3687,7 +3687,10 @@
     return undefined; // opaque -- no blending
   }
 
-  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount, frontFace) {
+  // The sample-count sign carries the determinant-selected front face while
+  // its magnitude remains the actual MSAA count. This keeps the governed
+  // factory signature at eight parameters without an allocation per variant.
+  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, signedSampleCount) {
     return device.createRenderPipeline({
       label: "gosx-pbr-" + blendMode,
       layout: pipelineLayout,
@@ -3704,8 +3707,8 @@
           blend: wgpuBlendState(blendMode),
         }],
       },
-      primitive: { topology: "triangle-list", cullMode: "none", frontFace: frontFace || "ccw" },
-      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
+      multisample: { count: Math.max(1, Math.floor(Math.abs(signedSampleCount) || 1)) },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: depthWrite,
@@ -6157,6 +6160,66 @@
   // WebGPU Renderer
   // -----------------------------------------------------------------------
 
+  function sceneWebGPUObjectReflected(obj) {
+    var reflectedDirect = obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
+    return reflectedDirect;
+  }
+
+  function sceneWebGPUPipelineKind(reflected, base) {
+    return reflected ? base + "-cw" : base;
+  }
+
+  function sceneWebGPUSelenaPipelineOptions(obj, reflectedDirect) {
+    var selenaPipelineOptions = obj.doubleSided
+      ? { cullMode: "none" }
+      : (reflectedDirect ? { frontFace: "cw" } : null);
+    return selenaPipelineOptions;
+  }
+
+  function sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect) {
+    return obj.doubleSided ? ":ds" : (reflectedDirect ? ":cw" : "");
+  }
+
+  function sceneSelenaAttributeSource(name) {
+    switch (name) {
+    case "position": return "positions";
+    case "normal": return "normals";
+    case "uv": return "uvs";
+    default: return "";
+    }
+  }
+
+  function sceneSelenaAttributeComponents(type) {
+    switch (String(type || "")) {
+    case "vec2": return 2;
+    case "vec4": return 4;
+    case "vec3":
+    default:
+      return 3;
+    }
+  }
+
+  function sceneSelenaWGPUFormat(type) {
+    switch (sceneSelenaAttributeComponents(type)) {
+    case 2: return "float32x2";
+    case 4: return "float32x4";
+    default: return "float32x3";
+    }
+  }
+
+  function selenaPipelineFrontFace(options) {
+    return options && options.frontFace === "cw" ? "cw" : "ccw";
+  }
+
+  function sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat) {
+    var pointsModelMat = _pointsModelMat;
+    if (entry.parentMatrix) {
+      sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
+      pointsModelMat = _pointsTilt;
+    }
+    return pointsModelMat;
+  }
+
   function createSceneWebGPURenderer(canvas, options) {
     function sceneWebGPUFactoryFailure(reason) {
       var text = String(reason || "unknown");
@@ -7847,9 +7910,9 @@
     // Get or create a PBR pipeline for the given blend mode.
     function getPBRPipeline(blendMode, depthWrite, frontFace) {
       var reflected = frontFace === "cw";
-      var key = wgpuPipelineKey(reflected ? "pbr-cw" : "pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = wgpuPipelineKey(sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount, reflected ? "cw" : "ccw");
+      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -7919,24 +7982,6 @@
         ? material.customVertexWGSL
         : material.customFragmentWGSL;
       return String(src || "").trim();
-    }
-
-    function sceneSelenaAttributeComponents(type) {
-      switch (String(type || "")) {
-      case "vec2": return 2;
-      case "vec4": return 4;
-      case "vec3":
-      default:
-        return 3;
-      }
-    }
-
-    function sceneSelenaWGPUFormat(type) {
-      switch (sceneSelenaAttributeComponents(type)) {
-      case 2: return "float32x2";
-      case 4: return "float32x4";
-      default: return "float32x3";
-      }
     }
 
     function sceneSelenaUniformBufferSlot(renderContext) {
@@ -8149,15 +8194,6 @@
       return device.createBindGroupLayout({ label: "gosx-selena-material", entries: entries });
     }
 
-    function sceneSelenaAttributeSource(name) {
-      switch (name) {
-      case "position": return "positions";
-      case "normal": return "normals";
-      case "uv": return "uvs";
-      default: return "";
-      }
-    }
-
     function sceneSelenaPipelineAttributes(layout) {
       var attrs = Array.isArray(layout && layout.attributes) ? layout.attributes : [];
       var out = [];
@@ -8199,7 +8235,7 @@
       // obj.doubleSided === true, leaving every other object on the "back"
       // default -- see the winding-hazard note above that call.
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
-      var pipelineFrontFace = options && options.frontFace === "cw" ? "cw" : "ccw";
+      var pipelineFrontFace = selenaPipelineFrontFace(options);
       // depthStencil defaults to true (every existing caller relies on this
       // default and never passes the option, so behavior there is unchanged):
       // the pipeline gets a depth24plus depthStencil state, matching every
@@ -8256,10 +8292,7 @@
         pipelineFrontFace,
         pipelineDepthStencil ? "ds1" : "ds0",
       ].join("|");
-      var cached = selenaPipelineCache.get(key);
-      if (cached) {
-        // Memoize the resolved (key-derived) result on the material so the next
-        // object referencing it this frame skips the key build entirely.
+      function stamp(resource, failed) {
         material._gosxWGPUSelenaResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
@@ -8268,9 +8301,15 @@
           cullMode: pipelineCullMode,
           frontFace: pipelineFrontFace,
           depthStencil: pipelineDepthStencil,
-          resource: cached.failed ? null : cached,
-          failed: !!cached.failed,
+          resource: resource,
+          failed: failed,
         };
+      }
+      var cached = selenaPipelineCache.get(key);
+      if (cached) {
+        // Memoize the resolved (key-derived) result on the material so the next
+        // object referencing it this frame skips the key build entirely.
+        stamp(cached.failed ? null : cached, !!cached.failed);
         return cached.failed ? null : cached;
       }
       try {
@@ -8300,34 +8339,14 @@
         var pipeline = device.createRenderPipeline(pipelineDescriptor);
         cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
         selenaPipelineCache.set(key, cached);
-        material._gosxWGPUSelenaResource = {
-          blendMode: blendMode,
-          depthWrite: depthWrite,
-          targetFormat: pipelineTargetFormat,
-          sampleCount: pipelineSampleCount,
-          cullMode: pipelineCullMode,
-          frontFace: pipelineFrontFace,
-          depthStencil: pipelineDepthStencil,
-          resource: cached,
-          failed: false,
-        };
+        stamp(cached, false);
         return cached;
       } catch (err) {
         console.warn("[gosx] Selena WebGPU shader pipeline failed; falling back to PBR material.", err);
         selenaPipelineCache.set(key, { failed: true });
         // Memoize the failure too — a broken shader must not re-attempt (and
         // re-warn) once per object per frame.
-        material._gosxWGPUSelenaResource = {
-          blendMode: blendMode,
-          depthWrite: depthWrite,
-          targetFormat: pipelineTargetFormat,
-          sampleCount: pipelineSampleCount,
-          depthStencil: pipelineDepthStencil,
-          cullMode: pipelineCullMode,
-          frontFace: pipelineFrontFace,
-          resource: null,
-          failed: true,
-        };
+        stamp(null, true);
         return null;
       }
     }
@@ -8341,7 +8360,7 @@
     function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
-      var pipelineFrontFace = options && options.frontFace === "cw" ? "cw" : "ccw";
+      var pipelineFrontFace = selenaPipelineFrontFace(options);
       // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
       // (_gosxWGPUSelenaSkinnedResource) so a material drawn both skinned and
       // unskinned never aliases the wrong pipeline — the skinned key uses the
@@ -15500,8 +15519,7 @@
           // transform in per draw and restore the base matrix afterwards.
           var casterIndices = obj.vertices && obj.vertices.indices;
           if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
-          var reflectedCaster = sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
-          var retainedPipelineKind = reflectedCaster ? "static-cw" : "static";
+          var reflectedCaster = sceneAffineDeterminant(obj.modelMatrix, 0) < 0, retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
           if (currentShadowPipeline !== retainedPipelineKind) {
             pass.setPipeline(getShadowPipeline(reflectedCaster));
             currentShadowPipeline = retainedPipelineKind;
@@ -15509,8 +15527,7 @@
           if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
           var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (!(casterIndexCount > 0)) continue;
-          var casterModel = obj.modelMatrix;
-          var casterMatrix = lightMatrix;
+          var casterModel = obj.modelMatrix, casterMatrix = lightMatrix;
           if (casterModel && casterModel.length >= 16) {
             if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
             sceneMat4MultiplyInto(_shadowCombinedMatrixScratch, lightMatrix, casterModel);
@@ -15572,7 +15589,7 @@
       }
 
       function bindPBRPipeline(reflected) {
-        var kind = reflected ? "pbr-cw" : "pbr";
+        var kind = sceneWebGPUPipelineKind(reflected, "pbr");
         if (currentPipelineKind === kind) return;
         pass.setPipeline(getPBRPipeline(blendMode, depthWrite, reflected ? "cw" : "ccw"));
         pass.setBindGroup(0, frameBindGroup);
@@ -15629,15 +15646,12 @@
         // render/bundle/shadow_drift_test.go measures that move and pins all
         // three settings. See client/js/12-scene-geometry-winding.test.mjs for
         // the winding numbers.
-        var reflectedDirect = obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
-        var selenaPipelineOptions = obj.doubleSided
-          ? { cullMode: "none" }
-          : (reflectedDirect ? { frontFace: "cw" } : null);
+        var reflectedDirect = sceneWebGPUObjectReflected(obj), selenaPipelineOptions = sceneWebGPUSelenaPipelineOptions(obj, reflectedDirect);
         var selenaResource = isSkinned
           ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)
           : getSelenaPipeline(mat, blendMode, depthWrite, selenaPipelineOptions);
         if (selenaResource) {
-          var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + (obj.doubleSided ? ":ds" : (reflectedDirect ? ":cw" : ""));
+          var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect);
           if (currentPipelineKind !== selenaKey) {
             pass.setPipeline(selenaResource.pipeline);
             currentPipelineKind = selenaKey;
@@ -16468,11 +16482,7 @@
           sceneEulerMatrixInto(_pointsModelMat, rx, ry, rz, px, py, pz);
         }
 
-        var pointsModelMat = _pointsModelMat;
-        if (entry.parentMatrix) {
-          sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
-          pointsModelMat = _pointsTilt;
-        }
+        var pointsModelMat = sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat);
 
         // Build PointsUniforms buffer.
         // Layout: mat4x4f(64) + vec4 defaultColorAndSize(16) +

@@ -513,7 +513,11 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   // compatible with the pass by construction.
   assert.match(
     webgpuSource,
-    /wgpuPipelineKey\(reflected \? "pbr-cw" : "pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
+    /function sceneWebGPUPipelineKind\(reflected, base\) \{\s*return reflected \? base \+ "-cw" : base;\s*\}/,
+  );
+  assert.match(
+    webgpuSource,
+    /wgpuPipelineKey\(sceneWebGPUPipelineKind\(reflected, "pbr"\), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
   );
 });
 

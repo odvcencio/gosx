@@ -125,7 +125,7 @@ No cap, exception, manifest, workflow, governance, or dependency file changed.
   `+597` against the unchanged `+700` ceiling (103 lines spare).
 - Authored production bootstrap/runtime TypeScript: 513 additions, 762
   deletions, net `-249` against the unchanged `+250` ceiling.
-- `client/runtime/scene3d/mount-webgl.ts`: 4,797 lines against 4,879.
+- the WebGL mount renderer source: 4,797 lines against 4,879.
 - Minimal WebGPU route: 1,086,044 raw / 287,031 gzip / 240,453 Brotli against
   unchanged 1,090,039 / 287,220 / 240,514 caps (3,995 / 189 / 61 spare).
 - Full generated inventory: 64 paths, 17,813,033 bytes, digest
@@ -333,7 +333,7 @@ All ceilings are unchanged.
   +585 against the +700 ceiling; 115 lines of headroom.
 - Authored production bootstrap/runtime TS/JS: 504 additions, 758 deletions,
   net -254 against the +250 ceiling.
-- client/runtime/scene3d/mount-webgl.ts: 4,797 lines against the unchanged
+- the WebGL mount renderer source: 4,797 lines against the unchanged
   4,879-line ceiling; 82 lines of headroom.
 - No bundle, route, line, source, complexity, ownership, or exception cap was
   raised.
