@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -272,6 +273,59 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
 	}
+}
+
+// runtimeExcludableAssetRoles maps each build.runtime.exclude role (also
+// used to tag the runtime JS payloads cmd/gosx/build.go stages) to the
+// runtimeSizeAssets() entries it covers. It is the same runtime asset
+// vocabulary this size report already renders per-asset "role" text for —
+// grouped here into the short, project-facing tokens gosx.config.json
+// accepts. The core loader chain (bootstrap.js, bootstrap-lite.js,
+// bootstrap-runtime.js, wasm_exec.js, patch.js) and every WASM artifact are
+// deliberately absent: they are never excludable in this lane. A future
+// build.runtime.features allow-list that also skips WASM compiles is v2,
+// not this vocabulary.
+var runtimeExcludableAssetRoles = map[string][]string{
+	"islands":     {"bootstrap-feature-islands.js"},
+	"engines":     {"bootstrap-feature-engines.js"},
+	"hubs":        {"bootstrap-feature-hubs.js"},
+	"controllers": {"bootstrap-feature-controllers.js"},
+	"textlayout":  {"bootstrap-feature-textlayout.js"},
+	"scene3d": {
+		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-command.js",
+		"bootstrap-feature-scene3d-hydrate.js",
+		"bootstrap-feature-scene3d-webgpu.js",
+		"bootstrap-feature-scene3d-webgl.js",
+		"bootstrap-feature-scene3d-gltf.js",
+		"bootstrap-feature-scene3d-animation.js",
+		"bootstrap-feature-scene3d-compute.js",
+		"bootstrap-feature-scene3d-decompress.js",
+	},
+	"video":    {"hls.min.js"},
+	"payments": {"stripe-bridge.js"},
+	"relay":    {"relay.js"},
+}
+
+// runtimeAssetRoles returns the sorted, valid build.runtime.exclude role
+// names — the runtime asset role vocabulary cmd/gosx/config.go validates
+// gosx.config.json against.
+func runtimeAssetRoles() []string {
+	names := make([]string, 0, len(runtimeExcludableAssetRoles))
+	for name := range runtimeExcludableAssetRoles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// runtimeAssetRoleSet is runtimeAssetRoles() as a lookup set.
+func runtimeAssetRoleSet() map[string]struct{} {
+	set := make(map[string]struct{}, len(runtimeExcludableAssetRoles))
+	for name := range runtimeExcludableAssetRoles {
+		set[name] = struct{}{}
+	}
+	return set
 }
 
 func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile, error) {

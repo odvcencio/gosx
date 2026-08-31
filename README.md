@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.53.10**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.54.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -878,6 +878,53 @@ service, not under app/, content/, or public/. The offline, static, image, and
 server consumers all use the filtered staged tree, and a final artifact audit
 protects it from build hooks reintroducing denied material.
 
+### Runtime asset selection
+
+`gosx build` writes every runtime asset by default: the bootstrap chain, every
+feature chunk (islands, engines, hubs, controllers, text layout, all eight
+Scene3D chunks, video, payments, and the preview relay), and a `.js.map`
+source-map sidecar for each. A server-rendered app that never declares a
+feature does not need its chunk or its map.
+
+`gosx.config.json`'s `build.runtime` block controls two independent things:
+whether `gosx build` writes `.js.map` sidecars, and which runtime feature
+chunks it skips entirely.
+
+    {
+      "build": {
+        "runtime": {
+          "sourceMaps": false,
+          "exclude": ["scene3d", "video", "payments", "relay", "textlayout"]
+        }
+      }
+    }
+
+This example fits a server-rendered app with no 3D scenes, no video player,
+no Stripe checkout, no cross-frame preview, and no demand-loaded text layout.
+`sourceMaps: false` also drops every remaining `.js.map` sidecar.
+
+Valid `exclude` roles: `islands`, `engines`, `hubs`, `controllers`,
+`textlayout`, `scene3d` (all eight Scene3D chunks), `video` (the HLS
+runtime), `payments` (the Stripe bridge), and `relay` (the cross-frame
+preview relay). An unknown role fails the build with a clear error naming
+the valid set.
+
+An excluded role's files never reach `dist/assets/runtime`, and its keys
+never reach `dist/build.json`. No renderer change is required: island.go
+already gates every feature tag and preload hint on whether a page uses
+that feature, never on whether the manifest recorded the asset. Excluding
+a feature a page does use breaks that page — `build.runtime.exclude` trusts
+the project to only exclude what it does not render.
+
+The core loader chain — `bootstrap.js`, `bootstrap-lite.js`,
+`bootstrap-runtime.js`, `wasm_exec.js`, and `patch.js` — is never
+excludable. `build.runtime.exclude` never skips WASM compilation; a later
+`build.runtime.features` allow-list that also skips unneeded WASM builds is
+a separate, future change.
+
+Both fields default to today's behavior: `sourceMaps` true, nothing
+excluded. A project with no `build.runtime` block builds unchanged.
+
 ## Deploy
 
 Three tiers:
@@ -992,7 +1039,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.53.10**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.54.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

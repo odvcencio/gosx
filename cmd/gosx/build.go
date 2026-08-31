@@ -586,34 +586,43 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	manifest.Runtime.StandardGoWASMExec = standardGoWASMExecAsset
 	fmt.Printf("    %s (%d bytes, standard Go)\n", standardGoWASMExecAsset.File, standardGoWASMExecAsset.Size)
 
-	// bootstrap.js, patch.js, and the lazily loaded HLS runtime.
+	// bootstrap.js, patch.js, and the lazily loaded HLS runtime. Each entry
+	// carries a build.runtime.exclude role (cmd/gosx/size.go
+	// runtimeExcludableAssetRoles); a blank role marks the core loader chain,
+	// which build.runtime.exclude can never drop. This loop never reaches
+	// WASM compilation or wasm_exec.js — those stay outside this lane.
 	for _, js := range []struct {
 		name string
 		path string
 		dest *HashedAsset
+		role string
 	}{
-		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
-		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite},
-		{"bootstrap-runtime", filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js"), &manifest.Runtime.BootstrapRuntime},
-		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands},
-		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines},
-		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs},
-		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers},
-		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout},
-		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D},
-		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand},
-		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate},
-		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU},
-		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL},
-		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF},
-		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation},
-		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute},
-		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress},
-		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
-		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
-		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge},
-		{"relay", filepath.Join(gosxRoot, "client", "js", "relay.js"), &manifest.Runtime.Relay},
+		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap, ""},
+		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite, ""},
+		{"bootstrap-runtime", filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js"), &manifest.Runtime.BootstrapRuntime, ""},
+		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands, "islands"},
+		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines, "engines"},
+		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs, "hubs"},
+		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers, "controllers"},
+		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout, "textlayout"},
+		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
+		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
+		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate, "scene3d"},
+		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU, "scene3d"},
+		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL, "scene3d"},
+		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF, "scene3d"},
+		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation, "scene3d"},
+		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute, "scene3d"},
+		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress, "scene3d"},
+		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch, ""},
+		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS, "video"},
+		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge, "payments"},
+		{"relay", filepath.Join(gosxRoot, "client", "js", "relay.js"), &manifest.Runtime.Relay, "relay"},
 	} {
+		if cfg.Build.Runtime.excludesRole(js.role) {
+			fmt.Printf("    (skipped: %s, excluded by build.runtime.exclude %q)\n", js.name, js.role)
+			continue
+		}
 		data, err := os.ReadFile(js.path)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", js.path, err)
@@ -626,9 +635,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		asset = withRuntimeIntegrity(asset, data)
 		*js.dest = asset
 		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
-		if mapData, err := os.ReadFile(js.path + ".map"); err == nil {
-			if err := os.WriteFile(filepath.Join(runtimeDir, js.name+".js.map"), mapData, 0644); err != nil {
-				return fmt.Errorf("write %s source map: %w", js.name, err)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(js.path + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, js.name+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", js.name, err)
+				}
 			}
 		}
 	}

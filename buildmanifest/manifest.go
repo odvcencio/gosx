@@ -42,30 +42,35 @@ type RuntimeAssets struct {
 	// WASMVariants contains the capability-linked artifacts. WASM remains the
 	// full-runtime compatibility field so older servers and source builds keep
 	// working while new renderers select the smallest compatible entry.
-	WASMVariants                      map[string]RuntimeVariantAsset `json:"wasmVariants,omitempty"`
-	WASMExec                          HashedAsset                    `json:"wasmExec"`
-	StandardGoWASMExec                HashedAsset                    `json:"standardGoWasmExec,omitempty"`
-	Bootstrap                         HashedAsset                    `json:"bootstrap"`
-	BootstrapLite                     HashedAsset                    `json:"bootstrapLite,omitempty"`
-	BootstrapRuntime                  HashedAsset                    `json:"bootstrapRuntime,omitempty"`
-	BootstrapFeatureIslands           HashedAsset                    `json:"bootstrapFeatureIslands,omitempty"`
-	BootstrapFeatureEngines           HashedAsset                    `json:"bootstrapFeatureEngines,omitempty"`
-	BootstrapFeatureHubs              HashedAsset                    `json:"bootstrapFeatureHubs,omitempty"`
-	BootstrapFeatureControllers       HashedAsset                    `json:"bootstrapFeatureControllers,omitempty"`
-	BootstrapFeatureTextlayout        HashedAsset                    `json:"bootstrapFeatureTextlayout,omitempty"`
-	BootstrapFeatureScene3D           HashedAsset                    `json:"bootstrapFeatureScene3d,omitempty"`
-	BootstrapFeatureScene3DCommand    HashedAsset                    `json:"bootstrapFeatureScene3dCommand,omitempty"`
-	BootstrapFeatureScene3DHydrate    HashedAsset                    `json:"bootstrapFeatureScene3dHydrate,omitempty"`
-	BootstrapFeatureScene3DWebGPU     HashedAsset                    `json:"bootstrapFeatureScene3dWebgpu,omitempty"`
-	BootstrapFeatureScene3DWebGL      HashedAsset                    `json:"bootstrapFeatureScene3dWebgl,omitempty"`
-	BootstrapFeatureScene3DGLTF       HashedAsset                    `json:"bootstrapFeatureScene3dGltf,omitempty"`
-	BootstrapFeatureScene3DAnimation  HashedAsset                    `json:"bootstrapFeatureScene3dAnimation,omitempty"`
-	BootstrapFeatureScene3DCompute    HashedAsset                    `json:"bootstrapFeatureScene3dCompute,omitempty"`
-	BootstrapFeatureScene3DDecompress HashedAsset                    `json:"bootstrapFeatureScene3dDecompress,omitempty"`
-	Patch                             HashedAsset                    `json:"patch"`
-	VideoHLS                          HashedAsset                    `json:"videoHLS,omitempty"`
-	StripeBridge                      HashedAsset                    `json:"stripeBridge,omitempty"`
-	Relay                             HashedAsset                    `json:"relay,omitempty"`
+	WASMVariants       map[string]RuntimeVariantAsset `json:"wasmVariants,omitempty"`
+	WASMExec           HashedAsset                    `json:"wasmExec"`
+	StandardGoWASMExec HashedAsset                    `json:"standardGoWasmExec,omitempty"`
+	Bootstrap          HashedAsset                    `json:"bootstrap"`
+	BootstrapLite      HashedAsset                    `json:"bootstrapLite,omitempty"`
+	BootstrapRuntime   HashedAsset                    `json:"bootstrapRuntime,omitempty"`
+	// The fields below back build.runtime.exclude roles (cmd/gosx/config.go,
+	// cmd/gosx/size.go). "omitempty" cannot drop a zero HashedAsset struct —
+	// encoding/json only treats false/0/nil/empty-collection values as empty
+	// — so these use "omitzero" (Go 1.24+) instead: a role a project excludes
+	// never appears in build.json, matching GC-3's framework-lane contract.
+	BootstrapFeatureIslands           HashedAsset `json:"bootstrapFeatureIslands,omitzero"`
+	BootstrapFeatureEngines           HashedAsset `json:"bootstrapFeatureEngines,omitzero"`
+	BootstrapFeatureHubs              HashedAsset `json:"bootstrapFeatureHubs,omitzero"`
+	BootstrapFeatureControllers       HashedAsset `json:"bootstrapFeatureControllers,omitzero"`
+	BootstrapFeatureTextlayout        HashedAsset `json:"bootstrapFeatureTextlayout,omitzero"`
+	BootstrapFeatureScene3D           HashedAsset `json:"bootstrapFeatureScene3d,omitzero"`
+	BootstrapFeatureScene3DCommand    HashedAsset `json:"bootstrapFeatureScene3dCommand,omitzero"`
+	BootstrapFeatureScene3DHydrate    HashedAsset `json:"bootstrapFeatureScene3dHydrate,omitzero"`
+	BootstrapFeatureScene3DWebGPU     HashedAsset `json:"bootstrapFeatureScene3dWebgpu,omitzero"`
+	BootstrapFeatureScene3DWebGL      HashedAsset `json:"bootstrapFeatureScene3dWebgl,omitzero"`
+	BootstrapFeatureScene3DGLTF       HashedAsset `json:"bootstrapFeatureScene3dGltf,omitzero"`
+	BootstrapFeatureScene3DAnimation  HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitzero"`
+	BootstrapFeatureScene3DCompute    HashedAsset `json:"bootstrapFeatureScene3dCompute,omitzero"`
+	BootstrapFeatureScene3DDecompress HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitzero"`
+	Patch                             HashedAsset `json:"patch"`
+	VideoHLS                          HashedAsset `json:"videoHLS,omitzero"`
+	StripeBridge                      HashedAsset `json:"stripeBridge,omitzero"`
+	Relay                             HashedAsset `json:"relay,omitzero"`
 }
 
 // RuntimeVariantAsset identifies one runtime artifact independently of its

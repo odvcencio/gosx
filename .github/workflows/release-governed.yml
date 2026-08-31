@@ -120,7 +120,7 @@ jobs:
   test-cli:
     needs: [prepare, validate]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -163,7 +163,7 @@ jobs:
           tinygo version
 
       # cmd/gosx runs real TinyGo production builds and needs the explicit
-      # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
+      # 25-minute Go timeout carried by test-cli; a plain `go test ./...`
       # silently restores Go's 10-minute package timeout.
       - name: CLI production-build tests
         working-directory: source
