@@ -237,6 +237,30 @@ test("WebGPU browser-proof readiness exits promptly on device-loss fallback befo
   const fixture = browserContext();
   const c = { mount: "scene3d-adapter-hydrate-browser-test" };
 
+  const stillWebGPUFixture = browserContext();
+  stillWebGPUFixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
+  stillWebGPUFixture.queue.submit([]);
+  stillWebGPUFixture.probe.lost = { reason: "destroyed", message: "test loss before renderer swap" };
+  stillWebGPUFixture.diagnostics.deviceLost = true;
+
+  await assert.rejects(
+    poll(runtimeSendFor(stillWebGPUFixture.context), buildExpression(c, 0, 0, undefined, false),
+      "wg first frame submitted scene color frame", 500),
+    (caught) => {
+      assert.equal(caught.terminal, true);
+      assert.equal(caught.classification, "device-lost-after-color-pass");
+      assert.equal(caught.lastPredicate.ready, false);
+      assert.equal(caught.lastPredicate.terminal, true);
+      assert.equal(caught.lastPredicate.predicates.rendererWebGPU, true);
+      assert.equal(caught.lastPredicate.predicates.freshColorPass, true);
+      assert.equal(caught.lastPredicate.predicates.deviceLost, true);
+      return true;
+    }
+  );
+  assert.equal(stillWebGPUFixture.onSubmittedWorkDoneCalls(), 0,
+    "explicit device loss while renderer still says WebGPU must not arm the capture-time queue fence");
+  assert.equal(stillWebGPUFixture.pendingSubmittedWork(), 0);
+
   fixture.encoder.beginRenderPass({ colorAttachments: [{ view: {} }] }).end();
   fixture.queue.submit([]);
   fixture.mount.attributes["data-gosx-scene3d-renderer"] = "webgl";

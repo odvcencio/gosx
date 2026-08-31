@@ -558,7 +558,6 @@ async function poll(send, expression, label, timeoutMs) {
   let value = null;
   while (Date.now() < deadline) {
     value = await evalSend(send, expression);
-    if (value && (value.ready === undefined || value.ready === true)) return value;
     if (value && value.terminal === true) {
       const classification = value.classification || value.terminalClassification || 'terminal-predicate';
       const error = new Error('terminal waiting for ' + label + ': ' + classification +
@@ -569,6 +568,7 @@ async function poll(send, expression, label, timeoutMs) {
       error.terminal = true;
       throw error;
     }
+    if (value && (value.ready === undefined || value.ready === true)) return value;
     await sleep(50);
   }
   const error = new Error('timeout waiting for ' + label + ' (last=' + JSON.stringify(value) + ')');
@@ -852,16 +852,16 @@ function webGPUPresentExpr(c, afterColorPasses, afterCompletedColorPasses, expec
     predicates.freshCompletedColorPass = predicates.completedColorPasses > predicates.colorPassBaseline &&
       predicates.completedColorPasses > predicates.completedColorPassBaseline;
     predicates.commandState = expectedX === null || predicates.objectX === expectedX;
+    predicates.deviceLost = predicates.fallback === 'webgpu-device-lost' || predicates.probeLost || predicates.diagnosticsDeviceLost;
     var ready = predicates.mountFound && predicates.rendererWebGPU && predicates.mounted &&
-      predicates.freshColorPass && predicates.failedSubmits === 0 && predicates.commandState &&
+      predicates.freshColorPass && predicates.failedSubmits === 0 && predicates.commandState && !predicates.deviceLost &&
       (!needsCompletion || (predicates.freshCompletedColorPass && predicates.completedSubmits > 0));
-    var deviceLost = predicates.fallback === 'webgpu-device-lost' || predicates.probeLost || predicates.diagnosticsDeviceLost;
-    var classification = deviceLost && predicates.colorPasses === 0 ? 'device-lost-before-color-pass' :
-      (deviceLost ? 'device-lost-after-color-pass' : 'predicate-not-ready');
-    var terminal = !!(predicates.mountFound && deviceLost);
+    var classification = predicates.deviceLost && predicates.colorPasses === 0 ? 'device-lost-before-color-pass' :
+      (predicates.deviceLost ? 'device-lost-after-color-pass' : 'predicate-not-ready');
+    var terminal = !!(predicates.mountFound && predicates.deviceLost);
     return {
       ready: ready,
-      terminal: !ready && terminal,
+      terminal: terminal,
       classification: classification,
       predicates: predicates,
       passes: window.__adapterWGPasses,
