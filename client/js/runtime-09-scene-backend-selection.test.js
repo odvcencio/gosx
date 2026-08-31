@@ -16,6 +16,7 @@ const {
   bootstrapRuntimeSource,
   bootstrapFeatureEnginesSource,
   bootstrapFeatureScene3DSource,
+  bootstrapFeatureScene3DWebGLSource,
   bootstrapFeatureScene3DWebGPUSource,
   FakeWebGLContext,
   FakeElement,
@@ -926,6 +927,182 @@ test("Scene3D ignores a stale lazy WebGL fallback after probe-ready adopts a fre
   assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
   assert.equal(events.filter((event) => event.msg === "water-renderer-fallback-unavailable").length, 0);
   assert.equal(env.context.__testWaterWebGPUInstances[1].renderCount, recoveredRenderCount);
+});
+
+async function mountReownableWebGLFallback() {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-double-loss";
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({ lost: new Promise(() => {}), features: new Set(), limits: {} }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testDoubleLossWebGPUInstances = [];
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              var instance = { lost: false, renderCount: 0, disposeCount: 0 };
+              window.__testDoubleLossWebGPUInstances.push(instance);
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  return {
+                    ready: !instance.lost,
+                    deviceLost: instance.lost,
+                    deviceLostInfo: instance.lost
+                      ? { reason: "destroyed", message: "Device was destroyed." }
+                      : null
+                  };
+                },
+                render: function() { instance.renderCount += 1; },
+                dispose: function() { instance.disposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-double-loss",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: mount.id,
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              backendCaps: { capable: ["webgpu", "webgl"] },
+              objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_scene3d_perf = true;
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+
+  let pendingWebGLScript = null;
+  env.document.scriptLoader = function(src, scriptElement) {
+    assert.equal(src, "/gosx/bootstrap-feature-scene3d-webgl.js");
+    env.fetchCalls.push({ url: src, init: {} });
+    pendingWebGLScript = scriptElement;
+  };
+  return { env, events, mount, raf, timers, pendingWebGLScript: () => pendingWebGLScript };
+}
+
+async function driveDoubleLossToSharedWebGLWait(harness) {
+  const { env, mount, raf } = harness;
+  const instances = env.context.__testDoubleLossWebGPUInstances;
+  const firstCanvas = mount.firstElementChild;
+  const firstRenderCount = instances[0].renderCount;
+  instances[0].lost = true;
+  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  assert.ok(harness.pendingWebGLScript(), "generation A loss must start the lazy WebGL fetch");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(raf.count(), 0, "lost generation A must own no scheduled frame while fallback waits");
+
+  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  await flushAsyncWork();
+  assert.equal(instances.length, 2, "probe-ready must adopt fresh WebGPU generation B");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
+  raf.flush(64);
+  await flushAsyncWork();
+
+  instances[1].lost = true;
+  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
+    1,
+    "generation B must subscribe to A's shared fetch without another network request",
+  );
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "B must not demote before the chunk settles");
+  assert.notEqual(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "terminal");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-device-lost");
+  assert.equal(raf.count(), 0, "lost generation B must own no scheduled frame while fallback waits");
+  mount.firstElementChild.dispatchEvent({ type: "gosx:scene3d:resource-ready" });
+  assert.equal(raf.count(), 0, "resource readiness must not reschedule condemned generation B");
+  assert.equal(instances[0].renderCount, firstRenderCount, "stale generation A must never render again");
+  return { firstCanvas, firstRenderCount, instances };
+}
+
+test("Scene3D double WebGPU loss re-owns one pending WebGL fetch for the current generation", async () => {
+  const harness = await mountReownableWebGLFallback();
+  const { env, events, mount, raf } = harness;
+  const { firstCanvas, firstRenderCount, instances } = await driveDoubleLossToSharedWebGLWait(harness);
+
+  runScript(bootstrapFeatureScene3DWebGLSource, env.context, "bootstrap-feature-scene3d-webgl.js");
+  harness.pendingWebGLScript().onload({});
+  await flushAsyncWork();
+  raf.flush(80);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-backend"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
+  assert.notEqual(mount.firstElementChild, firstCanvas, "B must adopt WebGL on an untainted replacement canvas");
+  assert.ok((mount.firstElementChild.contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+  assert.ok(mount.firstElementChild.children.some((child) => child.getAttribute("data-gosx-scene-node-layer") === "true"));
+  assert.equal(events.filter((event) => event.msg === "renderer-swap" && event.fields.to === "webgl").length, 1);
+  assert.deepEqual(Array.from(instances, (instance) => instance.disposeCount), [1, 1]);
+  assert.equal(instances[0].renderCount, firstRenderCount, "A's stale continuation must be inert");
+});
+
+test("Scene3D pending WebGL subscribers stay inert when B is superseded by generation C", async () => {
+  const harness = await mountReownableWebGLFallback();
+  const { env, mount } = harness;
+  const { instances } = await driveDoubleLossToSharedWebGLWait(harness);
+
+  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  await flushAsyncWork();
+  assert.equal(instances.length, 3, "probe-ready must supersede pending generation B with fresh generation C");
+  const generationCRenders = instances[2].renderCount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
+
+  runScript(bootstrapFeatureScene3DWebGLSource, env.context, "bootstrap-feature-scene3d-webgl.js");
+  harness.pendingWebGLScript().onload({});
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
+  assert.equal(instances[2].renderCount, generationCRenders, "stale A/B continuations must not render or demote C");
+  assert.deepEqual(Array.from(instances, (instance) => instance.disposeCount), [1, 1, 0]);
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
+    1,
+  );
 });
 
 test("Scene3D WebGL page fetches the lazy WebGL chunk and draws with WebGL", async () => {

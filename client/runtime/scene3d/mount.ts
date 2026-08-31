@@ -639,7 +639,6 @@
     let renderWatchdogLastAdvanceAt = 0;
     let renderWatchdogRecoveries = 0;
     let renderWatchdogFallbacks = 0;
-    let renderWatchdogActiveReason = "";
     let renderWatchdogSawHidden = false;
     // renderWatchdogDeviceLostInfo: { reason, message, adapterInfo } read off
     // the OLD renderer's diagnostics().deviceLostInfo (see 16a-scene-webgpu.js's
@@ -747,7 +746,7 @@
 
     function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback, nativeOnly) {
       renderWatchdogRecoveries += 1;
-      renderWatchdogActiveReason = reason || "webgpu-stalled";
+      const recoveryReason = reason || "webgpu-render-stall";
       // Read the OLD renderer's loss detail before it gets swapped away
       // below (see 16a-scene-webgpu.js's lastDeviceLostInfo / diagnostics()
       // .deviceLostInfo, and adapterInfo, which diagnostics() already
@@ -759,10 +758,10 @@
         message: priorLostInfo.message || "",
         adapterInfo: (priorDiagnostics && priorDiagnostics.adapterInfo) || null,
       } : null;
-      publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
+      publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
       gosxSceneEmit("warn", "render-watchdog-recovery", {
         rendererKind: renderer && renderer.kind ? renderer.kind : "",
-        reason: renderWatchdogActiveReason,
+        reason: recoveryReason,
         stalledForMS: Math.round(stalledFor || 0),
         recoveryCount: renderWatchdogRecoveries,
         forceFallback: !!forceFallback,
@@ -777,14 +776,14 @@
         const recreated = createSceneRenderer(canvas, props, capability);
         const nextRenderer = recreated && recreated.renderer;
         if (nextRenderer && nextRenderer.kind === "webgpu" && nextRenderer !== renderer) {
-          if (swapRenderer(nextRenderer, reason || "webgpu-render-stall")) {
+          if (swapRenderer(nextRenderer, recoveryReason)) {
             if (nativeOnly) {
-              sceneWebGLFallbackOwner = 0;
+              sceneWebGLFallbackOwner = !sceneWebGLFallbackOwner ? 0 : null;
               setAttrValue(mount, readyAttr, "true");
               publishSceneRenderWatchdogState("", 0);
             }
-            renderLatestSceneBundle(reason || "webgpu-render-stall");
-            scheduleRenderWithViewport(reason || "webgpu-render-stall");
+            renderLatestSceneBundle(recoveryReason);
+            scheduleRenderWithViewport(recoveryReason);
             return true;
           }
         } else if (nextRenderer && nextRenderer !== renderer && typeof nextRenderer.dispose === "function") {
@@ -796,16 +795,14 @@
         return false;
       }
 	    renderWatchdogFallbacks += 1;
-	    publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
-	    if (fallbackSceneRenderer(reason || "webgpu-render-stall")) {
-        if (sceneWebGLFallbackOwner !== renderer) {
-          renderLatestSceneBundle(reason || "webgpu-render-stall");
-          scheduleRenderWithViewport(reason || "webgpu-render-stall");
-        }
+	    publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
+	    if (fallbackSceneRenderer(recoveryReason)) {
+        renderLatestSceneBundle(recoveryReason);
+        scheduleRenderWithViewport(recoveryReason);
         return true;
       }
       if (sceneWebGLFallbackOwner === renderer) return false;
-      terminalSceneWebGPURecovery(reason || "webgpu-render-stall");
+      terminalSceneWebGPURecovery(recoveryReason);
       return false;
     }
 
@@ -1070,7 +1067,6 @@
         renderWatchdogLastSeq = progress.seq;
         renderWatchdogLastAt = progress.at;
         renderWatchdogLastAdvanceAt = now;
-        renderWatchdogActiveReason = "";
         renderWatchdogDeviceLostInfo = null;
         publishSceneRenderWatchdogState("", 0);
         return;
