@@ -11,8 +11,8 @@ import (
 // cullWGSL is the frustum-culling compute shader. One thread per instance
 // tests the instance's bounding sphere against the six frustum planes. The
 // sphere centre comes from the transform's translation column; the radius is
-// the primitive's unscaled radius multiplied by the largest axis scale the
-// transform carries. Visible instances are appended to a compacted output
+// the primitive's unscaled radius multiplied by a conservative Frobenius
+// bound on the transform's largest singular value. Visible instances are appended to a compacted output
 // buffer; the indirect-draw args buffer's instanceCount field is atomically
 // bumped, so the draw pass picks up only the visible count.
 //
@@ -80,9 +80,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let m = record.model;
   // Translation column of a column-major mat4 lives at m[3].xyz.
   let center = m[3].xyz;
-  // Largest axis scale of the upper-left 3x3. The maximum never
-  // under-estimates the bounding sphere, so no visible instance is dropped.
-  let scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
+  let scale = sqrt(dot(m[0].xyz, m[0].xyz) + dot(m[1].xyz, m[1].xyz) + dot(m[2].xyz, m[2].xyz));
   var radius = cull.radius;
   if (scale > 0.0) {
     radius = radius * scale;

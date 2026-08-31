@@ -59,7 +59,7 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
-  assert.match(webgpu, /createMaterialBindGroup\(\s*mat,\s*receiveShadow,\s*materialOwner,\s*obj\.retainedGeometry \? webGPUObjectModelMatrix\(obj\) : null,\s*obj\.retainedGeometry \? obj\.modelScaleSigns : null\s*\)/);
+  assert.match(webgpu, /createMaterialBindGroup\(\s*mat,\s*receiveShadow,\s*materialOwner,\s*obj\.retainedGeometry \? webGPUObjectModelMatrix\(obj\) : null\s*\)/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });
@@ -68,11 +68,15 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /function wgpuCreatePBRPipeline/);
-  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
+  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 \? "cw" : "ccw" \}/);
+  assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(Math\.abs\(signedSampleCount\) \|\| 1\)\) \}/);
   assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
   assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+  assert.match(webgpu, /bindPBRPipeline\(reflectedDirect\)/);
+  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -activeSampleCount : activeSampleCount\)/);
+  assert.match(webgpu, /getPBRPipeline\(blendMode, depthWrite, reflected \? "cw" : "ccw"\)/);
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
@@ -82,7 +86,8 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
   // caller passes no cullMode option -- drawPBRObjects is the caller that
   // now conditions its options argument on obj.doubleSided.
   assert.match(webgpu, /var pipelineCullMode = options && typeof options\.cullMode === "string" && options\.cullMode \? options\.cullMode : "back";/);
-  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided \? \{ cullMode: "none" \} : null;/);
+  assert.match(webgpu, /var reflectedDirect = obj\.directVertices && sceneAffineDeterminant\(obj\.modelMatrix, 0\) < 0;/);
+  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided\s*\? \{ cullMode: "none" \}\s*:\s*\(reflectedDirect \? \{ frontFace: "cw" \} : null\);/);
   assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
   assert.match(webgpu, /getSelenaSkinnedPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
 });

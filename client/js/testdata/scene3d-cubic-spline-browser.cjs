@@ -1,5 +1,6 @@
 'use strict';
-/* Native browser regression probe for imported glTF CUBICSPLINE animation.
+/* Native browser regression probe for imported glTF CUBICSPLINE animation
+ * and exact affine Group.Scale rendering/picking.
  *
  * Boots real Chrome over CDP (Node builtins only), serves the built
  * bootstrap.js plus a strict method-and-path allowlist of feature assets on
@@ -7,8 +8,13 @@
  * WebGL2 and once onto WebGPU. Native WebGL2 AND WebGPU availability are
  * both required up front; there are no fallbacks and no skips.
  *
- * Per backend, the imported 'curve' clip of the cubic-spline fixture GLB is
- * driven end to end:
+ * Per backend an affine-only document first proves a retained indexed mesh
+ * under non-uniform parent scale, rotated leaf shear, and reflection. Forwarding
+ * API wrappers join the exact local vertex upload and model-matrix uniform to
+ * the draw which consumes them, assert CW front-face selection and visible
+ * pixels, then a real pointer event picks that same sole scene object. A
+ * separate document then drives the imported 'curve' clip of the cubic-spline
+ * fixture GLB end to end:
  *   - JS mixer (never WASM), all five channels loaded, first-clamp pose is
  *     the authored property values; the baseline screenshot is frozen there.
  *   - Playback starts ONLY via the public document 'gosx:hub:event' with
@@ -42,7 +48,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const REPO = process.argv[2];
 const ART = process.argv[3];
@@ -77,6 +83,15 @@ if (!Number.isInteger(RESTORE_ATOMIC_GAP_MS) || RESTORE_ATOMIC_GAP_MS < 0 ||
   console.error('GOSX_SCENE3D_CUBIC_RESTORE_ATOMIC_GAP_MS must be an integer from 0 to 1000');
   process.exit(2);
 }
+const sourceProbe = spawnSync('git', ['rev-parse', 'HEAD'], {
+  cwd: REPO, encoding: 'utf8', timeout: 10000,
+});
+if (sourceProbe.error || sourceProbe.status !== 0 ||
+    !/^[0-9a-f]{40}$/.test(String(sourceProbe.stdout || '').trim())) {
+  console.error('unable to pin browser proof to source commit');
+  process.exit(2);
+}
+const SOURCE_COMMIT = sourceProbe.stdout.trim();
 const errors = [];
 const warnings = [];
 const fail = (m) => { errors.push(m); };
@@ -141,6 +156,30 @@ const CASES = [
   { name: 'wg', webgpu: true, mount: 'scene-cubic-wg', engine: 'gosx-engine-cubic-wg' },
 ];
 
+const AFFINE_CASES = [
+  { name: 'affine-gl', webgpu: false, mount: 'scene-affine-gl', engine: 'gosx-engine-affine-gl' },
+  { name: 'affine-wg', webgpu: true, mount: 'scene-affine-wg', engine: 'gosx-engine-affine-wg' },
+];
+
+const AFFINE_PARENT = [
+  -2, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0.5, 0.5, 1, 1,
+];
+const AFFINE_LOCAL_POSITIONS = [-0.4, -0.4, 0, 0.4, -0.4, 0, 0, 0.4, 0];
+const AFFINE_MODEL_MATRIX = [
+  -Math.SQRT2, Math.SQRT1_2, 0, 0,
+  Math.SQRT2, Math.SQRT1_2, 0, 0,
+  0, 0, 1, 0,
+  0.5, 0.5, 1, 1,
+];
+const AFFINE_WORLD_POSITIONS = [
+  0.5, 0.5 - 0.4 * Math.SQRT2, 1,
+  0.5 - 0.8 * Math.SQRT2, 0.5, 1,
+  0.5 + 0.4 * Math.SQRT2, 0.5 + 0.2 * Math.SQRT2, 1,
+];
+
 const START_DETAIL = { event: 'cubic-control',
   data: { cubic: { animationSpeed: 1, animationFadeInMS: 0, animationFadeOutMS: 0 } } };
 const FREEZE_DETAIL = { event: 'cubic-control', data: { cubic: { animationSpeed: 0 } } };
@@ -167,12 +206,39 @@ function manifestFor(mount, engine, webgpu) {
   }] });
 }
 
-function htmlFor(mount, engine, webgpu) {
+function affineManifestFor(mount, engine, webgpu) {
+  return JSON.stringify({ engines: [{
+    id: engine, component: 'GoSXScene3D', kind: 'surface', mountId: mount,
+    props: {
+      width: W, height: H, autoRotate: false, animation: false,
+      responsive: false, maxDevicePixelRatio: 1, background: '#101418',
+      camera: { x: 0.5, y: 0.5, z: 3, fov: 50 },
+      lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
+        directionX: 0, directionY: 0, directionZ: -1 }],
+      forceWebGL: !webgpu, requireWebGL: !webgpu, preferWebGPU: Boolean(webgpu),
+      pickSignalNamespace: 'affine.pick',
+      objects: [{
+        id: 'affine-group-child', kind: 'box', pickable: true, color: '#f6a44c', wireframe: false,
+        rotationZ: Math.PI / 4, parentMatrix: AFFINE_PARENT,
+        vertices: {
+          positions: AFFINE_LOCAL_POSITIONS,
+          normals: [Math.SQRT1_2, Math.SQRT1_2, 0, Math.SQRT1_2, Math.SQRT1_2, 0,
+            Math.SQRT1_2, Math.SQRT1_2, 0],
+          uvs: [0, 0, 1, 0, 0.5, 1],
+          tangents: [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1],
+          indices: [0, 1, 2], count: 3, immutable: true, revision: 0,
+        },
+      }],
+    },
+  }] });
+}
+
+function htmlFor(mount, engine, webgpu, affine) {
   return '<!doctype html><html><head><meta charset="utf-8">' +
     '<link rel="icon" href="data:,"></head><body>' +
     '<div id="' + mount + '" width="' + W + '" height="' + H + '"></div>' +
     '<script type="application/json" id="gosx-manifest">' +
-    manifestFor(mount, engine, webgpu) + '</script>' +
+    (affine ? affineManifestFor(mount, engine, webgpu) : manifestFor(mount, engine, webgpu)) + '</script>' +
     '<script src="/bootstrap.js"></script></body></html>';
 }
 
@@ -192,7 +258,8 @@ function requestAllowed(method, pathname, search) {
   if (search !== '') return false;
   if (method === 'POST') return pathname === '/_gosx/client-events';
   return method === 'GET' && (pathname === '/' || pathname === '/case/gl' ||
-    pathname === '/case/wg' || pathname === '/models/cubic-spline.glb' ||
+    pathname === '/case/wg' || pathname === '/case/affine-gl' ||
+    pathname === '/case/affine-wg' || pathname === '/models/cubic-spline.glb' ||
     STATIC_ROUTES.has(pathname));
 }
 
@@ -246,6 +313,14 @@ const server = http.createServer((req, res) => {
   }
   if (parsed.pathname === '/case/wg') {
     send(200, Buffer.from(htmlFor('scene-cubic-wg', 'gosx-engine-cubic-wg', true)), 'text/html');
+    return;
+  }
+  if (parsed.pathname === '/case/affine-gl') {
+    send(200, Buffer.from(htmlFor('scene-affine-gl', 'gosx-engine-affine-gl', false, true)), 'text/html');
+    return;
+  }
+  if (parsed.pathname === '/case/affine-wg') {
+    send(200, Buffer.from(htmlFor('scene-affine-wg', 'gosx-engine-affine-wg', true, true)), 'text/html');
     return;
   }
   if (parsed.pathname === '/models/cubic-spline.glb') {
@@ -435,19 +510,87 @@ window.__cubicGLDraws = 0; window.__cubicGLContext = '';
 window.__cubicWGPasses = 0; window.__cubicWGSubmits = 0;
 window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
 window.__cubicProofTarget = ${JSON.stringify(PROOF_TARGET)};
+window.__affineGLUploads = []; window.__affineGLDrawRecords = [];
+window.__affineWGUploads = []; window.__affineWGDrawRecords = [];
+window.__affineWGExecutedBundles = [];
+window.__affineInputEvents = [];
 (function () {
   var mutation = window.__cubicProofMutation;
   var proofTarget = window.__cubicProofTarget;
+  var nextGLBufferID = 1;
+  var glBufferIDs = new WeakMap();
+  var glStates = new WeakMap();
+  function glBufferID(buffer) {
+    if (!buffer) return 0;
+    var id = glBufferIDs.get(buffer);
+    if (!id) { id = nextGLBufferID++; glBufferIDs.set(buffer, id); }
+    return id;
+  }
+  function glState(ctx) {
+    var state = glStates.get(ctx);
+    if (!state) {
+      state = { arrayBuffer: 0, vao: null, defaults: Object.create(null),
+        vaos: new WeakMap(), matrices: new Map(), frontFace: ctx.CCW };
+      glStates.set(ctx, state);
+    }
+    return state;
+  }
+  function glAttributes(state) {
+    if (!state.vao) return state.defaults;
+    var attrs = state.vaos.get(state.vao);
+    if (!attrs) { attrs = Object.create(null); state.vaos.set(state.vao, attrs); }
+    return attrs;
+  }
+  function floats(value) {
+    return value instanceof Float32Array ? Array.prototype.slice.call(value) : null;
+  }
+  function wrap(proto, name, handler) {
+    if (!proto) return;
+    var orig = proto[name];
+    if (!orig || orig.__gosxAffineProbeWrapped) return;
+    var wrapped = function () { return handler.call(this, orig, arguments); };
+    wrapped.__gosxAffineProbeWrapped = true;
+    proto[name] = wrapped;
+  }
   function wrapGL(proto) {
     if (!proto) return;
     ['drawArrays', 'drawElements'].forEach(function (name) {
-      var orig = proto[name];
-      if (!orig) return;
-      proto[name] = function () {
+      wrap(proto, name, function (orig, args) {
         window.__cubicGLDraws += 1;
         window.__cubicGLContext = (this instanceof WebGL2RenderingContext) ? 'webgl2' : 'webgl';
-        return orig.apply(this, arguments);
-      };
+        var state = glState(this);
+        window.__affineGLDrawRecords.push({ kind: name,
+          buffers: Object.keys(glAttributes(state)).map(function (key) { return glAttributes(state)[key]; }),
+          matrices: Array.from(state.matrices.values()), frontFace: state.frontFace });
+        return orig.apply(this, args);
+      });
+    });
+    wrap(proto, 'createBuffer', function (orig, args) {
+      var buffer = orig.apply(this, args); glBufferID(buffer); return buffer;
+    });
+    wrap(proto, 'bindBuffer', function (orig, args) {
+      if (args[0] === this.ARRAY_BUFFER) glState(this).arrayBuffer = glBufferID(args[1]);
+      return orig.apply(this, args);
+    });
+    wrap(proto, 'bufferData', function (orig, args) {
+      var values = floats(args[1]);
+      if (values) window.__affineGLUploads.push({ buffer: glState(this).arrayBuffer, values: values });
+      return orig.apply(this, args);
+    });
+    wrap(proto, 'bindVertexArray', function (orig, args) {
+      glState(this).vao = args[0] || null; return orig.apply(this, args);
+    });
+    wrap(proto, 'vertexAttribPointer', function (orig, args) {
+      glAttributes(glState(this))[String(args[0])] = glState(this).arrayBuffer;
+      return orig.apply(this, args);
+    });
+    wrap(proto, 'uniformMatrix4fv', function (orig, args) {
+      var values = floats(args[2]);
+      if (values) glState(this).matrices.set(args[0], values.slice(0, 16));
+      return orig.apply(this, args);
+    });
+    wrap(proto, 'frontFace', function (orig, args) {
+      glState(this).frontFace = args[0]; return orig.apply(this, args);
     });
   }
   wrapGL(typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext.prototype : null);
@@ -1008,6 +1151,123 @@ window.__cubicProofTarget = ${JSON.stringify(PROOF_TARGET)};
       return result;
     };
   }
+
+  var nextWGBufferID = 1;
+  var wgBufferIDs = new WeakMap();
+  var wgBindGroups = new WeakMap();
+  var wgPipelines = new WeakMap();
+  var wgPassStates = new WeakMap();
+  function wgBufferID(buffer) {
+    if (!buffer) return 0;
+    var id = wgBufferIDs.get(buffer);
+    if (!id) { id = nextWGBufferID++; wgBufferIDs.set(buffer, id); }
+    return id;
+  }
+  function wgPassState(pass) {
+    var state = wgPassStates.get(pass);
+    if (!state) {
+      state = { vertexBuffers: Object.create(null), groups: Object.create(null),
+        frontFace: '', cullMode: '', records: [] };
+      wgPassStates.set(pass, state);
+    }
+    return state;
+  }
+  if (typeof GPUDevice !== 'undefined' && GPUDevice.prototype) {
+    wrap(GPUDevice.prototype, 'createBuffer', function (orig, args) {
+      var buffer = orig.apply(this, args); wgBufferID(buffer); return buffer;
+    });
+    wrap(GPUDevice.prototype, 'createBindGroup', function (orig, args) {
+      var group = orig.apply(this, args), bindings = Object.create(null);
+      var entries = args[0] && Array.isArray(args[0].entries) ? args[0].entries : [];
+      entries.forEach(function (entry) {
+        var resource = entry && entry.resource;
+        if (resource && resource.buffer) bindings[String(entry.binding)] = wgBufferID(resource.buffer);
+      });
+      wgBindGroups.set(group, bindings); return group;
+    });
+    wrap(GPUDevice.prototype, 'createRenderPipeline', function (orig, args) {
+      var pipeline = orig.apply(this, args);
+      var primitive = args[0] && args[0].primitive || {};
+      wgPipelines.set(pipeline, {
+        frontFace: String(primitive.frontFace || 'ccw'),
+        cullMode: String(primitive.cullMode || 'none'),
+      });
+      return pipeline;
+    });
+  }
+  if (typeof GPUCommandEncoder !== 'undefined' && GPUCommandEncoder.prototype &&
+      GPUCommandEncoder.prototype.beginRenderPass) {
+    wrap(GPUCommandEncoder.prototype, 'beginRenderPass', function (orig, args) {
+      var pass = orig.apply(this, args); wgPassState(pass); return pass;
+    });
+  }
+  if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype) {
+    wrap(GPUQueue.prototype, 'writeBuffer', function (orig, args) {
+      var values = floats(args[2]);
+      if (values) window.__affineWGUploads.push({ buffer: wgBufferID(args[0]), values: values });
+      return orig.apply(this, args);
+    });
+    wrap(GPUQueue.prototype, 'submit', function (orig, args) {
+      return orig.apply(this, args);
+    });
+  }
+  function wrapWGDrawEncoder(proto, retained) {
+    if (!proto) return;
+    wrap(proto, 'setVertexBuffer', function (orig, args) {
+      wgPassState(this).vertexBuffers[String(args[0])] = wgBufferID(args[1]);
+      return orig.apply(this, args);
+    });
+    wrap(proto, 'setBindGroup', function (orig, args) {
+      wgPassState(this).groups[String(args[0])] = wgBindGroups.get(args[1]) || null;
+      return orig.apply(this, args);
+    });
+    wrap(proto, 'setPipeline', function (orig, args) {
+      var primitive = wgPipelines.get(args[0]) || {};
+      wgPassState(this).frontFace = primitive.frontFace || '';
+      wgPassState(this).cullMode = primitive.cullMode || '';
+      return orig.apply(this, args);
+    });
+    ['draw', 'drawIndexed'].forEach(function (name) {
+      wrap(proto, name, function (orig, args) {
+        var state = wgPassState(this), material = state.groups['1'];
+        var record = { kind: name,
+          positionBuffer: state.vertexBuffers['0'] || 0,
+          materialBuffer: material && material['0'] || 0,
+          frontFace: state.frontFace, cullMode: state.cullMode,
+          bundle: retained ? -1 : 0 };
+        window.__affineWGDrawRecords.push(record);
+        if (retained) state.records.push(record);
+        return orig.apply(this, args);
+      });
+    });
+  }
+  wrapWGDrawEncoder(typeof GPURenderPassEncoder !== 'undefined' ? GPURenderPassEncoder.prototype : null, false);
+
+  var nextWGBundleID = 1;
+  var wgBundleIDs = new WeakMap();
+  if (typeof GPURenderBundleEncoder !== 'undefined' && GPURenderBundleEncoder.prototype) {
+    wrapWGDrawEncoder(GPURenderBundleEncoder.prototype, true);
+    wrap(GPURenderBundleEncoder.prototype, 'finish', function (orig, args) {
+      var state = wgPassState(this), bundle = orig.apply(this, args);
+      var id = nextWGBundleID++;
+      wgBundleIDs.set(bundle, id);
+      state.records.forEach(function (record) { record.bundle = id; });
+      return bundle;
+    });
+  }
+  if (typeof GPURenderPassEncoder !== 'undefined' && GPURenderPassEncoder.prototype) {
+    wrap(GPURenderPassEncoder.prototype, 'executeBundles', function (orig, args) {
+      var bundles = args[0] || [];
+      for (var i = 0; i < bundles.length; i++) {
+        var id = wgBundleIDs.get(bundles[i]);
+        if (id) window.__affineWGExecutedBundles.push(id);
+      }
+      return orig.apply(this, args);
+    });
+  }
+  document.addEventListener('gosx:scene3d:input', function (event) {
+    window.__affineInputEvents.push(event && event.detail || null);
+  });
 })();
 `;
 
@@ -1104,6 +1364,90 @@ function poseExpr() {
     'wgPasses:window.__cubicWGPasses,wgSubmits:window.__cubicWGSubmits};})()';
 }
 
+function affineRefsSetExpr(mount) {
+  return '(function(){var m=document.getElementById(' + JSON.stringify(mount) + ');' +
+    'if(!m||m.getAttribute("data-gosx-scene3d-mounted")!=="true")return false;' +
+    'var cv=m.querySelector("canvas"),st=m.__gosxScene3DState;' +
+    'var object=st&&st.objects&&st.objects.get("affine-group-child");' +
+    'if(!cv||!st||!object)return false;' +
+    'window.__affineRefs={mount:m,canvas:cv,state:st,object:object};return true;})()';
+}
+
+function affinePickExpr() {
+  return '(function(){var r=window.__affineRefs;if(!r||!r.canvas)return false;' +
+    'window.__affineInputEvents.length=0;var b=r.canvas.getBoundingClientRect();' +
+    'var base={bubbles:true,cancelable:true,pointerId:71,pointerType:"mouse",isPrimary:true,' +
+      'button:0,clientX:b.left+b.width/2,clientY:b.top+b.height/2};' +
+    'r.canvas.dispatchEvent(new PointerEvent("pointerdown",Object.assign({buttons:1},base)));' +
+    'document.dispatchEvent(new PointerEvent("pointerup",Object.assign({buttons:0},base)));' +
+    'return true;})()';
+}
+
+function affineScalePolicyExpr() {
+  return '(function(){' +
+    'function hit(matrix,origin,dir){var mesh={id:"scaled",kind:"sphere",radius:1,count:1,pickable:true,transforms:new Float32Array(matrix)};' +
+      'var h=window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes({origin:origin,dir:dir},[mesh],0);' +
+      'return h&&{distance:h.distance,local:h.localPosition};}' +
+    'function inverse(matrix){var out=new Float64Array(12),api=window.__gosx_scene3d_api;' +
+      'return {without:api.sceneAffineDeterminant(matrix,0),withOut:api.sceneAffineDeterminant(matrix,0,out),inverse:Array.from(out,function(v){return Number.isFinite(v)?v:null;})};}' +
+    'function uniform(s){return hit([s,0,0,0,0,s,0,0,0,0,s,0,0,0,0,1],{x:0,y:0,z:2*s},{x:0,y:0,z:-1});}' +
+    'function shear(s){var n=Math.SQRT1_2,len=s*Math.sqrt(5),x=-s*n,y=3*s*n;' +
+      'return {expected:len,hit:hit([-2*s,0,0,0,s,3*s,0,0,0,0,4*s,0,0,0,0,1],{x:2*x,y:2*y,z:0},{x:-x/len,y:-y/len,z:0})};}' +
+    'var near=[9e307,-9e307,0,0,9e307,9e307,0,0,0,0,9e307,0,0,0,0,1];' +
+    'return {uniformCutoff:uniform(1e6),uniformLarge:uniform(1e9),uniformSmall:uniform(1e-9),shearedLarge:shear(1e9),shearedSmall:shear(1e-9),' +
+      'tiny:inverse([1e-297,0,0,0,0,2e-303,0,0,0,0,2e-303,0,0,0,0,1]),' +
+      'tinyShear:inverse([1e-297,0,0,0,5e-298,2e-303,0,0,-4e-298,1e-303,2e-303,0,0,0,0,1]),' +
+      'tinyTransposed:inverse([1e-297,5e-298,-4e-298,0,0,2e-303,1e-303,0,0,0,2e-303,0,0,0,0,1]),' +
+      'tinyReflected:inverse([-1e-297,0,0,0,5e-298,2e-303,0,0,-4e-298,1e-303,2e-303,0,0,0,0,1]),' +
+      'thresholdAccepted:inverse([1e-297,0,0,0,0,1e-303,0,0,0,0,1.000001e-303,0,0,0,0,1]),nearMax:inverse(near),' +
+      'thresholdRejected:inverse([1e-297,0,0,0,0,1e-303,0,0,0,0,0.999999e-303,0,0,0,0,1]),' +
+      'overflow:inverse([1e-308,0,0,0,0,1e-308,0,0,0,0,2e-320,0,0,0,0,1]),' +
+      'singular:inverse([1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1])};})()';
+}
+
+function affineEvidenceExpr() {
+  return '(function(){var r=window.__affineRefs;if(!r)return null;' +
+    'var local=' + JSON.stringify(AFFINE_LOCAL_POSITIONS) + ',model=' + JSON.stringify(AFFINE_MODEL_MATRIX) + ';' +
+    'function close(a,b){if(!a||a.length<b.length)return false;' +
+      'for(var i=0;i<b.length;i++)if(!Number.isFinite(a[i])||Math.abs(a[i]-b[i])>0.00002)return false;' +
+      'return true;}' +
+    'var glUpload=null,glDraw=null,glUploads=window.__affineGLUploads||[];' +
+    'for(var i=0;i<glUploads.length;i++)if(close(glUploads[i].values,local)){' +
+      'glUpload=glUploads[i];break;}' +
+    'var glRecords=window.__affineGLDrawRecords||[];' +
+    'for(var j=0;glUpload&&j<glRecords.length;j++){' +
+      'var record=glRecords[j],hasMatrix=false;' +
+      'for(var k=0;k<record.matrices.length;k++)if(close(record.matrices[k],model)){hasMatrix=true;break;}' +
+      'if(record.buffers.indexOf(glUpload.buffer)>=0&&hasMatrix){glDraw=record;break;}}' +
+    'var wgPosition=null,wgMaterial=null,wgDraw=null,wgUploads=window.__affineWGUploads||[];' +
+    'for(var wi=0;wi<wgUploads.length;wi++){' +
+      'var upload=wgUploads[wi];if(!wgPosition&&close(upload.values,local))wgPosition=upload;' +
+      'if(!wgMaterial&&upload.values&&upload.values.length>=36&&close(upload.values.slice(20,36),model))wgMaterial=upload;}' +
+    'var wgRecords=window.__affineWGDrawRecords||[];' +
+    'var executed=window.__affineWGExecutedBundles||[];' +
+    'for(var wj=0;wgPosition&&wgMaterial&&wj<wgRecords.length;wj++){' +
+      'if(wgRecords[wj].positionBuffer===wgPosition.buffer&&' +
+        'wgRecords[wj].materialBuffer===wgMaterial.buffer&&' +
+        '(wgRecords[wj].bundle===0||executed.indexOf(wgRecords[wj].bundle)>=0)){' +
+          'wgDraw=wgRecords[wj];break;}}' +
+    'var picked=null,events=window.__affineInputEvents||[];' +
+    'for(var ei=0;ei<events.length;ei++){' +
+      'var input=events[ei]&&events[ei].input;' +
+      'if(input&&input.targetID==="affine-group-child")picked=input;}' +
+    'var snapshot=window.__gosx_scene3d_debug&&window.__gosx_scene3d_debug.inspect(r.mount.id);' +
+    'var stats=snapshot&&snapshot.webgpuStats||{},diagnostics=snapshot&&snapshot.rendererDiagnostics||{};' +
+    'return {parent:Array.prototype.slice.call(r.object.parentMatrix||[]),' +
+      'glUpload:glUpload,glDraw:glDraw,wgPosition:wgPosition,wgMaterial:wgMaterial,wgDraw:wgDraw,' +
+      'pick:picked,draws:window.__cubicGLDraws,gl:window.__cubicGLContext,' +
+      'wgPasses:window.__cubicWGPasses,wgSubmits:window.__cubicWGSubmits,' +
+      'executedBundles:executed.slice(),' +
+      'path:{worldMeshVertexCount:snapshot&&snapshot.counts&&snapshot.counts.worldMeshVertexCount,' +
+        'retainedMeshObjects:stats.retainedMeshObjects,' +
+        'bundleState:stats.bundleState,' +
+        'cacheEntries:diagnostics.retainedGeometry&&diagnostics.retainedGeometry.cacheEntries},' +
+      'events:events};})()';
+}
+
 function hubExpr(detail) {
   return '(function(){try{document.dispatchEvent(new CustomEvent("gosx:hub:event",' +
     '{detail:' + JSON.stringify(detail) + '}));return true;}catch(e){return false;}})()';
@@ -1160,6 +1504,19 @@ function diffExpr(a, b) {
     '}catch(e){res(null);}}' +
     'A.onload=B.onload=done;A.onerror=B.onerror=function(){res(null);};' +
     'A.src="data:image/png;base64,' + a + '";B.src="data:image/png;base64,' + b + '";})';
+}
+
+function imageStatsExpr(base64) {
+  return 'new Promise(function(res){var image=new Image();image.onload=function(){try{' +
+    'var c=document.createElement("canvas");c.width=image.width;c.height=image.height;' +
+    'var x=c.getContext("2d",{willReadFrequently:true});x.drawImage(image,0,0);' +
+    'var data=x.getImageData(0,0,c.width,c.height).data,changed=0,maxDelta=0;' +
+    'for(var i=0;i<data.length;i+=4){var d=Math.max(Math.abs(data[i]-16),' +
+      'Math.abs(data[i+1]-20),Math.abs(data[i+2]-24),Math.abs(data[i+3]-255));' +
+      'if(d>3)changed++;if(d>maxDelta)maxDelta=d;}' +
+    'res({width:c.width,height:c.height,nonBackgroundPixels:changed,maxDelta:maxDelta});' +
+    '}catch(e){res(null);}};image.onerror=function(){res(null);};' +
+    'image.src="data:image/png;base64,' + base64 + '";})';
 }
 
 async function capture(send, mount) {
@@ -1295,6 +1652,28 @@ function assertClose(actual, expected, label, tol) {
   }
 }
 
+function assertRelative(actual, expected, label, tolerance) {
+  const value = Number(actual);
+  if (!Number.isFinite(value) || Math.abs(value - expected) > Math.abs(expected) * tolerance) {
+    fail(label + '=' + actual + ' want ' + expected + ' (relative tolerance ' + tolerance + ')');
+  }
+}
+
+function transformAffinePositions(local, matrix) {
+  const out = [];
+  for (let i = 0; i + 2 < local.length; i += 3) {
+    const x = local[i];
+    const y = local[i + 1];
+    const z = local[i + 2];
+    out.push(
+      matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+      matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+      matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+    );
+  }
+  return out;
+}
+
 async function pollClock(send, label) {
   const deadline = Date.now() + CLOCK_TIMEOUT_MS;
   let last = null;
@@ -1333,6 +1712,188 @@ function compareSampledPose(pose, t, label) {
   assertClose(pose.t0.rotation, fixture.evalRotation(t), label + ' sampled rotation', 2e-3);
   assertClose(pose.t0.scale, fixture.evalScale(t), label + ' sampled scale', 2e-3);
   assertClose(pose.t0.weights, fixture.evalWeights(t), label + ' sampled weights', 2e-3);
+}
+
+async function runAffineCase(send, c, sessionId) {
+  const ev = { name: c.name, kind: 'affine-renderer-owned', webgpu: c.webgpu,
+    mount: c.mount, engine: c.engine };
+  const loadP = waitForEvent('Page.loadEventFired', MOUNT_WAIT_MS, sessionId);
+  await send('Page.navigate', { url: BASE + '/case/' + c.name });
+  await loadP;
+
+  const deadline = Date.now() + MOUNT_WAIT_MS;
+  let ready = false;
+  while (Date.now() < deadline) {
+    if ((await evalSend(send, affineRefsSetExpr(c.mount))) === true) { ready = true; break; }
+    await sleep(100);
+  }
+  if (!ready) {
+    fail('[' + c.name + '] affine-only engine did not mount');
+    return ev;
+  }
+
+  ev.attrs = await evalSend(send, attrsExpr(c.mount));
+  const wantRenderer = c.webgpu ? 'webgpu' : 'webgl';
+  if (!ev.attrs || ev.attrs.mounted !== 'true' || ev.attrs.renderer !== wantRenderer) {
+    fail('[' + c.name + '] wrong backend attributes: ' + JSON.stringify(ev.attrs) +
+      ' (want mounted=true, renderer=' + wantRenderer + ')');
+  }
+  if (ev.attrs && ev.attrs.fallback) {
+    fail('[' + c.name + '] fallback attribute set: ' + ev.attrs.fallback);
+  }
+
+  await settleFrames(send, 10);
+  if ((await evalSend(send, affinePickExpr())) !== true) {
+    fail('[' + c.name + '] real canvas pointer pick dispatch failed');
+  }
+  await settleFrames(send, 2);
+
+  const evidence = await evalSend(send, affineEvidenceExpr());
+  ev.affine = evidence;
+  ev.scalePolicy = await evalSend(send, affineScalePolicyExpr());
+  if (!evidence) {
+    fail('[' + c.name + '] affine GPU/pick evidence unavailable');
+  } else {
+    assertClose(evidence.parent, AFFINE_PARENT, '[' + c.name + '] strict parent matrix', 1e-6);
+    if (!evidence.path || evidence.path.worldMeshVertexCount !== 0 || !(evidence.path.cacheEntries > 0) ||
+        (c.webgpu && evidence.path.retainedMeshObjects !== 1)) {
+      fail('[' + c.name + '] affine object fell off retained renderer path: ' +
+        JSON.stringify(evidence.path));
+    }
+    if (!c.webgpu) {
+      if (!evidence.glUpload || !evidence.glDraw) {
+        fail('[' + c.name + '] no WebGL draw joined retained local vertices to affine model matrix: ' +
+          JSON.stringify(evidence));
+      } else {
+        assertClose(evidence.glUpload.values, AFFINE_LOCAL_POSITIONS,
+          '[' + c.name + '] submitted retained local vertices', 1e-6);
+        let submittedModel = null;
+        for (const candidate of evidence.glDraw.matrices || []) {
+          if (Array.isArray(candidate) && candidate.length === 16 &&
+              candidate.every((value, i) => Math.abs(value - AFFINE_MODEL_MATRIX[i]) < 2e-5)) {
+            submittedModel = candidate;
+            break;
+          }
+        }
+        assertClose(submittedModel, AFFINE_MODEL_MATRIX,
+          '[' + c.name + '] submitted affine model matrix', 2e-5);
+        assertClose(transformAffinePositions(evidence.glUpload.values, submittedModel || AFFINE_MODEL_MATRIX),
+          AFFINE_WORLD_POSITIONS, '[' + c.name + '] independently reconstructed rendered vertices', 2e-5);
+        if (evidence.glDraw.kind !== 'drawElements') {
+          fail('[' + c.name + '] retained indexed affine object did not use drawElements: ' +
+            JSON.stringify(evidence.glDraw.kind));
+        }
+        if (evidence.glDraw.frontFace !== 2304) {
+          fail('[' + c.name + '] reflected WebGL draw did not select CW front face: ' +
+            JSON.stringify(evidence.glDraw.frontFace));
+        }
+      }
+      if (!(evidence.draws > 0) || evidence.gl !== 'webgl2') {
+        fail('[' + c.name + '] native WebGL2 draw evidence missing: ' + JSON.stringify(evidence));
+      }
+    } else {
+      if (!evidence.wgPosition || !evidence.wgMaterial || !evidence.wgDraw) {
+        fail('[' + c.name + '] no WebGPU draw joined retained local vertices to affine material: ' +
+          JSON.stringify(evidence));
+      } else {
+        const submittedModel = evidence.wgMaterial.values.slice(20, 36);
+        assertClose(evidence.wgPosition.values, AFFINE_LOCAL_POSITIONS,
+          '[' + c.name + '] submitted retained local vertices', 1e-6);
+        assertClose(submittedModel, AFFINE_MODEL_MATRIX,
+          '[' + c.name + '] submitted affine model matrix', 2e-5);
+        assertClose(transformAffinePositions(evidence.wgPosition.values, submittedModel),
+          AFFINE_WORLD_POSITIONS, '[' + c.name + '] independently reconstructed rendered vertices', 2e-5);
+        if (evidence.wgDraw.kind !== 'drawIndexed') {
+          fail('[' + c.name + '] retained indexed affine object did not use drawIndexed: ' +
+            JSON.stringify(evidence.wgDraw.kind));
+        }
+        if (evidence.wgDraw.frontFace !== 'cw') {
+          fail('[' + c.name + '] reflected WebGPU draw did not select CW front face: ' +
+            JSON.stringify(evidence.wgDraw.frontFace));
+        }
+        if (!(evidence.wgDraw.bundle > 0) ||
+            !Array.isArray(evidence.executedBundles) ||
+            evidence.executedBundles.indexOf(evidence.wgDraw.bundle) < 0) {
+          fail('[' + c.name + '] retained affine draw bundle was not executed by the render pass: ' +
+            JSON.stringify({ draw: evidence.wgDraw, executed: evidence.executedBundles }));
+        }
+      }
+      if (!(evidence.wgPasses > 0) || !(evidence.wgSubmits > 0)) {
+        fail('[' + c.name + '] native WebGPU pass/submit evidence missing: ' + JSON.stringify(evidence));
+      }
+    }
+    const pick = evidence.pick;
+    if (!pick || pick.targetID !== 'affine-group-child') {
+      fail('[' + c.name + '] actual canvas pick missed affine child: ' + JSON.stringify(pick));
+    } else {
+      assertClose([pick.worldX, pick.worldY, pick.worldZ], [0.5, 0.5, 1],
+        '[' + c.name + '] actual affine pick point', 2e-4);
+      if (Math.abs(Number(pick.depth) - 2) >= 2e-4) {
+        fail('[' + c.name + '] actual affine pick distance=' + pick.depth + ' want 2');
+      }
+    }
+  }
+  const scalePolicy = ev.scalePolicy;
+  if (!scalePolicy || !scalePolicy.uniformCutoff || !scalePolicy.uniformLarge || !scalePolicy.uniformSmall ||
+      !scalePolicy.shearedLarge || !scalePolicy.shearedLarge.hit ||
+      !scalePolicy.shearedSmall || !scalePolicy.shearedSmall.hit) {
+    fail('[' + c.name + '] affine scale-policy proof missing: ' + JSON.stringify(scalePolicy));
+  } else {
+    assertRelative(scalePolicy.uniformCutoff.distance, 1e6,
+      '[' + c.name + '] exact former-cutoff instanced pick distance', 1e-12);
+    assertRelative(scalePolicy.uniformLarge.distance, 1e9,
+      '[' + c.name + '] exact 1e9 instanced pick distance', 1e-12);
+    assertRelative(scalePolicy.uniformSmall.distance, 1e-9,
+      '[' + c.name + '] small instanced pick distance', 1e-6);
+    assertRelative(scalePolicy.shearedLarge.hit.distance, scalePolicy.shearedLarge.expected,
+      '[' + c.name + '] large sheared/reflected pick distance', 1e-6);
+    assertRelative(scalePolicy.shearedSmall.hit.distance, scalePolicy.shearedSmall.expected,
+      '[' + c.name + '] small sheared/reflected pick distance', 1e-6);
+    for (const name of ['tiny', 'tinyShear', 'tinyTransposed', 'tinyReflected', 'thresholdAccepted', 'nearMax']) {
+      const receipt = scalePolicy[name];
+      if (!receipt || receipt.without === 0 || receipt.withOut !== receipt.without ||
+          !Array.isArray(receipt.inverse) || !receipt.inverse.every(Number.isFinite) ||
+          !receipt.inverse.some((value) => value !== 0)) {
+        fail('[' + c.name + '] ' + name + ' affine inverse invalid: ' + JSON.stringify(receipt));
+      }
+    }
+    assertRelative(scalePolicy.tiny.inverse[0], 1e297,
+      '[' + c.name + '] anisotropic tiny inverse x', 1e-15);
+    assertRelative(scalePolicy.tiny.inverse[5], 5e302,
+      '[' + c.name + '] anisotropic tiny inverse y', 1e-15);
+    assertRelative(scalePolicy.tiny.inverse[10], 5e302,
+      '[' + c.name + '] anisotropic tiny inverse z', 1e-15);
+    const nearInverse = scalePolicy.nearMax && scalePolicy.nearMax.inverse;
+    if (!scalePolicy.nearMax || scalePolicy.nearMax.without !== 2 ||
+        !Array.isArray(nearInverse) || !nearInverse.every(Number.isFinite) ||
+        !nearInverse.some((value) => value !== 0)) {
+      fail('[' + c.name + '] near-max affine inverse invalid: ' + JSON.stringify(scalePolicy.nearMax));
+    }
+    if (!scalePolicy.thresholdRejected || scalePolicy.thresholdRejected.without !== 0 || scalePolicy.thresholdRejected.withOut !== 0 ||
+        !scalePolicy.overflow || scalePolicy.overflow.without !== 0 || scalePolicy.overflow.withOut !== 0 ||
+        !scalePolicy.singular || scalePolicy.singular.without !== 0 || scalePolicy.singular.withOut !== 0) {
+      fail('[' + c.name + '] invalid affine inverse did not fail closed: ' +
+        JSON.stringify({ threshold: scalePolicy.thresholdRejected, overflow: scalePolicy.overflow, singular: scalePolicy.singular }));
+    }
+  }
+
+  const shot = await capture(send, c.mount);
+  writeArtifact(c.name + '-visible.png', shot);
+  ev.pixelStats = await evalSend(send, imageStatsExpr(shot), { awaitPromise: true });
+  if (!ev.pixelStats || !(ev.pixelStats.nonBackgroundPixels > 20)) {
+    fail('[' + c.name + '] reflected/sheared face was not visibly rasterized: ' +
+      JSON.stringify(ev.pixelStats));
+  }
+
+  ev.disposed = await evalSend(send, disposeExpr(c.engine, c.mount));
+  if (ev.disposed !== true) fail('[' + c.name + '] disposal did not clear engine state');
+  ev.telemetry = await evalSend(send, telemetryQuiesceExpr(), { awaitPromise: true });
+  if (ev.telemetry && (ev.telemetry.queueDepth !== 0 || ev.telemetry.pendingRequests !== 0)) {
+    fail('[' + c.name + '] telemetry did not quiesce before navigation: ' +
+      JSON.stringify(ev.telemetry));
+  }
+  await waitForNetworkIdle(c.name);
+  return ev;
 }
 
 async function runCase(send, c, sessionId) {
@@ -1677,6 +2238,7 @@ function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, intentionalNoContent,
     clientEventResponses,
+    sourceCommit: SOURCE_COMMIT,
     selectedBrowser: SELECTED_BROWSER,
     webgpuProofTarget: PROOF_TARGET,
     renderTargetKind: 'proof-private-gpu-texture',
@@ -1883,6 +2445,32 @@ const watchdog = setTimeout(() => {
     afterTargetCloseByte: chromeStderrBytes,
   };
 
+  for (let i = 0; i < AFFINE_CASES.length; i += 1) {
+    const c = AFFINE_CASES[i];
+    const caseStderrStart = chromeStderrBytes;
+    const { targetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await cdpSend('Target.attachToTarget', { targetId, flatten: true });
+    const send = (method, params, to) => cdpSend(method, params, sessionId, to || STEP_MS);
+    try {
+      await send('Page.enable');
+      await send('Runtime.enable');
+      await send('Network.enable');
+      await send('Log.enable');
+      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
+      activeSessionId = sessionId;
+      CASE_EVIDENCE.push(await runAffineCase(send, c, sessionId));
+    } finally {
+      await sleep(100);
+      CASE_STDERR_RANGES.push({
+        name: c.name,
+        startByte: caseStderrStart,
+        beforeTargetCloseByte: chromeStderrBytes,
+      });
+      activeSessionId = null;
+      networkRequests.clear();
+      try { await cdpSend('Target.closeTarget', { targetId }, null, STEP_MS); } catch (_err) {}
+    }
+  }
   for (let i = 0; i < CASES.length; i += 1) {
     const c = CASES[i];
     const caseStderrStart = chromeStderrBytes;
@@ -1912,7 +2500,7 @@ const watchdog = setTimeout(() => {
       try { await cdpSend('Target.closeTarget', { targetId }, null, STEP_MS); } catch (_err) {}
     }
   }
-  if (clientEventResponses.length !== CASES.length) {
+  if (clientEventResponses.length !== CASES.length + AFFINE_CASES.length) {
     fail('expected one intentional client-events 204 per renderer case, got ' +
       clientEventResponses.length);
   }

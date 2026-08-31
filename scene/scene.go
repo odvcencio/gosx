@@ -327,6 +327,10 @@ type Group struct {
 	ID       string
 	Position Vector3
 	Rotation Euler
+	// Scale is inherited by descendants. Each zero component means unit scale,
+	// matching the existing Mesh and Model scale defaults. Non-uniform scale is
+	// retained as an exact affine transform so rotated children may carry shear.
+	Scale    Vector3
 	Children []Node
 }
 
@@ -339,7 +343,8 @@ type Mesh struct {
 	Rotation Euler
 	// Scale is a leaf (non-hierarchical) scale applied to this mesh's own
 	// geometry. The zero value means unit scale so existing scenes are
-	// unaffected. Group transforms deliberately remain scale-free.
+	// unaffected. Mesh scale does not propagate to Mesh.Children; Group.Scale
+	// is the hierarchical scale contract.
 	Scale    Vector3
 	Pickable *bool
 	Visible  *bool
@@ -1504,8 +1509,10 @@ type quaternion struct {
 }
 
 type worldTransform struct {
-	Position Vector3
-	Rotation quaternion
+	Position  Vector3
+	Rotation  quaternion
+	Matrix    affineMatrix
+	HasMatrix bool
 }
 
 type pendingLabel struct {
@@ -2413,7 +2420,7 @@ func htmlSurfaceWorldSize(surface HTMLSurface, textureWidth, textureHeight int) 
 }
 
 func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
-	world := combineTransforms(parent, localTransform(group.Position, group.Rotation))
+	world := combineTransforms(parent, localScaledTransform(group.Position, group.Rotation, group.Scale))
 	if id := strings.TrimSpace(group.ID); id != "" {
 		l.anchors[id] = world
 	}
@@ -2744,6 +2751,30 @@ func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotat
 	lowerHandle("z", "#3b82f6", Vector3{Z: size})
 }
 
+func applyLoweredObjectTransform(record *ObjectIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.HasMatrix {
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		record.ParentMatrix = affineSlice(parent.Matrix)
+		return
+	}
+	record.X, record.Y, record.Z = world.Position.X, world.Position.Y, world.Position.Z
+	rotation := eulerFromQuaternion(world.Rotation)
+	record.RotationX, record.RotationY, record.RotationZ = rotation.X, rotation.Y, rotation.Z
+}
+
+func applyLoweredPointsTransform(record *PointsIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.HasMatrix {
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		record.ParentMatrix = affineSlice(parent.Matrix)
+		return
+	}
+	record.X, record.Y, record.Z = world.Position.X, world.Position.Y, world.Position.Z
+	rotation := eulerFromQuaternion(world.Rotation)
+	record.RotationX, record.RotationY, record.RotationZ = rotation.X, rotation.Y, rotation.Z
+}
+
 func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(mesh.Position, mesh.Rotation))
 	id := strings.TrimSpace(mesh.ID)
@@ -2756,13 +2787,7 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	}
 	record.Kind = applyGeometryToObjectIR(&record, mesh.Geometry)
 	applyMaterialToObjectIR(&record, mesh.Material)
-	record.X = world.Position.X
-	record.Y = world.Position.Y
-	record.Z = world.Position.Z
-	rotation := eulerFromQuaternion(world.Rotation)
-	record.RotationX = rotation.X
-	record.RotationY = rotation.Y
-	record.RotationZ = rotation.Z
+	applyLoweredObjectTransform(&record, parent, world, mesh.Position, mesh.Rotation)
 	if mesh.Scale != (Vector3{}) && mesh.Scale != (Vector3{X: 1, Y: 1, Z: 1}) {
 		record.ScaleX = mesh.Scale.X
 		record.ScaleY = mesh.Scale.Y
@@ -2825,19 +2850,13 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		BlendMode:    strings.TrimSpace(string(pts.BlendMode)),
 		DepthWrite:   Bool(pts.DepthWrite),
 		Attenuation:  pts.Attenuation,
-		X:            world.Position.X,
-		Y:            world.Position.Y,
-		Z:            world.Position.Z,
 		Transition:   lowerTransition(pts.Transition),
 		InState:      pts.InState.legacyProps(),
 		OutState:     pts.OutState.legacyProps(),
 		Live:         normalizeLive(pts.Live),
 		QualityGroup: strings.TrimSpace(pts.QualityGroup),
 	}
-	rotation := eulerFromQuaternion(world.Rotation)
-	record.RotationX = rotation.X
-	record.RotationY = rotation.Y
-	record.RotationZ = rotation.Z
+	applyLoweredPointsTransform(&record, parent, world, pts.Position, pts.Rotation)
 	record.SpinX = pts.Spin.X
 	record.SpinY = pts.Spin.Y
 	record.SpinZ = pts.Spin.Z
@@ -3015,11 +3034,16 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		}
 		var scl Vector3
 		if i < len(im.Scales) {
-			scl = im.Scales[i]
+			scl = resolvedSceneScale(im.Scales[i])
 		} else {
 			scl = Vector3{X: 1, Y: 1, Z: 1}
 		}
-		// Apply parent world transform to instance position.
+		if parent.HasMatrix {
+			matrix := multiplyAffine(parent.Matrix, affineFromTRS(pos, quaternionFromEuler(rot), scl))
+			transforms = append(transforms, matrix[:]...)
+			continue
+		}
+		// Preserve the legacy flattened matrix when no scaled group is present.
 		worldPos := addVectors(world.Position, world.Rotation.rotate(pos))
 		instanceRot := world.Rotation.mul(quaternionFromEuler(rot)).normalized()
 		transforms = append(transforms, mat4FromTRS(worldPos, instanceRot, scl)...)
@@ -3373,40 +3397,7 @@ func cloneWaterShaderDescriptors(in map[string]json.RawMessage) map[string]json.
 
 // mat4FromTRS builds a column-major 4x4 matrix from translation, rotation (quaternion), and scale.
 func mat4FromTRS(t Vector3, q quaternion, s Vector3) []float64 {
-	// Rotation matrix from quaternion.
-	xx := q.X * q.X
-	yy := q.Y * q.Y
-	zz := q.Z * q.Z
-	xy := q.X * q.Y
-	xz := q.X * q.Z
-	yz := q.Y * q.Z
-	wx := q.W * q.X
-	wy := q.W * q.Y
-	wz := q.W * q.Z
-
-	// Column-major order: m[col*4 + row]
-	return []float64{
-		// Column 0
-		(1 - 2*(yy+zz)) * s.X,
-		(2 * (xy + wz)) * s.X,
-		(2 * (xz - wy)) * s.X,
-		0,
-		// Column 1
-		(2 * (xy - wz)) * s.Y,
-		(1 - 2*(xx+zz)) * s.Y,
-		(2 * (yz + wx)) * s.Y,
-		0,
-		// Column 2
-		(2 * (xz + wy)) * s.Z,
-		(2 * (yz - wx)) * s.Z,
-		(1 - 2*(xx+yy)) * s.Z,
-		0,
-		// Column 3
-		t.X,
-		t.Y,
-		t.Z,
-		1,
-	}
+	return affineSlice(affineFromTRS(t, q, s))
 }
 
 func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
@@ -3427,9 +3418,6 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record := ModelIR{
 		ObjectIR: ObjectIR{
 			ID:         id,
-			X:          world.Position.X,
-			Y:          world.Position.Y,
-			Z:          world.Position.Z,
 			Transition: lowerTransition(model.Transition),
 			InState:    model.InState.legacyProps(),
 			OutState:   model.OutState.legacyProps(),
@@ -3446,10 +3434,7 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 		Fit:         strings.TrimSpace(model.Fit),
 		FitAlign:    strings.TrimSpace(model.FitAlign),
 	}
-	rotation := eulerFromQuaternion(world.Rotation)
-	record.RotationX = rotation.X
-	record.RotationY = rotation.Y
-	record.RotationZ = rotation.Z
+	applyLoweredObjectTransform(&record.ObjectIR, parent, world, model.Position, model.Rotation)
 	applyMaterialProps(&record.ObjectIR, legacyMaterial(model.Material))
 	record.CastShadow = model.CastShadow
 	record.ReceiveShadow = model.ReceiveShadow
@@ -3481,19 +3466,22 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 	instances := make([]MeshInstanceIR, 0, len(igm.Instances))
 	for _, inst := range igm.Instances {
 		world := combineTransforms(parent, localTransform(inst.Position, inst.Rotation))
-		rotation := eulerFromQuaternion(world.Rotation)
-		instances = append(instances, MeshInstanceIR{
-			ID:        strings.TrimSpace(inst.ID),
-			X:         world.Position.X,
-			Y:         world.Position.Y,
-			Z:         world.Position.Z,
-			ScaleX:    inst.Scale.X,
-			ScaleY:    inst.Scale.Y,
-			ScaleZ:    inst.Scale.Z,
-			RotationX: rotation.X,
-			RotationY: rotation.Y,
-			RotationZ: rotation.Z,
-		})
+		record := MeshInstanceIR{
+			ID:     strings.TrimSpace(inst.ID),
+			ScaleX: inst.Scale.X,
+			ScaleY: inst.Scale.Y,
+			ScaleZ: inst.Scale.Z,
+		}
+		if parent.HasMatrix {
+			record.X, record.Y, record.Z = inst.Position.X, inst.Position.Y, inst.Position.Z
+			record.RotationX, record.RotationY, record.RotationZ = inst.Rotation.X, inst.Rotation.Y, inst.Rotation.Z
+			record.ParentMatrix = affineSlice(parent.Matrix)
+		} else {
+			rotation := eulerFromQuaternion(world.Rotation)
+			record.X, record.Y, record.Z = world.Position.X, world.Position.Y, world.Position.Z
+			record.RotationX, record.RotationY, record.RotationZ = rotation.X, rotation.Y, rotation.Z
+		}
+		instances = append(instances, record)
 	}
 	record := InstancedGLBMeshIR{
 		ID:        id,
@@ -3611,7 +3599,7 @@ func (l *graphLowerer) lowerAmbientLight(light AmbientLight) {
 }
 
 func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worldTransform) {
-	direction := parent.Rotation.rotate(light.Direction)
+	direction := parentDirection(parent, light.Direction)
 	l.lights = append(l.lights, LightIR{
 		ID:             l.nextSceneLightID("directional-light", light.ID),
 		Kind:           "directional",
@@ -3653,7 +3641,7 @@ func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) 
 
 func (l *graphLowerer) lowerSpotLight(light SpotLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
-	direction := parent.Rotation.rotate(light.Direction)
+	direction := parentDirection(parent, light.Direction)
 	l.lights = append(l.lights, LightIR{
 		ID:             l.nextSceneLightID("spot-light", light.ID),
 		Kind:           "spot",
@@ -3696,7 +3684,7 @@ func (l *graphLowerer) lowerHemisphereLight(light HemisphereLight) {
 
 func (l *graphLowerer) lowerRectAreaLight(light RectAreaLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
-	direction := parent.Rotation.rotate(light.Direction)
+	direction := parentDirection(parent, light.Direction)
 	l.lights = append(l.lights, LightIR{
 		ID:         l.nextSceneLightID("rect-area-light", light.ID),
 		Kind:       "rect-area",
@@ -3912,6 +3900,9 @@ func (l *graphLowerer) resolveAnchoredPosition(parent worldTransform, rawTarget 
 	anchor, ok := l.anchors[target]
 	if !ok {
 		return position
+	}
+	if anchor.HasMatrix {
+		return affinePoint(anchor.Matrix, localPosition)
 	}
 	return addVectors(anchor.Position, anchor.Rotation.rotate(localPosition))
 }
@@ -4641,6 +4632,15 @@ func localTransform(position Vector3, rotation Euler) worldTransform {
 	}
 }
 
+func localScaledTransform(position Vector3, rotation Euler, scale Vector3) worldTransform {
+	local := localTransform(position, rotation)
+	if !isUnitSceneScale(scale) {
+		local.Matrix = affineFromTRS(position, local.Rotation, scale)
+		local.HasMatrix = true
+	}
+	return local
+}
+
 func identityTransform() worldTransform {
 	return worldTransform{
 		Rotation: quaternion{W: 1},
@@ -4648,10 +4648,23 @@ func identityTransform() worldTransform {
 }
 
 func combineTransforms(parent, local worldTransform) worldTransform {
-	return worldTransform{
+	combined := worldTransform{
 		Position: addVectors(parent.Position, parent.Rotation.rotate(local.Position)),
 		Rotation: parent.Rotation.mul(local.Rotation).normalized(),
 	}
+	if parent.HasMatrix || local.HasMatrix {
+		combined.Matrix = multiplyAffine(worldAffine(parent), worldAffine(local))
+		combined.HasMatrix = true
+		combined.Position = affinePoint(combined.Matrix, Vector3{})
+	}
+	return combined
+}
+
+func parentDirection(parent worldTransform, direction Vector3) Vector3 {
+	if parent.HasMatrix {
+		return normalizeVector(affineVector(parent.Matrix, direction))
+	}
+	return parent.Rotation.rotate(direction)
 }
 
 func addVectors(left, right Vector3) Vector3 {

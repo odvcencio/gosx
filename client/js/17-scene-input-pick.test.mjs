@@ -201,6 +201,23 @@ test("a Points layer honors its position offset and its rotation", () => {
   assert.ok(Math.abs(hit.distance - (7 - POINT_THRESHOLD)) < 1e-9, `distance ${hit.distance}`);
 });
 
+test("a Points layer pick applies its exact affine parent after local rotation and offset", () => {
+  const context = createContext();
+  const hit = pick(context, baseBundle({
+    points: [pointsLayer({
+      positions: [1, 0, 0],
+      rotationZ: Math.PI / 2,
+      x: 1,
+      y: 2,
+      z: 3,
+      // Maps local world (1,3,3) to (0,0,-3), with non-uniform scale and shear.
+      parentMatrix: [2, 0, 0, 0, 1, 3, 0, 0, 0, 0, 4, 0, -5, -9, -15, 1],
+    })],
+  }));
+  assert.ok(hit, "expected the affine-transformed particle on the ray");
+  assert.ok(Math.abs(hit.distance - (7 - POINT_THRESHOLD)) < 1e-9, `distance ${hit.distance}`);
+});
+
 test("scenePointsRotationMatrix agrees with sceneRotatePoint on all three axes", () => {
   const context = createContext();
   context.__entry = { rotationX: 0.37, rotationY: -1.21, rotationZ: 2.04 };

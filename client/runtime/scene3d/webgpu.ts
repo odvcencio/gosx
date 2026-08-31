@@ -181,6 +181,8 @@
     "};",
   ].join("\n");
 
+  var WGSL_AFFINE_NORMAL = "fn gosxAffineNormal(m:mat4x4f,n:vec3f)->vec4f{let e=max(max(abs(m[0].xyz),abs(m[1].xyz)),abs(m[2].xyz));let s=max(e.x,max(e.y,e.z));if(s==0.0){return vec4f(normalize(n),1.0);}let a=m[0].xyz/s;let b=m[1].xyz/s;let c=m[2].xyz/s;let x=cross(b,c);let y=cross(c,a);let z=cross(a,b);let d=dot(a,x);if(abs(d)<=1e-12){return vec4f(normalize(n),1.0);}let o=select(-1.0,1.0,d>0.0);return vec4f(normalize(mat3x3f(x,y,z)*n*o),o);}";
+
   // -----------------------------------------------------------------------
   // PBR Vertex Shader (WGSL)
   // -----------------------------------------------------------------------
@@ -188,6 +190,7 @@
   var WGSL_PBR_VERTEX = [
     WGSL_FRAME_STRUCTS,
     WGSL_MATERIAL_STRUCT,
+    WGSL_AFFINE_NORMAL,
     "",
     "struct VertexInput {",
     "    @location(0) position: vec3f,",
@@ -212,18 +215,15 @@
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let worldPosition = material.modelMatrix * vec4f(in.position, 1.0);",
-    "    let modelBasis = mat3x3f(",
-    "        normalize(material.modelMatrix[0].xyz) * material.modelScaleSigns.x,",
-    "        normalize(material.modelMatrix[1].xyz) * material.modelScaleSigns.y,",
-    "        normalize(material.modelMatrix[2].xyz) * material.modelScaleSigns.z",
-    "    );",
+    "    let an = gosxAffineNormal(material.modelMatrix, in.normal);",
     "    out.worldPos = worldPosition.xyz;",
-    "    out.normal = normalize(modelBasis * in.normal);",
+    "    out.normal = an.xyz;",
     "    out.uv = in.uv;",
-    "    let T = normalize(modelBasis * in.tangent.xyz);",
+    "    let rawT = (material.modelMatrix * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
+    "    let T = normalize(rawT - N * dot(N, rawT));",
     "    out.tangent = T;",
-    "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
     "    out.clipPos = frame.projMatrix * frame.viewMatrix * worldPosition;",
     "    return out;",
@@ -244,6 +244,8 @@
   // bitangent handedness survives skinning. paddedCount comes from
   // arrayLength(&verts) to place the normal/tangent region bases.
   var SCENE_ELIO_SKIN_LBS_SOURCE = [
+    WGSL_AFFINE_NORMAL,
+    "",
     "struct SkinVertex {",
     "  px : f32,",
     "  py : f32,",
@@ -276,12 +278,14 @@
     "  let v = verts[i];",
     "  let m = (bones[v.b0] * v.w0 + bones[v.b1] * v.w1) + (bones[v.b2] * v.w2 + bones[v.b3] * v.w3);",
     "  let skinned = (m * vec4f(v.px, v.py, v.pz, 1.0)).xyz;",
-    "  let rawNormal = (m * vec4f(v.nx, v.ny, v.nz, 0.0)).xyz;",
-    "  let rawTangent = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
-    "  let nLen = length(rawNormal);",
-    "  let sn = select(rawNormal, rawNormal / nLen, nLen > 0.000001);",
-    "  let tLen = length(rawTangent);",
-    "  let st = select(rawTangent, rawTangent / tLen, tLen > 0.000001);",
+    "  let an = gosxAffineNormal(m, vec3f(v.nx, v.ny, v.nz));",
+    "  let rn = an.xyz;",
+    "  let rt = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
+    "  let nLen = length(rn);",
+    "  let sn = select(rn, rn / nLen, nLen > 0.000001);",
+    "  let ot = rt - sn * dot(sn, rt);",
+    "  let tLen = length(ot);",
+    "  let st = select(ot, ot / tLen, tLen > 0.000001);",
     "  let posBase = i * 3u;",
     "  out[posBase] = skinned.x;",
     "  out[posBase + 1u] = skinned.y;",
@@ -294,11 +298,13 @@
     "  out[tanBase] = st.x;",
     "  out[tanBase + 1u] = st.y;",
     "  out[tanBase + 2u] = st.z;",
-    "  out[tanBase + 3u] = v.tw;",
+    "  out[tanBase + 3u] = v.tw * an.w;",
     "}",
   ].join("\n");
 
   var SCENE_COMPUTED_MORPH_SOURCE = [
+    WGSL_AFFINE_NORMAL,
+    "",
     "struct MorphUniforms {",
     "  model : mat4x4<f32>,",
     "  alpha : f32,",
@@ -347,21 +353,23 @@
     "    vec3<f32>(targetPacked[packed + 3u], targetPacked[packed + 4u], targetPacked[packed + 5u]),",
     "    a",
     "  );",
-    "  let worldNormal = safeNormalize((morph.model * vec4<f32>(localNormal, 0.0)).xyz, vec3<f32>(0.0, 0.0, 1.0));",
-    "  outNormals[p] = worldNormal.x;",
-    "  outNormals[p + 1u] = worldNormal.y;",
-    "  outNormals[p + 2u] = worldNormal.z;",
+    "  let an = gosxAffineNormal(morph.model, localNormal);",
+    "  let wn = an.xyz;",
+    "  outNormals[p] = wn.x;",
+    "  outNormals[p + 1u] = wn.y;",
+    "  outNormals[p + 2u] = wn.z;",
     "",
     "  let localTangent = mix(",
     "    vec3<f32>(sourcePacked[packed + 6u], sourcePacked[packed + 7u], sourcePacked[packed + 8u]),",
     "    vec3<f32>(targetPacked[packed + 6u], targetPacked[packed + 7u], targetPacked[packed + 8u]),",
     "    a",
     "  );",
-    "  let worldTangent = safeNormalize((morph.model * vec4<f32>(localTangent, 0.0)).xyz, vec3<f32>(1.0, 0.0, 0.0));",
-    "  outTangents[t] = worldTangent.x;",
-    "  outTangents[t + 1u] = worldTangent.y;",
-    "  outTangents[t + 2u] = worldTangent.z;",
-    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5);",
+    "  let rt = (morph.model * vec4<f32>(localTangent, 0.0)).xyz;",
+    "  let wt = safeNormalize(rt-wn*dot(wn,rt), vec3<f32>(1.0, 0.0, 0.0));",
+    "  outTangents[t] = wt.x;",
+    "  outTangents[t + 1u] = wt.y;",
+    "  outTangents[t + 2u] = wt.z;",
+    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5) * an.w;",
     "}",
   ].join("\n");
 
@@ -1418,6 +1426,7 @@
 
   var WGSL_PBR_INSTANCED_VERTEX = [
     WGSL_FRAME_STRUCTS,
+    WGSL_AFFINE_NORMAL,
     "",
     "struct VertexInput {",
     "    @location(0) position: vec3f,",
@@ -1448,12 +1457,14 @@
     "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
     "    let world = model * vec4f(in.position, 1.0);",
     "    out.worldPos = world.xyz;",
-    "    out.normal = normalize((model * vec4f(in.normal, 0.0)).xyz);",
+    "    let an = gosxAffineNormal(model, in.normal);",
+    "    out.normal = an.xyz;",
     "    out.uv = in.uv;",
-    "    let T = normalize((model * vec4f(in.tangent.xyz, 0.0)).xyz);",
+    "    let rawT = (model * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
+    "    let T = normalize(rawT - N * dot(N, rawT));",
     "    out.tangent = T;",
-    "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = in.instanceColor;",
     "    out.clipPos = frame.projMatrix * frame.viewMatrix * world;",
     "    return out;",
@@ -1467,49 +1478,9 @@
   // is identical to the non-cull variant (same locations 0-4) so it is
   // compatible with WGSL_PBR_FRAGMENT without modification. pickData is read
   // in vertex but not forwarded to fragment (gpu picking consumes it natively).
-  var WGSL_PBR_INSTANCED_CULL_VERTEX = [
-    WGSL_FRAME_STRUCTS,
-    "",
-    "struct VertexInput {",
-    "    @location(0) position: vec3f,",
-    "    @location(1) normal: vec3f,",
-    "    @location(2) uv: vec2f,",
-    "    @location(3) tangent: vec4f,",
-    "    @location(4) instanceMatrix0: vec4f,",
-    "    @location(5) instanceMatrix1: vec4f,",
-    "    @location(6) instanceMatrix2: vec4f,",
-    "    @location(7) instanceMatrix3: vec4f,",
-    "    @location(8) pickData: vec4u,",
-    "};",
-    "",
-    "struct VertexOutput {",
-    "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) worldPos: vec3f,",
-    "    @location(1) normal: vec3f,",
-    "    @location(2) uv: vec2f,",
-    "    @location(3) tangent: vec3f,",
-    "    @location(4) bitangent: vec3f,",
-    "    @location(5) instanceColor: vec4f,",
-    "};",
-    "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
-    "",
-    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
-    "    var out: VertexOutput;",
-    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-    "    let world = model * vec4f(in.position, 1.0);",
-    "    out.worldPos = world.xyz;",
-    "    out.normal = normalize((model * vec4f(in.normal, 0.0)).xyz);",
-    "    out.uv = in.uv;",
-    "    let T = normalize((model * vec4f(in.tangent.xyz, 0.0)).xyz);",
-    "    let N = out.normal;",
-    "    out.tangent = T;",
-    "    out.bitangent = cross(N, T) * in.tangent.w;",
-    "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
-    "    out.clipPos = frame.projMatrix * frame.viewMatrix * world;",
-    "    return out;",
-    "}",
-  ].join("\n");
+  var WGSL_PBR_INSTANCED_CULL_VERTEX = WGSL_PBR_INSTANCED_VERTEX
+    .replace("instanceColor: vec4f,", "pickData: vec4u,")
+    .replace("out.instanceColor = in.instanceColor;", "out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);");
 
   // -----------------------------------------------------------------------
   // PBR Fragment Shader (WGSL)
@@ -2156,8 +2127,15 @@
   ].join("\n");
 
   var WGSL_SHADOW_INSTANCED_VERTEX = [
+    WGSL_AFFINE_NORMAL,
+    "",
     "struct ShadowFrameUniforms {",
     "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) @interpolate(flat) orientation: f32,",
     "};",
     "",
     "struct VertexInput {",
@@ -2170,15 +2148,20 @@
     "",
     "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
     "",
-    "@vertex fn vertexMain(in: VertexInput) -> @builtin(position) vec4f {",
+    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-    "    return shadowFrame.lightViewProjection * model * vec4f(in.position, 1.0);",
+    "    var out: VertexOutput;",
+    "    out.clipPos = shadowFrame.lightViewProjection * model * vec4f(in.position, 1.0);",
+    "    out.orientation = gosxAffineNormal(model, vec3f(0.0,0.0,1.0)).w;",
+    "    return out;",
     "}",
   ].join("\n");
 
-  // Shadow fragment shader is empty -- depth-only pass.
   var WGSL_SHADOW_FRAGMENT = [
-    "@fragment fn fragmentMain() {}",
+    "struct VertexOutput { @location(0) @interpolate(flat) orientation: f32, };",
+    "@fragment fn fragmentMain(in: VertexOutput, @builtin(front_facing) frontFacing: bool) {",
+    "  if (frontFacing != (in.orientation > 0.0)) { discard; }",
+    "}",
   ].join("\n");
 
   var WGSL_SCENE_COLOR_FRAGMENT = [
@@ -3704,7 +3687,10 @@
     return undefined; // opaque -- no blending
   }
 
-  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+  // The sample-count sign carries the determinant-selected front face while
+  // its magnitude remains the actual MSAA count. This keeps the governed
+  // factory signature at eight parameters without an allocation per variant.
+  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, signedSampleCount) {
     return device.createRenderPipeline({
       label: "gosx-pbr-" + blendMode,
       layout: pipelineLayout,
@@ -3721,8 +3707,8 @@
           blend: wgpuBlendState(blendMode),
         }],
       },
-      primitive: { topology: "triangle-list", cullMode: "none" },
-      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
+      multisample: { count: Math.max(1, Math.floor(Math.abs(signedSampleCount) || 1)) },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: depthWrite,
@@ -3799,7 +3785,7 @@
   // render/bundle/renderer.go keeps the OPPOSITE face on the native path.
   // render/bundle/shadow_drift_test.go pins both settings and states why they
   // differ. Change either side there, not here alone.
-  function wgpuCreateShadowPipeline(device, shadowLayout, vertexModule) {
+  function wgpuCreateShadowPipeline(device, shadowLayout, vertexModule, frontFace) {
     return device.createRenderPipeline({
       label: "gosx-shadow",
       layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
@@ -3808,7 +3794,7 @@
         entryPoint: "vertexMain",
         buffers: WGPU_SHADOW_VERTEX_LAYOUT,
       },
-      primitive: { topology: "triangle-list", cullMode: "front" },
+      primitive: { topology: "triangle-list", cullMode: "front", frontFace: frontFace || "ccw" },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: true,
@@ -3817,7 +3803,7 @@
     });
   }
 
-  function wgpuCreateShadowInstancedPipeline(device, shadowLayout, vertexModule) {
+  function wgpuCreateShadowInstancedPipeline(device, shadowLayout, vertexModule, fragmentModule) {
     return device.createRenderPipeline({
       label: "gosx-shadow-instanced",
       layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
@@ -3826,7 +3812,8 @@
         entryPoint: "vertexMain",
         buffers: WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT,
       },
-      primitive: { topology: "triangle-list", cullMode: "front" },
+      fragment: { module: fragmentModule, entryPoint: "fragmentMain", targets: [] },
+      primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: true,
@@ -6173,6 +6160,66 @@
   // WebGPU Renderer
   // -----------------------------------------------------------------------
 
+  function sceneWebGPUObjectReflected(obj) {
+    var reflectedDirect = obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
+    return reflectedDirect;
+  }
+
+  function sceneWebGPUPipelineKind(reflected, base) {
+    return reflected ? base + "-cw" : base;
+  }
+
+  function sceneWebGPUSelenaPipelineOptions(obj, reflectedDirect) {
+    var selenaPipelineOptions = obj.doubleSided
+      ? { cullMode: "none" }
+      : (reflectedDirect ? { frontFace: "cw" } : null);
+    return selenaPipelineOptions;
+  }
+
+  function sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect) {
+    return obj.doubleSided ? ":ds" : (reflectedDirect ? ":cw" : "");
+  }
+
+  function sceneSelenaAttributeSource(name) {
+    switch (name) {
+    case "position": return "positions";
+    case "normal": return "normals";
+    case "uv": return "uvs";
+    default: return "";
+    }
+  }
+
+  function sceneSelenaAttributeComponents(type) {
+    switch (String(type || "")) {
+    case "vec2": return 2;
+    case "vec4": return 4;
+    case "vec3":
+    default:
+      return 3;
+    }
+  }
+
+  function sceneSelenaWGPUFormat(type) {
+    switch (sceneSelenaAttributeComponents(type)) {
+    case 2: return "float32x2";
+    case 4: return "float32x4";
+    default: return "float32x3";
+    }
+  }
+
+  function selenaPipelineFrontFace(options) {
+    return options && options.frontFace === "cw" ? "cw" : "ccw";
+  }
+
+  function sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat) {
+    var pointsModelMat = _pointsModelMat;
+    if (entry.parentMatrix) {
+      sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
+      pointsModelMat = _pointsTilt;
+    }
+    return pointsModelMat;
+  }
+
   function createSceneWebGPURenderer(canvas, options) {
     function sceneWebGPUFactoryFailure(reason) {
       var text = String(reason || "unknown");
@@ -7861,10 +7908,11 @@
     }
 
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    function getPBRPipeline(blendMode, depthWrite, frontFace) {
+      var reflected = frontFace === "cw";
+      var key = wgpuPipelineKey(sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -7934,24 +7982,6 @@
         ? material.customVertexWGSL
         : material.customFragmentWGSL;
       return String(src || "").trim();
-    }
-
-    function sceneSelenaAttributeComponents(type) {
-      switch (String(type || "")) {
-      case "vec2": return 2;
-      case "vec4": return 4;
-      case "vec3":
-      default:
-        return 3;
-      }
-    }
-
-    function sceneSelenaWGPUFormat(type) {
-      switch (sceneSelenaAttributeComponents(type)) {
-      case 2: return "float32x2";
-      case 4: return "float32x4";
-      default: return "float32x3";
-      }
     }
 
     function sceneSelenaUniformBufferSlot(renderContext) {
@@ -8164,15 +8194,6 @@
       return device.createBindGroupLayout({ label: "gosx-selena-material", entries: entries });
     }
 
-    function sceneSelenaAttributeSource(name) {
-      switch (name) {
-      case "position": return "positions";
-      case "normal": return "normals";
-      case "uv": return "uvs";
-      default: return "";
-      }
-    }
-
     function sceneSelenaPipelineAttributes(layout) {
       var attrs = Array.isArray(layout && layout.attributes) ? layout.attributes : [];
       var out = [];
@@ -8214,6 +8235,7 @@
       // obj.doubleSided === true, leaving every other object on the "back"
       // default -- see the winding-hazard note above that call.
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
+      var pipelineFrontFace = selenaPipelineFrontFace(options);
       // depthStencil defaults to true (every existing caller relies on this
       // default and never passes the option, so behavior there is unchanged):
       // the pipeline gets a depth24plus depthStencil state, matching every
@@ -8245,6 +8267,7 @@
         memo.targetFormat === pipelineTargetFormat &&
         memo.sampleCount === pipelineSampleCount &&
         memo.cullMode === pipelineCullMode &&
+        memo.frontFace === pipelineFrontFace &&
         memo.depthStencil === pipelineDepthStencil
       ) {
         return memo.failed ? null : memo.resource;
@@ -8266,22 +8289,27 @@
         pipelineTargetFormat,
         pipelineSampleCount,
         pipelineCullMode,
+        pipelineFrontFace,
         pipelineDepthStencil ? "ds1" : "ds0",
       ].join("|");
-      var cached = selenaPipelineCache.get(key);
-      if (cached) {
-        // Memoize the resolved (key-derived) result on the material so the next
-        // object referencing it this frame skips the key build entirely.
+      function stamp(resource, failed) {
         material._gosxWGPUSelenaResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
           targetFormat: pipelineTargetFormat,
           sampleCount: pipelineSampleCount,
           cullMode: pipelineCullMode,
+          frontFace: pipelineFrontFace,
           depthStencil: pipelineDepthStencil,
-          resource: cached.failed ? null : cached,
-          failed: !!cached.failed,
+          resource: resource,
+          failed: failed,
         };
+      }
+      var cached = selenaPipelineCache.get(key);
+      if (cached) {
+        // Memoize the resolved (key-derived) result on the material so the next
+        // object referencing it this frame skips the key build entirely.
+        stamp(cached.failed ? null : cached, !!cached.failed);
         return cached.failed ? null : cached;
       }
       try {
@@ -8302,7 +8330,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: pipelineTargetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: pipelineCullMode },
+          primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
           multisample: { count: pipelineSampleCount },
         };
         if (pipelineDepthStencil) {
@@ -8311,32 +8339,14 @@
         var pipeline = device.createRenderPipeline(pipelineDescriptor);
         cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
         selenaPipelineCache.set(key, cached);
-        material._gosxWGPUSelenaResource = {
-          blendMode: blendMode,
-          depthWrite: depthWrite,
-          targetFormat: pipelineTargetFormat,
-          sampleCount: pipelineSampleCount,
-          cullMode: pipelineCullMode,
-          depthStencil: pipelineDepthStencil,
-          resource: cached,
-          failed: false,
-        };
+        stamp(cached, false);
         return cached;
       } catch (err) {
         console.warn("[gosx] Selena WebGPU shader pipeline failed; falling back to PBR material.", err);
         selenaPipelineCache.set(key, { failed: true });
         // Memoize the failure too — a broken shader must not re-attempt (and
         // re-warn) once per object per frame.
-        material._gosxWGPUSelenaResource = {
-          blendMode: blendMode,
-          depthWrite: depthWrite,
-          targetFormat: pipelineTargetFormat,
-          sampleCount: pipelineSampleCount,
-          depthStencil: pipelineDepthStencil,
-          cullMode: pipelineCullMode,
-          resource: null,
-          failed: true,
-        };
+        stamp(null, true);
         return null;
       }
     }
@@ -8350,6 +8360,7 @@
     function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
+      var pipelineFrontFace = selenaPipelineFrontFace(options);
       // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
       // (_gosxWGPUSelenaSkinnedResource) so a material drawn both skinned and
       // unskinned never aliases the wrong pipeline — the skinned key uses the
@@ -8361,7 +8372,8 @@
         memo.depthWrite === depthWrite &&
         memo.targetFormat === targetFormat &&
         memo.sampleCount === activeSampleCount &&
-        memo.cullMode === pipelineCullMode
+        memo.cullMode === pipelineCullMode &&
+        memo.frontFace === pipelineFrontFace
       ) {
         return memo.failed ? null : memo.resource;
       }
@@ -8377,6 +8389,7 @@
         targetFormat,
         activeSampleCount,
         pipelineCullMode,
+        pipelineFrontFace,
       ].join("|");
       function stampSkinned(resource, failed) {
         material._gosxWGPUSelenaSkinnedResource = {
@@ -8385,6 +8398,7 @@
           targetFormat: targetFormat,
           sampleCount: activeSampleCount,
           cullMode: pipelineCullMode,
+          frontFace: pipelineFrontFace,
           resource: resource,
           failed: failed,
         };
@@ -8404,7 +8418,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: pipelineCullMode },
+          primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -8948,16 +8962,20 @@
 
     // Get or create a shadow pipeline.
     var shadowPipeline = null;
-    function getShadowPipeline() {
-      if (shadowPipeline) return shadowPipeline;
-      shadowPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule);
+    var shadowReflectedPipeline = null;
+    function getShadowPipeline(reflected) {
+      if (reflected) {
+        if (!shadowReflectedPipeline) shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw");
+        return shadowReflectedPipeline;
+      }
+      if (!shadowPipeline) shadowPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "ccw");
       return shadowPipeline;
     }
 
     var shadowInstancedPipeline = null;
     function getShadowInstancedPipeline() {
       if (shadowInstancedPipeline) return shadowInstancedPipeline;
-      shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, shadowBindGroupLayout, shadowInstancedVertexModule);
+      shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, shadowBindGroupLayout, shadowInstancedVertexModule, shadowFragmentModule);
       return shadowInstancedPipeline;
     }
 
@@ -14196,7 +14214,7 @@
       return out;
     }
 
-    function materialUniformData(material, receiveShadow, modelMatrix, modelScaleSigns) {
+    function materialUniformData(material, receiveShadow, modelMatrix) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
@@ -14234,9 +14252,7 @@
       for (var mi = 0; mi < 16; mi++) {
         f[20 + mi] = model ? sceneNumber(model[mi], mi % 5 === 0 ? 1 : 0) : (mi % 5 === 0 ? 1 : 0);
       }
-      f[36] = modelScaleSigns ? sceneNumber(modelScaleSigns[0], 1) : 1;
-      f[37] = modelScaleSigns ? sceneNumber(modelScaleSigns[1], 1) : 1;
-      f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
+      f[36] = f[37] = f[38] = 1;
       f[39] = 0;
       // Dedicated trailing material scalars: normal-incidence dielectric F0
       // from the authored IOR, then the vec3f alignment word at index 41
@@ -14300,9 +14316,9 @@
       return bg;
     }
 
-    function createMaterialBindGroup(material, receiveShadow, cacheOwner, modelMatrix, modelScaleSigns) {
+    function createMaterialBindGroup(material, receiveShadow, cacheOwner, modelMatrix) {
       var mat = material || {};
-      var uniform = materialUniformData(mat, receiveShadow, modelMatrix, modelScaleSigns);
+      var uniform = materialUniformData(mat, receiveShadow, modelMatrix);
       var u = uniform.u;
       // Texture records.
       var textureMaps = [
@@ -15503,15 +15519,15 @@
           // transform in per draw and restore the base matrix afterwards.
           var casterIndices = obj.vertices && obj.vertices.indices;
           if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
-          if (currentShadowPipeline !== "static") {
-            pass.setPipeline(sp);
-            currentShadowPipeline = "static";
+          var reflectedCaster = sceneAffineDeterminant(obj.modelMatrix, 0) < 0, retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
+          if (currentShadowPipeline !== retainedPipelineKind) {
+            pass.setPipeline(getShadowPipeline(reflectedCaster));
+            currentShadowPipeline = retainedPipelineKind;
           }
           if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
           var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (!(casterIndexCount > 0)) continue;
-          var casterModel = obj.modelMatrix;
-          var casterMatrix = lightMatrix;
+          var casterModel = obj.modelMatrix, casterMatrix = lightMatrix;
           if (casterModel && casterModel.length >= 16) {
             if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
             sceneMat4MultiplyInto(_shadowCombinedMatrixScratch, lightMatrix, casterModel);
@@ -15572,11 +15588,12 @@
         }
       }
 
-      function bindPBRPipeline() {
-        if (currentPipelineKind === "pbr") return;
-        pass.setPipeline(getPBRPipeline(blendMode, depthWrite));
+      function bindPBRPipeline(reflected) {
+        var kind = sceneWebGPUPipelineKind(reflected, "pbr");
+        if (currentPipelineKind === kind) return;
+        pass.setPipeline(getPBRPipeline(blendMode, depthWrite, reflected ? "cw" : "ccw"));
         pass.setBindGroup(0, frameBindGroup);
-        currentPipelineKind = "pbr";
+        currentPipelineKind = kind;
         lastMaterialIndex = -1;
         lastReceiveShadow = null;
         lastMaterialOwner = null;
@@ -15629,12 +15646,12 @@
         // render/bundle/shadow_drift_test.go measures that move and pins all
         // three settings. See client/js/12-scene-geometry-winding.test.mjs for
         // the winding numbers.
-        var selenaPipelineOptions = obj.doubleSided ? { cullMode: "none" } : null;
+        var reflectedDirect = sceneWebGPUObjectReflected(obj), selenaPipelineOptions = sceneWebGPUSelenaPipelineOptions(obj, reflectedDirect);
         var selenaResource = isSkinned
           ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)
           : getSelenaPipeline(mat, blendMode, depthWrite, selenaPipelineOptions);
         if (selenaResource) {
-          var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + (obj.doubleSided ? ":ds" : "");
+          var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect);
           if (currentPipelineKind !== selenaKey) {
             pass.setPipeline(selenaResource.pipeline);
             currentPipelineKind = selenaKey;
@@ -15663,7 +15680,7 @@
         }
 
         if (isSkinned) {
-          bindPBRPipeline();
+          bindPBRPipeline(reflectedDirect);
           var skinnedOwner = mat || obj;
           if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
             var skinnedMatBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
@@ -15681,7 +15698,7 @@
           continue;
         }
 
-        bindPBRPipeline();
+        bindPBRPipeline(reflectedDirect);
 
         // Recreate material bind group when material or receiveShadow changes.
         var materialOwner = obj.retainedGeometry ? webGPURetainedMaterialOwner(obj) : (mat || obj);
@@ -15690,8 +15707,7 @@
             mat,
             receiveShadow,
             materialOwner,
-            obj.retainedGeometry ? webGPUObjectModelMatrix(obj) : null,
-            obj.retainedGeometry ? obj.modelScaleSigns : null
+            obj.retainedGeometry ? webGPUObjectModelMatrix(obj) : null
           );
           pass.setBindGroup(1, matBG);
           lastMaterialIndex = matIndex;
@@ -16450,44 +16466,23 @@
         var px = sceneNumber(entry.x, 0);
         var py = sceneNumber(entry.y, 0);
         var pz = sceneNumber(entry.z, 0);
+        var rx = sceneNumber(entry.rotationX, 0);
+        var ry = sceneNumber(entry.rotationY, 0);
+        var rz = sceneNumber(entry.rotationZ, 0);
         var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
 
         if (hasSpin) {
           var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
           var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
           var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
-          var csx = Math.cos(spx), ssx = Math.sin(spx);
-          var csy = Math.cos(spy), ssy = Math.sin(spy);
-          var csz = Math.cos(spz), ssz = Math.sin(spz);
-          _pointsSpin[0] = csy*csz; _pointsSpin[4] = ssx*ssy*csz-csx*ssz; _pointsSpin[8]  = csx*ssy*csz+ssx*ssz; _pointsSpin[12] = 0;
-          _pointsSpin[1] = csy*ssz; _pointsSpin[5] = ssx*ssy*ssz+csx*csz; _pointsSpin[9]  = csx*ssy*ssz-ssx*csz; _pointsSpin[13] = 0;
-          _pointsSpin[2] = -ssy;    _pointsSpin[6] = ssx*csy;             _pointsSpin[10] = csx*csy;             _pointsSpin[14] = 0;
-          _pointsSpin[3] = 0;       _pointsSpin[7] = 0;                   _pointsSpin[11] = 0;                   _pointsSpin[15] = 1;
-
-          var rx = sceneNumber(entry.rotationX, 0);
-          var ry = sceneNumber(entry.rotationY, 0);
-          var rz = sceneNumber(entry.rotationZ, 0);
-          var cxr = Math.cos(rx), sxr = Math.sin(rx);
-          var cyr = Math.cos(ry), syr = Math.sin(ry);
-          var czr = Math.cos(rz), szr = Math.sin(rz);
-          _pointsTilt[0] = cyr*czr; _pointsTilt[4] = sxr*syr*czr-cxr*szr; _pointsTilt[8]  = cxr*syr*czr+sxr*szr; _pointsTilt[12] = px;
-          _pointsTilt[1] = cyr*szr; _pointsTilt[5] = sxr*syr*szr+cxr*czr; _pointsTilt[9]  = cxr*syr*szr-sxr*czr; _pointsTilt[13] = py;
-          _pointsTilt[2] = -syr;    _pointsTilt[6] = sxr*cyr;             _pointsTilt[10] = cxr*cyr;             _pointsTilt[14] = pz;
-          _pointsTilt[3] = 0;       _pointsTilt[7] = 0;                   _pointsTilt[11] = 0;                   _pointsTilt[15] = 1;
-
+          sceneEulerMatrixInto(_pointsSpin, spx, spy, spz, 0, 0, 0);
+          sceneEulerMatrixInto(_pointsTilt, rx, ry, rz, px, py, pz);
           sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
         } else {
-          var rx2 = sceneNumber(entry.rotationX, 0);
-          var ry2 = sceneNumber(entry.rotationY, 0);
-          var rz2 = sceneNumber(entry.rotationZ, 0);
-          var cxr2 = Math.cos(rx2), sxr2 = Math.sin(rx2);
-          var cyr2 = Math.cos(ry2), syr2 = Math.sin(ry2);
-          var czr2 = Math.cos(rz2), szr2 = Math.sin(rz2);
-          _pointsModelMat[0] = cyr2*czr2; _pointsModelMat[4] = sxr2*syr2*czr2-cxr2*szr2; _pointsModelMat[8]  = cxr2*syr2*czr2+sxr2*szr2; _pointsModelMat[12] = px;
-          _pointsModelMat[1] = cyr2*szr2; _pointsModelMat[5] = sxr2*syr2*szr2+cxr2*czr2; _pointsModelMat[9]  = cxr2*syr2*szr2-sxr2*czr2; _pointsModelMat[13] = py;
-          _pointsModelMat[2] = -syr2;     _pointsModelMat[6] = sxr2*cyr2;                _pointsModelMat[10] = cxr2*cyr2;                _pointsModelMat[14] = pz;
-          _pointsModelMat[3] = 0;         _pointsModelMat[7] = 0;                        _pointsModelMat[11] = 0;                        _pointsModelMat[15] = 1;
+          sceneEulerMatrixInto(_pointsModelMat, rx, ry, rz, px, py, pz);
         }
+
+        var pointsModelMat = sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat);
 
         // Build PointsUniforms buffer.
         // Layout: mat4x4f(64) + vec4 defaultColorAndSize(16) +
@@ -16496,7 +16491,7 @@
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
 
-        puF.set(_pointsModelMat, 0);   // modelMatrix @ 0
+        puF.set(pointsModelMat, 0);   // modelMatrix @ 0
         var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
         puF[16] = defaultColorRGBA[0]; // defaultColorAndSize.r @ 64
         puF[17] = defaultColorRGBA[1];

@@ -436,12 +436,16 @@ test("default weights fold onto morphed position/normal/tangent data per node", 
     round6([0.125 / nLen])[0], 0, round6([1.125 / nLen])[0],
     round6([0.125 / nLen])[0], 0, round6([1.125 / nLen])[0],
   ]);
-  // Baked tangent xyz is normalized ([1, 0.5, 0]); authored w=1 survives.
-  const tLen = Math.sqrt(1 ** 2 + 0.5 ** 2);
+  // Tangent xyz follows the linear transform and is then independently
+  // Gram-Schmidt orthogonalized against the inverse-transpose normal.
+  const normal = [1 / Math.sqrt(82), 0, 9 / Math.sqrt(82)];
+  const dot = normal[0];
+  const tangent = [1 - normal[0] * dot, 0.5, -normal[2] * dot];
+  const tLen = Math.hypot(...tangent);
   assert.deepEqual(round6(result.meshDefault.tangents), [
-    round6([1 / tLen])[0], round6([0.5 / tLen])[0], 0, 1,
-    round6([1 / tLen])[0], round6([0.5 / tLen])[0], 0, 1,
-    round6([1 / tLen])[0], round6([0.5 / tLen])[0], 0, 1,
+    ...round6(tangent.map((v) => v / tLen)), 1,
+    ...round6(tangent.map((v) => v / tLen)), 1,
+    ...round6(tangent.map((v) => v / tLen)), 1,
   ]);
 
   // Node override [1, 0]: only target 0 applies, at full weight.
@@ -521,12 +525,19 @@ test("non-uniform node scale transforms primitive-local baked morph data", () =>
     round6([(0.125 / 2) / nl])[0], 0, round6([(1.125 / 4) / nl])[0],
   ]);
 
-  // Tangent directions take the upper-left 3x3 (the scale itself), then
-  // renormalize: normalize([1*2, 0.5*3, 0*4]) = [0.8, 0.6, 0], w still 1.
+  // Tangents take the forward linear transform, then Gram-Schmidt against
+  // the exact normal. This independent oracle would fail if the old plain
+  // mat3-normal path or a missing orthogonalization were restored.
+  const n = [2 / Math.sqrt(85), 0, 9 / Math.sqrt(85)];
+  const rawT = [2, 1.5, 0];
+  const ndot = n[0] * rawT[0];
+  const orthoT = [rawT[0] - n[0] * ndot, rawT[1], -n[2] * ndot];
+  const orthoLen = Math.hypot(...orthoT);
+  const expectedT = round6(orthoT.map((v) => v / orthoLen));
   assert.deepEqual(round6(result.tangents), [
-    0.8, 0.6, 0, 1,
-    0.8, 0.6, 0, 1,
-    0.8, 0.6, 0, 1,
+    ...expectedT, 1,
+    ...expectedT, 1,
+    ...expectedT, 1,
   ]);
 
   // The bake payload was consumed during extraction even under a transform.
@@ -829,4 +840,35 @@ test("zero-weight POSITION-only morphs keep the base fallback normals and the sh
   assert.deepEqual(morphRound6(result.normals), [0, 0, 1, 0, 0, 1, 0, 0, 1]);
   assert.equal(result.ownedStreams, true);
   assert.equal(result.sourceUntouched, true);
+});
+
+test("reflected shear reverses complete triangles and preserves the tangent frame", () => {
+  const { context } = createLoaderContext();
+  const result = plain(call(context, `(() => {
+    const positions = new Float32Array([0,0,0, 0,1,0, -1,0,1]);
+    const normals = new Float32Array([1,0,1, 1,0,1, 1,0,1]);
+    const tangents = new Float32Array([0,1,0,1, 0,1,0,1, 0,1,0,1]);
+    const uvs = new Float32Array([0,0, 1,0, 0,1]);
+    // Rows [-2,1,0; 0,3,0; 0,0,1]: non-orthogonal columns and det -6.
+    const matrix = new Float64Array([-2,0,0,0, 1,3,0,0, 0,0,1,0, 0,0,0,1]);
+    const out = gltfTransformMorphedStreams({positions,normals,tangents,uvs}, matrix);
+    return {positions:Array.from(out.positions), normals:Array.from(out.normals), tangents:Array.from(out.tangents), uvs:Array.from(out.uvs)};
+  })()`));
+  assert.deepEqual(result.positions, [0, 0, 0, 2, 0, 1, 1, 3, 0]);
+  assert.deepEqual(result.uvs, [0, 0, 0, 1, 1, 0]);
+  const n = [-3 / Math.sqrt(46), 1 / Math.sqrt(46), 6 / Math.sqrt(46)];
+  const t = [1 / Math.sqrt(10), 3 / Math.sqrt(10), 0];
+  for (let vertex = 0; vertex < 3; vertex++) {
+    assert.deepEqual(morphRound6(result.normals.slice(vertex * 3, vertex * 3 + 3)), morphRound6(n));
+    assert.deepEqual(morphRound6(result.tangents.slice(vertex * 4, vertex * 4 + 3)), morphRound6(t));
+    assert.equal(result.tangents[vertex * 4 + 3], -1);
+  }
+  const edge1 = result.positions.slice(3, 6);
+  const edge2 = result.positions.slice(6, 9);
+  const face = [
+    edge1[1] * edge2[2] - edge1[2] * edge2[1],
+    edge1[2] * edge2[0] - edge1[0] * edge2[2],
+    edge1[0] * edge2[1] - edge1[1] * edge2[0],
+  ];
+  assert.ok(face[0] * n[0] + face[1] * n[1] + face[2] * n[2] > 0, "reflected face stays front-facing");
 });

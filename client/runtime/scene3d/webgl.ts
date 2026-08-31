@@ -26,6 +26,8 @@
       : Math.pow((channel + 0.055) / 1.055, 2.4);
   }
 
+  const SCENE_GLSL_AFFINE_NORMAL = "vec4 gosxAffineNormal(mat3 m,vec3 n){vec3 e=max(max(abs(m[0]),abs(m[1])),abs(m[2]));float s=max(e.x,max(e.y,e.z));mat3 a=m/s;vec3 x=cross(a[1],a[2]),y=cross(a[2],a[0]),z=cross(a[0],a[1]);float d=dot(a[0],x);if(!(s>0.)||abs(d)<=1e-12)return vec4(normalize(n),1.);float o=sign(d);return vec4(normalize(mat3(x,y,z)*n*o),o);}";
+
   const SCENE_PBR_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -39,7 +41,6 @@
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
     "uniform mat4 u_modelMatrix;",
-    "uniform vec3 u_modelScaleSigns;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -47,6 +48,8 @@
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
     "out vec4 v_instanceColor;",
+    "",
+    SCENE_GLSL_AFFINE_NORMAL,
     "",
     "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
     "",
@@ -56,18 +59,13 @@
     "    vec2 gosxUV = a_uv;",
     "    gosxApplyCustomVertex(gosxPosition, gosxNormal, gosxUV);",
     "    vec4 gosxWorldPosition = u_modelMatrix * vec4(gosxPosition, 1.0);",
-    "    mat3 gosxModelBasis = mat3(",
-    "        normalize(u_modelMatrix[0].xyz) * u_modelScaleSigns.x,",
-    "        normalize(u_modelMatrix[1].xyz) * u_modelScaleSigns.y,",
-    "        normalize(u_modelMatrix[2].xyz) * u_modelScaleSigns.z",
-    "    );",
+    "mat3 m=mat3(u_modelMatrix);vec4 q=gosxAffineNormal(m,gosxNormal);",
     "    v_worldPosition = gosxWorldPosition.xyz;",
-    "    v_normal = normalize(gosxModelBasis * gosxNormal);",
+    "v_normal=q.xyz;",
     "    v_uv = gosxUV;",
     "",
-    "    vec3 T = normalize(gosxModelBasis * a_tangent.xyz);",
-    "    vec3 N = v_normal;",
-    "    vec3 B = cross(N, T) * a_tangent.w;",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "vec3 B=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
     "    v_instanceColor = vec4(1.0);",
@@ -848,15 +846,15 @@
     "out vec3 v_bitangent;",
     "out vec4 v_instanceColor;",
     "",
+    SCENE_GLSL_AFFINE_NORMAL,
+    "",
     "void main() {",
     "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
     "    v_worldPosition = worldPos.xyz;",
-    "    mat3 normalMatrix = mat3(a_instanceMatrix);",
-    "    v_normal = normalize(normalMatrix * a_normal);",
+    "mat3 m=mat3(a_instanceMatrix);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
     "    v_uv = a_uv;",
-    "    vec3 T = normalize(normalMatrix * a_tangent.xyz);",
-    "    vec3 N = v_normal;",
-    "    v_bitangent = cross(N, T) * a_tangent.w;",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
@@ -895,32 +893,28 @@
     "out vec3 v_bitangent;",
     "out vec4 v_instanceColor;",
     "",
+    SCENE_GLSL_AFFINE_NORMAL,
+    "",
     "void main() {",
-    "    vec4 pos = vec4(a_position, 1.0);",
-    "    vec3 norm = a_normal;",
-    "    vec3 tang = a_tangent.xyz;",
+    "    mat4 skinMatrix = mat4(1.0);",
     "",
     "    if (u_hasSkin) {",
-    "        mat4 skinMatrix =",
+    "        skinMatrix =",
     "            a_weights.x * u_jointMatrices[int(a_joints.x)] +",
     "            a_weights.y * u_jointMatrices[int(a_joints.y)] +",
     "            a_weights.z * u_jointMatrices[int(a_joints.z)] +",
     "            a_weights.w * u_jointMatrices[int(a_joints.w)];",
     "",
-    "        pos = skinMatrix * pos;",
-    "        norm = mat3(skinMatrix) * norm;",
-    "        tang = mat3(skinMatrix) * tang;",
     "    }",
     "",
-	    "    vec4 worldPos = u_modelMatrix * pos;",
-	    "    mat3 normalMatrix = mat3(u_modelMatrix);",
+	    "mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",
+	    "mat3 m=mat3(model);vec4 q=gosxAffineNormal(m,a_normal);",
 	    "    v_worldPosition = worldPos.xyz;",
-	    "    v_normal = normalize(normalMatrix * norm);",
+	    "v_normal=q.xyz;",
 	    "    v_uv = a_uv;",
 	    "",
-	    "    vec3 T = normalize(normalMatrix * tang);",
-	    "    vec3 N = v_normal;",
-    "    vec3 B = cross(N, T) * a_tangent.w;",
+	    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "vec3 B=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
     "    v_instanceColor = vec4(1.0);",
@@ -1400,7 +1394,9 @@
         if (typeof bindIndexedCaster !== "function") continue;
         var casterIndexCount = bindIndexedCaster(obj, shadowProgram);
         if (!(casterIndexCount > 0)) continue;
+        gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
         gl.drawElements(gl.TRIANGLES, casterIndexCount, gl.UNSIGNED_INT, 0);
+        gl.frontFace(gl.CCW);
         continue;
       }
 
@@ -5236,7 +5232,6 @@
       viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
       projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
       modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
-      modelScaleSigns: gl.getUniformLocation(program, "u_modelScaleSigns"),
       cameraPosition: gl.getUniformLocation(program, "u_cameraPosition"),
 
       albedo: gl.getUniformLocation(program, "u_albedo"),
@@ -5707,7 +5702,7 @@
       "\n" + qualifier + " vec4 a_weights;" +
       "\nuniform mat4 u_modelMatrix;" +
       "\nuniform mat4 u_jointMatrices[64];" +
-      "\nuniform bool u_hasSkin;\n";
+      "\nuniform bool u_hasSkin;\n" + SCENE_GLSL_AFFINE_NORMAL + "\n";
     out = out.slice(0, mainIdx) + extraDecls + out.slice(mainIdx);
 
     mainIdx = out.indexOf(mainMarker);
@@ -5722,7 +5717,7 @@
       "\n  vec4 selenaSkinWorldPos4 = u_modelMatrix * (selenaSkinMatrix * vec4(a_position, 1.0));" +
       "\n  vec3 position = selenaSkinWorldPos4.xyz;";
     if (hasNormal) {
-      skinBlock += "\n  vec3 normal = normalize(mat3(u_modelMatrix) * (mat3(selenaSkinMatrix) * a_normal));";
+      skinBlock += "\n  vec3 normal = gosxAffineNormal(mat3(u_modelMatrix * selenaSkinMatrix), a_normal).xyz;";
     }
     out = out.slice(0, bodyStart) + skinBlock + out.slice(bodyStart);
     return { source: out, hasNormal: hasNormal };
@@ -6608,6 +6603,34 @@
 
   // --- Renderer ---
 
+  function sceneWebGLObjectReflected(obj, directVertices) {
+    var reflectedDirect = directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0;
+    return reflectedDirect;
+  }
+
+  function sceneWebGLBeginReflectedFrontFace(gl, reflectedDirect) {
+    if (reflectedDirect) gl.frontFace(gl.CW);
+  }
+
+  function sceneWebGLEndReflectedFrontFace(gl, reflectedDirect) {
+    if (reflectedDirect) gl.frontFace(gl.CCW);
+  }
+
+  function sceneWebGLUploadPointModelMatrix(gl, pp, entry, _pointsTilt, _pointsModelMat) {
+    if (entry.parentMatrix) {
+      sceneMat4MultiplyInto(_pointsTilt, entry.parentMatrix, _pointsModelMat);
+    }
+    gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, entry.parentMatrix ? _pointsTilt : _pointsModelMat);
+  }
+
+  // Check if an object has skinning data attached.
+  function objectIsSkinned(obj) {
+    return Boolean(
+      obj && obj.skin &&
+      obj.vertices && obj.vertices.joints && obj.vertices.weights
+    );
+  }
+
   function createScenePBRRenderer(gl, canvas) {
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -7177,7 +7200,6 @@
       0, 0, 1, 0,
       0, 0, 0, 1,
     ]);
-    var identityModelScaleSigns = new Float32Array([1, 1, 1, 0]);
 
     // Per-frame camera cache — set once in render(), reused in
     // drawPBRObjectList and drawInstancedMeshes. Pre-allocated so
@@ -7738,14 +7760,6 @@
       }
     }
 
-    // Check if an object has skinning data attached.
-    function objectIsSkinned(obj) {
-      return Boolean(
-        obj && obj.skin &&
-        obj.vertices && obj.vertices.joints && obj.vertices.weights
-      );
-    }
-
 	    // Ensure the skinned PBR program is compiled (lazy init).
 	    function ensureSkinnedProgram() {
 	      if (skinnedProgram) return skinnedProgram;
@@ -7862,7 +7876,9 @@
       var name = field && field.name;
       if (name === "mvp") return scratchSelenaViewProjection;
       if (name === "modelMatrix") return webGLSelenaObjectModelMatrix(owner);
-      if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      if (name === "normalMatrix") return owner && owner.directVertices === true
+        ? sceneAffineNormalMatrix(webGLSelenaObjectModelMatrix(owner))
+        : [1, 0, 0, 0, 1, 0, 0, 0, 1];
       // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
@@ -8283,11 +8299,14 @@
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
           }
           const selenaIndexCount = bindScenePBRDirectIndexBuffer(selenaDirectVertices ? obj : null);
+          var selenaReflected = sceneWebGLObjectReflected(obj, selenaDirectVertices);
+          sceneWebGLBeginReflectedFrontFace(gl, selenaReflected);
           if (selenaIndexCount > 0) {
             gl.drawElements(gl.TRIANGLES, selenaIndexCount, gl.UNSIGNED_INT, 0);
           } else {
             gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
           }
+          sceneWebGLEndReflectedFrontFace(gl, selenaReflected);
           webglRenderTruthStats.meshDrawn += 1;
 
           if (selenaDepthWriteOverride) {
@@ -8360,18 +8379,6 @@
 	            obj.directVertices && obj.modelMatrix ? obj.modelMatrix : identityModelMatrix
 	          );
 	        }
-	        if (currentUniforms.modelScaleSigns) {
-	          var modelScaleSigns = obj.directVertices && obj.modelScaleSigns
-	            ? obj.modelScaleSigns
-	            : identityModelScaleSigns;
-	          gl.uniform3f(
-	            currentUniforms.modelScaleSigns,
-	            modelScaleSigns[0],
-	            modelScaleSigns[1],
-	            modelScaleSigns[2]
-	          );
-	        }
-
 	        if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
@@ -8487,11 +8494,14 @@
         }
 
         const directIndexCount = bindScenePBRDirectIndexBuffer(directVertices ? obj : null);
+        var reflectedDirect = sceneWebGLObjectReflected(obj, directVertices);
+        sceneWebGLBeginReflectedFrontFace(gl, reflectedDirect);
         if (directIndexCount > 0) {
           gl.drawElements(gl.TRIANGLES, directIndexCount, gl.UNSIGNED_INT, 0);
         } else {
           gl.drawArrays(gl.TRIANGLES, 0, count);
         }
+        sceneWebGLEndReflectedFrontFace(gl, reflectedDirect);
         webglRenderTruthStats.meshDrawn += 1;
 
         // Restore depth mask if overridden by per-object control.
@@ -8863,6 +8873,9 @@
         var px = sceneNumber(entry.x, 0);
         var py = sceneNumber(entry.y, 0);
         var pz = sceneNumber(entry.z, 0);
+        var rx = sceneNumber(entry.rotationX, 0);
+        var ry = sceneNumber(entry.rotationY, 0);
+        var rz = sceneNumber(entry.rotationZ, 0);
         var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
 
         if (hasSpin) {
@@ -8873,42 +8886,15 @@
           var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
           var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
           var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
-          var csx = Math.cos(spx), ssx = Math.sin(spx);
-          var csy = Math.cos(spy), ssy = Math.sin(spy);
-          var csz = Math.cos(spz), ssz = Math.sin(spz);
-          _pointsSpin[0] = csy*csz; _pointsSpin[4] = ssx*ssy*csz-csx*ssz; _pointsSpin[8]  = csx*ssy*csz+ssx*ssz; _pointsSpin[12] = 0;
-          _pointsSpin[1] = csy*ssz; _pointsSpin[5] = ssx*ssy*ssz+csx*csz; _pointsSpin[9]  = csx*ssy*ssz-ssx*csz; _pointsSpin[13] = 0;
-          _pointsSpin[2] = -ssy;    _pointsSpin[6] = ssx*csy;             _pointsSpin[10] = csx*csy;             _pointsSpin[14] = 0;
-          _pointsSpin[3] = 0;       _pointsSpin[7] = 0;                   _pointsSpin[11] = 0;                   _pointsSpin[15] = 1;
-
-          // R_tilt from static rotation Euler + translation.
-          var rx = sceneNumber(entry.rotationX, 0);
-          var ry = sceneNumber(entry.rotationY, 0);
-          var rz = sceneNumber(entry.rotationZ, 0);
-          var cxr = Math.cos(rx), sxr = Math.sin(rx);
-          var cyr = Math.cos(ry), syr = Math.sin(ry);
-          var czr = Math.cos(rz), szr = Math.sin(rz);
-          _pointsTilt[0] = cyr*czr; _pointsTilt[4] = sxr*syr*czr-cxr*szr; _pointsTilt[8]  = cxr*syr*czr+sxr*szr; _pointsTilt[12] = px;
-          _pointsTilt[1] = cyr*szr; _pointsTilt[5] = sxr*syr*szr+cxr*czr; _pointsTilt[9]  = cxr*syr*szr-sxr*czr; _pointsTilt[13] = py;
-          _pointsTilt[2] = -syr;    _pointsTilt[6] = sxr*cyr;             _pointsTilt[10] = cxr*cyr;             _pointsTilt[14] = pz;
-          _pointsTilt[3] = 0;       _pointsTilt[7] = 0;                   _pointsTilt[11] = 0;                   _pointsTilt[15] = 1;
-
+          sceneEulerMatrixInto(_pointsSpin, spx, spy, spz, 0, 0, 0);
+          sceneEulerMatrixInto(_pointsTilt, rx, ry, rz, px, py, pz);
           // model = tilt * spin
           sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
         } else {
           // No spin — just static rotation + translation.
-          var rx = sceneNumber(entry.rotationX, 0);
-          var ry = sceneNumber(entry.rotationY, 0);
-          var rz = sceneNumber(entry.rotationZ, 0);
-          var cxr = Math.cos(rx), sxr = Math.sin(rx);
-          var cyr = Math.cos(ry), syr = Math.sin(ry);
-          var czr = Math.cos(rz), szr = Math.sin(rz);
-          _pointsModelMat[0] = cyr*czr; _pointsModelMat[4] = sxr*syr*czr-cxr*szr; _pointsModelMat[8]  = cxr*syr*czr+sxr*szr; _pointsModelMat[12] = px;
-          _pointsModelMat[1] = cyr*szr; _pointsModelMat[5] = sxr*syr*szr+cxr*czr; _pointsModelMat[9]  = cxr*syr*szr-sxr*czr; _pointsModelMat[13] = py;
-          _pointsModelMat[2] = -syr;    _pointsModelMat[6] = sxr*cyr;             _pointsModelMat[10] = cxr*cyr;             _pointsModelMat[14] = pz;
-          _pointsModelMat[3] = 0;       _pointsModelMat[7] = 0;                   _pointsModelMat[11] = 0;                   _pointsModelMat[15] = 1;
+          sceneEulerMatrixInto(_pointsModelMat, rx, ry, rz, px, py, pz);
         }
-        gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, _pointsModelMat);
+        sceneWebGLUploadPointModelMatrix(gl, pp, entry, _pointsTilt, _pointsModelMat);
         var count = sceneNumber(entry.count, 0);
         webglRenderTruthStats.pointInstancesSubmitted += Math.max(0, count);
         if (count <= 0) continue;

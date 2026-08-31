@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -230,18 +231,19 @@ type IRNode struct {
 
 // IRTransform is the shared transform block used by every renderable node.
 type IRTransform struct {
-	X         float64 `json:"x,omitempty"`
-	Y         float64 `json:"y,omitempty"`
-	Z         float64 `json:"z,omitempty"`
-	RotationX float64 `json:"rotationX,omitempty"`
-	RotationY float64 `json:"rotationY,omitempty"`
-	RotationZ float64 `json:"rotationZ,omitempty"`
-	SpinX     float64 `json:"spinX,omitempty"`
-	SpinY     float64 `json:"spinY,omitempty"`
-	SpinZ     float64 `json:"spinZ,omitempty"`
-	ScaleX    float64 `json:"scaleX,omitempty"`
-	ScaleY    float64 `json:"scaleY,omitempty"`
-	ScaleZ    float64 `json:"scaleZ,omitempty"`
+	X            float64   `json:"x,omitempty"`
+	Y            float64   `json:"y,omitempty"`
+	Z            float64   `json:"z,omitempty"`
+	RotationX    float64   `json:"rotationX,omitempty"`
+	RotationY    float64   `json:"rotationY,omitempty"`
+	RotationZ    float64   `json:"rotationZ,omitempty"`
+	SpinX        float64   `json:"spinX,omitempty"`
+	SpinY        float64   `json:"spinY,omitempty"`
+	SpinZ        float64   `json:"spinZ,omitempty"`
+	ScaleX       float64   `json:"scaleX,omitempty"`
+	ScaleY       float64   `json:"scaleY,omitempty"`
+	ScaleZ       float64   `json:"scaleZ,omitempty"`
+	ParentMatrix []float64 `json:"parentMatrix,omitempty"`
 }
 
 // IRMeshNode describes a single mesh primitive or model instance.
@@ -537,6 +539,23 @@ func validateIRNode(index int, node IRNode, materialCount int) []string {
 	}
 	if materialCount > 0 && node.MaterialIndex >= materialCount {
 		problems = append(problems, fmt.Sprintf("nodes[%d].materialIndex out of range", index))
+	}
+	transformValues := []float64{
+		node.Transform.X, node.Transform.Y, node.Transform.Z,
+		node.Transform.RotationX, node.Transform.RotationY, node.Transform.RotationZ,
+		node.Transform.SpinX, node.Transform.SpinY, node.Transform.SpinZ,
+		node.Transform.ScaleX, node.Transform.ScaleY, node.Transform.ScaleZ,
+	}
+	for _, value := range transformValues {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			problems = append(problems, fmt.Sprintf("nodes[%d].transform values must be finite", index))
+			break
+		}
+	}
+	if matrix := node.Transform.ParentMatrix; matrix != nil {
+		if !ValidParentMatrix(matrix) {
+			problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentMatrix must be a finite, nonsingular affine 4x4 matrix", index))
+		}
 	}
 
 	payloads := 0
@@ -1180,35 +1199,37 @@ func htmlToIRNode(html HTMLIR) IRNode {
 
 func transformFromObjectIR(object ObjectIR) IRTransform {
 	return IRTransform{
-		X:         object.X,
-		Y:         object.Y,
-		Z:         object.Z,
-		RotationX: object.RotationX,
-		RotationY: object.RotationY,
-		RotationZ: object.RotationZ,
-		SpinX:     object.SpinX,
-		SpinY:     object.SpinY,
-		SpinZ:     object.SpinZ,
-		ScaleX:    1,
-		ScaleY:    1,
-		ScaleZ:    1,
+		X:            object.X,
+		Y:            object.Y,
+		Z:            object.Z,
+		RotationX:    object.RotationX,
+		RotationY:    object.RotationY,
+		RotationZ:    object.RotationZ,
+		SpinX:        object.SpinX,
+		SpinY:        object.SpinY,
+		SpinZ:        object.SpinZ,
+		ScaleX:       resolveIRScale(object.ScaleX),
+		ScaleY:       resolveIRScale(object.ScaleY),
+		ScaleZ:       resolveIRScale(object.ScaleZ),
+		ParentMatrix: append([]float64(nil), object.ParentMatrix...),
 	}
 }
 
 func transformFromPointsIR(points PointsIR) IRTransform {
 	return IRTransform{
-		X:         points.X,
-		Y:         points.Y,
-		Z:         points.Z,
-		RotationX: points.RotationX,
-		RotationY: points.RotationY,
-		RotationZ: points.RotationZ,
-		SpinX:     points.SpinX,
-		SpinY:     points.SpinY,
-		SpinZ:     points.SpinZ,
-		ScaleX:    1,
-		ScaleY:    1,
-		ScaleZ:    1,
+		X:            points.X,
+		Y:            points.Y,
+		Z:            points.Z,
+		RotationX:    points.RotationX,
+		RotationY:    points.RotationY,
+		RotationZ:    points.RotationZ,
+		SpinX:        points.SpinX,
+		SpinY:        points.SpinY,
+		SpinZ:        points.SpinZ,
+		ScaleX:       1,
+		ScaleY:       1,
+		ScaleZ:       1,
+		ParentMatrix: append([]float64(nil), points.ParentMatrix...),
 	}
 }
 

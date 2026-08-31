@@ -3230,7 +3230,7 @@ function loadSceneAdaptiveQualityAPI() {
   const end = source.indexOf("function applyScenePostFXState", start);
   assert.notEqual(start, -1, "adaptive controller start anchor missing");
   assert.notEqual(end, -1, "adaptive controller end anchor missing");
-  const sceneProps = sceneCoreSourceRange("function sceneProps(props)", "function sceneObjectList");
+  const sceneProps = sceneCoreSourceRange("function sceneProps(props)", "function sceneCloneData");
   const sceneIsPlainObject = sceneCoreSourceRange("function sceneIsPlainObject(value)", "function normalizeSceneMaterialCapabilityTier");
   const qualityLadderCore = sceneCoreSourceRange(
     "// G2 QualityLadder — bidirectional work-based ABR",

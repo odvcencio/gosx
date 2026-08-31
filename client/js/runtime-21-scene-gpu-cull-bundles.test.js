@@ -647,7 +647,7 @@ test("gpu-cull T2b: absent cullKernelWGSL → built-in kernel system", async () 
 // The defect this pins: a constant radius drops an instance that its transform
 // scales up, so the instance vanishes while it is plainly on screen. The built-in
 // kernel must scale the radius per thread, exactly as cullWGSL does in
-// render/bundle/cull.go. Removing any of the three length() calls fails this.
+// render/bundle/cull.go. Removing any column term fails this.
 test("gpu-cull T2b2: the built-in kernel scales the radius per instance", async () => {
   const { device } = makeFakeGPUDevice();
   const harness = await createCullSystemHarness(device);
@@ -656,8 +656,8 @@ test("gpu-cull T2b2: the built-in kernel scales the radius per instance", async 
   assert.equal(typeof wgsl, "string");
   assert.match(
     wgsl,
-    /let scale = max\(length\(m\[0\]\.xyz\), max\(length\(m\[1\]\.xyz\), length\(m\[2\]\.xyz\)\)\);/,
-    "the kernel must take the largest of the three transform column lengths",
+    /let scale = sqrt\(dot\(m\[0\]\.xyz, m\[0\]\.xyz\) \+ dot\(m\[1\]\.xyz, m\[1\]\.xyz\) \+ dot\(m\[2\]\.xyz, m\[2\]\.xyz\)\);/,
+    "the kernel must use the shear-safe Frobenius bound",
   );
   assert.match(wgsl, /if \(scale > 0\.0\) \{ radius = radius \* scale; \}/,
     "the radius must be scaled, and a degenerate transform must keep the base radius");
@@ -707,15 +707,15 @@ test("gpu-cull T2b3: the CPU oracle matches the kernel's scale term", async () =
     0, 0, 4, 0,
     5, 6, 7, 1,
   ]);
-  assert.equal(api.sceneInstanceColumnScale(transforms, 0), 4, "the largest column wins");
-  assert.equal(api.sceneInstanceCullRadius(1.5, transforms, 0), 6, "radius scales by the largest column");
+  assert.equal(api.sceneInstanceColumnScale(transforms, 0), Math.sqrt(29), "the Frobenius bound covers every linear entry");
+  assert.equal(api.sceneInstanceCullRadius(1.5, transforms, 0), 1.5 * Math.sqrt(29), "radius scales by the conservative bound");
   // A degenerate transform must keep the base radius rather than collapse.
   assert.equal(api.sceneInstanceCullRadius(1.5, new Float32Array(16), 0), 1.5);
 
   const two = new Float32Array(32);
   two.set(transforms, 0);
   two.set([9, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 16);
-  assert.equal(api.sceneInstancedMaxTransformScale(two, 2), 9, "the bound covers every instance");
+  assert.equal(api.sceneInstancedMaxTransformScale(two, 2), Math.sqrt(83), "the bound covers every instance");
   assert.equal(api.sceneInstancedMaxTransformScale(new Float32Array(16), 1), 1,
     "an all-zero transform must not report a zero bound");
 });
@@ -1142,9 +1142,7 @@ test("gpu-cull T5-capability: gpu-cull is true in WebGPU capabilities and false 
 //   i2 at (-5,0,0)  → CULLED (left)
 //   i3 at (0,0,5)   → CULLED (far)
 //   i4 at (0,5,0)   → CULLED (top: [0,-1,0,1]: d = -5+1=-4<-2)
-//   i5 at (0,0,-3)  → near plane [0,0,1,0]: d=0*(-3)+0 = -3 < -2 → CULLED?
-//                     Actually d = plane[0]*cx + plane[1]*cy + plane[2]*cz + plane[3]
-//                               = 0*0 + 0*0 + 1*(-3) + 0 = -3 < -2 → CULLED (behind near)
+//   i5 at (0,0,-5)  → CULLED behind near
 // Expected survivors: only i0.
 
 test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed reference", () => {
@@ -1176,7 +1174,7 @@ test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed re
     makeTranslationMat4(-5, 0, 0),  // i2: far left  — CULLED
     makeTranslationMat4(0, 0, 5),   // i3: far back  — CULLED
     makeTranslationMat4(0, 5, 0),   // i4: far up    — CULLED
-    makeTranslationMat4(0, 0, -3),  // i5: behind near — CULLED
+    makeTranslationMat4(0, 0, -5),  // i5: behind near — CULLED
   ];
   const transforms = new Float32Array(instances.flat());
   const radius = 2.0;
@@ -1189,7 +1187,7 @@ test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed re
   assert.equal(results[2], false, "i2 at (-5,0,0) must be CULLED (left plane)");
   assert.equal(results[3], false, "i3 at (0,0,5) must be CULLED (far plane)");
   assert.equal(results[4], false, "i4 at (0,5,0) must be CULLED (top plane)");
-  assert.equal(results[5], false, "i5 at (0,0,-3) must be CULLED (near plane)");
+  assert.equal(results[5], false, "i5 at (0,0,-5) must be CULLED (near plane)");
 
   // Collect survivors.
   const survivors = instances
@@ -1208,21 +1206,21 @@ test("cpu-cull S3-T2: radius controls cull boundary (larger radius keeps more in
   ]);
   const planes = extractFrustumPlanesJS(identity);
 
-  // Instance at (3,0,0): right plane [-1,0,0,1]: d = -3+1 = -2.
-  // radius=1.5 → -2 < -1.5 → CULLED.
-  // radius=3   → -2 >= -3  → VISIBLE.
+  // Instance at (4,0,0): right plane d=-3. Identity has Frobenius bound √3.
+  // radius=1.5 → effective radius≈2.598 → CULLED.
+  // radius=3   → effective radius≈5.196 → VISIBLE.
   function makeTf(x, y, z) {
     const t = new Float32Array(16);
     t[0]=1; t[5]=1; t[10]=1; t[15]=1; // identity mat
     t[12]=x; t[13]=y; t[14]=z;
     return t;
   }
-  const tf3 = makeTf(3, 0, 0);
+  const tf3 = makeTf(4, 0, 0);
 
   assert.equal(instancePassesCullTest(tf3, 0, planes, 1.5), false,
-    "radius 1.5: instance at (3,0,0) must be CULLED");
+    "radius 1.5: instance at (4,0,0) must be CULLED");
   assert.equal(instancePassesCullTest(tf3, 0, planes, 3.0), true,
-    "radius 3.0: instance at (3,0,0) must be VISIBLE (sphere overlaps right plane)");
+    "radius 3.0: instance at (4,0,0) must be VISIBLE (sphere overlaps right plane)");
 });
 
 // -------------------------------------------------------------------------
@@ -1235,8 +1233,8 @@ test("cpu-cull S3-T3: absent or zero cullRadius defaults to 2.0 (matches GPU-cul
   ]);
   const planes = extractFrustumPlanesJS(identity);
 
-  // At (2.5,0,0): right plane d = -2.5+1 = -1.5; -default_radius = -2.0; -1.5 >= -2 → VISIBLE.
-  // At (3.5,0,0): right plane d = -3.5+1 = -2.5; -2.5 < -2.0 → CULLED.
+  // Identity has Frobenius bound √3, so the default effective radius is 2√3.
+  // At x=4 d=-3 and survives; at x=5 d=-4 and is culled.
   function makeTf(x) {
     const t = new Float32Array(16);
     t[0]=1; t[5]=1; t[10]=1; t[15]=1;
@@ -1245,15 +1243,15 @@ test("cpu-cull S3-T3: absent or zero cullRadius defaults to 2.0 (matches GPU-cul
   }
 
   // undefined radius → default 2.0
-  assert.equal(instancePassesCullTest(makeTf(2.5), 0, planes, undefined), true,
-    "undefined radius → default 2.0 → (2.5,0,0) is VISIBLE");
-  assert.equal(instancePassesCullTest(makeTf(3.5), 0, planes, undefined), false,
-    "undefined radius → default 2.0 → (3.5,0,0) is CULLED");
+  assert.equal(instancePassesCullTest(makeTf(4), 0, planes, undefined), true,
+    "undefined radius → default 2.0 → (4,0,0) is VISIBLE");
+  assert.equal(instancePassesCullTest(makeTf(5), 0, planes, undefined), false,
+    "undefined radius → default 2.0 → (5,0,0) is CULLED");
   // 0 radius → default 2.0
-  assert.equal(instancePassesCullTest(makeTf(2.5), 0, planes, 0), true,
-    "zero radius → default 2.0 → (2.5,0,0) is VISIBLE");
-  assert.equal(instancePassesCullTest(makeTf(3.5), 0, planes, 0), false,
-    "zero radius → default 2.0 → (3.5,0,0) is CULLED");
+  assert.equal(instancePassesCullTest(makeTf(4), 0, planes, 0), true,
+    "zero radius → default 2.0 → (4,0,0) is VISIBLE");
+  assert.equal(instancePassesCullTest(makeTf(5), 0, planes, 0), false,
+    "zero radius → default 2.0 → (5,0,0) is CULLED");
 });
 
 // -------------------------------------------------------------------------

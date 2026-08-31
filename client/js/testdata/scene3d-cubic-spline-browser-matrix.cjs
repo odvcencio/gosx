@@ -94,6 +94,24 @@ const NEGATIVE_ERRORS = {
     '[wg] restored mapped renderer target contains 0 non-background pixels, expected > 20',
   ],
 };
+const EXPECTED_CASE_NAMES = Object.freeze(['affine-gl', 'affine-wg', 'gl', 'wg']);
+const AFFINE_PARENT = Object.freeze([
+  -2, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0.5, 0.5, 1, 1,
+]);
+const AFFINE_LOCAL_POSITIONS = Object.freeze([
+  -0.4, -0.4, 0,
+  0.4, -0.4, 0,
+  0, 0.4, 0,
+]);
+const AFFINE_MODEL_MATRIX = Object.freeze([
+  -Math.SQRT2, Math.SQRT1_2, 0, 0,
+  Math.SQRT2, Math.SQRT1_2, 0, 0,
+  0, 0, 1, 0,
+  0.5, 0.5, 1, 1,
+]);
 
 function digestFile(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -327,6 +345,13 @@ function closeArray(failures, actual, expected, label, tolerance) {
   }
 }
 
+function relativeClose(failures, actual, expected, label, tolerance) {
+  const value = Number(actual);
+  check(failures, Number.isFinite(value) &&
+    Math.abs(value - expected) <= Math.abs(expected) * tolerance,
+  label + ': got ' + actual + ', want ' + expected + ' within relative ' + tolerance);
+}
+
 function checkIdentity(failures, value, label) {
   exact(failures, value, {
     sameMount: true, sameCanvas: true, sameState: true, sameRecord: true,
@@ -349,6 +374,150 @@ function checkTelemetry(failures, value, label) {
   }
   exact(failures, value.lastFlushReason, 'manual-drain', label + '.lastFlushReason');
   exact(failures, value.lastFailureReason, '', label + '.lastFailureReason');
+}
+
+function checkAffineScalePolicy(failures, value, label) {
+  check(failures, value && typeof value === 'object', label + ': missing');
+  if (!value || typeof value !== 'object') return;
+  relativeClose(failures, value.uniformCutoff && value.uniformCutoff.distance,
+    1e6, label + '.uniformCutoff.distance', 1e-12);
+  relativeClose(failures, value.uniformLarge && value.uniformLarge.distance,
+    1e9, label + '.uniformLarge.distance', 1e-12);
+  relativeClose(failures, value.uniformSmall && value.uniformSmall.distance,
+    1e-9, label + '.uniformSmall.distance', 1e-6);
+  for (const name of ['shearedLarge', 'shearedSmall']) {
+    const receipt = value[name];
+    check(failures, receipt && receipt.hit, label + '.' + name + '.hit: missing');
+    if (receipt && receipt.hit) {
+      relativeClose(failures, receipt.hit.distance, receipt.expected,
+        label + '.' + name + '.distance', 1e-6);
+    }
+  }
+  for (const name of ['tiny', 'tinyShear', 'tinyTransposed', 'tinyReflected',
+    'thresholdAccepted', 'nearMax']) {
+    const receipt = value[name];
+    check(failures, receipt && receipt.without !== 0 &&
+      receipt.withOut === receipt.without && Array.isArray(receipt.inverse) &&
+      receipt.inverse.length === 12 && receipt.inverse.every(Number.isFinite) &&
+      receipt.inverse.some((entry) => entry !== 0),
+    label + '.' + name + ': invalid accepted inverse receipt ' + JSON.stringify(receipt));
+  }
+  if (value.tiny && Array.isArray(value.tiny.inverse)) {
+    relativeClose(failures, value.tiny.inverse[0], 1e297,
+      label + '.tiny.inverse[0]', 1e-15);
+    relativeClose(failures, value.tiny.inverse[5], 5e302,
+      label + '.tiny.inverse[5]', 1e-15);
+    relativeClose(failures, value.tiny.inverse[10], 5e302,
+      label + '.tiny.inverse[10]', 1e-15);
+  }
+  exact(failures, value.nearMax && value.nearMax.without, 2,
+    label + '.nearMax.without');
+  for (const name of ['thresholdRejected', 'overflow', 'singular']) {
+    const receipt = value[name];
+    check(failures, receipt && receipt.without === 0 && receipt.withOut === 0,
+      label + '.' + name + ': invalid inverse did not fail closed ' +
+        JSON.stringify(receipt));
+  }
+}
+
+function checkAffine(failures, value, webgpu) {
+  const name = webgpu ? 'affine-wg' : 'affine-gl';
+  check(failures, value && typeof value === 'object', name + ': case missing');
+  if (!value || typeof value !== 'object') return;
+  exact(failures, value.name, name, name + '.name');
+  exact(failures, value.kind, 'affine-renderer-owned', name + '.kind');
+  exact(failures, value.webgpu, webgpu, name + '.webgpu');
+  exact(failures, value.mount, 'scene-' + name, name + '.mount');
+  exact(failures, value.engine, 'gosx-engine-' + name, name + '.engine');
+  exact(failures, value.attrs, {
+    mounted: 'true', renderer: webgpu ? 'webgpu' : 'webgl', fallback: null,
+  }, name + '.attrs');
+
+  const affine = value.affine;
+  check(failures, affine && typeof affine === 'object', name + '.affine: missing');
+  if (affine && typeof affine === 'object') {
+    closeArray(failures, affine.parent, AFFINE_PARENT, name + '.affine.parent', 1e-6);
+    check(failures, affine.path && affine.path.worldMeshVertexCount === 0 &&
+      affine.path.cacheEntries > 0,
+    name + '.affine.path is not renderer-owned: ' + JSON.stringify(affine.path));
+    const pick = affine.pick;
+    exact(failures, pick && pick.targetID, 'affine-group-child',
+      name + '.affine.pick.targetID');
+    closeArray(failures, pick && [pick.worldX, pick.worldY, pick.worldZ],
+      [0.5, 0.5, 1], name + '.affine.pick.world', 2e-4);
+    relativeClose(failures, pick && pick.depth, 2,
+      name + '.affine.pick.depth', 1e-4);
+
+    if (webgpu) {
+      exact(failures, affine.glUpload, null, name + '.affine.glUpload');
+      exact(failures, affine.glDraw, null, name + '.affine.glDraw');
+      exact(failures, affine.draws, 0, name + '.affine.draws');
+      exact(failures, affine.gl, '', name + '.affine.gl');
+      check(failures, affine.wgPasses > 0 && affine.wgSubmits > 0,
+        name + '.affine WebGPU pass/submission counters are not positive');
+      check(failures, affine.path && affine.path.retainedMeshObjects === 1 &&
+        affine.path.bundleState === 'encoded',
+      name + '.affine retained bundle path is invalid: ' + JSON.stringify(affine.path));
+      check(failures, affine.wgPosition && affine.wgMaterial && affine.wgDraw,
+        name + '.affine retained WebGPU receipts are missing');
+      if (affine.wgPosition && affine.wgMaterial && affine.wgDraw) {
+        closeArray(failures, affine.wgPosition.values, AFFINE_LOCAL_POSITIONS,
+          name + '.affine.localPositions', 1e-6);
+        closeArray(failures, affine.wgMaterial.values &&
+          affine.wgMaterial.values.slice(20, 36), AFFINE_MODEL_MATRIX,
+        name + '.affine.modelMatrix', 2e-5);
+        exact(failures, affine.wgDraw.kind, 'drawIndexed',
+          name + '.affine.wgDraw.kind');
+        exact(failures, affine.wgDraw.positionBuffer, affine.wgPosition.buffer,
+          name + '.affine.wgDraw.positionBuffer');
+        exact(failures, affine.wgDraw.materialBuffer, affine.wgMaterial.buffer,
+          name + '.affine.wgDraw.materialBuffer');
+        exact(failures, affine.wgDraw.frontFace, 'cw',
+          name + '.affine.wgDraw.frontFace');
+        exact(failures, affine.wgDraw.cullMode, 'none',
+          name + '.affine.wgDraw.cullMode');
+        check(failures, affine.wgDraw.bundle > 0 &&
+          Array.isArray(affine.executedBundles) &&
+          affine.executedBundles.includes(affine.wgDraw.bundle),
+        name + '.affine draw bundle was not executed');
+      }
+    } else {
+      exact(failures, affine.wgPosition, null, name + '.affine.wgPosition');
+      exact(failures, affine.wgMaterial, null, name + '.affine.wgMaterial');
+      exact(failures, affine.wgDraw, null, name + '.affine.wgDraw');
+      exact(failures, affine.wgPasses, 0, name + '.affine.wgPasses');
+      exact(failures, affine.wgSubmits, 0, name + '.affine.wgSubmits');
+      exact(failures, affine.executedBundles, [], name + '.affine.executedBundles');
+      exact(failures, affine.gl, 'webgl2', name + '.affine.gl');
+      check(failures, affine.draws > 0 && affine.glUpload && affine.glDraw,
+        name + '.affine retained WebGL receipts are missing');
+      if (affine.glUpload && affine.glDraw) {
+        closeArray(failures, affine.glUpload.values, AFFINE_LOCAL_POSITIONS,
+          name + '.affine.localPositions', 1e-6);
+        const model = Array.isArray(affine.glDraw.matrices) ?
+          affine.glDraw.matrices.find((candidate) => Array.isArray(candidate) &&
+            candidate.length === AFFINE_MODEL_MATRIX.length &&
+            candidate.every((entry, index) => Number.isFinite(entry) &&
+              Math.abs(entry - AFFINE_MODEL_MATRIX[index]) < 2e-5)) : null;
+        closeArray(failures, model, AFFINE_MODEL_MATRIX,
+          name + '.affine.modelMatrix', 2e-5);
+        exact(failures, affine.glDraw.kind, 'drawElements',
+          name + '.affine.glDraw.kind');
+        exact(failures, affine.glDraw.frontFace, 2304,
+          name + '.affine.glDraw.frontFace');
+        check(failures, Array.isArray(affine.glDraw.buffers) &&
+          affine.glDraw.buffers.includes(affine.glUpload.buffer),
+        name + '.affine position buffer was not bound for the draw');
+      }
+    }
+  }
+  checkAffineScalePolicy(failures, value.scalePolicy, name + '.scalePolicy');
+  check(failures, value.pixelStats && value.pixelStats.width === 320 &&
+    value.pixelStats.height === 180 && value.pixelStats.nonBackgroundPixels > 20,
+  name + '.pixelStats does not prove visible rasterization: ' +
+    JSON.stringify(value.pixelStats));
+  exact(failures, value.disposed, true, name + '.disposed');
+  checkTelemetry(failures, value.telemetry, name + '.telemetry');
 }
 
 function checkCommonCase(failures, value, name) {
@@ -704,16 +873,13 @@ function checkTopLevel(failures, report, mode, browser) {
   exact(failures, report.notFound, [], 'report.notFound');
   exact(failures, report.unexpectedRequests, [], 'report.unexpectedRequests');
   exact(failures, report.networkFailures, [], 'report.networkFailures');
-  exact(failures, report.clientEventResponses, [
-    { method: 'POST', path: '/_gosx/client-events', status: 204 },
-    { method: 'POST', path: '/_gosx/client-events', status: 204 },
-  ], 'report.clientEventResponses');
-  exact(failures, report.intentionalNoContent, [
-    { method: 'POST', path: '/_gosx/client-events', status: 204,
-      cdpTerminal: 'loadingFailed:net::ERR_ABORTED' },
-    { method: 'POST', path: '/_gosx/client-events', status: 204,
-      cdpTerminal: 'loadingFailed:net::ERR_ABORTED' },
-  ], 'report.intentionalNoContent');
+  exact(failures, report.clientEventResponses, EXPECTED_CASE_NAMES.map(() =>
+    ({ method: 'POST', path: '/_gosx/client-events', status: 204 })),
+  'report.clientEventResponses');
+  exact(failures, report.intentionalNoContent, EXPECTED_CASE_NAMES.map(() =>
+    ({ method: 'POST', path: '/_gosx/client-events', status: 204,
+      cdpTerminal: 'loadingFailed:net::ERR_ABORTED' })),
+  'report.intentionalNoContent');
   check(failures, !Object.prototype.hasOwnProperty.call(report, 'fatal'),
     'report unexpectedly contains fatal: ' + JSON.stringify(report.fatal));
 
@@ -766,7 +932,7 @@ function checkTopLevel(failures, report, mode, browser) {
     'report.capabilityStderrRange is invalid');
     exact(failures, Array.isArray(report.caseStderrRanges) &&
       report.caseStderrRanges.map((entry) => entry && entry.name),
-    ['gl', 'wg'], 'report.caseStderrRanges names');
+    EXPECTED_CASE_NAMES, 'report.caseStderrRanges names');
     if (Array.isArray(report.caseStderrRanges)) {
       for (const [index, entry] of report.caseStderrRanges.entries()) {
         check(failures, entry && Number.isInteger(entry.startByte) &&
@@ -800,7 +966,7 @@ function checkTopLevel(failures, report, mode, browser) {
   const expectedErrors = NEGATIVE_ERRORS[mode.name] || [];
   exact(failures, report.errors, expectedErrors, 'report.errors');
   exact(failures, Array.isArray(report.cases) && report.cases.map((value) => value.name),
-    ['gl', 'wg'], 'report.case order');
+    EXPECTED_CASE_NAMES, 'report.case order');
 }
 
 function verifyReport(report, mode, browser) {
@@ -808,8 +974,14 @@ function verifyReport(report, mode, browser) {
   check(failures, report && typeof report === 'object', 'report is not an object');
   if (!report || typeof report !== 'object') return failures;
   checkTopLevel(failures, report, mode, browser);
+  const affineGL = Array.isArray(report.cases) ?
+    report.cases.find((value) => value.name === 'affine-gl') : null;
+  const affineWG = Array.isArray(report.cases) ?
+    report.cases.find((value) => value.name === 'affine-wg') : null;
   const gl = Array.isArray(report.cases) ? report.cases.find((value) => value.name === 'gl') : null;
   const wg = Array.isArray(report.cases) ? report.cases.find((value) => value.name === 'wg') : null;
+  checkAffine(failures, affineGL, false);
+  checkAffine(failures, affineWG, true);
   checkGL(failures, gl);
   checkWG(failures, wg, mode);
   return failures;
@@ -891,6 +1063,35 @@ function verifyTargetLinkageReportMutation(browser) {
   }
   return {
     mutation: 'wrong-private-target-generation',
+    sourceReport: path.relative(ART, reportPath),
+    sourceReportSHA256: digestFile(reportPath),
+    rejected: true,
+    verificationFailures: mutationFailures,
+  };
+}
+
+function verifyAffineOwnershipReportMutation(browser) {
+  const reportPath = path.join(ART, 'positive', 'report.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const baselineFailures = verifyReport(report, MODES[0], browser);
+  if (baselineFailures.length !== 0) {
+    throw new Error('positive report was not green before affine-ownership mutation: ' +
+      JSON.stringify(baselineFailures));
+  }
+  const mutated = JSON.parse(JSON.stringify(report));
+  const affineWG = mutated.cases.find((value) => value && value.name === 'affine-wg');
+  if (!affineWG || !affineWG.affine || !affineWG.affine.path) {
+    throw new Error('positive report lacks affine WebGPU ownership receipt');
+  }
+  affineWG.affine.path.worldMeshVertexCount = 1;
+  const mutationFailures = verifyReport(mutated, MODES[0], browser);
+  if (mutationFailures.length !== 1 ||
+      !mutationFailures[0].includes('affine-wg.affine.path is not renderer-owned')) {
+    throw new Error('world-baked affine ownership mutation was not rejected exactly: ' +
+      JSON.stringify(mutationFailures));
+  }
+  return {
+    mutation: 'world-baked-affine-vertices',
     sourceReport: path.relative(ART, reportPath),
     sourceReportSHA256: digestFile(reportPath),
     rejected: true,
@@ -1048,6 +1249,8 @@ function runMode(mode, browser) {
   receipt.browserVersionReportMutation = verifyWrongVersionReportMutation(
     receipt.selectedBrowser);
   receipt.targetLinkageReportMutation = verifyTargetLinkageReportMutation(
+    receipt.selectedBrowser);
+  receipt.affineOwnershipReportMutation = verifyAffineOwnershipReportMutation(
     receipt.selectedBrowser);
   receipt.finishedAt = new Date().toISOString();
   receipt.verified = receipt.errors.length === 0 && receipt.modes.length === MODES.length;

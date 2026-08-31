@@ -99,7 +99,7 @@
       return (frame && frame.viewProjection) || selenaIdentityMatrix4;
     }
     if (name === "modelMatrix") return webGPUSelenaObjectModelMatrix(owner);
-    if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    if (name === "normalMatrix") return owner && owner.directVertices === true ? sceneAffineNormalMatrix(webGPUObjectModelMatrix(owner)) : [1, 0, 0, 0, 1, 0, 0, 0, 1];
     var contextValue = sceneSelenaRenderContextUniformValue(renderContext, field);
     if (contextValue !== undefined) return contextValue;
     // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
