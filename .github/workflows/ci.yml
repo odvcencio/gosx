@@ -358,9 +358,10 @@ jobs:
           rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
 
   # scene3d-v1-adapter-proof: the real standard-Go WASM generic-hydrate seam,
-  # two native browser backends, same-ID stale suppression, and the targeted
-  # hub-command/remount contract. Success removes artifacts immediately;
-  # failure retains the report and screenshots for seven days.
+  # native WebGL2 plus requested-WebGPU/native-or-typed-fallback evidence,
+  # same-ID stale suppression, and the targeted hub-command/remount contract.
+  # Success removes artifacts immediately; failure retains the report and
+  # screenshots for seven days.
   scene3d-v1-adapter-proof:
     runs-on: ubuntu-latest
     timeout-minutes: 12

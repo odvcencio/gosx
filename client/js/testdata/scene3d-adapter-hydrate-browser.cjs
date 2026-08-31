@@ -13,8 +13,10 @@
  *
  * The bounded hub test invoked below also proves an ordinary diff round-trips
  * while a mixed remount-required diff returns no commands and mutates nothing.
- * Native WebGL2 and WebGPU are both required: no fallback and no skip.
- * Every request is constrained to an exact loopback allowlist; warnings,
+ * Native WebGL2 is required. The WebGPU-requested case must either prove a
+ * native WebGPU frame or a typed fail-closed WebGL fallback for native WebGPU
+ * unavailability/device loss; no skip/generic fallback is accepted. Every
+ * request is constrained to an exact loopback allowlist; warnings,
  * errors, HTTP failures, unaccounted aborts, and cleanup failures fail.
  *
  * Usage:
@@ -60,6 +62,18 @@ const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
 const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
 const FOUR_PART_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
 const CHROME_CLI_PRODUCT = /^(Google Chrome|Google Chrome for Testing) (\d+\.\d+\.\d+\.\d+)$/;
+const HOSTED_POLICY = 'requested-webgpu-or-typed-webgl-fallback';
+const OUTCOME_NATIVE_WEBGPU = 'native-webgpu';
+const OUTCOME_FALLBACK_UNAVAILABLE = 'fallback-unavailable';
+const OUTCOME_FALLBACK_DEVICE_LOST = 'fallback-device-lost';
+const FALLBACK_UNAVAILABLE = 'webgpu-unavailable';
+const FALLBACK_DEVICE_LOST = 'webgpu-device-lost';
+const OUTCOME_NATIVE_WEBGL2 = 'native-webgl2';
+const FALLBACK_WARNING_PATTERNS = [
+  /^console\.warning: \[gosx\] WebGPU probe(:| failed:| requestDevice failed; retrying with a fresh adapter:| device lost:)/,
+  /^console\.warning: \[gosx\] WebGPU renderer creation failed:/,
+  /^console\.warning: \[gosx\] WebGPU factory returned null after probe success; canvas may be tainted$/,
+];
 
 const CASES = [
   { name: 'gl', webgpu: false, engine: 'gosx-engine-adapter-gl', mount: 'scene-adapter-gl' },
@@ -746,9 +760,30 @@ window.__adapterWGLatestConfiguredDevice = null;
 const CAPS_EXPR = `(async function () {
   var canvas = document.createElement('canvas');
   var webgl2 = false;
+  var webglIdentity = null;
   try { webgl2 = !!canvas.getContext('webgl2'); } catch (_error) {}
+  try {
+    var gl = canvas.getContext('webgl2');
+    var debug = gl && gl.getExtension && gl.getExtension('WEBGL_debug_renderer_info');
+    if (gl && debug) {
+      webglIdentity = {
+        vendor: gl.getParameter(debug.UNMASKED_VENDOR_WEBGL),
+        renderer: gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)
+      };
+    }
+  } catch (_identityError) {}
   var adapter = navigator.gpu && navigator.gpu.requestAdapter ? await navigator.gpu.requestAdapter() : null;
-  return { webgl2: webgl2, webgpu: !!adapter };
+  var webgpuAdapterInfo = null;
+  try {
+    if (adapter && typeof adapter.requestAdapterInfo === 'function') {
+      webgpuAdapterInfo = await adapter.requestAdapterInfo();
+    } else if (adapter && adapter.info) {
+      webgpuAdapterInfo = adapter.info;
+    }
+  } catch (infoError) {
+    webgpuAdapterInfo = { error: String(infoError && (infoError.message || infoError) || infoError) };
+  }
+  return { webgl2: webgl2, webgpu: !!adapter, webglIdentity: webglIdentity, webgpuAdapterInfo: webgpuAdapterInfo };
 })()`;
 
 function preflightExpr(c) {
@@ -796,6 +831,8 @@ function winnerExpr(c, remember) {
       renderer: mount.getAttribute('data-gosx-scene3d-renderer'),
       fallback: mount.getAttribute('data-gosx-scene3d-renderer-fallback'),
       commandReady: mount.getAttribute('data-gosx-scene3d-command-ready'),
+      commandRevision: mount.getAttribute('data-gosx-scene3d-command-revision'),
+      commandAppliedRevision: mount.getAttribute('data-gosx-scene3d-command-applied-revision'),
       glDraws: window.__adapterGLDraws,
       glContext: window.__adapterGLContext,
       wgPasses: window.__adapterWGPasses,
@@ -907,6 +944,62 @@ async function waitForWebGPUPresentation(send, c, label, afterColorPasses, after
   evidence.queueFence = queueFence;
   // GPU completion precedes presentation; allow the browser compositor to
   // consume that finished canvas texture before Page.captureScreenshot.
+  await evalSend(send, settleFramesExpr(2), { awaitPromise: true });
+  return evidence;
+}
+
+function webGLFallbackPresentExpr(c, fallbackKind, afterGLDraws, expectedObjectX, requireRevision) {
+  return `(function () {
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var state = mount && mount.__gosxScene3DState;
+    var object = state && state.objects && state.objects.get('1');
+    var revision = mount && mount.getAttribute('data-gosx-scene3d-command-revision');
+    var appliedRevision = mount && mount.getAttribute('data-gosx-scene3d-command-applied-revision');
+    var expectedX = ${JSON.stringify(expectedObjectX === undefined ? null : expectedObjectX)};
+    var needsRevision = ${JSON.stringify(requireRevision === true)};
+    var predicates = {
+      mountFound: !!mount,
+      rendererWebGL: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'webgl',
+      rendererCanvas2D: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'canvas2d',
+      fallback: mount && mount.getAttribute('data-gosx-scene3d-renderer-fallback') || '',
+      expectedFallback: ${JSON.stringify(fallbackKind)},
+      mounted: !!mount && mount.getAttribute('data-gosx-scene3d-mounted') === 'true',
+      commandReady: !!mount && mount.getAttribute('data-gosx-scene3d-command-ready') === 'true',
+      commandRevision: revision,
+      commandAppliedRevision: appliedRevision,
+      glDraws: window.__adapterGLDraws,
+      glDrawBaseline: ${JSON.stringify(afterGLDraws || 0)},
+      glContext: window.__adapterGLContext,
+      expectedObjectX: expectedX,
+      objectX: object && object.x
+    };
+    predicates.freshGLDraw = predicates.glDraws > predicates.glDrawBaseline;
+    predicates.commandState = expectedX === null || predicates.objectX === expectedX;
+    predicates.revisionState = !needsRevision || (!!revision && revision === appliedRevision);
+    var ready = predicates.mountFound && predicates.rendererWebGL && !predicates.rendererCanvas2D &&
+      predicates.fallback === predicates.expectedFallback && predicates.mounted && predicates.commandReady &&
+      predicates.freshGLDraw && predicates.glContext === 'webgl2' && predicates.commandState && predicates.revisionState;
+    return {
+      ready: ready,
+      predicates: predicates,
+      renderer: mount && mount.getAttribute('data-gosx-scene3d-renderer'),
+      fallback: predicates.fallback,
+      mounted: mount && mount.getAttribute('data-gosx-scene3d-mounted'),
+      glDraws: window.__adapterGLDraws,
+      glContext: window.__adapterGLContext,
+      objectX: object && object.x,
+      commandRevision: revision,
+      commandAppliedRevision: appliedRevision
+    };
+  })()`;
+}
+
+async function waitForWebGLFallbackPresentation(send, c, label, fallbackKind, afterGLDraws, expectedObjectX, requireRevision) {
+  const evidence = await poll(
+    send, webGLFallbackPresentExpr(c, fallbackKind, afterGLDraws || 0, expectedObjectX, requireRevision),
+    label + ' typed WebGL fallback frame'
+  );
+  // Let the compositor consume the proven fresh WebGL draw before screenshot capture.
   await evalSend(send, settleFramesExpr(2), { awaitPromise: true });
   return evidence;
 }
@@ -1191,6 +1284,7 @@ function hubCommandExpr(c) {
       revision: revision,
       appliedRevision: appliedRevision,
       commandApplied: commandApplied,
+      glDrawBaseline: window.__adapterGLDraws,
       webgpuColorPassBaseline: colorPassBaseline,
       webgpuCompletedColorPassBaseline: completedColorPassBaseline
     };
@@ -1269,6 +1363,181 @@ function assertVisibleFrame(c, label, metrics) {
   }
 }
 
+function visibleFrameOK(metrics) {
+  return !!(metrics && !metrics.error && metrics.width === W && metrics.height === H &&
+    metrics.foregroundFraction >= FG_COVERAGE && metrics.maxDelta >= FG_THRESHOLD &&
+    metrics.restFraction >= REST_COVERAGE);
+}
+
+function classifyWGOutcomeSnapshot(snapshot) {
+  const nativeCapsSnapshot = snapshot && snapshot.nativeCaps || {};
+  const first = snapshot && snapshot.firstState || {};
+  const post = snapshot && snapshot.postState || {};
+  const receipt = snapshot && snapshot.fallbackReceipt || null;
+  const outcome = snapshot && snapshot.acceptedOutcome || '';
+  const fallbackKind = snapshot && snapshot.fallbackKind || '';
+  const firstVisible = snapshot && snapshot.firstFrameVisible === true;
+  const postVisible = snapshot && snapshot.postFrameVisible === true;
+  const commandRevision = post.commandRevision || '';
+  const commandAppliedRevision = post.commandAppliedRevision || '';
+  const commandRevisionOK = !!commandRevision && commandRevision === commandAppliedRevision;
+  const mountedAndCommandReady = first.mounted === 'true' && post.mounted === 'true' &&
+    first.handleReady === true && post.handleReady === true &&
+    first.commandReady === 'true' && post.commandReady === 'true';
+  const result = { accepted: false, reason: '', hardwareNativeCertified: false };
+  if (outcome === OUTCOME_NATIVE_WEBGPU) {
+    if (nativeCapsSnapshot.webgpu !== true) result.reason = 'native-webgpu-cap-missing';
+    else if (first.renderer !== 'webgpu' || post.renderer !== 'webgpu') result.reason = 'native-renderer-mismatch';
+    else if (fallbackKind) result.reason = 'native-fallback-present';
+    else if (!mountedAndCommandReady) result.reason = 'native-mounted-handle-missing';
+    else if (!(first.webgpuColorPasses > 0) || !(first.webgpuCompletedColorPasses > 0) ||
+        !(post.webgpuColorPasses > first.webgpuColorPasses) || !(post.webgpuCompletedColorPasses > first.webgpuCompletedColorPasses) ||
+        !(post.webgpuCompletedSubmits > 0) || post.webgpuFailedSubmits !== 0) result.reason = 'native-webgpu-evidence-missing';
+    else if (post.objectX !== 1.25 || !commandRevisionOK) result.reason = 'native-command-state-stale';
+    else if (!firstVisible || !postVisible) result.reason = 'native-pixels-missing';
+    else {
+      result.accepted = true;
+      result.reason = 'accepted';
+      result.hardwareNativeCertified = false;
+    }
+    return result;
+  }
+  if (outcome === OUTCOME_FALLBACK_UNAVAILABLE || outcome === OUTCOME_FALLBACK_DEVICE_LOST) {
+    const wantFallback = outcome === OUTCOME_FALLBACK_UNAVAILABLE ? FALLBACK_UNAVAILABLE : FALLBACK_DEVICE_LOST;
+    if (first.renderer !== 'webgl' || post.renderer !== 'webgl') result.reason = 'fallback-renderer-mismatch';
+    else if (fallbackKind !== wantFallback || first.fallback !== wantFallback || post.fallback !== wantFallback) result.reason = 'fallback-label-mismatch';
+    else if (first.renderer === 'canvas2d' || post.renderer === 'canvas2d') result.reason = 'canvas2d-fallback-rejected';
+    else if (!mountedAndCommandReady) result.reason = 'fallback-mounted-handle-missing';
+    else if (outcome === OUTCOME_FALLBACK_UNAVAILABLE && nativeCapsSnapshot.webgpu === true) result.reason = 'unavailable-while-native-webgpu-available';
+    else if (outcome === OUTCOME_FALLBACK_DEVICE_LOST &&
+        !(receipt && /^device-lost-/.test(String(receipt.classification || '')))) result.reason = 'device-loss-receipt-missing';
+    else if (!(first.glDraws > 0) || !(post.glDraws > first.glDraws) ||
+        first.glContext !== 'webgl2' || post.glContext !== 'webgl2') result.reason = 'fallback-webgl2-evidence-missing';
+    else if (post.objectX !== 1.25 || !commandRevisionOK) result.reason = 'fallback-command-state-stale';
+    else if (!firstVisible || !postVisible) result.reason = 'fallback-pixels-missing';
+    else {
+      result.accepted = true;
+      result.reason = 'accepted';
+      result.hardwareNativeCertified = false;
+    }
+    return result;
+  }
+  result.reason = outcome ? 'unknown-outcome' : 'missing-outcome';
+  return result;
+}
+
+function assertWGOutcomeAccepted(c, evidence) {
+  const verdict = classifyWGOutcomeSnapshot({
+    nativeCaps,
+    acceptedOutcome: evidence.acceptedOutcome,
+    fallbackKind: evidence.fallbackKind || '',
+    fallbackReceipt: evidence.fallbackReceipt,
+    firstFrameVisible: visibleFrameOK(evidence.firstFrame && evidence.firstFrame.metrics),
+    postFrameVisible: visibleFrameOK(evidence.afterHub && evidence.afterHub.metrics),
+    firstState: evidence.firstRenderState || {},
+    postState: evidence.postCommandRenderState || {},
+  });
+  evidence.outcomeVerdict = verdict;
+  evidence.hardwareNativeCertified = verdict.hardwareNativeCertified;
+  if (!verdict.accepted) {
+    fail('[' + c.name + '] WebGPU-requested outcome rejected: ' + JSON.stringify({
+      reason: verdict.reason,
+      acceptedOutcome: evidence.acceptedOutcome,
+      fallbackKind: evidence.fallbackKind,
+      firstState: evidence.firstRenderState,
+      postState: evidence.postCommandRenderState,
+      fallbackReceipt: evidence.fallbackReceipt,
+    }));
+  }
+}
+
+function renderStateForOutcome(drawState) {
+  return {
+    renderer: drawState && drawState.renderer || '',
+    fallback: drawState && drawState.fallback || '',
+    mounted: drawState && drawState.mounted || '',
+    handleReady: drawState && drawState.handleReady === true,
+    registrySameHandle: drawState && drawState.registrySameHandle === true,
+    commandReady: drawState && drawState.commandReady || '',
+    commandRevision: drawState && drawState.commandRevision || '',
+    commandAppliedRevision: drawState && drawState.commandAppliedRevision || '',
+    objectX: drawState && drawState.mesh && drawState.mesh.x,
+    glDraws: drawState && drawState.glDraws || 0,
+    glContext: drawState && drawState.glContext || '',
+    webgpuPasses: drawState && drawState.wgPasses || 0,
+    webgpuColorPasses: drawState && drawState.wgColorPasses || 0,
+    webgpuDraws: drawState && drawState.wgDraws || 0,
+    webgpuSubmits: drawState && drawState.wgSubmits || 0,
+    webgpuCompletedSubmits: drawState && drawState.wgCompletedSubmits || 0,
+    webgpuFailedSubmits: drawState && drawState.wgFailedSubmits || 0,
+    webgpuCompletedColorPasses: drawState && drawState.wgCompletedColorPasses || 0,
+    webgpuMeshObjects: drawState && drawState.webgpuMeshObjects || '',
+    webgpuMeshDrawCalls: drawState && drawState.webgpuMeshDrawCalls || '',
+    webgpuMeshViewCulled: drawState && drawState.webgpuMeshViewCulled || '',
+    webgpuMeshUndrawable: drawState && drawState.webgpuMeshUndrawable || '',
+  };
+}
+
+async function waitForWGPresentationOrFallback(send, c, label, baselines, expectedObjectX, requireRevision) {
+  const baseline = baselines || {};
+  const before = await evalSend(send, winnerExpr(c, false));
+  if (!before) throw new Error('[' + c.name + '] missing render state before ' + label);
+  if (before.renderer === 'webgl') {
+    if (before.fallback !== FALLBACK_UNAVAILABLE && before.fallback !== FALLBACK_DEVICE_LOST) {
+      fail('[' + c.name + '] requested-WebGPU case reached WebGL with unacceptable fallback label before ' +
+        label + ': ' + JSON.stringify(before));
+      return { acceptedOutcome: '', fallbackKind: before.fallback || '', fallbackEvidence: null };
+    }
+    const fallbackOutcome = before.fallback === FALLBACK_UNAVAILABLE ?
+      OUTCOME_FALLBACK_UNAVAILABLE : OUTCOME_FALLBACK_DEVICE_LOST;
+    const receipt = await captureWebGPUFailureReceipt(send, c, label);
+    const fallbackEvidence = await waitForWebGLFallbackPresentation(
+      send, c, label, before.fallback, baseline.glDraws || 0, expectedObjectX, requireRevision
+    );
+    return {
+      acceptedOutcome: fallbackOutcome,
+      fallbackKind: before.fallback,
+      fallbackReceipt: receipt,
+      fallbackEvidence: fallbackEvidence,
+    };
+  }
+  if (before.renderer !== 'webgpu' || before.fallback) {
+    fail('[' + c.name + '] requested-WebGPU case reached unacceptable renderer before ' +
+      label + ': ' + JSON.stringify(before));
+    return { acceptedOutcome: '', fallbackKind: before.fallback || '', fallbackEvidence: null };
+  }
+  try {
+    const webgpuEvidence = await waitForWebGPUPresentation(
+      send, c, label, baseline.webgpuColorPasses || 0,
+      baseline.webgpuCompletedColorPasses || 0, expectedObjectX
+    );
+    return {
+      acceptedOutcome: OUTCOME_NATIVE_WEBGPU,
+      fallbackKind: '',
+      webgpuEvidence: webgpuEvidence,
+    };
+  } catch (error) {
+    if (safeOwnDataValue(error, 'terminal') !== true ||
+        !/^device-lost-/.test(String(safeOwnDataValue(error, 'classification') || ''))) {
+      throw error;
+    }
+    const receipt = await captureWebGPUFailureReceipt(send, c, label);
+    const fallbackEvidence = await waitForWebGLFallbackPresentation(
+      send, c, label, FALLBACK_DEVICE_LOST, baseline.glDraws || 0, expectedObjectX, requireRevision
+    );
+    return {
+      acceptedOutcome: OUTCOME_FALLBACK_DEVICE_LOST,
+      fallbackKind: FALLBACK_DEVICE_LOST,
+      fallbackReceipt: receipt,
+      fallbackEvidence: fallbackEvidence,
+      terminalWebGPU: {
+        classification: safeOwnDataValue(error, 'classification') || '',
+        lastPredicate: boundedValue(safeOwnDataValue(error, 'lastPredicate')),
+      },
+    };
+  }
+}
+
 function assertEnvelope(call, c, generation, programName, commandIDs) {
   if (!call) { fail('[' + c.name + '] missing hydrate generation ' + generation); return; }
   const envelope = call.envelope;
@@ -1295,6 +1564,7 @@ async function runCase(send, c) {
   const evidence = {
     name: c.name,
     backend: c.webgpu ? 'webgpu' : 'webgl2',
+    requestedBackend: c.webgpu ? 'webgpu' : 'webgl2',
     startedAt: new Date().toISOString(),
     startedAtMS: Date.now(),
     phases: [],
@@ -1328,13 +1598,15 @@ async function runCase(send, c) {
   evidence.winner = await poll(send, winnerExpr(c, true), c.name + ' winning generation');
   assertEnvelope(evidence.winner.hydrates[1], c, 2, 'AdapterWinnerB', [0, 1, 2]);
   const winner = evidence.winner;
-  const expectedRenderer = c.webgpu ? 'webgpu' : 'webgl';
   if (!winner.keys.includes('1') || winner.keys.includes('0') || !winner.mesh || winner.mesh.id !== 'scene-object-1' ||
       winner.mesh.color !== '#8de1ff' || winner.lights !== 1) {
     fail('[' + c.name + '] winning commands not present exactly: ' + JSON.stringify(winner));
   }
-  if (!winner.handleReady || !winner.registrySameHandle || winner.renderer !== expectedRenderer ||
-      winner.fallback || winner.commandReady !== 'true') {
+  const winnerBackendReady = c.webgpu ?
+    ((winner.renderer === 'webgpu' && !winner.fallback) ||
+      (winner.renderer === 'webgl' && (winner.fallback === FALLBACK_UNAVAILABLE || winner.fallback === FALLBACK_DEVICE_LOST))) :
+    (winner.renderer === 'webgl' && !winner.fallback);
+  if (!winner.handleReady || !winner.registrySameHandle || !winnerBackendReady || winner.commandReady !== 'true') {
     fail('[' + c.name + '] winning handle/backend not ready: ' + JSON.stringify(winner));
   }
   if (winner.disposes.length !== 1 || winner.disposes[0][0] !== c.engine) {
@@ -1353,8 +1625,15 @@ async function runCase(send, c) {
   }
 
   if (c.webgpu) {
-    phase('webgpu-first-presentation-readiness');
-    evidence.webgpuPresentation = await waitForWebGPUPresentation(send, c, c.name + ' first frame');
+    phase('requested-webgpu-first-presentation-readiness');
+    const firstOutcome = await waitForWGPresentationOrFallback(send, c, c.name + ' first frame',
+      { glDraws: winner.glDraws || 0 }, undefined, false);
+    evidence.acceptedOutcome = firstOutcome.acceptedOutcome;
+    evidence.fallbackKind = firstOutcome.fallbackKind || '';
+    if (firstOutcome.fallbackReceipt) evidence.fallbackReceipt = firstOutcome.fallbackReceipt;
+    if (firstOutcome.webgpuEvidence) evidence.webgpuPresentation = firstOutcome.webgpuEvidence;
+    if (firstOutcome.fallbackEvidence) evidence.webgpuFallbackPresentation = firstOutcome.fallbackEvidence;
+    if (firstOutcome.terminalWebGPU) evidence.terminalWebGPU = firstOutcome.terminalWebGPU;
   }
 
   phase('first-capture');
@@ -1362,8 +1641,18 @@ async function runCase(send, c) {
   const metrics = evidence.firstFrame.metrics;
   assertVisibleFrame(c, 'first frame', metrics);
   const drawState = await evalSend(send, winnerExpr(c, false));
+  evidence.firstRenderState = renderStateForOutcome(drawState);
+  evidence.observedRenderer = evidence.firstRenderState.renderer;
+  evidence.fallbackKind = evidence.fallbackKind || evidence.firstRenderState.fallback || '';
   evidence.nativeRenderer = {
     mounted: drawState.mounted,
+    renderer: drawState.renderer,
+    fallback: drawState.fallback,
+    handleReady: drawState.handleReady,
+    commandReady: drawState.commandReady,
+    commandRevision: drawState.commandRevision,
+    commandAppliedRevision: drawState.commandAppliedRevision,
+    objectX: drawState.mesh && drawState.mesh.x,
     glDraws: drawState.glDraws,
     glContext: drawState.glContext,
     webgpuPasses: drawState.wgPasses,
@@ -1384,10 +1673,12 @@ async function runCase(send, c) {
   if (!c.webgpu && (!(drawState.glDraws > 0) || drawState.glContext !== 'webgl2')) {
     fail('[gl] native WebGL2 draw evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
   }
-  if (c.webgpu && (!(drawState.wgColorPasses > 0) || !(drawState.wgCompletedColorPasses > 0) ||
+  if (c.webgpu && evidence.acceptedOutcome === OUTCOME_NATIVE_WEBGPU &&
+      (!(drawState.wgColorPasses > 0) || !(drawState.wgCompletedColorPasses > 0) ||
       !(drawState.wgCompletedSubmits > 0) || drawState.wgFailedSubmits !== 0)) {
     fail('[wg] native WebGPU render evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
   }
+  if (!c.webgpu) evidence.acceptedOutcome = OUTCOME_NATIVE_WEBGL2;
 
   phase('hub-command');
   evidence.hubCommand = await evalSend(send, hubCommandExpr(c), { awaitPromise: true });
@@ -1400,21 +1691,38 @@ async function runCase(send, c) {
   }
   await evalSend(send, settleFramesExpr(4), { awaitPromise: true });
   if (c.webgpu) {
-    phase('webgpu-post-command-presentation-readiness');
-    evidence.webgpuAfterHubPresentation = await waitForWebGPUPresentation(
-      send, c, c.name + ' after hub command', evidence.hubCommand.webgpuColorPassBaseline,
-      evidence.hubCommand.webgpuCompletedColorPassBaseline, 1.25
-    );
-    if (evidence.webgpuAfterHubPresentation.objectX !== 1.25 ||
-        !evidence.webgpuAfterHubPresentation.commandRevision ||
-        evidence.webgpuAfterHubPresentation.commandRevision !== evidence.webgpuAfterHubPresentation.commandAppliedRevision) {
+    phase('requested-webgpu-post-command-presentation-readiness');
+    const postOutcome = await waitForWGPresentationOrFallback(send, c, c.name + ' after hub command', {
+      glDraws: evidence.hubCommand.glDrawBaseline,
+      webgpuColorPasses: evidence.hubCommand.webgpuColorPassBaseline,
+      webgpuCompletedColorPasses: evidence.hubCommand.webgpuCompletedColorPassBaseline,
+    }, 1.25, true);
+    if (postOutcome.acceptedOutcome !== evidence.acceptedOutcome ||
+        (postOutcome.fallbackKind || '') !== (evidence.fallbackKind || '')) {
+      fail('[wg] requested-WebGPU outcome changed between first and post-command proof: ' +
+        JSON.stringify({ firstOutcome: evidence.acceptedOutcome, firstFallback: evidence.fallbackKind,
+          postOutcome: postOutcome.acceptedOutcome, postFallback: postOutcome.fallbackKind }));
+    }
+    if (postOutcome.fallbackReceipt && !evidence.fallbackReceipt) evidence.fallbackReceipt = postOutcome.fallbackReceipt;
+    if (postOutcome.webgpuEvidence) evidence.webgpuAfterHubPresentation = postOutcome.webgpuEvidence;
+    if (postOutcome.fallbackEvidence) evidence.webgpuFallbackAfterHubPresentation = postOutcome.fallbackEvidence;
+    if (postOutcome.terminalWebGPU) evidence.terminalWebGPU = postOutcome.terminalWebGPU;
+    const postPresentation = postOutcome.webgpuEvidence || postOutcome.fallbackEvidence;
+    if (!postPresentation || postPresentation.objectX !== 1.25 ||
+        !postPresentation.commandRevision ||
+        postPresentation.commandRevision !== postPresentation.commandAppliedRevision) {
       fail('[wg] post-command frame did not retain applied command state: ' +
-        JSON.stringify(evidence.webgpuAfterHubPresentation));
+        JSON.stringify(postPresentation));
     }
   }
   phase('post-command-capture');
   evidence.afterHub = await capture(send, c, 'after-hub-command');
   assertVisibleFrame(c, 'after hub command', evidence.afterHub.metrics);
+  const postCommandDrawState = await evalSend(send, winnerExpr(c, false));
+  evidence.postCommandRenderState = renderStateForOutcome(postCommandDrawState);
+  evidence.observedRenderer = evidence.postCommandRenderState.renderer;
+  evidence.fallbackKind = evidence.fallbackKind || evidence.postCommandRenderState.fallback || '';
+  if (c.webgpu) assertWGOutcomeAccepted(c, evidence);
 
   phase('disposal');
   evidence.disposed = await evalSend(send, `(function () {
@@ -1472,9 +1780,46 @@ let browserReceipt = null;
 let finished = false;
 let reportWriteFailed = false;
 
+function classifyWarningEntry(entry, typedFallback) {
+  if (!typedFallback) {
+    return { allowed: false, reason: 'no-accepted-typed-fallback' };
+  }
+  for (const pattern of FALLBACK_WARNING_PATTERNS) {
+    if (pattern.test(String(entry))) {
+      return {
+        allowed: true,
+        reason: 'accepted-typed-fallback-environment-warning',
+        phase: typedFallback.fallbackReceipt && typedFallback.fallbackReceipt.phase || '',
+        outcome: typedFallback.acceptedOutcome,
+        fallbackKind: typedFallback.fallbackKind,
+      };
+    }
+  }
+  return { allowed: false, reason: 'not-in-exact-fallback-warning-allowlist' };
+}
+
+function classifyWarningsForReport() {
+  const typedFallback = caseEvidence.find((entry) =>
+    entry && (entry.acceptedOutcome === OUTCOME_FALLBACK_UNAVAILABLE ||
+      entry.acceptedOutcome === OUTCOME_FALLBACK_DEVICE_LOST) &&
+    entry.outcomeVerdict && entry.outcomeVerdict.accepted === true &&
+    entry.fallbackReceipt);
+  const entries = warnings.map((entry) => ({
+    message: entry,
+    classification: classifyWarningEntry(entry, typedFallback),
+  }));
+  return {
+    total: warnings.length,
+    allowed: entries.filter((entry) => entry.classification.allowed),
+    unexpected: entries.filter((entry) => !entry.classification.allowed),
+  };
+}
+
 function writeReport(extra) {
+  const warningClassification = classifyWarningsForReport();
   const report = Object.assign({
     contract: 'gosx.scene3d.adapter-hydrate/v1',
+    hostedPolicy: HOSTED_POLICY,
     abi: 3,
     runtimeArtifact,
     hubGate,
@@ -1483,6 +1828,7 @@ function writeReport(extra) {
     cases: caseEvidence,
     errors,
     warnings,
+    warningClassification,
     notFound,
     unexpectedRequests,
     networkFailures,
@@ -1591,8 +1937,9 @@ const watchdog = setTimeout(() => {
   await send('Page.navigate', { url: BASE + '/' });
   await capsLoaded;
   nativeCaps = await evalSend(send, CAPS_EXPR, { awaitPromise: true });
-  if (!nativeCaps || nativeCaps.webgl2 !== true || nativeCaps.webgpu !== true) {
-    throw new Error('native WebGL2 and WebGPU are both required; got ' + JSON.stringify(nativeCaps));
+  if (!nativeCaps || nativeCaps.webgl2 !== true) {
+    throw new Error('native WebGL2 is required; WebGPU capability is recorded but not required; got ' +
+      JSON.stringify(nativeCaps));
   }
 
   for (const c of CASES) await runCase(send, c);
@@ -1611,7 +1958,8 @@ const watchdog = setTimeout(() => {
   }
   await cleanup();
   writeReport({});
-  const exitCode = errors.length || warnings.length || notFound.length || unexpectedRequests.length ||
+  const warningClassification = classifyWarningsForReport();
+  const exitCode = errors.length || warningClassification.unexpected.length || notFound.length || unexpectedRequests.length ||
     networkFailures.length || reportWriteFailed ? 1 : 0;
   setTimeout(() => process.exit(exitCode), 50);
 });

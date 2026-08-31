@@ -55,6 +55,42 @@ function failureReceiptExpressionBuilder() {
   return vm.runInNewContext(browserProof.slice(start, end) + "; webGPUFailureReceiptExpr");
 }
 
+function outcomeClassifier() {
+  const start = browserProof.indexOf("function visibleFrameOK(metrics) {");
+  const end = browserProof.indexOf("\nfunction assertEnvelope", start);
+  assert.ok(start >= 0 && end > start, "browser proof WG outcome classifier must remain extractable");
+  const source = [
+    "const OUTCOME_NATIVE_WEBGPU = 'native-webgpu';",
+    "const OUTCOME_FALLBACK_UNAVAILABLE = 'fallback-unavailable';",
+    "const OUTCOME_FALLBACK_DEVICE_LOST = 'fallback-device-lost';",
+    "const FALLBACK_UNAVAILABLE = 'webgpu-unavailable';",
+    "const FALLBACK_DEVICE_LOST = 'webgpu-device-lost';",
+    browserProof.slice(start, end),
+    "; classifyWGOutcomeSnapshot",
+  ].join("\n");
+  return vm.runInNewContext(source);
+}
+
+function warningClassifier() {
+  const start = browserProof.indexOf("function classifyWarningEntry(entry, typedFallback) {");
+  const end = browserProof.indexOf("\nfunction writeReport", start);
+  assert.ok(start >= 0 && end > start, "browser proof warning classifier must remain extractable");
+  const source = [
+    "const OUTCOME_FALLBACK_UNAVAILABLE = 'fallback-unavailable';",
+    "const OUTCOME_FALLBACK_DEVICE_LOST = 'fallback-device-lost';",
+    "const FALLBACK_WARNING_PATTERNS = [",
+    "  /^console\\.warning: \\[gosx\\] WebGPU probe(:| failed:| requestDevice failed; retrying with a fresh adapter:| device lost:)/,",
+    "  /^console\\.warning: \\[gosx\\] WebGPU renderer creation failed:/,",
+    "  /^console\\.warning: \\[gosx\\] WebGPU factory returned null after probe success; canvas may be tainted$/,",
+    "];",
+    "let warnings = [];",
+    "let caseEvidence = [];",
+    browserProof.slice(start, end),
+    "; ({ classifyWarningsForReport, setWarnings(value) { warnings = value; }, setCases(value) { caseEvidence = value; } })",
+  ].join("\n");
+  return vm.runInNewContext(source);
+}
+
 function runtimeSendFor(context) {
   return async (method, params) => {
     assert.equal(method, "Runtime.evaluate");
@@ -138,6 +174,46 @@ function browserContext() {
       entry.reject(error);
     },
   };
+}
+
+function outcomeState(overrides = {}) {
+  return Object.assign({
+    renderer: "webgpu",
+    fallback: "",
+    mounted: "true",
+    handleReady: true,
+    registrySameHandle: true,
+    commandReady: "true",
+    commandRevision: "1",
+    commandAppliedRevision: "1",
+    objectX: 0,
+    glDraws: 0,
+    glContext: "",
+    webgpuColorPasses: 1,
+    webgpuCompletedColorPasses: 1,
+    webgpuCompletedSubmits: 1,
+    webgpuFailedSubmits: 0,
+  }, overrides);
+}
+
+function classifyOutcome(snapshot) {
+  return outcomeClassifier()(Object.assign({
+    nativeCaps: { webgl2: true, webgpu: true },
+    acceptedOutcome: "native-webgpu",
+    fallbackKind: "",
+    fallbackReceipt: null,
+    firstFrameVisible: true,
+    postFrameVisible: true,
+    firstState: outcomeState(),
+    postState: outcomeState({
+      objectX: 1.25,
+      commandRevision: "2",
+      commandAppliedRevision: "2",
+      webgpuColorPasses: 2,
+      webgpuCompletedColorPasses: 2,
+      webgpuCompletedSubmits: 2,
+    }),
+  }, snapshot));
 }
 
 test("WebGPU browser-proof readiness rejects depth-only and pre-command color submits", async () => {
@@ -228,6 +304,194 @@ test("WebGPU browser-proof readiness rejects depth-only and pre-command color su
   assert.equal(staleState.ready, false, "a visible frame with stale command state must not satisfy the post-command capture gate");
   assert.equal(staleState.predicates.commandState, false);
   assert.equal(fixture.pendingSubmittedWork(), 0, "all explicit queue fences must be settled");
+});
+
+test("adapter proof WG outcome classifier accepts exactly native WebGPU, unavailable fallback, and device-loss fallback", () => {
+  const native = classifyOutcome();
+  assert.equal(native.accepted, true);
+  assert.equal(native.hardwareNativeCertified, false, "hosted adapter proof never certifies hardware native WebGPU");
+
+  const unavailable = classifyOutcome({
+    nativeCaps: { webgl2: true, webgpu: false },
+    acceptedOutcome: "fallback-unavailable",
+    fallbackKind: "webgpu-unavailable",
+    fallbackReceipt: { phase: "wg first frame", classification: "no-scene-color-pass" },
+    firstState: outcomeState({
+      renderer: "webgl",
+      fallback: "webgpu-unavailable",
+      glDraws: 1,
+      glContext: "webgl2",
+      webgpuColorPasses: 0,
+      webgpuCompletedColorPasses: 0,
+      webgpuCompletedSubmits: 0,
+    }),
+    postState: outcomeState({
+      renderer: "webgl",
+      fallback: "webgpu-unavailable",
+      objectX: 1.25,
+      commandRevision: "2",
+      commandAppliedRevision: "2",
+      glDraws: 2,
+      glContext: "webgl2",
+      webgpuColorPasses: 0,
+      webgpuCompletedColorPasses: 0,
+      webgpuCompletedSubmits: 0,
+    }),
+  });
+  assert.equal(unavailable.accepted, true);
+  assert.equal(unavailable.hardwareNativeCertified, false);
+
+  const deviceLost = classifyOutcome({
+    acceptedOutcome: "fallback-device-lost",
+    fallbackKind: "webgpu-device-lost",
+    fallbackReceipt: { phase: "wg first frame", classification: "device-lost-before-color-pass" },
+    firstState: outcomeState({
+      renderer: "webgl",
+      fallback: "webgpu-device-lost",
+      glDraws: 1,
+      glContext: "webgl2",
+      webgpuColorPasses: 0,
+      webgpuCompletedColorPasses: 0,
+      webgpuCompletedSubmits: 0,
+    }),
+    postState: outcomeState({
+      renderer: "webgl",
+      fallback: "webgpu-device-lost",
+      objectX: 1.25,
+      commandRevision: "2",
+      commandAppliedRevision: "2",
+      glDraws: 2,
+      glContext: "webgl2",
+      webgpuColorPasses: 0,
+      webgpuCompletedColorPasses: 0,
+      webgpuCompletedSubmits: 0,
+    }),
+  });
+  assert.equal(deviceLost.accepted, true);
+  assert.equal(deviceLost.hardwareNativeCertified, false);
+});
+
+test("adapter proof source requires WebGL2 but records WebGPU without skipping WG", () => {
+  assert.match(browserProof, /if \(!nativeCaps \|\| nativeCaps\.webgl2 !== true\)/);
+  assert.doesNotMatch(browserProof, /nativeCaps\.webgpu !== true/);
+  assert.match(browserProof, /for \(const c of CASES\) await runCase\(send, c\);/);
+  assert.match(browserProof, /hostedPolicy: HOSTED_POLICY/);
+});
+
+test("adapter proof WG outcome classifier rejects bad labels, renderers, pixels, command state, and caps", () => {
+  const cases = [
+    {
+      name: "native missing completed pass",
+      patch: { postState: outcomeState({ objectX: 1.25, webgpuColorPasses: 2, webgpuCompletedColorPasses: 1 }) },
+      reason: "native-webgpu-evidence-missing",
+    },
+    {
+      name: "unavailable while native WebGPU exists",
+      patch: {
+        acceptedOutcome: "fallback-unavailable",
+        fallbackKind: "webgpu-unavailable",
+        firstState: outcomeState({ renderer: "webgl", fallback: "webgpu-unavailable", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "webgl", fallback: "webgpu-unavailable", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "unavailable-while-native-webgpu-available",
+    },
+    {
+      name: "fallback missing exact label",
+      patch: {
+        nativeCaps: { webgl2: true, webgpu: false },
+        acceptedOutcome: "fallback-unavailable",
+        fallbackKind: "",
+        firstState: outcomeState({ renderer: "webgl", fallback: "", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "webgl", fallback: "", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "fallback-label-mismatch",
+    },
+    {
+      name: "canvas2d fallback",
+      patch: {
+        nativeCaps: { webgl2: true, webgpu: false },
+        acceptedOutcome: "fallback-unavailable",
+        fallbackKind: "webgpu-unavailable",
+        firstState: outcomeState({ renderer: "canvas2d", fallback: "webgpu-unavailable", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "canvas2d", fallback: "webgpu-unavailable", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "fallback-renderer-mismatch",
+    },
+    {
+      name: "blank fallback first pixels",
+      patch: {
+        nativeCaps: { webgl2: true, webgpu: false },
+        acceptedOutcome: "fallback-unavailable",
+        fallbackKind: "webgpu-unavailable",
+        firstFrameVisible: false,
+        firstState: outcomeState({ renderer: "webgl", fallback: "webgpu-unavailable", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "webgl", fallback: "webgpu-unavailable", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "fallback-pixels-missing",
+    },
+    {
+      name: "stale command revision",
+      patch: {
+        nativeCaps: { webgl2: true, webgpu: false },
+        acceptedOutcome: "fallback-unavailable",
+        fallbackKind: "webgpu-unavailable",
+        firstState: outcomeState({ renderer: "webgl", fallback: "webgpu-unavailable", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({
+          renderer: "webgl",
+          fallback: "webgpu-unavailable",
+          glDraws: 2,
+          glContext: "webgl2",
+          objectX: 0,
+          commandRevision: "2",
+          commandAppliedRevision: "1",
+        }),
+      },
+      reason: "fallback-command-state-stale",
+    },
+    {
+      name: "device loss lacks explicit loss receipt",
+      patch: {
+        acceptedOutcome: "fallback-device-lost",
+        fallbackKind: "webgpu-device-lost",
+        fallbackReceipt: { classification: "no-scene-color-pass" },
+        firstState: outcomeState({ renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "device-loss-receipt-missing",
+    },
+  ];
+
+  for (const entry of cases) {
+    const verdict = classifyOutcome(entry.patch);
+    assert.equal(verdict.accepted, false, entry.name);
+    assert.equal(verdict.reason, entry.reason, entry.name);
+  }
+});
+
+test("adapter proof warning classifier only allows exact environment warnings for accepted typed fallback", () => {
+  const classifier = warningClassifier();
+  classifier.setWarnings([
+    "console.warning: [gosx] WebGPU probe: getContext(webgpu) returned null (context provider unavailable)",
+    "console.warning: unrelated warning",
+  ]);
+  classifier.setCases([{
+    name: "wg",
+    acceptedOutcome: "fallback-unavailable",
+    fallbackKind: "webgpu-unavailable",
+    fallbackReceipt: { phase: "requested-webgpu-first-presentation-readiness" },
+    outcomeVerdict: { accepted: true },
+  }]);
+  const classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 1);
+  assert.equal(classified.allowed[0].classification.phase, "requested-webgpu-first-presentation-readiness");
+  assert.equal(classified.unexpected.length, 1);
+  assert.equal(classified.unexpected[0].classification.reason, "not-in-exact-fallback-warning-allowlist");
+
+  classifier.setWarnings(["console.warning: [gosx] WebGPU probe: getContext(webgpu) returned null (context provider unavailable)"]);
+  classifier.setCases([{ name: "wg", acceptedOutcome: "native-webgpu", outcomeVerdict: { accepted: true } }]);
+  const nativeWarnings = classifier.classifyWarningsForReport();
+  assert.equal(nativeWarnings.allowed.length, 0);
+  assert.equal(nativeWarnings.unexpected[0].classification.reason, "no-accepted-typed-fallback");
 });
 
 test("WebGPU browser-proof readiness exits promptly on device-loss fallback before queue fence", async () => {
