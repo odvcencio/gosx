@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.54.0 (2026-08-31)
+
+### Added: selective runtime asset emission
+- `gosx.config.json` accepts a `build.runtime` object with two fields. `sourceMaps` (default true) gates every `.js.map` sidecar copy. `exclude` names asset roles that the build must not emit.
+- Valid roles: `islands`, `engines`, `hubs`, `controllers`, `textlayout`, `scene3d`, `video`, `payments`, `relay`. An unknown, blank, or duplicate role fails the build with a clear error.
+- An excluded asset is never read, never written, and never appears in `build.json`, so the renderer emits no tag and no preload hint for it. The core loader chain and the WASM artifacts are not excludable.
+- A server-rendered application that excludes `scene3d`, `video`, `payments`, `relay`, and `textlayout` and disables source maps writes about 14 MB less per build.
+- With no `build.runtime` block, emission is byte-identical to v0.53.10.
+
+### Changed
+- `buildmanifest` optional runtime-asset fields use `omitzero`, so an absent asset is absent from `build.json` instead of an empty object.
+- This release also carries the scene3d and CI maintenance commits that landed on `main` after v0.53.10.
+
+
 ## v0.53.10 (2026-08-29)
 
 ### Added: live binds that need no fetch, attributes and classes, and regions that grow
