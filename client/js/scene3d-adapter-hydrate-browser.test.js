@@ -84,9 +84,10 @@ function warningClassifier() {
     "  /^console\\.warning: \\[gosx\\] WebGPU factory returned null after probe success; canvas may be tainted$/,",
     "];",
     "let warnings = [];",
+    "let warningOccurrences = [];",
     "let caseEvidence = [];",
     browserProof.slice(start, end),
-    "; ({ classifyWarningsForReport, setWarnings(value) { warnings = value; }, setCases(value) { caseEvidence = value; } })",
+    "; ({ classifyWarningsForReport, setWarnings(value) { warnings = value; warningOccurrences = []; }, setWarningOccurrences(value) { warningOccurrences = value; warnings = value.map((entry) => entry.message); }, setCases(value) { caseEvidence = value; } })",
   ].join("\n");
   return vm.runInNewContext(source);
 }
@@ -344,7 +345,12 @@ test("adapter proof WG outcome classifier accepts exactly native WebGPU, unavail
   const deviceLost = classifyOutcome({
     acceptedOutcome: "fallback-device-lost",
     fallbackKind: "webgpu-device-lost",
-    fallbackReceipt: { phase: "wg first frame", classification: "device-lost-before-color-pass" },
+    fallbackReceipt: {
+      phase: "requested-webgpu-first-presentation-readiness",
+      classification: "device-lost-before-color-pass",
+      probe: { lost: { reason: "destroyed", message: "test loss" } },
+      diagnostics: { deviceLost: false },
+    },
     firstState: outcomeState({
       renderer: "webgl",
       fallback: "webgpu-device-lost",
@@ -459,20 +465,65 @@ test("adapter proof WG outcome classifier rejects bad labels, renderers, pixels,
       },
       reason: "device-loss-receipt-missing",
     },
+    {
+      name: "device loss receipt classification derived only from fallback label",
+      patch: {
+        acceptedOutcome: "fallback-device-lost",
+        fallbackKind: "webgpu-device-lost",
+        fallbackReceipt: {
+          phase: "requested-webgpu-first-presentation-readiness",
+          classification: "device-lost-before-color-pass",
+          independentDeviceLoss: false,
+          probe: { lost: null },
+          diagnostics: { deviceLost: false },
+        },
+        firstState: outcomeState({ renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "device-loss-evidence-missing",
+    },
+    {
+      name: "device loss receipt accepts diagnostics evidence independent of label",
+      patch: {
+        acceptedOutcome: "fallback-device-lost",
+        fallbackKind: "webgpu-device-lost",
+        fallbackReceipt: {
+          phase: "requested-webgpu-first-presentation-readiness",
+          classification: "device-lost-after-color-pass",
+          independentDeviceLoss: false,
+          probe: { lost: null },
+          diagnostics: { deviceLost: true },
+        },
+        firstState: outcomeState({ renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 1, glContext: "webgl2" }),
+        postState: outcomeState({ renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 2, glContext: "webgl2", objectX: 1.25 }),
+      },
+      reason: "",
+      accepted: true,
+    },
   ];
 
   for (const entry of cases) {
     const verdict = classifyOutcome(entry.patch);
-    assert.equal(verdict.accepted, false, entry.name);
-    assert.equal(verdict.reason, entry.reason, entry.name);
+    assert.equal(verdict.accepted, entry.accepted === true, entry.name);
+    assert.equal(verdict.reason, entry.accepted ? "accepted" : entry.reason, entry.name);
   }
 });
 
 test("adapter proof warning classifier only allows exact environment warnings for accepted typed fallback", () => {
   const classifier = warningClassifier();
-  classifier.setWarnings([
-    "console.warning: [gosx] WebGPU probe: getContext(webgpu) returned null (context provider unavailable)",
-    "console.warning: unrelated warning",
+  classifier.setWarningOccurrences([
+    {
+      message: "console.warning: [gosx] WebGPU probe: getContext(webgpu) returned null (context provider unavailable)",
+      caseName: "wg",
+      phase: "requested-webgpu-first-presentation-readiness",
+      source: "Runtime.consoleAPICalled",
+    },
+    {
+      message: "console.warning: unrelated warning",
+      caseName: "wg",
+      phase: "requested-webgpu-first-presentation-readiness",
+      source: "Runtime.consoleAPICalled",
+    },
   ]);
   classifier.setCases([{
     name: "wg",
@@ -484,14 +535,61 @@ test("adapter proof warning classifier only allows exact environment warnings fo
   const classified = classifier.classifyWarningsForReport();
   assert.equal(classified.allowed.length, 1);
   assert.equal(classified.allowed[0].classification.phase, "requested-webgpu-first-presentation-readiness");
+  assert.equal(classified.allowed[0].classification.caseName, "wg");
   assert.equal(classified.unexpected.length, 1);
   assert.equal(classified.unexpected[0].classification.reason, "not-in-exact-fallback-warning-allowlist");
 
-  classifier.setWarnings(["console.warning: [gosx] WebGPU probe: getContext(webgpu) returned null (context provider unavailable)"]);
+  classifier.setWarningOccurrences([{
+    message: "console.warning: [gosx] WebGPU probe: getContext(webgpu) returned null (context provider unavailable)",
+    caseName: "wg",
+    phase: "requested-webgpu-first-presentation-readiness",
+    source: "Runtime.consoleAPICalled",
+  }]);
   classifier.setCases([{ name: "wg", acceptedOutcome: "native-webgpu", outcomeVerdict: { accepted: true } }]);
   const nativeWarnings = classifier.classifyWarningsForReport();
   assert.equal(nativeWarnings.allowed.length, 0);
   assert.equal(nativeWarnings.unexpected[0].classification.reason, "no-accepted-typed-fallback");
+});
+
+test("adapter proof warning classifier rejects GL, unrelated-phase, and post-case warnings even if WG fallback passes", () => {
+  const classifier = warningClassifier();
+  classifier.setCases([{
+    name: "wg",
+    acceptedOutcome: "fallback-device-lost",
+    fallbackKind: "webgpu-device-lost",
+    fallbackReceipt: { phase: "requested-webgpu-first-presentation-readiness" },
+    outcomeVerdict: { accepted: true },
+  }]);
+
+  classifier.setWarningOccurrences([{
+    message: "console.warning: [gosx] WebGPU probe device lost: test",
+    caseName: "gl",
+    phase: "requested-webgpu-first-presentation-readiness",
+    source: "Runtime.consoleAPICalled",
+  }]);
+  let classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 0);
+  assert.equal(classified.unexpected[0].classification.reason, "warning-case-mismatch");
+
+  classifier.setWarningOccurrences([{
+    message: "console.warning: [gosx] WebGPU probe device lost: test",
+    caseName: "wg",
+    phase: "winning-generation-readiness",
+    source: "Runtime.consoleAPICalled",
+  }]);
+  classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 0);
+  assert.equal(classified.unexpected[0].classification.reason, "warning-phase-mismatch");
+
+  classifier.setWarningOccurrences([{
+    message: "console.warning: [gosx] WebGPU probe device lost: test",
+    caseName: "",
+    phase: "",
+    source: "Runtime.consoleAPICalled",
+  }]);
+  classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 0);
+  assert.equal(classified.unexpected[0].classification.reason, "warning-case-mismatch");
 });
 
 test("WebGPU browser-proof readiness exits promptly on device-loss fallback before queue fence", async () => {

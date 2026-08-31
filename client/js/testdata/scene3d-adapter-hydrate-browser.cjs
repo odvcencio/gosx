@@ -45,6 +45,9 @@ try {
 
 const errors = [];
 const warnings = [];
+const warningOccurrences = [];
+let currentCaseName = '';
+let currentCasePhase = '';
 const fail = (message) => { errors.push(String(message)); };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -480,6 +483,18 @@ function networkFail(message) {
   fail('network failure: ' + message);
 }
 
+function recordWarning(message, source) {
+  const entry = {
+    message: String(message),
+    source: source || 'unknown',
+    caseName: currentCaseName || '',
+    phase: currentCasePhase || '',
+    atMS: Date.now(),
+  };
+  warnings.push(entry.message);
+  warningOccurrences.push(entry);
+}
+
 function inspectNetwork(rawURL, method) {
   let parsed;
   try { parsed = new URL(rawURL); } catch (_error) {
@@ -528,7 +543,7 @@ function dispatch(raw) {
   if (message.method === 'Runtime.consoleAPICalled' && params.args) {
     const text = params.args.map((arg) => arg.value !== undefined ? String(arg.value) : (arg.description || '')).join(' ');
     if (params.type === 'error') errors.push('console.error: ' + text);
-    else if (params.type === 'warning') warnings.push('console.warning: ' + text);
+    else if (params.type === 'warning') recordWarning('console.warning: ' + text, 'Runtime.consoleAPICalled');
   } else if (message.method === 'Runtime.exceptionThrown' && params.exceptionDetails) {
     errors.push('page exception: ' + ((params.exceptionDetails.exception &&
       params.exceptionDetails.exception.description) || params.exceptionDetails.text));
@@ -558,7 +573,7 @@ function dispatch(raw) {
     networkRequests.delete(params.requestId);
   } else if (message.method === 'Log.entryAdded' && params.entry) {
     if (params.entry.level === 'error') errors.push('browser log error: ' + params.entry.text);
-    else if (params.entry.level === 'warning') warnings.push('browser log warning: ' + params.entry.text);
+    else if (params.entry.level === 'warning') recordWarning('browser log warning: ' + params.entry.text, 'Log.entryAdded');
   }
 }
 
@@ -1156,7 +1171,9 @@ function webGPUFailureReceiptExpr(c, phase) {
     };
     var classification = 'predicate-not-ready';
     var fallback = mount && mount.getAttribute('data-gosx-scene3d-renderer-fallback') || '';
-    var deviceLost = fallback === 'webgpu-device-lost' || !!((probe && probe.lost) || (diagnostics && diagnostics.deviceLost));
+    var independentDeviceLoss = !!((probe && probe.lost) ||
+      (diagnostics && (diagnostics.deviceLost || diagnostics.deviceLostInfo)));
+    var deviceLost = fallback === 'webgpu-device-lost' || independentDeviceLoss;
     if (identity.wrappedQueueMatchesProbe === false || identity.encoderDeviceMatchesProbe === false || identity.configuredDeviceMatchesProbe === false) classification = 'instrumented-queue-or-device-mismatch';
     else if (deviceLost && wrappers.colorPasses === 0) classification = 'device-lost-before-color-pass';
     else if (wrappers.colorPasses === 0) classification = 'no-scene-color-pass';
@@ -1168,6 +1185,7 @@ function webGPUFailureReceiptExpr(c, phase) {
       capturedAtMS: Date.now(),
       phase: ${JSON.stringify(phase)},
       classification: classification,
+      independentDeviceLoss: independentDeviceLoss,
       mount: mount ? {
         mounted: mount.getAttribute('data-gosx-scene3d-mounted'),
         renderer: mount.getAttribute('data-gosx-scene3d-renderer'),
@@ -1369,6 +1387,14 @@ function visibleFrameOK(metrics) {
     metrics.restFraction >= REST_COVERAGE);
 }
 
+function receiptHasIndependentDeviceLoss(receipt) {
+  if (!receipt) return false;
+  if (receipt.independentDeviceLoss === true) return true;
+  if (receipt.probe && receipt.probe.lost) return true;
+  if (receipt.diagnostics && (receipt.diagnostics.deviceLost === true || receipt.diagnostics.deviceLostInfo)) return true;
+  return false;
+}
+
 function classifyWGOutcomeSnapshot(snapshot) {
   const nativeCapsSnapshot = snapshot && snapshot.nativeCaps || {};
   const first = snapshot && snapshot.firstState || {};
@@ -1411,6 +1437,7 @@ function classifyWGOutcomeSnapshot(snapshot) {
     else if (outcome === OUTCOME_FALLBACK_UNAVAILABLE && nativeCapsSnapshot.webgpu === true) result.reason = 'unavailable-while-native-webgpu-available';
     else if (outcome === OUTCOME_FALLBACK_DEVICE_LOST &&
         !(receipt && /^device-lost-/.test(String(receipt.classification || '')))) result.reason = 'device-loss-receipt-missing';
+    else if (outcome === OUTCOME_FALLBACK_DEVICE_LOST && !receiptHasIndependentDeviceLoss(receipt)) result.reason = 'device-loss-evidence-missing';
     else if (!(first.glDraws > 0) || !(post.glDraws > first.glDraws) ||
         first.glContext !== 'webgl2' || post.glContext !== 'webgl2') result.reason = 'fallback-webgl2-evidence-missing';
     else if (post.objectX !== 1.25 || !commandRevisionOK) result.reason = 'fallback-command-state-stale';
@@ -1490,7 +1517,7 @@ async function waitForWGPresentationOrFallback(send, c, label, baselines, expect
     }
     const fallbackOutcome = before.fallback === FALLBACK_UNAVAILABLE ?
       OUTCOME_FALLBACK_UNAVAILABLE : OUTCOME_FALLBACK_DEVICE_LOST;
-    const receipt = await captureWebGPUFailureReceipt(send, c, label);
+    const receipt = await captureWebGPUFailureReceipt(send, c, currentCasePhase || label);
     const fallbackEvidence = await waitForWebGLFallbackPresentation(
       send, c, label, before.fallback, baseline.glDraws || 0, expectedObjectX, requireRevision
     );
@@ -1521,7 +1548,7 @@ async function waitForWGPresentationOrFallback(send, c, label, baselines, expect
         !/^device-lost-/.test(String(safeOwnDataValue(error, 'classification') || ''))) {
       throw error;
     }
-    const receipt = await captureWebGPUFailureReceipt(send, c, label);
+    const receipt = await captureWebGPUFailureReceipt(send, c, currentCasePhase || label);
     const fallbackEvidence = await waitForWebGLFallbackPresentation(
       send, c, label, FALLBACK_DEVICE_LOST, baseline.glDraws || 0, expectedObjectX, requireRevision
     );
@@ -1570,6 +1597,8 @@ async function runCase(send, c) {
     phases: [],
   };
   const phase = (name) => {
+    currentCaseName = c.name;
+    currentCasePhase = name;
     evidence.phase = name;
     evidence.phases.push({ name, at: new Date().toISOString(), atMS: Date.now() });
   };
@@ -1781,15 +1810,30 @@ let finished = false;
 let reportWriteFailed = false;
 
 function classifyWarningEntry(entry, typedFallback) {
+  const occurrence = typeof entry === 'string' ? {
+    message: entry,
+    source: 'legacy-string',
+    caseName: '',
+    phase: '',
+  } : (entry || {});
+  const message = String(occurrence.message || '');
   if (!typedFallback) {
     return { allowed: false, reason: 'no-accepted-typed-fallback' };
   }
+  const receiptPhase = typedFallback.fallbackReceipt && typedFallback.fallbackReceipt.phase || '';
+  if (typedFallback.name !== 'wg' || occurrence.caseName !== typedFallback.name) {
+    return { allowed: false, reason: 'warning-case-mismatch' };
+  }
+  if (!receiptPhase || occurrence.phase !== receiptPhase) {
+    return { allowed: false, reason: 'warning-phase-mismatch' };
+  }
   for (const pattern of FALLBACK_WARNING_PATTERNS) {
-    if (pattern.test(String(entry))) {
+    if (pattern.test(message)) {
       return {
         allowed: true,
         reason: 'accepted-typed-fallback-environment-warning',
         phase: typedFallback.fallbackReceipt && typedFallback.fallbackReceipt.phase || '',
+        caseName: typedFallback.name,
         outcome: typedFallback.acceptedOutcome,
         fallbackKind: typedFallback.fallbackKind,
       };
@@ -1804,8 +1848,11 @@ function classifyWarningsForReport() {
       entry.acceptedOutcome === OUTCOME_FALLBACK_DEVICE_LOST) &&
     entry.outcomeVerdict && entry.outcomeVerdict.accepted === true &&
     entry.fallbackReceipt);
-  const entries = warnings.map((entry) => ({
-    message: entry,
+  const occurrences = warningOccurrences.length ? warningOccurrences :
+    warnings.map((message) => ({ message, source: 'legacy-string', caseName: '', phase: '', atMS: 0 }));
+  const entries = occurrences.map((entry) => ({
+    message: entry.message,
+    occurrence: entry,
     classification: classifyWarningEntry(entry, typedFallback),
   }));
   return {
@@ -1828,6 +1875,7 @@ function writeReport(extra) {
     cases: caseEvidence,
     errors,
     warnings,
+    warningOccurrences,
     warningClassification,
     notFound,
     unexpectedRequests,
