@@ -579,7 +579,10 @@ const budgets = [
   // gosx#217 review follow-up: hub-identity scoping (data-gosx-live-hub),
   // page-wide cue mute (data-gosx-cue-toggle), and the region-key/-cursor
   // shape validation. Measured: 1_580_623 / 429_444 / 345_193.
-  { file: "bootstrap.js", raw: 1_580_800, gzip: 429_700, brotli: 345_400 },
+  // CUBICSPLINE playback replayed onto that runtime measured
+  // 1_581_011 / 429_650 / 345_085. Raise raw 1_580_800 -> 1_581_100 only;
+  // gzip/brotli remain unchanged, leaving exact margins 89 / 50 / 315.
+  { file: "bootstrap.js", raw: 1_581_100, gzip: 429_700, brotli: 345_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1242,7 +1245,9 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 45_000, gzip: 16_200, brotli: 14_420 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
+  // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
+  // next 100-byte boundary while compressed caps remain unchanged.
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_600, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
