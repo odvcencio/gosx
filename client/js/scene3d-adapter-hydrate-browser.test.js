@@ -108,6 +108,32 @@ function caseEvidenceRetainer() {
   return vm.runInNewContext(source, { setTimeout, clearTimeout });
 }
 
+function rejectedWGOutcomeHelper() {
+  const helperStart = browserProof.indexOf("async function rejectedWGOutcomeWithReceipt(send, c, label, before) {");
+  const helperEnd = browserProof.indexOf("\nasync function retainCaseEvidence", helperStart);
+  const receiptStart = browserProof.indexOf("function receiptHasIndependentDeviceLoss(receipt) {");
+  const receiptEnd = browserProof.indexOf("\nfunction classifyWGOutcomeSnapshot", receiptStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "browser proof rejected WG helper must remain extractable");
+  assert.ok(receiptStart >= 0 && receiptEnd > receiptStart, "browser proof receipt helper must remain extractable");
+  const source = [
+    browserProof.slice(receiptStart, receiptEnd),
+    "let currentCasePhase = 'requested-webgpu-first-presentation-readiness';",
+    browserProof.slice(helperStart, helperEnd),
+    "; rejectedWGOutcomeWithReceipt",
+  ].join("\n");
+  const context = {
+    captureWebGPUFailureReceipt: async () => ({
+      classification: "device-lost-after-color-pass",
+      independentDeviceLoss: true,
+      probe: { lost: { reason: "destroyed", message: "test loss" } },
+      mount: { renderer: "webgpu", fallback: "webgpu-probe-recovered" },
+    }),
+    safeErrorSnapshot: (error) => ({ message: error && error.message ? error.message : String(error) }),
+    String,
+  };
+  return vm.runInNewContext(source, context);
+}
+
 function browserContext() {
   const submittedWork = [];
   let onSubmittedWorkDoneCalls = 0;
@@ -670,6 +696,23 @@ test("WebGPU browser-proof readiness exits promptly on device-loss fallback befo
     }
   );
   assert.ok(slowPoll.state.sleepCalls > 0, "slow nonterminal readiness remains a bounded poll, not a terminal exit");
+});
+
+test("WebGPU browser-proof rejected WG states preserve independent failure receipt", async () => {
+  const rejectedWGOutcome = rejectedWGOutcomeHelper();
+  const result = await rejectedWGOutcome(
+    async () => { throw new Error("unexpected send"); },
+    { name: "wg", mount: "scene3d-adapter-hydrate-browser-test" },
+    "wg first frame",
+    { renderer: "webgpu", fallback: "webgpu-probe-recovered" },
+  );
+
+  assert.equal(result.acceptedOutcome, "");
+  assert.equal(result.fallbackKind, "webgpu-probe-recovered");
+  assert.equal(result.fallbackEvidence, null);
+  assert.equal(result.webgpuFailureReceipt.classification, "device-lost-after-color-pass");
+  assert.equal(result.webgpuFailureReceipt.independentDeviceLoss, true);
+  assert.equal(result.webgpuFailureReceipt.mount.fallback, "webgpu-probe-recovered");
 });
 
 test("WebGPU browser-proof failure receipt survives a timeout and classifies observable causes", async () => {

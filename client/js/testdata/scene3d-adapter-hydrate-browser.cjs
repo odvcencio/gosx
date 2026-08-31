@@ -1221,6 +1221,24 @@ async function captureWebGPUFailureReceipt(send, c, phase) {
   return boundedValue(await evalSend(send, webGPUFailureReceiptExpr(c, phase)));
 }
 
+async function rejectedWGOutcomeWithReceipt(send, c, label, before) {
+  const rejected = {
+    acceptedOutcome: '',
+    fallbackKind: before && before.fallback || '',
+    fallbackEvidence: null,
+  };
+  try {
+    const receipt = await captureWebGPUFailureReceipt(send, c, currentCasePhase || label);
+    if (receiptHasIndependentDeviceLoss(receipt) ||
+        /^device-lost-/.test(String(receipt && receipt.classification || ''))) {
+      rejected.webgpuFailureReceipt = receipt;
+    }
+  } catch (receiptError) {
+    rejected.webgpuFailureReceiptError = safeErrorSnapshot(receiptError);
+  }
+  return rejected;
+}
+
 async function retainCaseEvidence(sink, evidence, work, onFailure) {
   try {
     return await work();
@@ -1511,9 +1529,10 @@ async function waitForWGPresentationOrFallback(send, c, label, baselines, expect
   if (!before) throw new Error('[' + c.name + '] missing render state before ' + label);
   if (before.renderer === 'webgl') {
     if (before.fallback !== FALLBACK_UNAVAILABLE && before.fallback !== FALLBACK_DEVICE_LOST) {
+      const rejected = await rejectedWGOutcomeWithReceipt(send, c, label, before);
       fail('[' + c.name + '] requested-WebGPU case reached WebGL with unacceptable fallback label before ' +
-        label + ': ' + JSON.stringify(before));
-      return { acceptedOutcome: '', fallbackKind: before.fallback || '', fallbackEvidence: null };
+        label + ': ' + JSON.stringify({ state: before, webgpuFailureReceipt: rejected.webgpuFailureReceipt || null }));
+      return rejected;
     }
     const fallbackOutcome = before.fallback === FALLBACK_UNAVAILABLE ?
       OUTCOME_FALLBACK_UNAVAILABLE : OUTCOME_FALLBACK_DEVICE_LOST;
@@ -1529,9 +1548,10 @@ async function waitForWGPresentationOrFallback(send, c, label, baselines, expect
     };
   }
   if (before.renderer !== 'webgpu' || before.fallback) {
+    const rejected = await rejectedWGOutcomeWithReceipt(send, c, label, before);
     fail('[' + c.name + '] requested-WebGPU case reached unacceptable renderer before ' +
-      label + ': ' + JSON.stringify(before));
-    return { acceptedOutcome: '', fallbackKind: before.fallback || '', fallbackEvidence: null };
+      label + ': ' + JSON.stringify({ state: before, webgpuFailureReceipt: rejected.webgpuFailureReceipt || null }));
+    return rejected;
   }
   try {
     const webgpuEvidence = await waitForWebGPUPresentation(
@@ -1660,6 +1680,7 @@ async function runCase(send, c) {
     evidence.acceptedOutcome = firstOutcome.acceptedOutcome;
     evidence.fallbackKind = firstOutcome.fallbackKind || '';
     if (firstOutcome.fallbackReceipt) evidence.fallbackReceipt = firstOutcome.fallbackReceipt;
+    if (firstOutcome.webgpuFailureReceipt) evidence.webgpuFailureReceipt = firstOutcome.webgpuFailureReceipt;
     if (firstOutcome.webgpuEvidence) evidence.webgpuPresentation = firstOutcome.webgpuEvidence;
     if (firstOutcome.fallbackEvidence) evidence.webgpuFallbackPresentation = firstOutcome.fallbackEvidence;
     if (firstOutcome.terminalWebGPU) evidence.terminalWebGPU = firstOutcome.terminalWebGPU;
@@ -1733,6 +1754,7 @@ async function runCase(send, c) {
           postOutcome: postOutcome.acceptedOutcome, postFallback: postOutcome.fallbackKind }));
     }
     if (postOutcome.fallbackReceipt && !evidence.fallbackReceipt) evidence.fallbackReceipt = postOutcome.fallbackReceipt;
+    if (postOutcome.webgpuFailureReceipt && !evidence.webgpuFailureReceipt) evidence.webgpuFailureReceipt = postOutcome.webgpuFailureReceipt;
     if (postOutcome.webgpuEvidence) evidence.webgpuAfterHubPresentation = postOutcome.webgpuEvidence;
     if (postOutcome.fallbackEvidence) evidence.webgpuFallbackAfterHubPresentation = postOutcome.fallbackEvidence;
     if (postOutcome.terminalWebGPU) evidence.terminalWebGPU = postOutcome.terminalWebGPU;

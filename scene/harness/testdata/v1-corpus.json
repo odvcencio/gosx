@@ -203,7 +203,7 @@
         {"label": "scene3d-v1-adapter-proof", "job": "scene3d-v1-adapter-proof", "step": "Run Scene3D adapter hydrate browser proof", "command": "node client/js/testdata/scene3d-adapter-hydrate-browser.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
       ],
       "evidence": [
-        {"kind": "browser-test", "path": "client/js/testdata/scene3d-adapter-hydrate-browser.cjs", "contains": "Native WebGL2 and WebGPU are both required", "backends": ["hub", "webgpu", "webgl2"], "ciLabel": "scene3d-v1-adapter-proof"}
+        {"kind": "browser-test", "path": "client/js/testdata/scene3d-adapter-hydrate-browser.cjs", "contains": "typed fail-closed WebGL fallback", "backends": ["hub", "webgpu", "webgl2"], "ciLabel": "scene3d-v1-adapter-proof"}
       ]
     }
   ]

@@ -710,7 +710,7 @@
     }
 
     function publishSceneRenderWatchdogState(reason, stalledFor) {
-      setAttrValue(mount, "data-gosx-scene3d-render-watchdog", reason ? "recovering" : "ok");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog", sceneWebGLFallbackOwner === false ? "terminal" : (reason ? "recovering" : "ok"));
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-recoveries", renderWatchdogRecoveries || "");
@@ -738,7 +738,14 @@
       return "";
     }
 
-    function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback) {
+    function terminalSceneWebGPURecovery(reason) {
+      sceneWebGLFallbackOwner = false;
+      applySceneRendererState(mount, { kind: "unsupported" }, sceneDebugAttr(mount, sceneAttr("renderer-fallback")) || reason);
+      setAttrValue(mount, readyAttr, "false");
+      publishSceneRenderWatchdogState(reason, 0);
+    }
+
+    function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback, nativeOnly) {
       renderWatchdogRecoveries += 1;
       renderWatchdogActiveReason = reason || "webgpu-stalled";
       // Read the OLD renderer's loss detail before it gets swapped away
@@ -771,6 +778,11 @@
         const nextRenderer = recreated && recreated.renderer;
         if (nextRenderer && nextRenderer.kind === "webgpu" && nextRenderer !== renderer) {
           if (swapRenderer(nextRenderer, reason || "webgpu-render-stall")) {
+            if (nativeOnly) {
+              sceneWebGLFallbackOwner = 0;
+              setAttrValue(mount, readyAttr, "true");
+              publishSceneRenderWatchdogState("", 0);
+            }
             renderLatestSceneBundle(reason || "webgpu-render-stall");
             scheduleRenderWithViewport(reason || "webgpu-render-stall");
             return true;
@@ -778,15 +790,22 @@
         } else if (nextRenderer && nextRenderer !== renderer && typeof nextRenderer.dispose === "function") {
           nextRenderer.dispose();
         }
-	      }
-	      renderWatchdogFallbacks += 1;
-	      publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
-	      if (fallbackSceneRenderer(reason || "webgpu-render-stall")) {
-        renderLatestSceneBundle(reason || "webgpu-render-stall");
-        scheduleRenderWithViewport(reason || "webgpu-render-stall");
+      }
+      if (nativeOnly) {
+        if (sceneWebGLFallbackOwner === false) publishSceneRenderWatchdogState("webgpu-device-lost", 0);
+        return false;
+      }
+	    renderWatchdogFallbacks += 1;
+	    publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
+	    if (fallbackSceneRenderer(reason || "webgpu-render-stall")) {
+        if (sceneWebGLFallbackOwner !== renderer) {
+          renderLatestSceneBundle(reason || "webgpu-render-stall");
+          scheduleRenderWithViewport(reason || "webgpu-render-stall");
+        }
         return true;
       }
-      scheduleRenderWithViewport(reason || "webgpu-render-stall");
+      if (sceneWebGLFallbackOwner === renderer) return false;
+      terminalSceneWebGPURecovery(reason || "webgpu-render-stall");
       return false;
     }
 
@@ -873,6 +892,11 @@
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const reason = rendererReportsWebGPUFailure(diagnostics);
       if (!reason) {
+        return;
+      }
+      if (reason === "webgpu-device-lost") {
+        const reacquiring = sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer;
+        recoverSceneWebGPURenderer(reacquiring ? "webgpu-probe-recovered" : reason, 0, !reacquiring, reacquiring);
         return;
       }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
@@ -1004,6 +1028,7 @@
         checkSceneWebGLLossRecovery();
         return;
       }
+      if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
       const animation = sceneAnimationState();
       if (!animation.wants || !sceneCanRender()) {
         renderWatchdogLastSeq = -1;
@@ -1012,7 +1037,7 @@
         publishSceneRenderWatchdogState("", 0);
         return;
       }
-      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      const now = sceneFrameNowMS();
       // A hidden tab stalls requestAnimationFrame BY DESIGN, and the interval
       // that drives this check is itself throttled while hidden. Counting
       // that time as a stall meant every tab return could fire the watchdog
@@ -1071,7 +1096,7 @@
       if (renderWatchdogTimer != null || typeof setInterval !== "function") {
         return;
       }
-      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      const now = sceneFrameNowMS();
       const progress = readSceneWebGPUProgress();
       renderWatchdogLastSeq = progress.seq;
       renderWatchdogLastAt = progress.at;
@@ -1365,12 +1390,12 @@
       renderer = nextRenderer;
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
       publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
-      applySceneRendererState(mount, renderer, fallbackReason);
+      applySceneRendererState(mount, renderer, renderer.kind === "webgpu" ? "" : fallbackReason);
       publishSceneWaterRendererState(mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
-      renderWatchdogLastAdvanceAt = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      renderWatchdogLastAdvanceAt = sceneFrameNowMS();
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
@@ -1481,57 +1506,36 @@
 	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error";
 	    }
 
-    // WebGL fallback chunk state for this mount: "idle", "loading" or
-    // "settled". The ladder defers to the network at most once. After the
-    // chunk settles, whether or not it published a renderer, the ladder runs
-    // straight through to canvas2d.
-    let sceneWebGLFallbackChunkState = sceneWebGLRendererFactory() ? "settled" : "idle";
+    // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
+    // renderer generation owning a pending fetch (so stale completions lose).
+    let sceneWebGLFallbackOwner = sceneWebGLRendererFactory() ? 0 : null;
 
-    // deferSceneWebGLFallback keeps the WebGPU -> device-loss -> WebGL ->
-    // canvas2d ladder intact when WebGL sits in a lazily fetched chunk.
-    //
-    // A Chromium page that loses its WebGPU device reaches the WebGL rung with
-    // the chunk absent. Without this hop the ladder would skip WebGL and land
-    // on canvas2d, or on nothing at all, which trades graceful degradation for
-    // bytes. Instead: fetch the chunk, then re-enter fallbackSceneRenderer.
-    // The second pass finds the factory and swaps the renderer for real.
-    //
-    // Returns true when it started the fetch, so the caller reports that the
-    // ladder took an action. The mount draws nothing for one round trip, which
-    // is the same state a dead GPU device already left it in.
+    function settleSceneWebGLFallback(reason, owner, error) {
+      if (disposed || owner !== renderer || sceneWebGLFallbackOwner !== owner) return;
+      sceneWebGLFallbackOwner = 0;
+      if (error) {
+        gosxSceneEmit("warn", "webgl-fallback-chunk-failed", {
+          reason: reason || "", error: error && error.message ? String(error.message) : String(error || ""),
+        });
+      }
+      if (fallbackSceneRenderer(reason)) {
+        renderLatestSceneBundle(reason); scheduleRenderWithViewport(reason);
+        return;
+      }
+      terminalSceneWebGPURecovery(reason);
+      if (!error) gosxSceneEmit("warn", "webgl-fallback-chunk-unusable", { reason: reason || "" });
+    }
+
+    // Lazily load the WebGL rung without reviving the condemned WebGPU renderer.
+    // The generation owner makes stale completions inert and bounds the fetch.
     function deferSceneWebGLFallback(reason) {
-      if (sceneWebGLFallbackChunkState !== "idle") {
+      if (sceneWebGLFallbackOwner !== null) {
         return false;
       }
-      sceneWebGLFallbackChunkState = "loading";
+      const owner = sceneWebGLFallbackOwner = renderer;
       gosxSceneEmit("info", "webgl-fallback-chunk-fetch", { reason: reason || "" });
-      ensureWebGLFeatureLoaded().then(function() {
-        sceneWebGLFallbackChunkState = "settled";
-        if (disposed) {
-          return;
-        }
-        if (fallbackSceneRenderer(reason)) {
-          renderLatestSceneBundle(reason);
-          scheduleRenderWithViewport(reason);
-          return;
-        }
-        gosxSceneEmit("warn", "webgl-fallback-chunk-unusable", { reason: reason || "" });
-      }).catch(function(error) {
-        sceneWebGLFallbackChunkState = "settled";
-        gosxSceneEmit("warn", "webgl-fallback-chunk-failed", {
-          reason: reason || "",
-          error: error && error.message ? String(error.message) : String(error || ""),
-        });
-        if (disposed) {
-          return;
-        }
-        // The chunk is unreachable. Re-enter the ladder so it continues down
-        // to canvas2d instead of leaving the mount on a dead renderer.
-        if (fallbackSceneRenderer(reason)) {
-          renderLatestSceneBundle(reason);
-          scheduleRenderWithViewport(reason);
-        }
-      });
+      ensureWebGLFeatureLoaded().then(function() { settleSceneWebGLFallback(reason, owner); })
+        .catch(function(error) { settleSceneWebGLFallback(reason, owner, error); });
       return true;
     }
 
@@ -1598,7 +1602,7 @@
                 // ladder gives up on this rung, otherwise a WebGPU device loss
                 // would drop straight to canvas2d.
                 if (!sceneWebGLRendererFactory() && deferSceneWebGLFallback(fallbackReason)) {
-                  return true;
+                  return false;
                 }
                 const webglFallback = createFallbackSceneWebGLRenderer(fallbackReason);
                 if (webglFallback && webglFallback.result && webglFallback.result.renderer) {
@@ -1671,13 +1675,6 @@
 
     function renderLatestSceneBundle(reason) {
       if (disposed || !latestBundle || !renderer || typeof renderer.render !== "function" || !sceneCanRender()) {
-        return false;
-      }
-      // The ladder condemned this renderer and is waiting on the WebGL chunk.
-      // Drawing with a dead GPU device for that round trip buys nothing and can
-      // throw out of a rAF callback, so skip the frame. The renderer object
-      // stays in place, because swapRenderer still owns disposing it.
-      if (sceneWebGLFallbackChunkState === "loading") {
         return false;
       }
       // A retained bundle is backend-specific. Never replay it after a
@@ -1854,7 +1851,7 @@
     }
 
     function scheduleRender(reason) {
-      if (disposed) {
+      if (disposed || sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) {
         return;
       }
       lastRenderReason = reason || "refresh";
