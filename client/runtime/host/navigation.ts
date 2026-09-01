@@ -5039,12 +5039,20 @@
   // Revalidation is paused (see suspendRevalidation above) for the full
   // gesture: pointerdown/grab through drop, cancel, or pointercancel. It
   // resumes the moment the gesture ends, not after the follow-up action
-  // submission settles — a revalidation DOM swap after the user's finger or
-  // pointer has already left the list is no longer a hazard the way one
-  // mid-drag is; pendingManagedForms-style protection for the submission
-  // itself is unnecessary because nothing else touches the container's
-  // FORM_STATE_ATTR/FORM_PENDING_ATTR pair while it is set (see
-  // reorderContainerPending).
+  // submission settles.
+  //
+  // The submission then needs a SECOND, different guard, and an earlier
+  // version of this comment was wrong to say it did not. The gesture-long
+  // suspension is gone by the time the POST is in flight, so a periodic
+  // revalidation tick can land between the optimistic DOM move and the
+  // response, replace the body, and detach both the item and the container
+  // that commitReorderResult's failure path reverts through — the revert then
+  // writes into a document nobody is looking at. FORM_PENDING_ATTR does not
+  // stop that: runRevalidateTick gates on navigationOrFormSubmissionInFlight,
+  // which reads pendingManagedForms and knows nothing about that attribute.
+  // commitReorderResult therefore registers the container in
+  // pendingManagedForms for the lifetime of the POST, exactly as submitForm
+  // does for a real managed form.
   // ---------------------------------------------------------------------
 
   // reorderTargetIndex is the pure pointer-position -> target-index function
@@ -5430,7 +5438,17 @@
   // position — the optimistic reorder gosx#212 asks for. `originalParent`/
   // `originalIndex` are the item's pre-gesture position, read back only if
   // the submission fails.
-  async function commitReorderResult(container, item, originalParent, originalIndex) {
+  async function commitReorderResult(container, item, originalParent, originalIndex, originalItemIndex) {
+    const items = reorderItems(container);
+    const index = items.indexOf(item);
+    // A gesture that ends where it began tells the server nothing. Skipping
+    // the request outright is the whole point: on a 100-row board every
+    // aborted drag and every arrow-up-then-arrow-down would otherwise cost a
+    // round trip AND flash the container's pending/success state.
+    if (originalItemIndex != null && index === originalItemIndex) {
+      return;
+    }
+
     const spec = parseReorderActionSpec(container);
     if (!spec.url) {
       reportNavigationFailure("reorder action", new Error(REORDER_ACTION_ATTR + " is missing a URL"), {
@@ -5439,22 +5457,34 @@
       return;
     }
 
-    const items = reorderItems(container);
-    const index = items.indexOf(item);
     const itemField = reorderFieldName(container, REORDER_ITEM_FIELD_ATTR, REORDER_DEFAULT_ITEM_FIELD);
     const indexField = reorderFieldName(container, REORDER_INDEX_FIELD_ATTR, REORDER_DEFAULT_INDEX_FIELD);
     const itemIdentity = String((item.getAttribute && item.getAttribute(REORDER_ITEM_ATTR)) || "");
 
     const previousState = captureManagedFormState(container);
     setManagedFormPending(container);
+    // The container joins pendingManagedForms for the lifetime of the POST.
+    // See this section's opening comment: revalidation is NOT paused for the
+    // submission, so without this a periodic tick can fire between the
+    // optimistic DOM move and the response, swap the body, and detach the
+    // very nodes the failure path reverts through. pendingManagedForms is the
+    // runtime's own "a submission is in flight" gate (see
+    // navigationOrFormSubmissionInFlight), and runRevalidateTick already
+    // reads it.
+    pendingManagedForms.add(container);
     dispatchManagedEvent("gosx:reorder:submit", {
       detail: { container: container, item: item, itemId: itemIdentity, index: index },
     });
 
-    const outcome = await submitReorderAction(container, spec.method, spec.url, [
-      [itemField, itemIdentity],
-      [indexField, String(index)],
-    ]);
+    let outcome = null;
+    try {
+      outcome = await submitReorderAction(container, spec.method, spec.url, [
+        [itemField, itemIdentity],
+        [indexField, String(index)],
+      ]);
+    } finally {
+      pendingManagedForms.delete(container);
+    }
 
     restoreManagedFormState(container, previousState);
 
@@ -5462,6 +5492,16 @@
       restoreReorderItemPosition(item, originalParent, originalIndex);
       container.setAttribute(FORM_STATE_ATTR, "error");
       announceNavigation("Reorder failed. Order restored.");
+      // A reorder that silently snaps back looks like a bug in the app. Route
+      // the failure to the same visible surface a managed form action uses,
+      // so a sighted user sees WHY the row moved back — the live-region
+      // announcement above stays, for everyone else.
+      try {
+        presentManagedFormToast(outcome.response || null, {
+          ok: false,
+          message: "Reorder failed. Order restored.",
+        });
+      } catch (_error) {}
       dispatchManagedEvent("gosx:reorder:error", {
         detail: {
           container: container,

@@ -961,6 +961,48 @@ test("activation: a tap never grabs and never submits", async () => {
   assert.equal(handle._capturedPointerID, null, "the press released the pointer it captured");
 });
 
+test("activation: a drag that returns to its own slot posts nothing", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, { handle: true });
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+
+  const handle = items[0].__handle;
+  pointerDown(env, handle, { pointerId: 4, clientY: 20 });
+  pointerMove(handle, { pointerId: 4, clientY: 105 });
+  // ... and all the way back to where it started.
+  pointerMove(handle, { pointerId: 4, clientY: 10 });
+  handle.dispatchEvent({ type: "pointerup", pointerId: 4, clientY: 10 });
+  await flushAsyncWork();
+
+  assert.deepEqual(
+    container.children.map((c) => c.getAttribute("data-gosx-reorder-item")),
+    ["item-0", "item-1", "item-2"],
+  );
+  assert.equal(env.fetchCalls.length, 0, "the order did not change, so there is nothing to record");
+  assert.equal(container.getAttribute("data-gosx-form-state"), null, "no pending or success state flashes");
+});
+
+test("activation: a keyboard grab that ends where it began posts nothing", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { items } = buildList(env, 3, { handle: true });
+  const handle = items[0].__handle;
+
+  await keydown(env, handle, " ");
+  await keydown(env, handle, "ArrowDown");
+  await keydown(env, handle, "ArrowUp");
+  await keydown(env, handle, " ");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0);
+});
+
+// --- touch pointers -----------------------------------------------------------
+
 test("touch: a dedicated handle drags on the same 5px activation as a mouse", async () => {
   const env = createContext({
     elements: [],
@@ -1189,4 +1231,109 @@ test("keyboard: every move scrolls the item into view and returns focus to the h
   const scrollsAtTop = item.scrollIntoViewCalls.length;
   await keydown(env, handle, "ArrowUp");
   assert.equal(item.scrollIntoViewCalls.length, scrollsAtTop);
+});
+
+// --- submission guards ------------------------------------------------------------
+
+test("submission: the reorder POST holds off periodic revalidation for its lifetime", async () => {
+  // The gesture's own revalidation suspension ends at the drop. Without a
+  // second guard a tick between the optimistic move and the response would
+  // swap the body and detach the nodes the failure path reverts through.
+  let resolveReorder;
+  const revalidateRoot = new FakeElement("main", null);
+  revalidateRoot.setAttribute("data-gosx-revalidate-interval", "4s");
+  revalidateRoot.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  const { container, items } = buildListElements(3, { handle: true });
+
+  const versionURL = "http://localhost:3000/api/league/version";
+  const env = createContext({
+    elements: [revalidateRoot, container],
+    fetchRoutes: {
+      [versionURL]: { text: '{"version":1}' },
+      "http://localhost:3000/api/board/reorder": () =>
+        new Promise((resolve) => {
+          resolveReorder = () => resolve({ text: JSON.stringify({ ok: true }) });
+        }),
+    },
+  });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const handle = items[0].__handle;
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  const baseline = env.fetchCalls.filter((call) => call.url === versionURL).length;
+
+  await keydown(env, handle, " ");
+  await keydown(env, handle, "ArrowDown");
+  await keydown(env, handle, " ");
+  await flushAsyncWork();
+  assert.equal(container.getAttribute("data-gosx-pending"), "true", "the POST is in flight");
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === versionURL).length,
+    baseline,
+    "revalidation stays off while the reorder POST is in flight",
+  );
+
+  resolveReorder();
+  await flushAsyncWork();
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === versionURL).length,
+    baseline + 1,
+    "revalidation resumes once the POST settles",
+  );
+});
+
+test("submission: a failed reorder raises a visible toast, not only a live-region message", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/api/board/reorder": { status: 500, ok: false, text: JSON.stringify({ ok: false }) },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const toastHost = new FakeElement("div", null);
+  toastHost.setAttribute("data-gosx-toast-host", "");
+  env.document.body.appendChild(toastHost);
+  const { items } = buildList(env, 3, { handle: true });
+  const handle = items[0].__handle;
+
+  await keydown(env, handle, " ");
+  await keydown(env, handle, "ArrowDown");
+  await keydown(env, handle, " ");
+  await flushAsyncWork();
+
+  const toast = toastHost.children.find((child) => child.hasAttribute("data-gosx-toast"));
+  assert.ok(toast, "a reorder that snapped back must say why on screen");
+  assert.equal(toast.getAttribute("data-gosx-toast-kind"), "error");
+  assert.equal(toast.getAttribute("role"), "alert");
+  assert.match(toast.textContent, /Reorder failed/);
+  assert.equal(lastAnnouncement(env), "Reorder failed. Order restored.", "the announcement is kept as well");
+});
+
+test("submission: a successful reorder raises no toast", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/api/board/reorder": { text: JSON.stringify({ ok: true }) },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const toastHost = new FakeElement("div", null);
+  toastHost.setAttribute("data-gosx-toast-host", "");
+  env.document.body.appendChild(toastHost);
+  const { items } = buildList(env, 3, { handle: true });
+  const handle = items[0].__handle;
+
+  await keydown(env, handle, " ");
+  await keydown(env, handle, "ArrowDown");
+  await keydown(env, handle, " ");
+  await flushAsyncWork();
+
+  assert.equal(toastHost.children.length, 0);
 });
