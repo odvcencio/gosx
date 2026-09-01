@@ -1113,7 +1113,21 @@ async function captureDiagnosticBestEffort(evidence, stage, callback) {
   });
 }
 
+function probeLossCountExpr() {
+  return `(function () {
+    var probe = null;
+    try { probe = typeof window.__gosx_scene3d_webgpu_probe === 'function' ? window.__gosx_scene3d_webgpu_probe() : null; } catch (_error) {}
+    var descriptor = null;
+    try { descriptor = probe && Object.getOwnPropertyDescriptor(probe, 'lostProbeCount'); } catch (_error) {}
+    var count = descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : null;
+    return { valid: typeof count === 'number' && Number.isSafeInteger(count) && count >= 0, count: count };
+  })()`;
+}
+
 function webGPUFailureReceiptExpr(c, phase) {
+  const baseline = c && typeof c.probeLossCountBaseline === 'number' &&
+    Number.isSafeInteger(c.probeLossCountBaseline) && c.probeLossCountBaseline >= 0 ?
+    c.probeLossCountBaseline : null;
   return `(function () {
     function bounded(value, depth) {
       var level = depth || 0;
@@ -1175,23 +1189,37 @@ function webGPUFailureReceiptExpr(c, phase) {
       configuredDeviceMatchesProbe: configuredDevice && probeDevice ? configuredDevice === probeDevice : null,
       backendIsWebGPU: !!mount && mount.getAttribute('data-gosx-scene3d-renderer') === 'webgpu'
     };
+    function ownSafeCount(object, key) {
+      var descriptor = null;
+      try { descriptor = object && Object.getOwnPropertyDescriptor(object, key); } catch (_error) {}
+      var value = descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : null;
+      return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    }
     var classification = 'predicate-not-ready';
     var fallback = mount && mount.getAttribute('data-gosx-scene3d-renderer-fallback') || '';
-    var independentDeviceLoss = !!((probe && probe.lost) ||
+    var probeLossCountBaseline = ${JSON.stringify(baseline)};
+    var probeLossCount = ownSafeCount(probe, 'lostProbeCount');
+    var probeLossCountDelta = probeLossCountBaseline !== null && probeLossCount !== null &&
+      probeLossCount > probeLossCountBaseline ? probeLossCount - probeLossCountBaseline : 0;
+    var independentDeviceLoss = !!((probe && probe.lost) || probeLossCountDelta > 0 ||
       (diagnostics && (diagnostics.deviceLost || diagnostics.deviceLostInfo)));
-    var deviceLost = fallback === 'webgpu-device-lost' || independentDeviceLoss;
-    if (identity.wrappedQueueMatchesProbe === false || identity.encoderDeviceMatchesProbe === false || identity.configuredDeviceMatchesProbe === false) classification = 'instrumented-queue-or-device-mismatch';
-    else if (deviceLost && wrappers.colorPasses === 0) classification = 'device-lost-before-color-pass';
+    var instrumentedQueueOrDeviceMismatch = identity.wrappedQueueMatchesProbe === false ||
+      identity.encoderDeviceMatchesProbe === false || identity.configuredDeviceMatchesProbe === false;
+    if (independentDeviceLoss && wrappers.colorPasses === 0) classification = 'device-lost-before-color-pass';
+    else if (independentDeviceLoss) classification = 'device-lost-after-color-pass';
+    else if (instrumentedQueueOrDeviceMismatch) classification = 'instrumented-queue-or-device-mismatch';
     else if (wrappers.colorPasses === 0) classification = 'no-scene-color-pass';
     else if (wrappers.submitFailures > 0) classification = 'queue-submit-rejected';
     else if (wrappers.failedSubmits > 0) classification = 'queue-completion-rejected';
-    else if (deviceLost) classification = 'device-lost-after-color-pass';
     else if (wrappers.completedColorPasses === 0) classification = 'color-submitted-awaiting-queue';
     return bounded({
       capturedAtMS: Date.now(),
       phase: ${JSON.stringify(phase)},
       classification: classification,
       independentDeviceLoss: independentDeviceLoss,
+      instrumentedQueueOrDeviceMismatch: instrumentedQueueOrDeviceMismatch,
+      probeLossCountBaseline: probeLossCountBaseline,
+      probeLossCountDelta: probeLossCountDelta,
       mount: mount ? {
         mounted: mount.getAttribute('data-gosx-scene3d-mounted'),
         renderer: mount.getAttribute('data-gosx-scene3d-renderer'),
@@ -1215,7 +1243,7 @@ function webGPUFailureReceiptExpr(c, phase) {
         error: probe.error || '',
         lost: probe.lost || null,
         retryCount: probe.retryCount || 0,
-        lostProbeCount: probe.lostProbeCount || 0,
+        lostProbeCount: probeLossCount,
         warnings: probe.warnings || []
       } : null,
       diagnostics: diagnostics
@@ -1268,19 +1296,107 @@ function identityExpr(c) {
     var mount = document.getElementById(${JSON.stringify(c.mount)});
     var record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(${JSON.stringify(c.engine)});
     var state = mount && mount.__gosxScene3DState;
+    var handle = mount && mount.__gosxScene3DHandle;
+    var canvas = mount && mount.querySelector('canvas');
+    var mesh = state && state.objects && state.objects.get('1');
     var keys = [];
     if (state && state.objects && state.objects.forEach) state.objects.forEach(function (_value, key) { keys.push(String(key)); });
     keys.sort();
     return refs && {
       sameMount: refs.mount === mount,
       sameState: refs.state === state,
-      sameHandle: refs.handle === (mount && mount.__gosxScene3DHandle),
-      sameCanvas: refs.canvas === (mount && mount.querySelector('canvas')),
+      sameHandle: refs.handle === handle,
+      sameCanvas: refs.canvas === canvas,
+      samePendingCanvas: window.__adapterFallbackCanvas ? window.__adapterFallbackCanvas === canvas : null,
       sameRecord: refs.record === record,
       keys: keys,
-      disposes: (window.__adapterDisposeCalls || []).map(function (args) { return args.slice(); })
+      disposes: (window.__adapterDisposeCalls || []).map(function (args) { return args.slice(); }),
+      renderer: mount && mount.getAttribute('data-gosx-scene3d-renderer') || '',
+      fallback: mount && mount.getAttribute('data-gosx-scene3d-renderer-fallback') || '',
+      mounted: mount && mount.getAttribute('data-gosx-scene3d-mounted') || '',
+      handleReady: !!(handle && handle.__gosxScene3DCommandReady === true),
+      commandReady: mount && mount.getAttribute('data-gosx-scene3d-command-ready') || '',
+      commandRevision: mount && mount.getAttribute('data-gosx-scene3d-command-revision') || '',
+      commandAppliedRevision: mount && mount.getAttribute('data-gosx-scene3d-command-applied-revision') || '',
+      objectX: mesh && mesh.x,
+      glDraws: window.__adapterGLDraws || 0,
+      glContext: window.__adapterGLContext || ''
     };
   })()`;
+}
+
+function rememberFallbackCanvasExpr(c) {
+  return `(function () {
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var canvas = mount && mount.querySelector('canvas');
+    if (!canvas) return false;
+    window.__adapterFallbackCanvas = canvas;
+    return true;
+  })()`;
+}
+
+function staleGenerationIdentityOK(c, identity) {
+  return !!(identity && identity.sameMount && identity.sameState && identity.sameHandle &&
+    identity.sameRecord && identity.keys.includes('1') && !identity.keys.includes('0') &&
+    identity.disposes.length === 1 && identity.disposes[0] && identity.disposes[0][0] === c.engine);
+}
+
+function provisionalCanvasTransitionVerdict(c, winner, identity) {
+  if (!c || c.webgpu !== true || !winner || winner.renderer !== 'webgpu' || winner.fallback) {
+    return { accepted: false, reason: 'not-native-webgpu-transition' };
+  }
+  if (!staleGenerationIdentityOK(c, identity)) return { accepted: false, reason: 'stale-identity-mismatch' };
+  if (identity.sameCanvas !== false) return { accepted: false, reason: 'canvas-transition-not-observed' };
+  if (identity.renderer !== 'webgl' || identity.fallback !== FALLBACK_DEVICE_LOST) {
+    return { accepted: false, reason: 'canvas-transition-not-device-loss-webgl' };
+  }
+  if (identity.mounted !== 'true' || !identity.handleReady || identity.commandReady !== 'true') {
+    return { accepted: false, reason: 'canvas-transition-not-command-ready' };
+  }
+  return { accepted: true, reason: 'pending-full-device-loss-proof' };
+}
+
+function resolvedCanvasTransitionVerdict(c, winner, staleIdentity, finalIdentity, evidence) {
+  const provisional = provisionalCanvasTransitionVerdict(c, winner, staleIdentity);
+  if (!provisional.accepted) return provisional;
+  if (!staleGenerationIdentityOK(c, finalIdentity)) return { accepted: false, reason: 'final-identity-mismatch' };
+  if (finalIdentity.sameCanvas !== false || finalIdentity.samePendingCanvas !== true) {
+    return { accepted: false, reason: 'fallback-canvas-not-stable' };
+  }
+  if (finalIdentity.renderer !== 'webgl' || finalIdentity.fallback !== FALLBACK_DEVICE_LOST ||
+      finalIdentity.mounted !== 'true' || !finalIdentity.handleReady || finalIdentity.commandReady !== 'true') {
+    return { accepted: false, reason: 'final-typed-fallback-not-stable' };
+  }
+  if (!evidence || evidence.acceptedOutcome !== OUTCOME_FALLBACK_DEVICE_LOST ||
+      evidence.fallbackKind !== FALLBACK_DEVICE_LOST || !evidence.outcomeVerdict ||
+      evidence.outcomeVerdict.accepted !== true || !receiptHasIndependentDeviceLoss(evidence.fallbackReceipt)) {
+    return { accepted: false, reason: 'accepted-device-loss-proof-missing' };
+  }
+  const first = evidence.firstRenderState || {};
+  const post = evidence.postCommandRenderState || {};
+  if (first.renderer !== 'webgl' || post.renderer !== 'webgl' ||
+      first.fallback !== FALLBACK_DEVICE_LOST || post.fallback !== FALLBACK_DEVICE_LOST ||
+      first.mounted !== 'true' || post.mounted !== 'true' || !first.handleReady || !post.handleReady ||
+      first.commandReady !== 'true' || post.commandReady !== 'true') {
+    return { accepted: false, reason: 'typed-fallback-readiness-missing' };
+  }
+  if (!(first.glDraws > 0) || !(post.glDraws > first.glDraws) ||
+      first.glContext !== 'webgl2' || post.glContext !== 'webgl2') {
+    return { accepted: false, reason: 'fallback-webgl2-proof-missing' };
+  }
+  if (!visibleFrameOK(evidence.firstFrame && evidence.firstFrame.metrics) ||
+      !visibleFrameOK(evidence.afterHub && evidence.afterHub.metrics)) {
+    return { accepted: false, reason: 'fallback-pixels-missing' };
+  }
+  if (!evidence.hubCommand || evidence.hubCommand.afterX !== 1.25 || !evidence.hubCommand.sameState ||
+      !evidence.hubCommand.sameHandle || !evidence.hubCommand.commandApplied ||
+      !evidence.hubCommand.revision || evidence.hubCommand.revision !== evidence.hubCommand.appliedRevision ||
+      post.objectX !== 1.25 || !post.commandRevision || post.commandRevision !== post.commandAppliedRevision ||
+      finalIdentity.objectX !== 1.25 || !finalIdentity.commandRevision ||
+      finalIdentity.commandRevision !== finalIdentity.commandAppliedRevision) {
+    return { accepted: false, reason: 'fallback-command-proof-missing' };
+  }
+  return { accepted: true, reason: 'accepted-sticky-device-loss-canvas-transition' };
 }
 
 function hubCommandExpr(c) {
@@ -1413,10 +1529,18 @@ function visibleFrameOK(metrics) {
 
 function receiptHasIndependentDeviceLoss(receipt) {
   if (!receipt) return false;
-  if (receipt.independentDeviceLoss === true) return true;
   if (receipt.probe && receipt.probe.lost) return true;
   if (receipt.diagnostics && (receipt.diagnostics.deviceLost === true || receipt.diagnostics.deviceLostInfo)) return true;
-  return false;
+  const countDescriptor = receipt.probe && typeof receipt.probe === 'object' ?
+    Object.getOwnPropertyDescriptor(receipt.probe, 'lostProbeCount') : null;
+  const baselineDescriptor = typeof receipt === 'object' ?
+    Object.getOwnPropertyDescriptor(receipt, 'probeLossCountBaseline') : null;
+  const count = countDescriptor && Object.prototype.hasOwnProperty.call(countDescriptor, 'value') ?
+    countDescriptor.value : null;
+  const baseline = baselineDescriptor && Object.prototype.hasOwnProperty.call(baselineDescriptor, 'value') ?
+    baselineDescriptor.value : null;
+  return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 &&
+    typeof baseline === 'number' && Number.isSafeInteger(baseline) && baseline >= 0 && count > baseline;
 }
 
 function classifyWGOutcomeSnapshot(snapshot) {
@@ -1676,6 +1800,15 @@ async function runCase(send, c) {
     fail('[' + c.name + '] blocked generation mutated SSR/mount/registry: ' + JSON.stringify(pre));
   }
   assertEnvelope(pre.hydrates[0], c, 1, 'AdapterStaleA', [0]);
+  if (c.webgpu) {
+    evidence.probeLossCountBaselineSnapshot = await evalSend(send, probeLossCountExpr());
+    const baseline = evidence.probeLossCountBaselineSnapshot;
+    if (!baseline || baseline.valid !== true || baseline.count !== 0) {
+      fail('[wg] fresh-case probe loss counter baseline must be exact numeric zero: ' + JSON.stringify(baseline));
+    }
+    c.probeLossCountBaseline = baseline && baseline.valid === true ? baseline.count : null;
+    evidence.probeLossCountBaseline = c.probeLossCountBaseline;
+  }
 
   phase('winning-generation-readiness');
   await evalSend(send, 'window.__gosx_runtime_ready(); true');
@@ -1702,10 +1835,24 @@ async function runCase(send, c) {
   await evalSend(send, settleFramesExpr(12), { awaitPromise: true });
   evidence.afterStaleRelease = await evalSend(send, identityExpr(c));
   const identity = evidence.afterStaleRelease;
-  if (!identity || !identity.sameMount || !identity.sameState || !identity.sameHandle ||
-      !identity.sameCanvas || !identity.sameRecord || !identity.keys.includes('1') || identity.keys.includes('0') ||
-      identity.disposes.length !== 1) {
+  if (!staleGenerationIdentityOK(c, identity)) {
     fail('[' + c.name + '] stale output applied or republished: ' + JSON.stringify(identity));
+  } else if (identity.sameCanvas !== true) {
+    const transition = provisionalCanvasTransitionVerdict(c, winner, identity);
+    if (!transition.accepted) {
+      fail('[' + c.name + '] unowned canvas replacement during stale release: ' +
+        JSON.stringify({ transition, winner, identity }));
+    } else {
+      const remembered = await evalSend(send, rememberFallbackCanvasExpr(c));
+      if (remembered !== true) {
+        fail('[' + c.name + '] could not retain pending fallback canvas identity');
+      }
+      evidence.pendingCanvasTransition = {
+        classification: 'pending-device-loss-fallback-canvas-transition',
+        provisional: transition,
+        staleIdentity: identity,
+      };
+    }
   }
 
   if (c.webgpu) {
@@ -1812,7 +1959,19 @@ async function runCase(send, c) {
   evidence.postCommandRenderState = renderStateForOutcome(postCommandDrawState);
   evidence.observedRenderer = evidence.postCommandRenderState.renderer;
   evidence.fallbackKind = evidence.fallbackKind || evidence.postCommandRenderState.fallback || '';
-  if (c.webgpu) assertWGOutcomeAccepted(c, evidence);
+  if (c.webgpu) {
+    assertWGOutcomeAccepted(c, evidence);
+    if (evidence.pendingCanvasTransition) {
+      evidence.pendingCanvasTransition.finalIdentity = await evalSend(send, identityExpr(c));
+      evidence.pendingCanvasTransition.resolution = resolvedCanvasTransitionVerdict(
+        c, winner, identity, evidence.pendingCanvasTransition.finalIdentity, evidence
+      );
+      if (!evidence.pendingCanvasTransition.resolution.accepted) {
+        fail('[wg] pending fallback canvas transition rejected after full proof: ' +
+          JSON.stringify(evidence.pendingCanvasTransition));
+      }
+    }
+  }
 
   phase('disposal');
   evidence.disposed = await evalSend(send, `(function () {
@@ -1870,7 +2029,7 @@ let browserReceipt = null;
 let finished = false;
 let reportWriteFailed = false;
 
-function classifyWarningEntry(entry, typedFallback) {
+function classifyWarningEntry(entry, typedFallback, capabilityCounts) {
   const occurrence = typeof entry === 'string' ? {
     message: entry,
     source: 'legacy-string',
@@ -1880,6 +2039,10 @@ function classifyWarningEntry(entry, typedFallback) {
   const message = String(occurrence.message || '');
   const captureDriver = classifyCaptureDriverWarning(occurrence, message);
   if (captureDriver) return captureDriver;
+  const capabilityProbe = classifyCapabilityProbeWarning(
+    occurrence, message, capabilityCounts && capabilityCounts[message] || 0
+  );
+  if (capabilityProbe) return capabilityProbe;
   if (!typedFallback) {
     return { allowed: false, reason: 'no-accepted-typed-fallback' };
   }
@@ -1927,6 +2090,28 @@ function classifyWarningEntry(entry, typedFallback) {
   return { allowed: false, reason: 'not-in-exact-fallback-warning-allowlist' };
 }
 
+function classifyCapabilityProbeWarning(occurrence, message, count) {
+  if (!DEVICE_LOSS_BROWSER_WARNINGS.includes(message) ||
+      (occurrence.caseName !== 'caps' && occurrence.phase !== 'capability-probe')) return null;
+  if (occurrence.source !== 'Log.entryAdded') {
+    return { allowed: false, reason: 'capability-probe-warning-source-mismatch' };
+  }
+  if (occurrence.caseName !== 'caps') {
+    return { allowed: false, reason: 'capability-probe-warning-case-mismatch' };
+  }
+  if (occurrence.phase !== 'capability-probe') {
+    return { allowed: false, reason: 'capability-probe-warning-phase-mismatch' };
+  }
+  if (count !== 1) return { allowed: false, reason: 'capability-probe-warning-duplicate' };
+  if (errors.length) return { allowed: false, reason: 'capability-probe-warning-errors-present' };
+  return {
+    allowed: true,
+    reason: 'accepted-capability-probe-browser-notice',
+    phase: occurrence.phase,
+    caseName: occurrence.caseName,
+  };
+}
+
 function classifyCaptureDriverWarning(occurrence, message) {
   if (!CAPTURE_DRIVER_WARNING.test(message)) return null;
   if (occurrence.source !== 'Log.entryAdded') return { allowed: false, reason: 'capture-driver-warning-source-mismatch' };
@@ -1941,10 +2126,18 @@ function classifyWarningsForReport() {
   const typedFallback = caseEvidence.find((entry) => entry && entry.name === 'wg');
   const occurrences = warningOccurrences.length ? warningOccurrences :
     warnings.map((message) => ({ message, source: 'legacy-string', caseName: '', phase: '', atMS: 0 }));
+  const capabilityCounts = Object.create(null);
+  for (const occurrence of occurrences) {
+    const message = String(occurrence && occurrence.message || '');
+    if (DEVICE_LOSS_BROWSER_WARNINGS.includes(message) &&
+        (occurrence.caseName === 'caps' || occurrence.phase === 'capability-probe')) {
+      capabilityCounts[message] = (capabilityCounts[message] || 0) + 1;
+    }
+  }
   const entries = occurrences.map((entry) => ({
     message: entry.message,
     occurrence: entry,
-    classification: classifyWarningEntry(entry, typedFallback),
+    classification: classifyWarningEntry(entry, typedFallback, capabilityCounts),
   }));
   return {
     total: warnings.length,
@@ -2072,6 +2265,8 @@ const watchdog = setTimeout(() => {
   await send('Log.enable');
   await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
 
+  currentCaseName = 'caps';
+  currentCasePhase = 'capability-probe';
   const capsLoaded = waitForEvent('Page.loadEventFired', STEP_MS);
   await send('Page.navigate', { url: BASE + '/' });
   await capsLoaded;

@@ -55,6 +55,13 @@ function failureReceiptExpressionBuilder() {
   return vm.runInNewContext(browserProof.slice(start, end) + "; webGPUFailureReceiptExpr");
 }
 
+function probeLossCountExpressionBuilder() {
+  const start = browserProof.indexOf("function probeLossCountExpr() {");
+  const end = browserProof.indexOf("\nfunction webGPUFailureReceiptExpr", start);
+  assert.ok(start >= 0 && end > start, "browser proof probe-loss baseline helper must remain extractable");
+  return vm.runInNewContext(browserProof.slice(start, end) + "; probeLossCountExpr");
+}
+
 function outcomeClassifier() {
   const start = browserProof.indexOf("function visibleFrameOK(metrics) {");
   const end = browserProof.indexOf("\nfunction assertEnvelope", start);
@@ -84,8 +91,29 @@ function fallbackInstabilityClassifier() {
   ].join("\n"));
 }
 
+function canvasTransitionClassifier() {
+  const canvasStart = browserProof.indexOf("function staleGenerationIdentityOK(c, identity) {");
+  const canvasEnd = browserProof.indexOf("\nfunction hubCommandExpr", canvasStart);
+  const visibleStart = browserProof.indexOf("function visibleFrameOK(metrics) {");
+  const visibleEnd = browserProof.indexOf("\nfunction receiptHasIndependentDeviceLoss", visibleStart);
+  const receiptStart = browserProof.indexOf("function receiptHasIndependentDeviceLoss(receipt) {");
+  const receiptEnd = browserProof.indexOf("\nfunction classifyWGOutcomeSnapshot", receiptStart);
+  assert.ok(canvasStart >= 0 && canvasEnd > canvasStart, "browser proof canvas transition helpers must remain extractable");
+  assert.ok(visibleStart >= 0 && visibleEnd > visibleStart, "browser proof visible-frame helper must remain extractable");
+  assert.ok(receiptStart >= 0 && receiptEnd > receiptStart, "browser proof loss receipt helper must remain extractable");
+  return vm.runInNewContext([
+    "const OUTCOME_FALLBACK_DEVICE_LOST = 'fallback-device-lost';",
+    "const FALLBACK_DEVICE_LOST = 'webgpu-device-lost';",
+    "const W = 320, H = 180, FG_THRESHOLD = 12, FG_COVERAGE = 0.01, REST_COVERAGE = 0.5;",
+    browserProof.slice(visibleStart, visibleEnd),
+    browserProof.slice(receiptStart, receiptEnd),
+    browserProof.slice(canvasStart, canvasEnd),
+    "; ({ provisionalCanvasTransitionVerdict, resolvedCanvasTransitionVerdict })",
+  ].join("\n"));
+}
+
 function warningClassifier() {
-  const start = browserProof.indexOf("function classifyWarningEntry(entry, typedFallback) {");
+  const start = browserProof.indexOf("function classifyWarningEntry(entry, typedFallback, capabilityCounts) {");
   const end = browserProof.indexOf("\nfunction writeReport", start);
   assert.ok(start >= 0 && end > start, "browser proof warning classifier must remain extractable");
   const source = [
@@ -197,7 +225,7 @@ function browserContext() {
   vm.runInContext(preloadSource(), context, { filename: "scene3d-adapter-hydrate-browser-preload.js" });
   const queue = new context.GPUQueue();
   const device = new context.GPUDevice(queue);
-  const probe = { ready: true, adapter: {}, device, error: "", lost: null, warnings: [] };
+  const probe = { ready: true, adapter: {}, device, error: "", lost: null, lostProbeCount: 0, warnings: [] };
   const diagnostics = { renderer: "webgpu", ready: true, deviceLost: false };
   context.__gosx_scene3d_webgpu_probe = () => probe;
   context.__gosx_scene3d_webgpu_diagnostics = () => diagnostics;
@@ -262,6 +290,72 @@ function classifyOutcome(snapshot) {
       webgpuCompletedSubmits: 2,
     }),
   }, snapshot));
+}
+
+function visibleMetrics(overrides = {}) {
+  return Object.assign({
+    width: 320,
+    height: 180,
+    foregroundFraction: 0.2,
+    maxDelta: 120,
+    restFraction: 0.8,
+  }, overrides);
+}
+
+function canvasIdentity(engine, overrides = {}) {
+  return Object.assign({
+    sameMount: true,
+    sameState: true,
+    sameHandle: true,
+    sameCanvas: false,
+    samePendingCanvas: true,
+    sameRecord: true,
+    keys: ["1"],
+    disposes: [[engine]],
+    renderer: "webgl",
+    fallback: "webgpu-device-lost",
+    mounted: "true",
+    handleReady: true,
+    commandReady: "true",
+    commandRevision: "1",
+    commandAppliedRevision: "1",
+    objectX: 1.25,
+    glDraws: 2,
+    glContext: "webgl2",
+  }, overrides);
+}
+
+function canvasTransitionEvidence(overrides = {}) {
+  return Object.assign({
+    acceptedOutcome: "fallback-device-lost",
+    fallbackKind: "webgpu-device-lost",
+    outcomeVerdict: { accepted: true, reason: "accepted" },
+    fallbackReceipt: {
+      classification: "device-lost-after-color-pass",
+      probeLossCountBaseline: 0,
+      probe: { lost: null, lostProbeCount: 1 },
+      diagnostics: { deviceLost: false },
+    },
+    firstRenderState: outcomeState({
+      renderer: "webgl", fallback: "webgpu-device-lost", glDraws: 1, glContext: "webgl2",
+      webgpuColorPasses: 0, webgpuCompletedColorPasses: 0, webgpuCompletedSubmits: 0,
+    }),
+    postCommandRenderState: outcomeState({
+      renderer: "webgl", fallback: "webgpu-device-lost", objectX: 1.25,
+      commandRevision: "2", commandAppliedRevision: "2", glDraws: 2, glContext: "webgl2",
+      webgpuColorPasses: 0, webgpuCompletedColorPasses: 0, webgpuCompletedSubmits: 0,
+    }),
+    firstFrame: { metrics: visibleMetrics() },
+    afterHub: { metrics: visibleMetrics() },
+    hubCommand: {
+      afterX: 1.25,
+      sameState: true,
+      sameHandle: true,
+      commandApplied: true,
+      revision: "2",
+      appliedRevision: "2",
+    },
+  }, overrides);
 }
 
 test("WebGPU browser-proof readiness rejects depth-only and pre-command color submits", async () => {
@@ -594,6 +688,76 @@ test("adapter proof fails fast when a typed fallback changes across either captu
   assert.match(browserProof, /assertStableWGTypedFallback\(send, c, evidence, 'after-post-command-capture'/);
 });
 
+test("adapter proof defers only an exact WG device-loss canvas transition until the full sticky fallback proof", () => {
+  const classifier = canvasTransitionClassifier();
+  const c = { name: "wg", webgpu: true, engine: "gosx-engine-adapter-wg" };
+  const winner = { renderer: "webgpu", fallback: "" };
+  const stale = canvasIdentity(c.engine, { objectX: 0, commandRevision: "", commandAppliedRevision: "" });
+  const finalIdentity = canvasIdentity(c.engine, { commandRevision: "2", commandAppliedRevision: "2" });
+  const evidence = canvasTransitionEvidence();
+
+  assert.deepEqual(
+    { ...classifier.provisionalCanvasTransitionVerdict(c, winner, stale) },
+    { accepted: true, reason: "pending-full-device-loss-proof" },
+  );
+  assert.deepEqual(
+    { ...classifier.resolvedCanvasTransitionVerdict(c, winner, stale, finalIdentity, evidence) },
+    { accepted: true, reason: "accepted-sticky-device-loss-canvas-transition" },
+  );
+
+  const rejected = [
+    ["GL case", { ...c, name: "gl", webgpu: false }, winner, stale, finalIdentity, evidence, "not-native-webgpu-transition"],
+    ["winner was already fallback", c, { renderer: "webgl", fallback: "webgpu-device-lost" }, stale,
+      finalIdentity, evidence, "not-native-webgpu-transition"],
+    ["wrong fallback", c, winner, { ...stale, fallback: "webgpu-unavailable" }, finalIdentity,
+      evidence, "canvas-transition-not-device-loss-webgl"],
+    ["stale object key", c, winner, { ...stale, keys: ["0", "1"] }, finalIdentity,
+      evidence, "stale-identity-mismatch"],
+    ["missing stale mount identity", c, winner, { ...stale, sameMount: false }, finalIdentity,
+      evidence, "stale-identity-mismatch"],
+    ["missing state identity", c, winner, { ...stale, sameState: false }, finalIdentity,
+      evidence, "stale-identity-mismatch"],
+    ["missing stale handle identity", c, winner, { ...stale, sameHandle: false }, finalIdentity,
+      evidence, "stale-identity-mismatch"],
+    ["missing stale record identity", c, winner, { ...stale, sameRecord: false }, finalIdentity,
+      evidence, "stale-identity-mismatch"],
+    ["extra disposal", c, winner, { ...stale, disposes: [[c.engine], [c.engine]] }, finalIdentity,
+      evidence, "stale-identity-mismatch"],
+    ["bare canvas swap", c, winner, { ...stale, renderer: "webgpu", fallback: "" }, finalIdentity,
+      evidence, "canvas-transition-not-device-loss-webgl"],
+    ["replacement canvas churned", c, winner, stale, { ...finalIdentity, samePendingCanvas: false },
+      evidence, "fallback-canvas-not-stable"],
+    ["missing final mount identity", c, winner, stale, { ...finalIdentity, sameMount: false },
+      evidence, "final-identity-mismatch"],
+    ["missing final handle identity", c, winner, stale, { ...finalIdentity, sameHandle: false },
+      evidence, "final-identity-mismatch"],
+    ["missing final record identity", c, winner, stale, { ...finalIdentity, sameRecord: false },
+      evidence, "final-identity-mismatch"],
+    ["loss label alone", c, winner, stale, finalIdentity, canvasTransitionEvidence({
+      fallbackReceipt: {
+        classification: "device-lost-after-color-pass",
+        probeLossCountBaseline: 1,
+        probe: { lost: null, lostProbeCount: 1 },
+        diagnostics: { deviceLost: false },
+      },
+    }), "accepted-device-loss-proof-missing"],
+    ["blank fallback", c, winner, stale, finalIdentity, canvasTransitionEvidence({
+      firstFrame: { metrics: visibleMetrics({ foregroundFraction: 0, maxDelta: 0 }) },
+    }), "fallback-pixels-missing"],
+    ["stale command revision", c, winner, stale, { ...finalIdentity, commandAppliedRevision: "1" },
+      evidence, "fallback-command-proof-missing"],
+  ];
+  for (const [name, testCase, testWinner, testStale, testFinal, testEvidence, reason] of rejected) {
+    const verdict = classifier.resolvedCanvasTransitionVerdict(
+      testCase, testWinner, testStale, testFinal, testEvidence
+    );
+    assert.equal(verdict.accepted, false, name);
+    assert.equal(verdict.reason, reason, name);
+  }
+  assert.match(browserProof, /pendingCanvasTransition\.resolution = resolvedCanvasTransitionVerdict/);
+  assert.match(browserProof, /window\.__adapterFallbackCanvas = canvas/);
+});
+
 test("adapter proof warning classifier keeps unavailable and native outcomes fatal", () => {
   const classifier = warningClassifier();
   classifier.setWarningOccurrences([{
@@ -651,6 +815,66 @@ test("adapter proof warning classifier allows only the exact GL ReadPixels captu
       "no-accepted-typed-fallback",
     ],
   );
+});
+
+test("adapter proof owns each exact capability-probe browser notice once and rejects timing/source drift", () => {
+  const classifier = warningClassifier();
+  const contextLost = "browser log warning: WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost";
+  const externalInstance = "browser log warning: A valid external Instance reference no longer exists.";
+  classifier.setCases([]);
+  classifier.setErrors([]);
+  classifier.setWarningOccurrences([
+    { message: contextLost, caseName: "caps", phase: "capability-probe", source: "Log.entryAdded" },
+    { message: externalInstance, caseName: "caps", phase: "capability-probe", source: "Log.entryAdded" },
+  ]);
+  let classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 2);
+  assert.equal(classified.unexpected.length, 0);
+  assert.ok(classified.allowed.every((entry) =>
+    entry.classification.reason === "accepted-capability-probe-browser-notice"));
+
+  const classifyOne = (occurrence, errors = []) => {
+    classifier.setErrors(errors);
+    classifier.setWarningOccurrences([occurrence]);
+    const result = classifier.classifyWarningsForReport();
+    assert.equal(result.allowed.length, 0);
+    assert.equal(result.unexpected.length, 1);
+    return result.unexpected[0].classification.reason;
+  };
+  assert.equal(classifyOne({
+    message: contextLost, caseName: "caps", phase: "capability-probe", source: "Runtime.consoleAPICalled",
+  }), "capability-probe-warning-source-mismatch");
+  assert.equal(classifyOne({
+    message: contextLost, caseName: "", phase: "capability-probe", source: "Log.entryAdded",
+  }), "capability-probe-warning-case-mismatch");
+  assert.equal(classifyOne({
+    message: contextLost, caseName: "caps", phase: "", source: "Log.entryAdded",
+  }), "capability-probe-warning-phase-mismatch");
+  assert.equal(classifyOne({
+    message: externalInstance, caseName: "caps", phase: "capability-probe", source: "Log.entryAdded",
+  }, ["Runtime.evaluate: capability failure"]), "capability-probe-warning-errors-present");
+  assert.equal(classifyOne({
+    message: externalInstance.replace("no longer exists", "was destroyed"),
+    caseName: "caps", phase: "capability-probe", source: "Log.entryAdded",
+  }), "no-accepted-typed-fallback");
+  assert.equal(classifyOne({
+    message: "", caseName: "caps", phase: "capability-probe", source: "Log.entryAdded",
+  }), "no-accepted-typed-fallback");
+  assert.equal(classifyOne({
+    message: contextLost, caseName: "", phase: "", source: "Log.entryAdded",
+  }), "no-accepted-typed-fallback");
+
+  classifier.setErrors([]);
+  classifier.setWarningOccurrences([
+    { message: contextLost, caseName: "caps", phase: "capability-probe", source: "Log.entryAdded" },
+    { message: contextLost, caseName: "caps", phase: "capability-probe", source: "Log.entryAdded" },
+  ]);
+  classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 0);
+  assert.equal(classified.unexpected.length, 2);
+  assert.ok(classified.unexpected.every((entry) =>
+    entry.classification.reason === "capability-probe-warning-duplicate"));
+  assert.match(browserProof, /currentCaseName = 'caps';\n  currentCasePhase = 'capability-probe';/);
 });
 
 test("adapter proof warning classifier allows exact WG device-loss warnings only in its bounded window", () => {
@@ -716,7 +940,43 @@ test("adapter proof warning classifier allows exact WG device-loss warnings only
   );
 });
 
-test("adapter proof warning classifier accepts the exact nine-warning hosted device-loss fixture", () => {
+test("adapter proof accepts run 33458217937 exact nine-warning artifact timeline under corrected caps ownership", () => {
+  const classifier = warningClassifier();
+  const receiptPhase = "requested-webgpu-first-presentation-readiness";
+  const gl = "browser log warning: [.WebGL-0x1ba404717c00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels";
+  classifier.setCases([{
+    name: "wg",
+    acceptedOutcome: "fallback-device-lost",
+    fallbackKind: "webgpu-device-lost",
+    fallbackReceipt: { phase: receiptPhase },
+    outcomeVerdict: { accepted: true },
+  }]);
+  classifier.setWarningOccurrences([
+    { message: "browser log warning: WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost", caseName: "caps", phase: "capability-probe", source: "Log.entryAdded" },
+    { message: "browser log warning: A valid external Instance reference no longer exists.", caseName: "caps", phase: "capability-probe", source: "Log.entryAdded" },
+    { message: gl, caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: gl, caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: gl, caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: gl + " (this message will no longer repeat)", caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: "browser log warning: A valid external Instance reference no longer exists.", caseName: "wg", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: "console.warning: [gosx] WebGPU probe device lost: A valid external Instance reference no longer exists.", caseName: "wg", phase: "stale-generation-release", source: "Runtime.consoleAPICalled" },
+    { message: "console.warning: [gosx] WebGPU device lost: A valid external Instance reference no longer exists.", caseName: "wg", phase: "stale-generation-release", source: "Runtime.consoleAPICalled" },
+  ]);
+  const classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.total, 9);
+  assert.equal(classified.allowed.length, 9);
+  assert.equal(classified.unexpected.length, 0);
+  const reasons = Array.from(classified.allowed, (entry) => entry.classification.reason);
+  assert.equal(reasons.filter((reason) => reason === "accepted-gl-capture-readpixels-warning").length, 4);
+  assert.equal(reasons.filter((reason) => reason ===
+    "accepted-typed-fallback-device-loss-console-warning").length, 2);
+  assert.equal(reasons.filter((reason) => reason ===
+    "accepted-typed-fallback-device-loss-browser-notice").length, 1);
+  assert.equal(reasons.filter((reason) => reason ===
+    "accepted-capability-probe-browser-notice").length, 2);
+});
+
+test("adapter proof accepts run 33456783138 exact nine-warning artifact timeline", () => {
   const classifier = warningClassifier();
   const receiptPhase = "requested-webgpu-first-presentation-readiness";
   const gl = "browser log warning: [.WebGL-0x3a6c046c3600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels";
@@ -729,7 +989,7 @@ test("adapter proof warning classifier accepts the exact nine-warning hosted dev
   }]);
   classifier.setWarningOccurrences([
     { message: gl, caseName: "gl", phase: "winning-generation-readiness", source: "Log.entryAdded" },
-    { message: gl.replace("3a6c", "3A6D"), caseName: "gl", phase: "winning-generation-readiness", source: "Log.entryAdded" },
+    { message: gl, caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
     { message: gl, caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
     { message: gl + " (this message will no longer repeat)", caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
     { message: "browser log warning: WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost", caseName: "wg", phase: "stale-generation-release", source: "Log.entryAdded" },
@@ -742,12 +1002,20 @@ test("adapter proof warning classifier accepts the exact nine-warning hosted dev
   assert.equal(classified.total, 9);
   assert.equal(classified.allowed.length, 9);
   assert.equal(classified.unexpected.length, 0);
-  const reasons = Array.from(classified.allowed, (entry) => entry.classification.reason);
-  assert.equal(reasons.filter((reason) => reason === "accepted-gl-capture-readpixels-warning").length, 4);
-  assert.equal(reasons.filter((reason) => reason ===
-    "accepted-typed-fallback-device-loss-console-warning").length, 3);
-  assert.equal(reasons.filter((reason) => reason ===
-    "accepted-typed-fallback-device-loss-browser-notice").length, 2);
+  assert.deepEqual(
+    Array.from(classified.allowed, (entry) => entry.classification.reason),
+    [
+      "accepted-gl-capture-readpixels-warning",
+      "accepted-gl-capture-readpixels-warning",
+      "accepted-gl-capture-readpixels-warning",
+      "accepted-gl-capture-readpixels-warning",
+      "accepted-typed-fallback-device-loss-browser-notice",
+      "accepted-typed-fallback-device-loss-console-warning",
+      "accepted-typed-fallback-device-loss-console-warning",
+      "accepted-typed-fallback-device-loss-browser-notice",
+      "accepted-typed-fallback-device-loss-console-warning",
+    ],
+  );
 });
 
 test("adapter proof warning classifier rejects wrong WG device-loss ownership and altered evidence", () => {
@@ -981,6 +1249,57 @@ test("WebGPU browser-proof rejected WG states preserve independent failure recei
   assert.equal(result.webgpuFailureReceipt.classification, "device-lost-after-color-pass");
   assert.equal(result.webgpuFailureReceipt.independentDeviceLoss, true);
   assert.equal(result.webgpuFailureReceipt.mount.fallback, "webgpu-probe-recovered");
+});
+
+test("WebGPU browser proof requires a safe current-case probe-loss counter delta", () => {
+  const buildBaseline = probeLossCountExpressionBuilder();
+  const buildReceipt = failureReceiptExpressionBuilder();
+  const fixture = browserContext();
+  const c = { mount: "scene3d-adapter-hydrate-browser-test", probeLossCountBaseline: 0 };
+
+  const baseline = vm.runInContext(buildBaseline(), fixture.context);
+  assert.deepEqual({ ...baseline }, { valid: true, count: 0 });
+
+  fixture.context.__adapterWGLatestQueue = new fixture.context.GPUQueue();
+  fixture.probe.lostProbeCount = 1;
+  const currentLoss = vm.runInContext(buildReceipt(c, "stale-generation-release"), fixture.context);
+  assert.equal(currentLoss.classification, "device-lost-before-color-pass",
+    "a current-case loss delta must outrank the generic instrumentation mismatch");
+  assert.equal(currentLoss.independentDeviceLoss, true);
+  assert.equal(currentLoss.instrumentedQueueOrDeviceMismatch, true,
+    "loss-first classification must retain mismatch diagnostics");
+  assert.equal(currentLoss.probeLossCountBaseline, 0);
+  assert.equal(currentLoss.probeLossCountDelta, 1);
+
+  const staleCount = vm.runInContext(buildReceipt({ ...c, probeLossCountBaseline: 1 },
+    "stale-generation-release"), fixture.context);
+  assert.equal(staleCount.independentDeviceLoss, false,
+    "an absolute nonzero counter inherited from an earlier case is not current loss evidence");
+  assert.equal(staleCount.probeLossCountDelta, 0);
+  assert.equal(staleCount.classification, "instrumented-queue-or-device-mismatch");
+
+  const inheritedFixture = browserContext();
+  const inheritedProbe = Object.create({ lostProbeCount: 1 });
+  Object.assign(inheritedProbe, inheritedFixture.probe);
+  delete inheritedProbe.lostProbeCount;
+  inheritedFixture.context.__gosx_scene3d_webgpu_probe = () => inheritedProbe;
+  let rejected = vm.runInContext(buildReceipt(c, "stale-generation-release"), inheritedFixture.context);
+  assert.equal(rejected.independentDeviceLoss, false, "an inherited loss counter must fail closed");
+  assert.equal(rejected.probe.lostProbeCount, null);
+
+  const accessorFixture = browserContext();
+  Object.defineProperty(accessorFixture.probe, "lostProbeCount", { configurable: true, get() { return 1; } });
+  rejected = vm.runInContext(buildReceipt(c, "stale-generation-release"), accessorFixture.context);
+  assert.equal(rejected.independentDeviceLoss, false, "an accessor loss counter must fail closed");
+  assert.equal(rejected.probe.lostProbeCount, null);
+
+  for (const value of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "1", null]) {
+    const malformedFixture = browserContext();
+    malformedFixture.probe.lostProbeCount = value;
+    const malformed = vm.runInContext(buildReceipt(c, "stale-generation-release"), malformedFixture.context);
+    assert.equal(malformed.independentDeviceLoss, false, "malformed counter " + String(value));
+    assert.equal(malformed.probeLossCountDelta, 0, "malformed counter delta " + String(value));
+  }
 });
 
 test("WebGPU browser-proof failure receipt survives a timeout and classifies observable causes", async () => {
