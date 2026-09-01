@@ -2000,10 +2000,13 @@ function fileSize(relativePath) {
 // only inside bootstrap-runtime.js's/bootstrap-lite.js's shared budgets
 // above.
 //
-// gosx#217 review follow-up: hub-identity scoping, page-wide cue mute,
-// and the region-key/-cursor validation. Measured: 88_076. Cap set with
-// narrow rounding headroom.
-const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 88_500 };
+// gosx#212 reorder hardening: the auto-scroll target search (nearest
+// scrollable ancestor, viewport-measured edge zones), the pointer
+// activation distance and touch hold, the cached-rect/one-frame pointer
+// loop, keyboard scroll-into-view, the pendingManagedForms guard on the
+// reorder POST, the failure toast, and the ARIA 1.2 handle preparation.
+// Measured: 92_893. Cap set with narrow rounding headroom.
+const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 93_200 };
 
 test("navigation-runtime.min.js stays within its own raw size budget", () => {
   const raw = fileSize(navigationRuntimeMinBudget.file);

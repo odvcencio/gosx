@@ -15,6 +15,7 @@ const {
   runScript,
   flushAsyncWork,
   installManualTimers,
+  installManualRAF,
 } = require("./runtime-test-harness.js");
 
 function reorderRuntime(env) {
@@ -79,6 +80,13 @@ async function keydown(env, target, key) {
   env.document.dispatchEvent(event);
   await flushAsyncWork();
   return event;
+}
+
+// plainCopy re-homes an object the runtime created inside its own vm
+// context. assert/strict compares prototypes, and a cross-realm object has a
+// different Object.prototype than this file does.
+function plainCopy(value) {
+  return Object.assign({}, value);
 }
 
 function lastAnnouncement(env) {
@@ -177,7 +185,7 @@ test("reorderTargetIndex: scrolled container coordinates", () => {
 
 // --- setup / handle discovery --------------------------------------------
 
-test("a handle is prepared once: tabindex, role, aria-grabbed, touch-action", async () => {
+test("a dedicated handle is prepared once: tabindex, role, aria-pressed, touch-action", async () => {
   const env = createContext({ elements: [] });
   runScript(navigationSource, env.context, "navigation_runtime.js");
   const { items } = buildList(env, 3, { handle: true });
@@ -187,7 +195,9 @@ test("a handle is prepared once: tabindex, role, aria-grabbed, touch-action", as
 
   assert.equal(handle.getAttribute("tabindex"), "0");
   assert.equal(handle.getAttribute("role"), "button");
-  assert.equal(handle.getAttribute("aria-grabbed"), "true");
+  assert.equal(handle.getAttribute("aria-pressed"), "true");
+  assert.equal(handle.getAttribute("data-gosx-reorder-grabbed"), "true");
+  assert.equal(handle.getAttribute("aria-grabbed"), null, "aria-grabbed was removed in ARIA 1.2");
   assert.equal(handle.style.touchAction, "none");
   assert.equal(handle.getAttribute("data-gosx-reorder-handle-ready"), "true");
 });
@@ -195,9 +205,9 @@ test("a handle is prepared once: tabindex, role, aria-grabbed, touch-action", as
 test("every handle is tabbable from page load, with no prior pointer or keydown", () => {
   // A keyboard-only user's first touch on a never-interacted-with handle is
   // Tab, not Space/Enter/pointerdown — none of which have fired yet. Every
-  // handle must already be in the tab order (and carry aria-grabbed) by the
-  // time the runtime finishes loading, not only after prepareReorderHandle's
-  // own lazy, event-driven path runs.
+  // handle must already be in the tab order (and carry its grab state and its
+  // instructions) by the time the runtime finishes loading, not only after
+  // prepareReorderHandle's own lazy, event-driven path runs.
   const env = createContext({ elements: [] });
   runScript(navigationSource, env.context, "navigation_runtime.js");
   const { items } = buildList(env, 3, { handle: true });
@@ -212,9 +222,74 @@ test("every handle is tabbable from page load, with no prior pointer or keydown"
   for (const item of items) {
     const handle = item.__handle;
     assert.equal(handle.getAttribute("tabindex"), "0", "handle is in the tab order");
-    assert.equal(handle.getAttribute("aria-grabbed"), "false");
+    assert.equal(handle.getAttribute("aria-pressed"), "false");
+    assert.equal(handle.getAttribute("data-gosx-reorder-grabbed"), "false");
     assert.equal(handle.style.touchAction, "none");
   }
+});
+
+test("a11y: every handle points aria-describedby at one shared instructions node", () => {
+  const env = createContext({ elements: [] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { items } = buildList(env, 3, { handle: true });
+  env.document.dispatchEvent({ type: "gosx:navigate", detail: {} });
+
+  const instructions = env.document.querySelector("[data-gosx-reorder-instructions]");
+  assert.ok(instructions, "the runtime creates a pre-interaction instructions node");
+  assert.equal(instructions.getAttribute("id"), "gosx-reorder-instructions");
+  assert.match(instructions.textContent, /arrow up and arrow down/i);
+
+  for (const item of items) {
+    assert.equal(item.__handle.getAttribute("aria-describedby"), "gosx-reorder-instructions");
+  }
+
+  // One node for the whole page, however many handles point at it.
+  assert.equal(
+    env.document.querySelectorAll("[data-gosx-reorder-instructions]").length,
+    1,
+  );
+});
+
+test("a11y: a whole-item handle gets no button role, no roledescription, and no touch-action", () => {
+  // An item that acts as its own handle is not a button: stamping role and
+  // aria-roledescription on it flattens everything inside the row into one
+  // "Sortable item button". touch-action: none on the whole row would kill
+  // native list scrolling for every finger that lands on it.
+  const env = createContext({ elements: [] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { items } = buildList(env, 3, {});
+  env.document.dispatchEvent({ type: "gosx:navigate", detail: {} });
+
+  for (const item of items) {
+    assert.equal(item.getAttribute("tabindex"), "0", "still reachable by keyboard");
+    assert.equal(item.getAttribute("aria-describedby"), "gosx-reorder-instructions");
+    assert.equal(item.getAttribute("role"), null);
+    assert.equal(item.getAttribute("aria-roledescription"), null);
+    assert.equal(item.getAttribute("aria-pressed"), null);
+    assert.equal(item.style.touchAction, undefined, "the row keeps native scrolling");
+  }
+});
+
+test("a11y: the live region turns assertive for a gesture and polite again after it", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/api/board/reorder": { text: JSON.stringify({ ok: true }) },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { items } = buildList(env, 3, { handle: true });
+  const handle = items[0].__handle;
+
+  await keydown(env, handle, " ");
+  const region = env.document.querySelector("[data-gosx-announcer]");
+  assert.equal(region.getAttribute("aria-live"), "assertive", "move feedback must not queue behind other speech");
+
+  await keydown(env, handle, "ArrowDown");
+  assert.equal(region.getAttribute("aria-live"), "assertive");
+
+  await keydown(env, handle, " ");
+  assert.equal(region.getAttribute("aria-live"), "polite", "ordinary navigation announcements stay polite");
 });
 
 // --- keyboard path ---------------------------------------------------------
@@ -263,7 +338,7 @@ test("keyboard: grab, move, drop announces each step and reorders the DOM", asyn
   assert.equal(lastAnnouncement(env), "Dropped Item 0 at position 3 of 3.");
   assert.equal(container.getAttribute("class"), "", "the dragging class is removed on drop");
   assert.equal(items[0].getAttribute("class"), "", "the grabbed class is removed on drop");
-  assert.equal(handle.getAttribute("aria-grabbed"), "false");
+  assert.equal(handle.getAttribute("aria-pressed"), "false");
 
   await flushAsyncWork();
 
@@ -298,7 +373,7 @@ test("keyboard: escape cancels and restores the original order with no submissio
     ["item-0", "item-1", "item-2"],
   );
   assert.equal(lastAnnouncement(env), "Reorder cancelled.");
-  assert.equal(handle.getAttribute("aria-grabbed"), "false");
+  assert.equal(handle.getAttribute("aria-pressed"), "false");
   assert.equal(container.getAttribute("class"), "");
   assert.equal(env.fetchCalls.length, 0, "cancel never submits the managed action");
 });
@@ -382,7 +457,7 @@ test("keyboard: a second grab is blocked while a submission is in flight", async
   // queue) — the list must not change and no second request is issued.
   const orderBeforeSecondAttempt = container.children.map((c) => c.getAttribute("data-gosx-reorder-item"));
   await keydown(env, second, " ");
-  assert.equal(second.getAttribute("aria-grabbed"), "false", "the blocked grab never took hold");
+  assert.equal(second.getAttribute("aria-pressed"), "false", "the blocked grab never took hold");
   assert.deepEqual(
     container.children.map((c) => c.getAttribute("data-gosx-reorder-item")),
     orderBeforeSecondAttempt,
@@ -395,7 +470,7 @@ test("keyboard: a second grab is blocked while a submission is in flight", async
 
   // Now that the first submission has settled, a grab is accepted again.
   await keydown(env, second, " ");
-  assert.equal(second.getAttribute("aria-grabbed"), "true");
+  assert.equal(second.getAttribute("aria-pressed"), "true");
 });
 
 test("missing data-gosx-reorder-action never throws and never submits", async () => {
@@ -537,16 +612,23 @@ test("pointer: drag down past a sibling's midpoint reorders on drop and posts th
     preventDefault() {},
   });
 
+  // pointerdown alone is a PRESS, not a drag: nothing is lifted, no
+  // placeholder exists, and the list is untouched until the pointer travels
+  // the activation distance.
+  assert.equal(container.getAttribute("class"), null, "a press does not lift anything");
+  assert.equal(container.children.some((c) => c.hasAttribute("data-gosx-reorder-placeholder")), false);
+
+  // Drag the pointer down past item[2]'s midpoint (100). This crosses the
+  // activation distance, which starts the drag, and the transform is measured
+  // from the original pointerdown position.
+  handle.dispatchEvent({ type: "pointermove", pointerId, clientY: 105 });
   assert.equal(container.getAttribute("class"), "gosx-reorder--dragging");
   assert.equal(items[0].getAttribute("class"), "gosx-reorder-item--lifted");
+  assert.equal(items[0].style.transform, "translateY(85px)");
 
   const placeholder = container.children.find((c) => c.hasAttribute("data-gosx-reorder-placeholder"));
   assert.ok(placeholder, "a placeholder clone marks the vacated slot");
   assert.equal(placeholder.getAttribute("aria-hidden"), "true");
-
-  // Drag the pointer down past item[2]'s midpoint (100).
-  handle.dispatchEvent({ type: "pointermove", pointerId, clientY: 105 });
-  assert.equal(items[0].style.transform, "translateY(85px)");
 
   handle.dispatchEvent({ type: "pointerup", pointerId, clientY: 105 });
 
@@ -674,5 +756,437 @@ test("pointer: Escape is ignored with no active pointer drag, so a keyboard grab
 
   // The handle is still perfectly usable afterward.
   await keydown(env, handle, " ");
-  assert.equal(handle.getAttribute("aria-grabbed"), "true");
+  assert.equal(handle.getAttribute("aria-pressed"), "true");
+});
+
+// --- auto-scroll target selection -------------------------------------------
+
+// pointerDown and pointerMove keep the touch and mouse pointer tests below
+// symmetric: the ONLY difference between the two is pointerType, which is
+// exactly the difference the runtime branches on.
+function pointerDown(env, handle, options) {
+  const opts = options || {};
+  const event = {
+    type: "pointerdown",
+    target: handle,
+    pointerId: opts.pointerId != null ? opts.pointerId : 1,
+    pointerType: opts.pointerType || "mouse",
+    button: 0,
+    isPrimary: true,
+    clientX: opts.clientX != null ? opts.clientX : 10,
+    clientY: opts.clientY != null ? opts.clientY : 20,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+  env.document.dispatchEvent(event);
+  return event;
+}
+
+function pointerMove(handle, options) {
+  const opts = options || {};
+  handle.dispatchEvent({
+    type: "pointermove",
+    pointerId: opts.pointerId != null ? opts.pointerId : 1,
+    clientX: opts.clientX != null ? opts.clientX : 10,
+    clientY: opts.clientY,
+  });
+}
+
+function makeScrollable(element, clientHeight, scrollHeight) {
+  element.computedStyle = { overflowY: "auto" };
+  element.clientHeight = clientHeight;
+  element.scrollHeight = scrollHeight;
+  element.scrollTop = 0;
+  return element;
+}
+
+test("auto-scroll: the target is the nearest scrollable ancestor, not the container", () => {
+  const env = createContext({ elements: [] });
+  env.context.innerHeight = 800;
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const reorder = reorderRuntime(env);
+
+  const pane = new FakeElement("div", null);
+  env.document.body.appendChild(pane);
+  const { container } = buildListElements(3, { handle: true });
+  pane.appendChild(container);
+  makeScrollable(pane, 400, 4000);
+  withRect(pane, { top: 120, bottom: 520, height: 400 });
+  // The container itself is far taller than the screen — the shape that made
+  // the old container-rect edge zones unreachable.
+  withRect(container, { top: 120, bottom: 4120, height: 4000 });
+
+  const target = reorder.scrollTargetForContainer(container);
+  assert.equal(target.element, pane, "the scrolling pane is what a drag scrolls");
+  assert.equal(target.page, false);
+
+  const view = plainCopy(reorder.scrollViewRectForContainer(container));
+  assert.deepEqual(view, { top: 120, bottom: 520, height: 400 }, "edge zones live on the pane's visible box");
+});
+
+test("auto-scroll: a pane that declares overflow but has nothing to scroll is skipped", () => {
+  const env = createContext({ elements: [] });
+  env.context.innerHeight = 800;
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const reorder = reorderRuntime(env);
+
+  const pane = new FakeElement("div", null);
+  env.document.body.appendChild(pane);
+  const { container } = buildListElements(3, { handle: true });
+  pane.appendChild(container);
+  // overflow: auto, but the content fits: this element scrolls nothing.
+  makeScrollable(pane, 400, 400);
+
+  const target = reorder.scrollTargetForContainer(container);
+  assert.equal(target.page, true, "the search keeps walking up to the page scroller");
+  assert.equal(target.element, env.document.documentElement);
+});
+
+test("auto-scroll: with no scrollable ancestor the edge zones are the viewport", () => {
+  // This is the phone case data-gosx-reorder exists for: a 100-row board in
+  // the normal document flow, taller than the screen, scrolled by the window.
+  // Measuring the edge zones against the CONTAINER put both of them off
+  // screen, where no finger could ever reach them.
+  const env = createContext({ elements: [] });
+  env.context.innerHeight = 640;
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const reorder = reorderRuntime(env);
+
+  const { container } = buildList(env, 3, { handle: true });
+  withRect(container, { top: -2400, bottom: 3600, height: 6000 });
+
+  const target = reorder.scrollTargetForContainer(container);
+  assert.equal(target.page, true);
+
+  const view = plainCopy(reorder.scrollViewRectForContainer(container));
+  assert.deepEqual(view, { top: 0, bottom: 640, height: 640 });
+
+  // A finger near the bottom of the SCREEN scrolls down, which the old
+  // container-rect measurement could never report.
+  assert.ok(reorder.autoScrollDeltaForPointer(630, view) > 0);
+  assert.ok(reorder.autoScrollDeltaForPointer(10, view) < 0);
+  assert.equal(reorder.autoScrollDeltaForPointer(320, view), 0, "the middle of the screen is a dead zone");
+});
+
+test("auto-scroll: a scrollable pane's rect is clipped to the viewport", () => {
+  const env = createContext({ elements: [] });
+  env.context.innerHeight = 600;
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const reorder = reorderRuntime(env);
+
+  const pane = new FakeElement("div", null);
+  env.document.body.appendChild(pane);
+  const { container } = buildListElements(3, { handle: true });
+  pane.appendChild(container);
+  makeScrollable(pane, 1200, 9000);
+  // The pane starts above the fold and ends below it: only the middle band is
+  // reachable by a pointer, so only the middle band can hold an edge zone.
+  withRect(pane, { top: -300, bottom: 900, height: 1200 });
+
+  assert.deepEqual(
+    plainCopy(reorder.scrollViewRectForContainer(container)),
+    { top: 0, bottom: 600, height: 600 },
+  );
+});
+
+test("auto-scroll: a drag near the bottom of the screen scrolls the page scroller", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  env.context.innerHeight = 600;
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const { container, items } = buildList(env, 3, { handle: true });
+  withRect(container, { top: 0, bottom: 4000, height: 4000 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+  const scroller = env.document.documentElement;
+  scroller.scrollTop = 0;
+
+  const handle = items[0].__handle;
+  pointerDown(env, handle, { pointerId: 5, clientY: 20 });
+  pointerMove(handle, { pointerId: 5, clientY: 595 });
+
+  timers.runInterval(16);
+  assert.ok(scroller.scrollTop > 0, "the page scroller moved down");
+  const afterOneTick = scroller.scrollTop;
+  timers.runInterval(16);
+  assert.ok(scroller.scrollTop > afterOneTick, "each tick keeps scrolling while the finger stays at the edge");
+
+  // A finger back in the dead zone stops the scroll instead of drifting.
+  pointerMove(handle, { pointerId: 5, clientY: 300 });
+  const beforeIdleTick = scroller.scrollTop;
+  timers.runInterval(16);
+  assert.equal(scroller.scrollTop, beforeIdleTick);
+
+  handle.dispatchEvent({ type: "pointercancel", pointerId: 5 });
+  await flushAsyncWork();
+});
+
+test("auto-scroll: a container may widen or slow its own edge zones", () => {
+  const env = createContext({ elements: [] });
+  env.context.innerHeight = 600;
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const reorder = reorderRuntime(env);
+  const view = { top: 0, bottom: 600, height: 600 };
+
+  // The two overrides are read straight off the container by the drag; the
+  // pure function takes them as arguments so both can be checked here.
+  assert.equal(reorder.autoScrollDeltaForPointer(500, view), 0, "outside the default 48px zone");
+  assert.ok(reorder.autoScrollDeltaForPointer(500, view, 200, 18) > 0, "inside a 200px zone");
+  assert.equal(reorder.autoScrollDeltaForPointer(600, view, 200, 4), 4, "a slower cap is honored");
+});
+
+// --- activation constraint ---------------------------------------------------
+
+test("activation: a tap never grabs and never submits", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, { handle: true });
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  const handle = items[0].__handle;
+
+  pointerDown(env, handle, { pointerId: 2, clientY: 20 });
+  // Two pixels of jitter is a tap, not a drag.
+  pointerMove(handle, { pointerId: 2, clientY: 22 });
+  handle.dispatchEvent({ type: "pointerup", pointerId: 2, clientY: 22 });
+  await flushAsyncWork();
+
+  assert.equal(container.getAttribute("class"), null, "nothing was ever lifted");
+  assert.equal(container.children.some((c) => c.hasAttribute("data-gosx-reorder-placeholder")), false);
+  assert.equal(items[0].getAttribute("data-gosx-reorder-grabbed"), null);
+  assert.equal(env.fetchCalls.length, 0);
+  assert.equal(handle._capturedPointerID, null, "the press released the pointer it captured");
+});
+
+test("touch: a dedicated handle drags on the same 5px activation as a mouse", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/api/board/reorder": { text: JSON.stringify({ ok: true }) },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, { handle: true });
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+
+  const handle = items[0].__handle;
+  const down = pointerDown(env, handle, { pointerId: 11, pointerType: "touch", clientY: 20 });
+  assert.equal(down.defaultPrevented, true, "a dedicated handle owns the gesture from pointerdown");
+
+  pointerMove(handle, { pointerId: 11, clientY: 105 });
+  assert.equal(container.getAttribute("class"), "gosx-reorder--dragging", "no hold is required on a real handle");
+
+  handle.dispatchEvent({ type: "pointerup", pointerId: 11, clientY: 105 });
+  await flushAsyncWork();
+
+  assert.deepEqual(
+    container.children.map((c) => c.getAttribute("data-gosx-reorder-item")),
+    ["item-1", "item-2", "item-0"],
+  );
+  assert.equal(env.fetchCalls.length, 1);
+});
+
+test("touch: a whole-item row scrolls natively and only drags after a hold", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/api/board/reorder": { text: JSON.stringify({ ok: true }) },
+    },
+  });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, {});
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+
+  const row = items[0];
+  const down = pointerDown(env, row, { pointerId: 21, pointerType: "touch", clientY: 20 });
+  assert.equal(down.defaultPrevented, false, "the browser keeps its scroll gesture on a whole-item row");
+  assert.equal(row.style.touchAction, undefined);
+
+  // A finger that moves before the hold elapses is scrolling the list.
+  pointerMove(row, { pointerId: 21, clientY: 90 });
+  assert.equal(container.getAttribute("class"), null, "a scroll never became a drag");
+  assert.equal(row._capturedPointerID, null, "the pointer went back to the browser");
+
+  timers.runDelay(250);
+  assert.equal(container.getAttribute("class"), null, "an abandoned press cannot lift later");
+
+  // A finger held still through the hold lifts the row instead.
+  pointerDown(env, row, { pointerId: 22, pointerType: "touch", clientY: 20 });
+  assert.equal(container.getAttribute("class"), null, "still only a press");
+  timers.runDelay(250);
+  await flushAsyncWork();
+  assert.equal(container.getAttribute("class"), "gosx-reorder--dragging", "the hold lifted the row");
+  assert.equal(row.getAttribute("data-gosx-reorder-grabbed"), "true");
+
+  pointerMove(row, { pointerId: 22, clientY: 105 });
+  row.dispatchEvent({ type: "pointerup", pointerId: 22, clientY: 105 });
+  await flushAsyncWork();
+  assert.deepEqual(
+    container.children.map((c) => c.getAttribute("data-gosx-reorder-item")),
+    ["item-1", "item-2", "item-0"],
+  );
+});
+
+test("touch: a whole-item row under a MOUSE needs no hold", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, {});
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+
+  const row = items[0];
+  pointerDown(env, row, { pointerId: 31, pointerType: "mouse", clientY: 20 });
+  pointerMove(row, { pointerId: 31, clientY: 105 });
+  assert.equal(container.getAttribute("class"), "gosx-reorder--dragging");
+  assert.equal(timers.count(), 1, "a mouse press arms no hold timer, only the scroll interval");
+
+  row.dispatchEvent({ type: "pointercancel", pointerId: 31 });
+  await flushAsyncWork();
+});
+
+test("touch: pointercancel during the hold gives the gesture back to the browser", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, {});
+  const row = items[0];
+
+  pointerDown(env, row, { pointerId: 41, pointerType: "touch", clientY: 20 });
+  row.dispatchEvent({ type: "pointercancel", pointerId: 41 });
+  timers.runDelay(250);
+  await flushAsyncWork();
+
+  assert.equal(container.getAttribute("class"), null);
+  assert.equal(row._capturedPointerID, null);
+  assert.equal(lastAnnouncement(env), "", "a press that never lifted announces nothing");
+});
+
+// --- frame budget --------------------------------------------------------------
+
+test("performance: pointermove never measures; a frame measures at most once", () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  const frames = installManualRAF(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, { handle: true });
+
+  let measurements = 0;
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  const rects = [
+    { top: 0, height: 40, bottom: 40 },
+    { top: 40, height: 40, bottom: 80 },
+    { top: 80, height: 40, bottom: 120 },
+  ];
+  items.forEach((item, index) => {
+    item.getBoundingClientRect = () => {
+      measurements += 1;
+      return rects[index];
+    };
+  });
+
+  const handle = items[0].__handle;
+  pointerDown(env, handle, { pointerId: 51, clientY: 20 });
+  pointerMove(handle, { pointerId: 51, clientY: 30 });
+  const afterLift = measurements;
+  assert.ok(afterLift > 0, "the drag measures once when it starts");
+
+  // A finger delivers moves far faster than the display refreshes. None of
+  // them may read layout.
+  for (let y = 40; y <= 120; y += 10) {
+    pointerMove(handle, { pointerId: 51, clientY: y });
+  }
+  assert.equal(measurements, afterLift, "no pointermove reads layout");
+  assert.equal(items[0].style.transform, "translateY(100px)", "the lifted item still tracks every move");
+  assert.equal(frames.count(), 1, "however many moves arrive, one frame is scheduled");
+
+  frames.flush();
+  assert.equal(measurements, afterLift, "the frame decides from the rects it already holds");
+  const placeholder = container.children[container.children.length - 1];
+  assert.ok(placeholder.hasAttribute("data-gosx-reorder-placeholder"), "the frame moved the placeholder to the end");
+
+  // Moving the placeholder is the ONE event that shifts every sibling, so the
+  // next frame — and only the next frame — re-reads layout.
+  pointerMove(handle, { pointerId: 51, clientY: 121 });
+  frames.flush();
+  assert.ok(measurements > afterLift, "a placeholder move invalidates the cached rects");
+  const afterInvalidation = measurements;
+
+  // The placeholder did not move that time, so nothing is stale.
+  pointerMove(handle, { pointerId: 51, clientY: 122 });
+  frames.flush();
+  assert.equal(measurements, afterInvalidation, "a frame with no placeholder move re-reads nothing");
+
+  handle.dispatchEvent({ type: "pointercancel", pointerId: 51 });
+});
+
+test("performance: a drop lands where the finger was, even inside one frame", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/api/board/reorder": { text: JSON.stringify({ ok: true }) },
+    },
+  });
+  installManualRAF(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, { handle: true });
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+
+  // Press, flick to the end, and release without ever letting a frame run.
+  const handle = items[0].__handle;
+  pointerDown(env, handle, { pointerId: 61, clientY: 20 });
+  pointerMove(handle, { pointerId: 61, clientY: 105 });
+  handle.dispatchEvent({ type: "pointerup", pointerId: 61, clientY: 105 });
+  await flushAsyncWork();
+
+  assert.deepEqual(
+    container.children.map((c) => c.getAttribute("data-gosx-reorder-item")),
+    ["item-1", "item-2", "item-0"],
+  );
+  const body = new URLSearchParams(env.fetchCalls[0].init.body.toString());
+  assert.equal(body.get("index"), "2");
+});
+
+// --- keyboard visibility ---------------------------------------------------------
+
+test("keyboard: every move scrolls the item into view and returns focus to the handle", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { items } = buildList(env, 4, { handle: true });
+  const item = items[0];
+  const handle = item.__handle;
+
+  await keydown(env, handle, " ");
+  const focusesAfterGrab = handle.focusCalls.length;
+
+  await keydown(env, handle, "ArrowDown");
+  assert.equal(item.scrollIntoViewCalls.length, 1);
+  assert.deepEqual(plainCopy(item.scrollIntoViewCalls[0][0]), { block: "nearest", inline: "nearest" });
+  assert.equal(handle.focusCalls.length, focusesAfterGrab + 1, "moving the node dropped focus, so the move restores it");
+  assert.deepEqual(plainCopy(handle.focusCalls[handle.focusCalls.length - 1][0]), { preventScroll: true });
+
+  await keydown(env, handle, "ArrowDown");
+  assert.equal(item.scrollIntoViewCalls.length, 2);
+  assert.equal(handle.focusCalls.length, focusesAfterGrab + 2);
+
+  // A refused move — already at the end of the list — scrolls nothing.
+  await keydown(env, handle, "ArrowUp");
+  await keydown(env, handle, "ArrowUp");
+  const scrollsAtTop = item.scrollIntoViewCalls.length;
+  await keydown(env, handle, "ArrowUp");
+  assert.equal(item.scrollIntoViewCalls.length, scrollsAtTop);
 });

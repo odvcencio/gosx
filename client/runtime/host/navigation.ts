@@ -80,12 +80,33 @@
   const REORDER_PLACEHOLDER_CLASS = "gosx-reorder-item--placeholder";
   const REORDER_GRABBED_CLASS = "gosx-reorder-item--grabbed";
   // The auto-scroll edge zone, in CSS pixels measured inward from each end of
-  // the container's own border box, and the fastest scroll speed a pointer
+  // the SCROLL VIEW — the visible rect of whatever element the drag scrolls
+  // (see reorderScrollTarget/reorderScrollViewRect below), never the
+  // container's own border box — and the fastest scroll speed a pointer
   // pinned at the very edge of that zone reaches (pixels per tick — see
-  // REORDER_AUTOSCROLL_TICK_MS below).
+  // REORDER_AUTOSCROLL_TICK_MS below). A page may override both per container
+  // with REORDER_SCROLL_EDGE_ATTR and REORDER_SCROLL_SPEED_ATTR.
   const REORDER_AUTOSCROLL_EDGE_PX = 48;
   const REORDER_AUTOSCROLL_MAX_PX = 18;
   const REORDER_AUTOSCROLL_TICK_MS = 16;
+  const REORDER_SCROLL_EDGE_ATTR = "data-gosx-reorder-scroll-edge";
+  const REORDER_SCROLL_SPEED_ATTR = "data-gosx-reorder-scroll-speed";
+  // A pointer press becomes a drag only after it travels this far, in CSS
+  // pixels. Below it the press is a tap or a click, and the page keeps it.
+  const REORDER_ACTIVATION_PX = 5;
+  // A whole-item handle (no declared REORDER_HANDLE_ATTR anywhere in the
+  // item) under a non-mouse pointer must be held still for this long before
+  // the drag starts. See prepareReorderHandle for why that case cannot use
+  // touch-action: none.
+  const REORDER_TOUCH_HOLD_MS = 250;
+  // REORDER_GRABBED_ATTR replaces aria-grabbed, which ARIA 1.2 removed. It is
+  // a styling and testing hook, not an accessibility one: the live region and
+  // REORDER_INSTRUCTIONS_ID below carry the state to assistive technology.
+  const REORDER_GRABBED_ATTR = "data-gosx-reorder-grabbed";
+  const REORDER_INSTRUCTIONS_ATTR = "data-gosx-reorder-instructions";
+  const REORDER_INSTRUCTIONS_ID = "gosx-reorder-instructions";
+  const REORDER_INSTRUCTIONS_TEXT = "Press space or enter to pick this item up. "
+    + "Use arrow up and arrow down to move it. Press space to drop it, escape to cancel.";
   // Live-bound text regions (data-gosx-live-*, gosx#217). See "Live-bound
   // regions" below for the full contract; these are the attribute
   // constants it reads.
@@ -4979,10 +5000,10 @@
   // soft-navigation DOM swap with nothing to re-scan — the delegated
   // listener reads live attributes off whatever element the event landed
   // on, on every event, forever. Handle PREPARATION (tabindex, role,
-  // aria-grabbed, touch-action) is the one piece that cannot wait for a
-  // first interaction — see prepareAllReorderHandles below, called on page
-  // load and after every soft navigation the same way actions.ts's own
-  // refreshBindings is.
+  // aria-describedby instructions, touch-action) is the one piece that cannot
+  // wait for a first interaction — see prepareAllReorderHandles below, called
+  // on page load and after every soft navigation the same way actions.ts's
+  // own refreshBindings is.
   //
   // Only one reorder gesture — pointer or keyboard — is ever active at a
   // time across the whole page; a grab attempt while one is already active,
@@ -5153,11 +5174,74 @@
     return { handle: item, item: item, container: container };
   }
 
+  // ensureReorderInstructions creates the one shared, visually hidden node
+  // every prepared handle points aria-describedby at. Pre-interaction
+  // instructions are the difference between a screen-reader user knowing the
+  // list is sortable and discovering it by accident: the grab announcement
+  // arrives only AFTER a grab, which is too late to be an instruction.
+  //
+  // It uses the off-screen clip technique rather than the `hidden` attribute
+  // because engines disagree about exposing `hidden` text through
+  // aria-describedby; off-screen text is exposed by all of them.
+  function ensureReorderInstructions() {
+    const existing = findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(REORDER_INSTRUCTIONS_ATTR);
+    });
+    if (existing) return existing;
+    const node = document.createElement("div");
+    node.setAttribute(REORDER_INSTRUCTIONS_ATTR, "");
+    node.setAttribute("id", REORDER_INSTRUCTIONS_ID);
+    node.setAttribute("style", "position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;");
+    node.textContent = REORDER_INSTRUCTIONS_TEXT;
+    document.body.appendChild(node);
+    return node;
+  }
+
+  function describeReorderHandle(handle) {
+    if (!handle || !handle.setAttribute || !ensureReorderInstructions()) return;
+    const current = String(handle.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    if (current.indexOf(REORDER_INSTRUCTIONS_ID) < 0) {
+      current.push(REORDER_INSTRUCTIONS_ID);
+      handle.setAttribute("aria-describedby", current.join(" "));
+    }
+  }
+
+  // setReorderAnnouncerUrgency raises the shared navigation live region to
+  // assertive for the length of a gesture. A polite region queues behind
+  // whatever the screen reader is already reading, so "Moved to position 7 of
+  // 100" can arrive several arrow presses late — useless feedback for a
+  // gesture the user is steering right now. Raising the SHARED region rather
+  // than adding a second one keeps every message on one channel: two live
+  // regions holding the same text is a double announcement.
+  function setReorderAnnouncerUrgency(assertive) {
+    const region = ensureNavigationAnnouncer();
+    if (region && region.setAttribute) {
+      region.setAttribute("aria-live", assertive ? "assertive" : "polite");
+    }
+  }
+
+  // setReorderGrabbed records the lifted state. aria-grabbed is deliberately
+  // NOT written: ARIA 1.2 removed it, and no current screen reader acts on
+  // it. The state reaches assistive technology through the assertive live
+  // region instead, and through aria-pressed on a dedicated handle, which
+  // really is a toggle button. REORDER_GRABBED_ATTR is the styling and
+  // testing hook that replaces the attribute's old double duty.
+  function setReorderGrabbed(handle, grabbed) {
+    if (handle && handle.setAttribute) {
+      handle.setAttribute(REORDER_GRABBED_ATTR, grabbed ? "true" : "false");
+      if (String(handle.getAttribute("role") || "") === "button") {
+        handle.setAttribute("aria-pressed", grabbed ? "true" : "false");
+      }
+    }
+    setReorderAnnouncerUrgency(grabbed);
+  }
+
   // prepareReorderHandle runs the first time a handle is ever resolved
   // (pointer or keyboard), not on every scan — REORDER_HANDLE_READY_ATTR
   // marks it done. It never runs twice for the same element, even across a
-  // soft navigation that leaves the element in place.
-  function prepareReorderHandle(handle) {
+  // soft navigation that leaves the element in place. `explicitHandle` is
+  // false when the item declares no handle and therefore acts as its own.
+  function prepareReorderHandle(handle, explicitHandle) {
     if (!handle || (handle.hasAttribute && handle.hasAttribute(REORDER_HANDLE_READY_ATTR))) {
       return;
     }
@@ -5165,24 +5249,41 @@
     if (!handle.hasAttribute("tabindex")) {
       handle.setAttribute("tabindex", "0");
     }
-    if (!handle.hasAttribute("role")) {
-      handle.setAttribute("role", "button");
+    if (explicitHandle) {
+      if (!handle.hasAttribute("role")) {
+        handle.setAttribute("role", "button");
+      }
+      if (!handle.hasAttribute("aria-roledescription")) {
+        handle.setAttribute("aria-roledescription", "Sortable item");
+      }
+      handle.setAttribute("aria-pressed", "false");
+      // touch-action: none is required so a touch-drag on the handle is not
+      // raced by the browser's own scroll-gesture recognizer before
+      // setPointerCapture can claim the pointer (gosx#212). It is scoped to
+      // the DEDICATED handle element only — every other pixel of the page,
+      // including the rest of a sortable item outside its handle, keeps
+      // native scroll behavior untouched. This is a functional/behavioral
+      // style, not a visual one, so it sits outside the "transform only" rule
+      // that governs REORDER_LIFTED_CLASS positioning below.
+      if (handle.style) {
+        handle.style.touchAction = "none";
+      }
     }
-    if (!handle.hasAttribute("aria-roledescription")) {
-      handle.setAttribute("aria-roledescription", "Sortable item");
-    }
-    handle.setAttribute("aria-grabbed", "false");
-    // touch-action: none is required so a touch-drag on the handle is not
-    // raced by the browser's own scroll-gesture recognizer before
-    // setPointerCapture can claim the pointer (gosx#212). It is scoped to
-    // the handle element only — every other pixel of the page, including
-    // the rest of a sortable item outside its handle, keeps native scroll
-    // behavior untouched. This is a functional/behavioral style, not a
-    // visual one, so it sits outside the "transform only" rule that governs
-    // REORDER_LIFTED_CLASS positioning below.
-    if (handle.style) {
-      handle.style.touchAction = "none";
-    }
+    // A whole-item handle gets NEITHER of the two treatments above, and both
+    // omissions are deliberate:
+    //
+    //   role="button" + aria-roledescription="Sortable item" on a whole row
+    //   flattens everything inside it — its links, its text, its own controls
+    //   — into one "Sortable item button". A dedicated handle is a button; a
+    //   list item that merely happens to be draggable is not.
+    //
+    //   touch-action: none on a whole row kills native scrolling for every
+    //   finger that lands on the list, which on a 100-row board is the whole
+    //   screen. That row is instead dragged through the press-and-hold path
+    //   in openReorderPress: the browser keeps its scroll gesture, and a
+    //   deliberate hold is what claims the pointer for a drag.
+    handle.setAttribute(REORDER_GRABBED_ATTR, "false");
+    describeReorderHandle(handle);
   }
 
   function reorderHandleForItem(item) {
@@ -5204,7 +5305,8 @@
   function prepareAllReorderHandles() {
     for (const container of collectElements(document.body, isReorderContainer)) {
       for (const item of reorderItems(container)) {
-        prepareReorderHandle(reorderHandleForItem(item));
+        const handle = reorderHandleForItem(item);
+        prepareReorderHandle(handle, handle !== item);
       }
     }
   }
@@ -5400,12 +5502,30 @@
       container: container,
       originalParent: item.parentNode,
       originalIndex: toArray(item.parentNode.childNodes).indexOf(item),
+      originalItemIndex: reorderItems(container).indexOf(item),
       releaseRevalidation: suspendRevalidation(),
     };
     addManagedClass(container, REORDER_DRAGGING_CLASS);
     addManagedClass(item, REORDER_GRABBED_CLASS);
-    handle.setAttribute("aria-grabbed", "true");
+    setReorderGrabbed(handle, true);
     announceNavigation(reorderAnnouncement("grab", item, container));
+  }
+
+  // scrollReorderItemIntoView keeps a keyboard-moved item on screen. It asks
+  // for block:"nearest", the minimum scroll that makes the item visible, so a
+  // move inside the viewport scrolls nothing at all. The scroll is instant,
+  // never smooth: one arrow press per 60 ms outruns any smooth scroll, and
+  // the queued animations then fight each other. Instant scrolling is also
+  // what prefers-reduced-motion asks for, so the two agree here.
+  function scrollReorderItemIntoView(item) {
+    if (!item || typeof item.scrollIntoView !== "function") return;
+    try {
+      item.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } catch (_error) {
+      try {
+        item.scrollIntoView(false);
+      } catch (_ignored) {}
+    }
   }
 
   function moveKeyboardReorder(step) {
@@ -5427,6 +5547,12 @@
         state.container.appendChild(state.item);
       }
     }
+    // Order matters. Scroll first, so the item is on screen; focus second,
+    // because moving a node in the DOM drops focus to <body> in every engine
+    // and the next arrow press must still reach the handle. focusElement gets
+    // preventScroll so it cannot undo the scroll just chosen above.
+    scrollReorderItemIntoView(state.item);
+    focusElement(state.handle, true);
     announceNavigation(reorderAnnouncement("move", state.item, state.container));
   }
 
@@ -5436,11 +5562,17 @@
     activeReorderKeyboard = null;
     removeManagedClass(state.container, REORDER_DRAGGING_CLASS);
     removeManagedClass(state.item, REORDER_GRABBED_CLASS);
-    state.handle.setAttribute("aria-grabbed", "false");
+    setReorderGrabbed(state.handle, false);
     state.releaseRevalidation();
     announceNavigation(reorderAnnouncement("drop", state.item, state.container));
     focusElement(state.handle, true);
-    commitReorderResult(state.container, state.item, state.originalParent, state.originalIndex);
+    commitReorderResult(
+      state.container,
+      state.item,
+      state.originalParent,
+      state.originalIndex,
+      state.originalItemIndex,
+    );
   }
 
   function cancelKeyboardReorder() {
@@ -5450,39 +5582,242 @@
     restoreReorderItemPosition(state.item, state.originalParent, state.originalIndex);
     removeManagedClass(state.container, REORDER_DRAGGING_CLASS);
     removeManagedClass(state.item, REORDER_GRABBED_CLASS);
-    state.handle.setAttribute("aria-grabbed", "false");
+    setReorderGrabbed(state.handle, false);
     state.releaseRevalidation();
     announceNavigation("Reorder cancelled.");
+    scrollReorderItemIntoView(state.item);
     focusElement(state.handle, true);
   }
 
   // --- pointer reorder -----------------------------------------------------
 
-  function reorderAutoScrollDelta(clientY, containerRect) {
-    if (!containerRect || containerRect.height <= 0) return 0;
-    if (clientY <= containerRect.top) return -REORDER_AUTOSCROLL_MAX_PX;
-    if (clientY >= containerRect.bottom) return REORDER_AUTOSCROLL_MAX_PX;
-    const topZoneEnd = containerRect.top + REORDER_AUTOSCROLL_EDGE_PX;
-    if (clientY < topZoneEnd) {
-      const depth = (topZoneEnd - clientY) / REORDER_AUTOSCROLL_EDGE_PX;
-      return -Math.max(1, Math.round(depth * REORDER_AUTOSCROLL_MAX_PX));
+  function reorderRectOf(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") return null;
+    const box = node.getBoundingClientRect();
+    if (!box) return null;
+    return { top: box.top, bottom: box.bottom, height: box.bottom - box.top };
+  }
+
+  // reorderScrollableAncestor walks up from `node` (inclusive) to the first
+  // ancestor that genuinely scrolls vertically. "Genuinely" means BOTH tests
+  // pass: the element declares a scrolling overflow, AND its content is
+  // taller than its own box. A container styled `overflow: auto` whose list
+  // happens to fit scrolls nothing, so the search must keep walking to
+  // whatever does. The walk stops at <body>/<html>, whose scrolling is the
+  // page scroll and belongs to reorderScrollTarget's page branch instead.
+  function reorderScrollableAncestor(node) {
+    let current = node;
+    while (current && current.nodeType === 1) {
+      if (current === document.body || current === document.documentElement) {
+        break;
+      }
+      const style = typeof window.getComputedStyle === "function" ? window.getComputedStyle(current) : null;
+      const overflowY = String((style && (style.overflowY || style.overflow)) || "");
+      const scrolls = overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+      const box = Number(current.clientHeight) || 0;
+      const content = Number(current.scrollHeight) || 0;
+      if (scrolls && content > box + 1) {
+        return current;
+      }
+      current = current.parentNode;
     }
-    const bottomZoneStart = containerRect.bottom - REORDER_AUTOSCROLL_EDGE_PX;
+    return null;
+  }
+
+  function reorderViewportHeight() {
+    const inner = Number(window.innerHeight) || 0;
+    if (inner > 0) return inner;
+    return Number(document.documentElement && document.documentElement.clientHeight) || 0;
+  }
+
+  // reorderScrollTarget resolves, once per drag, WHICH element auto-scroll
+  // moves. `page` marks the fallback every ordinary page takes: the list has
+  // no scrollable ancestor of its own, so the thing that scrolls is the
+  // window, driven through document.scrollingElement (the standard, quirks-
+  // mode-safe handle on the page scroller).
+  function reorderScrollTarget(container) {
+    const scroller = reorderScrollableAncestor(container);
+    if (scroller) {
+      return { element: scroller, page: false };
+    }
+    return { element: document.scrollingElement || document.documentElement || document.body || null, page: true };
+  }
+
+  // reorderScrollViewRect measures, in viewport coordinates, the rect the
+  // edge zones are checked against. This is the gosx#212 auto-scroll defect:
+  // the old code measured against the CONTAINER's own border box, so a list
+  // taller than the screen — a 100-row board on a phone, the load profile
+  // this feature exists for — put both edge zones off-screen where no pointer
+  // can ever reach them, and auto-scroll never fired at all. A scrollable
+  // element's box is intersected with the viewport for the same reason: the
+  // part of it below the fold holds no pointer.
+  function reorderScrollViewRect(target, container) {
+    const viewportHeight = reorderViewportHeight();
+    if (!target || target.page) {
+      if (viewportHeight > 0) {
+        return { top: 0, bottom: viewportHeight, height: viewportHeight };
+      }
+      // No viewport measurement (a non-browser embedding, or a document that
+      // has not laid out): the container's own box is a poorer answer than
+      // the viewport, but a better one than refusing to scroll at all.
+      return reorderRectOf(container);
+    }
+    const box = reorderRectOf(target.element);
+    if (!box || viewportHeight <= 0) return box;
+    const top = Math.max(box.top, 0);
+    const bottom = Math.min(box.bottom, viewportHeight);
+    return { top: top, bottom: bottom, height: bottom - top };
+  }
+
+  function reorderScrollNumber(container, attrName, fallback) {
+    const raw = container && container.getAttribute ? container.getAttribute(attrName) : null;
+    const value = Number(String(raw == null ? "" : raw).trim());
+    return isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  // reorderAutoScrollDelta is pure: pointer Y and the scroll view's rect in,
+  // pixels-per-tick out. `edgePx`/`maxPx` are optional overrides; omitting
+  // both keeps the two module defaults, which is what the public
+  // autoScrollDeltaForPointer entry point does.
+  function reorderAutoScrollDelta(clientY, viewRect, edgePx, maxPx) {
+    if (!viewRect || !(viewRect.height > 0)) return 0;
+    const edge = edgePx > 0 ? edgePx : REORDER_AUTOSCROLL_EDGE_PX;
+    const max = maxPx > 0 ? maxPx : REORDER_AUTOSCROLL_MAX_PX;
+    if (clientY <= viewRect.top) return -max;
+    if (clientY >= viewRect.bottom) return max;
+    const topZoneEnd = viewRect.top + edge;
+    if (clientY < topZoneEnd) {
+      const depth = (topZoneEnd - clientY) / edge;
+      return -Math.max(1, Math.round(depth * max));
+    }
+    const bottomZoneStart = viewRect.bottom - edge;
     if (clientY > bottomZoneStart) {
-      const depth = (clientY - bottomZoneStart) / REORDER_AUTOSCROLL_EDGE_PX;
-      return Math.max(1, Math.round(depth * REORDER_AUTOSCROLL_MAX_PX));
+      const depth = (clientY - bottomZoneStart) / edge;
+      return Math.max(1, Math.round(depth * max));
     }
     return 0;
+  }
+
+  // reorderScrollBy writes the new offset through scrollTop, which is how the
+  // page scroller is driven too (document.scrollingElement.scrollTop IS the
+  // window scroll). It clamps at 0 always, and at the end of the content only
+  // when the element reports real scrollHeight/clientHeight numbers. Returns
+  // true only when the offset actually changed, so a caller can tell "scrolled"
+  // from "already pinned at the end".
+  function reorderScrollBy(element, delta) {
+    if (!element || !delta) return false;
+    const before = Number(element.scrollTop) || 0;
+    let next = before + delta;
+    if (next < 0) next = 0;
+    const box = Number(element.clientHeight) || 0;
+    const content = Number(element.scrollHeight) || 0;
+    if (content > 0 && box > 0 && next > content - box) {
+      next = Math.max(0, content - box);
+    }
+    if (next === before) return false;
+    element.scrollTop = next;
+    return true;
   }
 
   function reorderAutoScrollTick() {
     const state = activeReorderDrag;
     if (!state) return;
-    const containerRect = state.container.getBoundingClientRect();
-    const delta = reorderAutoScrollDelta(state.lastClientY, containerRect);
-    if (delta !== 0 && state.container && typeof state.container.scrollTop === "number") {
-      state.container.scrollTop += delta;
+    const viewRect = reorderScrollViewRect(state.scrollTarget, state.container);
+    const delta = reorderAutoScrollDelta(state.lastClientY, viewRect, state.scrollEdgePx, state.scrollMaxPx);
+    if (delta === 0) return;
+    if (reorderScrollBy(state.scrollTarget && state.scrollTarget.element, delta)) {
+      // Every item's viewport rect just moved, so the cached measurements the
+      // placeholder decision reads are stale. Re-resolve the target slot in
+      // the next frame against fresh rects.
+      state.rectsDirty = true;
+      scheduleReorderPointerFrame(state);
     }
+  }
+
+  // measureReorderRects reads every OTHER item's box once and caches the
+  // result on the drag state. A 100-row board on a phone — the load profile
+  // data-gosx-reorder exists for — makes this an O(n) forced layout, so it
+  // must run only when the geometry it measures has actually changed: at drag
+  // start, after the placeholder moves, and after an auto-scroll tick moves
+  // the list. It must NOT run per pointermove, which a finger delivers at the
+  // display refresh rate or faster.
+  function measureReorderRects(state) {
+    const others = reorderItems(state.container).filter(function(candidate) {
+      return candidate !== state.item;
+    });
+    state.others = others;
+    state.rects = others.map(function(candidate) {
+      const rect = candidate.getBoundingClientRect();
+      return { top: rect.top, height: rect.height };
+    });
+    state.rectsDirty = false;
+  }
+
+  // applyReorderPointerFrame is the whole layout-reading half of a pointer
+  // drag, run at most once per animation frame no matter how many pointermove
+  // events arrived since the last one. The cheap half — the lifted item's
+  // transform, which only WRITES one style property and forces no layout —
+  // stays on the event itself in updateReorderPointerDrag, so the dragged
+  // element never lags a frame behind the finger.
+  function applyReorderPointerFrame(state) {
+    state.frameHandle = null;
+    if (state !== activeReorderDrag) return;
+    if (state.rectsDirty) {
+      measureReorderRects(state);
+    }
+    const targetIndex = reorderTargetIndex(state.lastClientY, state.rects);
+    if (targetIndex === state.currentIndex) {
+      return;
+    }
+    state.currentIndex = targetIndex;
+    if (targetIndex >= state.others.length) {
+      state.container.appendChild(state.placeholder);
+    } else {
+      state.container.insertBefore(state.placeholder, state.others[targetIndex]);
+    }
+    // The placeholder just took a different slot, so every other item shifted.
+    // This is the ONLY DOM change a drag makes, so it is the only event that
+    // can invalidate the cache.
+    state.rectsDirty = true;
+  }
+
+  function scheduleReorderPointerFrame(state) {
+    if (!state || state.frameHandle != null) return;
+    state.frameHandle = gosxRuntimeFrame(function() {
+      applyReorderPointerFrame(state);
+    });
+  }
+
+  // NOT IMPLEMENTED, on purpose: FLIP animation of the displaced siblings.
+  //
+  // The obvious next step is to animate the gap as it travels — measure every
+  // sibling before the placeholder moves (First), measure again after (Last),
+  // apply the inverted delta as a transform, then release it. It is left out
+  // because it fights the budget the rest of this loop is built to: FLIP
+  // costs TWO full-list measurement passes and up to n-1 transform writes per
+  // placeholder crossing, while applyReorderPointerFrame above is built to
+  // spend at most ONE measurement pass per frame. On the 100-row phone list
+  // this feature exists for, a crossing happens on most frames of a fast
+  // drag, so the animation would be paid for out of the frame budget that
+  // keeps the dragged row under the finger. A dropped frame while dragging is
+  // more visible than an un-animated gap.
+  //
+  // A future implementation should therefore: measure only the siblings
+  // between the old and the new placeholder slot (a crossing displaces
+  // exactly one item in the common case, not the whole list); reuse the rects
+  // measureReorderRects already holds instead of adding a First pass; drive
+  // the transform release through Element.animate, not through a second
+  // frame callback; and skip the whole path when
+  // matchMedia("(prefers-reduced-motion: reduce)") matches.
+
+  // flushReorderPointerFrame runs a pending frame's work NOW. A drop can
+  // arrive in the same frame as the pointermove that decided its slot (a
+  // quick flick on a phone), and the drop must land where the finger last
+  // was, not where the previous frame left the placeholder.
+  function flushReorderPointerFrame(state) {
+    if (!state || state.frameHandle == null) return;
+    state.frameHandle = null;
+    applyReorderPointerFrame(state);
   }
 
   function updateReorderPointerDrag(event) {
@@ -5490,24 +5825,7 @@
     if (!state || event.pointerId !== state.pointerId) return;
     state.lastClientY = event.clientY;
     state.item.style.transform = "translateY(" + (event.clientY - state.startClientY) + "px)";
-
-    const others = reorderItems(state.container).filter(function(candidate) {
-      return candidate !== state.item;
-    });
-    const rects = others.map(function(candidate) {
-      const rect = candidate.getBoundingClientRect();
-      return { top: rect.top, height: rect.height };
-    });
-    const targetIndex = reorderTargetIndex(event.clientY, rects);
-    if (targetIndex === state.currentIndex) {
-      return;
-    }
-    state.currentIndex = targetIndex;
-    if (targetIndex >= others.length) {
-      state.container.appendChild(state.placeholder);
-    } else {
-      state.container.insertBefore(state.placeholder, others[targetIndex]);
-    }
+    scheduleReorderPointerFrame(state);
   }
 
   function clearReorderTransform(item) {
@@ -5519,25 +5837,24 @@
     const state = activeReorderDrag;
     if (!state) return;
     if (event && event.pointerId !== state.pointerId) return;
+    if (commit) {
+      // A drop can arrive in the same frame as the pointermove that chose its
+      // slot — a quick flick on a phone does exactly that. Run the pending
+      // frame's work now so the item lands where the finger last was rather
+      // than one frame behind it.
+      flushReorderPointerFrame(state);
+    }
     activeReorderDrag = null;
+    state.frameHandle = null;
 
     if (state.scrollIntervalHandle != null) {
       clearInterval(state.scrollIntervalHandle);
     }
-    if (state.handle.removeEventListener) {
-      state.handle.removeEventListener("pointermove", state.onMove);
-      state.handle.removeEventListener("pointerup", state.onUp);
-      state.handle.removeEventListener("pointercancel", state.onCancel);
-      state.handle.removeEventListener("lostpointercapture", state.onCancel);
-    }
-    try {
-      if (typeof state.handle.releasePointerCapture === "function") {
-        state.handle.releasePointerCapture(state.pointerId);
-      }
-    } catch (_error) {}
+    detachReorderPress(state.press);
 
     removeManagedClass(state.container, REORDER_DRAGGING_CLASS);
     removeManagedClass(state.item, REORDER_LIFTED_CLASS);
+    setReorderGrabbed(state.handle, false);
     clearReorderTransform(state.item);
     state.releaseRevalidation();
 
@@ -5561,22 +5878,174 @@
     }
     announceNavigation(reorderAnnouncement("drop", state.item, state.container));
     focusElement(state.handle, true);
-    commitReorderResult(state.container, state.item, state.originalParent, state.originalIndex);
+    commitReorderResult(
+      state.container,
+      state.item,
+      state.originalParent,
+      state.originalIndex,
+      state.originalItemIndex,
+    );
   }
 
-  function beginReorderPointerDrag(event, handle, item, container) {
-    if (activeReorderDrag || activeReorderKeyboard || reorderContainerPending(container)) {
+  // --- pointer activation ---------------------------------------------------
+  //
+  // A pointerdown does NOT start a drag. It opens a PRESS: the handle claims
+  // pointer capture (so every later move reaches it even after the finger
+  // leaves the handle), the three gesture listeners go on, and nothing else
+  // happens. The press becomes a drag only once the pointer travels
+  // REORDER_ACTIVATION_PX. Below that distance the press is a tap or a click
+  // and the page keeps it — grabbing a row on a plain tap was the gosx#212
+  // defect this closes.
+  //
+  // A whole-item handle (the item declares no REORDER_HANDLE_ATTR anywhere)
+  // under a non-mouse pointer adds a REORDER_TOUCH_HOLD_MS hold on top. That
+  // case deliberately does not set touch-action: none — see
+  // prepareReorderHandle — so the browser's own scroll gesture is still live
+  // and MUST win. Any movement before the hold elapses abandons the press and
+  // lets the list scroll natively; holding still through it lifts the item,
+  // the same press-and-hold contract iOS and Android use for their own
+  // drag-to-reorder lists. Keyboard grab is untouched by all of this: Space
+  // or Enter still lifts immediately.
+  let pendingReorderPress = null;
+
+  // reorderPressTravel measures how far a press has moved. It prefers the
+  // true 2-D distance and falls back to the vertical component alone when an
+  // event carries no usable clientX — a sortable list is a vertical gesture,
+  // so vertical travel is the meaningful half either way.
+  function reorderPressTravel(press, event) {
+    const dy = Number(event.clientY) - press.startClientY;
+    const vertical = isFinite(dy) ? Math.abs(dy) : 0;
+    const dx = Number(event.clientX) - press.startClientX;
+    if (!isFinite(dx)) return vertical;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function detachReorderPress(press) {
+    if (!press) return;
+    if (press.holdTimer != null) {
+      clearTimeout(press.holdTimer);
+      press.holdTimer = null;
+    }
+    if (press.handle.removeEventListener) {
+      press.handle.removeEventListener("pointermove", press.onMove);
+      press.handle.removeEventListener("pointerup", press.onUp);
+      press.handle.removeEventListener("pointercancel", press.onCancel);
+      press.handle.removeEventListener("lostpointercapture", press.onCancel);
+    }
+    try {
+      if (typeof press.handle.releasePointerCapture === "function") {
+        press.handle.releasePointerCapture(press.pointerId);
+      }
+    } catch (_error) {}
+    if (pendingReorderPress === press) {
+      pendingReorderPress = null;
+    }
+  }
+
+  function openReorderPress(event, handle, item, container, explicitHandle) {
+    if (activeReorderDrag || activeReorderKeyboard || pendingReorderPress || reorderContainerPending(container)) {
       return;
     }
     if (typeof event.pointerId !== "number" && typeof event.pointerId !== "string") {
       return;
     }
+    const pointerType = String(event.pointerType || "");
+    const press = {
+      pointerId: event.pointerId,
+      handle: handle,
+      item: item,
+      container: container,
+      startClientX: Number(event.clientX),
+      startClientY: Number(event.clientY),
+      // holdArmed marks a press that must wait out REORDER_TOUCH_HOLD_MS
+      // before it may lift. Only the whole-item-handle touch case arms it.
+      holdArmed: !explicitHandle && pointerType !== "" && pointerType !== "mouse",
+      holdTimer: null,
+      onMove: null,
+      onUp: null,
+      onCancel: null,
+    };
+    press.onMove = function(moveEvent) {
+      if (moveEvent.pointerId !== press.pointerId) return;
+      if (activeReorderDrag) {
+        updateReorderPointerDrag(moveEvent);
+        return;
+      }
+      if (pendingReorderPress !== press) return;
+      if (reorderPressTravel(press, moveEvent) < REORDER_ACTIVATION_PX) return;
+      if (press.holdArmed) {
+        // The finger moved before the hold elapsed: this is a scroll, not a
+        // drag. Give the gesture back to the browser.
+        detachReorderPress(press);
+        return;
+      }
+      beginReorderPointerDrag(press);
+      updateReorderPointerDrag(moveEvent);
+    };
+    press.onUp = function(upEvent) {
+      if (upEvent.pointerId !== press.pointerId) return;
+      if (activeReorderDrag) {
+        endReorderPointerDrag(upEvent, true);
+        return;
+      }
+      // Never became a drag: a tap or a click, which the page owns.
+      detachReorderPress(press);
+    };
+    press.onCancel = function(cancelEvent) {
+      if (cancelEvent && cancelEvent.pointerId != null && cancelEvent.pointerId !== press.pointerId) return;
+      if (activeReorderDrag) {
+        endReorderPointerDrag(cancelEvent || null, false);
+        return;
+      }
+      detachReorderPress(press);
+    };
+
+    pendingReorderPress = press;
+    try {
+      if (typeof handle.setPointerCapture === "function") {
+        handle.setPointerCapture(event.pointerId);
+      }
+    } catch (_error) {}
+    if (handle.addEventListener) {
+      handle.addEventListener("pointermove", press.onMove);
+      handle.addEventListener("pointerup", press.onUp);
+      handle.addEventListener("pointercancel", press.onCancel);
+      handle.addEventListener("lostpointercapture", press.onCancel);
+    }
+    if (press.holdArmed && typeof setTimeout === "function") {
+      press.holdTimer = setTimeout(function() {
+        press.holdTimer = null;
+        press.holdArmed = false;
+        if (pendingReorderPress === press && !activeReorderDrag) {
+          beginReorderPointerDrag(press);
+        }
+      }, REORDER_TOUCH_HOLD_MS);
+    }
+  }
+
+  function beginReorderPointerDrag(press) {
+    const item = press.item;
+    const container = press.container;
+    if (activeReorderDrag || activeReorderKeyboard || reorderContainerPending(container)) {
+      detachReorderPress(press);
+      return;
+    }
+    if (press.holdTimer != null) {
+      clearTimeout(press.holdTimer);
+      press.holdTimer = null;
+    }
+    press.holdArmed = false;
 
     // Captured BEFORE the placeholder is inserted, so this is the item's true
     // pre-gesture position — the position restoreReorderItemPosition returns
     // it to if the follow-up submission fails (see commitReorderResult).
     const originalParent = item.parentNode;
     const originalIndex = toArray(originalParent.childNodes).indexOf(item);
+    // originalItemIndex is the pre-gesture position in the SAME index space
+    // the submission posts: the position among identity-bearing items, not
+    // among all child nodes. commitReorderResult compares the two to skip a
+    // POST that would tell the server nothing.
+    const originalItemIndex = reorderItems(container).indexOf(item);
 
     const placeholder = item.cloneNode(true);
     if (placeholder.removeAttribute) {
@@ -5591,45 +6060,34 @@
     originalParent.insertBefore(placeholder, item);
 
     activeReorderDrag = {
-      pointerId: event.pointerId,
-      handle: handle,
+      press: press,
+      pointerId: press.pointerId,
+      handle: press.handle,
       item: item,
       container: container,
       placeholder: placeholder,
       originalParent: originalParent,
       originalIndex: originalIndex,
-      startClientY: event.clientY,
-      lastClientY: event.clientY,
+      originalItemIndex: originalItemIndex,
+      startClientY: press.startClientY,
+      lastClientY: press.startClientY,
       currentIndex: -1,
+      others: [],
+      rects: [],
+      rectsDirty: true,
+      frameHandle: null,
+      scrollTarget: reorderScrollTarget(container),
+      scrollEdgePx: reorderScrollNumber(container, REORDER_SCROLL_EDGE_ATTR, REORDER_AUTOSCROLL_EDGE_PX),
+      scrollMaxPx: reorderScrollNumber(container, REORDER_SCROLL_SPEED_ATTR, REORDER_AUTOSCROLL_MAX_PX),
       scrollIntervalHandle: null,
       releaseRevalidation: suspendRevalidation(),
-      onMove: null,
-      onUp: null,
-      onCancel: null,
     };
+    measureReorderRects(activeReorderDrag);
 
     addManagedClass(container, REORDER_DRAGGING_CLASS);
     addManagedClass(item, REORDER_LIFTED_CLASS);
+    setReorderGrabbed(press.handle, true);
     item.style.transform = "translateY(0px)";
-
-    try {
-      if (typeof handle.setPointerCapture === "function") {
-        handle.setPointerCapture(event.pointerId);
-      }
-    } catch (_error) {}
-
-    const onMove = function(moveEvent) { updateReorderPointerDrag(moveEvent); };
-    const onUp = function(upEvent) { endReorderPointerDrag(upEvent, true); };
-    const onCancel = function(cancelEvent) { endReorderPointerDrag(cancelEvent || event, false); };
-    activeReorderDrag.onMove = onMove;
-    activeReorderDrag.onUp = onUp;
-    activeReorderDrag.onCancel = onCancel;
-    if (handle.addEventListener) {
-      handle.addEventListener("pointermove", onMove);
-      handle.addEventListener("pointerup", onUp);
-      handle.addEventListener("pointercancel", onCancel);
-      handle.addEventListener("lostpointercapture", onCancel);
-    }
     activeReorderDrag.scrollIntervalHandle = setInterval(reorderAutoScrollTick, REORDER_AUTOSCROLL_TICK_MS);
 
     announceNavigation(reorderAnnouncement("grab", item, container));
@@ -5640,9 +6098,16 @@
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const resolved = reorderHandleForTarget(event.target);
     if (!resolved) return;
-    prepareReorderHandle(resolved.handle);
-    event.preventDefault();
-    beginReorderPointerDrag(event, resolved.handle, resolved.item, resolved.container);
+    const explicitHandle = resolved.handle !== resolved.item;
+    prepareReorderHandle(resolved.handle, explicitHandle);
+    // preventDefault only where the handle already owns the gesture through
+    // touch-action: none. A whole-item handle must leave the event alone so
+    // the browser can still scroll the list under it; that press is abandoned
+    // the moment the scroll starts (see openReorderPress).
+    if (explicitHandle) {
+      event.preventDefault();
+    }
+    openReorderPress(event, resolved.handle, resolved.item, resolved.container, explicitHandle);
   });
 
   document.addEventListener("keydown", function(event) {
@@ -5658,6 +6123,16 @@
       if (key === "Escape") {
         event.preventDefault();
         endReorderPointerDrag(null, false);
+      }
+      return;
+    }
+    // A press that has not become a drag yet holds pointer capture and three
+    // listeners. Escape must let go of all of it, the same as it does for a
+    // real drag — otherwise a held finger keeps the list locked.
+    if (pendingReorderPress) {
+      if (key === "Escape") {
+        event.preventDefault();
+        detachReorderPress(pendingReorderPress);
       }
       return;
     }
@@ -5687,7 +6162,9 @@
     if (key !== " " && key !== "Spacebar" && key !== "Enter") return;
     const resolved = reorderHandleForTarget(event.target);
     if (!resolved) return;
-    prepareReorderHandle(resolved.handle);
+    // Keyboard grab is immediate on purpose: there is no tap to disambiguate
+    // from, and no scroll gesture to lose. Only the pointer path waits.
+    prepareReorderHandle(resolved.handle, resolved.handle !== resolved.item);
     event.preventDefault();
     beginKeyboardReorder(resolved.handle);
   });
@@ -5702,6 +6179,9 @@
     if (activeReorderDrag) {
       endReorderPointerDrag(null, false);
     }
+    if (pendingReorderPress) {
+      detachReorderPress(pendingReorderPress);
+    }
     if (activeReorderKeyboard) {
       cancelKeyboardReorder();
     }
@@ -5715,6 +6195,18 @@
   const reorderAPI = {
     targetIndexForPointer: reorderTargetIndex,
     autoScrollDeltaForPointer: reorderAutoScrollDelta,
+    // scrollTargetForContainer answers "what would a drag in this container
+    // scroll?" — { element, page } — and scrollViewRectForContainer answers
+    // "against which rect are the edge zones measured?". Both are exposed for
+    // the same reason targetIndexForPointer is: they are the decisions the
+    // gesture is built on, and a page that wants to verify its own scroll
+    // layout should not have to start a drag to see them.
+    scrollTargetForContainer: reorderScrollTarget,
+    scrollViewRectForContainer: function(container) {
+      return reorderScrollViewRect(reorderScrollTarget(container), container);
+    },
+    activationDistancePx: REORDER_ACTIVATION_PX,
+    touchHoldMs: REORDER_TOUCH_HOLD_MS,
   };
   gosxHost.reorder = reorderAPI;
   window.__gosx.reorder = Object.assign(window.__gosx.reorder || {}, reorderAPI);
