@@ -575,23 +575,45 @@ func Page() Node {
 				<li>
 					Pointer Events with
 					<span class="inline-code">setPointerCapture</span>
-					— one path for mouse and touch. The handle gets
+					— one path for mouse and touch. A press is not a drag yet: the pointer must travel about 5 pixels first, so a tap on a row follows its link or selects its text instead of grabbing it.
+				</li>
+				<li>
+					A declared
+					<span class="inline-code">data-gosx-reorder-handle</span>
+					gets
 					<span class="inline-code">touch-action: none</span>
-					so a touch drag is not raced by the browser's own scroll gesture; every other pixel of the page keeps native scroll.
+					and drags as soon as it passes that distance. An item that acts as its own handle gets neither, because
+					<span class="inline-code">touch-action: none</span>
+					on a whole row stops the list scrolling under every finger that lands on it. That row waits for a 250 millisecond press and hold instead, the contract iOS and Android use for the same gesture: move before the hold ends and the browser keeps the gesture and scrolls the list. Give a list a real handle when a touch user must be able to drag without holding.
+				</li>
+				<li>
+					Auto-scroll drives the nearest scrollable ancestor of the container, or the window when the list has none. It measures its edge zones against the visible viewport, not against the container: a 100-row board is taller than the screen, so container-measured zones sit where no finger can reach them. Set the zone depth and the top speed per container with
+					<span class="inline-code">data-gosx-reorder-scroll-edge</span>
+					and
+					<span class="inline-code">data-gosx-reorder-scroll-speed</span>
+					.
+				</li>
+				<li>
+					Item positions are measured once when a drag starts, and again only when the placeholder moves or auto-scroll moves the list. Pointer moves are collected into one animation frame, so a fast finger on a long list costs one layout pass per frame instead of one per event.
 				</li>
 				<li>
 					The reorder is optimistic: the DOM updates on drop, before the action response returns. A failed action reverts the list to its pre-drag order and surfaces the failure through the same
 					<span class="inline-code">data-gosx-form-state</span>
 					/
 					<span class="inline-code">data-gosx-pending</span>
-					attributes and live-region announcement managed forms already use.
+					attributes and live-region announcement managed forms already use. It also raises an error toast when the page renders a
+					<span class="inline-code">data-gosx-toast-host</span>
+					, so a list that snaps back says why on screen.
+				</li>
+				<li>
+					A gesture that ends at the position it started from posts nothing at all. A drag that wanders down the list and comes back, or an arrow down followed by an arrow up, costs no request and flashes no pending state.
 				</li>
 				<li>
 					Periodic revalidation (see
 					<span class="inline-code">data-gosx-revalidate-interval</span>
 					above) pauses for the whole gesture — pointerdown or grab through drop, cancel, or
 					<span class="inline-code">pointercancel</span>
-					— and resumes the moment it ends. Only the framework can coordinate this against its own revalidation loop.
+					— and stays paused for the lifetime of the action request the drop starts. A revalidation swap between the optimistic move and the response would detach the rows the failure path reverts. Only the framework can coordinate this against its own revalidation loop.
 				</li>
 				<li>
 					A second grab anywhere in the same container while a drop's action submission is still in flight is refused outright. The list never changes and no second request is issued.
@@ -599,7 +621,7 @@ func Page() Node {
 				<li>
 					Escape and
 					<span class="inline-code">pointercancel</span>
-					cancel a pointer drag cleanly: the list returns to its pre-drag order and nothing is submitted.
+					cancel a pointer drag cleanly: the list returns to its pre-drag order and nothing is submitted. Escape also abandons a press that has not become a drag yet.
 				</li>
 			</ul>
 			<p>
@@ -610,7 +632,7 @@ func Page() Node {
 					Space or Enter on the handle grabs the item.
 				</li>
 				<li>
-					Arrow Up and Arrow Down move it one position while grabbed.
+					Arrow Up and Arrow Down move it one position while grabbed. Each move scrolls the item back into view and returns focus to the handle, because moving a node in the DOM drops focus to the document body.
 				</li>
 				<li>
 					Space drops it and posts the managed action.
@@ -622,8 +644,36 @@ func Page() Node {
 			<p>
 				Each step announces to an
 				<span class="inline-code">aria-live</span>
-				region: a grab announces the item and its position ("Grabbed Player Name. Position 1 of 12. Use arrow keys to move, space to drop, escape to cancel."), each arrow move announces the new position ("Moved to position 4 of 12."), and a drop confirms it.
+				region: a grab announces the item and its position ("Grabbed Player Name. Position 1 of 12. Use arrow keys to move, space to drop, escape to cancel."), each arrow move announces the new position ("Moved to position 4 of 12."), and a drop confirms it. The region is raised to
+				<span class="inline-code">assertive</span>
+				for the length of a gesture and returns to polite after it, so move feedback does not queue behind whatever the screen reader is already reading.
 			</p>
+			<p>
+				The runtime prepares each handle for assistive technology on page load and after every soft navigation:
+			</p>
+			<ul>
+				<li>
+					Every handle is in the tab order and carries
+					<span class="inline-code">aria-describedby</span>
+					pointing at one shared, visually hidden instructions node. A screen-reader user learns the list is sortable before touching it, not from the announcement that follows a grab.
+				</li>
+				<li>
+					A declared handle gets
+					<span class="inline-code">role="button"</span>
+					,
+					<span class="inline-code">aria-roledescription="Sortable item"</span>
+					, and
+					<span class="inline-code">aria-pressed</span>
+					for its picked-up state. An item acting as its own handle gets none of the three: stamping a button role on a whole row flattens its links and text into one control.
+				</li>
+				<li>
+					The runtime never writes
+					<span class="inline-code">aria-grabbed</span>
+					, which ARIA 1.2 removed. Style or test the lifted state with
+					<span class="inline-code">data-gosx-reorder-grabbed</span>
+					on the handle.
+				</li>
+			</ul>
 			<p>
 				Style state with these class hooks — the runtime writes no inline style except
 				<span class="inline-code">transform</span>
