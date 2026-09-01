@@ -73,11 +73,16 @@ const FALLBACK_UNAVAILABLE = 'webgpu-unavailable';
 const FALLBACK_DEVICE_LOST = 'webgpu-device-lost';
 const OUTCOME_NATIVE_WEBGL2 = 'native-webgl2';
 const FALLBACK_WARNING_PATTERNS = [
-  /^console\.warning: \[gosx\] WebGPU probe(:| failed:| requestDevice failed; retrying with a fresh adapter:| device lost:)/,
-  /^console\.warning: \[gosx\] WebGPU renderer creation failed:/,
+  /^console\.warning: \[gosx\] WebGPU probe(?:| failed| requestDevice failed; retrying with a fresh adapter| device lost): [^\r\n]+$/,
+  /^console\.warning: \[gosx\] WebGPU device lost: [^\r\n]+$/,
+  /^console\.warning: \[gosx\] WebGPU renderer creation failed: [^\r\n]+$/,
   /^console\.warning: \[gosx\] WebGPU factory returned null after probe success; canvas may be tainted$/,
 ];
-const CAPTURE_DRIVER_WARNING = /^browser log warning: GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels(?: \(this message will no longer repeat\))?$/;
+const DEVICE_LOSS_BROWSER_WARNINGS = [
+  'browser log warning: WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost',
+  'browser log warning: A valid external Instance reference no longer exists.',
+];
+const CAPTURE_DRIVER_WARNING = /^browser log warning: (?:\[\.WebGL-0x[0-9A-Fa-f]+\])?GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels(?: \(this message will no longer repeat\))?$/;
 
 const CASES = [
   { name: 'gl', webgpu: false, engine: 'gosx-engine-adapter-gl', mount: 'scene-adapter-gl' },
@@ -1882,20 +1887,42 @@ function classifyWarningEntry(entry, typedFallback) {
   if (typedFallback.name !== 'wg' || occurrence.caseName !== typedFallback.name) {
     return { allowed: false, reason: 'warning-case-mismatch' };
   }
-  if (!receiptPhase || occurrence.phase !== receiptPhase) {
-    return { allowed: false, reason: 'warning-phase-mismatch' };
+  if (typedFallback.acceptedOutcome !== OUTCOME_FALLBACK_DEVICE_LOST ||
+      typedFallback.fallbackKind !== FALLBACK_DEVICE_LOST ||
+      !typedFallback.outcomeVerdict || typedFallback.outcomeVerdict.accepted !== true ||
+      !typedFallback.fallbackReceipt || errors.length) {
+    return { allowed: false, reason: 'warning-outcome-mismatch' };
+  }
+  if (!receiptPhase || (occurrence.phase !== 'stale-generation-release' && occurrence.phase !== receiptPhase)) {
+    return { allowed: false, reason: 'warning-phase-outside-accepted-device-loss-window' };
   }
   for (const pattern of FALLBACK_WARNING_PATTERNS) {
     if (pattern.test(message)) {
+      if (occurrence.source !== 'Runtime.consoleAPICalled') {
+        return { allowed: false, reason: 'warning-source-mismatch' };
+      }
       return {
         allowed: true,
-        reason: 'accepted-typed-fallback-environment-warning',
-        phase: typedFallback.fallbackReceipt && typedFallback.fallbackReceipt.phase || '',
+        reason: 'accepted-typed-fallback-device-loss-console-warning',
+        phase: occurrence.phase,
         caseName: typedFallback.name,
         outcome: typedFallback.acceptedOutcome,
         fallbackKind: typedFallback.fallbackKind,
       };
     }
+  }
+  if (DEVICE_LOSS_BROWSER_WARNINGS.includes(message)) {
+    if (occurrence.source !== 'Log.entryAdded') {
+      return { allowed: false, reason: 'warning-source-mismatch' };
+    }
+    return {
+      allowed: true,
+      reason: 'accepted-typed-fallback-device-loss-browser-notice',
+      phase: occurrence.phase,
+      caseName: typedFallback.name,
+      outcome: typedFallback.acceptedOutcome,
+      fallbackKind: typedFallback.fallbackKind,
+    };
   }
   return { allowed: false, reason: 'not-in-exact-fallback-warning-allowlist' };
 }
@@ -1904,16 +1931,14 @@ function classifyCaptureDriverWarning(occurrence, message) {
   if (!CAPTURE_DRIVER_WARNING.test(message)) return null;
   if (occurrence.source !== 'Log.entryAdded') return { allowed: false, reason: 'capture-driver-warning-source-mismatch' };
   if (occurrence.caseName !== 'gl') return { allowed: false, reason: 'capture-driver-warning-case-mismatch' };
-  if (occurrence.phase !== 'stale-generation-release') return { allowed: false, reason: 'capture-driver-warning-phase-mismatch' };
+  if (occurrence.phase !== 'winning-generation-readiness' && occurrence.phase !== 'stale-generation-release') {
+    return { allowed: false, reason: 'capture-driver-warning-phase-mismatch' };
+  }
   return { allowed: true, reason: 'accepted-gl-capture-readpixels-warning', phase: occurrence.phase, caseName: occurrence.caseName };
 }
 
 function classifyWarningsForReport() {
-  const typedFallback = caseEvidence.find((entry) =>
-    entry && (entry.acceptedOutcome === OUTCOME_FALLBACK_UNAVAILABLE ||
-      entry.acceptedOutcome === OUTCOME_FALLBACK_DEVICE_LOST) &&
-    entry.outcomeVerdict && entry.outcomeVerdict.accepted === true &&
-    entry.fallbackReceipt);
+  const typedFallback = caseEvidence.find((entry) => entry && entry.name === 'wg');
   const occurrences = warningOccurrences.length ? warningOccurrences :
     warnings.map((message) => ({ message, source: 'legacy-string', caseName: '', phase: '', atMS: 0 }));
   const entries = occurrences.map((entry) => ({
