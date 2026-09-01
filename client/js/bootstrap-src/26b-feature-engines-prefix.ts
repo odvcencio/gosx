@@ -595,7 +595,7 @@
       const surfaceKind = placeholder.getAttribute("data-gosx-surface-kind") || "";
       const component = placeholder.getAttribute("data-gosx-engine-component") || "";
       const status = placeholder.getAttribute("data-gosx-engine-status") || "";
-      if (!surfaceKind || status === "missing") {
+      if (!surfaceKind || status === "missing" || surfaceKind === "scene3d") {
         paintEngineSurfaceMissing(placeholder, component);
         return;
       }

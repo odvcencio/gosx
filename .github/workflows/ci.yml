@@ -357,6 +357,79 @@ jobs:
           fi
           rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
 
+  # scene3d-v1-adapter-proof: the real standard-Go WASM generic-hydrate seam,
+  # native WebGL2 plus requested-WebGPU/native-or-typed-fallback evidence,
+  # same-ID stale suppression, and the targeted hub-command/remount contract.
+  # Success removes artifacts immediately; failure retains the report and
+  # screenshots for seven days.
+  scene3d-v1-adapter-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up stable Chrome for adapter proof
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Scene3D adapter hydrate browser proof
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          artifact_dir="${RUNNER_TEMP}/gosx-adapter-proof"
+          rm -rf -- "$artifact_dir"
+          mkdir -p "$artifact_dir"
+          proof_status=0
+          trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+          set +e
+          node client/js/testdata/scene3d-adapter-hydrate-browser.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+          proof_status=$?
+          set -e
+          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/report.json" ]; then
+            cat "$artifact_dir/report.json"
+          fi
+          exit "$proof_status"
+
+      - name: Upload Scene3D adapter proof diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scene3d-v1-adapter-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gosx-adapter-proof
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean Scene3D adapter proof artifacts
+        if: ${{ always() }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          rm -rf -- "${RUNNER_TEMP}/gosx-adapter-proof"
+
   # browser-tests: Go + Chrome + TinyGo. The wider browser suite executes WASM
   # directly; the bounded Scene3D proof runs in its separately named job.
   browser-tests:
@@ -470,6 +543,7 @@ jobs:
       - js-tests
       - wasm-tests
       - scene3d-v1-browser-renderer-proof
+      - scene3d-v1-adapter-proof
       - browser-tests
     timeout-minutes: 5
 
@@ -483,6 +557,7 @@ jobs:
           JS_TESTS_RESULT: ${{ needs.js-tests.result }}
           WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
           SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}
+          SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.scene3d-v1-adapter-proof.result }}
           BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}
         run: |
           set -eu
@@ -494,6 +569,7 @@ jobs:
             "js-tests=$JS_TESTS_RESULT" \
             "wasm-tests=$WASM_TESTS_RESULT" \
             "scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT" \
+            "scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT" \
             "browser-tests=$BROWSER_TESTS_RESULT"
           do
             case "$result" in
@@ -504,7 +580,7 @@ jobs:
                 ;;
             esac
           done
-          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, scene3d-v1-browser-renderer-proof, and browser-tests all passed"
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

@@ -221,6 +221,7 @@ func buildAssetFiles(manifest *buildmanifest.Manifest) []buildAssetRef {
 		runtimeAssets.BootstrapFeatureEngines, runtimeAssets.BootstrapFeatureHubs,
 		runtimeAssets.BootstrapFeatureControllers, runtimeAssets.BootstrapFeatureTextlayout,
 		runtimeAssets.BootstrapFeatureScene3D, runtimeAssets.BootstrapFeatureScene3DCommand,
+		runtimeAssets.BootstrapFeatureScene3DHydrate,
 		runtimeAssets.BootstrapFeatureScene3DWebGPU, runtimeAssets.BootstrapFeatureScene3DWebGL,
 		runtimeAssets.BootstrapFeatureScene3DGLTF, runtimeAssets.BootstrapFeatureScene3DAnimation,
 		runtimeAssets.BootstrapFeatureScene3DCompute, runtimeAssets.BootstrapFeatureScene3DDecompress,

@@ -449,11 +449,13 @@
 
   function disposePendingEngine(pending, restoreFallback) {
     if (!pending || pending.closed) return;
+    const owned = pendingEngineOwned(pending);
     pending.closed = true;
     if (pendingEngineRuntimes.get(pending.id) === pending) {
       pendingEngineRuntimes.delete(pending.id);
     }
     releaseGoWASMEngineWaiter(pending);
+    if (!owned) return;
     if (!pending.runtimeDisposed && pending.runtime && typeof pending.runtime.dispose === "function") {
       pending.runtimeDisposed = true;
       try {
@@ -797,10 +799,9 @@
       toPixel(windowX, windowY) {
         ensureCanvas();
         const currentLayout = layout || applyLayout();
-        if (!currentLayout) {
-          return { x: 0, y: 0, inside: false };
-        }
-        return pixelSurfaceWindowToPixel(windowX, windowY, mount, currentLayout, config);
+        return currentLayout
+          ? pixelSurfaceWindowToPixel(windowX, windowY, mount, currentLayout, config)
+          : { x: 0, y: 0, inside: false };
       },
       dispose() {
         disposed = true;
@@ -823,7 +824,7 @@
     return api;
   }
 
-  function createEngineRuntime(entry, mount) {
+  function createEngineRuntime(entry, mount, pending) {
     let programPromise = null;
     let pixelSurface = undefined;
 
@@ -854,7 +855,7 @@
       },
       async hydrateFromProgramRef() {
         const program = await loadProgram();
-        return hydrateSharedEngineProgram(entry, program);
+        return pendingEngineOwned(pending) ? hydrateSharedEngineProgram(entry, program) : null;
       },
       tick() {
         return tickSharedEngineRuntime(entry);
@@ -865,10 +866,7 @@
       frame,
       pixelSurface: frame,
       dispose() {
-        const currentFrame = frame();
-        if (currentFrame && typeof currentFrame.dispose === "function") {
-          currentFrame.dispose();
-        }
+        if (pixelSurface) pixelSurface.dispose();
         disposeSharedEngineRuntime(entry);
       },
     };
@@ -876,7 +874,6 @@
 
   function sharedEngineRuntimeBridge() {
     return {
-      hydrate: window.__gosx_hydrate_engine,
       tick: window.__gosx_tick_engine,
       render: window.__gosx_render_engine,
       dispose: window.__gosx_engine_dispose,
@@ -886,24 +883,21 @@
   function sharedEngineRuntimeAvailable(entry) {
     const bridge = sharedEngineRuntimeBridge();
     return engineUsesSharedRuntime(entry)
-      && typeof bridge.hydrate === "function"
+      && typeof window.__gosx_hydrate === "function"
       && typeof bridge.tick === "function"
       && typeof bridge.render === "function"
       && typeof bridge.dispose === "function";
   }
 
   function hydrateSharedEngineProgram(entry, program) {
-    const bridge = sharedEngineRuntimeBridge();
-    if (!engineUsesSharedRuntime(entry) || typeof bridge.hydrate !== "function" || !program) {
-      return [];
-    }
-    return decodeEngineCommands(bridge.hydrate(
+    return program ? window.__gosx_hydrate(
+      "scene3d",
       entry.id,
       entry.component,
       JSON.stringify(entry.props || {}),
       program.data,
       program.format || "json",
-    ));
+    ) : [];
   }
 
   function tickSharedEngineRuntime(entry) {
@@ -931,15 +925,7 @@
   }
 
   function decodeEngineCommands(result) {
-    if (result == null) {
-      return [];
-    }
-    if (typeof result !== "string") {
-      return [];
-    }
-    if (result === "" || result === "[]") {
-      return [];
-    }
+    if (typeof result !== "string" || !result || result === "[]") return [];
     if (result.startsWith("error:") || result.startsWith("marshal:")) {
       console.error("[gosx] engine runtime error:", result);
       return [];
@@ -1960,35 +1946,11 @@
     if (!source) {
       return "";
     }
-    return videoIsAbsoluteSyncURL(source) ? source : videoHubURL(source);
-  }
-
-  function videoHubURL(path) {
-    if (!path) return "";
-    if (videoIsAbsoluteSyncURL(path)) {
-      return path;
-    }
-    return videoHubOrigin() + videoNormalizeHubPath(path);
-  }
-
-  function videoIsAbsoluteSyncURL(path) {
-    return path.startsWith("ws://") || path.startsWith("wss://");
-  }
-
-  function videoHubOrigin() {
-    return videoHubScheme() + videoHubHost();
-  }
-
-  function videoHubScheme() {
-    return window.location && window.location.protocol === "https:" ? "wss://" : "ws://";
-  }
-
-  function videoHubHost() {
-    return window.location && window.location.host ? window.location.host : "";
-  }
-
-  function videoNormalizeHubPath(path) {
-    return path.startsWith("/") ? path : "/" + path;
+    if (source.startsWith("ws://") || source.startsWith("wss://")) return source;
+    const location = window.location;
+    return (location && location.protocol === "https:" ? "wss://" : "ws://") +
+      (location && location.host ? location.host : "") +
+      (source.startsWith("/") ? source : "/" + source);
   }
 
   async function createBuiltInVideoEngine(ctx) {
@@ -4457,7 +4419,7 @@
     }
   }
 
-  function createEngineContext(entry, mount, runtime, capabilityStatus) {
+  function createEngineContext(entry, mount, runtime, capabilityStatus, pending) {
     return {
       id: entry.id,
       kind: entry.kind,
@@ -4470,6 +4432,7 @@
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
       runtime: runtime,
+      isCurrent() { return pendingEngineOwned(pending); },
       emit: function(name, detail) {
         if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
           document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
@@ -4530,9 +4493,9 @@
       reportMissingEngineCapabilities(entry, mount, capabilityStatus);
       return;
     }
-    const runtime = createEngineRuntime(entry, mount);
+    const runtime = createEngineRuntime(entry, mount, pending);
     pending.runtime = runtime;
-    const ctx = createEngineContext(entry, mount, runtime, capabilityStatus);
+    const ctx = createEngineContext(entry, mount, runtime, capabilityStatus, pending);
     if (entry.props && entry.props.audio && window.__gosx && window.__gosx.audio && typeof window.__gosx.audio.registerManifest === "function") {
       window.__gosx.audio.registerManifest(entry.props.audio);
     }
@@ -4608,7 +4571,7 @@
       rememberMountedEngine(entry, mount, mounted.context, mounted.handle, moduleRecord, pending.fallbackSnapshot);
     } catch (e) {
       const owned = pendingEngineOwned(pending);
-      disposePendingEngine(pending, true);
+      disposePendingEngine(pending, !ctx._ssr);
       if (!owned) return;
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
       if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {

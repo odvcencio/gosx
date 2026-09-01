@@ -1,16 +1,6 @@
 // mount.ts — the GoSXScene3D engine factory.
 // @ts-check
-//
-// This is the mount closure: it builds the canvas, drives the render loop,
-// applies live scene updates, and disposes everything on teardown. It reads
-// every other 20x file.
-//
-// The former single 20-scene-mount.js was 10_127 lines and 43 percent of the
-// base Scene3D chunk. Backend selection (20a), the WebGL chunk loader (20b),
-// the quality ladder (20c), the development overlays (20d), the viewport
-// observers (20e), the DOM overlay (20f), the camera controls (20g) and the
-// telemetry globals (20h) are now files. Four of them are gate candidates:
-// the server already knows whether a scene needs them.
+// Mount closure: canvas, render loop, live updates, teardown, and gateable authorities.
 
 /**
  * @typedef {object} GoSXSceneEngineMountContext
@@ -26,26 +16,53 @@
     }
 
     const props = ctx.props || {};
+    const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
+    function scene3DFactoryCurrent() {
+      return !ctx.isCurrent || ctx.isCurrent();
+    }
+    let initialRuntimeCommands = null;
+    if (runtimeScene) {
+      ctx._ssr = true;
+      const hydrateInitial = window.__gosx_runtime_api &&
+        window.__gosx_runtime_api.scene3DHydrateInitialProgram;
+      if (typeof hydrateInitial !== "function") {
+        throw new Error("invalid Scene3D hydrate envelope");
+      }
+      initialRuntimeCommands = await hydrateInitial(ctx);
+      if (!scene3DFactoryCurrent()) return {};
+    }
     const sceneAttr = name => "data-gosx-scene3d-" + name;
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
-    // createSceneState decodes every compressed array as its first statement,
-    // so the decompress chunk must land first. A scene with plain float arrays
-    // and no generator descriptor fetches nothing and resolves at once.
+    // Settle decompression and the shared glTF/KTX2 IBL reader before state/resource creation.
     await settleSceneDecompressFeature(props);
-    // The assetpipe IBL contract points at KTX2 half-float products. Its reader
-    // currently shares the glTF sub-feature chunk, so settle that tiny upload
-    // dependency before either renderer freezes its resource layouts.
+    if (!scene3DFactoryCurrent()) return {};
     await settleSceneIBLFeature(props);
+    if (!scene3DFactoryCurrent()) return {};
     const sceneState = createSceneState(props, capability);
-    sceneState._modelStatusMount = mount;
-    // Model fetches start immediately, but glTF texture URI selection waits for
-    // this mount's actual renderer. The scope key is available now for honest
-    // cache separation even while its context Promise is still pending.
+    // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
-    // The manifest is immutable for the lifetime of an engine mount. Parse its
-    // large inline shader payload once instead of once per rendered frame.
+    await settlePreferredWebGPUBackend(props, capability);
+    if (!scene3DFactoryCurrent()) return {};
+    // Settle lazy WebGL and compute before first renderer creation/fallback.
+    await settlePreferredWebGLBackend(props, capability);
+    if (!scene3DFactoryCurrent()) return {};
+    await settleSceneComputeFeature(sceneState);
+    if (!scene3DFactoryCurrent()) return {};
+    if (initialRuntimeCommands) {
+      await applySceneCommands(sceneState, initialRuntimeCommands);
+      if (!scene3DFactoryCurrent()) return {};
+    }
+
+    const sceneMountOwner = { m: mount };
+    mount.__gosxScene3DOwner = sceneMountOwner;
+    function scene3DFactoryOwned() {
+      return scene3DFactoryCurrent() && mount.__gosxScene3DOwner === sceneMountOwner;
+    }
+    sceneState._modelOwner = scene3DFactoryOwned;
+    sceneState._modelStatusMount = mount;
+    // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
       typeof window.__gosx_scene3d_water_shader_sources_by_id === "object"
@@ -76,7 +93,6 @@
         failureStage: "unexpected",
       };
     });
-    const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
     let sceneCSSAnimationUntil = 0;
@@ -301,8 +317,9 @@
       const toggles = scope.querySelectorAll("[" + sceneAttr("animation-toggle") + "]");
       for (let i = 0; i < toggles.length; i += 1) {
         const candidate = toggles[i];
-        if (candidate.__gosxScene3DOwner) continue;
-        candidate.__gosxScene3DOwner = mount;
+        const owner = candidate.__gosxScene3DOwner;
+        if (owner && owner.m !== mount) continue;
+        candidate.__gosxScene3DOwner = sceneMountOwner;
         sceneAnimationToggle = candidate;
         break;
       }
@@ -357,37 +374,19 @@
 
     const sceneNodeSentinels = new Map();
     mount.__gosxScene3DSentinels = sceneNodeSentinels;
-    // Live sceneState handle for inspection (debug/test): lets callers read the
-    // mutable object/material state — e.g. customUniforms written by the C3
-    // material-motion seam — without going through the depth-clamped debug
-    // snapshot.
-    mount.__gosxScene3DState = sceneState;
     publishSceneWaterStateSnapshot(ctx.mount, sceneState);
     mount.__gosxScene3DCSSDynamic = false;
     mount.__gosxScene3DCSSRevision = 1;
     mount.__gosxScene3DCSSAnimationUntil = 0;
     applyScenePostFXState(mount, sceneState);
 
-    await settlePreferredWebGPUBackend(props, capability);
-    // WebGL now lives in its own chunk. Settle it too, so a WebGL page has the
-    // renderer, the registry entry and the water runtime before the first
-    // createSceneRenderer call. This resolves immediately on a WebGPU page and
-    // on the monolith.
-    await settlePreferredWebGLBackend(props, capability);
-    // The compute chunk carries the particle systems and the GPU instanced
-    // cull. Settle it too, so a particle scene draws its particles on the
-    // first frame instead of skipping them. A scene with no particles and no
-    // instanced mesh resolves immediately and fetches nothing.
-    await settleSceneComputeFeature(sceneState);
-
     let viewport = applySceneViewport(mount, canvas, labelLayer, sceneViewportFromMount(mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
     scenePrimeAdaptiveQuality(adaptiveQuality, viewport, mount, sceneState);
 
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
-      // Initial hydration was deliberately started before backend acquisition.
-      // Fence it before returning an unsupported handle so a late asset can
-      // only finish as stale and release its staged resources.
+      // Fence model hydration before returning the unsupported handle so a late
+      // asset can only finish as stale and release its staged resources.
       invalidateSceneModelHydration(sceneState);
       settleSceneModelTextureVariantScope(
         sceneState._modelTextureVariantScope,
@@ -415,7 +414,6 @@
         sentinelLayer.parentNode.removeChild(sentinelLayer);
       }
       delete mount.__gosxScene3DSentinels;
-      delete mount.__gosxScene3DState;
       delete mount.__gosxScene3DTextureVariantContext;
       delete mount.__gosxScene3DCSSDynamic;
       delete mount.__gosxScene3DCSSRevision;
@@ -423,12 +421,12 @@
       showSceneRequiredRendererMessage(mount, props, unsupportedReason);
       return {
         dispose() {
-          const unsupported = mount.querySelector
-            ? mount.querySelector("[" + sceneAttr("unsupported") + "]")
-            : null;
+          if (mount.__gosxScene3DOwner !== sceneMountOwner) return;
+          const unsupported = mount.querySelector("[" + sceneAttr("unsupported") + "]");
           if (unsupported && unsupported.parentNode === mount) {
             mount.removeChild(unsupported);
           }
+          delete mount.__gosxScene3DOwner;
         },
       };
     }
@@ -641,7 +639,6 @@
     let renderWatchdogLastAdvanceAt = 0;
     let renderWatchdogRecoveries = 0;
     let renderWatchdogFallbacks = 0;
-    let renderWatchdogActiveReason = "";
     let renderWatchdogSawHidden = false;
     // renderWatchdogDeviceLostInfo: { reason, message, adapterInfo } read off
     // the OLD renderer's diagnostics().deviceLostInfo (see 16a-scene-webgpu.js's
@@ -712,7 +709,7 @@
     }
 
     function publishSceneRenderWatchdogState(reason, stalledFor) {
-      setAttrValue(mount, "data-gosx-scene3d-render-watchdog", reason ? "recovering" : "ok");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog", sceneWebGLFallbackOwner === false ? "terminal" : (reason ? "recovering" : "ok"));
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-recoveries", renderWatchdogRecoveries || "");
@@ -740,9 +737,16 @@
       return "";
     }
 
-    function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback) {
+    function terminalSceneWebGPURecovery(reason) {
+      sceneWebGLFallbackOwner = false;
+      applySceneRendererState(mount, { kind: "unsupported" }, sceneDebugAttr(mount, sceneAttr("renderer-fallback")) || reason);
+      setAttrValue(mount, readyAttr, "false");
+      publishSceneRenderWatchdogState(reason, 0);
+    }
+
+    function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback, nativeOnly) {
       renderWatchdogRecoveries += 1;
-      renderWatchdogActiveReason = reason || "webgpu-stalled";
+      const recoveryReason = reason || "webgpu-render-stall";
       // Read the OLD renderer's loss detail before it gets swapped away
       // below (see 16a-scene-webgpu.js's lastDeviceLostInfo / diagnostics()
       // .deviceLostInfo, and adapterInfo, which diagnostics() already
@@ -754,10 +758,10 @@
         message: priorLostInfo.message || "",
         adapterInfo: (priorDiagnostics && priorDiagnostics.adapterInfo) || null,
       } : null;
-      publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
+      publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
       gosxSceneEmit("warn", "render-watchdog-recovery", {
         rendererKind: renderer && renderer.kind ? renderer.kind : "",
-        reason: renderWatchdogActiveReason,
+        reason: recoveryReason,
         stalledForMS: Math.round(stalledFor || 0),
         recoveryCount: renderWatchdogRecoveries,
         forceFallback: !!forceFallback,
@@ -772,53 +776,39 @@
         const recreated = createSceneRenderer(canvas, props, capability);
         const nextRenderer = recreated && recreated.renderer;
         if (nextRenderer && nextRenderer.kind === "webgpu" && nextRenderer !== renderer) {
-          if (swapRenderer(nextRenderer, reason || "webgpu-render-stall")) {
-            renderLatestSceneBundle(reason || "webgpu-render-stall");
-            scheduleRenderWithViewport(reason || "webgpu-render-stall");
+          if (swapRenderer(nextRenderer, recoveryReason)) {
+            if (nativeOnly) {
+              sceneWebGLFallbackOwner = !sceneWebGLFallbackOwner ? 0 : null;
+              setAttrValue(mount, readyAttr, "true");
+              publishSceneRenderWatchdogState("", 0);
+            }
+            renderLatestSceneBundle(recoveryReason);
+            scheduleRenderWithViewport(recoveryReason);
             return true;
           }
         } else if (nextRenderer && nextRenderer !== renderer && typeof nextRenderer.dispose === "function") {
           nextRenderer.dispose();
         }
-	      }
-	      renderWatchdogFallbacks += 1;
-	      publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
-	      if (fallbackSceneRenderer(reason || "webgpu-render-stall")) {
-        renderLatestSceneBundle(reason || "webgpu-render-stall");
-        scheduleRenderWithViewport(reason || "webgpu-render-stall");
+      }
+      if (nativeOnly) {
+        if (sceneWebGLFallbackOwner === false) publishSceneRenderWatchdogState("webgpu-device-lost", 0);
+        return false;
+      }
+	    renderWatchdogFallbacks += 1;
+	    publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
+	    if (fallbackSceneRenderer(recoveryReason)) {
+        renderLatestSceneBundle(recoveryReason);
+        scheduleRenderWithViewport(recoveryReason);
         return true;
       }
-      scheduleRenderWithViewport(reason || "webgpu-render-stall");
+      if (sceneWebGLFallbackOwner === renderer) return false;
+      terminalSceneWebGPURecovery(recoveryReason);
       return false;
     }
 
-    // recoverSceneWebGPUFromWebGLFallback climbs back onto WebGPU after a
-    // runtime WebGPU failure (device loss / persistent frame errors) forced
-    // a fallback to WebGL. Without this, a later gosx:scene3d:webgpu-probe-ready
-    // (the probe re-acquired a working device) was silently ignored, because
-    // handleSceneWebGPUProbeReady's own guard required the CURRENT renderer
-    // to already be "webgpu" — a session that fell back once stayed on
-    // WebGL for the rest of the page even after the GPU came back. Measured
-    // on the live site: the probe recovered a working device at ~t=12.7s
-    // and the mount was still on WebGL at t=30s.
-    //
-    // Only re-attempts when the fallback that put us on WebGL was itself a
-    // WebGPU failure (sceneFallbackRequiresReplacementCanvas's reason set —
-    // "webgpu-device-lost" / "webgpu-persistent-frame-error"), not an
-    // intentional preference (forceWebGL, environment-constrained, etc.).
-    //
-    // The current canvas is already tainted to WebGL — the fallback that
-    // put us here replaced it with a fresh canvas before configuring a
-    // WebGL context on it (same sceneFallbackRequiresReplacementCanvas
-    // reason set), and a canvas that has had getContext("webgl2") called on
-    // it can never return a working getContext("webgpu") afterward. So this
-    // needs its OWN fresh, as-yet-untainted trial canvas.
-    // createSceneWebGPURendererOrFallback only touches that trial canvas
-    // (calls getContext("webgpu") on it) once sceneWebGPUAvailable() is
-    // already true, so a failed attempt here never taints the LIVE canvas
-    // still on screen — the trial canvas is simply discarded, exactly like
-    // createFallbackSceneWebGLRenderer already does for its own trial
-    // canvas on the WebGPU-losing side of this same recovery machinery.
+    // Persistent frame errors may retry WebGPU on a fresh canvas. Explicit
+    // device loss is sticky for this mount; dispose/remount creates the next
+    // generation that may use a newly probed device.
     function recoverSceneWebGPUFromWebGLFallback(reason) {
       if (disposed || !renderer || renderer.kind !== "webgl") {
         return false;
@@ -831,7 +821,8 @@
       // its own render-empty check), so by the time a LATER probe-ready
       // event fires, that variable already reads "" even though this is
       // still, right now, a WebGPU-failure fallback.
-      if (!sceneFallbackRequiresReplacementCanvas(sceneDebugAttr(mount, sceneAttr("renderer-fallback")))) {
+      const fallbackReason = sceneDebugAttr(mount, sceneAttr("renderer-fallback"));
+      if (fallbackReason === "webgpu-device-lost" || !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
         return false;
       }
       const trialCanvas = prepareSceneReplacementCanvas();
@@ -875,6 +866,11 @@
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const reason = rendererReportsWebGPUFailure(diagnostics);
       if (!reason) {
+        return;
+      }
+      if (reason === "webgpu-device-lost") {
+        if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
+        recoverSceneWebGPURenderer(reason, 0, true);
         return;
       }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
@@ -1006,6 +1002,7 @@
         checkSceneWebGLLossRecovery();
         return;
       }
+      if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
       const animation = sceneAnimationState();
       if (!animation.wants || !sceneCanRender()) {
         renderWatchdogLastSeq = -1;
@@ -1014,7 +1011,7 @@
         publishSceneRenderWatchdogState("", 0);
         return;
       }
-      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      const now = sceneFrameNowMS();
       // A hidden tab stalls requestAnimationFrame BY DESIGN, and the interval
       // that drives this check is itself throttled while hidden. Counting
       // that time as a stall meant every tab return could fire the watchdog
@@ -1047,7 +1044,6 @@
         renderWatchdogLastSeq = progress.seq;
         renderWatchdogLastAt = progress.at;
         renderWatchdogLastAdvanceAt = now;
-        renderWatchdogActiveReason = "";
         renderWatchdogDeviceLostInfo = null;
         publishSceneRenderWatchdogState("", 0);
         return;
@@ -1073,7 +1069,7 @@
       if (renderWatchdogTimer != null || typeof setInterval !== "function") {
         return;
       }
-      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      const now = sceneFrameNowMS();
       const progress = readSceneWebGPUProgress();
       renderWatchdogLastSeq = progress.seq;
       renderWatchdogLastAt = progress.at;
@@ -1367,12 +1363,12 @@
       renderer = nextRenderer;
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
       publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
-      applySceneRendererState(mount, renderer, fallbackReason);
+      applySceneRendererState(mount, renderer, renderer.kind === "webgpu" ? "" : fallbackReason);
       publishSceneWaterRendererState(mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
-      renderWatchdogLastAdvanceAt = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      renderWatchdogLastAdvanceAt = sceneFrameNowMS();
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
@@ -1483,57 +1479,36 @@
 	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error";
 	    }
 
-    // WebGL fallback chunk state for this mount: "idle", "loading" or
-    // "settled". The ladder defers to the network at most once. After the
-    // chunk settles, whether or not it published a renderer, the ladder runs
-    // straight through to canvas2d.
-    let sceneWebGLFallbackChunkState = sceneWebGLRendererFactory() ? "settled" : "idle";
+    // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
+    // renderer generation owning a pending fetch (so stale completions lose).
+    let sceneWebGLFallbackOwner = sceneWebGLRendererFactory() ? 0 : null;
 
-    // deferSceneWebGLFallback keeps the WebGPU -> device-loss -> WebGL ->
-    // canvas2d ladder intact when WebGL sits in a lazily fetched chunk.
-    //
-    // A Chromium page that loses its WebGPU device reaches the WebGL rung with
-    // the chunk absent. Without this hop the ladder would skip WebGL and land
-    // on canvas2d, or on nothing at all, which trades graceful degradation for
-    // bytes. Instead: fetch the chunk, then re-enter fallbackSceneRenderer.
-    // The second pass finds the factory and swaps the renderer for real.
-    //
-    // Returns true when it started the fetch, so the caller reports that the
-    // ladder took an action. The mount draws nothing for one round trip, which
-    // is the same state a dead GPU device already left it in.
+    function settleSceneWebGLFallback(reason, owner, error) {
+      if (disposed || owner !== renderer || sceneWebGLFallbackOwner !== owner) return;
+      sceneWebGLFallbackOwner = 0;
+      if (error) {
+        gosxSceneEmit("warn", "webgl-fallback-chunk-failed", {
+          reason: reason || "", error: error && error.message ? String(error.message) : String(error || ""),
+        });
+      }
+      if (fallbackSceneRenderer(reason)) {
+        renderLatestSceneBundle(reason); scheduleRenderWithViewport(reason);
+        return;
+      }
+      terminalSceneWebGPURecovery(reason);
+      if (!error) gosxSceneEmit("warn", "webgl-fallback-chunk-unusable", { reason: reason || "" });
+    }
+
+    // Lazily load the WebGL rung without reviving the condemned WebGPU renderer.
+    // The generation owner makes stale completions inert and bounds the fetch.
     function deferSceneWebGLFallback(reason) {
-      if (sceneWebGLFallbackChunkState !== "idle") {
+      if (sceneWebGLFallbackOwner !== null) {
         return false;
       }
-      sceneWebGLFallbackChunkState = "loading";
+      const owner = sceneWebGLFallbackOwner = renderer;
       gosxSceneEmit("info", "webgl-fallback-chunk-fetch", { reason: reason || "" });
-      ensureWebGLFeatureLoaded().then(function() {
-        sceneWebGLFallbackChunkState = "settled";
-        if (disposed) {
-          return;
-        }
-        if (fallbackSceneRenderer(reason)) {
-          renderLatestSceneBundle(reason);
-          scheduleRenderWithViewport(reason);
-          return;
-        }
-        gosxSceneEmit("warn", "webgl-fallback-chunk-unusable", { reason: reason || "" });
-      }).catch(function(error) {
-        sceneWebGLFallbackChunkState = "settled";
-        gosxSceneEmit("warn", "webgl-fallback-chunk-failed", {
-          reason: reason || "",
-          error: error && error.message ? String(error.message) : String(error || ""),
-        });
-        if (disposed) {
-          return;
-        }
-        // The chunk is unreachable. Re-enter the ladder so it continues down
-        // to canvas2d instead of leaving the mount on a dead renderer.
-        if (fallbackSceneRenderer(reason)) {
-          renderLatestSceneBundle(reason);
-          scheduleRenderWithViewport(reason);
-        }
-      });
+      ensureWebGLFeatureLoaded().then(function() { settleSceneWebGLFallback(reason, owner); })
+        .catch(function(error) { settleSceneWebGLFallback(reason, owner, error); });
       return true;
     }
 
@@ -1600,7 +1575,7 @@
                 // ladder gives up on this rung, otherwise a WebGPU device loss
                 // would drop straight to canvas2d.
                 if (!sceneWebGLRendererFactory() && deferSceneWebGLFallback(fallbackReason)) {
-                  return true;
+                  return false;
                 }
                 const webglFallback = createFallbackSceneWebGLRenderer(fallbackReason);
                 if (webglFallback && webglFallback.result && webglFallback.result.renderer) {
@@ -1673,13 +1648,6 @@
 
     function renderLatestSceneBundle(reason) {
       if (disposed || !latestBundle || !renderer || typeof renderer.render !== "function" || !sceneCanRender()) {
-        return false;
-      }
-      // The ladder condemned this renderer and is waiting on the WebGL chunk.
-      // Drawing with a dead GPU device for that round trip buys nothing and can
-      // throw out of a rAF callback, so skip the frame. The renderer object
-      // stays in place, because swapRenderer still owns disposing it.
-      if (sceneWebGLFallbackChunkState === "loading") {
         return false;
       }
       // A retained bundle is backend-specific. Never replay it after a
@@ -1856,7 +1824,7 @@
     }
 
     function scheduleRender(reason) {
-      if (disposed) {
+      if (disposed || sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) {
         return;
       }
       lastRenderReason = reason || "refresh";
@@ -2673,14 +2641,6 @@
         })
       : function() {};
 
-    if (runtimeScene) {
-      if (ctx.runtime && ctx.runtime.available()) {
-        await applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
-      } else {
-        console.warn("[gosx] shared engine runtime unavailable");
-      }
-    }
-
     // WASM motion seam (P2.4b): lazy-load the scene's motion program once, then
     // each frame tick + decode packed transform writes into SET_TRANSFORM
     // commands routed through applySceneCommands (so state re-normalizes). Inert
@@ -3167,7 +3127,12 @@
     // safe even when loading, instantiation, skin setup, or status listeners
     // fail. The mount continues with the prior committed generation (or no
     // model-derived records on initial hydration).
+    let handle = null;
     await sceneModelHydration;
+    if (!scene3DFactoryOwned()) {
+      disposeMountedScene();
+      return {};
+    }
     scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
 
     // Defer the first Scene3D render until after a first-paint boundary.
@@ -3336,7 +3301,7 @@
       return Promise.resolve({ applied: true });
     }
 
-    const handle = {
+    handle = {
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
@@ -3422,126 +3387,119 @@
           scheduleRender("update-props");
         }
       },
-      dispose() {
-        disposed = true;
-        if (sceneAnimationToggle) {
-          if (typeof sceneAnimationToggle.removeEventListener === "function") {
-            sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
-          }
-          if (sceneAnimationToggle.__gosxScene3DOwner === mount) {
-            delete sceneAnimationToggle.__gosxScene3DOwner;
-          }
+      dispose: disposeMountedScene,
+    };
+
+    function disposeMountedScene() {
+      const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
+      disposed = true;
+      if (sceneAnimationToggle) {
+        if (typeof sceneAnimationToggle.removeEventListener === "function") {
+          sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
         }
-        if (revealSent && revealClass && document.documentElement) {
-          document.documentElement.classList.remove(revealClass);
+        if (sceneAnimationToggle.__gosxScene3DOwner === sceneMountOwner) {
+          delete sceneAnimationToggle.__gosxScene3DOwner;
         }
-        cancelSceneProgressiveModelLifecycle(sceneState);
-        // Supersede any SetModels/initial staging still waiting on I/O before
-        // releasing committed records. Its terminal generation check will
-        // dispose staged mixers and refuse all late status/scene mutation.
-        invalidateSceneModelHydration(sceneState);
-        initPending = false;
-        if (initHandle != null) {
-          cancelEngineFrame(initHandle);
-          initHandle = null;
-        }
-	        if (mount && typeof mount.removeEventListener === "function") {
-	          mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
-	        }
-        handle.__gosxScene3DCommandReady = false;
+      }
+      if (ownsMount && revealSent && revealClass && document.documentElement) {
+        document.documentElement.classList.remove(revealClass);
+      }
+      cancelSceneProgressiveModelLifecycle(sceneState);
+      // Supersede any SetModels/initial staging still waiting on I/O before
+      // releasing committed records. Its terminal generation check will
+      // dispose staged mixers and refuse all late status/scene mutation.
+      invalidateSceneModelHydration(sceneState);
+      initPending = false;
+      if (initHandle != null) {
+        cancelEngineFrame(initHandle);
+        initHandle = null;
+      }
+      if (mount && typeof mount.removeEventListener === "function") {
+        mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
+      }
+      if (handle) handle.__gosxScene3DCommandReady = false;
+      if (ownsMount) {
         publishSceneWaterLifecycleState(mount, sceneState, lifecycle, true);
         notifySceneRendererLifecycle("dispose", true, true);
-        clearIdleContextRelease();
-        clearVoluntaryRestoreWatchdog();
-        stopSceneRenderWatchdog();
-        if (webgpuProbeReadyListener && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
-          window.removeEventListener("gosx:scene3d:webgpu-probe-ready", webgpuProbeReadyListener);
-          webgpuProbeReadyListener = null;
-        }
-        if (scrollHandler) {
-          window.removeEventListener("scroll", scrollHandler);
-        }
-        if (visualViewportScrollHandler && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
-          window.visualViewport.removeEventListener("scroll", visualViewportScrollHandler);
-          window.visualViewport.removeEventListener("resize", visualViewportScrollHandler);
-        }
-	        detachSceneCanvasContextListeners(canvas);
-        document.removeEventListener("gosx:hub:event", sceneHubListener);
-        if (unsubCameraSignal) unsubCameraSignal();
-        if (unsubSelectionSignal) unsubSelectionSignal();
-        if (unsubGizmoSignal) unsubGizmoSignal();
-        releaseViewportObserver();
-        releaseCapabilityObserver();
-        releaseLifecycleObserver();
-        releaseMotionObserver();
-        releaseSceneCSSObserver();
-        if (domRegionTracker) {
-          domRegionTracker.dispose();
-        }
-        releaseManagedControlForms();
-        releaseTextLayoutListener();
-        releaseSceneDebugSurface();
-        dragHandle.dispose();
-        pickHandle.dispose();
-        sceneControlHandle.dispose();
-        renderer.dispose();
-        disposeSceneHTMLTextureState(htmlTextureState);
-        if (typeof releaseTextureLoadListener === "function") {
-          releaseTextureLoadListener();
-        }
-        if (wasmMotionState === 1 && typeof window !== "undefined"
-            && typeof window.__gosx_motion_unload === "function") {
-          window.__gosx_motion_unload(wasmMotionHandle);
-        }
-        wasmMotionState = -1;
-        wasmMotionHandle = 0;
-        // C3: free the material-uniform motion program handle.
-        if (wasmMatMotionState === 1 && typeof window !== "undefined"
-            && typeof window.__gosx_motion_unload === "function") {
-          window.__gosx_motion_unload(wasmMatMotionHandle);
-        }
-        wasmMatMotionState = -1;
-        wasmMatMotionHandle = 0;
-        // P4-M3: free any per-model WASM motion mixers created behind the flag.
-        sceneDestroyModelWasmMixers(sceneState && sceneState._modelSkins);
-        cancelFrame();
-        cancelScheduledRender();
-        if (pendingMotionHandle != null) {
-          cancelEngineFrame(pendingMotionHandle);
-          pendingMotionHandle = null;
-        }
-        if (labelRefreshHandle != null) {
-          cancelEngineFrame(labelRefreshHandle);
-        }
-        if (canvas.parentNode === mount) {
-          mount.removeChild(canvas);
-        }
-        if (labelLayer.parentNode === mount) {
-          mount.removeChild(labelLayer);
-        }
-        if (statsOverlay) {
-          statsOverlay.dispose();
-        }
-        if (inspectorOverlay) {
-          inspectorOverlay.dispose();
-        }
-        if (sentinelLayer.parentNode) {
-          sentinelLayer.parentNode.removeChild(sentinelLayer);
-        }
-        delete mount.__gosxScene3DSentinels;
+      }
+      clearIdleContextRelease();
+      clearVoluntaryRestoreWatchdog();
+      stopSceneRenderWatchdog();
+      if (webgpuProbeReadyListener && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+        window.removeEventListener("gosx:scene3d:webgpu-probe-ready", webgpuProbeReadyListener);
+        webgpuProbeReadyListener = null;
+      }
+      if (scrollHandler) {
+        window.removeEventListener("scroll", scrollHandler);
+      }
+      if (visualViewportScrollHandler && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
+        window.visualViewport.removeEventListener("scroll", visualViewportScrollHandler);
+        window.visualViewport.removeEventListener("resize", visualViewportScrollHandler);
+      }
+      detachSceneCanvasContextListeners(canvas);
+      document.removeEventListener("gosx:hub:event", sceneHubListener);
+      if (unsubCameraSignal) unsubCameraSignal();
+      if (unsubSelectionSignal) unsubSelectionSignal();
+      if (unsubGizmoSignal) unsubGizmoSignal();
+      releaseViewportObserver();
+      releaseCapabilityObserver();
+      releaseLifecycleObserver();
+      releaseMotionObserver();
+      releaseSceneCSSObserver();
+      if (domRegionTracker) domRegionTracker.dispose();
+      releaseManagedControlForms();
+      releaseTextLayoutListener();
+      releaseSceneDebugSurface();
+      dragHandle.dispose();
+      pickHandle.dispose();
+      sceneControlHandle.dispose();
+      renderer.dispose();
+      disposeSceneHTMLTextureState(htmlTextureState);
+      if (typeof releaseTextureLoadListener === "function") releaseTextureLoadListener();
+      if (wasmMotionState === 1 && typeof window !== "undefined"
+          && typeof window.__gosx_motion_unload === "function") {
+        window.__gosx_motion_unload(wasmMotionHandle);
+      }
+      wasmMotionState = -1;
+      wasmMotionHandle = 0;
+      // C3: free the material-uniform motion program handle.
+      if (wasmMatMotionState === 1 && typeof window !== "undefined"
+          && typeof window.__gosx_motion_unload === "function") {
+        window.__gosx_motion_unload(wasmMatMotionHandle);
+      }
+      wasmMatMotionState = -1;
+      wasmMatMotionHandle = 0;
+      // P4-M3: free any per-model WASM motion mixers created behind the flag.
+      sceneDestroyModelWasmMixers(sceneState && sceneState._modelSkins);
+      cancelFrame();
+      cancelScheduledRender();
+      if (pendingMotionHandle != null) {
+        cancelEngineFrame(pendingMotionHandle);
+        pendingMotionHandle = null;
+      }
+      if (labelRefreshHandle != null) cancelEngineFrame(labelRefreshHandle);
+      if (canvas.parentNode === mount) mount.removeChild(canvas);
+      if (labelLayer.parentNode === mount) mount.removeChild(labelLayer);
+      if (statsOverlay) statsOverlay.dispose();
+      if (inspectorOverlay) inspectorOverlay.dispose();
+      if (sentinelLayer.parentNode) sentinelLayer.parentNode.removeChild(sentinelLayer);
+      if (mount.__gosxScene3DSentinels === sceneNodeSentinels) delete mount.__gosxScene3DSentinels;
+      if (ownsMount) {
         delete mount.__gosxScene3DState;
         delete mount.__gosxScene3DTextureVariantContext;
         delete mount.__gosxScene3DCSSDynamic;
         delete mount.__gosxScene3DCSSRevision;
         delete mount.__gosxScene3DCSSAnimationUntil;
         delete mount.__gosxScene3DHandle;
+        delete mount.__gosxScene3DOwner;
         if (typeof mount.removeAttribute === "function") {
+          mount.removeAttribute(sceneAttr("inspector-enabled"));
           mount.removeAttribute(sceneAttr("command-ready"));
           mount.removeAttribute(sceneAttr("command-revision"));
           mount.removeAttribute(sceneAttr("command-applied-revision"));
         }
-      },
-    };
+      }
+    }
     // Mirror the returned handle directly on the mount element. The
     // window.__gosx.engines registry entry for this engine is written by the
     // GENERIC declarative-engine mounting path AFTER this factory's promise
@@ -3551,11 +3509,17 @@
     // completion. Callers that need the handle as soon as this mount is
     // interactive (e.g. an app-level progressive-upgrade script) should
     // prefer reading it from here over window.__gosx.engines.get(id).handle.
+    if (!scene3DFactoryOwned()) {
+      disposeMountedScene();
+      return {};
+    }
+    mount.__gosxScene3DState = sceneState;
     handle.__gosxScene3DCommandReady = true;
     mount.__gosxScene3DHandle = handle;
     if (typeof mount.setAttribute === "function") {
       mount.setAttribute(sceneAttr("command-ready"), "true");
     }
     scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
+    sceneState._modelOwner = null;
     return handle;
   });

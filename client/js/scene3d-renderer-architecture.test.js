@@ -260,7 +260,11 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    assert.equal(generated.length, 64);
+    assert.equal(generated.length, 68);
+    assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
+    assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
+    assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));
+    assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.br"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-webgpu.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-webgpu.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-webgpu.js.gz"));

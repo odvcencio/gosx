@@ -1,10 +1,5 @@
   // Scene geometry — vertex generation for wireframe primitives.
 
-  function sceneSegmentResolution(value) {
-    const segments = Math.round(sceneNumber(value, 12));
-    return Math.max(6, Math.min(24, segments));
-  }
-
   function scenePrimitiveSegmentResolution(value, fallback, minValue, maxValue) {
     const segments = Math.round(sceneNumber(value, fallback));
     return Math.max(minValue, Math.min(maxValue, segments));

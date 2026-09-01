@@ -34,6 +34,7 @@ const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DCommandSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-command.js"), "utf8");
+const bootstrapFeatureScene3DHydrateSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-hydrate.js"), "utf8");
 const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-compute.js"), "utf8");
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
@@ -2305,6 +2306,22 @@ function createContext(options) {
           if (typeof options.onHydrate === "function") {
             return options.onHydrate(...args);
           }
+          if (args[0] === "scene3d") {
+            const legacyArgs = args.slice(1);
+            engineHydrateCalls.push(legacyArgs);
+            const raw = typeof options.onHydrateEngine === "function"
+              ? options.onHydrateEngine(...legacyArgs)
+              : "[]";
+            const commands = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
+            return {
+              version: 1,
+              surfaceKind: "scene3d",
+              outputKind: "scene3d.commands",
+              targetId: args[1],
+              mode: "initial",
+              commands,
+            };
+          }
           return null;
         };
         context.__gosx_hydrate_compute = (...args) => {
@@ -2868,19 +2885,21 @@ async function mountMotionSeamScene(motionFlag, tickFn) {
         },
       ],
     },
-    // Camera + a single long box keyed "cube" (width 3, depth 0.4) so a 90°
+    // Camera + a single long box keyed "1" (width 3, depth 0.4) so a 90°
     // rotation about Y swaps the X/Z extents — a deterministic, camera-
     // independent world-space signal.
     onHydrateEngine: () => JSON.stringify([
       { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
       {
         kind: 0,
-        objectId: "cube",
+        objectId: 1,
         data: {
           kind: "box",
           geometry: "box",
           material: "flat",
           props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -2892,7 +2911,7 @@ async function mountMotionSeamScene(motionFlag, tickFn) {
   if (motionFlag) {
     env.context.__gosx_motion_wasm = true;
     env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["rotation"] });
     env.context.__gosx_motion_tick = tickFn;
     env.context.__gosx_motion_unload = () => {};
   }
@@ -2991,17 +3010,18 @@ async function mountMaterialMotionScene(motionFlag) {
         },
       ],
     },
-    // A selena/custom box keyed "glow-cube" carrying an inline customUniforms
+    // A selena/custom box keyed "1" carrying an inline customUniforms
     // bag — so the resolved write target is the object record itself (no named
     // material lookup), which the seam mutates in place.
     onHydrateEngine: () => JSON.stringify([
       { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
       {
         kind: 0,
-        objectId: "glow-cube",
+        objectId: 1,
         data: {
           kind: "box",
           geometry: "box",
+          material: "",
           props: {
             x: 0, y: 0, z: 0, size: 1, color: "#8de1ff",
             materialKind: "custom",
@@ -3009,6 +3029,8 @@ async function mountMaterialMotionScene(motionFlag) {
             customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
             customUniforms: { emissive: [0, 0, 0, 0] },
           },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -3018,13 +3040,13 @@ async function mountMaterialMotionScene(motionFlag) {
   if (motionFlag) {
     env.context.__gosx_motion_wasm = true;
     env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
     env.context.__gosx_motion_tick = tick;
     env.context.__gosx_motion_unload = () => {};
   } else {
     // Exports present but the opt-in flag deliberately unset.
     env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
     env.context.__gosx_motion_tick = tick;
     env.context.__gosx_motion_unload = () => {};
   }
@@ -4267,10 +4289,10 @@ function readBootstrapSrc(...names) {
     .join("\n");
 }
 
-// readSceneMountSrc joins every 20x-scene-mount*.js file in build order. The
+// readSceneMountSrc joins the Scene3D mount authorities in build order. The
 // old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
-// Scene3D chunk; it is now nine files. A source assertion about the mount path
-// must read them all.
+// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is now ten
+// governed sources. A source assertion about that path must read them all.
 function readSceneMountSrc() {
   return readBootstrapSrc(
     "../runtime/scene3d/mount-backend.ts",
@@ -4281,6 +4303,7 @@ function readSceneMountSrc() {
     "../runtime/scene3d/overlay-dom.ts",
     "../runtime/scene3d/mount-controls.ts",
     "../runtime/scene3d/mount-telemetry.ts",
+    "../runtime/scene3d/hydrate-input.ts",
     "../runtime/scene3d/mount.ts",
   );
 }
@@ -5639,6 +5662,7 @@ module.exports = {
   bootstrapFeatureHubsSource,
   bootstrapFeatureScene3DSource,
   bootstrapFeatureScene3DCommandSource,
+  bootstrapFeatureScene3DHydrateSource,
   bootstrapFeatureScene3DComputeSource,
   bootstrapFeatureScene3DDecompressSource,
   bootstrapFeatureScene3DWebGLSource,

@@ -30,6 +30,7 @@ func TestLoadAndURLs(t *testing.T) {
 	    "standardGoWasmExec": {"file": "standard-go-wasm_exec.2a2a2a2a.js", "hash": "2a2a2a2a", "size": 21},
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
     "bootstrapFeatureScene3dCommand": {"file": "bootstrap-feature-scene3d-command.3d3d3d3d.js", "hash": "3d3d3d3d", "size": 33},
+    "bootstrapFeatureScene3dHydrate": {"file": "bootstrap-feature-scene3d-hydrate.3e3e3e3e.js", "hash": "3e3e3e3e", "size": 34},
     "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40},
     "videoHLS": {"file": "hls.min.77777777.js", "hash": "77777777", "size": 70}
   },
@@ -67,6 +68,9 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if runtime.BootstrapFeatureScene3DCommand != "/gosx/assets/runtime/bootstrap-feature-scene3d-command.3d3d3d3d.js" {
 		t.Fatalf("unexpected scene3d command url: %s", runtime.BootstrapFeatureScene3DCommand)
+	}
+	if runtime.BootstrapFeatureScene3DHydrate != "/gosx/assets/runtime/bootstrap-feature-scene3d-hydrate.3e3e3e3e.js" {
+		t.Fatalf("unexpected scene3d hydrate url: %s", runtime.BootstrapFeatureScene3DHydrate)
 	}
 	if runtime.VideoHLS != "/gosx/assets/runtime/hls.min.77777777.js" {
 		t.Fatalf("unexpected video hls url: %s", runtime.VideoHLS)

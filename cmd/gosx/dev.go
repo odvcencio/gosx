@@ -265,6 +265,7 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	for _, chunk := range []string{
 		"bootstrap-feature-scene3d.js",
 		"bootstrap-feature-scene3d-command.js",
+		"bootstrap-feature-scene3d-hydrate.js",
 		"bootstrap-feature-scene3d-webgpu.js",
 		"bootstrap-feature-scene3d-webgl.js",
 		"bootstrap-feature-scene3d-gltf.js",

@@ -2,11 +2,24 @@
 
 package bridge
 
-// hydrateScene3D routes a scene3d surface through HydrateEngine and discards
-// the returned command stream. Build-tag-paired with bridge_reconciler_islands.go
-// — the tiny islands-only build provides a stub that returns an error so the
-// linker can drop the scene reconciler entirely.
-func (b *Bridge) hydrateScene3D(id, componentName, propsJSON string, programData []byte, format string) error {
-	_, err := b.HydrateEngine(id, componentName, propsJSON, programData, format)
-	return err
+import rootengine "m31labs.dev/gosx/engine"
+
+// hydrateScene3DOutput preserves the initial command stream produced by the
+// engine adapter. Build-tag-paired with bridge_reconciler_islands.go.
+func (b *Bridge) hydrateScene3DOutput(id, componentName, propsJSON string, programData []byte, format string) (*HydrateEnvelope, error) {
+	commands, err := b.HydrateEngine(id, componentName, propsJSON, programData, format)
+	if err != nil {
+		return nil, err
+	}
+	if commands == nil {
+		commands = make([]rootengine.Command, 0)
+	}
+	return &HydrateEnvelope{
+		Version:     HydrateEnvelopeVersion,
+		SurfaceKind: SurfaceKindScene3D,
+		OutputKind:  HydrateOutputScene3DCommands,
+		TargetID:    id,
+		Mode:        HydrateModeInitial,
+		Commands:    commands,
+	}, nil
 }

@@ -1042,6 +1042,12 @@ const budgets = [
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
+  // Strict initial-hydrate decoding is a separate progressive chunk. The
+  // server emits it only for a shared-runtime Scene3D entry with a program
+  // reference, before the main deferred Scene3D feature script. Static scenes
+  // therefore keep the existing initial-route ceilings. Canonical measured:
+  // 2_115 / 988 / 879, with narrow next-boundary headroom.
+  { file: "bootstrap-feature-scene3d-hydrate.js", raw: 2_200, gzip: 1_000, brotli: 900 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

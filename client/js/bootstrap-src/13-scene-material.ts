@@ -566,16 +566,6 @@
     return index;
   }
 
-  function sceneMaterialStrokeColor(material) {
-    const rgba = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
-    rgba[3] = clamp01(rgba[3] * sceneMaterialOpacity(material));
-    return "rgba(" +
-      Math.round(rgba[0] * 255) + ", " +
-      Math.round(rgba[1] * 255) + ", " +
-      Math.round(rgba[2] * 255) + ", " +
-      rgba[3].toFixed(3) + ")";
-  }
-
   function sceneMaterialOpacity(material) {
     if (!material || typeof material !== "object") {
       return 1;
@@ -588,10 +578,6 @@
       return 0;
     }
     return clamp01(sceneNumber(material.emissive, 0));
-  }
-
-  function sceneMaterialUsesAlpha(material) {
-    return sceneMaterialRenderPass(material) !== "opaque";
   }
 
   function sceneMaterialRenderPass(material) {

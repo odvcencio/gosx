@@ -194,7 +194,7 @@ func TestRunBuildRuntimeExcludeDropsAssetsFilesAndManifestKeys(t *testing.T) {
 	manifestPath := filepath.Join(dir, "dist", "build.json")
 	manifestJSON := readFile(t, manifestPath)
 	for _, forbiddenKey := range []string{
-		`"bootstrapFeatureScene3d"`, `"bootstrapFeatureScene3dCommand"`, `"bootstrapFeatureScene3dWebgpu"`,
+		`"bootstrapFeatureScene3d"`, `"bootstrapFeatureScene3dCommand"`, `"bootstrapFeatureScene3dHydrate"`, `"bootstrapFeatureScene3dWebgpu"`,
 		`"bootstrapFeatureScene3dWebgl"`, `"bootstrapFeatureScene3dGltf"`, `"bootstrapFeatureScene3dAnimation"`,
 		`"bootstrapFeatureScene3dCompute"`, `"bootstrapFeatureScene3dDecompress"`,
 		`"videoHLS"`, `"stripeBridge"`, `"relay"`, `"bootstrapFeatureTextlayout"`,
@@ -213,7 +213,8 @@ func TestRunBuildRuntimeExcludeDropsAssetsFilesAndManifestKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load %s: %v", manifestPath, err)
 	}
-	if manifest.Runtime.BootstrapFeatureScene3D.File != "" || manifest.Runtime.VideoHLS.File != "" ||
+	if manifest.Runtime.BootstrapFeatureScene3D.File != "" || manifest.Runtime.BootstrapFeatureScene3DHydrate.File != "" ||
+		manifest.Runtime.VideoHLS.File != "" ||
 		manifest.Runtime.StripeBridge.File != "" || manifest.Runtime.Relay.File != "" ||
 		manifest.Runtime.BootstrapFeatureTextlayout.File != "" {
 		t.Fatalf("decoded manifest still names an excluded runtime asset: %#v", manifest.Runtime)
@@ -258,6 +259,7 @@ func TestRunBuildDefaultRuntimeConfigMatchesLegacyOutputShape(t *testing.T) {
 		"bootstrap-feature-islands.", "bootstrap-feature-engines.", "bootstrap-feature-hubs.",
 		"bootstrap-feature-controllers.", "bootstrap-feature-textlayout.",
 		"bootstrap-feature-scene3d.", "bootstrap-feature-scene3d-command.",
+		"bootstrap-feature-scene3d-hydrate.",
 		"bootstrap-feature-scene3d-webgpu.", "bootstrap-feature-scene3d-webgl.",
 		"bootstrap-feature-scene3d-gltf.", "bootstrap-feature-scene3d-animation.",
 		"bootstrap-feature-scene3d-compute.", "bootstrap-feature-scene3d-decompress.",

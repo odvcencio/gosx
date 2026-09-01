@@ -3,7 +3,9 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"syscall/js"
 
 	"m31labs.dev/gosx/client/bridge"
@@ -77,11 +79,40 @@ func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
 		if err != nil {
 			return jsError(err)
 		}
-		if err := b.HydrateReconciler(surfaceKind, call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
+		output, err := b.HydrateReconcilerOutput(surfaceKind, call.islandID, call.componentName, call.propsJSON, call.programData, call.format)
+		if err != nil {
 			return jsError(err)
 		}
-		return js.Null()
+		if output == nil {
+			return js.Null()
+		}
+		value, err := hydrateEnvelopeJSValue(output)
+		if err != nil {
+			b.DisposeEngine(call.islandID)
+			return jsError(err)
+		}
+		return value
 	})
+}
+
+var marshalHydrateEnvelope = json.Marshal
+
+func hydrateEnvelopeJSValue(output *bridge.HydrateEnvelope) (value js.Value, err error) {
+	data, err := marshalHydrateEnvelope(output)
+	if err != nil {
+		return js.Undefined(), fmt.Errorf("marshal hydrate output: %w", err)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			value = js.Undefined()
+			err = fmt.Errorf("convert hydrate output: %v", recovered)
+		}
+	}()
+	value = js.Global().Get("JSON").Call("parse", string(data))
+	if value.Type() != js.TypeObject || value.IsNull() || value.InstanceOf(js.Global().Get("Array")) {
+		return js.Undefined(), errors.New("convert hydrate output: JSON.parse did not return an object")
+	}
+	return value, nil
 }
 
 // parseUnifiedHydrateArgs detects the call shape and returns the surfaceKind

@@ -261,6 +261,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-textlayout.js", file: rt.BootstrapFeatureTextlayout.File, role: "feature chunk"},
 		{name: "bootstrap-feature-scene3d.js", file: rt.BootstrapFeatureScene3D.File, role: "scene3d chunk"},
 		{name: "bootstrap-feature-scene3d-command.js", file: rt.BootstrapFeatureScene3DCommand.File, role: "scene3d command chunk"},
+		{name: "bootstrap-feature-scene3d-hydrate.js", file: rt.BootstrapFeatureScene3DHydrate.File, role: "scene3d hydrate chunk"},
 		{name: "bootstrap-feature-scene3d-webgpu.js", file: rt.BootstrapFeatureScene3DWebGPU.File, role: "scene3d webgpu chunk"},
 		{name: "bootstrap-feature-scene3d-webgl.js", file: rt.BootstrapFeatureScene3DWebGL.File, role: "scene3d webgl chunk"},
 		{name: "bootstrap-feature-scene3d-gltf.js", file: rt.BootstrapFeatureScene3DGLTF.File, role: "scene3d gltf chunk"},
@@ -293,6 +294,7 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"scene3d": {
 		"bootstrap-feature-scene3d.js",
 		"bootstrap-feature-scene3d-command.js",
+		"bootstrap-feature-scene3d-hydrate.js",
 		"bootstrap-feature-scene3d-webgpu.js",
 		"bootstrap-feature-scene3d-webgl.js",
 		"bootstrap-feature-scene3d-gltf.js",

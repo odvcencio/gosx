@@ -1379,6 +1379,7 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 		BootstrapFeatureEngines:          buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
 		BootstrapFeatureScene3D:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCommand:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DHydrate:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-hydrate.js", Hash: "hydrate"},
 		BootstrapFeatureScene3DWebGPU:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
 		BootstrapFeatureScene3DWebGL:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgl.js", Hash: "webgl"},
 		BootstrapFeatureScene3DGLTF:      buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-gltf.js", Hash: "gltf"},
@@ -1406,6 +1407,72 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 	// demand, and a tag here would defeat the whole saving.
 	if strings.Contains(html, `src="/gosx/assets/runtime/bootstrap-feature-scene3d-webgl.js"`) {
 		t.Errorf("WebGL chunk is eagerly loaded as a script tag: %s", html)
+	}
+	if strings.Contains(html, `feature-scene3d-hydrate`) {
+		t.Errorf("static Scene3D page eagerly loaded the hydrate chunk: %s", html)
+	}
+}
+
+func TestScene3DHydrateChunkIsProgramGatedOrderedAndIntegrityBound(t *testing.T) {
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DHydrate: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d-hydrate.js",
+			Hash:      "hydrate",
+			Integrity: "sha256-hydrate-integrity",
+		},
+	}}
+	r := NewRenderer("main")
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{
+		Name:     "GoSXScene3D",
+		Kind:     engine.KindSurface,
+		Runtime:  engine.RuntimeShared,
+		WASMPath: "/gosx/engines/scene.gxi",
+	}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("hydrate-nonce"))
+	hydrateTagStart := `<script defer data-gosx-script="feature-scene3d-hydrate" src="/gosx/assets/runtime/bootstrap-feature-scene3d-hydrate.js"`
+	hydrateAt := strings.Index(html, hydrateTagStart)
+	if hydrateAt < 0 {
+		t.Fatalf("shared Scene3D program omitted integrity-bound hydrate chunk: %s", html)
+	}
+	hydrateEnd := strings.Index(html[hydrateAt:], `</script>`)
+	if hydrateEnd < 0 {
+		t.Fatalf("shared Scene3D hydrate script is unterminated: %s", html)
+	}
+	hydrateTag := html[hydrateAt : hydrateAt+hydrateEnd]
+	for _, attribute := range []string{
+		`type="text/javascript"`,
+		`crossorigin="anonymous"`,
+		`referrerpolicy="no-referrer"`,
+		`integrity="sha256-hydrate-integrity"`,
+		`nonce="hydrate-nonce"`,
+	} {
+		if !strings.Contains(hydrateTag, attribute) {
+			t.Fatalf("shared Scene3D hydrate script omitted %s: %s", attribute, hydrateTag)
+		}
+	}
+	sceneAt := strings.Index(html, `data-gosx-script="feature-scene3d"`)
+	if hydrateAt < 0 || sceneAt < 0 || hydrateAt >= sceneAt {
+		t.Fatalf("hydrate chunk must execute before the main deferred Scene3D chunk: %s", html)
+	}
+
+	withoutCode := NewRenderer("main")
+	if err := withoutCode.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	withoutCode.RenderEngine(engine.Config{
+		Name:    "GoSXScene3D",
+		Kind:    engine.KindSurface,
+		Runtime: engine.RuntimeShared,
+	}, gosx.Text(""))
+	if got := gosx.RenderHTML(withoutCode.BootstrapScript()); strings.Contains(got, `feature-scene3d-hydrate`) {
+		t.Fatalf("shared Scene3D entry without code loaded hydrate chunk: %s", got)
 	}
 }
 

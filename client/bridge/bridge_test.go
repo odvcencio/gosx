@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -531,9 +532,11 @@ func TestBridgeHydrateReconcilerDOMMatchesHydrateIsland(t *testing.T) {
 	}
 }
 
-func TestBridgeHydrateReconcilerScene3DMatchesHydrateEngine(t *testing.T) {
-	// HydrateReconciler with surfaceKind="scene3d" must register the same kind
-	// of engine runtime as the legacy HydrateEngine path.
+func TestBridgeHydrateReconcilerOutputScene3DMatchesHydrateEngine(t *testing.T) {
+	if islandsOnlyBuild {
+		t.Skip("scene3d unavailable in islands-only build")
+	}
+	// The output-bearing path must preserve the exact legacy command stream.
 	bUnified := New()
 	bLegacy := New()
 
@@ -567,11 +570,22 @@ func TestBridgeHydrateReconcilerScene3DMatchesHydrateEngine(t *testing.T) {
 		t.Fatalf("encode engine program: %v", err)
 	}
 
-	if err := bUnified.HydrateReconciler("scene3d", "engine-0", prog.Name, `{}`, data, "json"); err != nil {
-		t.Fatalf("HydrateReconciler(scene3d): %v", err)
+	output, err := bUnified.HydrateReconcilerOutput("scene3d", "engine-0", prog.Name, `{}`, data, "json")
+	if err != nil {
+		t.Fatalf("HydrateReconcilerOutput(scene3d): %v", err)
 	}
-	if _, err := bLegacy.HydrateEngine("engine-0", prog.Name, `{}`, data, "json"); err != nil {
+	legacyCommands, err := bLegacy.HydrateEngine("engine-0", prog.Name, `{}`, data, "json")
+	if err != nil {
 		t.Fatalf("HydrateEngine: %v", err)
+	}
+	if output == nil {
+		t.Fatal("expected Scene3D hydrate output")
+	}
+	if output.Version != 1 || output.SurfaceKind != "scene3d" || output.OutputKind != "scene3d.commands" || output.TargetID != "engine-0" || output.Mode != "initial" {
+		t.Fatalf("unexpected hydrate output identity: %#v", output)
+	}
+	if !reflect.DeepEqual(output.Commands, legacyCommands) {
+		t.Fatalf("output commands differ from legacy commands:\noutput=%#v\nlegacy=%#v", output.Commands, legacyCommands)
 	}
 
 	if bUnified.EngineCount() != 1 {
@@ -579,6 +593,126 @@ func TestBridgeHydrateReconcilerScene3DMatchesHydrateEngine(t *testing.T) {
 	}
 	if bLegacy.EngineCount() != 1 {
 		t.Fatalf("legacy EngineCount = %d, want 1", bLegacy.EngineCount())
+	}
+}
+
+func TestBridgeHydrateReconcilerScene3DFailsBeforeMutation(t *testing.T) {
+	b := New()
+	hydrateMinimalEngineFor(t, b, "existing")
+	beforeEngines, beforeReconcilers := b.EngineCount(), b.ReconcilerCount()
+
+	err := b.HydrateReconciler("scene3d", "discarded", "Broken", `{bad props`, []byte(`{bad program`), "json")
+	if err == nil || !strings.Contains(err.Error(), "requires HydrateReconcilerOutput") {
+		t.Fatalf("expected stable output-required error, got %v", err)
+	}
+	if b.EngineCount() != beforeEngines || b.ReconcilerCount() != beforeReconcilers {
+		t.Fatalf("error-only Scene3D hydrate mutated maps: engines=%d/%d reconcilers=%d/%d",
+			b.EngineCount(), beforeEngines, b.ReconcilerCount(), beforeReconcilers)
+	}
+	if _, ok := b.LookupReconciler("discarded"); ok {
+		t.Fatal("error-only Scene3D hydrate registered a reconciler")
+	}
+}
+
+func TestBridgeHydrateReconcilerOutputScene3DEmptyCommandsAreArray(t *testing.T) {
+	if islandsOnlyBuild {
+		t.Skip("scene3d unavailable in islands-only build")
+	}
+	b := New()
+	data, err := rootengine.EncodeProgramJSON(&rootengine.Program{Name: "Empty"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := b.HydrateReconcilerOutput("scene3d", "empty", "Empty", `{}`, data, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil || output.Commands == nil || len(output.Commands) != 0 {
+		t.Fatalf("empty commands must be a non-nil empty slice, got %#v", output)
+	}
+}
+
+func TestBridgeHydrateReconcilerOutputScene3DSameIDReplacesAdapter(t *testing.T) {
+	if islandsOnlyBuild {
+		t.Skip("scene3d unavailable in islands-only build")
+	}
+	b := New()
+	data, err := rootengine.EncodeProgramJSON(&rootengine.Program{Name: "Replacement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.HydrateReconcilerOutput("scene3d", "same", "Replacement", `{}`, data, "json"); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := b.LookupReconciler("same")
+	if !ok {
+		t.Fatal("first adapter was not registered")
+	}
+	if _, err := b.HydrateReconcilerOutput("scene3d", "same", "Replacement", `{}`, data, "json"); err != nil {
+		t.Fatal(err)
+	}
+	second, ok := b.LookupReconciler("same")
+	if !ok || first == second {
+		t.Fatal("same-ID hydrate did not replace the adapter")
+	}
+	if b.EngineCount() != 1 || b.ReconcilerCount() != 1 {
+		t.Fatalf("same-ID hydrate leaked state: engines=%d reconcilers=%d", b.EngineCount(), b.ReconcilerCount())
+	}
+}
+
+func TestBridgeHydrateReconcilerOutputScene3DUnavailableInIslandsOnlyBuild(t *testing.T) {
+	if !islandsOnlyBuild {
+		t.Skip("islands-only contract")
+	}
+	b := New()
+	output, err := b.HydrateReconcilerOutput("scene3d", "stripped", "Scene", `{}`, []byte(`{}`), "json")
+	if output != nil || err == nil || !strings.Contains(err.Error(), "scene3d surface unavailable in islands-only build") {
+		t.Fatalf("islands-only hydrate = %#v, %v", output, err)
+	}
+	if b.EngineCount() != 0 || b.ReconcilerCount() != 0 {
+		t.Fatalf("islands-only hydrate registered state: engines=%d reconcilers=%d", b.EngineCount(), b.ReconcilerCount())
+	}
+}
+
+func TestBridgeHydrateReconcilerOutputPreservesOrdinarySurfaces(t *testing.T) {
+	prog := program.CounterProgram()
+	data, err := program.EncodeJSON(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New()
+	output, err := b.HydrateReconcilerOutput("dom", "dom-output", prog.Name, `{}`, data, "json")
+	if err != nil || output != nil || b.IslandCount() != 1 {
+		t.Fatalf("DOM output hydrate = %#v, %v; islands=%d", output, err, b.IslandCount())
+	}
+	if islandsOnlyBuild {
+		return
+	}
+	output, err = b.HydrateReconcilerOutput("canvas2d", "canvas-output", "Board", `{}`, []byte(`{}`), "json")
+	if err != nil || output != nil || b.CanvasBoardCount() != 1 {
+		t.Fatalf("Canvas2D output hydrate = %#v, %v; boards=%d", output, err, b.CanvasBoardCount())
+	}
+}
+
+func TestBridgeHydrateReconcilerOutputFailuresDoNotRegisterScene3D(t *testing.T) {
+	for _, tc := range []struct {
+		name, props, format string
+		program             []byte
+	}{
+		{name: "malformed program", props: `{}`, program: []byte(`{bad`), format: "json"},
+		{name: "malformed props", props: `{bad`, program: []byte(`{}`), format: "json"},
+		{name: "unknown format", props: `{}`, program: []byte(`{}`), format: "binary-v99"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New()
+			output, err := b.HydrateReconcilerOutput("scene3d", "bad", "Bad", tc.props, tc.program, tc.format)
+			if err == nil || output != nil {
+				t.Fatalf("expected nil output and error, got %#v, %v", output, err)
+			}
+			if b.EngineCount() != 0 || b.ReconcilerCount() != 0 {
+				t.Fatalf("failed hydrate registered state: engines=%d reconcilers=%d", b.EngineCount(), b.ReconcilerCount())
+			}
+		})
 	}
 }
 

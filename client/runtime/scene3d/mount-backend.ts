@@ -159,7 +159,7 @@
     record.key = key;
     registry.set(key, record);
     return function() {
-      registry.delete(key);
+      if (registry.get(key) === record) registry.delete(key);
     };
   }
 

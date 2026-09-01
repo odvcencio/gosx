@@ -1755,9 +1755,9 @@
         disposeDisclosure();
         if (form.__gosxScene3DFluidObjectControls === binding) {
           delete form.__gosxScene3DFluidObjectControls;
-        }
-        if (form.__gosxScene3DFluidObjectState) {
-          delete form.__gosxScene3DFluidObjectState;
+          if (form.__gosxScene3DFluidObjectState) {
+            delete form.__gosxScene3DFluidObjectState;
+          }
         }
       },
     };

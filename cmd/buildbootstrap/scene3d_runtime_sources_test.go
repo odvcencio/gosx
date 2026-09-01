@@ -10,6 +10,7 @@ func TestScene3DBundlesUseTypedRuntimeAuthorities(t *testing.T) {
 		"../runtime/scene3d/compute.ts":         false,
 		"../runtime/scene3d/dom-regions.ts":     false,
 		"../runtime/scene3d/gltf.ts":            false,
+		"../runtime/scene3d/hydrate-input.ts":   false,
 		"../runtime/scene3d/mount-backend.ts":   false,
 		"../runtime/scene3d/mount-controls.ts":  false,
 		"../runtime/scene3d/mount-quality.ts":   false,
