@@ -216,6 +216,137 @@ for (const asset of ASSETS.values()) {
   }
 }
 
+const CLEANUP_MAX_ATTEMPTS = 10;
+const CLEANUP_RETRY_DELAY_MS = 100;
+const CLEANUP_MAX_WAIT_MS = 1500;
+const CLEANUP_CHROME_EXIT_WAIT_MS = 5000;
+const CLEANUP_SERVER_CLOSE_WAIT_MS = 3000;
+const FINALIZATION_CLEANUP_ENVELOPE_MS = CLEANUP_CHROME_EXIT_WAIT_MS +
+  (2 * CLEANUP_MAX_WAIT_MS) + CLEANUP_SERVER_CLOSE_WAIT_MS;
+const FINALIZATION_HARD_DEADLINE_MS = 15000;
+const CLEANUP_TRANSIENT_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM', 'EMFILE', 'ENFILE']);
+const CLEANUP_PREFIXES = new Set(['gosx-adapter-chrome-', 'gosx-adapter-hydrate-']);
+
+function singleFlightAsync(operation) {
+  let sharedPromise = null;
+  return function runOnce() {
+    if (!sharedPromise) sharedPromise = Promise.resolve().then(operation);
+    return sharedPromise;
+  };
+}
+
+function createProofFinalizer(operations) {
+  let finalizationPromise = null;
+  let settled = false;
+  return function finalize(extra) {
+    if (finalizationPromise) return finalizationPromise;
+    finalizationPromise = (async () => {
+      const deadline = operations.setTimer(() => {
+        if (settled) return;
+        settled = true;
+        operations.fail('cleanup/finalization deadline exceeded ' +
+          FINALIZATION_HARD_DEADLINE_MS + 'ms');
+        operations.writeReport({ fatal: 'cleanup/finalization deadline' });
+        operations.exit(1);
+      }, FINALIZATION_HARD_DEADLINE_MS);
+      try {
+        await operations.cleanup();
+        if (settled) return;
+        operations.writeReport(extra || {});
+        const exitCode = operations.exitCode();
+        settled = true;
+        operations.clearTimer(deadline);
+        operations.exit(exitCode);
+      } catch (error) {
+        if (settled) return;
+        operations.fail('cleanup/finalization failed: ' +
+          String(error && (error.stack || error.message) || error));
+        operations.writeReport({ fatal: 'cleanup/finalization failure' });
+        settled = true;
+        operations.clearTimer(deadline);
+        operations.exit(1);
+      }
+    })();
+    return finalizationPromise;
+  };
+}
+
+function cleanupTempTreeError(label, target, code, attempts, cause) {
+  const detail = cause && cause.message ? ': ' + cause.message : '';
+  const error = new Error(label + ' cleanup failed: code=' + code + ' path=' +
+    JSON.stringify(target) + ' attempts=' + attempts + detail);
+  error.code = code;
+  error.path = target;
+  error.attempts = attempts;
+  error.label = label;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+async function cleanupTempTree(label, dir, expectedPrefix, hooks) {
+  if (!dir) return { label, path: '', attempts: 0, removed: true, skipped: true };
+  const options = hooks || {};
+  const tmpRoot = path.resolve(os.tmpdir());
+  const target = path.resolve(String(dir));
+  const basename = path.basename(target);
+  const relative = path.relative(tmpRoot, target);
+  const directChild = !!relative && !path.isAbsolute(relative) && relative !== '..' &&
+    !relative.startsWith('..' + path.sep) && path.dirname(target) === tmpRoot;
+  if (!directChild) throw cleanupTempTreeError(label, target, 'EUNSAFEPATH', 0);
+  if (!CLEANUP_PREFIXES.has(expectedPrefix) || !basename.startsWith(expectedPrefix) ||
+      basename.length <= expectedPrefix.length) {
+    throw cleanupTempTreeError(label, target, 'EUNSAFEPREFIX', 0);
+  }
+
+  const maxAttempts = Number.isSafeInteger(options.maxAttempts) && options.maxAttempts > 0 ?
+    Math.min(options.maxAttempts, CLEANUP_MAX_ATTEMPTS) : CLEANUP_MAX_ATTEMPTS;
+  const retryDelayMS = Number.isFinite(options.retryDelayMS) && options.retryDelayMS >= 0 ?
+    Math.min(options.retryDelayMS, CLEANUP_RETRY_DELAY_MS) : CLEANUP_RETRY_DELAY_MS;
+  const maxWaitMS = Number.isFinite(options.maxWaitMS) && options.maxWaitMS >= 0 ?
+    Math.min(options.maxWaitMS, CLEANUP_MAX_WAIT_MS) : CLEANUP_MAX_WAIT_MS;
+  const remove = options.remove || ((targetPath) => fs.promises.rm(targetPath, { recursive: true, force: true }));
+  const lstat = options.lstat || ((targetPath) => fs.promises.lstat(targetPath));
+  const delay = options.delay || sleep;
+  const now = options.now || Date.now;
+  const startedAt = now();
+  let lastError = null;
+
+  for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
+    try {
+      await remove(target);
+      try {
+        await lstat(target);
+        lastError = new Error('path still exists after recursive removal');
+        lastError.code = 'ENOTEMPTY';
+        lastError.path = target;
+      } catch (error) {
+        if (error && error.code === 'ENOENT') return { label, path: target, attempts, removed: true };
+        lastError = error;
+      }
+    } catch (error) {
+      if (error && error.code === 'ENOENT') return { label, path: target, attempts, removed: true };
+      lastError = error;
+    }
+    const code = lastError && typeof lastError.code === 'string' ? lastError.code : 'EUNKNOWN';
+    if (!CLEANUP_TRANSIENT_CODES.has(code) || attempts >= maxAttempts || now() - startedAt >= maxWaitMS) {
+      throw cleanupTempTreeError(label, target, code, attempts, lastError);
+    }
+    const remainingMS = maxWaitMS - (now() - startedAt);
+    if (remainingMS <= 0) throw cleanupTempTreeError(label, target, code, attempts, lastError);
+    await delay(Math.min(retryDelayMS, remainingMS));
+  }
+  throw cleanupTempTreeError(label, target, 'EUNKNOWN', maxAttempts, lastError);
+}
+
+async function cleanupTempTreeOrFail(label, dir, expectedPrefix, hooks) {
+  try { return await cleanupTempTree(label, dir, expectedPrefix, hooks); }
+  catch (error) {
+    fail(error && error.message ? error.message : label + ' cleanup failed: code=EUNKNOWN path=' +
+      JSON.stringify(String(dir || '')) + ' attempts=0');
+    return null;
+  }
+}
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'gosx-adapter-hydrate-'));
 const wasmPath = path.join(scratch, 'client.wasm');
 let wasmExecPath = '';
@@ -2175,7 +2306,7 @@ function writeReport(extra) {
   }
 }
 
-async function cleanup() {
+async function cleanupOnce() {
   for (const record of pending.values()) clearTimeout(record.timer);
   pending.clear();
   for (const entry of listeners) clearTimeout(entry.timer);
@@ -2185,22 +2316,38 @@ async function cleanup() {
   if (chrome) {
     const exited = new Promise((resolve) => chrome.once('exit', resolve));
     try { chrome.kill('SIGKILL'); } catch (_error) {}
-    await Promise.race([exited, sleep(5000)]);
+    await Promise.race([exited, sleep(CLEANUP_CHROME_EXIT_WAIT_MS)]);
   }
   if (profile) {
-    try { fs.rmSync(profile, { recursive: true, force: true }); }
-    catch (e) { fail('profile cleanup failed: ' + e.message); }
+    await cleanupTempTreeOrFail('profile', profile, 'gosx-adapter-chrome-');
   }
-  try { fs.rmSync(scratch, { recursive: true, force: true }); }
-  catch (e) { fail('WASM scratch cleanup failed: ' + e.message); }
+  await cleanupTempTreeOrFail('WASM scratch', scratch, 'gosx-adapter-hydrate-');
   await new Promise((resolve) => {
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
-    const timer = setTimeout(finish, 3000);
+    const timer = setTimeout(finish, CLEANUP_SERVER_CLOSE_WAIT_MS);
     try { server.close(() => { clearTimeout(timer); finish(); }); }
     catch (_error) { clearTimeout(timer); finish(); }
   });
 }
+
+const cleanup = singleFlightAsync(cleanupOnce);
+
+function proofExitCode() {
+  const warningClassification = classifyWarningsForReport();
+  return errors.length || warningClassification.unexpected.length || notFound.length || unexpectedRequests.length ||
+    networkFailures.length || reportWriteFailed ? 1 : 0;
+}
+
+const finalizeProof = createProofFinalizer({
+  cleanup,
+  fail,
+  writeReport,
+  exitCode: proofExitCode,
+  setTimer: setTimeout,
+  clearTimer: clearTimeout,
+  exit: (exitCode) => { setTimeout(() => process.exit(exitCode), 50); },
+});
 
 process.on('exit', () => { try { if (chrome) chrome.kill('SIGKILL'); } catch (_error) {} });
 
@@ -2208,9 +2355,7 @@ const watchdog = setTimeout(() => {
   if (finished) return;
   finished = true;
   fail('overall watchdog exceeded ' + OVERALL_MS + 'ms');
-  writeReport({ fatal: 'overall watchdog' });
-  cleanup().then(() => process.exit(1));
-  setTimeout(() => process.exit(1), 5000).unref();
+  void finalizeProof({ fatal: 'overall watchdog' });
 }, OVERALL_MS);
 
 (async () => {
@@ -2285,15 +2430,10 @@ const watchdog = setTimeout(() => {
   }
 })().catch((e) => {
   fail(String(e && (e.stack || e.message) || e));
-}).then(async () => {
+}).then(() => {
   if (!finished) {
     finished = true;
     clearTimeout(watchdog);
   }
-  await cleanup();
-  writeReport({});
-  const warningClassification = classifyWarningsForReport();
-  const exitCode = errors.length || warningClassification.unexpected.length || notFound.length || unexpectedRequests.length ||
-    networkFailures.length || reportWriteFailed ? 1 : 0;
-  setTimeout(() => process.exit(exitCode), 50);
+  return finalizeProof({});
 });

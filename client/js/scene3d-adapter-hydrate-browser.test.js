@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -9,6 +10,30 @@ const vm = require("node:vm");
 const browserProof = fs.readFileSync(
   path.join(__dirname, "testdata", "scene3d-adapter-hydrate-browser.cjs"), "utf8"
 );
+
+function cleanupHelpers() {
+  const start = browserProof.indexOf("const CLEANUP_MAX_ATTEMPTS = 10;");
+  const end = browserProof.indexOf("\nconst scratch = fs.mkdtempSync", start);
+  assert.ok(start >= 0 && end > start, "browser proof cleanup helpers must remain extractable");
+  const errors = [];
+  const api = vm.runInNewContext(browserProof.slice(start, end) +
+    "; ({ cleanupTempTree, cleanupTempTreeOrFail, singleFlightAsync, createProofFinalizer, " +
+    "FINALIZATION_CLEANUP_ENVELOPE_MS, FINALIZATION_HARD_DEADLINE_MS })", {
+    Date,
+    Error,
+    JSON,
+    Number,
+    Object,
+    Set,
+    String,
+    fail(message) { errors.push(String(message)); },
+    fs,
+    os,
+    path,
+    sleep: async () => {},
+  });
+  return { ...api, errors };
+}
 
 function preloadSource() {
   const start = browserProof.indexOf("const PRELOAD = `") + "const PRELOAD = `".length;
@@ -357,6 +382,406 @@ function canvasTransitionEvidence(overrides = {}) {
     },
   }, overrides);
 }
+
+function cleanupTarget(prefix, suffix = "fixture") {
+  return path.join(os.tmpdir(), prefix + suffix);
+}
+
+function cleanupError(code, target) {
+  const error = new Error(code + " removing " + target);
+  error.code = code;
+  error.path = target;
+  return error;
+}
+
+async function cleanupAbsent(target) {
+  throw cleanupError("ENOENT", target);
+}
+
+test("adapter proof cleanup retries each transient code, ENOENT, and post-rm existence within bounds", async () => {
+  for (const code of ["ENOTEMPTY", "EBUSY", "EPERM", "EMFILE", "ENFILE"]) {
+    const { cleanupTempTree } = cleanupHelpers();
+    const target = cleanupTarget("gosx-adapter-chrome-", code.toLowerCase());
+    let removeCalls = 0;
+    let delayCalls = 0;
+    const receipt = await cleanupTempTree("profile", target, "gosx-adapter-chrome-", {
+      maxAttempts: 3,
+      retryDelayMS: 1,
+      remove: async () => {
+        removeCalls += 1;
+        if (removeCalls === 1) throw cleanupError(code, target);
+      },
+      lstat: cleanupAbsent,
+      delay: async () => { delayCalls += 1; },
+    });
+    assert.equal(receipt.removed, true, code);
+    assert.equal(receipt.attempts, 2, code);
+    assert.equal(removeCalls, 2, code);
+    assert.equal(delayCalls, 1, code);
+  }
+
+  const missing = cleanupHelpers();
+  const missingTarget = cleanupTarget("gosx-adapter-hydrate-", "missing");
+  let missingCalls = 0;
+  const missingReceipt = await missing.cleanupTempTree(
+    "WASM scratch", missingTarget, "gosx-adapter-hydrate-", {
+      remove: async () => { missingCalls += 1; throw cleanupError("ENOENT", missingTarget); },
+      lstat: async () => { throw new Error("remove ENOENT must not need an absence probe"); },
+    }
+  );
+  assert.equal(missingReceipt.removed, true);
+  assert.equal(missingReceipt.attempts, 1);
+  assert.equal(missingCalls, 1);
+
+  const lingering = cleanupHelpers();
+  const lingeringTarget = cleanupTarget("gosx-adapter-hydrate-", "lingering");
+  let lingeringRemoves = 0;
+  let statCalls = 0;
+  const lingeringReceipt = await lingering.cleanupTempTree(
+    "WASM scratch", lingeringTarget, "gosx-adapter-hydrate-", {
+      maxAttempts: 3,
+      retryDelayMS: 0,
+      remove: async () => { lingeringRemoves += 1; },
+      lstat: async () => {
+        statCalls += 1;
+        if (statCalls > 1) await cleanupAbsent(lingeringTarget);
+        return {};
+      },
+      delay: async () => {},
+    }
+  );
+  assert.equal(lingeringReceipt.removed, true);
+  assert.equal(lingeringReceipt.attempts, 2);
+  assert.equal(lingeringRemoves, 2, "post-rm existence must trigger another removal attempt");
+  assert.equal(statCalls, 2, "absence must be verified after the successful retry");
+
+  const absent = cleanupHelpers();
+  const absentTarget = cleanupTarget("gosx-adapter-hydrate-", "stat-enoent");
+  let absentStatCalls = 0;
+  const absentReceipt = await absent.cleanupTempTree(
+    "WASM scratch", absentTarget, "gosx-adapter-hydrate-", {
+      remove: async () => {},
+      lstat: async () => { absentStatCalls += 1; await cleanupAbsent(absentTarget); },
+    }
+  );
+  assert.equal(absentReceipt.removed, true);
+  assert.equal(absentReceipt.attempts, 1);
+  assert.equal(absentStatCalls, 1, "only lstat ENOENT may prove post-removal absence");
+
+  const empty = cleanupHelpers();
+  let emptyRemoves = 0;
+  const emptyReceipt = await empty.cleanupTempTree("profile", "", "gosx-adapter-chrome-", {
+    remove: async () => { emptyRemoves += 1; },
+  });
+  assert.equal(emptyReceipt.skipped, true);
+  assert.equal(emptyReceipt.attempts, 0);
+  assert.equal(emptyRemoves, 0);
+});
+
+test("adapter proof cleanup rejects unsafe, wrong-prefix, nontransient, and exhausted removal exactly", async () => {
+  const profileTarget = cleanupTarget("gosx-adapter-chrome-", "persistent");
+  const persistent = cleanupHelpers();
+  let persistentCalls = 0;
+  let persistentDelays = 0;
+  await assert.rejects(
+    persistent.cleanupTempTree("profile", profileTarget, "gosx-adapter-chrome-", {
+      maxAttempts: 3,
+      retryDelayMS: 0,
+      remove: async () => { persistentCalls += 1; throw cleanupError("ENOTEMPTY", profileTarget); },
+      lstat: async () => ({}),
+      delay: async () => { persistentDelays += 1; },
+    }),
+    (error) => {
+      assert.equal(error.label, "profile");
+      assert.equal(error.code, "ENOTEMPTY");
+      assert.equal(error.path, path.resolve(profileTarget));
+      assert.equal(error.attempts, 3);
+      assert.match(error.message, /profile cleanup failed: code=ENOTEMPTY/);
+      assert.match(error.message, /attempts=3/);
+      return true;
+    }
+  );
+  assert.equal(persistentCalls, 3);
+  assert.equal(persistentDelays, 2);
+
+  for (const code of ["EACCES", "EINVAL"]) {
+    const immediate = cleanupHelpers();
+    let calls = 0;
+    let delays = 0;
+    await assert.rejects(
+      immediate.cleanupTempTree("profile", profileTarget, "gosx-adapter-chrome-", {
+        remove: async () => { calls += 1; throw cleanupError(code, profileTarget); },
+        lstat: async () => ({}),
+        delay: async () => { delays += 1; },
+      }),
+      (error) => error.code === code && error.attempts === 1 && error.label === "profile"
+    );
+    assert.equal(calls, 1, code);
+    assert.equal(delays, 0, code);
+  }
+
+  const timed = cleanupHelpers();
+  let clock = 0;
+  let timedCalls = 0;
+  await assert.rejects(
+    timed.cleanupTempTree("profile", profileTarget, "gosx-adapter-chrome-", {
+      maxAttempts: 10,
+      retryDelayMS: 10,
+      maxWaitMS: 15,
+      now: () => clock,
+      remove: async () => { timedCalls += 1; throw cleanupError("EBUSY", profileTarget); },
+      lstat: async () => ({}),
+      delay: async (delayMS) => { clock += delayMS; },
+    }),
+    (error) => error.code === "EBUSY" && error.attempts === 3
+  );
+  assert.equal(clock, 15, "retry delay must stop at the explicit deadline");
+  assert.equal(timedCalls, 3, "deadline must stop before the ten-attempt ceiling");
+
+  const inaccessible = cleanupHelpers();
+  let inaccessibleStats = 0;
+  await assert.rejects(
+    inaccessible.cleanupTempTree("profile", profileTarget, "gosx-adapter-chrome-", {
+      remove: async () => {},
+      lstat: async () => {
+        inaccessibleStats += 1;
+        throw cleanupError("EACCES", profileTarget);
+      },
+    }),
+    (error) => error.code === "EACCES" && error.attempts === 1 && error.label === "profile"
+  );
+  assert.equal(inaccessibleStats, 1, "lstat EACCES must be fatal rather than mistaken for absence");
+
+  const transientStat = cleanupHelpers();
+  let transientStats = 0;
+  const transientStatReceipt = await transientStat.cleanupTempTree(
+    "profile", profileTarget, "gosx-adapter-chrome-", {
+      maxAttempts: 2,
+      retryDelayMS: 0,
+      remove: async () => {},
+      lstat: async () => {
+        transientStats += 1;
+        if (transientStats === 1) throw cleanupError("EPERM", profileTarget);
+        await cleanupAbsent(profileTarget);
+      },
+      delay: async () => {},
+    }
+  );
+  assert.equal(transientStatReceipt.attempts, 2);
+  assert.equal(transientStats, 2, "transient lstat errors must use the bounded retry policy");
+
+  for (const entry of [
+    {
+      name: "outside tmp",
+      target: path.resolve(os.tmpdir(), "..", "gosx-adapter-chrome-outside"),
+      prefix: "gosx-adapter-chrome-",
+      code: "EUNSAFEPATH",
+    },
+    {
+      name: "nested tmp child",
+      target: path.join(os.tmpdir(), "nested", "gosx-adapter-chrome-child"),
+      prefix: "gosx-adapter-chrome-",
+      code: "EUNSAFEPATH",
+    },
+    {
+      name: "wrong profile prefix",
+      target: cleanupTarget("not-gosx-adapter-", "profile"),
+      prefix: "gosx-adapter-chrome-",
+      code: "EUNSAFEPREFIX",
+    },
+    {
+      name: "prefix without mkdtemp suffix",
+      target: cleanupTarget("gosx-adapter-chrome-", ""),
+      prefix: "gosx-adapter-chrome-",
+      code: "EUNSAFEPREFIX",
+    },
+  ]) {
+    const unsafe = cleanupHelpers();
+    let calls = 0;
+    await assert.rejects(
+      unsafe.cleanupTempTree("profile", entry.target, entry.prefix, {
+        remove: async () => { calls += 1; },
+        lstat: cleanupAbsent,
+      }),
+      (error) => {
+        assert.equal(error.label, "profile", entry.name);
+        assert.equal(error.code, entry.code, entry.name);
+        assert.equal(error.path, path.resolve(entry.target), entry.name);
+        assert.equal(error.attempts, 0, entry.name);
+        return true;
+      }
+    );
+    assert.equal(calls, 0, entry.name + " must fail before removal");
+  }
+});
+
+test("adapter proof cleanup and finalization are single-flight and report only after cleanup", async () => {
+  const helpers = cleanupHelpers();
+  let releaseChromeWait;
+  let cleanupCalls = 0;
+  let profileRemoves = 0;
+  const events = [];
+  const profileTarget = cleanupTarget("gosx-adapter-chrome-", "watchdog-profile");
+  const scratchTarget = cleanupTarget("gosx-adapter-hydrate-", "watchdog-scratch");
+  const cleanup = helpers.singleFlightAsync(async () => {
+    cleanupCalls += 1;
+    events.push("cleanup-start");
+    await new Promise((resolve) => { releaseChromeWait = resolve; });
+    await helpers.cleanupTempTree("profile", profileTarget, "gosx-adapter-chrome-", {
+      maxAttempts: 2,
+      retryDelayMS: 0,
+      remove: async () => {
+        profileRemoves += 1;
+        if (profileRemoves === 1) throw cleanupError("ENOTEMPTY", profileTarget);
+      },
+      lstat: cleanupAbsent,
+      delay: async () => {},
+    });
+    await helpers.cleanupTempTreeOrFail(
+      "WASM scratch", scratchTarget, "gosx-adapter-hydrate-", {
+        maxAttempts: 1,
+        remove: async () => { throw cleanupError("ENOTEMPTY", scratchTarget); },
+      }
+    );
+    events.push("cleanup-end");
+  });
+  const cleanupFirst = cleanup();
+  const cleanupSecond = cleanup();
+  assert.strictEqual(cleanupFirst, cleanupSecond, "concurrent cleanup callers must share one promise");
+
+  let deadlineCallback = null;
+  let deadlineMS = 0;
+  const reports = [];
+  const exits = [];
+  const finalize = helpers.createProofFinalizer({
+    cleanup,
+    fail(message) { helpers.errors.push(String(message)); },
+    writeReport(extra) {
+      events.push("report");
+      reports.push({ extra, errors: [...helpers.errors] });
+    },
+    exitCode() { return helpers.errors.length ? 1 : 0; },
+    setTimer(callback, delayMS) {
+      deadlineCallback = callback;
+      deadlineMS = delayMS;
+      return { callback };
+    },
+    clearTimer() { events.push("deadline-clear"); },
+    exit(code) { events.push("exit"); exits.push(code); },
+  });
+  const watchdogFinalization = finalize({ fatal: "overall watchdog" });
+  const mainFinalization = finalize({});
+  assert.strictEqual(watchdogFinalization, mainFinalization,
+    "watchdog and main completion must share one finalization promise");
+  await Promise.resolve();
+  assert.equal(cleanupCalls, 1);
+  assert.deepEqual(events, ["cleanup-start"], "watchdog must not report or exit before cleanup settles");
+  assert.equal(typeof deadlineCallback, "function");
+  assert.equal(deadlineMS, helpers.FINALIZATION_HARD_DEADLINE_MS);
+  assert.ok(deadlineMS > helpers.FINALIZATION_CLEANUP_ENVELOPE_MS,
+    "emergency deadline must exceed Chrome, both tree retries, and server close");
+
+  releaseChromeWait();
+  await watchdogFinalization;
+  assert.equal(cleanupCalls, 1);
+  assert.equal(profileRemoves, 2, "the watchdog must await bounded transient tree cleanup");
+  assert.deepEqual(events, ["cleanup-start", "cleanup-end", "report", "deadline-clear", "exit"]);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].extra.fatal, "overall watchdog");
+  assert.equal(reports[0].errors.length, 1);
+  assert.match(reports[0].errors[0], /WASM scratch cleanup failed: code=ENOTEMPTY/);
+  assert.match(reports[0].errors[0], /attempts=1/,
+    "the durable watchdog report must include cleanup errors");
+  assert.deepEqual(exits, [1]);
+
+  const watchdogStart = browserProof.indexOf("const watchdog = setTimeout");
+  const watchdogEnd = browserProof.indexOf("\n\n(async () =>", watchdogStart);
+  const watchdogSource = browserProof.slice(watchdogStart, watchdogEnd);
+  assert.match(watchdogSource, /void finalizeProof\(\{ fatal: 'overall watchdog' \}\)/);
+  assert.doesNotMatch(watchdogSource, /writeReport|cleanup\(\)|5000/,
+    "watchdog must delegate ordered teardown/report/exit to the shared finalizer");
+  assert.match(browserProof, /const cleanup = singleFlightAsync\(cleanupOnce\)/);
+  assert.match(browserProof, /return finalizeProof\(\{\}\)/,
+    "normal completion must join the same finalization promise as the watchdog");
+});
+
+test("adapter proof hard finalization deadline records failure before its sole exit", async () => {
+  const helpers = cleanupHelpers();
+  let releaseCleanup;
+  const events = [];
+  let deadlineCallback = null;
+  const finalize = helpers.createProofFinalizer({
+    cleanup: helpers.singleFlightAsync(() => new Promise((resolve) => { releaseCleanup = resolve; })),
+    fail(message) { events.push(["fail", String(message)]); },
+    writeReport(extra) { events.push(["report", extra]); },
+    exitCode() { return 0; },
+    setTimer(callback, delayMS) {
+      assert.equal(delayMS, helpers.FINALIZATION_HARD_DEADLINE_MS);
+      deadlineCallback = callback;
+      return callback;
+    },
+    clearTimer() { events.push(["deadline-clear"]); },
+    exit(code) { events.push(["exit", code]); },
+  });
+  const first = finalize({ fatal: "overall watchdog" });
+  assert.strictEqual(first, finalize({}), "deadline path must retain finalization idempotence");
+  await Promise.resolve();
+  assert.equal(events.length, 0);
+
+  deadlineCallback();
+  assert.match(events[0][1], /cleanup\/finalization deadline exceeded 15000ms/);
+  assert.equal(events[1][0], "report");
+  assert.equal(events[1][1].fatal, "cleanup/finalization deadline");
+  assert.deepEqual(events[2], ["exit", 1]);
+  releaseCleanup();
+  await first;
+  assert.equal(events.length, 3, "late cleanup completion must not rewrite the report or exit twice");
+});
+
+test("adapter proof cleanup errors stay fatal while exact run WG warnings pass only with clean errors", async () => {
+  const cleanup = cleanupHelpers();
+  const profileTarget = cleanupTarget("gosx-adapter-chrome-", "fatal");
+  await cleanup.cleanupTempTreeOrFail("profile", profileTarget, "gosx-adapter-chrome-", {
+    maxAttempts: 2,
+    retryDelayMS: 0,
+    remove: async () => { throw cleanupError("ENOTEMPTY", profileTarget); },
+    lstat: async () => ({}),
+    delay: async () => {},
+  });
+  assert.equal(cleanup.errors.length, 1);
+  assert.match(cleanup.errors[0], /profile cleanup failed: code=ENOTEMPTY/);
+  assert.match(cleanup.errors[0], /attempts=2/);
+
+  const classifier = warningClassifier();
+  classifier.setCases([{
+    name: "wg",
+    acceptedOutcome: "fallback-device-lost",
+    fallbackKind: "webgpu-device-lost",
+    fallbackReceipt: { phase: "requested-webgpu-first-presentation-readiness" },
+    outcomeVerdict: { accepted: true },
+  }]);
+  const warnings = [
+    { message: "browser log warning: WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost", caseName: "wg", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: "console.warning: [gosx] WebGPU probe device lost: Device was destroyed.", caseName: "wg", phase: "stale-generation-release", source: "Runtime.consoleAPICalled" },
+    { message: "console.warning: [gosx] WebGPU device lost: Device was destroyed.", caseName: "wg", phase: "stale-generation-release", source: "Runtime.consoleAPICalled" },
+    { message: "browser log warning: A valid external Instance reference no longer exists.", caseName: "wg", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: "console.warning: [gosx] WebGPU probe: requestAdapter returned null", caseName: "wg", phase: "stale-generation-release", source: "Runtime.consoleAPICalled" },
+  ];
+  classifier.setErrors([]);
+  classifier.setWarningOccurrences(warnings);
+  let classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 5);
+  assert.equal(classified.unexpected.length, 0);
+
+  classifier.setErrors(cleanup.errors);
+  classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 0);
+  assert.equal(classified.unexpected.length, 5);
+  assert.ok(classified.unexpected.every((entry) =>
+    entry.classification.reason === "warning-outcome-mismatch"));
+  assert.match(browserProof, /await cleanupTempTreeOrFail\('profile', profile, 'gosx-adapter-chrome-'\)/);
+  assert.match(browserProof, /await cleanupTempTreeOrFail\('WASM scratch', scratch, 'gosx-adapter-hydrate-'\)/);
+});
 
 test("WebGPU browser-proof readiness rejects depth-only and pre-command color submits", async () => {
   const buildExpression = presentExpressionBuilder();
