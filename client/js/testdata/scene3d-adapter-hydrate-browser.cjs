@@ -77,6 +77,7 @@ const FALLBACK_WARNING_PATTERNS = [
   /^console\.warning: \[gosx\] WebGPU renderer creation failed:/,
   /^console\.warning: \[gosx\] WebGPU factory returned null after probe success; canvas may be tainted$/,
 ];
+const CAPTURE_DRIVER_WARNING = /^browser log warning: GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels(?: \(this message will no longer repeat\))?$/;
 
 const CASES = [
   { name: 'gl', webgpu: false, engine: 'gosx-engine-adapter-gl', mount: 'scene-adapter-gl' },
@@ -1523,6 +1524,35 @@ function renderStateForOutcome(drawState) {
   };
 }
 
+function fallbackInstabilityDiagnostic(c, evidence, stage, drawState, captureMetrics) {
+  if (!c.webgpu || (evidence.acceptedOutcome !== OUTCOME_FALLBACK_UNAVAILABLE &&
+      evidence.acceptedOutcome !== OUTCOME_FALLBACK_DEVICE_LOST)) return null;
+  const state = renderStateForOutcome(drawState);
+  const expectedFallback = evidence.fallbackKind || '';
+  if (state.renderer === 'webgl' && state.fallback === expectedFallback &&
+      state.mounted === 'true' && state.handleReady && state.commandReady === 'true') return null;
+  return {
+    classification: 'fallback-instability',
+    stage,
+    expectedFallback,
+    acceptedOutcome: evidence.acceptedOutcome,
+    currentRenderState: state,
+    captureMetrics: captureMetrics || null,
+    fallbackReceipt: evidence.fallbackReceipt || null,
+    warningTimeline: warningOccurrences.slice(),
+  };
+}
+
+async function assertStableWGTypedFallback(send, c, evidence, stage, captureMetrics) {
+  const drawState = await evalSend(send, winnerExpr(c, false));
+  const diagnostic = fallbackInstabilityDiagnostic(c, evidence, stage, drawState, captureMetrics);
+  if (!diagnostic) return;
+  evidence.fallbackInstability = diagnostic;
+  const error = new Error('[' + c.name + '] fallback-instability: ' + JSON.stringify(diagnostic));
+  error.fallbackInstability = diagnostic;
+  throw error;
+}
+
 async function waitForWGPresentationOrFallback(send, c, label, baselines, expectedObjectX, requireRevision) {
   const baseline = baselines || {};
   const before = await evalSend(send, winnerExpr(c, false));
@@ -1687,7 +1717,9 @@ async function runCase(send, c) {
   }
 
   phase('first-capture');
+  await assertStableWGTypedFallback(send, c, evidence, 'before-first-capture');
   evidence.firstFrame = await capture(send, c, 'first-frame');
+  await assertStableWGTypedFallback(send, c, evidence, 'after-first-capture', evidence.firstFrame.metrics);
   const metrics = evidence.firstFrame.metrics;
   assertVisibleFrame(c, 'first frame', metrics);
   const drawState = await evalSend(send, winnerExpr(c, false));
@@ -1767,7 +1799,9 @@ async function runCase(send, c) {
     }
   }
   phase('post-command-capture');
+  await assertStableWGTypedFallback(send, c, evidence, 'before-post-command-capture');
   evidence.afterHub = await capture(send, c, 'after-hub-command');
+  await assertStableWGTypedFallback(send, c, evidence, 'after-post-command-capture', evidence.afterHub.metrics);
   assertVisibleFrame(c, 'after hub command', evidence.afterHub.metrics);
   const postCommandDrawState = await evalSend(send, winnerExpr(c, false));
   evidence.postCommandRenderState = renderStateForOutcome(postCommandDrawState);
@@ -1839,6 +1873,8 @@ function classifyWarningEntry(entry, typedFallback) {
     phase: '',
   } : (entry || {});
   const message = String(occurrence.message || '');
+  const captureDriver = classifyCaptureDriverWarning(occurrence, message);
+  if (captureDriver) return captureDriver;
   if (!typedFallback) {
     return { allowed: false, reason: 'no-accepted-typed-fallback' };
   }
@@ -1862,6 +1898,14 @@ function classifyWarningEntry(entry, typedFallback) {
     }
   }
   return { allowed: false, reason: 'not-in-exact-fallback-warning-allowlist' };
+}
+
+function classifyCaptureDriverWarning(occurrence, message) {
+  if (!CAPTURE_DRIVER_WARNING.test(message)) return null;
+  if (occurrence.source !== 'Log.entryAdded') return { allowed: false, reason: 'capture-driver-warning-source-mismatch' };
+  if (occurrence.caseName !== 'gl') return { allowed: false, reason: 'capture-driver-warning-case-mismatch' };
+  if (occurrence.phase !== 'stale-generation-release') return { allowed: false, reason: 'capture-driver-warning-phase-mismatch' };
+  return { allowed: true, reason: 'accepted-gl-capture-readpixels-warning', phase: occurrence.phase, caseName: occurrence.caseName };
 }
 
 function classifyWarningsForReport() {

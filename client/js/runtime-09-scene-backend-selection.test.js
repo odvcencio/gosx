@@ -29,6 +29,7 @@ const {
   scene3dWebGLSplitManifest,
   makeFakeGPUDevice,
   freshFeatureBundleSource,
+  scene3DCommandFetchRoutes,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap registers and selects Scene3D backends through registry", async () => {
@@ -804,6 +805,7 @@ async function mountLostWaterWebGPU() {
   });
   const timers = installManualTimers(env.context);
   const raf = installManualRAF(env.context);
+  env.context.console.info = function() {};
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   env.context.__gosx_scene3d_perf = true;
   env.context.__gosx_emit = (level, cat, msg, fields) => {
@@ -884,9 +886,20 @@ test("Scene3D lost WebGPU water recovery becomes terminal after one unavailable 
 
   env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
   await flushAsyncWork();
-  assert.equal(env.context.__testWaterWebGPUInstances.length, 2, "probe-ready must construct a fresh renderer generation");
+  assert.equal(env.context.__testWaterWebGPUInstances.length, 1, "probe-ready must not revive a terminal device-lost mount");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "terminal");
+  assert.equal(raf.count(), 0);
+
+  env.context.__gosx_dispose_engine("gosx-engine-water-webgpu-device-lost-terminal");
+  env.context.__gosx_mount_late_engine_factory("GoSXScene3D");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(env.context.__testWaterWebGPUInstances.length, 2, "explicit remount may adopt the fresh probe generation");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "", "fresh native WebGPU recovery must not publish a fallback label");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
   assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
   setNow(26000);
   assert.equal(timers.runInterval(2000), 1, "the watchdog must observe the fresh generation's progress");
@@ -895,7 +908,7 @@ test("Scene3D lost WebGPU water recovery becomes terminal after one unavailable 
   assert.equal(env.context.__testWaterWebGPUInstances[0].renderCount, renderedBeforeLoss, "the lost generation must never render again");
 });
 
-test("Scene3D ignores a stale lazy WebGL fallback after probe-ready adopts a fresh WebGPU generation", async () => {
+test("Scene3D ignores probe-ready while the current lost generation awaits lazy WebGL", async () => {
   const harness = await mountLostWaterWebGPU();
   const { env, events, mount, timers, setNow } = harness;
   let pendingWebGLScript = null;
@@ -912,21 +925,18 @@ test("Scene3D ignores a stale lazy WebGL fallback after probe-ready adopts a fre
 
   env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
   await flushAsyncWork();
-  assert.equal(env.context.__testWaterWebGPUInstances.length, 2);
+  assert.equal(env.context.__testWaterWebGPUInstances.length, 1);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
-  const recoveredRenderCount = env.context.__testWaterWebGPUInstances[1].renderCount;
-  assert.ok(recoveredRenderCount >= 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-device-lost");
 
   runScript(unusableWaterWebGLChunkSource, env.context, "bootstrap-feature-scene3d-webgl.js");
   pendingWebGLScript.onload({});
   await flushAsyncWork();
 
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "the stale fallback must not demote the fresh generation");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "", "fresh native WebGPU recovery must publish clean backend truth");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-water-renderer"), "active");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
-  assert.equal(events.filter((event) => event.msg === "water-renderer-fallback-unavailable").length, 0);
-  assert.equal(env.context.__testWaterWebGPUInstances[1].renderCount, recoveredRenderCount);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "terminal");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
+  assert.equal(events.filter((event) => event.msg === "water-renderer-fallback-unavailable").length, 1);
 });
 
 async function mountReownableWebGLFallback() {
@@ -997,6 +1007,7 @@ async function mountReownableWebGLFallback() {
   });
   const timers = installManualTimers(env.context);
   const raf = installManualRAF(env.context);
+  env.context.console.info = function() {};
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   env.context.__gosx_scene3d_perf = true;
   env.context.__gosx_emit = (level, cat, msg, fields) => {
@@ -1029,13 +1040,15 @@ async function driveDoubleLossToSharedWebGLWait(harness) {
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
   assert.equal(raf.count(), 0, "lost generation A must own no scheduled frame while fallback waits");
 
-  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  env.context.__gosx_dispose_engine("gosx-engine-webgpu-double-loss");
+  env.context.__gosx_mount_late_engine_factory("GoSXScene3D");
   await flushAsyncWork();
-  assert.equal(instances.length, 2, "probe-ready must adopt fresh WebGPU generation B");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
+  await flushSceneInitialFrameBoundary(raf);
   raf.flush(64);
   await flushAsyncWork();
+  assert.equal(instances.length, 2, "explicit remount must adopt fresh WebGPU generation B");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
 
   instances[1].lost = true;
   env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
@@ -1055,7 +1068,7 @@ async function driveDoubleLossToSharedWebGLWait(harness) {
   return { firstCanvas, firstRenderCount, instances };
 }
 
-test("Scene3D double WebGPU loss re-owns one pending WebGL fetch for the current generation", async () => {
+test("Scene3D remounted WebGPU generation re-owns one pending WebGL fetch after double loss", async () => {
   const harness = await mountReownableWebGLFallback();
   const { env, events, mount, raf } = harness;
   const { firstCanvas, firstRenderCount, instances } = await driveDoubleLossToSharedWebGLWait(harness);
@@ -1078,27 +1091,25 @@ test("Scene3D double WebGPU loss re-owns one pending WebGL fetch for the current
   assert.equal(instances[0].renderCount, firstRenderCount, "A's stale continuation must be inert");
 });
 
-test("Scene3D pending WebGL subscribers stay inert when B is superseded by generation C", async () => {
+test("Scene3D pending WebGL subscribers stay inert when generation B is explicitly disposed", async () => {
   const harness = await mountReownableWebGLFallback();
   const { env, mount } = harness;
   const { instances } = await driveDoubleLossToSharedWebGLWait(harness);
 
-  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  env.context.__gosx_dispose_engine("gosx-engine-webgpu-double-loss");
   await flushAsyncWork();
-  assert.equal(instances.length, 3, "probe-ready must supersede pending generation B with fresh generation C");
-  const generationCRenders = instances[2].renderCount;
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
+  assert.equal(env.context.__gosx.engines.has("gosx-engine-webgpu-double-loss"), false);
+  assert.equal(mount.__gosxScene3DState, undefined);
+  assert.equal(mount.__gosxScene3DHandle, undefined);
 
   runScript(bootstrapFeatureScene3DWebGLSource, env.context, "bootstrap-feature-scene3d-webgl.js");
   harness.pendingWebGLScript().onload({});
   await flushAsyncWork();
 
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
-  assert.equal(instances[2].renderCount, generationCRenders, "stale A/B continuations must not render or demote C");
-  assert.deepEqual(Array.from(instances, (instance) => instance.disposeCount), [1, 1, 0]);
+  assert.equal(mount.__gosxScene3DState, undefined);
+  assert.equal(mount.__gosxScene3DHandle, undefined);
+  assert.equal(instances.length, 2);
+  assert.deepEqual(Array.from(instances, (instance) => instance.disposeCount), [1, 1]);
   assert.equal(
     env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
     1,
@@ -1682,7 +1693,7 @@ test("selective Scene3D bootstrap uses WebGL when WebGPU cannot cover scene feat
   assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), true);
 });
 
-test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once the probe recovers, and actually renders through the new device", async () => {
+test("Scene3D device-lost WebGL fallback stays typed and command-capable until explicit remount", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgpu-device-lost-recovery";
   let now = 0;
@@ -1702,7 +1713,7 @@ test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once t
       }),
       getPreferredCanvasFormat: () => "rgba8unorm",
     },
-    fetchRoutes: {
+    fetchRoutes: scene3DCommandFetchRoutes({
       "/gosx/bootstrap-feature-engines.js": {
         text: bootstrapFeatureEnginesSource,
       },
@@ -1744,7 +1755,7 @@ test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once t
           };
         `,
       },
-    },
+    }),
     manifest: {
       runtime: { path: "/gosx/runtime.wasm" },
       engines: [
@@ -1761,7 +1772,7 @@ test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once t
             autoRotate: true,
             scene: {
               objects: [
-                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+                { id: "sticky-box", kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff", live: ["sticky-update"] },
               ],
             },
           },
@@ -1831,37 +1842,58 @@ test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once t
   assert.equal(recoveryEvent.fields.deviceLostMessage, "Device was destroyed.");
   assert.equal(recoveryEvent.fields.adapterInfo && recoveryEvent.fields.adapterInfo.vendor, "test-vendor");
 
-  // --- The probe recovers: this is the exact production trigger
-  // (16z-scene-webgpu-probe.ts's sceneWebGPUDispatchProbeReady) for a
-  // device re-acquired after a loss. Before this fix, handleSceneWebGPUProbeReady
-  // silently ignored this because renderer.kind was "webgl". ---
+  const stickyState = mount.__gosxScene3DState;
+  const stickyHandle = mount.__gosxScene3DHandle;
+  env.document.dispatchEvent(new env.context.CustomEvent("gosx:hub:event", {
+    detail: { event: "sticky-update", data: { x: 0.5 } },
+  }));
+  await flushAsyncWork();
+  raf.flush(16);
+  assert.equal(stickyState.objects.get("sticky-box").x, 0.5, "hub event must remain live on typed fallback");
+
+  const command = await env.context.__gosx.scene3d.dispatchCommands(
+    "gosx-engine-webgpu-device-lost-recovery",
+    [{ kind: 2, objectId: "sticky-box", data: { x: 1.25 } }],
+    { engineID: "gosx-engine-webgpu-device-lost-recovery", timeoutMS: 5000 },
+  );
+  await flushAsyncWork();
+  raf.flush(16);
+  assert.equal(command.applied, true);
+  assert.equal(stickyState.objects.get("sticky-box").x, 1.25);
+  const commandRevision = mount.getAttribute("data-gosx-scene3d-command-revision");
+  assert.ok(commandRevision);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-applied-revision"), commandRevision);
+
+  // A recovered probe is telemetry for this mount, never permission to bind
+  // the fresh device into a generation that already survived loss on WebGL.
   events.length = 0;
   env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
   await flushAsyncWork();
 
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "the mount must climb back onto WebGPU once the probe recovers");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "", "recovered WebGPU must not externalize the recovery reason as a fallback");
-  assert.equal(env.context.__testWebGPUCreateCount, 2, "recovery must construct a genuinely NEW webgpu renderer instance");
-  const recoveredCanvas = mount.children[0];
-  assert.notEqual(recoveredCanvas, fallbackCanvas, "recovery must mount a fresh, untainted canvas -- the WebGL fallback canvas cannot host a WebGPU context");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+  assert.equal(env.context.__testWebGPUCreateCount, 1, "same-mount probe-ready must not create another WebGPU renderer");
+  assert.equal(mount.children[0], fallbackCanvas);
+  assert.equal(mount.__gosxScene3DState, stickyState);
+  assert.equal(mount.__gosxScene3DHandle, stickyHandle);
+  assert.equal(events.some((event) => event.msg === "renderer-swap"), false);
 
-  // Proof this is a REAL adoption, not a flag flip: the recovery swap
-  // itself already rendered once immediately (renderLatestSceneBundle),
-  // and the OLD, disposed instance must never render again.
-  const recoveredRenderCountAfterSwap = env.context.__testWebGPUInstances[1].renderCount;
-  assert.ok(recoveredRenderCountAfterSwap >= 1, "the RECOVERED renderer instance must actually receive render() calls, not just become the DOM-attribute value");
-  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "the OLD, disposed instance must never render again (still just its one pre-loss frame)");
-
-  // Drive a further real animation frame and confirm the continuous render
-  // loop keeps driving THIS SAME recovered instance (proves adoption, not a
-  // one-shot compensating render).
+  env.context.console.info = function() {};
+  env.context.__gosx_dispose_engine("gosx-engine-webgpu-device-lost-recovery");
+  env.context.__gosx_mount_late_engine_factory("GoSXScene3D");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
   raf.flush(16);
   await flushAsyncWork();
-  assert.ok(env.context.__testWebGPUInstances[1].renderCount > recoveredRenderCountAfterSwap, "the render loop must keep driving the recovered instance on subsequent frames");
-  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "the OLD, disposed instance must still never render again");
 
-  assert.equal(events.some((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-probe-recovered"), true);
+  assert.equal(env.context.__testWebGPUCreateCount, 2, "explicit remount may bind the fresh WebGPU generation");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "", "");
+  assert.notEqual(mount.children[0], fallbackCanvas);
+  assert.notEqual(mount.__gosxScene3DState, stickyState);
+  assert.notEqual(mount.__gosxScene3DHandle, stickyHandle);
+  assert.ok(env.context.__testWebGPUInstances[1].renderCount >= 1);
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "disposed lost generation must never render again");
 });
 
 test("Scene3D WebGPU device loss counts once (not twice) against the probe's reprobe backoff, and the loss reason survives a later successful reprobe", async () => {

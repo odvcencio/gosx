@@ -71,6 +71,19 @@ function outcomeClassifier() {
   return vm.runInNewContext(source);
 }
 
+function fallbackInstabilityClassifier() {
+  const start = browserProof.indexOf("function renderStateForOutcome(drawState) {");
+  const end = browserProof.indexOf("\nasync function waitForWGPresentationOrFallback", start);
+  assert.ok(start >= 0 && end > start, "browser proof fallback-instability classifier must remain extractable");
+  return vm.runInNewContext([
+    "const OUTCOME_FALLBACK_UNAVAILABLE = 'fallback-unavailable';",
+    "const OUTCOME_FALLBACK_DEVICE_LOST = 'fallback-device-lost';",
+    "const warningOccurrences = [];",
+    browserProof.slice(start, end),
+    "; fallbackInstabilityDiagnostic",
+  ].join("\n"));
+}
+
 function warningClassifier() {
   const start = browserProof.indexOf("function classifyWarningEntry(entry, typedFallback) {");
   const end = browserProof.indexOf("\nfunction writeReport", start);
@@ -83,6 +96,7 @@ function warningClassifier() {
     "  /^console\\.warning: \\[gosx\\] WebGPU renderer creation failed:/,",
     "  /^console\\.warning: \\[gosx\\] WebGPU factory returned null after probe success; canvas may be tainted$/,",
     "];",
+    "const CAPTURE_DRIVER_WARNING = /^browser log warning: GL Driver Message \\(OpenGL, Performance, GL_CLOSE_PATH_NV, High\\): GPU stall due to ReadPixels(?: \\(this message will no longer repeat\\))?$/;",
     "let warnings = [];",
     "let warningOccurrences = [];",
     "let caseEvidence = [];",
@@ -535,6 +549,44 @@ test("adapter proof WG outcome classifier rejects bad labels, renderers, pixels,
   }
 });
 
+test("adapter proof fails fast when a typed fallback changes across either capture", () => {
+  const classifyInstability = fallbackInstabilityClassifier();
+  const c = { name: "wg", webgpu: true };
+  const evidence = {
+    acceptedOutcome: "fallback-device-lost",
+    fallbackKind: "webgpu-device-lost",
+    fallbackReceipt: { classification: "device-lost-after-color-pass" },
+  };
+  const stable = {
+    renderer: "webgl",
+    fallback: "webgpu-device-lost",
+    mounted: "true",
+    handleReady: true,
+    commandReady: "true",
+  };
+  assert.equal(classifyInstability(c, evidence, "before-first-capture", stable), null);
+
+  const metrics = { foregroundCoverage: 0.4 };
+  const promoted = classifyInstability(c, evidence, "after-first-capture", {
+    ...stable,
+    renderer: "webgpu",
+    fallback: "",
+  }, metrics);
+  assert.equal(promoted.classification, "fallback-instability");
+  assert.equal(promoted.stage, "after-first-capture");
+  assert.equal(promoted.expectedFallback, "webgpu-device-lost");
+  assert.equal(promoted.currentRenderState.renderer, "webgpu");
+  assert.equal(promoted.captureMetrics.foregroundCoverage, 0.4);
+
+  const wrongLabel = classifyInstability(c, evidence, "before-post-command-capture", {
+    ...stable,
+    fallback: "webgpu-probe-recovered",
+  });
+  assert.equal(wrongLabel.classification, "fallback-instability");
+  assert.equal(wrongLabel.stage, "before-post-command-capture");
+  assert.match(browserProof, /assertStableWGTypedFallback\(send, c, evidence, 'after-post-command-capture'/);
+});
+
 test("adapter proof warning classifier only allows exact environment warnings for accepted typed fallback", () => {
   const classifier = warningClassifier();
   classifier.setWarningOccurrences([
@@ -575,6 +627,37 @@ test("adapter proof warning classifier only allows exact environment warnings fo
   const nativeWarnings = classifier.classifyWarningsForReport();
   assert.equal(nativeWarnings.allowed.length, 0);
   assert.equal(nativeWarnings.unexpected[0].classification.reason, "no-accepted-typed-fallback");
+});
+
+test("adapter proof warning classifier allows only the exact GL ReadPixels capture-driver warning", () => {
+  const classifier = warningClassifier();
+  classifier.setCases([]);
+  const exact = "browser log warning: GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels";
+  classifier.setWarningOccurrences([
+    { message: exact, caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: exact + " (this message will no longer repeat)", caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: exact, caseName: "wg", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: exact, caseName: "gl", phase: "first-capture", source: "Log.entryAdded" },
+    { message: exact, caseName: "gl", phase: "stale-generation-release", source: "Runtime.consoleAPICalled" },
+    { message: exact.replace("ReadPixels", "DrawPixels"), caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: "browser log warning: A valid external Instance reference no longer exists", caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+    { message: "browser log warning: WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost", caseName: "gl", phase: "stale-generation-release", source: "Log.entryAdded" },
+  ]);
+  const classified = classifier.classifyWarningsForReport();
+  assert.equal(classified.allowed.length, 2);
+  assert.ok(classified.allowed.every((entry) =>
+    entry.classification.reason === "accepted-gl-capture-readpixels-warning"));
+  assert.deepEqual(
+    Array.from(classified.unexpected, (entry) => entry.classification.reason),
+    [
+      "capture-driver-warning-case-mismatch",
+      "capture-driver-warning-phase-mismatch",
+      "capture-driver-warning-source-mismatch",
+      "no-accepted-typed-fallback",
+      "no-accepted-typed-fallback",
+      "no-accepted-typed-fallback",
+    ],
+  );
 });
 
 test("adapter proof warning classifier rejects GL, unrelated-phase, and post-case warnings even if WG fallback passes", () => {

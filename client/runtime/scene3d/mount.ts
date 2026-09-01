@@ -806,33 +806,9 @@
       return false;
     }
 
-    // recoverSceneWebGPUFromWebGLFallback climbs back onto WebGPU after a
-    // runtime WebGPU failure (device loss / persistent frame errors) forced
-    // a fallback to WebGL. Without this, a later gosx:scene3d:webgpu-probe-ready
-    // (the probe re-acquired a working device) was silently ignored, because
-    // handleSceneWebGPUProbeReady's own guard required the CURRENT renderer
-    // to already be "webgpu" — a session that fell back once stayed on
-    // WebGL for the rest of the page even after the GPU came back. Measured
-    // on the live site: the probe recovered a working device at ~t=12.7s
-    // and the mount was still on WebGL at t=30s.
-    //
-    // Only re-attempts when the fallback that put us on WebGL was itself a
-    // WebGPU failure (sceneFallbackRequiresReplacementCanvas's reason set —
-    // "webgpu-device-lost" / "webgpu-persistent-frame-error"), not an
-    // intentional preference (forceWebGL, environment-constrained, etc.).
-    //
-    // The current canvas is already tainted to WebGL — the fallback that
-    // put us here replaced it with a fresh canvas before configuring a
-    // WebGL context on it (same sceneFallbackRequiresReplacementCanvas
-    // reason set), and a canvas that has had getContext("webgl2") called on
-    // it can never return a working getContext("webgpu") afterward. So this
-    // needs its OWN fresh, as-yet-untainted trial canvas.
-    // createSceneWebGPURendererOrFallback only touches that trial canvas
-    // (calls getContext("webgpu") on it) once sceneWebGPUAvailable() is
-    // already true, so a failed attempt here never taints the LIVE canvas
-    // still on screen — the trial canvas is simply discarded, exactly like
-    // createFallbackSceneWebGLRenderer already does for its own trial
-    // canvas on the WebGPU-losing side of this same recovery machinery.
+    // Persistent frame errors may retry WebGPU on a fresh canvas. Explicit
+    // device loss is sticky for this mount; dispose/remount creates the next
+    // generation that may use a newly probed device.
     function recoverSceneWebGPUFromWebGLFallback(reason) {
       if (disposed || !renderer || renderer.kind !== "webgl") {
         return false;
@@ -845,7 +821,8 @@
       // its own render-empty check), so by the time a LATER probe-ready
       // event fires, that variable already reads "" even though this is
       // still, right now, a WebGPU-failure fallback.
-      if (!sceneFallbackRequiresReplacementCanvas(sceneDebugAttr(mount, sceneAttr("renderer-fallback")))) {
+      const fallbackReason = sceneDebugAttr(mount, sceneAttr("renderer-fallback"));
+      if (fallbackReason === "webgpu-device-lost" || !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
         return false;
       }
       const trialCanvas = prepareSceneReplacementCanvas();
@@ -892,8 +869,8 @@
         return;
       }
       if (reason === "webgpu-device-lost") {
-        const reacquiring = sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer;
-        recoverSceneWebGPURenderer(reacquiring ? "webgpu-probe-recovered" : reason, 0, !reacquiring, reacquiring);
+        if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
+        recoverSceneWebGPURenderer(reason, 0, true);
         return;
       }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
