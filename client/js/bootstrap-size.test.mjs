@@ -582,7 +582,10 @@ const budgets = [
   // CUBICSPLINE playback replayed onto that runtime measured
   // 1_581_011 / 429_650 / 345_085. Raise raw 1_580_800 -> 1_581_100 only;
   // gzip/brotli remain unchanged, leaving exact margins 89 / 50 / 315.
-  { file: "bootstrap.js", raw: 1_581_100, gzip: 429_700, brotli: 345_400 },
+  // Solid selected-mesh highlighting replaces generated triangle edges with a
+  // material-profile lift. Measured: 1_577_268 / 429_688 / 345_584; only the
+  // Brotli ceiling moves to the next 100-byte boundary.
+  { file: "bootstrap.js", raw: 1_581_100, gzip: 429_700, brotli: 345_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1982,9 +1985,11 @@ const routeBudgets = [
     // the next 100-byte boundary (29 B headroom); raw/gzip stay fixed. The
     // overlapping R0 base+WebGPU renderer set moves 205_089 -> 205_200 from
     // its exact-zero main margin to cover the same 205_182 composition (18 B).
+    // Solid selected-mesh highlighting measures 241_200 Brotli on this route;
+    // retain one 100-byte step of reviewed headroom.
     raw: 1_091_500,
     gzip: 287_800,
-    brotli: 241_100,
+    brotli: 241_300,
   },
 
 ];
