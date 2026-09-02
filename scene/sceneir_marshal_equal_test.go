@@ -53,6 +53,12 @@ import (
 // degraded entries and reason records dropped out of the verdict. WebGL2
 // still gates ibl on fragment texture units, so its degraded entry for ibl
 // stays. See scene/capability/capability.go for both row rewrites.
+//
+// REGENERATED on 2026-09-02 for the StandardMaterial solid-default fix.
+// StandardMaterial records whose Wireframe pointer is nil now emit the explicit
+// `"wireframe":false` contract. That is the deliberate byte delta: typed PBR
+// primitives become filled surfaces while raw SceneIR that omits the field
+// keeps the browser runtime's historical compatibility default.
 const sceneIRGoldenPath = "testdata/sceneir_marshal_golden.json"
 
 // sceneIRGoldenCases is the number of generated scenes in the corpus.
