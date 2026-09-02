@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.55.0 (2026-09-02)
 
 ### Changed: soft navigation preserves the interactive page shell
 
