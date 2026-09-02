@@ -41,10 +41,10 @@
       ]
     },
     "docs-scene3d-ci": {
-      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Gates the shipped JavaScript, including the typed browser host and valid lazy WebGL fallback path when WebGPU is unavailable, and total network payload, plus bounded load and blocking time; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary. network_kb allows 1513KiB: the real performance probe measured 1511.67KiB docs network payload after the reviewed WebGL specular-color patch grew the bootstrap.js and WebGL chunk budgets; all other docs gates (JS 1293.03KiB, LCP 2016ms, TBT 1410ms) pass.",
+      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Gates the shipped JavaScript, including the typed browser host and valid lazy WebGL fallback path when WebGPU is unavailable, and total network payload, plus bounded load and blocking time; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary. network_kb allows 1515KiB: the 2026-09-02 real performance probe measured 1514.15KiB after the reviewed in-place navigation runtime landed; all other docs gates (JS 1308.66KiB, LCP, and TBT) passed.",
       "assertions": [
         "js_total_kb <= 1550",
-        "network_kb <= 1513",
+        "network_kb <= 1515",
         "lcp <= 18000",
         "tbt <= 15000"
       ]
