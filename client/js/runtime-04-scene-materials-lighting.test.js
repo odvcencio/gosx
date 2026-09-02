@@ -1173,6 +1173,86 @@ test("bootstrap keeps solid mesh bundles off the legacy wire-line path", async (
   assert.equal(solidBundle.worldPositions.length, 0);
   assert.equal(solidBundle.worldMeshVertexCount, 3);
 
+  const selectedBundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [Object.assign({}, baseMesh, { id: "selected-gltf", selected: true })],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(selectedBundle.meshObjects.length, 1);
+  assert.equal(selectedBundle.objects.length, 0);
+  assert.equal(selectedBundle.worldVertexCount, 0);
+  assert.equal(selectedBundle.worldPositions.length, 0);
+  assert.equal(selectedBundle.materials[selectedBundle.meshObjects[0].materialIndex].emissive, 0.08);
+
+  const outlinedBundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [Object.assign({}, baseMesh, { id: "outlined-gltf", selected: true, outlineColor: "#facc15", outlineWidth: 3 })],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(outlinedBundle.meshObjects.length, 1);
+  assert.equal(outlinedBundle.objects.length, 1);
+  assert.equal(outlinedBundle.worldVertexCount, 6);
+  assert.equal(outlinedBundle.worldLineWidths[0], 3);
+
+  const customShaderBundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [Object.assign({}, baseMesh, {
+      id: "selected-custom-shader",
+      selected: true,
+      customFragment: "void main() {}",
+    })],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(customShaderBundle.meshObjects.length, 1);
+  assert.equal(customShaderBundle.objects.length, 1);
+  assert.equal(customShaderBundle.worldVertexCount, 6);
+  assert.equal(customShaderBundle.worldLineWidths[0], 3);
+
   const wireBundle = api.createSceneRenderBundle(
     320,
     180,
