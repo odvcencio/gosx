@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.54.2 (2026-09-02)
+
+### Fixed: selected PBR meshes keep their authored solid finish
+- Selecting an ordinary solid mesh now applies a restrained emissive lift instead of drawing every triangle edge as a yellow overlay. High-segment cylinders and spheres therefore keep their material surface instead of exposing cap fans and tessellation as a wire cage.
+- Explicit `outlineColor` / positive `outlineWidth` authoring and explicit `wireframe: true` continue to use the generated-edge path.
+- Custom non-Selena shaders retain their historical edge fallback, while Selena materials continue to own their selection treatment without generated topology lines.
+
 ## v0.54.1 (2026-09-02)
 
 ### Fixed: typed standard materials render as solid PBR surfaces by default
