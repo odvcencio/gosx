@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.54.1 (2026-09-02)
+
+### Fixed: typed standard materials render as solid PBR surfaces by default
+- `scene.StandardMaterial` now lowers an omitted `Wireframe` value as an explicit `false`, so untextured spheres, cylinders, boxes, and other typed PBR primitives generate filled triangle geometry instead of silently falling back to edge-only rendering.
+- `Wireframe: scene.Bool(true)` remains an explicit opt-in, and raw hand-authored SceneIR that omits `wireframe` keeps its historical compatibility behavior.
+- Typed SceneIR and `LegacyProps` now carry the same solid-default contract across ordinary meshes, models, and instanced meshes without changing other material kinds.
+
 ## v0.54.0 (2026-08-31)
 
 ### Added: selective runtime asset emission

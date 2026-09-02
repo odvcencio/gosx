@@ -1498,7 +1498,10 @@ type StandardMaterial struct {
 	Emissive          float64
 	Opacity           *float64
 	BlendMode         MaterialBlendMode
-	Wireframe         *bool
+	// Wireframe opts a standard PBR surface into edge-only rendering. A nil
+	// value is solid; use Bool(true) to request the compatibility wireframe
+	// presentation explicitly.
+	Wireframe *bool
 }
 
 type quaternion struct {
@@ -4339,7 +4342,42 @@ func legacyMaterial(material Material) map[string]any {
 	if material == nil {
 		return nil
 	}
-	return material.legacyMaterial()
+	if standard, ok := material.(*StandardMaterial); ok && standard == nil {
+		return nil
+	}
+	standard, ok := typedStandardMaterial(material)
+	if !ok {
+		return material.legacyMaterial()
+	}
+	props := standard.legacyMaterial()
+	if props == nil {
+		props = map[string]any{}
+	}
+	setBool(props, "wireframe", standardMaterialWireframe(standard.Wireframe))
+	return props
+}
+
+func typedStandardMaterial(material Material) (StandardMaterial, bool) {
+	switch standard := material.(type) {
+	case StandardMaterial:
+		return standard, true
+	case *StandardMaterial:
+		if standard != nil {
+			return *standard, true
+		}
+	}
+	return StandardMaterial{}, false
+}
+
+// standardMaterialWireframe makes the typed StandardMaterial contract
+// explicit on the wire. The browser runtime keeps its historical default for
+// raw SceneIR records that omit wireframe, but a typed PBR material is a solid
+// surface unless the author deliberately opts into edge-only rendering.
+func standardMaterialWireframe(value *bool) *bool {
+	if value != nil {
+		return value
+	}
+	return Bool(false)
 }
 
 // applyMaterialToObjectIR writes typed material fields directly onto
@@ -4362,41 +4400,10 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 	case MatteMaterial:
 		applyMaterialStyleToObjectIR(record, MaterialMatte, MaterialStyle(m))
 	case StandardMaterial:
-		record.MaterialKind = "standard"
-		record.Color = strings.TrimSpace(m.Color)
-		record.Texture = strings.TrimSpace(m.Texture)
-		record.Roughness = m.Roughness
-		record.Metalness = m.Metalness
-		record.Clearcoat = m.Clearcoat
-		record.Sheen = m.Sheen
-		record.Transmission = m.Transmission
-		record.Iridescence = m.Iridescence
-		record.Anisotropy = m.Anisotropy
-		if m.IOR != nil {
-			record.IOR = m.IOR
-		}
-		if m.SpecularIntensity != nil {
-			record.SpecularIntensity = Float(*m.SpecularIntensity)
-		}
-		if m.SpecularColor != nil {
-			record.SpecularColor = copySpecularColor(m.SpecularColor)
-		}
-		record.NormalMap = strings.TrimSpace(m.NormalMap)
-		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
-		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
-		record.OcclusionMap = strings.TrimSpace(m.OcclusionMap)
-		record.EmissiveMap = strings.TrimSpace(m.EmissiveMap)
-		if m.Emissive != 0 {
-			record.Emissive = Float(m.Emissive)
-		}
-		if m.Opacity != nil {
-			record.Opacity = m.Opacity
-		}
-		if m.BlendMode != "" {
-			record.BlendMode = string(m.BlendMode)
-		}
-		if m.Wireframe != nil {
-			record.Wireframe = m.Wireframe
+		applyStandardMaterialToObjectIR(record, m)
+	case *StandardMaterial:
+		if m != nil {
+			applyStandardMaterialToObjectIR(record, *m)
 		}
 	case LineBasicMaterial:
 		applyMaterialStyleToObjectIR(record, "line-basic", m.MaterialStyle)
@@ -4453,6 +4460,43 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		// use the legacy map round-trip so correctness is preserved.
 		applyMaterialProps(record, material.legacyMaterial())
 	}
+}
+
+func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial) {
+	record.MaterialKind = "standard"
+	record.Color = strings.TrimSpace(material.Color)
+	record.Texture = strings.TrimSpace(material.Texture)
+	record.Roughness = material.Roughness
+	record.Metalness = material.Metalness
+	record.Clearcoat = material.Clearcoat
+	record.Sheen = material.Sheen
+	record.Transmission = material.Transmission
+	record.Iridescence = material.Iridescence
+	record.Anisotropy = material.Anisotropy
+	if material.IOR != nil {
+		record.IOR = material.IOR
+	}
+	if material.SpecularIntensity != nil {
+		record.SpecularIntensity = Float(*material.SpecularIntensity)
+	}
+	if material.SpecularColor != nil {
+		record.SpecularColor = copySpecularColor(material.SpecularColor)
+	}
+	record.NormalMap = strings.TrimSpace(material.NormalMap)
+	record.RoughnessMap = strings.TrimSpace(material.RoughnessMap)
+	record.MetalnessMap = strings.TrimSpace(material.MetalnessMap)
+	record.OcclusionMap = strings.TrimSpace(material.OcclusionMap)
+	record.EmissiveMap = strings.TrimSpace(material.EmissiveMap)
+	if material.Emissive != 0 {
+		record.Emissive = Float(material.Emissive)
+	}
+	if material.Opacity != nil {
+		record.Opacity = material.Opacity
+	}
+	if material.BlendMode != "" {
+		record.BlendMode = string(material.BlendMode)
+	}
+	record.Wireframe = standardMaterialWireframe(material.Wireframe)
 }
 
 func applyMaterialStyleToObjectIR(record *ObjectIR, kind MaterialKind, style MaterialStyle) {
