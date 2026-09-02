@@ -806,7 +806,7 @@
       ],
       "raw": 767915,
       "gzip": 212127,
-      "brotli": 176975
+      "brotli": 177100, "ledger": "Solid selected-mesh highlighting replaces implicit topology edges with a material-profile lift; measured 177010 Brotli, with 90 bytes of reviewed headroom."
     },
     "base+webgpu": {
       "chunks": [
@@ -815,8 +815,8 @@
       ],
       "raw": 940631,
       "gzip": 246602,
-      "brotli": 205200,
-      "ledger": "Main measured exactly 205089 Brotli (0 B spare); Group.Scale measures 205182, matching the linked 241071 minimal-route composition, so only this overlapping Brotli ceiling moves to the next 100-byte boundary (18 B spare)."
+      "brotli": 205400,
+      "ledger": "Group.Scale measured 205182 Brotli. Solid selected-mesh highlighting now measures 205349, so this overlapping ceiling moves to 205400 with 51 bytes of reviewed headroom."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -838,7 +838,7 @@
       ],
       "raw": 994126,
       "gzip": 266366,
-      "brotli": 222700
+      "brotli": 222800, "ledger": "Solid selected-mesh highlighting measures 222766 Brotli for the WebGPU plus glTF/animation route, with 34 bytes of reviewed headroom."
     }
   },
   "rendererABI": {

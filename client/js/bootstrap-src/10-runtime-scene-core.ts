@@ -5257,6 +5257,29 @@
     return material && material.shaderBackend === "selena";
   }
 
+  // A default selected mesh should keep looking like the material the author
+  // chose. The historical fallback outlined selection by drawing every
+  // triangle edge, which exposed cap fans and sphere tessellation as a dense
+  // wire cage. Give ordinary PBR materials a restrained self-lit lift instead;
+  // authors who explicitly set outlineColor or outlineWidth retain the legacy
+  // edge overlay, and explicit wireframe materials remain wireframes.
+  function sceneSelectedMaterialProfile(material, object, hasAuthoredOutline) {
+    if (!material || !object || !object.selected || hasAuthoredOutline ||
+        material.wireframe || sceneMaterialUsesAuthoredMeshShader(material)) {
+      return material;
+    }
+    const currentEmissive = sceneCSSVarReference(material.emissive)
+      ? 0
+      : clamp01(sceneNumber(material.emissive, 0));
+    const selected = Object.assign({}, material, {
+      emissive: clamp01(currentEmissive + 0.08),
+      shaderData: null,
+    });
+    selected.key = sceneMaterialProfileKey(selected);
+    selected.shaderData = sceneMaterialShaderData(selected);
+    return selected;
+  }
+
   // sceneMeshHasValidTriangleIndices reports whether a vertices snapshot carries
   // the optional authored triangle index stream (already validated and copied to
   // a Uint32Array by sceneNormalizeMeshVertexData).
@@ -5311,13 +5334,28 @@
     if (!vertices || !vertices.positions || !vertices.count) {
       return;
     }
-    const material = sceneObjectMaterialProfile(object);
+    const authoredOutlineColor = object && typeof object.outlineColor === "string"
+      ? object.outlineColor.trim()
+      : "";
+    const authoredOutlineWidth = sceneNumber(object && object.outlineWidth, 0);
+    const hasAuthoredOutline = Boolean(object && object.selected && (authoredOutlineColor || authoredOutlineWidth > 0));
+    const sourceMaterial = sceneObjectMaterialProfile(object);
+    // Custom shaders cannot safely accept the standard-material emissive lift.
+    // Preserve their historical generated-edge selection fallback unless the
+    // backend already owns its selection treatment (Selena does).
+    const needsCustomShaderSelectionEdges = Boolean(
+      object && object.selected && !hasAuthoredOutline &&
+      sceneMaterialUsesAuthoredMeshShader(sourceMaterial) &&
+      !sceneMaterialSuppressesGeneratedWireSegments(sourceMaterial)
+    );
+    const emitsSelectionEdges = hasAuthoredOutline || needsCustomShaderSelectionEdges;
+    const material = sceneSelectedMaterialProfile(sourceMaterial, object, emitsSelectionEdges);
     if (sceneMeshObjectEffectivelyInvisible(object, material)) {
       return;
     }
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
-    const outlineColor = object && object.selected ? (object.outlineColor || "#facc15") : "";
-    const outlineWidth = object && object.selected ? Math.max(2, sceneNumber(object.outlineWidth, 3)) : 0;
+    const outlineColor = emitsSelectionEdges ? (authoredOutlineColor || "#facc15") : "";
+    const outlineWidth = emitsSelectionEdges ? Math.max(2, authoredOutlineWidth || 3) : 0;
     const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
@@ -5349,7 +5387,7 @@
     // ~1/4 of an equivalent low-poly object's).
     //
     // The one case where the computed lighting genuinely matters: wire
-    // segments (wireframe fill or the "selected object" outline highlight,
+    // segments (wireframe fill or an explicit/custom-shader selection outline,
     // appendSceneMeshWireSegment below) ARE drawn through the shared
     // world-line path both backends actually render, so `lighting` is still
     // computed with full fidelity whenever emitWireSegments is true. In the
