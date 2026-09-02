@@ -134,6 +134,33 @@ function measureWinding(mesh) {
   return { triangles, degenerate, reversed, worst, mean: total / triangles };
 }
 
+function measureTangentFrames(mesh) {
+  const count = Math.floor(mesh.positions.length / 3);
+  let invalid = 0;
+  let shortest = Infinity;
+  let largestNormalDot = 0;
+  for (let vertex = 0; vertex < count; vertex += 1) {
+    const normalOffset = vertex * 3;
+    const tangentOffset = vertex * 4;
+    const nx = mesh.normals[normalOffset];
+    const ny = mesh.normals[normalOffset + 1];
+    const nz = mesh.normals[normalOffset + 2];
+    const tx = mesh.tangents[tangentOffset];
+    const ty = mesh.tangents[tangentOffset + 1];
+    const tz = mesh.tangents[tangentOffset + 2];
+    const tw = mesh.tangents[tangentOffset + 3];
+    const tangentLength = Math.hypot(tx, ty, tz);
+    const normalLength = Math.hypot(nx, ny, nz) || 1;
+    const normalDot = Math.abs(nx * tx + ny * ty + nz * tz) / normalLength;
+    if (![tx, ty, tz, tw].every(Number.isFinite) || Math.abs(Math.abs(tw) - 1) > 1e-6) {
+      invalid += 1;
+    }
+    shortest = Math.min(shortest, tangentLength);
+    largestNormalDot = Math.max(largestNormalDot, normalDot);
+  }
+  return { count, invalid, shortest, largestNormalDot };
+}
+
 // Every solid-mesh generator 12-scene-geometry.ts declares, with the parameters
 // to build it and the figures the three producers now report.
 //
@@ -240,6 +267,19 @@ test("every solid-mesh generator winds with its own stored normals", () => {
       Math.abs(measured.worst - testCase.worst) < 1e-4,
       `${label} worst dot ${measured.worst.toFixed(6)}, want the recorded ${testCase.worst}`,
     );
+  }
+});
+
+test("every procedural solid emits a complete finite orthonormal tangent stream", () => {
+  const context = loadGeometryModule(false);
+  for (const testCase of generatorCases) {
+    const label = `${testCase.generator}(${JSON.stringify(testCase.object)})`;
+    const mesh = buildMesh(context, testCase.generator, testCase.object);
+    const measured = measureTangentFrames(mesh);
+    assert.equal(mesh.tangents.length, measured.count * 4, `${label} tangent tuple count`);
+    assert.equal(measured.invalid, 0, `${label} finite signed tangent frames`);
+    assert.ok(measured.shortest > 0.999, `${label} shortest tangent = ${measured.shortest}`);
+    assert.ok(measured.largestNormalDot < 1e-5, `${label} max |N dot T| = ${measured.largestNormalDot}`);
   }
 });
 

@@ -284,6 +284,8 @@ class FakeWebGLContext {
     this.LEQUAL = 0x0203;
     this.FRONT = 0x0404;
     this.BACK = 0x0405;
+    this.CW = 0x0900;
+    this.CCW = 0x0901;
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
@@ -620,6 +622,10 @@ class FakeWebGLContext {
 
   cullFace(face) {
     this.ops.push(["cullFace", face]);
+  }
+
+  frontFace(mode) {
+    this.ops.push(["frontFace", mode]);
   }
 
   deleteBuffer(buffer) {

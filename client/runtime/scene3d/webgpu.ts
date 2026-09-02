@@ -15364,7 +15364,7 @@
     // -----------------------------------------------------------------------
 
     // Scratch for the per-caster combined (lightVP × model) matrix used by
-    // retained indexed casters; allocated lazily, reused every frame.
+    // retained casters; allocated lazily, reused every frame.
     var _shadowCombinedMatrixScratch = null;
 
     function ensureShadowFrameBufferCapacity(matrixCount) {
@@ -15457,12 +15457,10 @@
         }
 
         if (obj.retainedGeometry && obj.directVertices) {
-          // Retained indexed geometry casts from cached model-space buffers
-          // through a uint32 index buffer. The shadow uniform carries the light
-          // view-projection alone, so model-space casters fold their own
-          // transform in per draw and restore the base matrix afterwards.
-          var casterIndices = obj.vertices && obj.vertices.indices;
-          if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
+          // Retained geometry casts from cached model-space positions. Indexed
+          // meshes use drawIndexed; expanded procedural triangle lists use
+          // draw. The shadow uniform carries the light view-projection alone,
+          // so every model-space caster folds in its own transform per draw.
           var reflectedCaster = sceneAffineDeterminant(obj.modelMatrix, 0) < 0, retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
           if (currentShadowPipeline !== retainedPipelineKind) {
             pass.setPipeline(getShadowPipeline(reflectedCaster));
@@ -15470,7 +15468,6 @@
           }
           if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
           var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
-          if (!(casterIndexCount > 0)) continue;
           var casterModel = obj.modelMatrix, casterMatrix = lightMatrix;
           if (casterModel && casterModel.length >= 16) {
             if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
@@ -15481,7 +15478,8 @@
           retainedShadowMatrixSlot += 1;
           device.queue.writeBuffer(shadowFrameBuffer, casterMatrixOffset, casterMatrix, 0, 16);
           pass.setBindGroup(0, shadowBG, [casterMatrixOffset]);
-          pass.drawIndexed(casterIndexCount);
+          if (casterIndexCount > 0) pass.drawIndexed(casterIndexCount);
+          else pass.draw(obj.vertexCount);
           continue;
         }
 

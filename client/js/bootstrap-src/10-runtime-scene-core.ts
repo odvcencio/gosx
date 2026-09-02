@@ -5280,24 +5280,11 @@
     return selected;
   }
 
-  // sceneMeshHasValidTriangleIndices reports whether a vertices snapshot carries
-  // the optional authored triangle index stream (already validated and copied to
-  // a Uint32Array by sceneNormalizeMeshVertexData).
-  function sceneMeshHasValidTriangleIndices(vertices) {
-    const indices = vertices && vertices.indices;
-    return indices instanceof Uint32Array &&
-      indices.length >= 3 &&
-      indices.length % 3 === 0;
-  }
-
   function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
     const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
     const scaleZ = sceneNumber(object && object.scaleZ, 1);
-    const scaleMagnitude = Math.max(1, Math.abs(scaleX), Math.abs(scaleY), Math.abs(scaleZ));
-    const uniformScale = Math.abs(scaleX - scaleY) <= scaleMagnitude * 0.000001 &&
-      Math.abs(scaleY - scaleZ) <= scaleMagnitude * 0.000001;
     function hasAttribute(name, tupleSize) {
       const data = vertices && vertices[name];
       return data instanceof Float32Array && data.length >= count * tupleSize;
@@ -5309,14 +5296,12 @@
       sceneMeshGeometryRevision(object, vertices) !== null &&
       vertices.dynamic !== true &&
       scaleX > 0.000001 && scaleY > 0.000001 && scaleZ > 0.000001 &&
-      uniformScale &&
       !emitWireSegments &&
       !(bundle && Array.isArray(bundle.waterSystems) && bundle.waterSystems.length) &&
-      // Shadow casters historically bake into the shared world soup. Indexed
-      // geometry opts out: the shadow pass can draw its retained local vertices
-      // through an element buffer instead, so no per-frame CPU expansion is
-      // needed and the caster keeps model-space topology.
-      !(object && object.castShadow && !sceneMeshHasValidTriangleIndices(vertices)) &&
+      // Both GPU backends apply the full model matrix (and its affine normal
+      // transform) to retained geometry. Positive non-uniform scale and
+      // unindexed triangle lists therefore stay local for both the colour and
+      // shadow passes instead of paying a world-space CPU bake per frame.
       !(object && object.skin) &&
       !(object && object.computedMorph) &&
       !(object && (object.dynamicGeometry || object.geometryDynamic || object.geometryDirty)) &&
