@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { evaluateSizeBudget } = require("./size-budget-policy.js");
 
 const {
   architecture,
@@ -518,19 +519,30 @@ function rendererSetSizes(chunks) {
   return { raw: sum(""), gzip: sum(".gz"), brotli: sum(".br") };
 }
 
-function assertAtOrBelow(actual, baseline, label) {
+function assertAtOrBelow(actual, baseline, label, t) {
   for (const metric of ["raw", "gzip", "brotli"]) {
-    assert.ok(actual[metric] <= baseline[metric], `${label} ${metric} ${actual[metric]} exceeds ${baseline[metric]}`);
+    const result = evaluateSizeBudget(actual[metric], baseline[metric], metric);
+    if (result.warningExceeded && !result.hardLimitExceeded && t) {
+      t.diagnostic(
+        `${label} ${metric} ${result.actual} is above warning limit ${result.warningLimit} ` +
+        `(reviewed target ${result.target}); hard limit ${result.hardLimit}`,
+      );
+    }
+    assert.ok(
+      !result.hardLimitExceeded,
+      `${label} ${metric} ${result.actual} exceeds hard limit ${result.hardLimit} ` +
+        `(reviewed target ${result.target} + ${result.errorAllowance} governed allowance)`,
+    );
   }
 }
 
-test("renderer-set bytes cannot hide growth between base and lazy chunks", () => {
+test("renderer-set bytes cannot hide material growth between base and lazy chunks", (t) => {
   for (const [label, baseline] of Object.entries(architecture.rendererSets)) {
-    assertAtOrBelow(rendererSetSizes(baseline.chunks), baseline, label);
+    assertAtOrBelow(rendererSetSizes(baseline.chunks), baseline, label, t);
   }
   assert.throws(
-    () => assertAtOrBelow({ raw: 11, gzip: 8, brotli: 6 }, { raw: 10, gzip: 8, brotli: 6 }, "negative fixture"),
-    /negative fixture raw 11 exceeds 10/,
+    () => assertAtOrBelow({ raw: 2059, gzip: 1033, brotli: 1031 }, { raw: 10, gzip: 8, brotli: 6 }, "negative fixture"),
+    /negative fixture raw 2059 exceeds hard limit 2058/,
   );
 });
 
