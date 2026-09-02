@@ -224,6 +224,373 @@
   }
 
   // --------------------------------------------------------------------------
+  // Scene3D soft-navigation reconciliation
+  // --------------------------------------------------------------------------
+
+  // This is the browser-side compatibility-SceneIR counterpart of
+  // scene.DiffScene. A soft navigation may keep a live Scene3D engine only
+  // when every changed authored field is expressible through the existing
+  // command protocol. Keeping the policy here makes the monolithic and
+  // selective runtimes use the same command ordering and remount boundary.
+  const SCENE_NAVIGATION_FIELDS = new Set([
+    "schema",
+    "objects",
+    "models",
+    "points",
+    "instancedMeshes",
+    "instancedGLBMeshes",
+    "computeParticles",
+    "waterSystems",
+    "animations",
+    "labels",
+    "sprites",
+    "html",
+    "lights",
+    "environment",
+    "postEffects",
+    "postFXMaxPixels",
+    "shadowMaxPixels",
+    "qualityLadder",
+    "qualityStartRung",
+    "pointQualityGroups",
+    "backendCaps",
+    "shaderLib",
+    "motionProgram",
+    "materialMotionProgram",
+  ]);
+  const SCENE_NAVIGATION_RECORDS = [
+    { field: "objects", kind: "" },
+    { field: "labels", kind: "label" },
+    { field: "sprites", kind: "sprite" },
+    { field: "html", kind: "html" },
+    { field: "lights", kind: "light" },
+  ];
+  const sceneNavigationBaselines = new WeakMap();
+  const sceneNavigationTails = new WeakMap();
+  const sceneNavigationInvalidRecords = new WeakSet();
+
+  function sceneNavigationPlainObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+
+  // JSON manifests contain only arrays, plain objects and primitives. Compare
+  // objects without depending on property insertion order; shader-lib
+  // inflation can legitimately insert an inline shader field in a different
+  // position from a manifest that authored the same field inline.
+  function sceneNavigationJSONEqual(previous, next) {
+    if (Object.is(previous, next)) return true;
+    if (typeof previous !== typeof next || previous === null || next === null) return false;
+    if (Array.isArray(previous) || Array.isArray(next)) {
+      if (!Array.isArray(previous) || !Array.isArray(next) || previous.length !== next.length) return false;
+      for (let index = 0; index < previous.length; index += 1) {
+        if (!sceneNavigationJSONEqual(previous[index], next[index])) return false;
+      }
+      return true;
+    }
+    if (!sceneNavigationPlainObject(previous) || !sceneNavigationPlainObject(next)) return false;
+    const previousKeys = Object.keys(previous).sort();
+    const nextKeys = Object.keys(next).sort();
+    if (previousKeys.length !== nextKeys.length) return false;
+    for (let index = 0; index < previousKeys.length; index += 1) {
+      const key = previousKeys[index];
+      if (key !== nextKeys[index] || !sceneNavigationJSONEqual(previous[key], next[key])) return false;
+    }
+    return true;
+  }
+
+  function sceneNavigationClone(value) {
+    if (Array.isArray(value)) return value.map(sceneNavigationClone);
+    if (!sceneNavigationPlainObject(value)) return value;
+    const clone = {};
+    for (const key of Object.keys(value)) clone[key] = sceneNavigationClone(value[key]);
+    return clone;
+  }
+
+  function sceneNavigationOwn(value, key) {
+    return !!value && Object.prototype.hasOwnProperty.call(value, key);
+  }
+
+  function sceneNavigationNullableArray(scene, field) {
+    const value = sceneNavigationOwn(scene, field) ? scene[field] : null;
+    if (value == null) return { valid: true, value: null };
+    return { valid: Array.isArray(value), value: value };
+  }
+
+  function sceneNavigationNullableObject(scene, field) {
+    const value = sceneNavigationOwn(scene, field) ? scene[field] : null;
+    if (value == null) return { valid: true, value: null };
+    return { valid: sceneNavigationPlainObject(value), value: value };
+  }
+
+  function sceneNavigationInteger(scene, field) {
+    const value = sceneNavigationOwn(scene, field) && scene[field] != null ? scene[field] : 0;
+    return { valid: Number.isSafeInteger(value), value: value };
+  }
+
+  function sceneNavigationString(scene, field) {
+    const value = sceneNavigationOwn(scene, field) && scene[field] != null ? scene[field] : "";
+    return { valid: typeof value === "string", value: value };
+  }
+
+  function sceneNavigationScene(props) {
+    if (!sceneNavigationPlainObject(props)) return null;
+    const value = sceneNavigationOwn(props, "scene") ? props.scene : null;
+    if (value == null) return {};
+    return sceneNavigationPlainObject(value) ? value : null;
+  }
+
+  function sceneNavigationOuterPropsEqual(previous, next) {
+    if (!sceneNavigationPlainObject(previous) || !sceneNavigationPlainObject(next)) return false;
+    const previousKeys = Object.keys(previous).filter(function(key) { return key !== "scene"; }).sort();
+    const nextKeys = Object.keys(next).filter(function(key) { return key !== "scene"; }).sort();
+    if (previousKeys.length !== nextKeys.length) return false;
+    for (let index = 0; index < previousKeys.length; index += 1) {
+      const key = previousKeys[index];
+      if (key !== nextKeys[index] || !sceneNavigationJSONEqual(previous[key], next[key])) return false;
+    }
+    return true;
+  }
+
+  function sceneNavigationKnownFields(scene) {
+    for (const key of Object.keys(scene)) {
+      if (!SCENE_NAVIGATION_FIELDS.has(key)) return false;
+    }
+    return true;
+  }
+
+  function sceneNavigationRemountFieldsEqual(previous, next) {
+    const previousSchema = sceneNavigationString(previous, "schema");
+    const nextSchema = sceneNavigationString(next, "schema");
+    const previousShadow = sceneNavigationInteger(previous, "shadowMaxPixels");
+    const nextShadow = sceneNavigationInteger(next, "shadowMaxPixels");
+    const previousStartRung = sceneNavigationInteger(previous, "qualityStartRung");
+    const nextStartRung = sceneNavigationInteger(next, "qualityStartRung");
+    const previousLadder = sceneNavigationNullableArray(previous, "qualityLadder");
+    const nextLadder = sceneNavigationNullableArray(next, "qualityLadder");
+    const previousGroups = sceneNavigationNullableObject(previous, "pointQualityGroups");
+    const nextGroups = sceneNavigationNullableObject(next, "pointQualityGroups");
+    const previousCaps = sceneNavigationNullableObject(previous, "backendCaps");
+    const nextCaps = sceneNavigationNullableObject(next, "backendCaps");
+    const previousShaderLib = sceneNavigationNullableObject(previous, "shaderLib");
+    const nextShaderLib = sceneNavigationNullableObject(next, "shaderLib");
+    const previousMotion = sceneNavigationString(previous, "motionProgram");
+    const nextMotion = sceneNavigationString(next, "motionProgram");
+    const previousMaterialMotion = sceneNavigationString(previous, "materialMotionProgram");
+    const nextMaterialMotion = sceneNavigationString(next, "materialMotionProgram");
+    const values = [
+      previousSchema, nextSchema,
+      previousShadow, nextShadow,
+      previousStartRung, nextStartRung,
+      previousLadder, nextLadder,
+      previousGroups, nextGroups,
+      previousCaps, nextCaps,
+      previousShaderLib, nextShaderLib,
+      previousMotion, nextMotion,
+      previousMaterialMotion, nextMaterialMotion,
+    ];
+    if (values.some(function(value) { return !value.valid; })) return false;
+    return sceneNavigationJSONEqual(previousSchema.value, nextSchema.value) &&
+      sceneNavigationJSONEqual(previousShadow.value, nextShadow.value) &&
+      sceneNavigationJSONEqual(previousStartRung.value, nextStartRung.value) &&
+      sceneNavigationJSONEqual(previousLadder.value, nextLadder.value) &&
+      sceneNavigationJSONEqual(previousGroups.value, nextGroups.value) &&
+      sceneNavigationJSONEqual(previousCaps.value, nextCaps.value) &&
+      sceneNavigationJSONEqual(previousShaderLib.value, nextShaderLib.value) &&
+      sceneNavigationJSONEqual(previousMotion.value, nextMotion.value) &&
+      sceneNavigationJSONEqual(previousMaterialMotion.value, nextMaterialMotion.value);
+  }
+
+  function sceneNavigationRecordCollectionsValid(scene) {
+    const ids = new Set();
+    for (const descriptor of SCENE_NAVIGATION_RECORDS) {
+      const collection = sceneNavigationNullableArray(scene, descriptor.field);
+      if (!collection.valid) return false;
+      const records = collection.value || [];
+      for (const record of records) {
+        if (!sceneNavigationPlainObject(record) || typeof record.id !== "string" || !record.id) return false;
+        if (ids.has(record.id)) return false;
+        ids.add(record.id);
+      }
+    }
+    return true;
+  }
+
+  function sceneNavigationCreateCommand(record, recordKind) {
+    const data = { props: sceneNavigationClone(record) };
+    if (recordKind) {
+      data.kind = recordKind;
+    } else if (typeof record.kind === "string" && record.kind) {
+      data.geometry = record.kind;
+    } else if (record.kind != null && typeof record.kind !== "string") {
+      return null;
+    }
+    return { kind: 0, objectId: record.id, data: data };
+  }
+
+  // Mirrors diffSceneRecords: sorted removals, then next-record order, with a
+  // changed record represented by remove+create so omitted/zero fields reset.
+  function sceneNavigationDiffRecords(commands, previousScene, nextScene, descriptor) {
+    const previousCollection = sceneNavigationNullableArray(previousScene, descriptor.field);
+    const nextCollection = sceneNavigationNullableArray(nextScene, descriptor.field);
+    if (!previousCollection.valid || !nextCollection.valid) return false;
+    if (sceneNavigationJSONEqual(previousCollection.value, nextCollection.value)) return true;
+
+    const previousRecords = previousCollection.value || [];
+    const nextRecords = nextCollection.value || [];
+    const previousByID = new Map(previousRecords.map(function(record) { return [record.id, record]; }));
+    const nextIDs = new Set(nextRecords.map(function(record) { return record.id; }));
+    const removed = Array.from(previousByID.keys()).filter(function(id) { return !nextIDs.has(id); }).sort();
+    for (const id of removed) commands.push({ kind: 1, objectId: id });
+    for (const record of nextRecords) {
+      const previousRecord = previousByID.get(record.id);
+      if (previousRecord && sceneNavigationJSONEqual(previousRecord, record)) continue;
+      if (previousRecord) commands.push({ kind: 1, objectId: record.id });
+      const create = sceneNavigationCreateCommand(record, descriptor.kind);
+      if (!create) return false;
+      commands.push(create);
+    }
+    return true;
+  }
+
+  function sceneNavigationDiffPlan(previousProps, nextProps) {
+    // Preserve the established identical-payload reuse contract even for a
+    // future SceneIR shape this runtime does not yet know how to diff.
+    try {
+      if (JSON.stringify(previousProps || null) === JSON.stringify(nextProps || null)) {
+        return { safe: true, commands: [] };
+      }
+    } catch (_e) {
+      return { safe: false, commands: [] };
+    }
+    if (!sceneNavigationOuterPropsEqual(previousProps, nextProps)) return { safe: false, commands: [] };
+    const previous = sceneNavigationScene(previousProps);
+    const next = sceneNavigationScene(nextProps);
+    if (!previous || !next || !sceneNavigationKnownFields(previous) || !sceneNavigationKnownFields(next)) {
+      return { safe: false, commands: [] };
+    }
+    if (!sceneNavigationRemountFieldsEqual(previous, next)) return { safe: false, commands: [] };
+
+    const recordsChanged = SCENE_NAVIGATION_RECORDS.some(function(descriptor) {
+      return !sceneNavigationJSONEqual(
+        sceneNavigationNullableArray(previous, descriptor.field).value,
+        sceneNavigationNullableArray(next, descriptor.field).value,
+      );
+    });
+    if (recordsChanged && (!sceneNavigationRecordCollectionsValid(previous) || !sceneNavigationRecordCollectionsValid(next))) {
+      return { safe: false, commands: [] };
+    }
+
+    const commands = [];
+    for (const descriptor of SCENE_NAVIGATION_RECORDS) {
+      if (!sceneNavigationDiffRecords(commands, previous, next, descriptor)) return { safe: false, commands: [] };
+    }
+
+    const previousEnvironment = sceneNavigationOwn(previous, "environment") && previous.environment != null ? previous.environment : {};
+    const nextEnvironment = sceneNavigationOwn(next, "environment") && next.environment != null ? next.environment : {};
+    if (!sceneNavigationPlainObject(previousEnvironment) || !sceneNavigationPlainObject(nextEnvironment)) {
+      return { safe: false, commands: [] };
+    }
+    if (!sceneNavigationJSONEqual(previousEnvironment, nextEnvironment)) {
+      commands.push({ kind: 13, data: { environment: sceneNavigationClone(nextEnvironment), shape: "sceneIR" } });
+    }
+
+    const previousModels = sceneNavigationNullableArray(previous, "models");
+    const nextModels = sceneNavigationNullableArray(next, "models");
+    if (!previousModels.valid || !nextModels.valid) return { safe: false, commands: [] };
+    if (!sceneNavigationJSONEqual(previousModels.value, nextModels.value)) {
+      commands.push({ kind: 10, data: { models: sceneNavigationClone(nextModels.value) } });
+    }
+
+    const particleFields = ["points", "computeParticles", "waterSystems"];
+    const previousParticles = particleFields.map(function(field) { return sceneNavigationNullableArray(previous, field); });
+    const nextParticles = particleFields.map(function(field) { return sceneNavigationNullableArray(next, field); });
+    if (previousParticles.concat(nextParticles).some(function(value) { return !value.valid; })) {
+      return { safe: false, commands: [] };
+    }
+    if (particleFields.some(function(_field, index) {
+      return !sceneNavigationJSONEqual(previousParticles[index].value, nextParticles[index].value);
+    })) {
+      commands.push({
+        kind: 6,
+        data: {
+          points: sceneNavigationClone(nextParticles[0].value),
+          computeParticles: sceneNavigationClone(nextParticles[1].value),
+          waterSystems: sceneNavigationClone(nextParticles[2].value),
+        },
+      });
+    }
+
+    const bulkCommands = [
+      { field: "instancedMeshes", kind: 8 },
+      { field: "instancedGLBMeshes", kind: 11 },
+      { field: "animations", kind: 12 },
+    ];
+    for (const descriptor of bulkCommands) {
+      const previousValue = sceneNavigationNullableArray(previous, descriptor.field);
+      const nextValue = sceneNavigationNullableArray(next, descriptor.field);
+      if (!previousValue.valid || !nextValue.valid) return { safe: false, commands: [] };
+      if (!sceneNavigationJSONEqual(previousValue.value, nextValue.value)) {
+        const data = {};
+        data[descriptor.field] = sceneNavigationClone(nextValue.value);
+        commands.push({ kind: descriptor.kind, data: data });
+      }
+    }
+
+    const previousPostEffects = sceneNavigationNullableArray(previous, "postEffects");
+    const nextPostEffects = sceneNavigationNullableArray(next, "postEffects");
+    const previousPostCap = sceneNavigationInteger(previous, "postFXMaxPixels");
+    const nextPostCap = sceneNavigationInteger(next, "postFXMaxPixels");
+    if (!previousPostEffects.valid || !nextPostEffects.valid || !previousPostCap.valid || !nextPostCap.valid) {
+      return { safe: false, commands: [] };
+    }
+    if (!sceneNavigationJSONEqual(previousPostEffects.value, nextPostEffects.value) || previousPostCap.value !== nextPostCap.value) {
+      commands.push({
+        kind: 7,
+        data: {
+          postEffects: sceneNavigationClone(nextPostEffects.value),
+          postFXMaxPixels: nextPostCap.value,
+        },
+      });
+    }
+    return { safe: true, commands: commands };
+  }
+
+  // Serializing per mounted record makes overlapping navigations reconcile
+  // from the last scene actually applied to the engine, not from a stale page
+  // manifest. A command failure poisons only that record; its caller then uses
+  // the existing dispose+remount fallback, which recovers from partial work.
+  function sceneNavigationTryReuse(record, previousProps, nextProps) {
+    if (!record || (typeof record !== "object" && typeof record !== "function")) return Promise.resolve(false);
+    const previousTail = sceneNavigationTails.get(record) || Promise.resolve();
+    const result = previousTail.then(async function() {
+      if (sceneNavigationInvalidRecords.has(record) || record.disposed) return false;
+      const baseline = sceneNavigationBaselines.get(record) || previousProps;
+      const plan = sceneNavigationDiffPlan(baseline, nextProps);
+      if (!plan.safe) return false;
+      if (plan.commands.length > 0) {
+        const handle = record.handle;
+        if (!handle || typeof handle.applyCommands !== "function") return false;
+        try {
+          await handle.applyCommands(plan.commands);
+        } catch (_e) {
+          sceneNavigationInvalidRecords.add(record);
+          return false;
+        }
+      }
+      sceneNavigationBaselines.set(record, nextProps);
+      return true;
+    }, function() {
+      return false;
+    });
+    const tail = result.then(function() {}, function() {});
+    sceneNavigationTails.set(record, tail);
+    tail.then(function() {
+      if (sceneNavigationTails.get(record) === tail) sceneNavigationTails.delete(record);
+    });
+    return result;
+  }
+
+  // --------------------------------------------------------------------------
   // Shared WASM runtime loading
   // --------------------------------------------------------------------------
 

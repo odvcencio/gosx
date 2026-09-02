@@ -2308,7 +2308,7 @@ test("navigation runtime reuses an engine when incoming scene still carries shad
   assert.equal(manifestScript.textContent.includes("fragmentWGSLRef"), true, "incoming DOM manifest text must not be mutated");
 });
 
-test("split runtime navigation reuses an identical Scene3D engine and keeps the same canvas", async () => {
+test("split runtime command-diffs a Scene3D material edit and keeps the same canvas", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "bg-scene-split";
 
@@ -2316,7 +2316,7 @@ test("split runtime navigation reuses an identical Scene3D engine and keeps the 
     width: 320,
     height: 180,
     autoRotate: false,
-    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+    scene: { objects: [{ id: "split-box", kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
   };
   const manifest = {
     engines: [
@@ -2364,12 +2364,20 @@ test("split runtime navigation reuses an identical Scene3D engine and keeps the 
     disposed = true;
     return originalDispose();
   };
+  const appliedCommands = [];
+  const originalApplyCommands = recordBefore.handle.applyCommands.bind(recordBefore.handle);
+  recordBefore.handle.applyCommands = function(commands) {
+    appliedCommands.push(...commands);
+    return originalApplyCommands(commands);
+  };
 
   const nextMountPlaceholder = new FakeElement("div", null);
   nextMountPlaceholder.id = "bg-scene-split";
   const manifestScript = new FakeElement("script", null);
   manifestScript.id = "gosx-manifest";
-  manifestScript.textContent = JSON.stringify(manifest);
+  const nextManifest = JSON.parse(JSON.stringify(manifest));
+  nextManifest.engines[0].props.scene.objects[0].color = "#ff8d8d";
+  manifestScript.textContent = JSON.stringify(nextManifest);
 
   parsedDocs.set("__SPLIT_REUSE_NEXT__", buildNavigatedDocument({
     title: "Split Next",
@@ -2385,12 +2393,14 @@ test("split runtime navigation reuses an identical Scene3D engine and keeps the 
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/split-next");
   await flushAsyncWork();
 
-  assert.equal(disposed, false, "split runtime identical-scene navigation must not dispose the engine");
+  assert.equal(disposed, false, "split runtime must reuse a command-diffable Scene3D engine");
   const liveMount = env.document.getElementById("bg-scene-split");
   assert.strictEqual(liveMount, mount, "split runtime must move the same mount element");
   assert.strictEqual(liveMount.children[0], canvasBefore, "split runtime must keep the same canvas element");
   assert.equal(liveMount.getAttribute("data-gosx-engine-reused"), "true");
   assert.strictEqual(env.context.__gosx.engines.get("bg-scene-split"), recordBefore, "the same engine record must persist");
+  assert.deepEqual(appliedCommands.map((command) => command.kind), [1, 0]);
+  assert.equal(appliedCommands[1].data.props.color, "#ff8d8d");
   assert.equal(
     events.some((e) => e.msg === "engine-reused-across-navigation" && e.fields.engineID === "bg-scene-split"),
     true,
@@ -2722,7 +2732,7 @@ test("Scene3D canonical performance telemetry API owns legacy perf flag", async 
   assert.equal(env.context.__gosx.scene3d.isPerformanceTelemetryEnabled(), false);
 });
 
-test("navigation runtime disposes and remounts an engine when the scene payload differs", async () => {
+test("navigation runtime command-diffs a Scene3D material edit and preserves the same canvas", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "bg-scene-2";
 
@@ -2730,7 +2740,7 @@ test("navigation runtime disposes and remounts an engine when the scene payload 
     width: 320,
     height: 180,
     autoRotate: false,
-    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+    scene: { objects: [{ id: "demo-box", kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
   };
   const manifestA = {
     engines: [
@@ -2764,7 +2774,8 @@ test("navigation runtime disposes and remounts an engine when the scene payload 
 
   const recordBefore = env.context.__gosx.engines.get("bg-scene-2");
   assert.ok(recordBefore, "expected the Scene3D engine to mount initially");
-  assert.ok(mount.children[0], "expected Scene3D to create a canvas inside the mount");
+  const canvasBefore = mount.children[0];
+  assert.ok(canvasBefore, "expected Scene3D to create a canvas inside the mount");
 
   let disposed = false;
   const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
@@ -2772,14 +2783,21 @@ test("navigation runtime disposes and remounts an engine when the scene payload 
     disposed = true;
     return originalDispose();
   };
+  const appliedCommands = [];
+  const originalApplyCommands = recordBefore.handle.applyCommands.bind(recordBefore.handle);
+  recordBefore.handle.applyCommands = function(commands) {
+    appliedCommands.push(...commands);
+    return originalApplyCommands(commands);
+  };
 
-  // Same id/mountId/component, DIFFERENT scene payload (color changed) —
-  // must NOT be treated as reusable.
+  // Same id/mountId/component, with a material field changed. DiffScene's
+  // compatibility policy represents this as remove+create so zero/omitted
+  // material fields reset without remounting the renderer.
   const sceneB = {
     width: 320,
     height: 180,
     autoRotate: false,
-    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#ff8d8d" }] },
+    scene: { objects: [{ id: "demo-box", kind: "box", width: 1, height: 1, depth: 1, color: "#ff8d8d" }] },
   };
   const manifestB = {
     engines: [
@@ -2815,17 +2833,145 @@ test("navigation runtime disposes and remounts an engine when the scene payload 
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/changed");
   await flushAsyncWork();
 
-  assert.equal(disposed, true, "a changed scene payload must dispose the outgoing engine");
+  assert.equal(disposed, false, "a command-diffable material edit must not dispose the engine");
   const liveMount = env.document.getElementById("bg-scene-2");
-  assert.notStrictEqual(liveMount, mount, "a changed scene must NOT adopt the old mount element");
-  const newRecord = env.context.__gosx.engines.get("bg-scene-2");
-  assert.ok(newRecord, "expected the engine to be remounted");
-  assert.notStrictEqual(newRecord, recordBefore, "a fresh engine record must replace the disposed one");
+  assert.strictEqual(liveMount, mount, "the live Scene3D mount must be adopted into the incoming page");
+  assert.strictEqual(liveMount.children[0], canvasBefore, "the same renderer canvas must survive the edit");
+  assert.strictEqual(env.context.__gosx.engines.get("bg-scene-2"), recordBefore);
+  assert.deepEqual(appliedCommands.map((command) => command.kind), [1, 0]);
+  assert.equal(appliedCommands[0].objectId, "demo-box");
+  assert.equal(appliedCommands[1].objectId, "demo-box");
+  assert.equal(appliedCommands[1].data.props.color, "#ff8d8d");
   assert.equal(
-    events.some((e) => e.msg === "engine-remounted" && e.fields.engineID === "bg-scene-2"),
+    events.some((e) => e.msg === "engine-reused-across-navigation" && e.fields.engineID === "bg-scene-2"),
     true,
   );
-  assert.equal(events.some((e) => e.msg === "engine-reused-across-navigation"), false);
+  assert.equal(events.some((e) => e.msg === "engine-remounted"), false);
+});
+
+test("navigation runtime remounts Scene3D when a mount-only quality field changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "quality-scene";
+  const baseProps = {
+    width: 320,
+    height: 180,
+    scene: {
+      objects: [{ id: "quality-box", kind: "box", color: "#8de1ff" }],
+      qualityLadder: [{ name: "balanced", computeBudgetScale: 1, pointBudgetScale: 1, expensivePassCadence: 1 }],
+    },
+  };
+  const manifestA = {
+    engines: [{
+      id: "quality-scene",
+      mountId: "quality-scene",
+      component: "GoSXScene3D",
+      kind: "surface",
+      jsExport: "GoSXScene3D",
+      props: baseProps,
+      capabilities: ["canvas", "webgl", "animation"],
+    }],
+  };
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: manifestA,
+    fetchRoutes: {
+      "http://localhost:3000/quality": { text: "__QUALITY_NEXT__", url: "http://localhost:3000/quality" },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("quality-scene");
+  const canvasBefore = mount.children[0];
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+  const nextProps = JSON.parse(JSON.stringify(baseProps));
+  nextProps.scene.qualityLadder[0].computeBudgetScale = 0.65;
+  const manifestB = JSON.parse(JSON.stringify(manifestA));
+  manifestB.engines[0].props = nextProps;
+  const nextMount = new FakeElement("div", null);
+  nextMount.id = "quality-scene";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifestB);
+  parsedDocs.set("__QUALITY_NEXT__", buildNavigatedDocument({
+    title: "Quality",
+    bodyNodes: [nextMount, manifestScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/quality");
+  await flushAsyncWork();
+
+  assert.equal(disposed, true, "qualityLadder is read at mount and must force a remount");
+  assert.notStrictEqual(mount.children[0], canvasBefore, "remounting must create a fresh renderer canvas");
+  assert.notStrictEqual(env.context.__gosx.engines.get("quality-scene"), recordBefore);
+});
+
+test("navigation runtime remounts Scene3D when a command-diff application fails", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "failed-diff-scene";
+  const manifestA = {
+    engines: [{
+      id: "failed-diff-scene",
+      mountId: "failed-diff-scene",
+      component: "GoSXScene3D",
+      kind: "surface",
+      jsExport: "GoSXScene3D",
+      props: { scene: { objects: [{ id: "failed-box", kind: "box", color: "#8de1ff" }] } },
+      capabilities: ["canvas", "webgl", "animation"],
+    }],
+  };
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: manifestA,
+    fetchRoutes: {
+      "http://localhost:3000/failed-diff": { text: "__FAILED_DIFF_NEXT__", url: "http://localhost:3000/failed-diff" },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("failed-diff-scene");
+  const canvasBefore = mount.children[0];
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+  recordBefore.handle.applyCommands = function() {
+    return Promise.reject(new Error("synthetic command failure"));
+  };
+  const manifestB = JSON.parse(JSON.stringify(manifestA));
+  manifestB.engines[0].props.scene.objects[0].color = "#ff8d8d";
+  const nextMount = new FakeElement("div", null);
+  nextMount.id = "failed-diff-scene";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifestB);
+  parsedDocs.set("__FAILED_DIFF_NEXT__", buildNavigatedDocument({
+    title: "Failed diff",
+    bodyNodes: [nextMount, manifestScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/failed-diff");
+  await flushAsyncWork();
+
+  assert.equal(disposed, true, "a rejected command batch must use the established remount fallback");
+  assert.notStrictEqual(mount.children[0], canvasBefore, "fallback remount must create a fresh renderer canvas");
+  assert.notStrictEqual(env.context.__gosx.engines.get("failed-diff-scene"), recordBefore);
 });
 
 test("navigation runtime reuses an engine while hub subscriptions disconnect and re-arm cleanly", async () => {
