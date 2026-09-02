@@ -585,7 +585,11 @@ const budgets = [
   // Solid selected-mesh highlighting replaces generated triangle edges with a
   // material-profile lift. Measured: 1_577_268 / 429_688 / 345_584; only the
   // Brotli ceiling moves to the next 100-byte boundary.
-  { file: "bootstrap.js", raw: 1_581_100, gzip: 429_700, brotli: 345_700 },
+  // v0.55.0: keyed soft-navigation reconciliation, automatic same-origin
+  // link/form interception, and Scene3D command-diff reuse replace full-page
+  // reloads while preserving live controls and canvases. Measured:
+  // 1_583_642 / 431_409 / 346_635, with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 431_500, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -659,7 +663,9 @@ const budgets = [
   // gosx#217 review follow-up: hub-identity scoping, cue mute, and the
   // region-key/-cursor validation (navigation.ts/regions.ts, both carried
   // by the runtime chunk). Measured: 150_160 / 41_135 / 35_887.
-  { file: "bootstrap-runtime.js", raw: 150_400, gzip: 41_300, brotli: 36_100 },
+  // v0.55.0 soft-navigation reconciliation and declarative link/form routing
+  // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
+  { file: "bootstrap-runtime.js", raw: 156_500, gzip: 43_100, brotli: 37_600 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1472,9 +1478,11 @@ const routeBudgets = [
     // Measured selective total: 259_682 / 73_492 / 64_547, plus narrow
     // headroom on gzip/brotli too (both were within single-digit percent of
     // their prior caps already).
-    raw: 260_000,
-    gzip: 73_700,
-    brotli: 64_800,
+    // v0.55.0 carries the same soft-navigation behavior without pulling in
+    // Scene3D. Measured: 265_883 / 75_486 / 66_333.
+    raw: 266_000,
+    gzip: 75_600,
+    brotli: 66_400,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1725,9 +1733,11 @@ const routeBudgets = [
     // 250_950 -> 251_400 for event-mode live binds, region append/prepend,
     // and hub reconnect backoff (gosx#217 extension). Measured:
     // 1_070_068 / 296_424 / 251_179, plus narrow rounding headroom.
-    raw: 1_071_000,
-    gzip: 296_600,
-    brotli: 251_400,
+    // v0.55.0 navigation reconciliation is shared by the WebGL route.
+    // Measured: 1_073_248 / 298_070 / 252_956.
+    raw: 1_073_500,
+    gzip: 298_200,
+    brotli: 253_100,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1854,9 +1864,11 @@ const routeBudgets = [
     // gosx#217 review follow-up: hub-identity scoping, cue mute, and the
     // region-key/-cursor validation. Measured: 1_463_526 / 391_787 /
     // 331_014; only brotli exceeded, raised with narrow rounding headroom.
-    raw: 1_464_000,
-    gzip: 391_800,
-    brotli: 331_200,
+    // v0.55.0 navigation reconciliation is shared by the dual-backend route.
+    // Measured: 1_465_069 / 393_405 / 332_750.
+    raw: 1_465_500,
+    gzip: 393_600,
+    brotli: 332_900,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1987,9 +1999,11 @@ const routeBudgets = [
     // its exact-zero main margin to cover the same 205_182 composition (18 B).
     // Solid selected-mesh highlighting measures 241_200 Brotli on this route;
     // retain one 100-byte step of reviewed headroom.
-    raw: 1_091_500,
-    gzip: 287_800,
-    brotli: 241_300,
+    // v0.55.0 navigation reconciliation plus Scene3D command-diff reuse.
+    // Measured: 1_093_330 / 289_512 / 242_867.
+    raw: 1_093_500,
+    gzip: 289_700,
+    brotli: 243_000,
   },
 
 ];
@@ -2014,7 +2028,9 @@ function fileSize(relativePath) {
 // gosx#217 review follow-up: hub-identity scoping, page-wide cue mute,
 // and the region-key/-cursor validation. Measured: 88_076. Cap set with
 // narrow rounding headroom.
-const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 88_500 };
+// v0.55.0 keyed body reconciliation and automatic same-origin link/form
+// routing. Measured: 94_820; the raw-only cap retains 180 bytes of headroom.
+const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 95_000 };
 
 test("navigation-runtime.min.js stays within its own raw size budget", () => {
   const raw = fileSize(navigationRuntimeMinBudget.file);
