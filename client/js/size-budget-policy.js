@@ -19,9 +19,19 @@ const SIZE_BUDGET_POLICY = Object.freeze({
   }),
 });
 
+function requireSizeBudgetBytes(value, label) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be a non-negative safe integer byte count`);
+  }
+  return value;
+}
+
 function sizeBudgetAllowance(target, metric, severity) {
-  const baseline = Math.max(0, Math.floor(Number(target) || 0));
-  const tierName = severity === "warning" ? "warning" : "error";
+  const baseline = requireSizeBudgetBytes(target, "size-budget target");
+  if (severity !== "warning" && severity !== "error") {
+    throw new TypeError(`unknown size-budget severity ${String(severity)}`);
+  }
+  const tierName = severity;
   const tier = SIZE_BUDGET_POLICY[tierName];
   const fraction = SIZE_BUDGET_POLICY[`${tierName}Fraction`];
   const minimum = tier.minimumBytes[metric];
@@ -29,12 +39,15 @@ function sizeBudgetAllowance(target, metric, severity) {
   if (!Number.isFinite(minimum) || !Number.isFinite(maximum)) {
     throw new TypeError(`unknown size-budget metric ${String(metric)}`);
   }
+  // A zero target is a semantic invariant (for example, a static route that
+  // must ship no JavaScript), not a small bundle entitled to a noise floor.
+  if (baseline === 0) return 0;
   return Math.max(minimum, Math.min(maximum, Math.ceil(baseline * fraction)));
 }
 
 function evaluateSizeBudget(actual, target, metric) {
-  const measured = Math.max(0, Math.floor(Number(actual) || 0));
-  const baseline = Math.max(0, Math.floor(Number(target) || 0));
+  const measured = requireSizeBudgetBytes(actual, "measured size");
+  const baseline = requireSizeBudgetBytes(target, "size-budget target");
   const warningAllowance = sizeBudgetAllowance(baseline, metric, "warning");
   const errorAllowance = sizeBudgetAllowance(baseline, metric, "error");
   const warningLimit = baseline + warningAllowance;
