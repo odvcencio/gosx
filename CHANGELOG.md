@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.55.1 (2026-09-02)
+
+### Fixed: responsive Scene3D canvases honor fill-height layout bounds
+
+- `fillHeight` scenes now derive their responsive height from the mount's layout box instead of feeding the canvas's stale intrinsic aspect ratio back into each resize pass.
+- Grid- and flex-bound Scene3D canvases remain inside their viewport during initial hydration and soft navigation instead of growing beneath adjacent panels or docks.
+
 ## v0.55.0 (2026-09-02)
 
 ### Changed: soft navigation preserves the interactive page shell
