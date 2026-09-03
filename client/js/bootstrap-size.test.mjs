@@ -1617,11 +1617,12 @@ const routeBudgets = [
     // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
     // 1_219_707 / 324_730 / 274_303, plus rounding headroom.
     // Bumped for the restored client fixes. Measured: 1_221_816 / 325_234 / 274_642.
-    // Bumped for the four client fixes restored after the main squash.
-    // Measured: 1_435_294 / 384_033 / 324_698.
-    raw: 1_436_794,
-    gzip: 384_433,
-    brotli: 325_098,
+    // v0.55.0 route audit: 1_245_867 / 333_157 / 281_573. The previous
+    // baseline accidentally described a dual-backend-era payload; use rounded
+    // current-route baselines and let the shared policy govern future growth.
+    raw: 1_250_000,
+    gzip: 335_000,
+    brotli: 282_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
