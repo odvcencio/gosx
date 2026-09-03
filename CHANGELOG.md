@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.53.11 (2026-09-03)
+
+### Fixed: comments inside GSX markup compile away
+- A `//` line inside GSX element children now compiles away, instead of rendering as page text. The rule: a line whose first non-whitespace characters are `//` is dropped, including its newline. Text with `//` after other content on the same line — a `LABEL // detail` divider, a URL — stays untouched.
+- Edge case: a bare `//` line with nothing after it also drops, since it reads exactly like a comment line. Write a real divider as `{"// detail"}`, or keep it on the same line as its neighbors.
+- `{/* a comment */}` and `{// a comment}` now compile away too, instead of failing to parse. A container that mixes a comment with a real expression, `{/* why */ data}`, keeps working as before.
+- A `//` line inside `<script>`, `<style>`, `<pre>`, or `<textarea>` still renders verbatim; none of the above applies inside an attribute value either.
+
 ## v0.53.10 (2026-08-29)
 
 ### Added: live binds that need no fetch, attributes and classes, and regions that grow

@@ -129,13 +129,23 @@ type transpiler struct {
 	// to resolve a same-file <Each of> or spread source's element/struct
 	// type by walking structFieldTypes from the right root.
 	currentPropsType string
-	errs             []string
-	hasStrict        bool
-	strict           int
-	gosxAlias        string
-	injectGosx       bool
-	strictProjection bool
-	importNames      map[string]string
+	// verbatimTextDepth counts nesting inside a <pre> or <textarea> element.
+	// emitGSXText only drops a whole-line `//` comment (issue: developer
+	// comments rendered as page text) when this is 0 — a <pre>/<textarea>
+	// displays its text content verbatim (a code sample, a default form
+	// value), so a `//` line inside one is payload, not a stray comment,
+	// same as <script>/<style> body text (which never reaches emitGSXText
+	// at all; see emitRawTextElement). A counter, not a bool, so a second
+	// <pre> nested inside the first still reads as "inside" after the
+	// inner one closes.
+	verbatimTextDepth int
+	errs              []string
+	hasStrict         bool
+	strict            int
+	gosxAlias         string
+	injectGosx        bool
+	strictProjection  bool
+	importNames       map[string]string
 	// sharedImports resolves a shared import's raw source path text (e.g.
 	// "./ui") to its Go projection facts. See Options.SharedImports.
 	sharedImports map[string]SharedImport
@@ -962,6 +972,13 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		return t.emitStrictEach(openNode, n)
 	}
 
+	// isVerbatimTextTag: see verbatimTextDepth's doc comment. Scoped tightly
+	// around emitChildrenAndSlots so the depth is back to its caller's value
+	// before this function's own return, regardless of which branch below
+	// fires.
+	if isVerbatimTextTag(tag) {
+		t.verbatimTextDepth++
+	}
 	// emitChildrenAndSlots partitions any statically slot-tagged direct
 	// child out of children (gosx#249). slots is only ever consulted by
 	// the two component-call branches below — <If>/<Each> (handled above)
@@ -970,6 +987,9 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 	// rejects a slot="Name" attribute reaching either shape before this
 	// function runs (see emitChildrenAndSlots' doc comment).
 	children, slots := t.emitChildrenAndSlots(n)
+	if isVerbatimTextTag(tag) {
+		t.verbatimTextDepth--
+	}
 
 	if t.isStrictConditionalTag(tag) {
 		if cond, ok := t.strictConditionalCondExpr(openNode); ok {
@@ -1357,13 +1377,89 @@ func (t *transpiler) emitExprContainer(n *gotreesitter.Node) string {
 	return fmt.Sprintf("%s(%s)", t.gosxRef("Expr"), t.text(exprNode))
 }
 
+// emitGSXText emits a GSX child text node. A production page rendered a
+// developer's `//` divider comment as literal page text, because nothing in
+// this pipeline treated a comment line inside markup as anything but
+// content — GSX text is not Go source, so the Go lexer's comment handling
+// never runs over it. This function is the fix: outside a
+// <pre>/<textarea> (verbatimTextDepth == 0; see its doc comment) it drops
+// every comment-only line first, then applies the ordinary
+// all-whitespace-collapses-to-nothing rule to what is left.
 func (t *transpiler) emitGSXText(n *gotreesitter.Node) string {
 	text := t.text(n)
+	if t.verbatimTextDepth == 0 {
+		text = stripCommentOnlyLines(text)
+	}
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return ""
 	}
 	return fmt.Sprintf("%s(%q)", t.gosxRef("Text"), text)
+}
+
+// isVerbatimTextTag reports whether tag displays its children's text
+// verbatim, the way <script>/<style> already do at the grammar level (see
+// emitRawTextElement). <pre> and <textarea> get the same treatment here
+// instead of in the grammar: unlike <script>/<style>, HTML lets ordinary
+// markup — nested elements for syntax highlighting inside <pre>, or a
+// Go expression default value inside <textarea> — appear in their content,
+// so they still parse as plain jsx_element, not jsx_raw_text_element.
+func isVerbatimTextTag(tag string) bool {
+	switch tag {
+	case "pre", "textarea":
+		return true
+	default:
+		return false
+	}
+}
+
+// stripCommentOnlyLines removes, from a run of GSX child text, every line
+// whose first non-whitespace characters are "//" — content AND that line's
+// own trailing newline together, so no blank line is left in its place.
+//
+// The rule is deliberately "line starts with //", not "line contains //":
+// Gridiron renders "LABEL // detail" divider text and bare URLs
+// (https://...) as page content, and both have "//" after other text on the
+// same line, so both must survive untouched. A line holding nothing but
+// "//" itself — no trailing detail — is also dropped: Gridiron had exactly
+// that bare-line shape left over from a previous reformat, and it is
+// indistinguishable from a real `//` comment by any rule short of this one.
+// A divider that must render has to move into an expression, {"// detail"},
+// or stay on the same line as its neighboring text.
+//
+// A line is measured up to and including its own "\n" (the final line, if
+// the text node does not end in a newline, has none); dropping only ever
+// removes that one line's own bytes, never a neighboring line's terminator,
+// so keeping and dropping lines can be decided independently of each other.
+func stripCommentOnlyLines(text string) string {
+	var b strings.Builder
+	rest := text
+	for len(rest) > 0 {
+		nl := strings.IndexByte(rest, '\n')
+		var line string
+		if nl < 0 {
+			line = rest
+			rest = ""
+		} else {
+			line = rest[:nl+1]
+			rest = rest[nl+1:]
+		}
+		if isCommentOnlyLine(strings.TrimSuffix(line, "\n")) {
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+// isCommentOnlyLine reports whether content — one line of GSX child text,
+// its own trailing newline (if any) already removed — opens, after any
+// leading whitespace, with "//". strings.TrimLeftFunc only trims the left
+// side, so a "\r" a Windows line ending leaves at the right edge of content
+// plays no part in this check.
+func isCommentOnlyLine(content string) bool {
+	trimmed := strings.TrimLeftFunc(content, unicode.IsSpace)
+	return strings.HasPrefix(trimmed, "//")
 }
 
 func (t *transpiler) emitElementCall(tag string, attrs []string, children []string) string {
