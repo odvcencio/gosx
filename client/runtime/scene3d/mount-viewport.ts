@@ -34,14 +34,24 @@
         : null;
       const measuredCanvasWidth = sceneNumber(canvasRect && canvasRect.width, 0);
       const measuredMountWidth = sceneNumber(mountRect && mountRect.width, 0);
+      const measuredCanvasHeight = sceneNumber(canvasRect && canvasRect.height, 0);
+      const measuredMountHeight = sceneNumber(mountRect && mountRect.height, 0);
       if (measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)) {
         cssWidth = measuredCanvasWidth;
       } else if (measuredMountWidth > 0) {
         cssWidth = measuredMountWidth;
       }
-      const measuredHeight = measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)
-        ? sceneNumber(canvasRect && canvasRect.height, 0)
-        : sceneNumber(mountRect && mountRect.height, 0);
+      // A fill-bound scene is constrained by its mount, not by the canvas's
+      // replaced-element aspect ratio. applySceneViewport intentionally gives
+      // responsive canvases height:auto, so feeding canvasRect.height back
+      // into the next viewport pass can grow the canvas on every resize when
+      // its intrinsic ratio is stale. Prefer the mount's layout height and
+      // use the canvas only when the mount has not acquired a real box yet.
+      const measuredHeight = useMeasuredHeight && measuredMountHeight > 0
+        ? measuredMountHeight
+        : measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)
+          ? measuredCanvasHeight
+          : measuredMountHeight;
       if (useMeasuredHeight && measuredHeight > 0) {
         cssHeight = measuredHeight;
       } else if (cssWidth > 0) {
