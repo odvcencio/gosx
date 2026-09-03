@@ -32,11 +32,22 @@ func Page() Node {
 		<section id="client-navigation">
 			<h2>Opt-in client navigation</h2>
 			<p>
-				GoSX keeps ordinary links as the fallback. Add
-				<span class="inline-code">data-gosx-link="true"</span>
-				and install the navigation runtime to turn a same-origin HTTP(S) link into a managed transition.
+				Install the navigation runtime to make ordinary same-origin HTTP(S) links managed transitions. GET forms and same-origin POST forms whose action ends in
+				<span class="inline-code">/__actions/&lt;name&gt;</span>
+				are managed automatically too. Every one retains native browser behavior when JavaScript is unavailable.
 			</p>
-			{CodeBlock("gosx", `<a href="/docs/routing" data-gosx-link="true">Routing</a>`)}
+			{CodeBlock("gosx", `<a href="/docs/routing">Routing</a>
+	<form method="get" action="/docs"><input name="q" /></form>
+	<a href="/download" data-gosx-native>Use native navigation</a>`)}
+			<p>
+				Use
+				<span class="inline-code">data-gosx-native</span>
+				on a link or form when a document load or native submission is intentional. The existing
+				<span class="inline-code">data-gosx-link</span>
+				and
+				<span class="inline-code">data-gosx-form</span>
+				markers remain supported for explicit policy and compatibility.
+			</p>
 			<p>
 				Install the runtime once for the document. Applications built directly on
 				<span class="inline-code">server.App</span>
@@ -64,7 +75,14 @@ func Page() Node {
 		<section id="page-transitions">
 			<h2>What a managed transition owns</h2>
 			<p>
-				The runtime fetches a complete server-rendered document, parses it, disposes the outgoing page, replaces managed head and body content, loads the incoming managed scripts in role order, and bootstraps the new page. If managed navigation cannot safely continue, the native link remains the fallback.
+				The runtime fetches a complete server-rendered document, parses it, disposes the outgoing runtime surfaces, swaps the managed head, reconciles safe body elements in place, loads incoming managed scripts in role order, and bootstraps the new page. If managed navigation cannot safely continue, the native link remains the fallback.
+			</p>
+			<p>
+				An
+				<span class="inline-code">id</span>
+				or
+				<span class="inline-code">data-gosx-key</span>
+				provides stable identity across sibling moves. Matching ordinary wrappers are also reconciled positionally so the runtime can reach keyed panels and forms without destroying the page shell. Incoming attributes and text still win; a dirty or focused stable form control keeps its live value and focus. Islands, non-reused engines, runtime surfaces, scripts, media, and other opaque stateful roots are replaced through their normal lifecycle.
 			</p>
 			<div class="feature-grid">
 				<div class="card">
@@ -1053,9 +1071,9 @@ func Page() Node {
 				<span class="inline-code">force</span>
 				, and the cache entry expires after five minutes.
 			</p>
-			{CodeBlock("gosx", `<a href="/pricing" data-gosx-link="true" data-gosx-prefetch="render">Pricing</a>
-	<a href="/account" data-gosx-link="true" data-gosx-prefetch="off">Account</a>
-	<a href="/demo" data-gosx-link="true" data-gosx-prefetch="force">Demo</a>`)}
+			{CodeBlock("gosx", `<a href="/pricing" data-gosx-prefetch="render">Pricing</a>
+	<a href="/account" data-gosx-prefetch="off">Account</a>
+	<a href="/demo" data-gosx-prefetch="force">Demo</a>`)}
 			<p>
 				A fetched page can remove itself from the in-memory page cache with this document metadata:
 			</p>

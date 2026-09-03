@@ -197,13 +197,100 @@
     scenePushMeshVertex(out, c, normal, uvc || { x: 1, y: 1 });
   }
 
+  // Build one stable tangent frame per expanded triangle. Procedural meshes are
+  // immutable snapshots, so doing this once while the geometry is created lets
+  // both GPU backends retain the local arrays instead of regenerating tangents
+  // while baking every object into a world-space soup on every camera frame.
+  //
+  // Each primitive vertex is already expanded (there is no shared index
+  // stream), so a triangle-local UV derivative is sufficient. Degenerate UVs
+  // and pole-adjacent parameterizations use the least-aligned cardinal axis,
+  // matching the finite fallback used by the historical world-bake path.
+  function scenePrimitiveMeshTangents(positions, normals, uvs) {
+    const count = Math.floor((positions && positions.length || 0) / 3);
+    const tangents = new Float32Array(count * 4);
+    for (let base = 0; base + 2 < count; base += 3) {
+      const p0 = base * 3;
+      const p1 = (base + 1) * 3;
+      const p2 = (base + 2) * 3;
+      const uv0 = base * 2;
+      const uv1 = (base + 1) * 2;
+      const uv2 = (base + 2) * 2;
+      const e1x = positions[p1] - positions[p0];
+      const e1y = positions[p1 + 1] - positions[p0 + 1];
+      const e1z = positions[p1 + 2] - positions[p0 + 2];
+      const e2x = positions[p2] - positions[p0];
+      const e2y = positions[p2 + 1] - positions[p0 + 1];
+      const e2z = positions[p2 + 2] - positions[p0 + 2];
+      const du1 = uvs[uv1] - uvs[uv0];
+      const dv1 = uvs[uv1 + 1] - uvs[uv0 + 1];
+      const du2 = uvs[uv2] - uvs[uv0];
+      const dv2 = uvs[uv2 + 1] - uvs[uv0 + 1];
+      const denominator = du1 * dv2 - du2 * dv1;
+      const reciprocal = Math.abs(denominator) > 0.0000000001 ? 1 / denominator : 0;
+      const sourceX = reciprocal ? (dv2 * e1x - dv1 * e2x) * reciprocal : e1x;
+      const sourceY = reciprocal ? (dv2 * e1y - dv1 * e2y) * reciprocal : e1y;
+      const sourceZ = reciprocal ? (dv2 * e1z - dv1 * e2z) * reciprocal : e1z;
+      const bitangentX = reciprocal ? (du1 * e2x - du2 * e1x) * reciprocal : 0;
+      const bitangentY = reciprocal ? (du1 * e2y - du2 * e1y) * reciprocal : 0;
+      const bitangentZ = reciprocal ? (du1 * e2z - du2 * e1z) * reciprocal : 0;
+
+      for (let corner = 0; corner < 3; corner += 1) {
+        const vertex = base + corner;
+        const normalOffset = vertex * 3;
+        const nx = normals[normalOffset];
+        const ny = normals[normalOffset + 1];
+        const nz = normals[normalOffset + 2];
+        const projection = sourceX * nx + sourceY * ny + sourceZ * nz;
+        let tx = sourceX - nx * projection;
+        let ty = sourceY - ny * projection;
+        let tz = sourceZ - nz * projection;
+        let length = Math.sqrt(tx * tx + ty * ty + tz * tz);
+        if (!(length > 0.000001)) {
+          if (Math.abs(nx) <= Math.abs(ny) && Math.abs(nx) <= Math.abs(nz)) {
+            tx = 0;
+            ty = -nz;
+            tz = ny;
+          } else if (Math.abs(ny) <= Math.abs(nz)) {
+            tx = nz;
+            ty = 0;
+            tz = -nx;
+          } else {
+            tx = -ny;
+            ty = nx;
+            tz = 0;
+          }
+          length = Math.max(0.000001, Math.sqrt(tx * tx + ty * ty + tz * tz));
+        }
+        tx /= length;
+        ty /= length;
+        tz /= length;
+        const handedness = reciprocal &&
+          ((ny * tz - nz * ty) * bitangentX +
+           (nz * tx - nx * tz) * bitangentY +
+           (nx * ty - ny * tx) * bitangentZ) < 0
+          ? -1
+          : 1;
+        const tangentOffset = vertex * 4;
+        tangents[tangentOffset] = tx;
+        tangents[tangentOffset + 1] = ty;
+        tangents[tangentOffset + 2] = tz;
+        tangents[tangentOffset + 3] = handedness;
+      }
+    }
+    return tangents;
+  }
+
   function sceneFinalizePrimitiveMesh(out) {
     if (!out || out.count < 3) return null;
+    const positions = new Float32Array(out.positions);
+    const normals = new Float32Array(out.normals);
+    const uvs = new Float32Array(out.uvs);
     return {
-      positions: new Float32Array(out.positions),
-      normals: new Float32Array(out.normals),
-      uvs: new Float32Array(out.uvs),
-      tangents: new Float32Array(0),
+      positions,
+      normals,
+      uvs,
+      tangents: scenePrimitiveMeshTangents(positions, normals, uvs),
       count: out.count,
       immutable: true,
       revision: 0,
@@ -530,9 +617,8 @@
   // IIFE and function declarations hoist, so the call resolves lexically.
   //
   // The two families return the same shape and differ only in the count key:
-  // this one uses `count`, the instanced one uses `vertexCount`. Tangents come
-  // through as generated, which is better than the empty array
-  // sceneFinalizePrimitiveMesh hands back.
+  // this one uses `count`, the instanced one uses `vertexCount`. Both paths
+  // provide complete tangent frames for normal-mapped PBR materials.
   function sceneInstancedTriangleMesh(kind, object) {
     if (typeof generateInstancedGeometry !== "function") return null;
     const mesh = generateInstancedGeometry(kind, object || {});

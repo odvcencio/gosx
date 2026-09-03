@@ -338,7 +338,7 @@
     }
   }
 
-  function reusableEngines(nextDoc) {
+  async function reusableEngines(nextDoc) {
     const reusable = new Set();
     if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
       return reusable;
@@ -353,6 +353,7 @@
     if (!nextManifest || !Array.isArray(nextManifest.engines)) {
       return reusable;
     }
+    inflateManifestShaderLibs(nextManifest, { publish: false });
     const nextByID = new Map();
     for (const entry of nextManifest.engines) {
       if (entry && entry.id) nextByID.set(String(entry.id), entry);
@@ -366,7 +367,15 @@
       if (!incomingEntry) continue;
       if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
       if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
-      if (!runtimePayloadIdentical(outgoingEntry, incomingEntry)) continue;
+      if (String(outgoingEntry.component || "") === "GoSXScene3D") {
+        if (!await sceneNavigationTryReuse(
+          record,
+          normalizeRuntimePayload(outgoingEntry),
+          normalizeRuntimePayload(incomingEntry),
+        )) continue;
+      } else if (!runtimePayloadIdentical(outgoingEntry, incomingEntry)) {
+        continue;
+      }
       reusable.add(engineID);
     }
     return reusable;

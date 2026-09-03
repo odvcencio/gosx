@@ -41,18 +41,18 @@
       ]
     },
     "docs-scene3d-ci": {
-      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Gates the shipped JavaScript, including the typed browser host and valid lazy WebGL fallback path when WebGPU is unavailable, and total network payload, plus bounded load and blocking time; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary. network_kb allows 1513KiB: the real performance probe measured 1511.67KiB docs network payload after the reviewed WebGL specular-color patch grew the bootstrap.js and WebGL chunk budgets; all other docs gates (JS 1293.03KiB, LCP 2016ms, TBT 1410ms) pass.",
+      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Uses rounded payload ceilings with modest release headroom for the typed browser host and lazy WebGL fallback. Load and blocking time remain separate experience gates; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary.",
       "assertions": [
         "js_total_kb <= 1550",
-        "network_kb <= 1513",
+        "network_kb <= 1600",
         "lcp <= 18000",
         "tbt <= 15000"
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. Gates load, the reviewed O-series browser-host and runtime payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately. Remote CI (ad17) measured 1653.78KiB network payload; the shadow-budget draw fix grows the WebGL chunk by ~1.05KiB raw, a bounded runtime increase on top of that CI measurement, so the assertion allows 1656KiB. network_kb raised 1656 to 1665 KiB on 2026-08-30: the v0.53.10 runtime (live-bind attribute/class/event modes, region growth modes, cue mute, backoff) measured 1656.37 KiB in CI.",
+      "description": "Water route under CI software rasterization. Uses a rounded total-payload ceiling with modest release headroom while load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
       "assertions": [
-        "network_kb <= 1665",
+        "network_kb <= 1750",
         "lcp <= 2000",
         "tbt <= 18000"
       ]

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.55.0 (2026-09-02)
+
+### Changed: soft navigation preserves the interactive page shell
+
+- Managed navigation now reconciles safe body elements in place instead of deleting and cloning the complete body. Unique `id` and `data-gosx-key` elements retain identity across sibling moves; compatible unkeyed wrappers reconcile positionally so keyed panels and forms nested under the page shell remain stable.
+- Incoming server attributes and content still apply. Dirty or focused stable controls retain their live value, selection, and focus, while untouched controls adopt the new server value. Runtime-owned islands, non-reused engines, runtime surfaces, scripts, media, and opaque custom elements are replaced through their existing dispose/bootstrap lifecycle.
+- With `app.EnableNavigation()`, safe same-origin anchors, GET forms, and same-origin GoSX `POST .../__actions/<name>` forms are managed automatically. Add `data-gosx-native` to a link or form to require native browser navigation/submission. Existing `data-gosx-link`, `data-gosx-form`, and `data-gosx-managed` contracts remain compatible.
+- Scene3D reuse decisions may now complete asynchronously before page disposal, allowing a compatible changed scene to apply a command diff while retaining its live mount and canvas. A stale navigation re-checks supersession after that decision and cannot dispose a newer page.
+
+### Changed: procedural Scene3D meshes stay on the retained fast path
+
+- Procedural solid geometry now carries complete finite tangent frames, so normal-mapped PBR materials do not require a later repair pass.
+- Static, finite procedural meshes with safe positive transforms remain in retained WebGL and WebGPU shadow passes. Dynamic, reflected, skinned, morphed, water, wireframe, and custom-shader cases keep their conservative world-baked fallback.
+
+### Changed: bundle budgets govern meaningful growth
+
+- Generated-runtime size targets are reviewed baselines with bounded warning and failure bands instead of byte-perfect tripwires. Compression noise stays quiet while dependency-sized regressions still fail.
+- CI route payloads use rounded product ceilings, and the checked-in default budget now has a production-loader contract test covering every profile, route, assertion, and configured metric.
+
 ## v0.54.2 (2026-09-02)
 
 ### Fixed: selected PBR meshes keep their authored solid finish

@@ -57,20 +57,13 @@
   // preserves the canvas's rendering context; removal+recreation does not),
   // and mountAllEngines skips remounting them.
   //
-  // Reuse rule (deliberately conservative — this is a same-document DOM
-  // move, not a real diff/patch, so false positives would visibly break the
-  // page): an engine is reused ONLY when, for the SAME engine id, the
-  // outgoing and incoming manifest entries have the identical component,
-  // the identical mountId (the actual DOM element being kept), AND
-  // byte-identical serialized `props` (the structural scene payload — geometry,
-  // materials, lights, post-FX, quality ladder, everything the server
-  // authored). Runtime-only state that lives inside the already-mounted
-  // engine instance (camera orbit position, water sim state, in-flight
-  // animations, adaptive-quality rung, ...) is intentionally NOT part of the
-  // comparison — preserving exactly that state across the navigation is the
-  // whole point of reuse. Any other difference (including one the deep
-  // serialization comparison can't see, by construction, since it only sees
-  // authored props) falls back to the original dispose+remount behavior.
+  // Reuse rule (deliberately conservative — false positives would visibly
+  // break the page): same id/component/mountId and either byte-identical props,
+  // or a GoSXScene3D props.scene change fully expressible by scene.DiffScene's
+  // existing command protocol. Commands are applied before DOM reconciliation.
+  // Any outer-prop/remount-field change or command error falls back to the
+  // original dispose+remount behavior. Runtime-only camera/simulation/quality
+  // state survives only on a successful reuse.
   function scenePayloadIdentical(outgoingEntry, incomingEntry) {
     try {
       return JSON.stringify(outgoingEntry.props || null) === JSON.stringify(incomingEntry.props || null);
@@ -79,7 +72,7 @@
     }
   }
 
-  function reusableEngines(nextDoc) {
+  async function reusableEngines(nextDoc) {
     const reusable = new Set();
     if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
       return reusable;
@@ -108,7 +101,11 @@
       if (!incomingEntry) continue;
       if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
       if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
-      if (!scenePayloadIdentical(outgoingEntry, incomingEntry)) continue;
+      if (String(outgoingEntry.component || "") === "GoSXScene3D") {
+        if (!await sceneNavigationTryReuse(record, outgoingEntry.props || null, incomingEntry.props || null)) continue;
+      } else if (!scenePayloadIdentical(outgoingEntry, incomingEntry)) {
+        continue;
+      }
       reusable.add(engineID);
     }
     return reusable;

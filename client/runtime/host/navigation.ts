@@ -11,6 +11,15 @@
   const HEAD_END = "gosx-head-end";
   const SCRIPT_ROLE = "data-gosx-script";
   const LINK_ATTR = "data-gosx-link";
+  // EnableNavigation owns safe same-origin navigation by default. Authors can
+  // put data-gosx-native on a link or form when native browser submission or
+  // document navigation is intentional (downloads, integration hand-offs,
+  // server streaming, and similar cases).
+  const NATIVE_ATTR = "data-gosx-native";
+  // id is the primary reconciliation key. data-gosx-key gives repeated or
+  // generated markup the same stable identity contract without requiring an
+  // addressable fragment target.
+  const NAVIGATION_KEY_ATTR = "data-gosx-key";
   const LINK_STATE_ATTR = "data-gosx-link-state";
   const LINK_CURRENT_ATTR = "data-gosx-link-current";
   const LINK_CURRENT_POLICY_ATTR = "data-gosx-link-current-policy";
@@ -165,6 +174,16 @@
   const NAV_INLINE_REPLAY_ATTR = "data-gosx-navigation-replay";
   const NAV_INLINE_REPLAYED_ATTR = "data-gosx-navigation-replayed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
+  // These elements own browser/runtime state that cannot be reconstructed by
+  // synchronizing HTML attributes and child text alone. Non-reused roots are
+  // replaced after the outgoing page lifecycle has disposed them; reusable
+  // engine mounts are adopted explicitly by replaceBody instead.
+  const NAVIGATION_UNSAFE_ROOT_ATTRS = [
+    "data-gosx-island",
+    "data-gosx-engine",
+    "data-gosx-engine-bytecode",
+    "data-gosx-runtime-surface",
+  ];
   const SUBMITTER_ATTRS = {
     formAction: "formaction",
     formMethod: "formmethod",
@@ -999,7 +1018,7 @@
 
   function managedLinks(root) {
     return collectElements(root || document.body, function(node) {
-      return node.hasAttribute && node.hasAttribute(LINK_ATTR);
+      return isManagedNavigationLink(node);
     });
   }
 
@@ -1108,7 +1127,7 @@
   }
 
   function shouldPrefetchLink(anchor, trigger) {
-    if (!anchor || !anchor.getAttribute) return false;
+    if (!isManagedNavigationLink(anchor) || !anchor.getAttribute) return false;
     const target = navigationURLParts(anchor.getAttribute("href"));
     if (!isSameOriginNavigation(target && target.href, windowLocationHref())) return false;
     if (sameNavigationURL(target, currentNavigationURL())) return false;
@@ -1247,13 +1266,39 @@
   // data-gosx-form-state) from refreshManagedForms. FORM_ATTR is left
   // unguarded: it is a framework-written attribute, never hand-authored on
   // a non-form element, so no equivalent risk exists there.
-  function isManagedFormElement(node) {
-    if (!node || !node.hasAttribute) return false;
+  function hasNativeNavigationOptOut(node) {
+    return !!node && !!node.hasAttribute && node.hasAttribute(NATIVE_ATTR);
+  }
+
+  function isFrameworkActionURL(value) {
+    const parsed = navigationURLParts(value || windowLocationHref());
+    if (!isHTTPNavigationURL(parsed)) return false;
+    const current = navigationURLParts(windowLocationHref());
+    if (!isHTTPNavigationURL(current) || parsed.origin !== current.origin) return false;
+    return /\/__actions\/[^/]+(?:\/)?$/.test(String(parsed.path || parsed.pathname || ""));
+  }
+
+  function isAutoManagedFormElement(form, submitter) {
+    if (!isElement(form, "FORM")) return false;
+    if (hasNativeNavigationOptOut(form) || hasNativeNavigationOptOut(submitter)) return false;
+    if (formSubmitTarget(form, submitter)) return false;
+    const method = formSubmissionMethod(form, submitter);
+    if (method === "GET") return true;
+    if (method !== "POST") return false;
+    return isFrameworkActionURL(formSubmissionAction(form, submitter));
+  }
+
+  function isManagedFormElement(node, submitter) {
+    if (!node || !node.hasAttribute || hasNativeNavigationOptOut(node) || hasNativeNavigationOptOut(submitter)) {
+      return false;
+    }
     if (node.hasAttribute(FORM_ATTR)) return true;
     if (isElement(node, "FORM") && node.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR)) {
+      // An explicit false is also an opt-out from the automatic GET/action
+      // defaults, preserving the shorthand's established native behavior.
       return managedFormShorthandTruthy(node.getAttribute(FORM_MANAGED_SHORTHAND_ATTR));
     }
-    return false;
+    return isAutoManagedFormElement(node, submitter);
   }
 
   function managedForms(root) {
@@ -1697,21 +1742,359 @@
     return node;
   }
 
+  function navigationNodeKey(node) {
+    if (!node || node.nodeType !== 1 || !node.getAttribute) return "";
+    const id = String(node.getAttribute("id") || "");
+    if (id) return "id:" + id;
+    const key = String(node.getAttribute(NAVIGATION_KEY_ATTR) || "");
+    return key ? "key:" + key : "";
+  }
+
+  function navigationRuntimeUnsafe(node) {
+    if (!node || node.nodeType !== 1) return false;
+    const tag = String(node.tagName || "").toUpperCase();
+    // Custom elements and browser media/canvas containers carry opaque state;
+    // replacing them is safer than pretending their HTML fully describes it.
+    if (tag.indexOf("-") >= 0
+        || tag === "SCRIPT"
+        || tag === "CANVAS"
+        || tag === "VIDEO"
+        || tag === "AUDIO"
+        || tag === "IFRAME"
+        || tag === "OBJECT"
+        || tag === "EMBED") {
+      return true;
+    }
+    for (const attr of NAVIGATION_UNSAFE_ROOT_ATTRS) {
+      if (node.hasAttribute && node.hasAttribute(attr)) return true;
+    }
+    return false;
+  }
+
+  function navigationNodesCanReconcile(current, incoming) {
+    if (!current || !incoming || current.nodeType !== incoming.nodeType) return false;
+    if (current.nodeType === 3) return true;
+    if (current.nodeType !== 1) return false;
+    if (navigationRuntimeUnsafe(current) || navigationRuntimeUnsafe(incoming)) return false;
+    if (String(current.tagName || "").toUpperCase() !== String(incoming.tagName || "").toUpperCase()) {
+      return false;
+    }
+    if (current.namespaceURI && incoming.namespaceURI && current.namespaceURI !== incoming.namespaceURI) {
+      return false;
+    }
+    const currentKey = navigationNodeKey(current);
+    const incomingKey = navigationNodeKey(incoming);
+    if ((currentKey || incomingKey) && currentKey !== incomingKey) return false;
+
+    const tag = String(current.tagName || "").toUpperCase();
+    if (tag === "INPUT") {
+      const currentType = String(current.getAttribute("type") || "text").toLowerCase();
+      const incomingType = String(incoming.getAttribute("type") || "text").toLowerCase();
+      if (currentType !== incomingType) return false;
+    }
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      const currentName = String(current.getAttribute("name") || "");
+      const incomingName = String(incoming.getAttribute("name") || "");
+      if (currentName !== incomingName || (!currentKey && !currentName)) {
+        return false;
+      }
+    }
+    // An explicit key declares semantic form identity. Without one, action
+    // and method prevent a conditional form at the same sibling index from
+    // inheriting listeners or dirty controls from an unrelated operation.
+    if (!currentKey && tag === "FORM") {
+      const currentRawAction = String(current.getAttribute("action") || "");
+      const incomingRawAction = String(incoming.getAttribute("action") || "");
+      if (!currentRawAction || !incomingRawAction) return false;
+      const currentAction = absolutizeURL(currentRawAction, windowLocationHref());
+      const incomingAction = absolutizeURL(incomingRawAction, windowLocationHref());
+      if (currentAction !== incomingAction) return false;
+      if (String(current.getAttribute("method") || "get").toLowerCase()
+          !== String(incoming.getAttribute("method") || "get").toLowerCase()) return false;
+    }
+    return true;
+  }
+
+  function navigationAttributeValue(name, value, baseURL) {
+    if (URL_ATTRS.indexOf(name) >= 0) return absolutizeURL(value, baseURL);
+    if (name === "srcset") return absolutizeSrcset(value, baseURL);
+    return value;
+  }
+
+  function reconcileNavigationAttributes(current, incoming, baseURL) {
+    const incomingEntries = attributeEntries(incoming);
+    const incomingNames = new Set(incomingEntries.map(function(entry) { return entry.name; }));
+    for (const entry of attributeEntries(current)) {
+      if (!incomingNames.has(entry.name)) current.removeAttribute(entry.name);
+    }
+    for (const entry of incomingEntries) {
+      const value = navigationAttributeValue(entry.name, entry.value, baseURL);
+      if (current.getAttribute(entry.name) !== value) {
+        current.setAttribute(entry.name, value);
+      }
+    }
+  }
+
+  function navigationControlKind(node) {
+    const tag = String(node && node.tagName || "").toUpperCase();
+    if (node && (node.isContentEditable === true
+        || String(node.getAttribute && node.getAttribute("contenteditable") || "").toLowerCase() === "true")) {
+      return "editable";
+    }
+    if (tag === "TEXTAREA") return "text";
+    if (tag === "SELECT") return "select";
+    if (tag !== "INPUT") return "";
+    const type = String(node.getAttribute && node.getAttribute("type") || "text").toLowerCase();
+    if (type === "hidden" || type === "button" || type === "submit" || type === "reset" || type === "image") {
+      return "";
+    }
+    if (type === "checkbox" || type === "radio") return "check";
+    if (type === "file") return "file";
+    return "text";
+  }
+
+  function navigationDefaultValue(node) {
+    if (typeof node.defaultValue === "string") return node.defaultValue;
+    if (isElement(node, "TEXTAREA")) return String(node.textContent || "");
+    return String(node.getAttribute && node.getAttribute("value") || "");
+  }
+
+  function navigationSelectDirty(node) {
+    const options = node && typeof node.querySelectorAll === "function"
+      ? toArray(node.querySelectorAll("option"))
+      : [];
+    for (const option of options) {
+      const selected = typeof option.selected === "boolean" ? option.selected : option.hasAttribute("selected");
+      const defaultSelected = typeof option.defaultSelected === "boolean"
+        ? option.defaultSelected
+        : option.hasAttribute("selected");
+      if (selected !== defaultSelected) return true;
+    }
+    return false;
+  }
+
+  function navigationSelectedValues(node) {
+    const values = [];
+    const options = node && typeof node.querySelectorAll === "function"
+      ? toArray(node.querySelectorAll("option"))
+      : [];
+    for (const option of options) {
+      const selected = typeof option.selected === "boolean" ? option.selected : option.hasAttribute("selected");
+      if (!selected) continue;
+      values.push(String(option.value !== undefined
+        ? option.value
+        : option.getAttribute("value") || option.textContent || ""));
+    }
+    return values;
+  }
+
+  function captureNavigationControlState(node) {
+    const kind = navigationControlKind(node);
+    if (!kind) return null;
+    const focused = document.activeElement === node;
+    let dirty = false;
+    if (kind === "check") {
+      const checked = !!node.checked;
+      const defaultChecked = typeof node.defaultChecked === "boolean"
+        ? node.defaultChecked
+        : node.hasAttribute("checked");
+      dirty = checked !== defaultChecked;
+    } else if (kind === "select") {
+      dirty = navigationSelectDirty(node);
+    } else if (kind === "editable") {
+      dirty = focused;
+    } else if (kind !== "file") {
+      dirty = String(node.value == null ? "" : node.value) !== navigationDefaultValue(node);
+    }
+
+    const state = {
+      kind: kind,
+      preserve: focused || dirty || kind === "file",
+      focused: focused,
+      value: node.value,
+      checked: node.checked,
+      selectedIndex: node.selectedIndex,
+      selectedValues: kind === "select" ? navigationSelectedValues(node) : null,
+      selectionStart: node.selectionStart,
+      selectionEnd: node.selectionEnd,
+      selectionDirection: node.selectionDirection,
+      html: kind === "editable" ? node.innerHTML : null,
+    };
+    return state;
+  }
+
+  function incomingNavigationControlValue(node) {
+    if (isElement(node, "INPUT") && node.hasAttribute("value")) {
+      return String(node.getAttribute("value") || "");
+    }
+    if (isElement(node, "TEXTAREA")) {
+      return typeof node.value === "string" && node.value !== ""
+        ? node.value
+        : String(node.textContent || "");
+    }
+    return node.value;
+  }
+
+  function restoreNavigationSelection(node, state) {
+    if (!state || !state.focused || typeof state.selectionStart !== "number" || typeof state.selectionEnd !== "number") {
+      return;
+    }
+    try {
+      if (typeof node.setSelectionRange === "function") {
+        node.setSelectionRange(state.selectionStart, state.selectionEnd, state.selectionDirection || undefined);
+      } else {
+        node.selectionStart = state.selectionStart;
+        node.selectionEnd = state.selectionEnd;
+        if (state.selectionDirection !== undefined) node.selectionDirection = state.selectionDirection;
+      }
+    } catch (_) {}
+  }
+
+  function applyNavigationControlState(current, incoming, state) {
+    if (!state) return;
+    if (state.preserve) {
+      if (state.kind === "editable") {
+        if (state.html != null) current.innerHTML = state.html;
+      } else if (state.kind === "check" && typeof state.checked === "boolean") {
+        current.checked = state.checked;
+      } else if (state.kind !== "file" && state.value !== undefined) {
+        current.value = state.value;
+      }
+      if (state.kind === "select" && Array.isArray(state.selectedValues) && current.hasAttribute("multiple")) {
+        const selected = new Set(state.selectedValues);
+        const options = typeof current.querySelectorAll === "function" ? toArray(current.querySelectorAll("option")) : [];
+        for (const option of options) {
+          const value = String(option.value !== undefined
+            ? option.value
+            : option.getAttribute("value") || option.textContent || "");
+          option.selected = selected.has(value);
+        }
+      }
+      restoreNavigationSelection(current, state);
+      return;
+    }
+
+    if (state.kind === "check") {
+      current.checked = typeof incoming.checked === "boolean"
+        ? incoming.checked
+        : incoming.hasAttribute("checked");
+      return;
+    }
+    if (state.kind !== "file") {
+      const value = incomingNavigationControlValue(incoming);
+      if (value !== undefined) current.value = value;
+    }
+    if (state.kind === "select" && typeof incoming.selectedIndex === "number") {
+      current.selectedIndex = incoming.selectedIndex;
+    }
+  }
+
+  function reconcileNavigationNode(current, incoming, baseURL, reused) {
+    if (current.nodeType === 3) {
+      const text = String(incoming.textContent || "");
+      if (current.textContent !== text) current.textContent = text;
+      return current;
+    }
+
+    const controlState = captureNavigationControlState(current);
+    reconcileNavigationAttributes(current, incoming, baseURL);
+    if (!isElement(current, "INPUT")) {
+      reconcileNavigationChildren(current, incoming, baseURL, reused);
+    }
+    applyNavigationControlState(current, incoming, controlState);
+    return current;
+  }
+
+  function uniqueNavigationChildrenByKey(parent) {
+    const keyed = new Map();
+    const duplicate = new Set();
+    for (const child of toArray(parent && parent.childNodes)) {
+      const key = navigationNodeKey(child);
+      if (!key || duplicate.has(key)) continue;
+      if (keyed.has(key)) {
+        keyed.delete(key);
+        duplicate.add(key);
+      } else {
+        keyed.set(key, child);
+      }
+    }
+    return keyed;
+  }
+
+  function reusableNavigationNode(incoming, reused) {
+    if (!incoming || incoming.nodeType !== 1 || !incoming.getAttribute || !reused) return null;
+    const id = String(incoming.getAttribute("id") || "");
+    return id && reused.has(id) ? reused.get(id) : null;
+  }
+
+  function navigatedBodyChildIncluded(child) {
+    return !(isElement(child, "SCRIPT") && child.hasAttribute(SCRIPT_ROLE) && child.getAttribute("src"));
+  }
+
+  // Reconcile siblings in incoming order. Unique keys may move while keeping
+  // identity; unkeyed nodes are reused only in the same position and only
+  // when their element type is safe. This intentionally avoids a fuzzy global
+  // match that could attach old listeners/state to unrelated route content.
+  function reconcileNavigationChildren(parent, incomingParent, baseURL, reused) {
+    const keyed = uniqueNavigationChildrenByKey(parent);
+    const seenIncomingKeys = new Set();
+    const incomingChildren = toArray(incomingParent && incomingParent.childNodes).filter(navigatedBodyChildIncluded);
+    let outputIndex = 0;
+
+    for (const incoming of incomingChildren) {
+      const atPosition = parent.childNodes[outputIndex] || null;
+      const key = navigationNodeKey(incoming);
+      const adopted = reusableNavigationNode(incoming, reused);
+      let current = null;
+
+      if (adopted) {
+        current = adopted;
+      } else if (key && !seenIncomingKeys.has(key)) {
+        current = keyed.get(key) || null;
+      } else if (!key && atPosition && !navigationNodeKey(atPosition)
+          && navigationNodesCanReconcile(atPosition, incoming)) {
+        current = atPosition;
+      }
+      if (key) seenIncomingKeys.add(key);
+
+      if (current && !adopted && !navigationNodesCanReconcile(current, incoming)) {
+        current = null;
+      }
+      if (current) {
+        if (current !== atPosition) parent.insertBefore(current, atPosition);
+        if (!adopted) reconcileNavigationNode(current, incoming, baseURL, reused);
+        if (key) keyed.delete(key);
+      } else {
+        const inserted = adoptOrClone(incoming, baseURL, reused);
+        parent.insertBefore(inserted, atPosition);
+      }
+      outputIndex += 1;
+    }
+
+    while (parent.childNodes.length > outputIndex) {
+      parent.removeChild(parent.childNodes[outputIndex]);
+    }
+  }
+
+  function navigationNodeConnected(node) {
+    const root = document.documentElement || document.body;
+    return !!node && !!root && (!root.contains || root.contains(node));
+  }
+
+  function navigationEditableFocus(node) {
+    if (!node || node.nodeType !== 1) return false;
+    return !!navigationControlKind(node);
+  }
+
   function replaceBody(nextDoc, baseURL, reuseIDs) {
     const body = document.body;
     const nextBody = nextDoc.body;
-    const existingAttrs = attributeEntries(body);
-    for (const entry of existingAttrs) {
-      body.removeAttribute(entry.name);
-    }
-    for (const entry of attributeEntries(nextBody)) {
-      body.setAttribute(entry.name, entry.value);
-    }
+    const activeElement = document.activeElement;
+    reconcileNavigationAttributes(body, nextBody, baseURL);
 
-    // Detach (not destroy) any live mount elements this navigation is
-    // reusing — captured BEFORE the body is wiped below so their rendering
-    // context survives the swap. See window.__gosx_reusable_engines and
-    // adoptOrClone above. Resolved via the engine registry's OWN `mount`
+    // Capture live mount elements before reconciliation can move them. See
+    // window.__gosx_reusable_engines and adoptOrClone above. Resolved via the
+    // engine registry's OWN `mount`
     // element reference (not a fresh getElementById(engineID) lookup) since
     // the reuse set is keyed by engine id, while the actual DOM element id
     // is entry.mountId (defaults to entry.id, but is not guaranteed equal) —
@@ -1726,17 +2109,12 @@
       });
     }
 
-    while (body.firstChild) {
-      body.removeChild(body.firstChild);
-    }
-
-    const children = toArray(nextBody.childNodes);
-    for (const child of children) {
-      if (isElement(child, "SCRIPT") && child.hasAttribute(SCRIPT_ROLE) && child.getAttribute("src")) {
-        continue;
-      }
-      body.appendChild(adoptOrClone(child, baseURL, reused));
-    }
+    reconcileNavigationChildren(body, nextBody, baseURL, reused);
+    return {
+      focusElement: navigationEditableFocus(activeElement) && navigationNodeConnected(activeElement)
+        ? activeElement
+        : null,
+    };
   }
 
   function inlineNavigationScriptCanReplay(script) {
@@ -1959,7 +2337,14 @@
   }
 
   function isManagedNavigationLink(anchor) {
-    return !!anchor && !!anchor.hasAttribute && anchor.hasAttribute(LINK_ATTR);
+    if (!anchor || !anchor.hasAttribute || hasNativeNavigationOptOut(anchor)) return false;
+    if (anchor.hasAttribute(LINK_ATTR)) return true;
+    // Explicit markers remain supported for compatibility and policy
+    // decoration. The default path is intentionally narrower: only ordinary
+    // anchors that already satisfy native-navigation safety constraints.
+    return isElement(anchor, "A")
+      && allowsManagedLinkHandling(anchor)
+      && isSameOriginNavigation(anchor.getAttribute("href"), windowLocationHref());
   }
 
   function isPrimaryNavigationEvent(event) {
@@ -1992,7 +2377,7 @@
   function closestLink(node) {
     let current = node;
     while (current) {
-      if (current.hasAttribute && current.hasAttribute(LINK_ATTR)) {
+      if (isManagedNavigationLink(current)) {
         return current;
       }
       current = current.parentNode;
@@ -2001,9 +2386,9 @@
   }
 
   function shouldHandleForm(form, event) {
-    if (!isManagedFormElement(form)) return false;
     if (event.defaultPrevented) return false;
     const submitter = event && event.submitter ? event.submitter : null;
+    if (!isManagedFormElement(form, submitter)) return false;
     if (formSubmitTarget(form, submitter)) return false;
 
     const method = formSubmissionMethod(form, submitter);
@@ -2482,18 +2867,22 @@
   }
 
   function nativeSubmitForm(form, submitter) {
-    if (!form || !isManagedFormElement(form)) return;
+    if (!form || !isManagedFormElement(form, submitter)) return;
     // Strip every attribute that makes isManagedFormElement true — FORM_ATTR
-    // and/or the shorthand — so form.requestSubmit() below dispatches a
-    // fresh "submit" event that shouldHandleForm lets through natively,
-    // instead of re-intercepting it. Both are restored once the native
-    // submission has been requested.
+    // and/or the shorthand — and temporarily install the universal native
+    // opt-out. The latter is required for automatically-managed GET and
+    // /__actions/ forms, which have no opt-in attribute to strip. That makes
+    // form.requestSubmit() dispatch a fresh event that shouldHandleForm lets
+    // through natively instead of re-intercepting its own fallback.
     const hadForm = form.hasAttribute(FORM_ATTR);
     const previousForm = hadForm ? form.getAttribute(FORM_ATTR) : null;
     const hadShorthand = form.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR);
     const previousShorthand = hadShorthand ? form.getAttribute(FORM_MANAGED_SHORTHAND_ATTR) : null;
+    const hadNative = form.hasAttribute(NATIVE_ATTR);
+    const previousNative = hadNative ? form.getAttribute(NATIVE_ATTR) : null;
     if (hadForm) form.removeAttribute(FORM_ATTR);
     if (hadShorthand) form.removeAttribute(FORM_MANAGED_SHORTHAND_ATTR);
+    form.setAttribute(NATIVE_ATTR, "");
     try {
       if (typeof form.requestSubmit === "function") {
         if (submitter) {
@@ -2513,6 +2902,8 @@
     } finally {
       if (hadForm) form.setAttribute(FORM_ATTR, previousForm);
       if (hadShorthand) form.setAttribute(FORM_MANAGED_SHORTHAND_ATTR, previousShorthand);
+      if (hadNative) form.setAttribute(NATIVE_ATTR, previousNative);
+      else form.removeAttribute(NATIVE_ATTR);
     }
   }
 
@@ -2689,7 +3080,7 @@
         observeNavigation("debug", "navigation superseded", { url: String(url || "") });
         return false;
       }
-      await applyNavigatedPage(
+      const reconciliation = await applyNavigatedPage(
         page.nextDoc,
         page.nextURL,
         !!opts.replace,
@@ -2701,7 +3092,12 @@
       }
       completeNavigation(page.nextURL);
       if (page.fetchID > navigationFetchApplied) navigationFetchApplied = page.fetchID;
-      finalizeNavigation(page.nextURL, opts, resolveNavigationA11y(page.nextURL));
+      const a11y = resolveNavigationA11y(page.nextURL);
+      if (reconciliation && navigationEditableFocus(reconciliation.focusElement)
+          && navigationNodeConnected(reconciliation.focusElement)) {
+        a11y.preservedFocus = reconciliation.focusElement;
+      }
+      finalizeNavigation(page.nextURL, opts, a11y);
       return true;
     } catch (err) {
       if (!navigationIsCurrent(sequence) || navigationAbortError(err)) return false;
@@ -2763,12 +3159,12 @@
   // that function's doc comment for the full (deliberately conservative)
   // rule. Absent in older bootstrap bundles or non-Scene3D pages, in which
   // case navigation behaves exactly as before (dispose + remount).
-  function reusableEngineIDs(nextDoc) {
+  async function reusableEngineIDs(nextDoc) {
     if (typeof window.__gosx_reusable_engines !== "function") {
       return new Set();
     }
     try {
-      const ids = window.__gosx_reusable_engines(nextDoc);
+      const ids = await Promise.resolve(window.__gosx_reusable_engines(nextDoc));
       return ids instanceof Set ? ids : new Set();
     } catch (_e) {
       return new Set();
@@ -2779,7 +3175,8 @@
     if (isCurrent && !isCurrent()) return;
     // Computed BEFORE disposal — it compares the OUTGOING (still-live)
     // engines against the INCOMING manifest parsed from nextDoc.
-    const reuseIDs = reusableEngineIDs(nextDoc);
+    const reuseIDs = await reusableEngineIDs(nextDoc);
+    if (isCurrent && !isCurrent()) return;
     await disposeCurrentPage(reuseIDs);
     if (isCurrent && !isCurrent()) return;
     // Head/body replacement adopts nodes out of the parsed document. Capture
@@ -2789,7 +3186,7 @@
       .concat(collectManagedScripts(nextDoc.body, nextURL));
     await replaceManagedHead(nextDoc, nextURL);
     if (isCurrent && !isCurrent()) return;
-    replaceBody(nextDoc, nextURL, reuseIDs);
+    const reconciliation = replaceBody(nextDoc, nextURL, reuseIDs);
     updateHistory(nextURL, !!replace);
     // Pre-bootstrap replays run before the managed scene chunks load and
     // before bootstrap consumes the manifest. A manifest-rewriting boot
@@ -2801,6 +3198,7 @@
     await bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs);
     if (isCurrent && !isCurrent()) return;
     replayInlineNavigationScripts(document.body, "post");
+    return reconciliation;
   }
 
   function applyNavigationScroll(a11y, preserveScroll) {
@@ -2828,9 +3226,10 @@
   function finalizeNavigation(url, options, a11y) {
     const opts = options || {};
     applyNavigationScroll(a11y, !!opts.preserveScroll);
-    focusElement(a11y.focusTarget, true);
+    const focusTarget = a11y.preservedFocus || a11y.focusTarget;
+    if (!a11y.preservedFocus) focusElement(focusTarget, true);
     const announcement = announceNavigation(a11y.announcement);
-    dispatchNavigate(url, opts.replace, announcement, a11y.focusTarget);
+    dispatchNavigate(url, opts.replace, announcement, focusTarget);
     // Runs after every soft navigation this function completes, whether it
     // fetched a new document or reconciled the already-current page — see
     // setupPageRevalidation's doc comment.
@@ -6571,7 +6970,7 @@
 
   function onMouseOver(event) {
     const anchor = closestLink(event.target);
-    if (!anchor || !anchor.hasAttribute || !anchor.hasAttribute(LINK_ATTR)) return;
+    if (!isManagedNavigationLink(anchor)) return;
     prefetchLink(anchor, "hover");
   }
 
@@ -6587,7 +6986,7 @@
 
   function onFocusIn(event) {
     const anchor = closestLink(event.target);
-    if (!anchor || !anchor.hasAttribute || !anchor.hasAttribute(LINK_ATTR)) return;
+    if (!isManagedNavigationLink(anchor)) return;
     prefetchLink(anchor, "focus");
   }
 

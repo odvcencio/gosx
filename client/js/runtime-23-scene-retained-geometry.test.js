@@ -223,14 +223,12 @@ test("Scene3D retained geometry uses explicit semantic fallbacks", () => {
   const { env, api } = loadFreshSceneAPI();
   const F32 = vm.runInContext("Float32Array", env.context);
   const cases = [
-    retainedTriangle({ id: "shadow", castShadow: true }, F32),
     retainedTriangle({ id: "dynamic", geometryDirty: true }, F32),
     retainedTriangle({ id: "wire", wireframe: true }, F32),
     retainedTriangle({ id: "custom", customVertex: "void main() {}" }, F32),
     retainedTriangle({ id: "morph", computedMorph: { alpha: 0.5 } }, F32),
     retainedTriangle({ id: "mutable", vertices: Object.assign({}, retainedTriangle({}, F32).vertices, { immutable: false }) }, F32),
     retainedTriangle({ id: "revisionless", vertices: Object.assign({}, retainedTriangle({}, F32).vertices, { revision: null }) }, F32),
-    retainedTriangle({ id: "nonuniform-scale", scaleY: 2 }, F32),
     retainedTriangle({ id: "reflected-scale", scaleX: -1 }, F32),
   ];
   for (const object of cases) {
@@ -250,10 +248,63 @@ test("Scene3D retained geometry uses explicit semantic fallbacks", () => {
   assert.equal(backendNeutral.worldMeshPositions.length, 9);
 });
 
+test("Scene3D retains unindexed shadow casters with positive non-uniform scale", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const object = retainedTriangle({
+    id: "scaled-shadow-caster",
+    castShadow: true,
+    scaleX: 2,
+    scaleY: 0.25,
+    scaleZ: 1.5,
+  }, vm.runInContext("Float32Array", env.context));
+  const bundle = renderBundle(api, object, 0);
+
+  assert.equal(bundle.retainedMeshObjectCount, 1);
+  assert.equal(bundle.retainedMeshVertexCount, 3);
+  assert.equal(bundle.worldBakedMeshObjectCount, 0);
+  assert.equal(bundle.worldMeshPositions.length, 0);
+  assert.equal(bundle.meshObjects[0].retainedGeometry, true);
+  assert.equal(bundle.meshObjects[0].castShadow, true);
+  assert.deepEqual(
+    {
+      minX: bundle.meshObjects[0].bounds.minX,
+      minY: bundle.meshObjects[0].bounds.minY,
+      maxX: bundle.meshObjects[0].bounds.maxX,
+      maxY: bundle.meshObjects[0].bounds.maxY,
+    },
+    { minX: 0, minY: -0.25, maxX: 4, maxY: 0.25 },
+  );
+});
+
+test("Scene3D retains a generated flattened sphere shadow caster end to end", () => {
+  const { api } = loadFreshSceneAPI();
+  const object = api.normalizeSceneObject({
+    id: "board-socket",
+    kind: "sphere",
+    radius: 0.3,
+    segments: 20,
+    scale: { x: 1, y: 0.28, z: 1 },
+    materialKind: "standard",
+    color: "#071019",
+    wireframe: false,
+    castShadow: true,
+    receiveShadow: true,
+  }, 0, null);
+  const bundle = renderBundle(api, object, 0);
+
+  assert.equal(object.vertices.count, 1080, "20-segment sphere keeps its existing tessellation");
+  assert.equal(object.vertices.tangents.length, object.vertices.count * 4, "primitive lowering completes tangent frames once");
+  assert.equal(bundle.retainedMeshObjectCount, 1);
+  assert.equal(bundle.retainedMeshVertexCount, object.vertices.count);
+  assert.equal(bundle.worldBakedMeshObjectCount, 0);
+  assert.equal(bundle.worldBakedMeshVertexCount, 0);
+  assert.equal(bundle.worldMeshPositions.length, 0);
+});
+
 test("Scene3D world-baked non-uniform transforms use inverse-transpose normals and linear tangents", () => {
   const { env, api } = loadFreshSceneAPI();
   const object = obliqueTriangle({ scaleX: 2, scaleY: 3, scaleZ: 4 }, vm.runInContext("Float32Array", env.context));
-  const bundle = renderBundle(api, object, 0);
+  const bundle = renderBundle(api, object, 0, [], false);
   const mesh = bundle.meshObjects[0];
   const expectedNormal = normalized([1 / 2, 1 / 3, 1 / 4]);
   const expectedTangent = normalized([2, -3, 0]);
@@ -305,7 +356,7 @@ test("Scene3D world-baked reflections preserve CCW faces and tangent-frame hande
   for (const fixture of cases) {
     const [scaleX, scaleY, scaleZ] = fixture.scale;
     const object = obliqueTriangle({ id: fixture.id, scaleX, scaleY, scaleZ }, F32);
-    const bundle = renderBundle(api, object, 0);
+    const bundle = renderBundle(api, object, 0, [], false);
     const mesh = bundle.meshObjects[0];
     const expectedOrder = fixture.reversed ? [0, 2, 1] : [0, 1, 2];
     const expectedNormal = normalized([1 / scaleX, 1 / scaleY, 1 / scaleZ]);

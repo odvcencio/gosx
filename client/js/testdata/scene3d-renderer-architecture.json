@@ -16,7 +16,7 @@
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2700,
-    "actualGovernanceLinesAtReview": 2640,
+    "actualGovernanceLinesAtReview": 2652,
     "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
   },
   "rendererSourceNamingContract": [
@@ -239,7 +239,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2120:3",
+      "name": "createSceneWaterSimWebGL@2123:3",
       "lines": 255,
       "cyclomatic": 78,
       "cognitive": 84,
@@ -248,7 +248,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@2894:3",
+      "name": "createSceneWaterRendererWebGL@2897:3",
       "lines": 1287,
       "cyclomatic": 354,
       "cognitive": 437,
@@ -257,7 +257,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3080:5",
+      "name": "waterShadowSignature@3083:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,
@@ -266,7 +266,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3521:5",
+      "name": "applyWaterQualityProfile@3524:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -275,7 +275,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3679:5",
+      "name": "renderMeshTextureTarget@3682:5",
       "lines": 28,
       "cyclomatic": 6,
       "cognitive": 5,
@@ -284,7 +284,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3708:5",
+      "name": "drawFrame@3711:5",
       "lines": 398,
       "cyclomatic": 103,
       "cognitive": 126,
@@ -293,7 +293,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4247:3",
+      "name": "createScenePostProcessor@4250:3",
       "lines": 550,
       "cyclomatic": 140,
       "cognitive": 200,
@@ -302,7 +302,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4649:14",
+      "name": "anonymous@4652:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -311,7 +311,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6017:3",
+      "name": "scenePBRUploadLights@6020:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -320,7 +320,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@6490:3",
+      "name": "scenePBRUploadEnvironmentMap@6493:3",
       "lines": 110,
       "cyclomatic": 49,
       "cognitive": 95,
@@ -329,16 +329,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@6634:3",
-      "lines": 2736,
-      "cyclomatic": 770,
-      "cognitive": 1179,
+      "name": "createScenePBRRenderer@6637:3",
+      "lines": 2706,
+      "cyclomatic": 761,
+      "cognitive": 1168,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@7266:5",
+      "name": "uploadCustomUniforms@7269:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -347,7 +347,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7442:5",
+      "name": "render@7445:5",
       "lines": 283,
       "cyclomatic": 73,
       "cognitive": 105,
@@ -356,16 +356,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@8237:5",
-      "lines": 261,
-      "cyclomatic": 74,
-      "cognitive": 173,
+      "name": "drawPBRObjectList@8240:5",
+      "lines": 256,
+      "cyclomatic": 71,
+      "cognitive": 167,
       "maxNesting": 6,
       "parameters": 4
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@8638:5",
+      "name": "applyPointsAuthoredCustomUniforms@8645:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -374,7 +374,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@8814:5",
+      "name": "drawPointsEntries@8821:5",
       "lines": 219,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -383,7 +383,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@9115:5",
+      "name": "drawInstancedMeshes@9122:5",
       "lines": 206,
       "cyclomatic": 55,
       "cognitive": 117,
@@ -590,16 +590,16 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPBRObjects@15507:5",
+      "name": "drawPBRObjects@15505:5",
       "lines": 179,
-      "cyclomatic": 87,
-      "cognitive": 170,
+      "cyclomatic": 85,
+      "cognitive": 163,
       "maxNesting": 6,
       "parameters": 9
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "instancedMeshColorData@15729:5",
+      "name": "instancedMeshColorData@15727:5",
       "lines": 48,
       "cyclomatic": 20,
       "cognitive": 35,
@@ -608,7 +608,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPointsEntries@16388:5",
+      "name": "drawPointsEntries@16386:5",
       "lines": 178,
       "cyclomatic": 51,
       "cognitive": 86,
@@ -617,7 +617,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawComputeParticleEntries@16563:5",
+      "name": "drawComputeParticleEntries@16561:5",
       "lines": 155,
       "cyclomatic": 44,
       "cognitive": 60,
@@ -626,7 +626,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "publishWebGPUFrameStats@16786:5",
+      "name": "publishWebGPUFrameStats@16784:5",
       "lines": 313,
       "cyclomatic": 257,
       "cognitive": 257,
@@ -635,7 +635,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawBoardLabels@17459:5",
+      "name": "drawBoardLabels@17457:5",
       "lines": 117,
       "cyclomatic": 39,
       "cognitive": 76,
@@ -644,7 +644,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "render@17694:5",
+      "name": "render@17692:5",
       "lines": 653,
       "cyclomatic": 175,
       "cognitive": 226,
@@ -653,7 +653,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@18644:5",
+      "name": "diagnostics@18642:5",
       "lines": 90,
       "cyclomatic": 49,
       "cognitive": 49,

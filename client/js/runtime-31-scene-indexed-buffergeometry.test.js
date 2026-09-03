@@ -19,6 +19,7 @@ const {
   bootstrapRuntimeSource,
   createBoardWebGPUHarness,
   createContext,
+  createWebGLRendererForPost,
   freshFeatureBundleSource,
   runScript,
 } = require("./runtime-test-harness.js");
@@ -191,7 +192,7 @@ test("Scene3D unindexed geometry keeps its historical lowering", () => {
   assert.equal(bakedBundle.worldMeshPositions.length, 18);
 });
 
-test("Scene3D shadow semantics: indexed casters retain, unindexed casters still bake", () => {
+test("Scene3D shadow semantics retain indexed and expanded triangle casters", () => {
   const { env, api } = loadFreshSceneAPI();
   const F32 = vm.runInContext("Float32Array", env.context);
   const U32 = vm.runInContext("Uint32Array", env.context);
@@ -203,9 +204,10 @@ test("Scene3D shadow semantics: indexed casters retain, unindexed casters still 
 
   const soupCaster = api.normalizeSceneObject(soupQuad({ id: "soup-caster", castShadow: true }, F32, U32), 1, null);
   const soupBundle = renderBundle(api, soupCaster, 0);
-  assert.equal(soupBundle.retainedMeshObjectCount, 0, "unindexed casters keep the baked path");
-  assert.equal(soupBundle.worldBakedMeshObjectCount, 1);
-  assert.equal(soupBundle.worldMeshPositions.length, 18);
+  assert.equal(soupBundle.retainedMeshObjectCount, 1, "expanded casters keep immutable local geometry");
+  assert.equal(soupBundle.meshObjects[0].castShadow, true);
+  assert.equal(soupBundle.worldBakedMeshObjectCount, 0);
+  assert.equal(soupBundle.worldMeshPositions.length, 0);
 });
 
 function frameUint32IndexBindings(fake, startPass) {
@@ -306,6 +308,69 @@ test("WebGPU indexed shadow casters bind distinct aligned matrix slots", async (
     Array.from(casterWrites[1].data),
     "different model transforms keep different light-space matrices",
   );
+  harness.renderer.dispose();
+});
+
+test("WebGPU retained expanded caster draws its cached positions without an index buffer", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
+  const api = harness.env.context.__gosx_scene3d_api;
+  const F32 = vm.runInContext("Float32Array", harness.env.context);
+  const U32 = vm.runInContext("Uint32Array", harness.env.context);
+  const viewport = { cssWidth: 640, cssHeight: 480, pixelWidth: 640, pixelHeight: 480, pixelRatio: 1 };
+  const caster = api.normalizeSceneObject(soupQuad({ id: "expanded-caster", castShadow: true }, F32, U32), 0, null);
+  const light = api.normalizeSceneLight({
+    id: "sun",
+    kind: "directional",
+    x: 4,
+    y: 6,
+    z: 8,
+    intensity: 1,
+    castShadow: true,
+  }, 0, null);
+
+  const passStart = harness.fake.state.renderPasses.length;
+  harness.renderer.render(renderBundle(api, caster, 0, [], true, [light]), viewport);
+  const shadowPass = harness.fake.state.renderPasses.slice(passStart).find((pass) =>
+    pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) &&
+    pass.descriptor.colorAttachments.length === 0 &&
+    pass.draws.some((draw) => draw.vertexCount === 6)
+  );
+  assert.ok(shadowPass, "the retained expanded caster must issue draw(6) in a depth-only pass");
+  assert.equal(shadowPass.drawIndexeds.length, 0, "an expanded caster needs no synthetic index buffer");
+  assert.ok(shadowPass.vertexBuffers.some((binding) => binding.slot === 0), "shadow draw binds cached local positions");
+  harness.renderer.dispose();
+});
+
+test("WebGL retained expanded caster draws its cached positions without an index buffer", () => {
+  const harness = createWebGLRendererForPost({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const F32 = vm.runInContext("Float32Array", harness.env.context);
+  const U32 = vm.runInContext("Uint32Array", harness.env.context);
+  const caster = api.normalizeSceneObject(soupQuad({ id: "expanded-caster", castShadow: true }, F32, U32), 0, null);
+  const light = api.normalizeSceneLight({
+    id: "sun",
+    kind: "directional",
+    x: 4,
+    y: 6,
+    z: 8,
+    intensity: 1,
+    castShadow: true,
+  }, 0, null);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const gl = harness.canvas.getContext("webgl2");
+  harness.env.document.body.appendChild(harness.canvas);
+
+  harness.renderer.render(renderBundle(api, caster, 0, [], true, [light]), viewport);
+  const shadowProgram = gl.programs.find((program) =>
+    gl.programShaderSources(program).includes("u_lightViewProjection * (u_modelMatrix * vec4(a_position, 1.0))")
+  );
+  assert.ok(shadowProgram, "the shadow depth program must compile");
+  assert.ok(
+    gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 6 && entry[4] === shadowProgram.id),
+    "the retained expanded caster must issue drawArrays(6) in the shadow program",
+  );
+  assert.equal(harness.renderer.diagnostics().retainedGeometry.cacheEntries, 1);
   harness.renderer.dispose();
 });
 
@@ -465,7 +530,8 @@ test("backends wire uint32 index buffers and indexed draws for indexed direct me
   assert.match(webgl, /gl\.ELEMENT_ARRAY_BUFFER/);
   assert.match(webgl, /gl\.drawElements\(gl\.TRIANGLES, selenaIndexCount, gl\.UNSIGNED_INT, 0\)/);
   assert.match(webgl, /gl\.drawElements\(gl\.TRIANGLES, directIndexCount, gl\.UNSIGNED_INT, 0\)/);
-  assert.match(webgl, /gl\.drawElements\(gl\.TRIANGLES, casterIndexCount, gl\.UNSIGNED_INT, 0\)/);
+  assert.match(webgl, /gl\.drawElements\(gl\.TRIANGLES, casterDraw\.count, gl\.UNSIGNED_INT, 0\)/);
+  assert.match(webgl, /gl\.drawArrays\(gl\.TRIANGLES, 0, casterDraw\.count\)/);
   assert.match(webgl, /uniform mat4 u_modelMatrix;/, "shadow depth shader transforms model-space casters");
 
   const webgpu = readSceneRendererBackendSrc("webgpu");
@@ -473,6 +539,8 @@ test("backends wire uint32 index buffers and indexed draws for indexed direct me
   assert.match(webgpu, /pass\.setIndexBuffer\(record\.buffer, "uint32"\)/);
   assert.match(webgpu, /pass\.drawIndexed\(pbrIndexCount\)/);
   assert.match(webgpu, /pass\.drawIndexed\(casterIndexCount\)/);
+  assert.match(webgpu, /else pass\.draw\(obj\.vertexCount\)/,
+    "retained expanded casters must use the unindexed shadow draw path");
   assert.match(webgpu, /pass\.drawIndexed\(skinnedShadowIndexCount\)/);
   assert.match(webgpu, /pass\.drawIndexed\(morphShadowIndexCount\)/);
   assert.match(webgpu, /pass\.drawIndexed\(selenaSkinIndexCount\)/);
