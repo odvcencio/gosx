@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: comments inside GSX markup compile away
+- A `//` line inside GSX element children now compiles away, instead of rendering as page text. Text with `//` after other content on a line, and URLs, stay untouched.
+- `{/* a comment */}` and `{// a comment}` now compile away too, instead of failing to parse.
+- A `//` line inside `<script>`, `<style>`, `<pre>`, or `<textarea>` still renders verbatim; none of this applies inside an attribute value.
+
 ## v0.55.1 (2026-09-02)
 
 ### Fixed: responsive Scene3D canvases honor fill-height layout bounds
@@ -52,7 +59,6 @@
 ### Changed
 - `buildmanifest` optional runtime-asset fields use `omitzero`, so an absent asset is absent from `build.json` instead of an empty object.
 - This release also carries the scene3d and CI maintenance commits that landed on `main` after v0.53.10.
-
 
 ## v0.53.10 (2026-08-29)
 
