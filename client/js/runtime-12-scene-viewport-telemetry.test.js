@@ -81,6 +81,25 @@ test("Scene3D viewport preserves low-power DPR caps unless an authored floor rai
   assert.equal(floored.devicePixelRatio, 1.85);
 });
 
+test("responsive fill-height Scene3D measures its mount instead of a stale intrinsic canvas", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 720,
+    height: 480,
+    responsive: true,
+    fillHeight: true,
+  }, {
+    measuredWidth: 663,
+    measuredHeight: 620,
+    canvasMeasuredWidth: 663,
+    canvasMeasuredHeight: 858,
+  });
+
+  assert.equal(viewport.cssWidth, 663);
+  assert.equal(viewport.cssHeight, 620);
+  assert.equal(viewport.pixelWidth, 663);
+  assert.equal(viewport.pixelHeight, 620);
+});
+
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-responsive";

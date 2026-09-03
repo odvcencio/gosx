@@ -3342,9 +3342,16 @@ function resolveSceneViewportForTest(props, options = {}) {
     : sceneNumberForTest(props && props.height, 844);
   const base = api.sceneViewportBase(Object.assign({ responsive: false }, props || {}));
   if (options.base) Object.assign(base, options.base);
-  const rect = { width, height, left: 0, top: 0 };
-  const mount = { getBoundingClientRect() { return rect; } };
-  const canvas = { getBoundingClientRect() { return rect; } };
+  const canvasWidth = Number.isFinite(Number(options.canvasMeasuredWidth))
+    ? Number(options.canvasMeasuredWidth)
+    : width;
+  const canvasHeight = Number.isFinite(Number(options.canvasMeasuredHeight))
+    ? Number(options.canvasMeasuredHeight)
+    : height;
+  const mountRect = { width, height, left: 0, top: 0 };
+  const canvasRect = { width: canvasWidth, height: canvasHeight, left: 0, top: 0 };
+  const mount = { getBoundingClientRect() { return mountRect; } };
+  const canvas = { getBoundingClientRect() { return canvasRect; } };
   return api.sceneViewportFromMount(
     mount,
     Object.assign({ responsive: false }, props || {}),
