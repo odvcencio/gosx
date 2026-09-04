@@ -148,6 +148,49 @@ func TestAlphaCutoffTypedGraphLowering(t *testing.T) {
 	check(build(Cutoff(0.5)), Cutoff(0.5))
 }
 
+// TestCustomMaterialAlphaCutoffValuePointerParity protects the optimized
+// CustomMaterial value switch from drifting away from the legacy pointer
+// fallback used by *CustomMaterial during ordinary Mesh lowering.
+func TestCustomMaterialAlphaCutoffValuePointerParity(t *testing.T) {
+	cases := []struct {
+		name   string
+		cutoff AlphaCutoff
+	}{
+		{name: "omitted", cutoff: AlphaCutoff{}},
+		{name: "disabled", cutoff: CutoffDisabled()},
+		{name: "zero", cutoff: Cutoff(0)},
+		{name: "numeric", cutoff: Cutoff(0.5)},
+	}
+	lower := func(t *testing.T, material Material) AlphaCutoff {
+		t.Helper()
+		ir := (Props{Graph: NewGraph(Mesh{
+			ID:       "custom",
+			Geometry: CubeGeometry{Size: 1},
+			Material: material,
+		})}).SceneIR()
+		if len(ir.Objects) != 1 {
+			t.Fatalf("ordinary Mesh lowering produced %d objects, want 1", len(ir.Objects))
+		}
+		return ir.Objects[0].AlphaCutoff
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			material := CustomMaterial{StandardMaterial: StandardMaterial{AlphaCutoff: tc.cutoff}}
+			fromValue := lower(t, material)
+			fromPointer := lower(t, &material)
+			if !cutoffSame(fromValue, tc.cutoff) {
+				t.Fatalf("CustomMaterial value alphaCutoff = %v, want %v", fromValue, tc.cutoff)
+			}
+			if !cutoffSame(fromPointer, tc.cutoff) {
+				t.Fatalf("*CustomMaterial alphaCutoff = %v, want %v", fromPointer, tc.cutoff)
+			}
+			if !cutoffSame(fromValue, fromPointer) {
+				t.Fatalf("value/pointer alphaCutoff mismatch: %v versus %v", fromValue, fromPointer)
+			}
+		})
+	}
+}
+
 // TestAlphaCutoffLegacyMapPaths covers typed exports and map imports for all
 // four legacyProps shapes plus applyMaterialProps, and proves the source map
 // is never mutated.
@@ -324,6 +367,96 @@ func TestAlphaCutoffCanonicalMaterialSeparation(t *testing.T) {
 	}
 	if v, ok := out.Variants["full"].AlphaCutoff.Value(); !ok || v != 0.5 {
 		t.Fatalf("variant alphaCutoff = %v, want 0.5", out.Variants["full"].AlphaCutoff)
+	}
+}
+
+func TestIRValidateAlphaCutoffMaterialAndVariants(t *testing.T) {
+	cases := []struct {
+		name    string
+		cutoff  AlphaCutoff
+		message string
+	}{
+		{name: "negative", cutoff: Cutoff(-0.5), message: "must not be negative"},
+		{name: "nan", cutoff: Cutoff(math.NaN()), message: "must be finite"},
+		{name: "positive-infinity", cutoff: Cutoff(math.Inf(1)), message: "must be finite"},
+		{name: "negative-infinity", cutoff: Cutoff(math.Inf(-1)), message: "must be finite"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ir := IR{
+				Version: IRVersion,
+				Materials: []IRMaterial{
+					{AlphaCutoff: tc.cutoff},
+					{Variants: map[string]IRMaterialVariant{"full": {AlphaCutoff: tc.cutoff}}},
+				},
+			}
+			err := ir.Validate()
+			if err == nil {
+				t.Fatalf("%s alphaCutoff unexpectedly validated", tc.name)
+			}
+			for _, path := range []string{
+				"materials[0].alphaCutoff",
+				`materials[1].variants["full"].alphaCutoff`,
+			} {
+				want := path + " " + tc.message
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("validation error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestIRValidateAlphaCutoffAcceptedMaterialAndVariantStates(t *testing.T) {
+	for _, cutoff := range []AlphaCutoff{
+		{},
+		CutoffDisabled(),
+		Cutoff(0),
+		Cutoff(0.5),
+		Cutoff(1),
+		Cutoff(1.5),
+	} {
+		ir := IR{
+			Version: IRVersion,
+			Materials: []IRMaterial{{
+				AlphaCutoff: cutoff,
+				Variants: map[string]IRMaterialVariant{
+					"full": {AlphaCutoff: cutoff},
+				},
+			}},
+		}
+		if err := ir.Validate(); err != nil {
+			t.Fatalf("valid material/variant alphaCutoff %v rejected: %v", cutoff, err)
+		}
+	}
+}
+
+func TestInvalidAlphaCutoffCanonicalMaterialsDoNotCollapse(t *testing.T) {
+	material := StandardMaterial{AlphaCutoff: Cutoff(-0.5)}
+	ir := (Props{Graph: NewGraph(
+		Mesh{ID: "a", Geometry: CubeGeometry{Size: 1}, Material: material},
+		Mesh{ID: "b", Geometry: CubeGeometry{Size: 1}, Material: material},
+	)}).CanonicalIR()
+	if len(ir.Materials) != 2 {
+		t.Fatalf("invalid materials collapsed to %d canonical entries, want 2", len(ir.Materials))
+	}
+	if len(ir.Nodes) != 2 || ir.Nodes[0].MaterialIndex != 0 || ir.Nodes[1].MaterialIndex != 1 {
+		t.Fatalf("invalid material indexes collapsed: %#v", ir.Nodes)
+	}
+	if _, err := canonicalMaterialKey(ir.Materials[0]); err == nil {
+		t.Fatal("invalid alphaCutoff unexpectedly produced a canonical material key")
+	}
+	err := ir.Validate()
+	if err == nil {
+		t.Fatal("canonical IR with invalid alphaCutoff unexpectedly validated")
+	}
+	for _, want := range []string{
+		"materials[0].alphaCutoff must not be negative",
+		"materials[1].alphaCutoff must not be negative",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error %q does not contain %q", err, want)
+		}
 	}
 }
 

@@ -4456,6 +4456,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		if m.Wireframe != nil {
 			record.Wireframe = m.Wireframe
 		}
+		record.AlphaCutoff = m.AlphaCutoff
 		record.CustomVertex = strings.TrimSpace(m.VertexGLSL)
 		record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
 		record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
