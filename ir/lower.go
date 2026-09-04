@@ -3020,7 +3020,7 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 			// positions admit different identifier sets.
 			l.validateStrictServerChildExpression(node.Span, node.Text, componentName, propsType, scope)
 		}
-		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && !ifShadowed
+		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && (node.IsSyntheticConditional() || !ifShadowed)
 		isBuiltinEach := node.Kind == NodeComponent && node.Tag == "Each" && !eachShadowed
 		if isBuiltinEach {
 			childScope, ok := l.enterStrictEach(node, componentName, propsType, scope, slices)
@@ -3881,11 +3881,12 @@ func (l *lowerer) buildIfComponent(whenExpr string, children []NodeID, fallbackE
 		attrs = append(attrs, Attr{Kind: AttrExpr, Name: "fallback", Expr: fallbackExpr})
 	}
 	return l.prog.AddNode(Node{
-		Kind:     NodeComponent,
-		Tag:      "If",
-		Attrs:    attrs,
-		Children: children,
-		Span:     span,
+		Kind:                 NodeComponent,
+		Tag:                  "If",
+		Attrs:                attrs,
+		Children:             children,
+		Span:                 span,
+		syntheticConditional: true,
 	})
 }
 

@@ -2,6 +2,7 @@ package gosx_test
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -144,6 +145,98 @@ component Root() {
 			lowered := compileIslandProgram(t, source, "Root")
 			if lowered.Nodes[lowered.Root].Tag != "span" {
 				t.Fatalf("lowered same-file %s shadow = %#v, want composed span", tag, lowered.Nodes)
+			}
+		})
+	}
+}
+
+func TestSyntheticJSXConditionalsIgnoreLocalIfShadow(t *testing.T) {
+	tests := []struct {
+		name             string
+		body             string
+		wantConditionals int
+		wantTrueTags     string
+		wantFalseTags    string
+	}{
+		{
+			name:             "logical and",
+			body:             `{props.Show && <strong>shown</strong>}`,
+			wantConditionals: 1,
+			wantTrueTags:     "div,strong",
+			wantFalseTags:    "div",
+		},
+		{
+			name:             "jsx ternary",
+			body:             `{props.Show ? <strong>shown</strong> : <small>hidden</small>}`,
+			wantConditionals: 2,
+			wantTrueTags:     "div,strong",
+			wantFalseTags:    "div,small",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			source := fmt.Sprintf(`package app
+
+type RootProps struct { Show bool }
+
+component If() {
+	return <em>shadow</em>
+}
+
+//gosx:island
+component Root(props: RootProps) {
+	return <div>%s</div>
+}
+
+component ServerRoot(props: RootProps) {
+	return <div>{props.Show && <strong>shown</strong>}</div>
+}
+`, tc.body)
+			lowered := compileIslandProgram(t, source, "Root")
+			conditionals := 0
+			for _, node := range lowered.Nodes {
+				if node.Kind == islandprogram.NodeConditional {
+					conditionals++
+				}
+				if node.Tag == "em" || node.Text == "shadow" {
+					t.Fatalf("compiler-owned conditional resolved through local If shadow: %#v", lowered.Nodes)
+				}
+			}
+			if conditionals != tc.wantConditionals {
+				t.Fatalf("conditional node count = %d, want %d: %#v", conditionals, tc.wantConditionals, lowered.Nodes)
+			}
+
+			for _, state := range []struct {
+				show bool
+				want string
+			}{
+				{show: true, want: tc.wantTrueTags},
+				{show: false, want: tc.wantFalseTags},
+			} {
+				props := fmt.Sprintf(`{"Show":%t}`, state.show)
+				tree := clientvm.ResolveInitialTree(lowered, props)
+				if got := strings.Join(resolvedTags(tree), ","); got != state.want {
+					t.Fatalf("resolved tags for props %s = %q, want %q", props, got, state.want)
+				}
+
+				prog, err := gosx.Compile([]byte(source))
+				if err != nil {
+					t.Fatalf("Compile server branch: %v", err)
+				}
+				html, err := route.RenderProgramComponent(prog, "ServerRoot", route.ProgramRenderEnv{
+					Props: struct{ Show bool }{Show: state.show},
+				})
+				if err != nil {
+					t.Fatalf("RenderProgramComponent: %v", err)
+				}
+				wantHTML := "<div></div>"
+				if state.show {
+					wantHTML = "<div><strong>shown</strong></div>"
+				}
+				if html != wantHTML {
+					t.Fatalf("server HTML for Show=%t = %q, want %q", state.show, html, wantHTML)
+				}
 			}
 		})
 	}

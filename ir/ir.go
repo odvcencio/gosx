@@ -328,6 +328,13 @@ const (
 type Node struct {
 	Kind NodeKind
 
+	// syntheticConditional identifies the compiler-owned <If> shape used to
+	// lower JSX conditional expressions such as {ok && <span/>}. It is kept
+	// private so source authors cannot forge it: same-file component lookup
+	// applies only to authored component references, while this node always
+	// retains builtin conditional semantics.
+	syntheticConditional bool
+
 	// Tag is the element/component name (for NodeElement and NodeComponent).
 	Tag string
 
@@ -364,6 +371,13 @@ type Node struct {
 
 	// Span tracks source location.
 	Span Span
+}
+
+// IsSyntheticConditional reports whether this node is compiler-owned control
+// flow rather than an authored component reference. Consumers that resolve
+// same-file components must preserve builtin semantics for these nodes.
+func (n *Node) IsSyntheticConditional() bool {
+	return n != nil && n.syntheticConditional
 }
 
 // AttrKind discriminates attribute types.

@@ -312,6 +312,14 @@ func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, en
 }
 
 func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
+	// JSX conditional expressions lower to a compiler-owned <If> shape. The
+	// marker distinguishes that control flow from an authored <If/> reference,
+	// so a same-file component named If only shadows authored calls.
+	if node.IsSyntheticConditional() {
+		r.writeConditional(b, node, env)
+		return
+	}
+
 	// Strict calls are type-checked as calls to the same-file declaration. Keep
 	// that declaration authoritative even when its name collides with a layout
 	// replacement or one of the legacy renderer builtins; otherwise generated Go
@@ -3505,6 +3513,13 @@ func (r *fileProgramRenderer) textContentNode(nodeID ir.NodeID, env fileRenderEn
 	case ir.NodeFragment, ir.NodeElement:
 		return r.textContentChildren(node.Children, env)
 	case ir.NodeComponent:
+		if node.IsSyntheticConditional() {
+			condition := attrValue(node.Attrs, env, "when", "if", "cond", "test")
+			if truthy(condition) {
+				return r.textContentChildren(node.Children, env)
+			}
+			return plainTextFileEvaluatedExpr(attrValue(node.Attrs, env, "fallback", "else"))
+		}
 		comp, ok := r.components[node.Tag]
 		if !ok || comp.IsIsland || comp.IsEngine {
 			return ""

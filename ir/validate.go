@@ -955,7 +955,7 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 		}
 
 		node := &prog.Nodes[id]
-		if node.Kind != NodeComponent {
+		if node.Kind != NodeComponent || node.IsSyntheticConditional() {
 			diags = append(diags, validateIslandNode(node, scope)...)
 			for _, child := range node.Children {
 				walk(child, stack)

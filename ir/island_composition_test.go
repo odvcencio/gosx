@@ -106,6 +106,42 @@ func TestIslandSameFileComponentsShadowBuiltinsAndAliases(t *testing.T) {
 	}
 }
 
+func TestSyntheticConditionalBypassesImpureLocalIfShadow(t *testing.T) {
+	prog := &Program{
+		Nodes: []Node{
+			{
+				Kind:                 NodeComponent,
+				Tag:                  "If",
+				Attrs:                []Attr{{Kind: AttrExpr, Name: "when", Expr: "visible"}},
+				Children:             []NodeID{1},
+				syntheticConditional: true,
+			},
+			{Kind: NodeElement, Tag: "span", IsStatic: true},
+			{Kind: NodeElement, Tag: "em", IsStatic: true},
+		},
+		Components: []Component{
+			{Name: "Root", Syntax: ComponentSyntaxStrict, Root: 0, IsIsland: true},
+			{
+				Name:   "If",
+				Syntax: ComponentSyntaxStrict,
+				Root:   2,
+				Scope:  &ComponentScope{Signals: []SignalInfo{{Name: "owned", InitExpr: "0"}}},
+			},
+		},
+	}
+
+	lowered, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland synthetic conditional: %v", err)
+	}
+	if lowered.Nodes[lowered.Root].Kind != program.NodeConditional {
+		t.Fatalf("lowered root = %#v, want compiler conditional", lowered.Nodes[lowered.Root])
+	}
+	if diags := Validate(prog); len(diags) != 0 {
+		t.Fatalf("Validate synthetic conditional = %#v, want no local-If purity diagnostics", diags)
+	}
+}
+
 func TestValidateIslandPureViewCompositionBoundaryErrors(t *testing.T) {
 	prog := basicComposedIslandProgram()
 	prog.Components[1].IsIsland = true

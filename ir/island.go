@@ -539,7 +539,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, an
 	}
 	srcNode := l.src.NodeAt(srcID)
 
-	if srcNode.Kind == NodeComponent {
+	if srcNode.Kind == NodeComponent && !srcNode.IsSyntheticConditional() {
 		// A same-file declaration is authoritative even when its name shadows
 		// an island builtin or element alias. The strict front end applies the
 		// same precedence before this VM lowering stage.
