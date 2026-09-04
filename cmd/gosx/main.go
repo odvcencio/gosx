@@ -28,6 +28,9 @@
 //	gosx scene validate          Validate SceneIR JSON files
 //	gosx size [--json] <dist|build.json>
 //	                              Report runtime bundle sizes
+//	gosx ui list                 List source-owned UI recipes
+//	gosx ui add <recipe>         Install recipe source into an app
+//	gosx ui diff <recipe>        Compare installed source with a recipe
 package main
 
 import (
@@ -91,6 +94,8 @@ func main() {
 		cmdOuroboros()
 	case "size", "size-report":
 		cmdSizeReport()
+	case "ui":
+		cmdUI()
 	case "visual":
 		cmdVisual()
 	case "repl":
@@ -211,6 +216,8 @@ Usage:
 		ouroborosUsage(w)
 	case "size", "size-report":
 		sizeUsage(w)
+	case "ui":
+		uiUsage(w)
 	case "visual":
 		visualUsage(w)
 	case "repl":
@@ -267,6 +274,9 @@ Commands:
                        Check saved perf output against budgets
   size [--json] <dist|build.json>
                        Report runtime bundle sizes
+  ui list              List the local source-owned UI recipe catalog
+  ui add <recipe>      Install readable recipe source into an app
+  ui diff <recipe>     Compare installed source with the catalog
   visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
   release check        Check release metadata consistency

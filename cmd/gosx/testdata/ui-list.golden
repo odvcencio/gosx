@@ -1,0 +1,5 @@
+RECIPE  VERSION  DEPENDS  DESCRIPTION
+button  1.0.0    tokens   Semantic action button with four tones and three sizes.
+card    1.0.0    tokens   Editorial content card with default, raised, and quiet surfaces.
+input   1.0.0    tokens   Accessible labeled input with help, invalid, required, and disabled states.
+tokens  1.0.0    -        Portable Obsidian color, type, spacing, shape, and motion tokens.
