@@ -176,10 +176,15 @@
     // intentionally small but finite; geometry closer than it is outside the
     // documented shadow volume.
     var far = 0;
+    var boundCoordinateScale = 0;
     if (sceneBounds &&
         isFinite(sceneBounds.minX) && isFinite(sceneBounds.maxX) &&
         isFinite(sceneBounds.minY) && isFinite(sceneBounds.maxY) &&
         isFinite(sceneBounds.minZ) && isFinite(sceneBounds.maxZ)) {
+      boundCoordinateScale = Math.max(
+        Math.abs(sceneBounds.minX), Math.abs(sceneBounds.maxX),
+        Math.abs(sceneBounds.minY), Math.abs(sceneBounds.maxY),
+        Math.abs(sceneBounds.minZ), Math.abs(sceneBounds.maxZ));
       for (var corner = 0; corner < 8; corner++) {
         var bx = (corner & 1) ? sceneBounds.maxX : sceneBounds.minX;
         var by = (corner & 2) ? sceneBounds.maxY : sceneBounds.minY;
@@ -204,7 +209,7 @@
     // beyond it. Refuse a numerically ill-conditioned projection rather than
     // allowing padding to grow beyond one eighth of the selected depth.
     var float32Epsilon = 1.1920928955078125e-7;
-    var coordinateScale = Math.abs(px) + Math.abs(py) + Math.abs(pz) + far;
+    var coordinateScale = Math.abs(px) + Math.abs(py) + Math.abs(pz) + boundCoordinateScale + far;
     var viewPadding = coordinateScale * 64 * float32Epsilon;
     var projectionPadding = far * Math.max(1, far / near) * 64 * float32Epsilon;
     var farPadding = Math.max(far * 64 * float32Epsilon, viewPadding, projectionPadding);
