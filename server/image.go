@@ -33,6 +33,21 @@ type ImageTransform struct {
 	Format  string
 }
 
+// ImageSource describes one author-supplied <source> candidate for image art
+// direction. SrcSet is emitted as an HTML srcset value; GoSX does not fetch,
+// cache, or rewrite its candidates. Sources are evaluated in slice order, as
+// required by the browser's <picture> selection algorithm. Positive Width and
+// Height values declare that source crop's intrinsic dimensions; non-positive
+// values are omitted.
+type ImageSource struct {
+	SrcSet string `json:"srcset,omitempty"`
+	Media  string `json:"media,omitempty"`
+	Sizes  string `json:"sizes,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+}
+
 // ImageProps configures the server.Image helper.
 type ImageProps struct {
 	Src           string
@@ -49,6 +64,10 @@ type ImageProps struct {
 	Quality       int
 	Format        string
 	Resolver      string
+	Sources       []ImageSource
+	// PictureAttrs applies only when Image emits a <picture> wrapper. The
+	// variadic args passed to Image remain attributes on the fallback <img>.
+	PictureAttrs gosx.AttrList
 }
 
 // ImageURL builds an optimizer URL for a local public image source.
@@ -57,7 +76,8 @@ func ImageURL(src string, transform ImageTransform) string {
 }
 
 // Image renders an optimized image tag for local public assets and falls back
-// to a plain <img> for unsupported sources such as remote URLs or SVGs.
+// to an unoptimized <img> for sources such as remote URLs or SVGs. Non-empty
+// Sources wrap that fallback image in ordered native <picture> markup.
 func Image(props ImageProps, args ...any) gosx.Node {
 	// Fail closed at render time: a format the handler cannot produce would
 	// otherwise ship as a fmt= URL that 400s only when a browser requests it
@@ -151,7 +171,45 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	}
 
 	baseAttrs = append(baseAttrs, args...)
-	return gosx.El("img", baseAttrs...)
+	img := gosx.El("img", baseAttrs...)
+	sources := imageSourceNodes(props.Sources)
+	if len(sources) == 0 {
+		return img
+	}
+	children := make([]any, 0, len(sources)+1)
+	for _, source := range sources {
+		children = append(children, source)
+	}
+	children = append(children, img)
+	return gosx.El("picture", append([]any{props.PictureAttrs}, children...)...)
+}
+
+func imageSourceNodes(sources []ImageSource) []gosx.Node {
+	nodes := make([]gosx.Node, 0, len(sources))
+	for _, source := range sources {
+		srcset := strings.TrimSpace(source.SrcSet)
+		if srcset == "" {
+			continue
+		}
+		attrs := []any{gosx.Attr("srcset", srcset)}
+		if media := strings.TrimSpace(source.Media); media != "" {
+			attrs = append(attrs, gosx.Attr("media", media))
+		}
+		if sizes := strings.TrimSpace(source.Sizes); sizes != "" {
+			attrs = append(attrs, gosx.Attr("sizes", sizes))
+		}
+		if typ := strings.TrimSpace(source.Type); typ != "" {
+			attrs = append(attrs, gosx.Attr("type", typ))
+		}
+		if source.Width > 0 {
+			attrs = append(attrs, gosx.Attr("width", source.Width))
+		}
+		if source.Height > 0 {
+			attrs = append(attrs, gosx.Attr("height", source.Height))
+		}
+		nodes = append(nodes, gosx.El("source", gosx.Attrs(attrs...)))
+	}
+	return nodes
 }
 
 // ImageHandler serves optimized local images from a source directory.

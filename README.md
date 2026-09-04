@@ -349,7 +349,7 @@ a same-origin root-relative path, with unsafe values resolving to `/`.
 
 **Streaming** — Deferred page regions via `ctx.Defer()` and component-level `ctx.Suspense()` boundaries render fallback content immediately, then stream resolved content into place as each boundary completes.
 
-**Image and Font Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, immutable caching, auto responsive `server.Image` markup, and a `server.Font` helper for preload plus `@font-face`.
+**Image and Font Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, immutable caching, auto responsive `server.Image` markup, ordered `server.ImageSource` art direction through native `<picture>` markup with explicit wrapper attributes and per-crop dimensions, and a `server.Font` helper for preload plus `@font-face`.
 
 **Routing and Edge** — Server middleware can be annotated with `app.UseEdge`, and `app.UseI18n` adds locale-prefix routing that composes with both `server.App` and file routing.
 

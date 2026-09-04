@@ -699,6 +699,8 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		Priority:      truthy(attrValue(node.Attrs, env, "priority")),
 		Quality:       int(numericValue(attrValue(node.Attrs, env, "quality"))),
 		Format:        stringValue(attrValue(node.Attrs, env, "format")),
+		Sources:       imageSourceListValue(attrValue(node.Attrs, env, "sources")),
+		PictureAttrs:  imagePictureAttrsValue(attrValue(node.Attrs, env, "pictureAttrs", "pictureattrs")),
 	}
 	if err := server.ValidateProducibleImageFormat(props.Format); err != nil {
 		panic(err)
@@ -3255,6 +3257,9 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 		"priority":      {},
 		"quality":       {},
 		"format":        {},
+		"sources":       {},
+		"pictureAttrs":  {},
+		"pictureattrs":  {},
 	}
 	out := []any{}
 	for _, attr := range attrs {
@@ -3750,15 +3755,44 @@ func mapStringAnyValue(value any) map[string]any {
 }
 
 func videoSourceListValue(value any) []server.VideoSource {
-	return decodeVideoListValue[server.VideoSource](value)
+	return decodeListValue[server.VideoSource](value)
+}
+
+func imageSourceListValue(value any) []server.ImageSource {
+	return decodeListValue[server.ImageSource](value)
+}
+
+// imagePictureAttrsValue maps file-route data onto the wrapper's distinct
+// attribute channel. An AttrList keeps authored order; string-keyed maps use
+// the same deterministic ordering, name normalization, invalid-name filter,
+// boolean semantics, and gosx.Attr rendering path as ordinary spread attrs.
+func imagePictureAttrsValue(value any) gosx.AttrList {
+	if attrs, ok := value.(gosx.AttrList); ok {
+		return attrs
+	}
+	values := mapStringAnyValue(value)
+	if len(values) == 0 {
+		return nil
+	}
+	attrs := make([]any, 0, len(values))
+	for _, entry := range sortedStringAnyMap(values) {
+		name := normalizeFileAttrName(entry.Key)
+		if name == "" || !validRenderAttrName(name) {
+			continue
+		}
+		if attr, ok := fileNodeAttr(name, entry.Value); ok {
+			attrs = append(attrs, attr)
+		}
+	}
+	return gosx.Attrs(attrs...)
 }
 
 func videoAudioTrackListValue(value any) []server.VideoAudioTrack {
-	return decodeVideoListValue[server.VideoAudioTrack](value)
+	return decodeListValue[server.VideoAudioTrack](value)
 }
 
 func videoTrackListValue(value any) []server.VideoTrack {
-	return decodeVideoListValue[server.VideoTrack](value)
+	return decodeListValue[server.VideoTrack](value)
 }
 
 func videoSyncTuningValue(value any) *server.SyncTuning {
@@ -3836,7 +3870,7 @@ func decodeVideoStructPointerValue[T comparable](value any) *T {
 	return &out
 }
 
-func decodeVideoListValue[T any](value any) []T {
+func decodeListValue[T any](value any) []T {
 	if value == nil {
 		return nil
 	}
