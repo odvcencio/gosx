@@ -194,6 +194,24 @@
     var near = Math.min(0.1, Math.max(0.01, far * 0.001));
     if (near >= far) near = far * 0.5;
 
+    // Leave a conservative finite-precision guard beyond the logical far
+    // depth before producing Float32 view/projection matrices. Exact fits can
+    // round a boundary corner just past clip Z in the shader, especially when
+    // world-space translation is large or far/near is wide. The first term
+    // covers view-space multiply/add error; the second covers perspective
+    // coefficient quantization. An authored range remains the logical light
+    // limit (the BRDF still enforces it): only this projection guard extends
+    // beyond it. Refuse a numerically ill-conditioned projection rather than
+    // allowing padding to grow beyond one eighth of the selected depth.
+    var float32Epsilon = 1.1920928955078125e-7;
+    var coordinateScale = Math.abs(px) + Math.abs(py) + Math.abs(pz) + far;
+    var viewPadding = coordinateScale * 64 * float32Epsilon;
+    var projectionPadding = far * Math.max(1, far / near) * 64 * float32Epsilon;
+    var farPadding = Math.max(far * 64 * float32Epsilon, viewPadding, projectionPadding);
+    if (!isFinite(farPadding) || farPadding > far * 0.125) return null;
+    far += farPadding;
+    if (!isFinite(far)) return null;
+
     var fx = dx, fy = dy, fz = dz;
     var upX = 0, upY = 1, upZ = 0;
     if (Math.abs(fy) > 0.99) {
