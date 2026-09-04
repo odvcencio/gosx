@@ -539,7 +539,12 @@ function gosxConfigureSceneScript(script, role, src) {
       return false;
     }
     const material = sceneObjectMaterialProfile(object);
-    return !sceneMaterialUsesAuthoredMeshShader(material);
+    // Zero authored opacity only hides the draw when the material cannot
+    // mask its own fill: authored mesh shaders and materials carrying an
+    // enabled numeric alpha cutoff (0 included) keep rendering the masked
+    // fill, so the hide gate spares them alongside the shader exemption.
+    return !sceneMaterialUsesAuthoredMeshShader(material) &&
+      !sceneMaterialHasEnabledNumericAlphaCutoff(material);
   }
 
   function sceneModelEffectivelyHidden(model, object) {
@@ -715,7 +720,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -787,6 +792,19 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "ior", "ior", override);
     sceneAssignMaterialOverride(next, material, "specularIntensity", "specularIntensity", override);
     sceneAssignMaterialOverride(next, material, "specularColor", "specularColor", override);
+    // An explicit null cutoff (masking disabled) is copied as-is; genuine
+    // absence — including an own { alphaCutoff: undefined } — in the
+    // override never touches the asset's authored masking.
+    if (override.alphaCutoff !== undefined) {
+      sceneAssignMaterialOverride(next, material, "alphaCutoff", "alphaCutoff", override);
+    }
+    // Unlit flag: normalize via sceneBool without mutating the override
+    // source; undefined (absent) leaves the asset's authored lighting as-is,
+    // an explicit false clears any inherited unlit flag.
+    const unlitOverride = sceneBool(override.unlit, undefined);
+    if (unlitOverride !== undefined) {
+      sceneAssignMaterialOverride(next, material, "unlit", "unlit", { unlit: unlitOverride });
+    }
     sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
     sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);

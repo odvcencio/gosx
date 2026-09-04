@@ -329,7 +329,13 @@
   }
 
   function sceneWorldObjectRenderPass(object, material) {
-    const renderPass = String(object && object.renderPass || "").toLowerCase();
+    // A derived object pass is a cached computed default; freshly evaluated
+    // material routing (e.g. after real CSS substitution) must win. Raw
+    // (unmarked) and explicit (marker === false) object passes keep
+    // precedence.
+    const renderPass = object && object._renderPassDerived === true
+      ? ""
+      : String(object && object.renderPass || "").toLowerCase();
     if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
       return renderPass;
     }

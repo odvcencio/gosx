@@ -774,11 +774,18 @@
 
   // Determine the render pass for an object given its material.
   function scenePBRObjectRenderPass(obj, material) {
-    if (obj && typeof obj.renderPass === "string" && obj.renderPass) {
+    // Derived object passes are cached defaults; after CSS substitution the
+    // effective material must be allowed to choose the route again.
+    if (obj && obj._renderPassDerived !== true &&
+        typeof obj.renderPass === "string" && obj.renderPass) {
       const pass = obj.renderPass.toLowerCase();
       if (pass === "alpha" || pass === "additive" || pass === "opaque") {
         return pass;
       }
+    }
+    if (material && (material._renderPassDerived === true ||
+        material._blendModeDerived === true)) {
+      return sceneMaterialRenderPass(material);
     }
     if (material && typeof material.renderPass === "string" && material.renderPass) {
       const pass = material.renderPass.toLowerCase();
@@ -786,6 +793,13 @@
         return pass;
       }
     }
+    // Authored blend choices remain authoritative. Built-in masked materials
+    // otherwise use the opaque/depth-writing route and discard in-shader.
+    const materialBlend = material && typeof material.blendMode === "string"
+      ? material.blendMode.toLowerCase() : "";
+    if (materialBlend === "additive") return "additive";
+    if (materialBlend === "alpha") return "alpha";
+    if (sceneMaterialMaskOpaqueRouting(material)) return "opaque";
     // If material opacity < 1, default to alpha pass.
     if (material && sceneNumber(material.opacity, 1) < 1) {
       return "alpha";

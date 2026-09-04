@@ -187,7 +187,7 @@
     }
   }
 
-  function normalizeSceneMaterialBlendMode(value, kind, opacity) {
+  function normalizeSceneMaterialBlendMode(value, kind, opacity, maskOpaque) {
     const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (mode) {
       case "opaque":
@@ -207,12 +207,15 @@
         if (fallback !== "opaque") {
           return fallback;
         }
+        if (maskOpaque) {
+          return "opaque";
+        }
         return opacity < 0.999 ? "alpha" : "opaque";
       }
     }
   }
 
-  function normalizeSceneMaterialRenderPass(value, blendMode, opacity, kind) {
+  function normalizeSceneMaterialRenderPass(value, blendMode, opacity, kind, maskOpaque) {
     const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (pass) {
       case "opaque":
@@ -231,6 +234,15 @@
         const profile = sceneRegisteredMaterialProfile(kind);
         if (profile && profile.renderPass) {
           return profile.renderPass;
+        }
+        // An explicit alpha blend selects the alpha pass unless an
+        // explicit pass or a registered profile supersedes it, even when
+        // mask-opaque routing would otherwise default to opaque.
+        if (blendMode === "alpha") {
+          return "alpha";
+        }
+        if (maskOpaque) {
+          return "opaque";
         }
         return blendMode === "alpha" || opacity < 0.999 ? "alpha" : "opaque";
     }
@@ -378,6 +390,173 @@
     return [1, 1, 1];
   }
 
+  // Scene/glTF-authored alpha cutoff:
+  // finite numbers >= 0 are valid with no upper clamp — 0 and values above
+  // 1 included; nonempty numeric strings are accepted. An explicit null
+  // disables the cutoff outright. undefined inherits a validated fallback;
+  // booleans, empty strings, unparseable text, non-finite and negative
+  // values fall back safely, terminating at null. CSS var strings ride the
+  // existing explicit-var machinery and come back trimmed; null, false and
+  // empty strings are never coerced to 0.
+  function sceneNormalizeMaterialAlphaCutoff(value, fallback) {
+    if (value === null) {
+      return null;
+    }
+    if (sceneCSSVarReference(value)) {
+      return String(value).trim();
+    }
+    var numeric = value;
+    if (typeof numeric === "string") {
+      numeric = numeric.trim() !== "" ? Number(numeric) : NaN;
+    } else if (typeof numeric !== "number") {
+      numeric = NaN;
+    }
+    if (Number.isFinite(numeric) && numeric >= 0) {
+      return numeric;
+    }
+    if (fallback === null) {
+      return null;
+    }
+    if (sceneCSSVarReference(fallback)) {
+      return String(fallback).trim();
+    }
+    // The inherited fallback must satisfy the same numeric contract as the
+    // direct value; the hard null default always terminates the recursion.
+    return sceneNormalizeMaterialAlphaCutoff(fallback, null);
+  }
+
+  // Alpha-mask routing provenance helpers. A numeric-enabled cutoff (finite
+  // number >= 0, including 0; null and invalid values are disabled) on a
+  // built-in shader forces surviving mask fragments opaque, so derived
+  // (non-explicit) blend/renderPass choices default to opaque. Explicit
+  // choices and authored shaders (custom/Selena) keep their legacy behavior.
+  function sceneMaterialMaskActive(alphaCutoff) {
+    const cutoff = sceneNormalizeMaterialAlphaCutoff(alphaCutoff, null);
+    return typeof cutoff === "number" && Number.isFinite(cutoff);
+  }
+
+  function sceneMaterialHasDirectAuthoredShaderValues(values) {
+    if (!values || typeof values !== "object") {
+      return false;
+    }
+    if (String(values.shaderBackend || "").trim().toLowerCase() === "selena") {
+      return true;
+    }
+    return Boolean(
+      (typeof values.customVertex === "string" && values.customVertex.trim()) ||
+      (typeof values.customFragment === "string" && values.customFragment.trim()) ||
+      (typeof values.customVertexWGSL === "string" && values.customVertexWGSL.trim()) ||
+      (typeof values.customFragmentWGSL === "string" && values.customFragmentWGSL.trim()) ||
+      (typeof values.shaderSource === "string" && values.shaderSource.trim())
+    );
+  }
+
+  function sceneMaterialHasAuthoredShaderValues(values) {
+    if (sceneMaterialHasDirectAuthoredShaderValues(values)) {
+      return true;
+    }
+    // Raw scene objects may carry material fields on a nested
+    // item.material source; shader detection must see the same effective
+    // values the normalizer inheritance uses.
+    return !!(values && typeof values === "object" &&
+      sceneMaterialHasDirectAuthoredShaderValues(values.material));
+  }
+
+  // Effective per-field shader values the normalizers actually inherit.
+  // Authorship must be judged per field: a string item value wins (nested
+  // material first for objects/instanced meshes, direct-only for named
+  // records), and a non-string value inherits the current string instead
+  // of clearing — matching actual field normalization. Clearing one shader
+  // field must not clear a retained sibling field.
+  const SCENE_SHADER_AUTHORED_KEYS = [
+    "shaderBackend",
+    "customVertex",
+    "customFragment",
+    "customVertexWGSL",
+    "customFragmentWGSL",
+    "shaderSource",
+  ];
+
+  function sceneEffectiveShaderValues(item, current, directOnly) {
+    const values = {};
+    for (let i = 0; i < SCENE_SHADER_AUTHORED_KEYS.length; i += 1) {
+      const key = SCENE_SHADER_AUTHORED_KEYS[i];
+      const itemValue = item && typeof item === "object"
+        ? (directOnly ? item[key] : sceneObjectMaterialValue(item, key))
+        : undefined;
+      const currentValue = current && typeof current === "object" ? current[key] : undefined;
+      values[key] = typeof itemValue === "string"
+        ? itemValue
+        : (typeof currentValue === "string" ? currentValue : "");
+    }
+    return values;
+  }
+
+  // Resolves the object that supplied a routed blend/pass value so the
+  // derived marker is read from that same object:
+  // - "blendAlias" mirrors sceneObjectBlendModeValue: material blendMode,
+  //   item blendMode, then the blend alias (material blend, item blend),
+  //   including its handling of undefined values.
+  // - "material" mirrors sceneObjectMaterialValue: material own property,
+  //   then item own property, no blend alias.
+  // - "direct" reads only the item's own property, never nested material.
+  // With no route value, the fallback (current) object supplies the marker.
+  function sceneRoutedValueSource(item, name, mode) {
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+    if (mode === "direct") {
+      return Object.prototype.hasOwnProperty.call(item, name) ? item : null;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (mode === "blendAlias") {
+      const materialHasBlendMode =
+        material && Object.prototype.hasOwnProperty.call(material, "blendMode");
+      if (materialHasBlendMode && material.blendMode !== undefined) {
+        return material;
+      }
+      if (!materialHasBlendMode &&
+          Object.prototype.hasOwnProperty.call(item, "blendMode") &&
+          item.blendMode !== undefined) {
+        return item;
+      }
+      if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
+        return material;
+      }
+      return Object.prototype.hasOwnProperty.call(item, "blend") ? item : null;
+    }
+    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
+      return material;
+    }
+    return Object.prototype.hasOwnProperty.call(item, name) ? item : null;
+  }
+
+  function sceneRoutedValueExplicit(item, current, hasItemValue, name, derivedKey, mode) {
+    if (!hasItemValue) {
+      return current[derivedKey] !== true;
+    }
+    const source = sceneRoutedValueSource(item, name, mode);
+    return !(source && source[derivedKey] === true);
+  }
+
+  function sceneRoutedBlendExplicit(item, current, hasItemValue, mode) {
+    return sceneRoutedValueExplicit(item, current, hasItemValue,
+      "blendMode", "_blendModeDerived", mode || "blendAlias");
+  }
+
+  function sceneRoutedPassExplicit(item, current, hasItemValue, mode) {
+    return sceneRoutedValueExplicit(item, current, hasItemValue,
+      "renderPass", "_renderPassDerived", mode || "material");
+  }
+
+  function sceneMaterialMaskOpaqueRouting(material) {
+    if (!material || typeof material !== "object" ||
+        sceneMaterialHasAuthoredShaderValues(material)) {
+      return false;
+    }
+    return sceneMaterialMaskActive(material.alphaCutoff);
+  }
+
   function sceneObjectMaterialSource(item) {
     return item && item.material && typeof item.material === "object" ? item.material : null;
   }
@@ -450,17 +629,44 @@
   function sceneObjectMaterialProfile(object) {
     const kind = normalizeSceneMaterialKind(object && object.materialKind);
     const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
+    // Routing must judge the same effective shader fields this profile
+    // actually copies to the renderer (the flattened top-level values),
+    // not stale nested source material retained on instanced entries.
+    const maskOpaque = sceneMaterialMaskActive(object && object.alphaCutoff) &&
+      !sceneMaterialHasDirectAuthoredShaderValues(object);
+    // A positive derived marker means computed. Raw (unmarked) values are
+    // authored only when they carry a recognized explicit route value; a
+    // raw profile with no route value at all conveys the computed default,
+    // and an explicit (marker === false) marker always stays authored.
+    // Recognition reuses the shared profile alias maps so raw authored
+    // aliases (transparent/translucent/add/solid/glow/emissive) stay
+    // authored exactly like canonical opaque/alpha/additive values.
+    const blendMarker = object && object._blendModeDerived;
+    const passMarker = object && object._renderPassDerived;
+    const blendDerived = blendMarker === true ||
+      (blendMarker !== false &&
+        sceneMaterialProfileBlendMode(object && object.blendMode) === "");
+    const passDerived = passMarker === true ||
+      (passMarker !== false &&
+        sceneMaterialProfileRenderPass(object && object.renderPass) === "");
     const profile = {
       kind,
       color: object && typeof object.color === "string" && object.color ? object.color : "#8de1ff",
       texture: object && typeof object.texture === "string" ? object.texture.trim() : "",
       opacity,
+      unlit: sceneBool(object && object.unlit, false),
       wireframe: sceneBool(object && object.wireframe, true),
-      blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
+      blendMode: normalizeSceneMaterialBlendMode(
+        blendDerived ? "" : (object && object.blendMode),
+        kind,
+        opacity,
+        maskOpaque,
+      ),
       emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
       ior: sceneNormalizeMaterialIor(object && object.ior, 1.5),
+      alphaCutoff: sceneNormalizeMaterialAlphaCutoff(object && object.alphaCutoff, null),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(object && object.specularIntensity, 1),
       specularColor: sceneNormalizeMaterialSpecularColor(object && object.specularColor, null),
       clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
@@ -489,7 +695,18 @@
         ? normalizeSceneMaterialTextureDescriptors(object && object.textureDescriptors, null)
         : (object && object.textureDescriptors ? sceneCloneData(object.textureDescriptors) : null),
     };
-    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity, kind);
+    profile.renderPass = normalizeSceneMaterialRenderPass(
+      passDerived ? "" : (object && object.renderPass),
+      profile.blendMode,
+      profile.opacity,
+      kind,
+      maskOpaque,
+    );
+    // Carry routing provenance on the profile so downstream bundle
+    // records, dedup keys, and selectors can distinguish derived
+    // (computed) routes from authored ones after CSS resolution.
+    profile._blendModeDerived = blendDerived;
+    profile._renderPassDerived = passDerived;
     profile.key = sceneMaterialProfileKey(profile);
     profile.shaderData = sceneMaterialShaderData(profile);
     return profile;
@@ -501,10 +718,15 @@
       normalizeSceneMaterialKind(profile && profile.kind),
       String(profile && profile.color || ""),
       String(profile && profile.texture || ""),
+      String(sceneBool(profile && profile.unlit, false)),
       clamp01(sceneNumber(profile && profile.opacity, 1)).toFixed(3),
       String(sceneBool(profile && profile.wireframe, true)),
       String(profile && profile.blendMode || "opaque"),
       String(profile && profile.renderPass || "opaque"),
+      // Derived-vs-authored provenance changes routing behavior, so
+      // otherwise-identical profiles must never share a cached material.
+      String(profile && profile._blendModeDerived === true),
+      String(profile && profile._renderPassDerived === true),
       sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
@@ -513,6 +735,11 @@
       // (null/false/"") go through sceneNormalizeMaterialIor onto the 1.5
       // shader default instead of colliding with an explicit 0 (F0 = 1).
       sceneCSSVarReference(profile && profile.ior) ? String(profile.ior).trim() : sceneNormalizeMaterialIor(profile && profile.ior),
+      // Authored alpha cutoff keys at full precision — no toFixed
+      // quantization — so distinct valid cutoffs never share a cached
+      // material. A disabled cutoff (null) stringifies distinctly from an
+      // explicit 0 threshold; CSS vars keep their trimmed form.
+      sceneCSSVarReference(profile && profile.alphaCutoff) ? String(profile.alphaCutoff).trim() : String(sceneNormalizeMaterialAlphaCutoff(profile && profile.alphaCutoff)),
       // Specular factors key at full precision — intensity is never
       // quantized and the tint is serialized exactly — so distinct valid
       // values (per RGB component and per intensity, however close) never
@@ -584,6 +811,27 @@
     if (!material || typeof material !== "object") {
       return "opaque";
     }
+    // Derived (computed) material routes must be re-evaluated from the
+    // effective fields whenever consulted — notably after real CSS
+    // resolution replaced an authored var() alphaCutoff string with a
+    // numeric value — instead of replaying the pre-resolution cached
+    // strings. Authored (unmarked raw or explicitly non-derived) values
+    // keep precedence through the normal path below.
+    if (material._renderPassDerived === true || material._blendModeDerived === true) {
+      const opacity = sceneMaterialOpacity(material);
+      const maskOpaque = sceneMaterialMaskOpaqueRouting(material);
+      const kind = String(material.kind || "");
+      const blendMode = material._blendModeDerived === true
+        ? normalizeSceneMaterialBlendMode("", kind, opacity, maskOpaque)
+        : String(material.blendMode || "").toLowerCase();
+      return normalizeSceneMaterialRenderPass(
+        material._renderPassDerived === true ? "" : String(material.renderPass || ""),
+        blendMode,
+        opacity,
+        kind,
+        maskOpaque,
+      );
+    }
     const renderPass = String(material.renderPass || "").toLowerCase();
     if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
       return renderPass;
@@ -592,7 +840,13 @@
     if (blendMode === "additive") {
       return "additive";
     }
-    if (blendMode === "alpha" || sceneMaterialOpacity(material) < 0.999) {
+    if (blendMode === "alpha") {
+      return "alpha";
+    }
+    if (sceneMaterialMaskOpaqueRouting(material)) {
+      return "opaque";
+    }
+    if (sceneMaterialOpacity(material) < 0.999) {
       return "alpha";
     }
     return "opaque";

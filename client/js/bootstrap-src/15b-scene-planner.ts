@@ -360,8 +360,10 @@
     hash = sceneCSSHashCollection(hash, bundle && bundle.materials, [
       "id", "name", "kind", "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "specularIntensity", "specularColor",
+      "alphaCutoff",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "blendMode",
-      "renderPass", "depthWrite", "style", "size", "attenuation",
+      "renderPass", "_blendModeDerived", "_renderPassDerived",
+      "depthWrite", "style", "size", "attenuation",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.lights, [
       "id", "kind", "color", "groundColor", "intensity", "x", "y", "z",
@@ -370,13 +372,15 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.objects, [
       "id", "kind", "material", "materialIndex", "color", "opacity", "emissive",
-      "roughness", "metalness", "ior", "specularIntensity", "specularColor", "lineWidth", "x", "y", "z", "rotationX",
+      "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "lineWidth", "x", "y", "z", "rotationX",
       "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
+      "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
       "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
-      "vertexCount", "color", "opacity", "roughness", "metalness", "ior",
+      "vertexCount", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
       "specularIntensity", "specularColor",
+      "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
       "id", "material", "materialIndex", "count", "color", "size", "opacity",
@@ -385,7 +389,8 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.instancedMeshes, [
       "id", "kind", "material", "materialIndex", "count", "color", "roughness",
-      "metalness", "ior", "specularIntensity", "specularColor", "width", "height", "depth", "radius",
+      "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "width", "height", "depth", "radius",
+      "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.labels, [
       "id", "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -428,6 +433,36 @@
     return hash;
   }
 
+  function scenePlannerAlphaCutoffRawText(value) {
+    // Type-aware raw scalar text for CSS input hashing of alphaCutoff:
+    // undefined (absence / inheritance), explicit null (disabled) and 0
+    // must stay distinct, and numbers keep full precision (no *1000
+    // quantization, which would collapse close cutoffs).
+    if (value === undefined) {
+      return "undefined";
+    }
+    if (value === null) {
+      return "null";
+    }
+    if (typeof value === "number") {
+      return String(value);
+    }
+    if (typeof value === "string") {
+      return "s:" + value;
+    }
+    return String(value);
+  }
+
+  function scenePlannerAlphaCutoffText(value) {
+    // Exact text for the already-normalized cutoff: omitted and explicit
+    // null both normalize to the disabled state, while any valid number
+    // serializes at full precision so .3 and .3000001 stay distinct.
+    if (value === null || value === undefined) {
+      return "null";
+    }
+    return String(value);
+  }
+
   function sceneCSSHashRecordKeys(hash, record, keys) {
     if (!record || typeof record !== "object") {
       return scenePlannerHashString(hash, "null");
@@ -443,6 +478,14 @@
         // objects, meshObjects and instancedMeshes without changing hash
         // semantics for any other field.
         hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(record[key]));
+        continue;
+      }
+      if (key === "alphaCutoff") {
+        // Full-precision, type-aware hashing for the alpha cutoff only:
+        // absence, explicit null and 0 are distinct CSS inputs, and close
+        // numeric values must not collapse. No other field's hashing
+        // changes.
+        hash = scenePlannerHashString(hash, scenePlannerAlphaCutoffRawText(record[key]));
         continue;
       }
       hash = scenePlannerHashAny(hash, record[key], 0);
@@ -523,7 +566,12 @@
       }
       return;
     }
-    const signature = sceneCSSRecordPatchSignature(patches);
+    // Routing provenance (derived vs authored) participates in the patch
+    // cache signature so a cached resolution can never restore a stale
+    // route onto a record whose authoredness changed.
+    const signature = sceneCSSRecordPatchSignature(patches) +
+      "|routing:" + String(sourceRecord._blendModeDerived === true) +
+      String(sourceRecord._renderPassDerived === true);
     const existingCache = sourceRecord._sceneCSSPatchCache;
     if (
       existingCache &&
@@ -603,6 +651,7 @@
     sceneCSSResolveCollectionKeys(state, css, "materials", [
       "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "specularIntensity", "specularColor",
+      "alphaCutoff",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
     ], null);
@@ -614,12 +663,14 @@
     sceneCSSResolveCollectionKeys(state, css, "objects", [
       "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "specularIntensity", "specularColor",
+      "alphaCutoff",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineWidth",
       "x", "y", "z", "rotationX", "rotationY", "rotationZ",
       "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "meshObjects", [
       "depthCenter", "vertexOffset", "vertexCount", "ior", "specularIntensity", "specularColor",
+      "alphaCutoff",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "points", [
       "color", "size", "opacity", "x", "y", "z",
@@ -627,7 +678,7 @@
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "instancedMeshes", [
       "color", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
-      "width", "height", "depth", "radius",
+      "alphaCutoff", "width", "height", "depth", "radius",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "labels", [
       "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -1499,13 +1550,38 @@
   }
 
   function scenePlannerObjectRenderPass(object, material) {
-    const objectPass = object && typeof object.renderPass === "string" ? object.renderPass.toLowerCase() : "";
+    // Derived object passes are cached computed defaults; freshly evaluated
+    // material routing (e.g. after real CSS substitution) wins. Raw and
+    // explicit object passes keep precedence.
+    const objectPass = object && object._renderPassDerived === true
+      ? ""
+      : (object && typeof object.renderPass === "string" ? object.renderPass.toLowerCase() : "");
     if (objectPass === "opaque" || objectPass === "alpha" || objectPass === "additive") {
       return objectPass;
     }
-    const materialPass = material && typeof material.renderPass === "string" ? material.renderPass.toLowerCase() : "";
-    if (materialPass === "opaque" || materialPass === "alpha" || materialPass === "additive") {
-      return materialPass;
+    // Computed (derived-marker) material routes re-evaluate from the
+    // effective fields — so a material whose CSS var alphaCutoff has just
+    // been resolved re-routes here. Raw unmarked values keep the legacy
+    // thresholds (opacity < 1) instead of the generic < 0.999 split.
+    if (material && (material._renderPassDerived === true ||
+        material._blendModeDerived === true)) {
+      return sceneMaterialRenderPass(material);
+    }
+    const rawRenderPass = material && typeof material.renderPass === "string"
+      ? material.renderPass.toLowerCase() : "";
+    if (rawRenderPass === "opaque" || rawRenderPass === "alpha" || rawRenderPass === "additive") {
+      return rawRenderPass;
+    }
+    const rawBlend = material && typeof material.blendMode === "string"
+      ? material.blendMode.toLowerCase() : "";
+    if (rawBlend === "additive") {
+      return "additive";
+    }
+    if (rawBlend === "alpha") {
+      return "alpha";
+    }
+    if (sceneMaterialMaskOpaqueRouting(material)) {
+      return "opaque";
     }
     if (material && sceneNumber(material.opacity, 1) < 1) {
       return "alpha";
@@ -1569,6 +1645,11 @@
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+    // Pass routing and derived provenance participate in the signature so a
+    // raw/derived override toggle on an unchanged material cannot reuse a
+    // stale prepared bucket — before the retained fast-path return.
+    hash = scenePlannerHashString(hash, object && typeof object.renderPass === "string" ? object.renderPass : "");
+    hash = scenePlannerHashNumber(hash, object && object._renderPassDerived === true ? 1 : 0);
     if (object && object.retainedGeometry) {
       scenePlannerTelemetryState.retainedHashFastPaths += 1;
       hash = scenePlannerHashString(hash, String(object.geometryRevision == null ? 0 : object.geometryRevision));
@@ -1589,7 +1670,11 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
     hash = scenePlannerHashNumber(hash, object && object.static ? 1 : 0);
-    return scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
+    hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
+    // Line passes follow the same derived-marker routing; hash the pass and
+    // marker so toggling the override invalidates prepared buckets.
+    hash = scenePlannerHashString(hash, object && typeof object.renderPass === "string" ? object.renderPass : "");
+    return scenePlannerHashNumber(hash, object && object._renderPassDerived === true ? 1 : 0);
   }
 
   function scenePlannerHashMaterial(hash, material) {
@@ -1615,6 +1700,7 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.emissive, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.roughness, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.metalness, 0));
+    hash = scenePlannerHashString(hash, String(sceneBool(material && material.unlit, false)));
     // Authored ior drives the dielectric F0 uniform; hash it explicitly so
     // material records without a stable profile key still invalidate the
     // prepared-scene signature when it changes.
@@ -1627,6 +1713,19 @@
     // the prepared-scene signature when they change.
     hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(sceneNormalizeMaterialSpecularIntensity(material && material.specularIntensity, 1)));
     hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(sceneNormalizeMaterialSpecularColor(material && material.specularColor, null)));
+    // Normalized alpha cutoff feeds planner profile preparation; hash it
+    // via the existing normalizer so omitted and explicit null both hash
+    // as the disabled state (matching at the finalized profile level),
+    // disabled stays distinct from an explicit 0, and the exact string
+    // serialization keeps .3 and .3000001 distinct even when the material
+    // has a stable key. The shared *1000 quantization would collapse
+    // these cases.
+    hash = scenePlannerHashString(hash, scenePlannerAlphaCutoffText(sceneNormalizeMaterialAlphaCutoff(material && material.alphaCutoff)));
+    // Derived-vs-authored routing provenance changes pass routing
+    // behavior; include it so otherwise-identical profiles never share a
+    // prepared-scene signature.
+    hash = scenePlannerHashString(hash, String(material && material._blendModeDerived === true));
+    hash = scenePlannerHashString(hash, String(material && material._renderPassDerived === true));
     return scenePlannerHashNumber(hash, material && material.wireframe ? 1 : 0);
   }
 

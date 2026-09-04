@@ -379,7 +379,7 @@ test("late ordinary WebGPU bitmap completion destroys its replacement texture", 
   assert.equal(notifications, 0, "a disposed WebGPU bitmap completion must not request another frame");
 });
 
-test("specular-color WebGPU uploads decode unpremultiplied; other roles keep prior decode", async () => {
+test("specular-color and base-color WebGPU uploads decode unpremultiplied; other roles keep prior decode", async () => {
   const { win, context, loader } = loadInternalTextureLoader(webgpuChunk, "wgpuLoadTexture");
   win.GPUTextureUsage = {
     COPY_DST: 0x02,
@@ -452,10 +452,10 @@ test("specular-color WebGPU uploads decode unpremultiplied; other roles keep pri
   images[1].onload();
   await settle();
   assert.equal(baseRecord.loaded, true, "the base-color texture must still load");
-  assert.equal(baseOptionCalls[0], undefined,
-    "base-color must keep the default decode, not the specular-color override");
-  assert.equal(baseCopies[0].destination.premultipliedAlpha, undefined,
-    "base-color copy must keep prior destination options");
+  assert.equal(baseOptionCalls[0]?.premultiplyAlpha, "none",
+    "base-color decode must request unpremultiplied pixels so RGB survives alpha=0");
+  assert.equal(baseCopies[0].destination.premultipliedAlpha, false,
+    "base-color copy must not premultiply at upload time");
   assert.equal(baseFormats[0], "rgba8unorm",
     "the base-color placeholder texture keeps the linear format");
   assert.equal(baseFormats[1], "rgba8unorm",

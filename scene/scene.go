@@ -1501,7 +1501,8 @@ type StandardMaterial struct {
 	// Wireframe opts a standard PBR surface into edge-only rendering. A nil
 	// value is solid; use Bool(true) to request the compatibility wireframe
 	// presentation explicitly.
-	Wireframe *bool
+	Wireframe   *bool
+	AlphaCutoff AlphaCutoff `json:"alphaCutoff,omitzero"`
 }
 
 type quaternion struct {
@@ -2963,6 +2964,9 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if wireframe, ok := mapBool(materialProps["wireframe"]); ok {
 			record.Wireframe = Bool(wireframe)
 		}
+		if v, ok := materialProps["alphaCutoff"]; ok {
+			record.AlphaCutoff = alphaCutoffFromAny(v, true)
+		}
 		record.Roughness = mapFloat64(materialProps["roughness"])
 		record.Metalness = mapFloat64(materialProps["metalness"])
 		record.Clearcoat = mapFloat64(materialProps["clearcoat"])
@@ -3532,6 +3536,9 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 				record.Emissive = &f
 			}
 		}
+		if v, ok := mat["alphaCutoff"]; ok {
+			record.AlphaCutoff = alphaCutoffFromAny(v, true)
+		}
 	}
 	l.instancedGLBMeshes = append(l.instancedGLBMeshes, record)
 }
@@ -4012,6 +4019,9 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if wireframe, ok := mapBool(props["wireframe"]); ok {
 		record.Wireframe = Bool(wireframe)
 	}
+	if v, ok := props["alphaCutoff"]; ok {
+		record.AlphaCutoff = alphaCutoffFromAny(v, true)
+	}
 	if lineDash, ok := mapBool(props["lineDash"]); ok {
 		record.LineDash = Bool(lineDash)
 	}
@@ -4446,6 +4456,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		if m.Wireframe != nil {
 			record.Wireframe = m.Wireframe
 		}
+		record.AlphaCutoff = m.AlphaCutoff
 		record.CustomVertex = strings.TrimSpace(m.VertexGLSL)
 		record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
 		record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
@@ -4497,6 +4508,7 @@ func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial
 		record.BlendMode = string(material.BlendMode)
 	}
 	record.Wireframe = standardMaterialWireframe(material.Wireframe)
+	record.AlphaCutoff = material.AlphaCutoff
 }
 
 func applyMaterialStyleToObjectIR(record *ObjectIR, kind MaterialKind, style MaterialStyle) {
@@ -4599,6 +4611,7 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumericPtr(out, "opacity", m.Opacity)
 	setString(out, "blendMode", string(m.BlendMode))
 	setBool(out, "wireframe", m.Wireframe)
+	setAlphaCutoff(out, "alphaCutoff", m.AlphaCutoff)
 	if len(out) == 0 {
 		return nil
 	}

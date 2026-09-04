@@ -125,7 +125,10 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const ENGINE = 'gosx-engine-ior-browser';
 const MOUNT = 'scene-ior-browser';
 const W = 256, H = 192;
-const OVERALL_MS = 180000;
+// Raised 180000 -> 210000: probe grew from 181 to 197 cases; the last run
+// finished all 181 old cases, reproduced 14 new-case failures, and still hit
+// the overall watchdog near case 193, so the budget needs ~30s more headroom.
+const OVERALL_MS = 210000;
 const CASE_WAIT_MS = 20000;
 const SETTLE_MS = 600;
 const FG_THRESHOLD = 12;   // min channel delta vs measured corner background
@@ -164,6 +167,9 @@ function buildQuadGLB(withIor, spec, alpha) {
     material.extensions = { KHR_materials_ior: { ior: 2.42 } };
   }
   if (alpha && alpha.mode) material.alphaMode = alpha.mode;
+  // MASK fixtures only: a defined cutoff (including the explicit 0) is
+  // copied to material.alphaCutoff and nothing else in the fixture changes.
+  if (alpha && alpha.cutoff !== undefined) material.alphaCutoff = alpha.cutoff;
   if (spec) {
     material.extensions = material.extensions || {};
     material.extensions.KHR_materials_specular = {
@@ -275,6 +281,11 @@ const TEX_PNGS = {
   '/tex/spec-color-tint-alpha0.png': makePNG([128, 64, 255], 0),
   '/tex/spec-color-tint-alpha128.png': makePNG([128, 64, 255], 128),
   '/tex/spec-color-hdr.png': makePNG([64, 128, 255], 255),
+  // Base-color texture slice: flat white RGB with varied alpha, so the RGB
+  // role is fixed and only the alpha channel varies across the trio.
+  '/tex/alb-white-a0.png': makePNG([255, 255, 255], 0),
+  '/tex/alb-white-a128.png': makePNG([255, 255, 255], 128),
+  '/tex/alb-white-a255.png': makePNG([255, 255, 255], 255),
 };
 let texServed = {};
 
@@ -324,6 +335,12 @@ function buildQuadGLBTex(opts) {
   if (opts.colorTex) specExt.specularColorTexture = { index: textures.length - 1 };
   if (opts.specFactor != null) specExt.specularFactor = opts.specFactor;
   if (opts.specColor) specExt.specularColorFactor = opts.specColor;
+  if (opts.baseAlpha !== undefined) {
+    material.pbrMetallicRoughness.baseColorFactor = [0.69, 0.31, 0.24, opts.baseAlpha];
+  }
+  const baseColorIndex = opts.baseColorTex !== undefined
+    ? textures.length
+    : undefined;
   const extUsed = [];
   if (Object.keys(specExt).length) {
     material.extensions = { KHR_materials_specular: specExt };
@@ -333,6 +350,20 @@ function buildQuadGLBTex(opts) {
     material.extensions = material.extensions || {};
     material.extensions.KHR_materials_ior = { ior: opts.ior };
     extUsed.push('KHR_materials_ior');
+  }
+  if (opts.alphaMode !== undefined) material.alphaMode = opts.alphaMode;
+  if (opts.alphaCutoff !== undefined) material.alphaCutoff = opts.alphaCutoff;
+  if (opts.baseColorTex !== undefined) {
+    material.pbrMetallicRoughness.baseColorTexture = { index: baseColorIndex };
+  }
+  if (opts.unlit) {
+    material.extensions = material.extensions || {};
+    material.extensions.KHR_materials_unlit = {};
+    extUsed.push('KHR_materials_unlit');
+  }
+  if (opts.baseColorTex !== undefined) {
+    textures.push({ sampler: 0, source: images.length });
+    images.push({ uri: opts.baseColorTex });
   }
   const json = {
     asset: { version: '2.0', generator: 'scene3d-material-ior-browser probe' },
@@ -372,6 +403,38 @@ const glbTexMetalAlpha255 = buildQuadGLBTex({ png: '/tex/spec-alpha255.png', met
 const glbTexIblAlpha0 = buildQuadGLBTex({ png: '/tex/spec-alpha0-white.png', ior: 1 });
 const glbTexIblAlpha255 = buildQuadGLBTex({ png: '/tex/spec-alpha255.png', ior: 1 });
 const glbSpec128 = buildQuadGLB(false, { factor: 128 / 255, color: [1, 1, 1] });
+// ---- Masked/unlit baseColorTexture fixtures (masktex slice) ---------------
+// Each fixture is a quad with a baseColorTexture (alpha comes from the PNG
+// texels), ior 2.42, and combinations of alphaMode/alphaCutoff/unlit and
+// baseAlpha factor. Expected opacity/cutoff/emptiness is authored per-case
+// below, never derived from shader math.
+const glbMasktexControl = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a255.png', ior: 2.42 });
+const glbMasktexOpaqueA0 = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a0.png', ior: 2.42 });
+const glbMasktexMaskA0 = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a0.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0.5 });
+const glbMasktexMaskA255 = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a255.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0.5 });
+const glbMasktexMaskA128 = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a128.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0.5 });
+const glbMasktexMaskA128F5 = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a128.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0.5, baseAlpha: 0.5 });
+const glbMasktexMaskC0F0 = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a0.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0, baseAlpha: 0 });
+const glbMasktexUnlitControl = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a255.png', ior: 2.42, unlit: true });
+const glbMasktexUnlitDiscard = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a128.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0.5, baseAlpha: 0.5, unlit: true });
+const glbMasktexUnlitSurvive = buildQuadGLBTex({
+  baseColorTex: '/tex/alb-white-a128.png', ior: 2.42,
+  alphaMode: 'MASK', alphaCutoff: 0.5, unlit: true });
 const GLB_FILES = {
   '/models/quad-tex-alpha255.glb': glbTexAlpha255,
   '/models/quad-tex-alpha0.glb': glbTexAlpha0,
@@ -382,6 +445,16 @@ const GLB_FILES = {
   '/models/quad-tex-ibl-alpha0.glb': glbTexIblAlpha0,
   '/models/quad-tex-ibl-alpha255.glb': glbTexIblAlpha255,
   '/models/quad-spec-128.glb': glbSpec128,
+  '/models/gl-masktex-control.glb': glbMasktexControl,
+  '/models/gl-masktex-opaque-a0.glb': glbMasktexOpaqueA0,
+  '/models/gl-masktex-mask-a0.glb': glbMasktexMaskA0,
+  '/models/gl-masktex-mask-a255.glb': glbMasktexMaskA255,
+  '/models/gl-masktex-mask-a128.glb': glbMasktexMaskA128,
+  '/models/gl-masktex-mask-a128-f5.glb': glbMasktexMaskA128F5,
+  '/models/gl-masktex-mask-c0-f0.glb': glbMasktexMaskC0F0,
+  '/models/gl-masktex-unlit-control.glb': glbMasktexUnlitControl,
+  '/models/gl-masktex-unlit-discard.glb': glbMasktexUnlitDiscard,
+  '/models/gl-masktex-unlit-survive.glb': glbMasktexUnlitSurvive,
 };
 
 // ---- Specular-COLOR texture fixtures (color-texture slice) ----------------
@@ -442,8 +515,9 @@ Object.assign(GLB_FILES, {
 // Alpha variants of the SAME valid quad (identical positions/normals/indices,
 // KHR IOR 2.42 in every variant); only baseColorFactor alpha and alphaMode
 // vary. Served at distinct /models/alpha-*.glb paths. No alpha textures and
-// no MASK claims; OPAQUE forces effective opacity 1 regardless of authored
-// alpha, BLEND preserves it.
+// no unlit variants; OPAQUE forces effective opacity 1 regardless of authored
+// alpha, BLEND preserves it. The MASK variants add only material.alphaCutoff
+// (factor-only masking, cutoff .5 / 0 / 2); no texture-based MASK fixtures.
 const glbAlphaOmitA0 = buildQuadGLB(true, null, { alpha: 0 });
 const glbAlphaOPA0 = buildQuadGLB(true, null, { alpha: 0, mode: 'OPAQUE' });
 const glbAlphaOPA25 = buildQuadGLB(true, null, { alpha: 0.25, mode: 'OPAQUE' });
@@ -455,6 +529,11 @@ const alphaGLBs = {
   'alpha-blend-a25': buildQuadGLB(true, null, { alpha: 0.25, mode: 'BLEND' }),
   'alpha-blend-a1': buildQuadGLB(true, null, { alpha: 1, mode: 'BLEND' }),
   'alpha-override-a25': glbAlphaOmitA0,
+  'alpha-mask-c5-f25': buildQuadGLB(true, null, { alpha: 0.25, mode: 'MASK' }),
+  'alpha-mask-c5-f5': buildQuadGLB(true, null, { alpha: 0.5, mode: 'MASK', cutoff: 0.5 }),
+  'alpha-mask-c0-f0': buildQuadGLB(true, null, { alpha: 0, mode: 'MASK', cutoff: 0 }),
+  'alpha-mask-c2-f1': buildQuadGLB(true, null, { alpha: 1, mode: 'MASK', cutoff: 2 }),
+  'alpha-mask-c5-f1': buildQuadGLB(true, null, { alpha: 1, mode: 'MASK', cutoff: 0.5 }),
 };
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
@@ -545,6 +624,44 @@ const CASES = [
   { name: 'glb-alpha-override25',
     model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 0.25, same: 'glb-alpha-blend25' },
+  // glTF MASK: real COLOR-PASS alpha-mask checks on BOTH backends restricted
+  // to factor-only fill masking (no alpha-mask texture, no cutout shadow,
+  // no wireframe). Every MASK case forces wireframe:false so the comparison
+  // is FILL pixels only, made against the dedicated per-backend FILL control
+  // (alpha-opaque-a1 with wireframe:false and no authored cutoff; the WebGL
+  // glb-mask-fill-control and the WebGPU wg-mask-fill-control), not a
+  // default-wireframe opaque case, and same/diff references always name the
+  // same-backend FILL control. The cutoff uniform (WebGL) / 208-byte upload
+  // float index 42 (WebGPU) is observed at the SAME opacity/F0/F90-qualified
+  // PBR draw/upload as opacity.
+  // c5-f25: fill alpha 0.25 < cutoff 0.5 -> every fill fragment discarded,
+  // strict empty screenshot (full background, zero foreground), meaningfully
+  // different from the FILL control. c5-f5: fill alpha == cutoff keeps the
+  // fragment (>= comparison), pixel-identical to the FILL control. c0-f0:
+  // explicit cutoff 0 keeps fill-alpha-0 fragments, still matching the FILL
+  // control (CPU hide-gate regression for a cutoff of exactly 0). c2-f1:
+  // cutoff 2 discards fill alpha 1 -> strict empty screenshot. c5-f1:
+  // survives and matches the FILL control. expectedEmpty cases still perform
+  // a real PBR draw with expected uniforms and full readiness; only the
+  // pixel-content assertion differs (strict all-background, zero-foreground).
+  { name: 'glb-mask-fill-control',
+    model: AMODEL('alpha-opaque-a1', { wireframe: false }), f0: F0(2.42),
+    expectedOpacity: 1, expectedAlphaCutoff: -1 },
+  { name: 'glb-mask-c5-f25', model: AMODEL('alpha-mask-c5-f25', { wireframe: false }),
+    expectedOpacity: 0.25, expectedAlphaCutoff: 0.5, expectedEmpty: true,
+    f0: F0(2.42), differs: 'glb-mask-fill-control', minChanged: 50 },
+  { name: 'glb-mask-c5-f5', model: AMODEL('alpha-mask-c5-f5', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    same: 'glb-mask-fill-control' },
+  { name: 'glb-mask-c0-f0', model: AMODEL('alpha-mask-c0-f0', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0, expectedAlphaCutoff: 0,
+    same: 'glb-mask-fill-control' },
+  { name: 'glb-mask-c2-f1', model: AMODEL('alpha-mask-c2-f1', { wireframe: false }),
+    expectedOpacity: 1, expectedAlphaCutoff: 2, expectedEmpty: true,
+    f0: F0(2.42), differs: 'glb-mask-fill-control', minChanged: 50 },
+  { name: 'glb-mask-c5-f1', model: AMODEL('alpha-mask-c5-f1', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'glb-mask-fill-control' },
   WG({ name: 'wg-alpha-pass1', model: AMODEL('alpha-opaque-a1', { renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 1, base: 'wgap1' }),
   WG({ name: 'wg-alpha-opaque1', model: AMODEL('alpha-opaque-a1'), f0: F0(2.42),
@@ -562,7 +679,182 @@ const CASES = [
   WG({ name: 'wg-alpha-override25',
     model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 0.25, same: 'wg-alpha-blend25' }),
+  // WebGPU MASK mirror of the glb-mask-* cases: same fixtures, same
+  // wireframe:false FILL-only comparisons, same expectedEmpty semantics;
+  // cutoff is validated in the 208-byte material upload (float index 42).
+  WG({ name: 'wg-mask-fill-control',
+    model: AMODEL('alpha-opaque-a1', { wireframe: false }), f0: F0(2.42),
+    expectedOpacity: 1, expectedAlphaCutoff: -1 }),
+  WG({ name: 'wg-mask-c5-f25', model: AMODEL('alpha-mask-c5-f25', { wireframe: false }),
+    expectedOpacity: 0.25, expectedAlphaCutoff: 0.5, expectedEmpty: true,
+    f0: F0(2.42), differs: 'wg-mask-fill-control', minChanged: 50 }),
+  WG({ name: 'wg-mask-c5-f5', model: AMODEL('alpha-mask-c5-f5', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    same: 'wg-mask-fill-control' }),
+  WG({ name: 'wg-mask-c0-f0', model: AMODEL('alpha-mask-c0-f0', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0, expectedAlphaCutoff: 0,
+    same: 'wg-mask-fill-control' }),
+  WG({ name: 'wg-mask-c2-f1', model: AMODEL('alpha-mask-c2-f1', { wireframe: false }),
+    expectedOpacity: 1, expectedAlphaCutoff: 2, expectedEmpty: true,
+    f0: F0(2.42), differs: 'wg-mask-fill-control', minChanged: 50 }),
+  WG({ name: 'wg-mask-c5-f1', model: AMODEL('alpha-mask-c5-f1', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'wg-mask-fill-control' }),
 ];
+
+// ---- Masked/unlit baseColorTexture cases (both backends) ------------------
+// Controls precede their dependents; every same/differs reference points at
+// the SAME-backend control. expectedOpacity/expectedAlphaCutoff/expectedEmpty/
+// expectedUnlit are authored explicit values, never derived from shader
+// coverage math or observed runtime state.
+CASES.push(...[
+  { name: 'gl-masktex-control',
+    model: AMODEL('gl-masktex-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    expectedUnlit: false },
+  { name: 'gl-masktex-opaque-a0',
+    model: AMODEL('gl-masktex-opaque-a0', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a0.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    same: 'gl-masktex-control', expectedUnlit: false },
+  { name: 'gl-masktex-mask-a0',
+    model: AMODEL('gl-masktex-mask-a0', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a0.png'],
+    f0: F0(2.42), expectedEmpty: true,
+    differs: 'gl-masktex-control', minChanged: 50,
+    expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    expectedUnlit: false },
+  { name: 'gl-masktex-mask-a255',
+    model: AMODEL('gl-masktex-mask-a255', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'gl-masktex-control', expectedUnlit: false },
+  { name: 'gl-masktex-mask-a128',
+    model: AMODEL('gl-masktex-mask-a128', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'gl-masktex-control', expectedUnlit: false },
+  { name: 'gl-masktex-mask-a128-f5',
+    model: AMODEL('gl-masktex-mask-a128-f5', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedEmpty: true,
+    differs: 'gl-masktex-control', minChanged: 50,
+    expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    expectedUnlit: false },
+  { name: 'gl-masktex-mask-c0-f0',
+    model: AMODEL('gl-masktex-mask-c0-f0', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a0.png'],
+    f0: F0(2.42), expectedOpacity: 0, expectedAlphaCutoff: 0,
+    same: 'gl-masktex-control', expectedUnlit: false },
+  { name: 'gl-masktex-unlit-control',
+    model: AMODEL('gl-masktex-unlit-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    expectedUnlit: true },
+  { name: 'gl-masktex-unlit-discard',
+    model: AMODEL('gl-masktex-unlit-discard', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedEmpty: true,
+    differs: 'gl-masktex-unlit-control', minChanged: 50,
+    expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    expectedUnlit: true },
+  { name: 'gl-masktex-unlit-survive',
+    model: AMODEL('gl-masktex-unlit-survive', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'gl-masktex-unlit-control', expectedUnlit: true },
+  WG({ name: 'wg-masktex-control',
+    model: AMODEL('gl-masktex-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    expectedUnlit: false }),
+  WG({ name: 'wg-masktex-opaque-a0',
+    model: AMODEL('gl-masktex-opaque-a0', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a0.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    same: 'wg-masktex-control', expectedUnlit: false }),
+  WG({ name: 'wg-masktex-mask-a0',
+    model: AMODEL('gl-masktex-mask-a0', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a0.png'],
+    f0: F0(2.42), expectedEmpty: true,
+    differs: 'wg-masktex-control', minChanged: 50,
+    expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    expectedUnlit: false }),
+  WG({ name: 'wg-masktex-mask-a255',
+    model: AMODEL('gl-masktex-mask-a255', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'wg-masktex-control', expectedUnlit: false }),
+  WG({ name: 'wg-masktex-mask-a128',
+    model: AMODEL('gl-masktex-mask-a128', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'wg-masktex-control', expectedUnlit: false }),
+  WG({ name: 'wg-masktex-mask-a128-f5',
+    model: AMODEL('gl-masktex-mask-a128-f5', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedEmpty: true,
+    differs: 'wg-masktex-control', minChanged: 50,
+    expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    expectedUnlit: false }),
+  WG({ name: 'wg-masktex-mask-c0-f0',
+    model: AMODEL('gl-masktex-mask-c0-f0', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a0.png'],
+    f0: F0(2.42), expectedOpacity: 0, expectedAlphaCutoff: 0,
+    same: 'wg-masktex-control', expectedUnlit: false }),
+  WG({ name: 'wg-masktex-unlit-control',
+    model: AMODEL('gl-masktex-unlit-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    expectedUnlit: true }),
+  WG({ name: 'wg-masktex-unlit-discard',
+    model: AMODEL('gl-masktex-unlit-discard', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedEmpty: true,
+    differs: 'wg-masktex-unlit-control', minChanged: 50,
+    expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    expectedUnlit: true }),
+  WG({ name: 'wg-masktex-unlit-survive',
+    model: AMODEL('gl-masktex-unlit-survive', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a128.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'wg-masktex-unlit-control', expectedUnlit: true }),
+]);
+
+// ---- Unlit-flag propagation + light-invariance cases (both backends) ------
+// Authored expectations only: expectedUnlit is never derived from observed or
+// runtime state. The dark cases run keyLightIntensity:0; unlit-dark must be
+// byte-identical to the SAME-backend unlit control (light-independent), while
+// lit-dark must differ from the SAME-backend lit control with the key light ON
+CASES.push(...[
+  { name: 'gl-unlit-dark',
+    model: AMODEL('gl-masktex-unlit-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    keyLightIntensity: 0,
+    same: 'gl-masktex-unlit-control', expectedUnlit: true },
+  { name: 'gl-lit-dark',
+    model: AMODEL('gl-masktex-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    keyLightIntensity: 0,
+    differs: 'gl-masktex-control', minChanged: 50,
+    expectedUnlit: false },
+  WG({ name: 'wg-unlit-dark',
+    model: AMODEL('gl-masktex-unlit-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    keyLightIntensity: 0,
+    same: 'wg-masktex-unlit-control', expectedUnlit: true }),
+  WG({ name: 'wg-lit-dark',
+    model: AMODEL('gl-masktex-control', { wireframe: false }),
+    albedoTex: true, requiredTex: ['/tex/alb-white-a255.png'],
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: -1,
+    keyLightIntensity: 0,
+    differs: 'wg-masktex-control', minChanged: 50,
+    expectedUnlit: false }),
+]);
 
 // ---- Direct-light specular-factor cases (both backends) ----
 // Each definition below is instantiated once on WebGL and once on the required
@@ -1072,7 +1364,144 @@ const SPEC_COLOR_ENV = () => ({ ambientIntensity: 0, skyIntensity: 0, groundInte
     environment: { envMap: '/tex/spec-color-white.png' },
     requiredTex: ['/tex/spec-color-white.png'] },
 ].forEach((c) => CASES.push(c));
+
+// ---- Alpha-mask ROUTING defaults: direct built-in masked meshes on BOTH
+// backends. One single standard-material, wireframe:false OBJ mesh per case
+// (common shape/color/roughness/IOR); no imported GLB, because glTF already
+// authors an explicit pass. All expectations are authored constants, never
+// computed from runtime values. New native depth/blend observations gate
+// ONLY this group.
+const MASKROUTE_MAT = { color: '#3a7bd5', roughness: 0.35, metalness: 0, ior: 1.5 };
+[false, true].forEach((webgpu) => {
+  const pfx = webgpu ? 'wg-maskroute-' : 'gl-maskroute-';
+  const push = (name, objExtra, extra) => CASES.push(Object.assign({
+    name: pfx + name, webgpu, f0: 0.04, f90: 1,
+    obj: OBJ(Object.assign({}, MASKROUTE_MAT, objExtra)),
+  }, extra));
+  // Opaque control: direct built-in opaque PBR route, no authored cutoff
+  // (uniform/upload sentinel -1), depth-writing, no blend.
+  push('opaque', {},
+    { expectedOpacity: 1, expectedAlphaCutoff: -1,
+      expectedDepthWrite: true, expectedBlend: false });
+  // Built-in MASK inputs (.5/.5) still route as an opaque, depth-writing
+  // PBR draw (no blend pass); pixels match the opaque control.
+  push('mask-c5-f5', { opacity: 0.5, alphaCutoff: 0.5 },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Zero/zero: alpha 0 is not below cutoff 0, so nothing is discarded and
+  // the draw survives on the opaque route, matching the control.
+  push('mask-c0-f0', { opacity: 0, alphaCutoff: 0 },
+    { expectedOpacity: 0, expectedAlphaCutoff: 0,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Factor .25 with cutoff .5: every fragment discarded, strict empty image.
+  push('discard-c5-f25', { opacity: 0.25, alphaCutoff: 0.5 },
+    { expectedOpacity: 0.25, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, expectedEmpty: true,
+      differs: pfx + 'opaque', minChanged: 1 });
+  // Explicit renderPass:'alpha' control: blended route, no depth write,
+  // sentinel cutoff, opaque factor 1.
+  push('alpha-opaque', { opacity: 1, renderPass: 'alpha' },
+    { expectedOpacity: 1, expectedAlphaCutoff: -1,
+      expectedDepthWrite: false, expectedBlend: true });
+  // MASK inputs on the explicit alpha route: surviving fragments force
+  // output alpha 1 in the built-in shader, so pixels match the alpha
+  // control with factor 1; routing (no depth write, blend on) is identical.
+  push('alpha-mask-c5-f5', { opacity: 0.5, alphaCutoff: 0.5, renderPass: 'alpha' },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: false, expectedBlend: true, same: pfx + 'alpha-opaque' });
+  // Mask disabled (explicit alphaCutoff null): fractional opacity routes to
+  // the blended alpha pass; cutoff uniform/upload sentinel -1.
+  push('mask-disabled', { opacity: 0.5, alphaCutoff: null },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: -1,
+      expectedDepthWrite: false, expectedBlend: true });
+  // CSS-authored cutoff: the raw input stays the string
+  // var(--mask-cutoff, 0.5); the runtime effective cutoff is the numeric
+  // 0.5 resolved through the CSS var fallback (no htmlFor change needed).
+  // Still the opaque route.
+  push('mask-css-cutoff', { opacity: 0.5, alphaCutoff: 'var(--mask-cutoff, 0.5)' },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+});
 const byName = {};
+// Verified typed AlphaCutoff fixture: one JSON object on stdout carrying
+// exactly five same-geometry standard-material scenes lowered through the
+// real Go Props{Graph}.SceneIR pipeline plus three real DiffCommands
+// transitions. A missing or invalid fixture is fatal: no probe runs
+// without it. The generated Go objects are used verbatim — no manual
+// alteration of object or material field data.
+let MASK_FIXTURE = null;
+try {
+  MASK_FIXTURE = JSON.parse(execFileSync('go',
+    ['run', './client/js/testdata/alpha-mask-typed-fixture'],
+    { cwd: REPO, encoding: 'utf8', timeout: 60000 }));
+  if (!MASK_FIXTURE || MASK_FIXTURE.schema !== 'gosx.alpha-cutoff.fixture.v1') {
+    throw new Error('bad fixture schema');
+  }
+  const maskSceneNames = Object.keys(MASK_FIXTURE.scenes || {}).sort();
+  if (JSON.stringify(maskSceneNames) !==
+      JSON.stringify(['disabled', 'discard', 'mask', 'opaque', 'zero'])) {
+    throw new Error('expected exactly five fixture scenes');
+  }
+  for (const n of maskSceneNames) {
+    const s = MASK_FIXTURE.scenes[n];
+    if (!s || !Array.isArray(s.objects) || s.objects.length !== 1) {
+      throw new Error('scene ' + n + ': expected exactly one object');
+    }
+    if (!s.objects[0] || s.objects[0].id !== 'typed-mask') {
+      throw new Error('scene ' + n + ': missing typed-mask object');
+    }
+  }
+  const maskTransitionNames = (MASK_FIXTURE.transitions || [])
+    .map((t) => t && t.name).sort();
+  if (JSON.stringify(maskTransitionNames) !==
+      JSON.stringify(['absent-to-zero', 'mask-to-absent', 'mask-to-disabled'])) {
+    throw new Error('expected exactly three fixture transitions');
+  }
+} catch (e) {
+  console.error('alpha-mask-typed-fixture failed: ' + ((e && e.message) || e));
+  process.exit(2);
+}
+// ---- Typed AlphaCutoff ROUTING: the real Go fixture objects on BOTH
+// backends. Each case uses the generated fixture object verbatim (same
+// geometry/color/roughness/IOR; no raw-JS object substitution, no material
+// rewrites). All expectations are authored constants from the fixture
+// contract, never computed from runtime values. The existing native
+// depth/blend/uniform/pixel gates above apply unchanged to this group.
+// Note: discard changes PIXELS only — its routing stays the depth-writing
+// opaque draw, exactly like the opaque control.
+[false, true].forEach((webgpu) => {
+  const pfx = webgpu ? 'wg-typedmask-' : 'gl-typedmask-';
+  const push = (suffix, sceneName, extra) => CASES.push(Object.assign({
+    name: pfx + suffix, webgpu, f0: 0.04, f90: 1,
+    obj: MASK_FIXTURE.scenes[sceneName].objects[0],
+  }, extra));
+  // Opaque control: no authored cutoff (sentinel -1), depth-writing,
+  // no blend, factor 1.
+  push('opaque', 'opaque',
+    { expectedOpacity: 1, expectedAlphaCutoff: -1,
+      expectedDepthWrite: true, expectedBlend: false });
+  // Mask .5/.5: opaque, depth-writing PBR draw; pixels match the control.
+  push('mask', 'mask',
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Zero/zero: alpha 0 is not below cutoff 0; draw survives on the opaque
+  // route, matching the control.
+  push('zero', 'zero',
+    { expectedOpacity: 0, expectedAlphaCutoff: 0,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Cutoff disabled (null): fractional opacity routes to the blended alpha
+  // pass; sentinel cutoff.
+  push('disabled', 'disabled',
+    { expectedOpacity: 0.5, expectedAlphaCutoff: -1,
+      expectedDepthWrite: false, expectedBlend: true,
+      differs: pfx + 'opaque', minChanged: 1 });
+  // Discard 1/2: every fragment discarded, strict empty image, still the
+  // depth-writing opaque route (routing unchanged from the control).
+  push('discard', 'discard',
+    { expectedOpacity: 1, expectedAlphaCutoff: 2,
+      expectedDepthWrite: true, expectedBlend: false, expectedEmpty: true,
+      differs: pfx + 'opaque', minChanged: 1 });
+});
 CASES.forEach((c) => { byName[c.name] = c; });
 
 function propsFor(c) {
@@ -1311,11 +1740,16 @@ async function evalSend(send, expression, extra) {
 // wrapped with its true signature (buffer, bufferOffset, data, dataOffset?,
 // size?) with correct element/byte dataOffset+size semantics, capturing only
   // 208-byte material uploads and reading F0 at float indices 44..46 and F90
-// at 47.
+// at 47, plus the alpha cutoff at float index 42 (byte 168).
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
     lastDrawOpacity: null,
+    lastDrawAlphaCutoff: null,
+    lastDrawDepthWrite: null,
+    lastDrawBlend: null,
+    lastDrawUnlit: null,
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
+    lastDrawHasAlbedoMap: null,
     programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null };
   // Forced MAX_TEXTURE_IMAGE_UNITS caps, selected by the served case pathname
   // so no other case is affected. Used only by the shadow-budget cases.
@@ -1339,6 +1773,7 @@ const PRELOAD = `
     return id;
   }
   window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
+  window.__gosxWGPUDraws = { observed: 0, lastDepthWrite: null, lastBlend: null };
 (function () {
   var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
   var frameBindGroups = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
@@ -1395,6 +1830,52 @@ const PRELOAD = `
           var ov = (om && om.has(cp)) ? this.__origGetUniform.call(this, cp, om.get(cp)) : null;
           window.__gosxIOR.lastDrawOpacity =
             (typeof ov === "number" && Number.isFinite(ov)) ? ov : null;
+          // u_alphaCutoff read through the native getUniform at the SAME
+          // F0/F90-qualified PBR draw, mirroring u_opacity. Missing/inactive
+          // uniform or a nonfinite value stays null and fails the gate.
+          var omc = this.__aclocs;
+          var cvv = (omc && omc.has(cp)) ? this.__origGetUniform.call(this, cp, omc.get(cp)) : null;
+          window.__gosxIOR.lastDrawAlphaCutoff =
+            (typeof cvv === "number" && Number.isFinite(cvv)) ? cvv : null;
+          // Native per-draw depth/blend routing observations at the SAME
+          // F0/F90-qualified PBR draw: the real DEPTH_WRITEMASK via the
+          // saved native getParameter and the real BLEND enable state via
+          // the saved native isEnabled. Strict booleans only; a missing or
+          // failed read is recorded as null and fails the route gates; it
+          // never defaults to an assumed routing state.
+          try {
+            var dwm = this.__origGetParameter.call(this, this.DEPTH_WRITEMASK);
+            window.__gosxIOR.lastDrawDepthWrite =
+              (dwm === true) ? true : (dwm === false) ? false : null;
+          } catch (e4) {
+            window.__gosxIOR.lastDrawDepthWrite = null;
+            noteErr(window.__gosxIOR.obsErrors, e4);
+          }
+          try {
+            var blv = this.__origIsEnabled
+              ? this.__origIsEnabled.call(this, this.BLEND) : null;
+            window.__gosxIOR.lastDrawBlend =
+              (blv === true) ? true : (blv === false) ? false : null;
+          } catch (e5) {
+            window.__gosxIOR.lastDrawBlend = null;
+            noteErr(window.__gosxIOR.obsErrors, e5);
+          }
+          var mul = this.__ulocs;
+          var ulv = (mul && mul.has(cp)) ? this.__origGetUniform.call(this, cp, mul.get(cp)) : null;
+          // u_unlit read through the native getUniform at the SAME F0/F90-
+          // qualified PBR draw. Only an explicit boolean true/false or
+          // numeric 1/0 is accepted; missing/inactive becomes null EVERY draw.
+          window.__gosxIOR.lastDrawUnlit =
+            (ulv === true || ulv === false) ? ulv :
+            (ulv === 1 || ulv === 0) ? ulv === 1 : null;
+          var malb = this.__alblocs;
+          var abv = (malb && malb.has(cp)) ? this.__origGetUniform.call(this, cp, malb.get(cp)) : null;
+          // u_hasAlbedoMap read through the native getUniform at the SAME
+          // F0/F90-qualified PBR draw. Only an explicit boolean true/false or
+          // numeric 1/0 is accepted; missing/inactive becomes null EACH draw.
+          window.__gosxIOR.lastDrawHasAlbedoMap =
+            (abv === true || abv === false) ? abv :
+            (abv === 1 || abv === 0) ? abv === 1 : null;
           var mibl = this.__sibllocs;
           if (mibl && mibl.has(cp)) {
             var vI = this.__origGetUniform.call(this, cp, mibl.get(cp));
@@ -1536,6 +2017,7 @@ const PRELOAD = `
     proto.__gosxIORWrapped = true;
     var gu = proto.getUniformLocation, gp = proto.getParameter, guf = proto.getUniform,
         gpp = proto.getProgramParameter, gau = proto.getActiveUniform,
+        ie = proto.isEnabled,
         da = proto.drawArrays, de = proto.drawElements,
         dai = proto.drawArraysInstanced, dei = proto.drawElementsInstanced,
         gat = proto.activeTexture, gfbt = proto.framebufferTexture2D;
@@ -1543,6 +2025,7 @@ const PRELOAD = `
     proto.__origGetUniform = guf;
     proto.__origGetProgramParameter = gpp;
     proto.__origGetActiveUniform = gau;
+    if (ie) proto.__origIsEnabled = ie;
     if (gat) proto.__origActiveTexture = gat;
     proto.__origGetUniformLocation = gu;
     // Forced-cap interception for MAX_TEXTURE_IMAGE_UNITS (0x8872) only, on
@@ -1593,6 +2076,18 @@ const PRELOAD = `
         if (n === "u_opacity") {
           var mop = this.__oplocs || (this.__oplocs = new Map());
           if (loc) mop.set(p, loc); else mop.delete(p);
+        }
+        if (n === "u_alphaCutoff") {
+          var mac = this.__aclocs || (this.__aclocs = new Map());
+          if (loc) mac.set(p, loc); else mac.delete(p);
+        }
+        if (n === "u_hasAlbedoMap") {
+          var mab = this.__alblocs || (this.__alblocs = new Map());
+          if (loc) mab.set(p, loc); else mab.delete(p);
+        }
+        if (n === "u_unlit") {
+          var mul = this.__ulocs || (this.__ulocs = new Map());
+          if (loc) mul.set(p, loc); else mul.delete(p);
         }
         if (n === "u_specularF0") {
           var m0 = this.__sf0locs || (this.__sf0locs = new Map());
@@ -1685,16 +2180,25 @@ const PRELOAD = `
             var dv = new DataView(buf, base + byteOff, 208);
             var floats = new Array(52);
             for (var i = 0; i < 52; i++) floats[i] = dv.getFloat32(i * 4, true);
-            // float index 6 is the material opacity, captured from the same
-            // actual 208-byte upload as F0/F90.
+            // float index 6 is the material opacity and float index 42
+            // (byte 168) is the alpha cutoff (-1 disabled, 0 valid, >1
+            // finite), both captured from the same actual 208-byte upload
+            // as F0/F90.
             window.__gosxWGPU.dumps.push({
               f0: [floats[44], floats[45], floats[46]], f90: floats[47], opacity: floats[6],
+              alphaCutoff: floats[42],
               floats: floats,
               // hasSpecularIntensityMap flag at float index 41 (byte 164) and
               // hasSpecularColorMap flag at float index 51 (byte 204), each
               // read as an integer word, never via Float32 reinterpretation.
               hasSpecIntensityMap: dv.getUint32(164, true),
-              hasSpecColorMap: dv.getUint32(204, true) });
+              hasSpecColorMap: dv.getUint32(204, true),
+              // hasAlbedoMap flag at byte 52 (u32 index 13), read as an
+              // integer word, never via Float32 reinterpretation.
+              hasAlbedoMap: dv.getUint32(52, true),
+              // unlit flag at byte 48 (u32 index 12), read as an integer
+              // word, never via Float32 reinterpretation.
+              unlit: dv.getUint32(48, true) });
             window.__gosxWGPU.materialUploads += 1;
           }
         }
@@ -1759,6 +2263,97 @@ const PRELOAD = `
   }
   if (typeof GPURenderPassEncoder !== "undefined") wrapSetBindGroup(GPURenderPassEncoder.prototype);
   if (typeof GPURenderBundleEncoder !== "undefined") wrapSetBindGroup(GPURenderBundleEncoder.prototype);
+  if (typeof GPUDevice !== "undefined" && GPUDevice.prototype &&
+      GPUDevice.prototype.createRenderPipeline) {
+    var crp = GPUDevice.prototype.createRenderPipeline;
+    var crpa = GPUDevice.prototype.createRenderPipelineAsync;
+    var wgpuPipelineRoute = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+    // Snapshot only plain routing fields from the descriptor, synchronously;
+    // GPU handles are never stored, copied, or reported.
+    function snapshotRouteDescriptor(d) {
+      if (!d || typeof d !== "object") return null;
+      try {
+        var frag = d.fragment;
+        var tg = frag ? frag.targets : null;
+        var t0 = (tg && tg.length > 0) ? tg[0] : null;
+        var ds = d.depthStencil;
+        // PBR qualification: real gosx-pbr- label, built-in vertex and
+        // fragment entry points, an actual color target AND an explicit
+        // depth-stencil state. The label never supplies the depth/blend
+        // values; shadow-only or generic pipelines never qualify.
+        if (typeof d.label === "string" && d.label.indexOf("gosx-pbr-") === 0 &&
+            d.vertex && d.vertex.entryPoint === "vertexMain" &&
+            frag && frag.entryPoint === "fragmentMain" &&
+            t0 && typeof t0 === "object" && ds && typeof ds === "object") {
+          return {
+            depthWriteEnabled:
+              ds.depthWriteEnabled === true ? true :
+              ds.depthWriteEnabled === false ? false : null,
+            blend: (t0.blend && typeof t0.blend === "object") ? true : false
+          };
+        }
+      } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+      return null;
+    }
+    GPUDevice.prototype.createRenderPipeline = function () {
+      var p = crp.apply(this, arguments);
+      try {
+        var s = snapshotRouteDescriptor(arguments[0]);
+        if (s && wgpuPipelineRoute) wgpuPipelineRoute.set(p, s);
+      } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+      return p;
+    };
+    if (crpa) {
+      GPUDevice.prototype.createRenderPipelineAsync = function () {
+        var args = arguments;
+        // Snapshot synchronously BEFORE awaiting native creation; the
+        // descriptor may be mutated or reused later and is never re-read.
+        var s = null;
+        try { s = snapshotRouteDescriptor(args[0]); }
+        catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+        return crpa.apply(this, arguments).then(function (p) {
+          try { if (s && wgpuPipelineRoute) wgpuPipelineRoute.set(p, s); }
+          catch (e2) { noteErr(window.__gosxWGPU.obsErrors, e2); }
+          return p;
+        });
+      };
+    }
+    // Track the ACTUAL pipeline bound through setPipeline on both encoder
+    // kinds, then record draw count and routing states for successful
+    // native draws only: the native draw runs FIRST, observation after.
+    function wrapPipelineTrack(proto) {
+      if (!proto || !proto.setPipeline || proto.__gosxSPWrapped) return;
+      proto.__gosxSPWrapped = true;
+      var bound = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+      var sp = proto.setPipeline;
+      proto.setPipeline = function () {
+        var r = sp.apply(this, arguments);
+        try {
+          if (bound && arguments[0]) bound.set(this, arguments[0]);
+        } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+        return r;
+      };
+      ["draw", "drawIndexed"].forEach(function (m) {
+        var orig = proto[m];
+        if (!orig) return;
+        proto[m] = function () {
+          var r = orig.apply(this, arguments);
+          try {
+            var pi = bound ? bound.get(this) : null;
+            var s = (pi && wgpuPipelineRoute) ? wgpuPipelineRoute.get(pi) : null;
+            if (s) {
+              window.__gosxWGPUDraws.observed += 1;
+              window.__gosxWGPUDraws.lastDepthWrite = s.depthWriteEnabled;
+              window.__gosxWGPUDraws.lastBlend = s.blend;
+            }
+          } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+          return r;
+        };
+      });
+    }
+    if (typeof GPURenderPassEncoder !== "undefined") wrapPipelineTrack(GPURenderPassEncoder.prototype);
+    if (typeof GPURenderBundleEncoder !== "undefined") wrapPipelineTrack(GPURenderBundleEncoder.prototype);
+  }
 })();
 `;
 
@@ -1805,9 +2400,17 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
   'lastDrawOpacity:(typeof window.__gosxIOR.lastDrawOpacity==="number"?' +
   'window.__gosxIOR.lastDrawOpacity:null),' +
+  'lastDrawAlphaCutoff:(typeof window.__gosxIOR.lastDrawAlphaCutoff==="number"?' +
+  'window.__gosxIOR.lastDrawAlphaCutoff:null),' +
+  'lastDrawDepthWrite:(window.__gosxIOR.lastDrawDepthWrite===true||' +
+  'window.__gosxIOR.lastDrawDepthWrite===false?window.__gosxIOR.lastDrawDepthWrite:null),' +
+  'lastDrawBlend:(window.__gosxIOR.lastDrawBlend===true||' +
+  'window.__gosxIOR.lastDrawBlend===false?window.__gosxIOR.lastDrawBlend:null),' +
   'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
   'lastDrawHasSpecIntensityMap:window.__gosxIOR.lastDrawHasSpecIntensityMap,' +
   'lastDrawHasSpecColorMap:window.__gosxIOR.lastDrawHasSpecColorMap,' +
+  'lastDrawHasAlbedoMap:window.__gosxIOR.lastDrawHasAlbedoMap,' +
+  'lastDrawUnlit:window.__gosxIOR.lastDrawUnlit,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -1819,7 +2422,12 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'wgpu:window.__gosxWGPU?{uploads:window.__gosxWGPU.materialUploads,' +
   'dumps:window.__gosxWGPU.dumps.slice(-4),' +
   'envWords:((typeof window.__gosxWGPUReadEnvWords === "function") ? window.__gosxWGPUReadEnvWords() : null),' +
-  'obsErrors:(window.__gosxWGPU.obsErrors||[]).slice(0,4)}:null};})()';
+  'obsErrors:(window.__gosxWGPU.obsErrors||[]).slice(0,4),' +
+  'wgdraws:(window.__gosxWGPUDraws?{observed:window.__gosxWGPUDraws.observed,' +
+  'lastDepthWrite:(window.__gosxWGPUDraws.lastDepthWrite===true||' +
+  'window.__gosxWGPUDraws.lastDepthWrite===false?window.__gosxWGPUDraws.lastDepthWrite:null),' +
+  'lastBlend:(window.__gosxWGPUDraws.lastBlend===true||' +
+  'window.__gosxWGPUDraws.lastBlend===false?window.__gosxWGPUDraws.lastBlend:null)}:null)}:null};})()';
 
 // Decode the actual screenshot with a native Image + 2D canvas. Measures the
 // real corner background from the image itself, then foreground pixels that
@@ -2013,6 +2621,11 @@ setTimeout(() => {
 
     const rec = { name: c.name, skipped: false };
     if (c.expectedOpacity !== undefined) rec.expectedOpacity = c.expectedOpacity;
+    if (c.expectedAlphaCutoff !== undefined) rec.expectedAlphaCutoff = c.expectedAlphaCutoff;
+    if (c.expectedDepthWrite !== undefined) rec.expectedDepthWrite = c.expectedDepthWrite;
+    if (c.expectedBlend !== undefined) rec.expectedBlend = c.expectedBlend;
+    if (typeof c.expectedUnlit === 'boolean') rec.expectedUnlit = c.expectedUnlit;
+    if (c.expectedEmpty === true) rec.expectedEmpty = true;
     evidence.push(rec);
     // IBL expectation: requiresIBL === true selects the positive gate;
     // noIBL === true selects the explicit-disabled assertions. Cases
@@ -2135,6 +2748,25 @@ setTimeout(() => {
           fail(c.name + (c.webgpu
             ? ': hasSpecularColorMap flag not observed as 1 in any 208-byte upload within '
             : ': u_hasSpecularColorMap not observed loaded (true/1) at production draw within ') +
+            CASE_WAIT_MS + 'ms');
+        }
+      }
+      let albedoReady = false;
+      if (c.albedoTex && ready) {
+        const albDeadline = Date.now() + CASE_WAIT_MS;
+        while (Date.now() < albDeadline && !albedoReady) {
+          const ast = await evalSend(send, READ);
+          if (ast && ast.ior && ast.wgpu) {
+            albedoReady = c.webgpu
+              ? (ast.wgpu.dumps || []).some((d) => d.hasAlbedoMap === 1)
+              : ast.ior.lastDrawHasAlbedoMap === true;
+          }
+          if (!albedoReady) await sleep(50);
+        }
+        if (!albedoReady) {
+          fail(c.name + (c.webgpu
+            ? ': hasAlbedoMap flag not observed as 1 in any 208-byte upload within '
+            : ': u_hasAlbedoMap not observed loaded (true/1) at production draw within ') +
             CASE_WAIT_MS + 'ms');
         }
       }
@@ -2273,9 +2905,11 @@ setTimeout(() => {
           });
           rec.f0InUpload = Boolean(hit);
           if (hit) { rec.uploadF0 = hit.f0; rec.uploadF90 = hit.f90; }
-          if (c.expectedOpacity != null) {
-            // Opacity (float index 6) must be present with the expected RGB
-            // F0 and F90 in the SAME 208-byte upload, not sighted apart.
+          if (c.expectedOpacity != null || c.expectedAlphaCutoff != null ||
+              c.albedoTex || typeof c.expectedUnlit === 'boolean') {
+            // Opacity (float index 6) and the alpha cutoff (float index 42,
+            // byte 168) must be present with the expected RGB F0 and F90 in
+            // the SAME 208-byte upload, never sighted independently.
             let ohit = null;
             (s.wgpu.dumps || []).forEach((d) => {
               if (ohit || !Array.isArray(d.f0) || d.f0.length !== 3) return;
@@ -2285,15 +2919,37 @@ setTimeout(() => {
               }
               if (!(typeof d.f90 === 'number' && Number.isFinite(d.f90) &&
                     Math.abs(d.f90 - expF90) < 1e-4)) return;
-              if (!(typeof d.opacity === 'number' && Number.isFinite(d.opacity) &&
+              if (c.expectedOpacity != null &&
+                  !(typeof d.opacity === 'number' && Number.isFinite(d.opacity) &&
                     Math.abs(d.opacity - c.expectedOpacity) < 1e-4)) return;
-              ohit = true;
+              if (c.expectedAlphaCutoff != null &&
+                  !(typeof d.alphaCutoff === 'number' && Number.isFinite(d.alphaCutoff) &&
+                    Math.abs(d.alphaCutoff - c.expectedAlphaCutoff) < 1e-4)) return;
+              // u_unlit upload flag must match the expected boolean exactly
+              // (1 for true, 0 for false) whenever the case carries one.
+              if (typeof c.expectedUnlit === 'boolean' &&
+                  d.unlit !== (c.expectedUnlit ? 1 : 0)) return;
+              if (c.albedoTex && d.hasAlbedoMap !== 1) return;
+              ohit = d;
             });
-            rec.opacityInUpload = Boolean(ohit);
+            if (typeof c.expectedUnlit === 'boolean') {
+              rec.unlitInUpload = Boolean(ohit);
+              if (ohit) rec.uploadUnlit = ohit.unlit;
+            }
+            if (c.expectedOpacity != null) rec.opacityInUpload = Boolean(ohit);
+            if (c.expectedAlphaCutoff != null) {
+              rec.alphaCutoffInUpload = Boolean(ohit);
+              if (ohit) rec.uploadAlphaCutoff = ohit.alphaCutoff;
+            }
+            if (c.albedoTex) rec.albedoMapFlag = ohit ? ohit.hasAlbedoMap : 0;
             if (!ohit) {
-              fail(c.name + ': expected opacity ' + c.expectedOpacity +
+              fail(c.name + ': expected' +
+                (c.expectedOpacity != null ? ' opacity ' + c.expectedOpacity : '') +
+                (c.expectedAlphaCutoff != null ? ' cutoff ' + c.expectedAlphaCutoff : '') +
+                (typeof c.expectedUnlit === 'boolean' ? ' unlit ' + (c.expectedUnlit ? 1 : 0) : '') +
+                (c.albedoTex ? ' + hasAlbedoMap===1' : '') +
                 ' with F0 [' + expF0.join(',') + '] + F90 ' + expF90 +
-                ' not found together in any 208-byte upload (floats[6]/floats[44..47])');
+                ' not found together in any 208-byte upload (floats[6]/floats[42]/floats[44..47])');
             }
           }
           if (!hit) {
@@ -2398,6 +3054,74 @@ setTimeout(() => {
           rec.uniformOpacity = s.ior.lastDrawOpacity;
           assertClose(s.ior.lastDrawOpacity, c.expectedOpacity, c.name + ' u_opacity at draw');
         }
+        if (c.expectedAlphaCutoff !== undefined) {
+          if (typeof s.ior.lastDrawAlphaCutoff !== 'number' ||
+              !Number.isFinite(s.ior.lastDrawAlphaCutoff)) {
+            fail(c.name + ': u_alphaCutoff not observed at the F0/F90-qualified PBR draw');
+          }
+          rec.uniformAlphaCutoff = s.ior.lastDrawAlphaCutoff;
+          assertClose(s.ior.lastDrawAlphaCutoff, c.expectedAlphaCutoff, c.name + ' u_alphaCutoff at draw');
+        }
+        if (typeof c.expectedUnlit === 'boolean') {
+          // u_unlit must be observed as a strict boolean at the SAME draw;
+          // null/missing never defaults and never passes.
+          if (typeof s.ior.lastDrawUnlit !== 'boolean') {
+            fail(c.name + ': u_unlit not observed as boolean (got ' +
+              JSON.stringify(s.ior.lastDrawUnlit) + ') at the F0/F90-qualified PBR draw');
+            rec.uniformUnlit = null;
+          } else {
+            rec.uniformUnlit = s.ior.lastDrawUnlit;
+            if (s.ior.lastDrawUnlit !== c.expectedUnlit) {
+              fail(c.name + ': u_unlit actual ' + s.ior.lastDrawUnlit +
+                ' != expected ' + c.expectedUnlit + ' at the F0/F90-qualified PBR draw');
+            }
+          }
+        }
+        if (c.albedoTex && !c.webgpu) {
+          if (s.ior.lastDrawHasAlbedoMap !== true) {
+            fail(c.name + ': u_hasAlbedoMap not observed loaded (true/1) at the F0/F90-qualified PBR draw');
+            rec.albedoMapFlag = (s.ior.lastDrawHasAlbedoMap === false) ? 0 : null;
+          } else {
+            rec.albedoMapFlag = 1;
+          }
+        }
+      }
+
+      // Native per-draw depth/blend routing gates: only cases carrying
+      // authored expectedDepthWrite/expectedBlend (the alpha-mask routing
+      // group) are gated. WebGL reads the real DEPTH_WRITEMASK and
+      // isEnabled(BLEND) at the F0/F90-qualified PBR draw; WebGPU reads the
+      // actually drawn PBR-qualified pipeline's descriptor snapshot (never
+      // creation alone, never a requested input, no raw GPU handles). A
+      // missing or failed observation fails; it never defaults.
+      if (c.expectedDepthWrite !== undefined || c.expectedBlend !== undefined) {
+        if (c.webgpu) {
+          const wd = (s.wgpu && s.wgpu.wgdraws) ? s.wgpu.wgdraws : null;
+          if (!wd || !(wd.observed > 0)) {
+            fail(c.name + ': no drawn PBR-qualified WebGPU pipeline observed');
+          } else {
+            rec.drawnPipeline = { depthWrite: wd.lastDepthWrite, blend: wd.lastBlend };
+            if (wd.lastDepthWrite !== c.expectedDepthWrite) {
+              fail(c.name + ': drawn pipeline depthWriteEnabled=' +
+                wd.lastDepthWrite + ' != expected ' + c.expectedDepthWrite);
+            }
+            if (wd.lastBlend !== c.expectedBlend) {
+              fail(c.name + ': drawn pipeline blend=' +
+                wd.lastBlend + ' != expected ' + c.expectedBlend);
+            }
+          }
+        } else {
+          if (s.ior.lastDrawDepthWrite !== c.expectedDepthWrite) {
+            fail(c.name + ': DEPTH_WRITEMASK=' + s.ior.lastDrawDepthWrite +
+              ' != expected ' + c.expectedDepthWrite + ' at the F0/F90-qualified PBR draw');
+          }
+          if (s.ior.lastDrawBlend !== c.expectedBlend) {
+            fail(c.name + ': isEnabled(BLEND)=' + s.ior.lastDrawBlend +
+              ' != expected ' + c.expectedBlend + ' at the F0/F90-qualified PBR draw');
+          }
+          rec.drawnDepthWrite = s.ior.lastDrawDepthWrite;
+          rec.drawnBlend = s.ior.lastDrawBlend;
+        }
       }
 
       cap = await capture(send);
@@ -2412,9 +3136,18 @@ setTimeout(() => {
       const m = cap.metrics;
       rec.litPixels = m.fgPixels; rec.fgFrac = m.fgFrac; rec.meanRGB = m.bg;
       rec.centerRGB = Array.isArray(m.center) ? m.center : null;
-      // Foreground-vs-background proof in ALL cases (including IOR 0 / F0 1).
-      // A pure background image (fg=0) fails this assertion.
-      if (!(m.fgPixels > 0) || !(m.fgFrac >= FG_COVERAGE) || !(m.maxDelta >= FG_THRESHOLD)) {
+      // Only the explicitly tagged new expectedEmpty:true MASK cases assert
+      // an exact background image (every pixel classified background, zero
+      // foreground); readiness, the real PBR draw and the uniform gates above
+      // are never relaxed for them. All older cases keep the unchanged
+      // foreground-vs-background proof (including IOR 0 / F0 1): a pure
+      // background image (fg=0) fails that assertion.
+      if (c.expectedEmpty === true) {
+        if (m.bgPixels !== m.w * m.h || m.fgPixels !== 0) {
+          fail(c.name + ': expectedEmpty case must leave only background ' +
+            '(bg=' + m.bgPixels + ' != ' + (m.w * m.h) + ' or fg=' + m.fgPixels + ')');
+        }
+      } else if (!(m.fgPixels > 0) || !(m.fgFrac >= FG_COVERAGE) || !(m.maxDelta >= FG_THRESHOLD)) {
         fail(c.name + ': no measurable geometry foreground vs measured corner background ' +
           '(fg=' + m.fgPixels + ', frac=' + m.fgFrac.toFixed(4) + ', maxDelta=' + m.maxDelta + ')');
       }
@@ -2585,7 +3318,18 @@ setTimeout(() => {
       uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
       uniformOpacity: r.uniformOpacity, opacityInUpload: r.opacityInUpload,
       expectedOpacity: r.expectedOpacity,
+      expectedAlphaCutoff: r.expectedAlphaCutoff,
+      uniformAlphaCutoff: r.uniformAlphaCutoff,
+      alphaCutoffInUpload: r.alphaCutoffInUpload, uploadAlphaCutoff: r.uploadAlphaCutoff,
+      expectedDepthWrite: r.expectedDepthWrite, expectedBlend: r.expectedBlend,
+      drawnDepthWrite: r.drawnDepthWrite, drawnBlend: r.drawnBlend,
+      drawnPipeline: r.drawnPipeline || undefined,
+      expectedUnlit: r.expectedUnlit,
+      uniformUnlit: r.uniformUnlit,
+      unlitInUpload: r.unlitInUpload, uploadUnlit: r.uploadUnlit,
+      expectedEmpty: r.expectedEmpty,
       specIntensityMapFlag: r.specIntensityMapFlag, specColorMapFlag: r.specColorMapFlag,
+      albedoMapFlag: r.albedoMapFlag,
       textureServed: r.textureServed,
       iblState: r.iblState, iblAssetsServed: r.iblAssetsServed,
       uploadF0: r.uploadF0, uploadF90: r.uploadF90,
@@ -2609,10 +3353,39 @@ setTimeout(() => {
       'u_hasSpecularColorMap draw-time uniform (WebGL, missing = null) or the byte-204 ' +
       'upload flag (WebGPU), with combined color+intensity readiness requiring BOTH flags ' +
       'in the same draw/snapshot; ' +
+      'the new base-color PNG alpha/unlit cases additionally carry actual loaded-albedo ' +
+      'evidence, observed per backend as the real u_hasAlbedoMap draw-time uniform ' +
+      '(WebGL, missing = null) or the byte-52 upload flag (WebGPU), required in the same ' +
+      'draw/snapshot as opacity, cutoff, F0 and F90, and are distinct from the older ' +
+      'factor-only FILL MASK cases, with no matching cutout-shadow, instancing, or ' +
+      'wireframe certification made for them; ' +
+      'the unlit cases add observed u_unlit evidence per backend as the real draw-time ' +
+      'uniform (WebGL, boolean true/false or 1/0, missing = null, compared against the ' +
+      'expected boolean, absent = fail) or the byte-48 upload flag (WebGPU, required ' +
+      'exactly 1/0 alongside opacity, cutoff, albedo, F0 and F90), including the paired ' +
+      'light-invariance case pairs, without claiming full glTF compliance, shadows, ' +
+      'vertex colors, or instancing; ' +
+      'Older MASK cases on BOTH backends validate factor-only FILL masking against ' +
+      'the dedicated per-backend wireframe:false opaque FILL control ' +
+      '(alpha-opaque-a1, no authored cutoff; glb-mask-fill-control and ' +
+      'wg-mask-fill-control), with expectedEmpty cases asserting strict ' +
+      'full-background + zero-foreground screenshots and no alpha-mask ' +
+      'texture, cutout-shadow, or wireframe claims made for those older ' +
+      'cases only; ' +
+      'the new alpha-mask routing cases add native per-draw depth/blend ' +
+      'observations gating only their own cases: WebGL reads the real ' +
+      'DEPTH_WRITEMASK/isEnabled(BLEND) at the F0/F90-qualified PBR draw and ' +
+      'WebGPU observes the actually drawn PBR pipeline descriptor ' +
+      '(depthWriteEnabled and color-target blend presence) tracked through ' +
+      'setPipeline on render-pass and render-bundle encoders; these certify ' +
+      'draw-route state only, not physical GPU depth hardware behavior or ' +
+      'full geometry correctness; ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
-      'proof in every case. Forced 16/32 MAX_TEXTURE_IMAGE_UNITS allocator-cap testing on native ' +
+      'observations recorded for every case: foreground controls prove actual visible draw, while ' +
+      'expectedEmpty cases are strict background-only, proving zero-foreground full-background ' +
+      'output rather than visible draw. Forced 16/32 MAX_TEXTURE_IMAGE_UNITS allocator-cap testing on native ' +
       'WebGL is not physical 16-unit hardware certification. GPU hardware acceleration type is ' +
       'NOT certified (SwiftShader possible).',
   };

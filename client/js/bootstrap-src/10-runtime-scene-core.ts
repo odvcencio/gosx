@@ -693,13 +693,29 @@
     const materialColor = sceneObjectMaterialHasValue(item, "color") ? sceneObjectMaterialValue(item, "color") : current.color;
     const textureValue = sceneObjectMaterialHasValue(item, "texture") ? sceneObjectMaterialValue(item, "texture") : current.texture;
     const texture = typeof textureValue === "string" ? textureValue.trim() : "";
+    const unlit = sceneBool(sceneObjectMaterialValue(item, "unlit"), sceneBool(current.unlit, false));
     const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
     const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
+    const maskCutoff = sceneNormalizeMaterialAlphaCutoff(
+      sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff);
+    const maskOpaque = sceneMaterialMaskActive(maskCutoff) &&
+      !sceneMaterialHasDirectAuthoredShaderValues(
+        sceneEffectiveShaderValues(item, current, false));
+    const rawBlendMode = sceneObjectBlendModeHasValue(item)
+      ? sceneObjectBlendModeValue(item) : current.blendMode;
+    const blendExplicit = sceneMaterialProfileBlendMode(rawBlendMode) !== "" &&
+      sceneRoutedBlendExplicit(item, current, sceneObjectBlendModeHasValue(item));
     const blendMode = normalizeSceneMaterialBlendMode(
-      sceneObjectBlendModeHasValue(item) ? sceneObjectBlendModeValue(item) : current.blendMode,
+      blendExplicit ? rawBlendMode : "",
       materialKind,
       numericOpacity,
+      maskOpaque,
     );
+    const rawRenderPass = sceneObjectMaterialHasValue(item, "renderPass")
+      ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass;
+    const passExplicit = sceneMaterialProfileRenderPass(rawRenderPass) !== "" &&
+      sceneRoutedPassExplicit(item, current,
+        sceneObjectMaterialHasValue(item, "renderPass"));
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const segmentSource = Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments;
     const radialSegmentSource = Object.prototype.hasOwnProperty.call(item, "radialSegments") ? item.radialSegments : current.radialSegments;
@@ -731,6 +747,7 @@
       materialKind,
       color: typeof materialColor === "string" && materialColor ? materialColor : (typeof current.color === "string" && current.color ? current.color : "#8de1ff"),
       texture,
+      unlit,
       opacity,
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
@@ -743,6 +760,7 @@
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -765,11 +783,14 @@
       shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
       shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       blendMode,
+      _blendModeDerived: !blendExplicit,
+      _renderPassDerived: !passExplicit,
       renderPass: normalizeSceneMaterialRenderPass(
-        sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
+        passExplicit ? rawRenderPass : "",
         blendMode,
         numericOpacity,
         materialKind,
+        maskOpaque,
       ),
       wireframe: sceneBool(
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
@@ -1315,6 +1336,13 @@
     if (sceneObjectMaterialHasValue(current, "metalness")) {
       override.metalness = sceneObjectMaterialValue(current, "metalness");
     }
+    if (sceneObjectMaterialHasValue(current, "unlit")) {
+      const rawUnlit = sceneObjectMaterialValue(current, "unlit");
+      const unlit = sceneBool(rawUnlit, undefined);
+      if (unlit !== undefined) {
+        override.unlit = unlit;
+      }
+    }
     // Authored ior is normalized under the KHR contract (CSS var text
     // trimmed, explicit zero preserved) while genuine absence stays absent.
     if (sceneObjectMaterialHasValue(current, "ior")) {
@@ -1328,6 +1356,13 @@
     }
     if (sceneObjectMaterialHasValue(current, "specularColor")) {
       override.specularColor = sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(current, "specularColor"), null);
+    }
+    // Authored alpha cutoffs follow the shared KHR mask contract: a defined
+    // value is normalized (explicit null disables masking) while genuine
+    // absence — including an own undefined field — must never erase imported
+    // asset masking.
+    if (sceneObjectMaterialValue(current, "alphaCutoff") !== undefined) {
+      override.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(current, "alphaCutoff"), null);
     }
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
@@ -1488,6 +1523,28 @@
     if (batch.specularColor === undefined) {
       delete batch.specularColor;
     }
+    // Unlit follows the raw-or-inherited contract: a defined raw or current
+    // value is normalized through sceneBool, and the batch field is assigned
+    // only when the boolean result is defined so plumbing never erases an
+    // imported asset-authored true.
+    const batchUnlit = sceneBool(
+      sceneObjectMaterialValue(raw, "unlit"),
+      sceneBool(current.unlit, undefined));
+    if (batchUnlit !== undefined) {
+      batch.unlit = batchUnlit;
+    }
+    // Alpha cutoff follows the shared mask contract: a defined raw (nested or
+    // direct) or inherited current value is normalized with the inherited
+    // fallback, explicit null disables, and genuine absence stays absent so
+    // asset-authored masking is never erased by defaulted plumbing.
+    const rawAlphaCutoff = sceneObjectMaterialValue(raw, "alphaCutoff");
+    if (rawAlphaCutoff !== undefined) {
+      batch.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(
+        rawAlphaCutoff,
+        current.alphaCutoff !== undefined ? current.alphaCutoff : null);
+    } else if (current.alphaCutoff !== undefined) {
+      batch.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null);
+    }
     return batch;
   }
 
@@ -1525,10 +1582,15 @@
         scaleZ: instance.scaleZ,
         parentMatrix: instance.parentMatrix,
       };
-      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "pickable", "visible", "static"]) {
+      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "pickable", "visible", "static"]) {
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
           raw[key] = batch[key];
         }
+      }
+      // Alpha cutoff is copied separately so an explicit null (masking
+      // disabled) survives: the legacy loop above deliberately excludes null.
+      if (batch.alphaCutoff !== undefined) {
+        raw.alphaCutoff = batch.alphaCutoff;
       }
       models.push(normalizeSceneModel(raw, batchIndex + "-" + index));
     }
@@ -1878,12 +1940,29 @@
     const tubularSegmentSource = Object.prototype.hasOwnProperty.call(item, "tubularSegments") ? item.tubularSegments : current.tubularSegments;
     const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item) || current.materialKind);
     const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
+    const unlit = sceneBool(sceneObjectMaterialValue(item, "unlit"), sceneBool(current.unlit, false));
     const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
+    const maskCutoff = sceneNormalizeMaterialAlphaCutoff(
+      sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff);
+    const maskOpaque = sceneMaterialMaskActive(maskCutoff) &&
+      !sceneMaterialHasDirectAuthoredShaderValues(
+        sceneEffectiveShaderValues(item, current, false));
+    const rawBlendMode = sceneObjectMaterialHasValue(item, "blendMode")
+      ? sceneObjectMaterialValue(item, "blendMode") : current.blendMode;
+    const blendExplicit = sceneMaterialProfileBlendMode(rawBlendMode) !== "" &&
+      sceneRoutedBlendExplicit(item, current,
+        sceneObjectMaterialHasValue(item, "blendMode"), "material");
     const blendMode = normalizeSceneMaterialBlendMode(
-      sceneObjectMaterialHasValue(item, "blendMode") ? sceneObjectMaterialValue(item, "blendMode") : current.blendMode,
+      blendExplicit ? rawBlendMode : "",
       materialKind,
       numericOpacity,
+      maskOpaque,
     );
+    const rawRenderPass = sceneObjectMaterialHasValue(item, "renderPass")
+      ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass;
+    const passExplicit = sceneMaterialProfileRenderPass(rawRenderPass) !== "" &&
+      sceneRoutedPassExplicit(item, current,
+        sceneObjectMaterialHasValue(item, "renderPass"));
     const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
@@ -1906,6 +1985,7 @@
       color: typeof sceneObjectMaterialValue(item, "color") === "string" && sceneObjectMaterialValue(item, "color") ? sceneObjectMaterialValue(item, "color") : (typeof current.color === "string" ? current.color : "#8de1ff"),
       texture: typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : (typeof current.texture === "string" ? current.texture : ""),
       opacity,
+      unlit,
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
@@ -1917,6 +1997,7 @@
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -1927,11 +2008,14 @@
         current.textureDescriptors,
       ),
       blendMode,
+      _blendModeDerived: !blendExplicit,
+      _renderPassDerived: !passExplicit,
       renderPass: normalizeSceneMaterialRenderPass(
-        sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
+        passExplicit ? rawRenderPass : "",
         blendMode,
         numericOpacity,
         materialKind,
+        maskOpaque,
       ),
       wireframe: sceneBool(sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe, false),
       depthWrite: sceneObjectMaterialHasValue(item, "depthWrite") ? sceneBool(sceneObjectMaterialValue(item, "depthWrite"), true) : current.depthWrite,
@@ -2344,7 +2428,30 @@
     const depthWriteSpecified = Object.prototype.hasOwnProperty.call(item, "depthWrite");
     const opacity = sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)), 0, 1);
     const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)));
-    const blendMode = normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, kind, numericOpacity);
+    const maskCutoff = sceneObjectMaterialValue(item, "alphaCutoff") !== undefined
+      ? sceneNormalizeMaterialAlphaCutoff(
+        sceneObjectMaterialValue(item, "alphaCutoff"),
+        current.alphaCutoff !== undefined
+          ? sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null)
+          : null)
+      : (current.alphaCutoff !== undefined
+        ? sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null)
+        : undefined);
+    const maskOpaque = sceneMaterialMaskActive(maskCutoff) &&
+      !sceneMaterialHasDirectAuthoredShaderValues(
+        sceneEffectiveShaderValues(item, current, true));
+    const rawBlendMode = item.blendMode || current.blendMode;
+    const blendExplicit = sceneMaterialProfileBlendMode(rawBlendMode) !== "" &&
+      sceneRoutedBlendExplicit(item, current, blendModeSpecified, "direct");
+    const blendMode = normalizeSceneMaterialBlendMode(
+      blendExplicit ? rawBlendMode : "",
+      kind,
+      numericOpacity,
+      maskOpaque,
+    );
+    const rawRenderPass = item.renderPass || current.renderPass;
+    const passExplicit = sceneMaterialProfileRenderPass(rawRenderPass) !== "" &&
+      sceneRoutedPassExplicit(item, current, !!item.renderPass, "direct");
     const out = {
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ""),
       name: typeof item.name === "string" && item.name ? item.name : (typeof current.name === "string" ? current.name : ("scene-material-" + index)),
@@ -2370,7 +2477,15 @@
       emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(item.textureDescriptors, current.textureDescriptors),
       blendMode,
-      renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity, kind),
+      _blendModeDerived: !blendExplicit,
+      _renderPassDerived: !passExplicit,
+      renderPass: normalizeSceneMaterialRenderPass(
+        passExplicit ? rawRenderPass : "",
+        blendMode,
+        numericOpacity,
+        kind,
+        maskOpaque,
+      ),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
       lineDash: sceneBool(Object.prototype.hasOwnProperty.call(item, "lineDash") ? item.lineDash : current.lineDash, false),
       dashSize: sceneNumber(item.dashSize, sceneNumber(current.dashSize, 0)),
@@ -2397,6 +2512,23 @@
       _blendModeSpecified: blendModeSpecified || current._blendModeSpecified === true,
       _depthWriteSpecified: depthWriteSpecified || current._depthWriteSpecified === true,
     };
+    // Normalize unlit from the raw record value: omission and own undefined
+    // inherit the current flag; malformed values fall back to it too, so a
+    // bad override can neither erase the inherited flag nor define a new one.
+    // Only a valid boolean (or inherited valid flag) reaches the output.
+    const normalizedUnlit = sceneBool(
+      sceneObjectMaterialValue(item, "unlit"),
+      sceneBool(current.unlit, undefined),
+    );
+    if (normalizedUnlit !== undefined) {
+      out.unlit = normalizedUnlit;
+    }
+    const rawAlphaCutoff = sceneObjectMaterialValue(item, "alphaCutoff");
+    if (rawAlphaCutoff !== undefined) {
+      out.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(rawAlphaCutoff, sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null));
+    } else if (current.alphaCutoff !== undefined) {
+      out.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null);
+    }
     out.key = sceneMaterialProfileKey(out);
     out.shaderData = sceneMaterialShaderData(out);
     return out;
@@ -3004,6 +3136,7 @@
       color: material.color || object.color,
       texture: material.texture || object.texture,
       opacity: material.opacity != null ? material.opacity : object.opacity,
+      unlit: material.unlit !== undefined ? material.unlit : object.unlit,
       emissive: material.emissive != null ? material.emissive : object.emissive,
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,
@@ -3015,6 +3148,7 @@
       transmission: material.transmission != null ? material.transmission : object.transmission,
       iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
       anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
+      alphaCutoff: material.alphaCutoff !== undefined ? material.alphaCutoff : object.alphaCutoff,
       normalMap: material.normalMap || object.normalMap,
       roughnessMap: material.roughnessMap || object.roughnessMap,
       metalnessMap: material.metalnessMap || object.metalnessMap,
@@ -3023,6 +3157,14 @@
       textureDescriptors: material.textureDescriptors || object.textureDescriptors,
       blendMode: material.blendMode || object.blendMode,
       renderPass: material.renderPass || object.renderPass,
+      // Provenance follows the same source chosen for the routed value:
+      // a raw (unmarked) named material route is authored, not computed.
+      _blendModeDerived: material.blendMode
+        ? material._blendModeDerived === true
+        : object._blendModeDerived,
+      _renderPassDerived: material.renderPass
+        ? material._renderPassDerived === true
+        : object._renderPassDerived,
       wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
       depthWrite: material.depthWrite != null ? material.depthWrite : object.depthWrite,
       lineDash: material.lineDash != null ? material.lineDash : object.lineDash,
@@ -4194,7 +4336,7 @@
     if (current) {
       const next = sceneObjectFromPayload(objectID, {
         geometry: current.kind,
-        props: Object.assign({}, current, patch || {}),
+        props: patch || {},
       }, current);
       if (next) {
         state.objects.set(key, next);
@@ -4243,6 +4385,20 @@
     const merged = Object.assign({}, current, props);
     merged.id = current.id || merged.id || ("scene-object-" + objectID);
     merged.kind = normalizeSceneKind(merged.kind || geometry);
+    // Route provenance: a route value authored in the incoming props must
+    // not inherit a stale derived marker merged in from the current object
+    // (otherwise an explicit route equal to the derived text stays wrongly
+    // marked as computed). Props that already carry their own derived
+    // metadata keep it; unaffected fields retain the current markers so
+    // defaults keep re-evaluating through the normal fallback.
+    const passSource = sceneRoutedValueSource(props, "renderPass", "material");
+    if (passSource && passSource._renderPassDerived !== true) {
+      merged._renderPassDerived = false;
+    }
+    const blendSource = sceneRoutedValueSource(props, "blendMode", "blendAlias");
+    if (blendSource && blendSource._blendModeDerived !== true) {
+      merged._blendModeDerived = false;
+    }
     return normalizeSceneObject(merged, objectID, current);
   }
 
@@ -4716,6 +4872,7 @@
         materialIndex,
         materialKind: material.kind || mesh.materialKind,
         renderPass: material.renderPass || mesh.renderPass,
+        _renderPassDerived: (mesh && mesh._renderPassDerived) === true,
       });
       bundle.instancedMeshes.push(entry);
     }
@@ -5063,6 +5220,7 @@
         pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
         materialIndex: materialIndex,
         renderPass: sceneWorldObjectRenderPass(object, material),
+        _renderPassDerived: (object && object._renderPassDerived) === true,
         vertexOffset: vertexOffset,
         vertexCount: vertexCount,
         static: Boolean(object.static),
@@ -5228,13 +5386,27 @@
     if (object._modelHidden) {
       return true;
     }
-    if (material && sceneNumber(material.opacity, 1) <= 0.0001 && !sceneMaterialUsesAuthoredMeshShader(material)) {
+    if (material && sceneNumber(material.opacity, 1) <= 0.0001 &&
+        !sceneMaterialUsesAuthoredMeshShader(material) &&
+        !sceneMaterialHasEnabledNumericAlphaCutoff(material)) {
       return true;
     }
     const scaleX = Math.abs(sceneNumber(object.scaleX, sceneNumber(object.scale, 1)));
     const scaleY = Math.abs(sceneNumber(object.scaleY, sceneNumber(object.scale, 1)));
     const scaleZ = Math.abs(sceneNumber(object.scaleZ, sceneNumber(object.scale, 1)));
     return Math.max(scaleX, scaleY, scaleZ) <= 0.0015;
+  }
+
+  // sceneMaterialHasEnabledNumericAlphaCutoff reports whether the material
+  // carries a normalized numeric alpha cutoff that is considered enabled:
+  // finite numbers >= 0 qualify (0 included), while null, undefined, invalid
+  // values and unresolved CSS var strings do not.
+  function sceneMaterialHasEnabledNumericAlphaCutoff(material) {
+    if (!material || typeof material !== "object") {
+      return false;
+    }
+    const cutoff = sceneNormalizeMaterialAlphaCutoff(material.alphaCutoff, null);
+    return typeof cutoff === "number" && Number.isFinite(cutoff);
   }
 
   function sceneMaterialUsesAuthoredMeshShader(material) {
@@ -5389,6 +5561,7 @@
         pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
         materialIndex: materialIndex,
         renderPass: sceneWorldObjectRenderPass(object, material),
+        _renderPassDerived: (object && object._renderPassDerived) === true,
         texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
         static: false,
         castShadow: false,
@@ -5421,7 +5594,8 @@
           kind: object.kind,
           pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
           materialIndex: materialIndex,
-          renderPass: objectPassString,
+          renderPass: sceneWorldObjectRenderPass(object, material),
+          _renderPassDerived: (object && object._renderPassDerived) === true,
           texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
           static: Boolean(object.static),
           castShadow: Boolean(object.castShadow),
@@ -5561,6 +5735,7 @@
       pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
       materialIndex: materialIndex,
       renderPass: sceneWorldObjectRenderPass(object, material),
+      _renderPassDerived: (object && object._renderPassDerived) === true,
       texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
       static: Boolean(object.static),
       castShadow: Boolean(object.castShadow),
@@ -5610,6 +5785,7 @@
       kind: object.kind,
       materialIndex: materialIndex,
       renderPass: sceneWorldObjectRenderPass(object, material),
+      _renderPassDerived: (object && object._renderPassDerived) === true,
       static: Boolean(object.static),
       positions: scenePlaneSurfacePositions(scenePlaneSurfaceCorners(object, timeSeconds)),
       uv: scenePlaneSurfaceUVs(),

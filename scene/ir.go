@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -148,6 +149,7 @@ type IRMaterial struct {
 	MetalnessMap       string                       `json:"metalnessMap,omitempty"`
 	OcclusionMap       string                       `json:"occlusionMap,omitempty"`
 	EmissiveMap        string                       `json:"emissiveMap,omitempty"`
+	AlphaCutoff        AlphaCutoff                  `json:"alphaCutoff,omitzero"`
 	TextureDescriptors MaterialTextureDescriptors   `json:"textureDescriptors,omitzero"`
 	BlendMode          string                       `json:"blendMode,omitempty"`
 	RenderPass         string                       `json:"renderPass,omitempty"`
@@ -192,6 +194,7 @@ type IRMaterialVariant struct {
 	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
 	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
 	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
+	AlphaCutoff        AlphaCutoff                `json:"alphaCutoff,omitzero"`
 	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
 	BlendMode          string                     `json:"blendMode,omitempty"`
 	RenderPass         string                     `json:"renderPass,omitempty"`
@@ -509,6 +512,23 @@ func (ir *IR) Validate() error {
 	if ir.Camera.Far != 0 && ir.Camera.Near != 0 && ir.Camera.Far <= ir.Camera.Near {
 		problems = append(problems, "camera.far must be greater than camera.near")
 	}
+	for i, material := range ir.Materials {
+		if problem := validateIRAlphaCutoff(fmt.Sprintf("materials[%d].alphaCutoff", i), material.AlphaCutoff); problem != "" {
+			problems = append(problems, problem)
+		}
+		variantNames := make([]string, 0, len(material.Variants))
+		for name := range material.Variants {
+			variantNames = append(variantNames, name)
+		}
+		sort.Strings(variantNames)
+		for _, name := range variantNames {
+			variant := material.Variants[name]
+			path := fmt.Sprintf("materials[%d].variants[%q].alphaCutoff", i, name)
+			if problem := validateIRAlphaCutoff(path, variant.AlphaCutoff); problem != "" {
+				problems = append(problems, problem)
+			}
+		}
+	}
 	for i, node := range ir.Nodes {
 		problems = append(problems, validateIRNode(i, node, len(ir.Materials))...)
 	}
@@ -526,6 +546,23 @@ func (ir *IR) Validate() error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func validateIRAlphaCutoff(path string, cutoff AlphaCutoff) string {
+	switch cutoff.state {
+	case alphaCutoffOmitted, alphaCutoffDisabled:
+		return ""
+	case alphaCutoffNumeric:
+		if math.IsNaN(cutoff.value) || math.IsInf(cutoff.value, 0) {
+			return path + " must be finite"
+		}
+		if cutoff.value < 0 {
+			return path + " must not be negative"
+		}
+		return ""
+	default:
+		return path + " has an invalid state"
+	}
 }
 
 func validateIRNode(index int, node IRNode, materialCount int) []string {
@@ -895,8 +932,14 @@ func lightsToIR(items []LightIR) []IRLight {
 }
 
 func appendIRMaterial(materials *[]IRMaterial, indexes map[string]int, material IRMaterial) int {
-	keyBytes, _ := json.Marshal(material)
-	key := string(keyBytes)
+	key, err := canonicalMaterialKey(material)
+	if err != nil {
+		// Keep invalid authored materials independently addressable so IR.Validate
+		// can diagnose each path. Never collapse marshal failures under an empty key.
+		idx := len(*materials)
+		*materials = append(*materials, material)
+		return idx
+	}
 	if idx, ok := indexes[key]; ok {
 		return idx
 	}
@@ -904,6 +947,14 @@ func appendIRMaterial(materials *[]IRMaterial, indexes map[string]int, material 
 	indexes[key] = idx
 	*materials = append(*materials, material)
 	return idx
+}
+
+func canonicalMaterialKey(material IRMaterial) (string, error) {
+	keyBytes, err := json.Marshal(material)
+	if err != nil {
+		return "", fmt.Errorf("marshal canonical material key: %w", err)
+	}
+	return string(keyBytes), nil
 }
 
 func materialFromObjectIR(object ObjectIR) IRMaterial {
@@ -928,6 +979,7 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		MetalnessMap:       object.MetalnessMap,
 		OcclusionMap:       object.OcclusionMap,
 		EmissiveMap:        object.EmissiveMap,
+		AlphaCutoff:        object.AlphaCutoff,
 		TextureDescriptors: object.TextureDescriptors,
 		BlendMode:          object.BlendMode,
 		RenderPass:         object.RenderPass,
@@ -970,6 +1022,7 @@ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 		MetalnessMap:       mesh.MetalnessMap,
 		OcclusionMap:       mesh.OcclusionMap,
 		EmissiveMap:        mesh.EmissiveMap,
+		AlphaCutoff:        mesh.AlphaCutoff,
 		TextureDescriptors: mesh.TextureDescriptors,
 		BlendMode:          mesh.BlendMode,
 		RenderPass:         mesh.RenderPass,

@@ -168,6 +168,11 @@
     // pre-zeroes it so a plain pack stays
     // neutral until createMaterialBindGroup sets the real flag.
     "    hasSpecularIntensityMap: u32,",
+    // f32 alpha cutoff at u32 index 42 (reusing the old padding word);
+    // index 41 above carries the specular flag and index 43 stays
+    // padding, keeping the struct at 208 bytes total (41 flag,
+    // 42 cutoff, 43 pad).
+    "    alphaCutoff: f32,",
     "    specularF0: vec3f,",
     "    specularF90: f32,",
     // Per-channel log2 of the authored dielectric specular coefficient
@@ -206,7 +211,7 @@
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
-    "    @location(5) instanceColor: vec4f,",
+    "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -1447,7 +1452,7 @@
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
-    "    @location(5) instanceColor: vec4f,",
+    "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -1500,7 +1505,7 @@
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
-    "    @location(5) instanceColor: vec4f,",
+    "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "",
     // Group 0: per-frame
@@ -1792,12 +1797,17 @@
     "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
     // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
+    "    var texAlpha = 1.0;",
     "    if (material.hasAlbedoMap != 0u) {",
     "        let texAlbedo = textureSample(albedoTex, albedoSamp, in.uv);",
     "        albedo = albedo * texAlbedo.rgb;",
+    "        texAlpha = texAlbedo.a;",
     "    }",
     "    albedo = albedo * in.instanceColor.rgb;",
     "    let finalOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);",
+    "    let cutoff = material.alphaCutoff;",
+    "    let alphaEnabled = cutoff >= 0.0;",
+    "    let coverage = finalOpacity * texAlpha;",
     "",
     "    var roughness = material.roughness;",
     "    if (material.hasRoughnessMap != 0u) {",
@@ -1826,7 +1836,9 @@
     // Unlit path: output albedo directly.
     "    if (material.unlit != 0u) {",
     "        let color = albedo + emissiveColor * emissiveStrength;",
-    "        return vec4f(color, finalOpacity);",
+    "        // Alpha-cut discard after sampling to keep derivative uniformity.",
+    "        if (alphaEnabled && coverage < cutoff) { discard; }",
+    "        return vec4f(color, select(finalOpacity, 1.0, alphaEnabled));",
     "    }",
     "",
     // Resolve per-pixel normal via TBN matrix.
@@ -2059,7 +2071,8 @@
     "        }",
     "    }",
     "",
-    "    return vec4f(color, finalOpacity);",
+    "    if (alphaEnabled && coverage < cutoff) { discard; }",
+    "    return vec4f(color, select(finalOpacity, 1.0, alphaEnabled));",
     "}",
   ].join("\n");
 
@@ -2075,7 +2088,7 @@
       "    @location(2) uv: vec2f,",
       "    @location(3) tangent: vec3f,",
       "    @location(4) bitangent: vec3f,",
-      "    @location(5) instanceColor: vec4f,",
+      "    @location(5) @interpolate(flat) instanceColor: vec4f,",
       "};",
       "",
       "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
@@ -2088,8 +2101,11 @@
       "    let texturePassMode = " + mode + "u;",
       "    if (texturePassMode == 2u && in.worldPos.y < 0.0) { discard; }",
       "    var albedo = material.albedo;",
+      "    var texAlpha = 1.0;",
       "    if (material.hasAlbedoMap != 0u) {",
-      "        albedo = albedo * textureSample(albedoTex, albedoSamp, in.uv).rgb;",
+      "        let texel = textureSample(albedoTex, albedoSamp, in.uv);",
+      "        albedo = albedo * texel.rgb;",
+      "        texAlpha = texel.a;",
       "    }",
       "    albedo = albedo * in.instanceColor.rgb;",
       "    var emissiveColor = albedo;",
@@ -2105,7 +2121,13 @@
       "    } else {",
       "        color = mix(color, vec3f(0.08, 0.18, 0.26), 0.08);",
       "    }",
-      "    return vec4f(color, material.opacity * clamp(in.instanceColor.a, 0.0, 1.0));",
+      "    let unmaskedOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);",
+      "    let cutoff = material.alphaCutoff;",
+      "    let alphaEnabled = cutoff >= 0.0;",
+      "    let coverage = unmaskedOpacity * texAlpha;",
+      "    // Alpha-cut discard after sampling; equality survives the cut.",
+      "    if (alphaEnabled && coverage < cutoff) { discard; }",
+      "    return vec4f(color, select(unmaskedOpacity, 1.0, alphaEnabled));",
       "}",
     ].join("\n");
   }
@@ -3250,13 +3272,13 @@
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
-        // Specular-color maps store meaningful RGB under a possibly-zero
-        // alpha channel (the shader samples .rgb only). Browser bitmap
-        // decode can premultiply, zeroing RGB wherever alpha is 0, which
-        // makes the specular tint collapse to black. Request explicitly
-        // unpremultiplied decode and copy for this role only; other roles
-        // keep their prior behavior.
-        var isSpecularColor = descriptor.role === "specular-color";
+        // Specular-color and base-color maps store meaningful RGB under a
+        // possibly-zero alpha channel; base-color alpha additionally drives
+        // MASK coverage. Browser bitmap decode can premultiply, zeroing RGB
+        // wherever alpha is 0, which makes the specular tint or albedo
+        // collapse to black. Request explicitly unpremultiplied decode and
+        // copy for these roles only; other roles keep their prior behavior.
+        var needsUnpremultipliedAlpha = ["specular-color", "base-color"].indexOf(descriptor.role) >= 0;
         var w = image.width;
         var h = image.height;
         var tex = device.createTexture({
@@ -3266,7 +3288,7 @@
         });
         // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
-          var bitmapOptions = isSpecularColor ? { premultiplyAlpha: "none" } : undefined;
+          var bitmapOptions = needsUnpremultipliedAlpha ? { premultiplyAlpha: "none" } : undefined;
           createImageBitmap(image, bitmapOptions).then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
@@ -3275,7 +3297,7 @@
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              isSpecularColor ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
+              needsUnpremultipliedAlpha ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();
@@ -14203,11 +14225,15 @@
       // reused as the hasSpecularIntensityMap flag (u[41], set by
       // createMaterialBindGroup and zeroed here so a plain pack stays
       // neutral), then the effective specular factors (F0 rgb, F90 =
-      // intensity) at the vec3f-aligned slots 44..47. Slots 42..43 stay
-      // zeroed so the packed material bytes stay deterministic.
+      // intensity) at the vec3f-aligned slots 44..47. Slot 42 carries the
+      // float32 alpha cutoff; slot 43 stays zeroed so the packed material
+      // bytes stay deterministic.
       f[40] = sceneWebGPUDielectricF0(mat.ior);
       f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
-      f[42] = 0;
+      var alphaCutoff = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
+      f[42] = (typeof alphaCutoff === "number" && Number.isFinite(alphaCutoff) && alphaCutoff >= 0)
+        ? (alphaCutoff <= 1 ? Math.fround(alphaCutoff) : 2)
+        : -1; // alphaCutoff, normalized the same way as the WebGL renderer
       f[43] = 0;
       var specular = sceneWebGPUSpecularFactors(mat);
       f[44] = specular.f0[0];

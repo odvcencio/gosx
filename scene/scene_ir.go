@@ -131,6 +131,7 @@ type InstancedGLBMeshIR struct {
 	Texture           string           `json:"texture,omitempty"`
 	Opacity           *float64         `json:"opacity,omitempty"`
 	Emissive          *float64         `json:"emissive,omitempty"`
+	AlphaCutoff       AlphaCutoff      `json:"alphaCutoff,omitzero"`
 	BlendMode         string           `json:"blendMode,omitempty"`
 	Roughness         float64          `json:"roughness,omitempty"`
 	Metalness         float64          `json:"metalness,omitempty"`
@@ -233,6 +234,7 @@ type ObjectIR struct {
 	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
 	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
 	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
+	AlphaCutoff        AlphaCutoff                `json:"alphaCutoff,omitzero"`
 	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
 	LODGroup           string                     `json:"lodGroup,omitempty"`
 	LODLevel           int                        `json:"lodLevel,omitempty"`
@@ -625,6 +627,7 @@ type InstancedMeshIR struct {
 	MetalnessMap         string                     `json:"metalnessMap,omitempty"`
 	OcclusionMap         string                     `json:"occlusionMap,omitempty"`
 	EmissiveMap          string                     `json:"emissiveMap,omitempty"`
+	AlphaCutoff          AlphaCutoff                `json:"alphaCutoff,omitzero"`
 	TextureDescriptors   MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
 	CustomVertex         string                     `json:"customVertex,omitempty"`
 	CustomFragment       string                     `json:"customFragment,omitempty"`
@@ -2027,6 +2030,7 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setString(record, "metalnessMap", item.MetalnessMap)
 	setString(record, "occlusionMap", item.OcclusionMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	setAlphaCutoff(record, "alphaCutoff", item.AlphaCutoff)
 	if descriptors := legacyTextureDescriptors(item.TextureDescriptors); len(descriptors) > 0 {
 		record["textureDescriptors"] = descriptors
 	}
@@ -2133,6 +2137,7 @@ func (item ModelIR) legacyProps() map[string]any {
 	setString(record, "metalnessMap", item.MetalnessMap)
 	setString(record, "occlusionMap", item.OcclusionMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	setAlphaCutoff(record, "alphaCutoff", item.AlphaCutoff)
 	if descriptors := legacyTextureDescriptors(item.TextureDescriptors); len(descriptors) > 0 {
 		record["textureDescriptors"] = descriptors
 	}
@@ -2335,6 +2340,7 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "metalnessMap", item.MetalnessMap)
 	setString(record, "occlusionMap", item.OcclusionMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	setAlphaCutoff(record, "alphaCutoff", item.AlphaCutoff)
 	if descriptors := legacyTextureDescriptors(item.TextureDescriptors); len(descriptors) > 0 {
 		record["textureDescriptors"] = descriptors
 	}
@@ -2405,6 +2411,7 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setNumericPtr(record, "ior", item.IOR)
 	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
 	setColor3Ptr(record, "specularColor", item.SpecularColor)
+	setAlphaCutoff(record, "alphaCutoff", item.AlphaCutoff)
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
