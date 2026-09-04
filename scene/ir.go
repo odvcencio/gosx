@@ -533,9 +533,7 @@ func (ir *IR) Validate() error {
 		problems = append(problems, validateIRNode(i, node, len(ir.Materials))...)
 	}
 	for i, light := range ir.Lights {
-		if strings.TrimSpace(light.Kind) == "" {
-			problems = append(problems, fmt.Sprintf("lights[%d].kind is required", i))
-		}
+		problems = append(problems, validateIRLight(i, light)...)
 	}
 	for i, effect := range ir.PostFX {
 		if strings.TrimSpace(effect.Kind) == "" {
@@ -546,6 +544,61 @@ func (ir *IR) Validate() error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func validateIRLight(index int, light IRLight) []string {
+	path := fmt.Sprintf("lights[%d]", index)
+	kind := strings.ToLower(strings.TrimSpace(light.Kind))
+	var problems []string
+	if kind == "" {
+		problems = append(problems, path+".kind is required")
+	}
+	numeric := []struct {
+		name  string
+		value float64
+	}{
+		{"intensity", light.Intensity},
+		{"x", light.X}, {"y", light.Y}, {"z", light.Z},
+		{"directionX", light.DirectionX}, {"directionY", light.DirectionY}, {"directionZ", light.DirectionZ},
+		{"angle", light.Angle}, {"penumbra", light.Penumbra},
+		{"range", light.Range}, {"decay", light.Decay},
+		{"width", light.Width}, {"height", light.Height},
+		{"shadowBias", light.ShadowBias}, {"shadowSoftness", light.ShadowSoftness},
+	}
+	for _, field := range numeric {
+		if math.IsNaN(field.value) || math.IsInf(field.value, 0) {
+			problems = append(problems, path+"."+field.name+" must be finite")
+		}
+	}
+	nonNegative := []struct {
+		name  string
+		value float64
+	}{
+		{"intensity", light.Intensity}, {"angle", light.Angle},
+		{"penumbra", light.Penumbra}, {"range", light.Range},
+		{"decay", light.Decay}, {"width", light.Width},
+		{"height", light.Height}, {"shadowSoftness", light.ShadowSoftness},
+	}
+	for _, field := range nonNegative {
+		if field.value < 0 {
+			problems = append(problems, path+"."+field.name+" must not be negative")
+		}
+	}
+	if light.ShadowSize < 0 {
+		problems = append(problems, path+".shadowSize must not be negative")
+	}
+	if light.ShadowCascades < 0 {
+		problems = append(problems, path+".shadowCascades must not be negative")
+	}
+	if kind == "spot" && light.CastShadow {
+		if !math.IsNaN(light.Angle) && !math.IsInf(light.Angle, 0) && light.Angle >= math.Pi/2 {
+			problems = append(problems, path+".angle must be less than pi/2 for one-map spot shadows")
+		}
+		if light.ShadowCascades > 1 {
+			problems = append(problems, path+".shadowCascades must be 0 or 1 for one-map spot shadows")
+		}
+	}
+	return problems
 }
 
 func validateIRAlphaCutoff(path string, cutoff AlphaCutoff) string {

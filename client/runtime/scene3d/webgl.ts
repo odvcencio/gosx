@@ -234,10 +234,12 @@
     // extra samples and just return a hard comparison.
     "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
+    "    if (lightSpacePos.w <= 0.0) return 1.0;",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
+    "    if (projCoords.x < -1.0 || projCoords.x > 1.0 ||",
+    "        projCoords.y < -1.0 || projCoords.y > 1.0 ||",
+    "        projCoords.z < -1.0 || projCoords.z > 1.0) return 1.0;",
     "    projCoords = projCoords * 0.5 + 0.5;",
-    "",
-    "    if (projCoords.z > 1.0) return 1.0;",
     "",
     "    float receiverDepth = projCoords.z;",
     "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
@@ -564,9 +566,9 @@
     "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
     "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
-    // Shadow attenuation for directional lights.
+    // Shadow attenuation follows the light associated with each slot.
     "        float shadow = 1.0;",
-    "        if (u_receiveShadow && lightType == 1) {",
+    "        if (u_receiveShadow && (lightType == 1 || lightType == 3)) {",
     "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
     "                shadow = shadowFactorSlot0(viewDepth);",
     "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
@@ -1007,9 +1009,9 @@
   }
 
   // Compute per-cascade light-space matrices and split-far view-space depths
-  // for the given shadow slot. When numCascades === 1 the function falls back
-  // to the legacy full-scene ortho fit so behaviour is identical to pre-CSM
-  // single-map output.
+  // for the given shadow slot. A one-map directional light keeps the legacy
+  // full-scene orthographic fit; a one-map spot light receives the shared
+  // perspective matrix selected by sceneShadowLightSpaceMatrix.
   function computeShadowSlotCascadeMatrices(light, slot, sceneBounds, viewMatrix, fovDeg, aspect, camNear, camFar) {
     var n = slot.numCascades;
     if (n <= 1) {
@@ -7534,9 +7536,9 @@
       sceneSelenaFrameTime = performance.now() / 1000; // feed auto time uniform before any selena mesh draw
 
       // --- Shadow Pass ---
-      // Identify shadow-casting directional lights (max 2) and render per-
-      // cascade depth maps. Reset per-frame shadow state (closure-scoped for
-      // drawPBRObjectList access).
+      // Identify shadow-casting directional and spot lights (max 2 authored-
+      // order slots) and render their depth maps. Reset per-frame shadow state
+      // (closure-scoped for drawPBRObjectList access).
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
 
       if (shadowProgram) {
@@ -7553,11 +7555,25 @@
           var light = lightArray[li];
           if (!light || !light.castShadow) continue;
           var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-          if (kind !== "directional") continue;
+          var isSpot = kind === "spot";
+          if (kind !== "directional" && !isSpot) continue;
+
+          // Validate a spot's one-map projection before it can consume either
+          // an authored-order slot or texture budget. Unsupported wide cones
+          // and malformed projections therefore cannot crowd out a later
+          // valid light.
+          var validatedMatrix = null;
+          if (isSpot) {
+            if (!sceneBounds) sceneBounds = sceneShadowComputeBounds(bundle);
+            validatedMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+            if (!validatedMatrix) continue;
+          }
           shadowCandidates.push({
             lightIndex: li,
             light: light,
-            requestedCascades: Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
+            requestedCascades: isSpot
+              ? 1
+              : Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
             shadowSize: resolveShadowSize(
               Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
               shadowMaxPixels),
