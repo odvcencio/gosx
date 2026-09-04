@@ -82,10 +82,23 @@ func GosxGrammar() *Grammar {
 			)))
 
 		// Expression container: {expr}
+		//
+		// The expression field is Optional so {/* comment */} and {// comment}
+		// parse: a comment is an extra (see the "comments are extras" note in
+		// parse_error.go), which can appear anywhere between the braces, but
+		// extras alone cannot satisfy a required _expression symbol. Without
+		// Optional here, a brace pair holding only a comment produced a
+		// "missing identifier" ERROR node instead of a comment authors could
+		// actually leave in GSX markup. transpile.go's emitExprContainer
+		// already returns "" for a nil expression field (previously a
+		// defensive branch that was unreachable, since the field used to be
+		// required), so no transpile.go change was needed once parsing
+		// accepts the empty body — emitChildrenAndSlots already drops a ""
+		// child.
 		g.Define("jsx_expression_container",
 			Seq(
 				Str("{"),
-				Field("expression", Sym("_expression")),
+				Optional(Field("expression", Sym("_expression"))),
 				Str("}"),
 			))
 

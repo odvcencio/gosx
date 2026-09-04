@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx/internal/strictcomponent"
@@ -160,6 +161,14 @@ type lowerer struct {
 	// (validateStrictServerExpressions) so a structurally invalid of
 	// source is reported exactly once instead of twice.
 	strictEachElems map[string]map[string]string
+
+	// verbatimTextDepth is transpile.transpiler's verbatimTextDepth,
+	// mirrored here for this package's own, independent CST walk:
+	// lowerGSXElement increments it around a <pre>/<textarea> body, and
+	// lowerText only drops a whole-line "//" comment when it reads 0.
+	// <script>/<style> need no entry here — they lower through
+	// lowerRawTextElement, a body lowerText never sees at all.
+	verbatimTextDepth int
 }
 
 // strictReadClass records the position(s) a props read appears in, so
@@ -3636,7 +3645,17 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 
 	tag := l.extractTagName(openNode)
 	attrs := l.extractAttrs(openNode)
+	// See verbatimTextDepth's doc comment: extractChildren lowers every
+	// direct child right here (including any nested jsx_text), so the
+	// depth change must bracket exactly this call.
+	verbatim := tag == "pre" || tag == "textarea"
+	if verbatim {
+		l.verbatimTextDepth++
+	}
 	rawChildren := l.extractChildren(n)
+	if verbatim {
+		l.verbatimTextDepth--
+	}
 	children, slots := l.partitionCallSlots(IsComponent(tag), rawChildren)
 	l.validateStrictComponentCall(n, tag, attrs, children)
 	l.validateStrictCalleeSlots(n, tag, slots)
@@ -3783,7 +3802,15 @@ func (l *lowerer) lowerFragment(n *gotreesitter.Node) NodeID {
 func (l *lowerer) lowerExprContainer(n *gotreesitter.Node) NodeID {
 	exprNode := l.childByField(n, "expression")
 	if exprNode == nil {
-		l.errorf(n, "expression container missing expression")
+		// {/* a comment */} or {// a comment}: grammar.go made
+		// jsx_expression_container's expression field Optional so a
+		// comment-only brace body parses at all (a Go comment is an
+		// extra — it can sit anywhere between the braces — but extras
+		// alone cannot satisfy a required _expression symbol). A GSX
+		// author's own comment left in markup is not a lowering error;
+		// it renders as nothing, the same empty NodeText this function
+		// already produced for its old, unreachable-before-that-change
+		// defensive branch — only the errorf here is new to remove.
 		return l.prog.AddNode(Node{Kind: NodeText, Text: ""})
 	}
 
@@ -3874,8 +3901,17 @@ func (l *lowerer) buildIfComponent(whenExpr string, children []NodeID, fallbackE
 	})
 }
 
+// lowerText lowers a GSX child text node. See
+// transpile.(*transpiler).emitGSXText's doc comment for why this drops a
+// whole-line "//" comment first: this package walks the same CST
+// independently, for gosx.Compile's IR-rendering callers (route's
+// RenderProgramComponent among them) rather than transpile's generated Go
+// source, so the same fix has to be made twice, once per walk.
 func (l *lowerer) lowerText(n *gotreesitter.Node) NodeID {
 	text := l.text(n)
+	if l.verbatimTextDepth == 0 {
+		text = stripCommentOnlyLines(text)
+	}
 	// Trim whitespace-only text nodes to just a space
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -3896,6 +3932,48 @@ func (l *lowerer) lowerText(n *gotreesitter.Node) NodeID {
 		IsStatic: true,
 		Span:     l.span(n),
 	})
+}
+
+// stripCommentOnlyLines and isCommentOnlyLine are
+// transpile.stripCommentOnlyLines and transpile.isCommentOnlyLine, copied
+// rather than imported: package transpile already imports this package
+// (PackageFile.Program is *ir.Program; see transpile/package.go), so the
+// reverse import ir -> transpile would cycle. See lowerText's doc comment
+// for why both packages need their own copy of this rule in the first
+// place.
+//
+// stripCommentOnlyLines removes, from a run of GSX child text, every line
+// whose first non-whitespace characters are "//" — content AND that line's
+// own trailing newline together, so no blank line is left in its place. A
+// line is measured up to and including its own "\n" (the final line, if the
+// text node does not end in a newline, has none).
+func stripCommentOnlyLines(text string) string {
+	var b strings.Builder
+	rest := text
+	for len(rest) > 0 {
+		nl := strings.IndexByte(rest, '\n')
+		var line string
+		if nl < 0 {
+			line = rest
+			rest = ""
+		} else {
+			line = rest[:nl+1]
+			rest = rest[nl+1:]
+		}
+		if isCommentOnlyLine(strings.TrimSuffix(line, "\n")) {
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+// isCommentOnlyLine reports whether content — one line of GSX child text,
+// its own trailing newline (if any) already removed — opens, after any
+// leading whitespace, with "//".
+func isCommentOnlyLine(content string) bool {
+	trimmed := strings.TrimLeftFunc(content, unicode.IsSpace)
+	return strings.HasPrefix(trimmed, "//")
 }
 
 func (l *lowerer) extractTagName(n *gotreesitter.Node) string {
