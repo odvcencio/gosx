@@ -4,9 +4,11 @@
 already bound and active. Create navigation/assertion deadlines from `browser.Context`
 afterward, and call `browser.Close()` in cleanup. Startup gets at most two
 30-second attempts within a 65-second overall budget, reserving time for process,
-pipe, and CDP cleanup. Only a live process that reaches the startup deadline can
-retry. Process exits, invalid endpoints, and concrete CDP errors fail immediately;
-assertions and page navigation are never retried.
+pipe, and CDP cleanup. The WebSocket handshake uses the remaining attempt/overall
+allowance. Startup deadlines and typed handshake timeouts can retry only while the
+process is alive and the caller is not canceled. Process exits, invalid endpoints,
+and non-timeout CDP errors fail immediately; assertions and page navigation are
+never retried.
 
 This package launches Chrome directly and uses chromedp's remote allocator for
 the bound connection because chromedp v0.15.1's exec allocator has three relevant
