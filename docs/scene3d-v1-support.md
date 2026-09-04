@@ -86,8 +86,11 @@ their dependency, byte, and certification cost:
 - advanced TAA, SSR, or motion-blur pipelines;
 - full native visual parity or macOS/Linux native renderer parity;
 - general mobile touch/pinch/gamepad Scene3D controls;
-- alpha masks, SH light probes, custom vertex attributes, spot shadows, and
-  point shadows as v1 completion requirements.
+- SH light probes, custom vertex attributes, and point shadows as v1 completion
+  requirements;
+- alpha-mask-aware shadow-caster silhouettes as a v1 completion requirement.
+  Alpha cutoff is supported on visible PBR surfaces, but the current depth-only
+  directional and spot shadow passes cast the closed mesh silhouette.
 
 ## Completion rule
 

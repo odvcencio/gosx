@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "1.0.0",
+  "source": "https://github.com/odvcencio/gosx/tree/main/internal/uirecipe/recipes/v1",
+  "license": "MIT",
+  "provenance": "GoSX source-owned UI recipe catalog",
+  "recipes": [
+    {
+      "name": "button",
+      "version": "1.0.0",
+      "description": "Semantic action button with four tones and three sizes.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "button/button.gsx", "target": "app/ui/button.gsx"},
+        {"source": "button/button.css", "target": "public/ui/button.css"}
+      ]
+    },
+    {
+      "name": "card",
+      "version": "1.0.0",
+      "description": "Editorial content card with default, raised, and quiet surfaces.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "card/card.gsx", "target": "app/ui/card.gsx"},
+        {"source": "card/card.css", "target": "public/ui/card.css"}
+      ]
+    },
+    {
+      "name": "input",
+      "version": "1.0.0",
+      "description": "Accessible labeled input with help, invalid, required, and disabled states.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "input/input.gsx", "target": "app/ui/input.gsx"},
+        {"source": "input/input.css", "target": "public/ui/input.css"}
+      ]
+    },
+    {
+      "name": "tokens",
+      "version": "1.0.0",
+      "description": "Portable Obsidian color, type, spacing, shape, and motion tokens.",
+      "dependencies": [],
+      "files": [
+        {"source": "tokens/tokens.css", "target": "public/ui/tokens.css"}
+      ]
+    }
+  ]
+}

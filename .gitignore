@@ -4,8 +4,10 @@ build/
 /docs/*
 !/docs/docs-site-operations.md
 !/docs/docs-site-spec.md
+!/docs/polar.md
 !/docs/scene3d-v1-support.md
 !/docs/stripe.md
+!/docs/ui-recipes.md
 /gosx
 node_modules/
 

@@ -866,6 +866,14 @@ func validateLight(report *Report, light scene.LightIR, path string) {
 	if light.ShadowCascades < 0 {
 		report.add(Error, "scene.shadow.invalid_size", "Light shadowCascades must not be negative", path+".shadowCascades", light.ID, nil)
 	}
+	if strings.EqualFold(strings.TrimSpace(light.Kind), "spot") && light.CastShadow {
+		if !math.IsNaN(light.Angle) && !math.IsInf(light.Angle, 0) && light.Angle >= math.Pi/2 {
+			report.add(Error, "scene.shadow.spot_angle_unsupported", "Spot-light shadow angle must be less than pi/2 for one perspective map", path+".angle", light.ID, map[string]any{"angle": light.Angle})
+		}
+		if light.ShadowCascades > 1 {
+			report.add(Error, "scene.shadow.spot_cascades_unsupported", "Spot-light shadows use one perspective map and do not support cascades", path+".shadowCascades", light.ID, map[string]any{"shadowCascades": light.ShadowCascades})
+		}
+	}
 	for i, coefficient := range light.Coefficients {
 		validateVector3(report, light.ID, fmt.Sprintf("%s.coefficients[%d]", path, i), coefficient)
 	}
