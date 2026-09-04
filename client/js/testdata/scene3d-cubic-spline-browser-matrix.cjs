@@ -16,6 +16,8 @@ const fs = require('fs');
 const path = require('path');
 const util = require('util');
 const { spawn, spawnSync } = require('child_process');
+const { buildOwnedChromeStderrRanges, scanOwnedChromeDiagnostics } =
+  require('./scene3d-browser-diagnostics.cjs');
 
 const REPO = process.argv[2] ? path.resolve(process.argv[2]) : '';
 const ART = process.argv[3] ? path.resolve(process.argv[3]) : '';
@@ -121,6 +123,8 @@ function verifyHostedClaimSources() {
   const files = {
     harness: HARNESS,
     matrix: __filename,
+    diagnostics: path.join(REPO, 'client', 'js', 'testdata',
+      'scene3d-browser-diagnostics.cjs'),
     workflow: path.join(REPO, '.github', 'workflows', 'ci.yml'),
     corpus: path.join(REPO, 'scene', 'harness', 'testdata', 'v1-corpus.json'),
     readme: path.join(REPO, 'README.md'),
@@ -247,34 +251,36 @@ function containsSwiftShader(value) {
   catch (_error) { return false; }
 }
 
-function countDiagnostic(content, needle) {
-  let count = 0;
-  let offset = 0;
-  for (;;) {
-    const found = content.indexOf(needle, offset);
-    if (found < 0) return count;
-    count += 1;
-    offset = found + Math.max(1, needle.length);
-  }
-}
-
-function scanChromeDiagnostics(raw, boundary) {
-  const all = raw.toString('utf8').toLowerCase();
+function scanChromeDiagnostics(raw, boundary, capabilityRange, caseRanges) {
   const bounded = Number.isInteger(boundary)
     ? Math.max(0, Math.min(raw.length, boundary)) : raw.length;
-  const beforeTeardown = raw.subarray(0, bounded).toString('utf8').toLowerCase();
-  return {
-    scannedBytes: raw.length,
-    webgpuIntentionalTeardownStderrByte: bounded,
-    swapFindings: CHROME_SWAP_DIAGNOSTICS.map((needle) => ({
-      needle, count: countDiagnostic(all, needle),
-    })).filter((entry) => entry.count > 0),
-    preTeardownLifecycleFindings:
-      CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS.map((needle) => ({
-        needle, count: countDiagnostic(beforeTeardown, needle),
-      })).filter((entry) => entry.count > 0),
-    scanError: '',
-  };
+  try {
+    const owned = scanOwnedChromeDiagnostics(
+      raw,
+      buildOwnedChromeStderrRanges(capabilityRange, caseRanges),
+      CHROME_SWAP_DIAGNOSTICS,
+      CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS,
+    );
+    return {
+      scannedBytes: raw.length,
+      webgpuIntentionalTeardownStderrByte: bounded,
+      ownedStderrBytes: owned.ownedStderrBytes,
+      ownedStderrRanges: owned.ownedStderrRanges,
+      swapFindings: owned.swapFindings,
+      preTeardownLifecycleFindings: owned.preTeardownLifecycleFindings,
+      scanError: '',
+    };
+  } catch (error) {
+    return {
+      scannedBytes: raw.length,
+      webgpuIntentionalTeardownStderrByte: bounded,
+      ownedStderrBytes: null,
+      ownedStderrRanges: [],
+      swapFindings: [],
+      preTeardownLifecycleFindings: [],
+      scanError: String(error && error.message || error),
+    };
+  }
 }
 
 function checkCDPBrowserIdentity(failures, value, browser, label) {
@@ -941,6 +947,25 @@ function checkTopLevel(failures, report, mode, browser) {
           entry.beforeTargetCloseByte <= maxByte,
         'report.caseStderrRanges[' + index + '] is invalid');
       }
+      const expectedOwnedRanges = [
+        {
+          name: 'chrome-startup',
+          startByte: 0,
+          beforeTargetCloseByte: report.capabilityStderrRange &&
+            report.capabilityStderrRange.startByte,
+        },
+        ...report.caseStderrRanges.map((entry) => ({
+          name: entry && entry.name,
+          startByte: entry && entry.startByte,
+          beforeTargetCloseByte: entry && entry.beforeTargetCloseByte,
+        })),
+      ];
+      exact(failures, report.chromeDiagnostics.ownedStderrRanges,
+        expectedOwnedRanges, 'report.chromeDiagnostics.ownedStderrRanges');
+      exact(failures, report.chromeDiagnostics.ownedStderrBytes,
+        expectedOwnedRanges.reduce((total, entry) =>
+          total + entry.beforeTargetCloseByte - entry.startByte, 0),
+      'report.chromeDiagnostics.ownedStderrBytes');
     }
   }
   check(failures, report.browserGPU && typeof report.browserGPU === 'object',
@@ -1177,7 +1202,15 @@ function runMode(mode, browser) {
         }
         const boundary = report && report.chromeDiagnostics &&
           report.chromeDiagnostics.webgpuIntentionalTeardownStderrByte;
-        chromeDiagnostics = scanChromeDiagnostics(chromeStderrRaw, boundary);
+        const capabilityRange = report && report.capabilityStderrRange;
+        const caseRanges = report && report.caseStderrRanges;
+        chromeDiagnostics = scanChromeDiagnostics(
+          chromeStderrRaw, boundary, capabilityRange, caseRanges,
+        );
+        if (chromeDiagnostics.scanError) {
+          verificationFailures.push('raw Chrome stderr diagnostic scan failed: ' +
+            chromeDiagnostics.scanError);
+        }
         if (chromeDiagnostics.swapFindings.length > 0) {
           verificationFailures.push('raw Chrome stderr contains forbidden swap/SharedImage ' +
             'diagnostics: ' + JSON.stringify(chromeDiagnostics.swapFindings));

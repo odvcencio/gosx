@@ -61,6 +61,7 @@ const MOUNT_MS = 40000;
 const OVERALL_MS = 420000;
 const BUILD_MS = 240000;
 const DIAGNOSTIC_CAPTURE_MS = 2000;
+const CAPABILITY_TEARDOWN_DRAIN_MS = 100;
 const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
 const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
 const FOUR_PART_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
@@ -717,6 +718,15 @@ function dispatch(raw) {
 async function evalSend(send, expression, extra) {
   const response = await send('Runtime.evaluate', Object.assign({ expression, returnByValue: true }, extra || {}));
   return response && response.result && response.result.value;
+}
+
+async function drainCapabilityPage(send) {
+  currentCaseName = 'caps';
+  currentCasePhase = 'capability-probe';
+  const loaded = waitForEvent('Page.loadEventFired', STEP_MS);
+  await send('Page.navigate', { url: 'about:blank' });
+  await loaded;
+  await sleep(CAPABILITY_TEARDOWN_DRAIN_MS);
 }
 
 async function poll(send, expression, label, timeoutMs) {
@@ -2420,6 +2430,10 @@ const watchdog = setTimeout(() => {
     throw new Error('native WebGL2 is required; WebGPU capability is recorded but not required; got ' +
       JSON.stringify(nativeCaps));
   }
+  // Destroy and drain the capability document while capability ownership is
+  // still active. Otherwise Page.navigate for the first renderer case can
+  // report the old probe canvas/context teardown under that new case.
+  await drainCapabilityPage(send);
 
   for (const c of CASES) await runCase(send, c);
   for (const c of CASES) {
