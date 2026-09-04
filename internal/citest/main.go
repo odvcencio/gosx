@@ -54,6 +54,7 @@ var prRaceTargets = []raceTarget{
 	{"field", "parallel volumetric field work"},
 	{"hub", "websocket client pumps and shared connection state"},
 	{"hub/scene3d", "authoritative shared Scene3D state"},
+	{"internal/chrometest", "Chrome startup, pipe draining, cancellation, and cleanup goroutines"},
 	{"physics", "shared physics acceleration data"},
 	{"render/bundle", "parallel render-bundle assembly"},
 	{"route", "shared parser, source, and metadata caches"},
