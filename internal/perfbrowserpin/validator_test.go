@@ -24,6 +24,14 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		want   string
 	}{
 		{
+			name: "go-tests timeout regression",
+			mutate: replace(
+				"  go-tests:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20",
+				"  go-tests:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15",
+			),
+			want: "go-tests job.timeout-minutes",
+		},
+		{
 			name: "numeric pin drift",
 			mutate: replace(
 				"          chrome-version: '1688711'",

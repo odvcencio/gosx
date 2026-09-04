@@ -55,12 +55,14 @@ jobs:
   # desktop gates. The production-build CLI suite runs in go-cli-tests beside
   # this job, so its ~6 minute TinyGo integration tests no longer serialize all
   # other Go checks. The go-race-tests job now runs the race detector in
-  # parallel, so this lane needs neither TinyGo nor Node. A recent PR-path run
-  # measured 12m01s without its race step (run 31573355088, job 94042534187),
-  # so it keeps a 15-minute fail-safe.
+  # parallel, so this lane needs neither TinyGo nor Node. A main-path run
+  # measured 14m10s (run 33836750032, job 100910735401), and a PR run reached
+  # its final test gate at 14m59 before the 15-minute ceiling cancelled teardown
+  # (run 33853282910, job 100960713148). A 20-minute fail-safe stays bounded
+  # while allowing normal runner variance and post-step cleanup.
   go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository

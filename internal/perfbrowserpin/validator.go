@@ -18,6 +18,7 @@ import (
 
 const (
 	browserJobName = "browser-tests"
+	goTestsJobName = "go-tests"
 	stableJobName  = "scene3d-v1-browser-renderer-proof"
 	adapterJobName = "scene3d-v1-adapter-proof"
 	testJobName    = "test"
@@ -153,6 +154,13 @@ func Validate(source []byte) error {
 	if err != nil {
 		return err
 	}
+	goTestsJob, ok := jobs[goTestsJobName]
+	if !ok {
+		return errors.New("workflow.jobs: go-tests job is missing")
+	}
+	if err := validateGoTestsTimeout(goTestsJob); err != nil {
+		return err
+	}
 
 	browserJob, ok := jobs[browserJobName]
 	if !ok {
@@ -184,6 +192,19 @@ func Validate(source []byte) error {
 		return err
 	}
 	return nil
+}
+
+func validateGoTestsTimeout(node *yaml.Node) error {
+	const label = "go-tests job"
+	job, err := mapping(node, label)
+	if err != nil {
+		return err
+	}
+	timeout, ok := job["timeout-minutes"]
+	if !ok {
+		return fmt.Errorf("%s: missing field %q", label, "timeout-minutes")
+	}
+	return exactInt(timeout, label+".timeout-minutes", "20")
 }
 
 func decode(source []byte) (*yaml.Node, error) {
