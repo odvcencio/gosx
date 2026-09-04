@@ -52,7 +52,7 @@
   opacity: 0.62;
 }
 
-.gsx-field[data-invalid] .gsx-input {
+.gsx-field[data-invalid="true"] .gsx-input {
   border-color: var(--gsx-color-danger);
 }
 

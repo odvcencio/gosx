@@ -8,8 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -17,21 +18,16 @@ const installedManifestPath = ".gosx/ui/manifest.json"
 
 // AddOptions controls source installation. Update never overwrites a locally
 // modified file; it only advances files that still match their installed hash.
-type AddOptions struct {
-	Update bool
-}
+type AddOptions struct{ Update bool }
 
 // FileAction describes one deterministic add result row.
-type FileAction struct {
-	Path   string
-	Action string
-}
+type FileAction struct{ Path, Action string }
 
 // AddResult summarizes one source installation.
 type AddResult struct {
-	Recipe  string
-	Version string
-	Files   []FileAction
+	Recipe, Version string
+	Files           []FileAction
+	Warnings        []string
 }
 
 type installedManifest struct {
@@ -42,103 +38,96 @@ type installedManifest struct {
 	Provenance     string            `json:"provenance"`
 	Recipes        []installedRecipe `json:"recipes"`
 }
-
 type installedRecipe struct {
 	Name    string          `json:"name"`
 	Version string          `json:"version"`
 	Files   []installedFile `json:"files"`
 }
-
 type installedFile struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
 }
 
-type plannedFile struct {
-	recipe recipe
-	file   recipeFile
-	path   string
-	action string
-}
-
 // Add installs a recipe and its dependency closure into an application root.
 func (c *Catalog) Add(root, name string, options AddOptions) (AddResult, error) {
-	root, err := resolveAppRoot(root)
-	if err != nil {
-		return AddResult{}, err
-	}
+	return c.add(root, name, options, nil)
+}
+
+func (c *Catalog) add(root, name string, options AddOptions, hook transactionHook) (AddResult, error) {
 	closure, err := c.closure(name)
 	if err != nil {
 		return AddResult{}, err
 	}
-	installed, priorHashes, err := readInstalledManifest(root)
+	app, err := openAppRoot(root)
 	if err != nil {
 		return AddResult{}, err
 	}
-
-	plan := make([]plannedFile, 0)
+	defer app.Close()
+	metadata, err := openParent(app, installedManifestPath, true)
+	if err != nil {
+		return AddResult{}, err
+	}
+	defer metadata.Close()
+	unlock, err := lockInstall(metadata)
+	if err != nil {
+		return AddResult{}, err
+	}
+	defer unlock()
+	if _, err := metadata.Lstat("transaction.json"); err == nil {
+		return AddResult{}, fmt.Errorf("unfinished UI transaction: inspect .gosx/ui/transaction.json and its recovery files before installing")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return AddResult{}, err
+	}
+	// Ownership and content are read only after the cross-process lock is held.
+	installed, priorHashes, err := c.readInstalledManifest(app)
+	if err != nil {
+		return AddResult{}, err
+	}
+	tx := transaction{app: app, metadata: metadata, hook: hook}
+	defer tx.close()
+	result := AddResult{Recipe: name, Version: c.recipes[name].Version}
 	for _, item := range closure {
 		for _, file := range item.files {
-			target, err := secureTarget(root, file.Target)
+			entry, err := tx.prepare(file.Target, file.Content)
 			if err != nil {
 				return AddResult{}, err
 			}
-			current, readErr := os.ReadFile(target)
+			action := "create"
 			switch {
-			case readErr == nil && bytes.Equal(current, file.Content):
-				plan = append(plan, plannedFile{recipe: item, file: file, path: target, action: "unchanged"})
-			case readErr == nil && !options.Update:
+			case entry.exists && bytes.Equal(entry.before, file.Content):
+				action = "unchanged"
+			case entry.exists && !options.Update:
 				return AddResult{}, sourceConflict(name, file.Target, "differs from the catalog")
-			case readErr == nil && options.Update:
+			case entry.exists:
 				prior, tracked := priorHashes[file.Target]
 				if !tracked {
 					return AddResult{}, sourceConflict(name, file.Target, "is not tracked by the installed manifest")
 				}
-				if contentHash(current) != prior {
+				if contentHash(entry.before) != prior {
 					return AddResult{}, sourceConflict(name, file.Target, "was modified after installation")
 				}
-				plan = append(plan, plannedFile{recipe: item, file: file, path: target, action: "update"})
-			case errors.Is(readErr, os.ErrNotExist):
-				if options.Update {
-					if _, tracked := priorHashes[file.Target]; tracked {
-						return AddResult{}, sourceConflict(name, file.Target, "was removed after installation")
-					}
+				action = "update"
+			case options.Update:
+				if _, tracked := priorHashes[file.Target]; tracked {
+					return AddResult{}, sourceConflict(name, file.Target, "was removed after installation")
 				}
-				plan = append(plan, plannedFile{recipe: item, file: file, path: target, action: "create"})
-			default:
-				return AddResult{}, fmt.Errorf("read %s: %w", file.Target, readErr)
 			}
+			entry.changed = action != "unchanged"
+			result.Files = append(result.Files, FileAction{Path: file.Target, Action: action})
 		}
 	}
-
-	lockPath, err := secureTarget(root, installedManifestPath)
+	data, err := marshalInstalledManifest(c.mergeInstalledManifest(installed, closure))
 	if err != nil {
 		return AddResult{}, err
 	}
-	installed = c.mergeInstalledManifest(installed, closure)
-	lockData, err := marshalInstalledManifest(installed)
+	entry, err := tx.prepare(installedManifestPath, data)
 	if err != nil {
 		return AddResult{}, err
 	}
-
-	// Every read, ownership check, and symlink check above happens before the
-	// first write. A conflict therefore cannot leave a partially added recipe.
-	for _, file := range plan {
-		if file.action == "unchanged" {
-			continue
-		}
-		if err := writeOwnedFile(root, file.path, file.file.Content); err != nil {
-			return AddResult{}, fmt.Errorf("%s %s: %w", file.action, file.file.Target, err)
-		}
-	}
-	if err := writeOwnedFile(root, lockPath, lockData); err != nil {
-		return AddResult{}, fmt.Errorf("write %s: %w", installedManifestPath, err)
-	}
-
-	selected := c.recipes[name]
-	result := AddResult{Recipe: name, Version: selected.Version}
-	for _, file := range plan {
-		result.Files = append(result.Files, FileAction{Path: file.file.Target, Action: file.action})
+	entry.changed = !entry.exists || !bytes.Equal(entry.before, data)
+	result.Warnings, err = tx.commit()
+	if err != nil {
+		return AddResult{}, err
 	}
 	sort.Slice(result.Files, func(i, j int) bool { return result.Files[i].Path < result.Files[j].Path })
 	return result, nil
@@ -166,25 +155,15 @@ func (c *Catalog) mergeInstalledManifest(current installedManifest, closure []re
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	out := installedManifest{
-		SchemaVersion:  1,
-		CatalogVersion: c.version,
-		Source:         c.source,
-		License:        c.license,
-		Provenance:     c.provenance,
-	}
+	out := installedManifest{SchemaVersion: 1, CatalogVersion: c.version, Source: c.source, License: c.license, Provenance: c.provenance}
 	for _, name := range names {
 		out.Recipes = append(out.Recipes, byName[name])
 	}
 	return out
 }
 
-func readInstalledManifest(root string) (installedManifest, map[string]string, error) {
-	path, err := secureTarget(root, installedManifestPath)
-	if err != nil {
-		return installedManifest{}, nil, err
-	}
-	data, err := os.ReadFile(path)
+func (c *Catalog) readInstalledManifest(root *os.Root) (installedManifest, map[string]string, error) {
+	data, err := readRootFile(root, installedManifestPath, maxSourceBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return installedManifest{}, map[string]string{}, nil
 	}
@@ -192,36 +171,109 @@ func readInstalledManifest(root string) (installedManifest, map[string]string, e
 		return installedManifest{}, nil, fmt.Errorf("read %s: %w", installedManifestPath, err)
 	}
 	var manifest installedManifest
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := decodeDocument(data, &manifest); err != nil {
 		return installedManifest{}, nil, fmt.Errorf("decode %s: %w", installedManifestPath, err)
 	}
-	if manifest.SchemaVersion != 1 {
-		return installedManifest{}, nil, fmt.Errorf("unsupported installed UI manifest schema %d", manifest.SchemaVersion)
+	if err := c.validateInstalledManifest(manifest); err != nil {
+		return installedManifest{}, nil, err
 	}
 	hashes := map[string]string{}
 	for _, item := range manifest.Recipes {
-		if !recipeNamePattern.MatchString(item.Name) || strings.TrimSpace(item.Version) == "" {
-			return installedManifest{}, nil, fmt.Errorf("invalid recipe entry in %s", installedManifestPath)
-		}
 		for _, file := range item.Files {
-			if err := validateCatalogPath("installed", file.Path); err != nil {
-				return installedManifest{}, nil, fmt.Errorf("%s: %w", installedManifestPath, err)
-			}
-			if len(file.SHA256) != sha256.Size*2 {
-				return installedManifest{}, nil, fmt.Errorf("%s: invalid hash for %s", installedManifestPath, file.Path)
-			}
-			if _, err := hex.DecodeString(file.SHA256); err != nil {
-				return installedManifest{}, nil, fmt.Errorf("%s: invalid hash for %s", installedManifestPath, file.Path)
-			}
-			if prior, duplicate := hashes[file.Path]; duplicate && prior != file.SHA256 {
-				return installedManifest{}, nil, fmt.Errorf("%s: conflicting hashes for %s", installedManifestPath, file.Path)
-			}
 			hashes[file.Path] = file.SHA256
 		}
 	}
 	return manifest, hashes, nil
+}
+
+func (c *Catalog) validateInstalledManifest(manifest installedManifest) error {
+	bad := func(cause string) error { return fmt.Errorf("invalid %s: %s", installedManifestPath, cause) }
+	if manifest.SchemaVersion != 1 {
+		return bad("unsupported schema")
+	}
+	if manifest.Source != c.source || manifest.License != c.license || manifest.Provenance != c.provenance {
+		return bad("unknown source, license, or provenance")
+	}
+	if !supportedVersion(manifest.CatalogVersion, c.version) {
+		return bad("unsupported catalog version")
+	}
+	if len(manifest.Recipes) == 0 || len(manifest.Recipes) > len(c.recipes) {
+		return bad("invalid recipe count")
+	}
+	seen := map[string]bool{}
+	paths := map[string]bool{}
+	for _, item := range manifest.Recipes {
+		known, ok := c.recipes[item.Name]
+		if !ok || seen[item.Name] {
+			return bad("unknown or duplicate recipe")
+		}
+		seen[item.Name] = true
+		if !supportedVersion(item.Version, known.Version) {
+			return bad("unsupported recipe version")
+		}
+		// Older versions may be a subset of the current recipe's owned paths;
+		// this supports additive upgrades. Renamed/removed paths need an explicit
+		// future migration, never silently transferring ownership to another recipe.
+		owned := map[string]string{}
+		for _, file := range known.files {
+			owned[file.Target] = file.SHA256
+		}
+		if len(item.Files) == 0 || len(item.Files) > len(owned) {
+			return bad("invalid recipe file count")
+		}
+		for _, file := range item.Files {
+			if err := validateCatalogPath("installed", file.Path); err != nil {
+				return err
+			}
+			knownHash, ok := owned[file.Path]
+			if !ok || paths[file.Path] {
+				return bad("unknown or duplicate recipe file")
+			}
+			paths[file.Path] = true
+			if len(file.SHA256) != sha256.Size*2 || strings.ToLower(file.SHA256) != file.SHA256 {
+				return bad("invalid file hash")
+			}
+			if _, err := hex.DecodeString(file.SHA256); err != nil {
+				return bad("invalid file hash")
+			}
+			if item.Version == known.Version && file.SHA256 != knownHash {
+				return bad("hash does not match the declared recipe version")
+			}
+		}
+		if item.Version == known.Version && len(item.Files) != len(owned) {
+			return bad("missing file for declared recipe version")
+		}
+	}
+	for _, item := range manifest.Recipes {
+		for _, dependency := range c.recipes[item.Name].Dependencies {
+			if !seen[dependency] {
+				return bad("missing recipe dependency")
+			}
+		}
+	}
+	return nil
+}
+
+var releaseVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
+
+// v1 accepts released versions from 1.0.0 through this CLI's version, within
+// the same major. Metadata is an ownership ledger, not a signature of old code.
+func supportedVersion(installed, current string) bool {
+	if !releaseVersionPattern.MatchString(installed) || !releaseVersionPattern.MatchString(current) {
+		return false
+	}
+	a, b := strings.Split(installed, "."), strings.Split(current, ".")
+	if a[0] != b[0] || a[0] == "0" {
+		return false
+	}
+	for i := range a {
+		x, _ := strconv.Atoi(a[i])
+		y, _ := strconv.Atoi(b[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return true
 }
 
 func marshalInstalledManifest(manifest installedManifest) ([]byte, error) {
@@ -230,140 +282,6 @@ func marshalInstalledManifest(manifest installedManifest) ([]byte, error) {
 		return nil, fmt.Errorf("encode installed UI manifest: %w", err)
 	}
 	return append(data, '\n'), nil
-}
-
-func resolveAppRoot(root string) (string, error) {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve application root: %w", err)
-	}
-	abs, err = filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", fmt.Errorf("resolve application root: %w", err)
-	}
-	info, err := os.Stat(abs)
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("application root %s is not a directory", abs)
-	}
-	for _, required := range []string{"go.mod", "app"} {
-		path := filepath.Join(abs, required)
-		info, err := os.Lstat(path)
-		if err != nil {
-			return "", fmt.Errorf("application root %s is missing %s", abs, required)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("application root %s uses a symlink for %s", abs, required)
-		}
-		if required == "app" && !info.IsDir() {
-			return "", fmt.Errorf("application root %s has non-directory app", abs)
-		}
-		if required == "go.mod" && !info.Mode().IsRegular() {
-			return "", fmt.Errorf("application root %s has non-regular go.mod", abs)
-		}
-	}
-	return abs, nil
-}
-
-func secureTarget(root, relative string) (string, error) {
-	if err := validateCatalogPath("target", filepath.ToSlash(relative)); err != nil {
-		return "", err
-	}
-	target := filepath.Join(root, filepath.FromSlash(relative))
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("target %q escapes application root", relative)
-	}
-	current := root
-	parts := strings.Split(filepath.FromSlash(relative), string(filepath.Separator))
-	for index, part := range parts {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return "", fmt.Errorf("inspect target %q: %w", relative, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("refusing target %q: %s is a symlink", relative, filepath.ToSlash(strings.Join(parts[:index+1], "/")))
-		}
-		if index < len(parts)-1 && !info.IsDir() {
-			return "", fmt.Errorf("refusing target %q: parent %s is not a directory", relative, current)
-		}
-		if index == len(parts)-1 && info.IsDir() {
-			return "", fmt.Errorf("refusing target %q: destination is a directory", relative)
-		}
-	}
-	return target, nil
-}
-
-func writeOwnedFile(root, target string, content []byte) error {
-	relative, err := filepath.Rel(root, target)
-	if err != nil {
-		return err
-	}
-	directory := filepath.Dir(target)
-	if err := makeSecureDirectories(root, directory); err != nil {
-		return err
-	}
-	// Recheck after directory creation to narrow the preflight/write race and
-	// refuse a symlink swapped into place before the atomic rename.
-	if _, err := secureTarget(root, filepath.ToSlash(relative)); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(directory, ".gosx-ui-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0o644); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.Write(content); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempName, target)
-}
-
-func makeSecureDirectories(root, directory string) error {
-	rel, err := filepath.Rel(root, directory)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("directory %s escapes application root", directory)
-	}
-	current := root
-	if rel == "." {
-		return nil
-	}
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-				return err
-			}
-			info, err = os.Lstat(current)
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return fmt.Errorf("refusing directory %s: not a real directory", current)
-		}
-	}
-	return nil
 }
 
 func contentHash(content []byte) string {

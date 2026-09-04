@@ -36,9 +36,11 @@ override the three font tokens with their own stacks.
 - Gold accent `#d4af37`: 9.69:1 (WCAG AAA).
 - Error text `#ff8f82`: 9.22:1 (WCAG AAA).
 
-Contrast ratios use the solid canvas as the conservative reference. Components
-never rely on color alone: invalid fields also expose `aria-invalid`, disabled
-controls use native semantics, and focus has a visible outline.
+These ratios measure text against the solid canvas only. Raised and translucent
+surfaces, disabled controls, and other component states have different contrast;
+the numbers do not establish AAA compliance for every component state.
+Invalid fields also expose `aria-invalid`, disabled controls use native semantics,
+and focus has a visible outline.
 
 ### Motion
 
@@ -87,6 +89,62 @@ Every successful add updates `.gosx/ui/manifest.json`. It records catalog and
 recipe versions, SHA-256 hashes, the SPDX license, and source provenance. It is
 tool-owned metadata; component and stylesheet files remain ordinary application
 source intended for editing.
+
+### Installation guarantees and recovery
+
+Installers take an OS-backed exclusive lock at `.gosx/ui/install.lock` before
+reading the manifest or source, then revalidate under that lock. Leave the lock
+file in place: the OS releases the lock when a process exits. Concurrent GoSX
+installers serialize; a second installer waits up to 15 seconds before returning
+a busy error. The metadata directory and empty destination directories can remain
+after a failed preflight. Add `.gosx/ui/` to the application's ignore rules if this
+tool-owned metadata should not be committed.
+
+Every changed source file and the manifest are staged before replacement. An
+error during replacement rolls back the whole set through saved originals.
+The manifest is installed last. Files are published by linking complete staged
+bytes into an absent destination, so a new file created between validation and
+publication is preserved. The destination filesystem must support hard links.
+Individual file publications are atomic, but the whole
+multi-file operation is **not an atomic snapshot for external readers**: a dev
+server or editor can observe intermediate files while installation is running.
+When all source and manifest writes commit but backup cleanup fails, the command
+reports success with a cleanup warning and keeps the recovery journal.
+
+If rollback itself fails, the command reports that explicitly, preserves the
+available backups, and leaves `.gosx/ui/transaction.json`. Rollback also stops
+and preserves unexpected content if it detects an editor changing or replacing
+a newly installed file. Further adds stop
+until the transaction is reviewed. The journal records each destination, its
+before/after hashes, and stage/backup names relative to its destination directory.
+Preserve those files, compare their hashes, and restore the original files (or
+finish the intended installation) before removing the journal. An interrupted
+stage may also leave `.gosx-ui-stage-*` or `.gosx-ui-backup-*` files. Do not delete
+them until their relationship to the transaction is understood.
+
+This is error recovery, not power-loss durability: process termination, machine
+crashes, filesystem failure, or a failed rollback can require manual recovery.
+The installer uses Go's descriptor-backed `os.Root` and pinned destination
+directories to prevent parent-symlink swaps from redirecting operations outside
+those directories. It rejects symlinks, special files, traversal, Windows device
+names, alternate data streams, and control characters in catalog paths. It does
+not defend against privileged mount changes, an actor moving already-open
+directories elsewhere, or an uncooperative process editing files during the last
+check/rename window. The lock coordinates GoSX installers, not arbitrary editors.
+Installation is supported on Linux, macOS, BSD, and Windows; platforms without
+descriptor-backed roots and OS file locking fail closed.
+
+Installed metadata must have one JSON document, unique object members, exact
+catalog provenance, known recipes and owned paths, and valid release versions
+within the catalog's supported major version through the current CLI version.
+An older recipe may own a subset of its current paths, allowing additive updates;
+renamed or removed paths require an explicit future migration. Metadata is an
+ownership ledger, not a cryptographic attestation of historical catalog bytes.
+
+`diff` escapes terminal controls, including ANSI/OSC, carriage returns, and bidi
+formatting. It summarizes binary or large content with lengths and hashes.
+Reads are limited to 1 MiB per file; detailed diffs are limited to 64 KiB and
+512 newlines per side, with at most 128 KiB of escaped output per file.
 
 ## Using a recipe
 

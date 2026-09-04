@@ -9,11 +9,13 @@ import (
 	goformat "go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"m31labs.dev/gosx"
@@ -97,9 +99,7 @@ func loadCatalog(fsys fs.FS) (*Catalog, error) {
 		return nil, fmt.Errorf("read UI catalog manifest: %w", err)
 	}
 	var manifest catalogManifest
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := decodeDocument(data, &manifest); err != nil {
 		return nil, fmt.Errorf("decode UI catalog manifest: %w", err)
 	}
 	if manifest.SchemaVersion != 1 {
@@ -273,14 +273,80 @@ func (c *Catalog) validateDependencyCycles() error {
 }
 
 func validateCatalogPath(kind, value string) error {
-	if value == "" || strings.Contains(value, "\\") || path.IsAbs(value) {
+	if value == "" || len(value) > 240 || !utf8.ValidString(value) || strings.ContainsAny(value, "\\:<>\"|?*") || path.IsAbs(value) {
 		return fmt.Errorf("invalid %s path %q", kind, value)
 	}
 	clean := path.Clean(value)
 	if clean != value || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("invalid %s path %q", kind, value)
 	}
+	for _, part := range strings.Split(value, "/") {
+		if strings.TrimRight(part, " .") != part || len(part) > 100 {
+			return fmt.Errorf("invalid %s path %q", kind, value)
+		}
+		for _, r := range part {
+			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+				return fmt.Errorf("invalid %s path %q", kind, value)
+			}
+		}
+		device := strings.ToUpper(strings.TrimRight(strings.SplitN(part, ".", 2)[0], " "))
+		if device == "CON" || device == "PRN" || device == "AUX" || device == "NUL" || device == "CONIN$" || device == "CONOUT$" ||
+			(len(device) == 4 && (strings.HasPrefix(device, "COM") || strings.HasPrefix(device, "LPT")) && strings.ContainsRune("123456789", rune(device[3]))) ||
+			strings.HasPrefix(device, "COM") && strings.ContainsAny(strings.TrimPrefix(device, "COM"), "¹²³") ||
+			strings.HasPrefix(device, "LPT") && strings.ContainsAny(strings.TrimPrefix(device, "LPT"), "¹²³") {
+			return fmt.Errorf("invalid %s path %q", kind, value)
+		}
+	}
 	return nil
+}
+
+// Both catalog and installed metadata contain exactly one JSON document.
+func decodeDocument(data []byte, target any) error {
+	// encoding/json otherwise accepts duplicate object members with last-value
+	// wins semantics, which makes an ownership ledger ambiguous to reviewers.
+	if err := uniqueJSONMembers(json.NewDecoder(bytes.NewReader(data))); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("expected exactly one JSON document")
+	}
+	return nil
+}
+
+func uniqueJSONMembers(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, container := token.(json.Delim)
+	if !container {
+		return nil
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		if delimiter == '{' {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			if !ok || seen[name] {
+				return fmt.Errorf("duplicate or invalid JSON object member")
+			}
+			seen[name] = true
+		}
+		if err := uniqueJSONMembers(decoder); err != nil {
+			return err
+		}
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func validateRecipeSource(name string, content []byte) error {

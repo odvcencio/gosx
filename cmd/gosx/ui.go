@@ -74,6 +74,9 @@ func runUICommand(args []string, stdout io.Writer) error {
 			fmt.Fprintf(stdout, "  %-9s %s\n", file.Action, file.Path)
 		}
 		fmt.Fprintln(stdout, "  manifest  .gosx/ui/manifest.json")
+		for _, warning := range result.Warnings {
+			fmt.Fprintln(stdout, "  warning: "+warning)
+		}
 		return nil
 	case "diff":
 		root, _, recipe, help, err := parseUIRecipeArgs("diff", args[1:], false)

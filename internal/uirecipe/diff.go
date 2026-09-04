@@ -1,11 +1,14 @@
 package uirecipe
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ErrDifferences lets the CLI return diff's conventional non-zero status while
@@ -29,10 +32,11 @@ type DiffResult struct {
 
 // Diff compares application-owned files without changing them.
 func (c *Catalog) Diff(root, name string) (DiffResult, error) {
-	root, err := resolveAppRoot(root)
+	app, err := openAppRoot(root)
 	if err != nil {
 		return DiffResult{}, err
 	}
+	defer app.Close()
 	closure, err := c.closure(name)
 	if err != nil {
 		return DiffResult{}, err
@@ -41,11 +45,7 @@ func (c *Catalog) Diff(root, name string) (DiffResult, error) {
 	result := DiffResult{Recipe: name, Version: selected.Version, Clean: true}
 	for _, item := range closure {
 		for _, file := range item.files {
-			target, err := secureTarget(root, file.Target)
-			if err != nil {
-				return DiffResult{}, err
-			}
-			current, readErr := os.ReadFile(target)
+			current, readErr := readRootFile(app, file.Target, maxSourceBytes)
 			switch {
 			case readErr == nil && contentHash(current) == file.SHA256:
 				result.Entries = append(result.Entries, DiffEntry{Path: file.Target, Status: "unchanged"})
@@ -78,6 +78,14 @@ type diffLine struct {
 }
 
 func unifiedDiff(current, desired []byte, file string) string {
+	// Keep terminal output and the quadratic LCS table bounded independently
+	// of file size. Binary inputs are described, never emitted to a terminal.
+	if !utf8.Valid(current) || bytes.IndexByte(current, 0) >= 0 || !utf8.Valid(desired) || bytes.IndexByte(desired, 0) >= 0 {
+		return diffSummary(current, desired, file, "binary content omitted")
+	}
+	if len(current) > 64<<10 || len(desired) > 64<<10 || bytes.Count(current, []byte{'\n'}) > 512 || bytes.Count(desired, []byte{'\n'}) > 512 {
+		return diffSummary(current, desired, file, "large text omitted")
+	}
 	left := splitDiffLines(current)
 	right := splitDiffLines(desired)
 	rows := make([][]int, len(left)+1)
@@ -119,8 +127,27 @@ func unifiedDiff(current, desired []byte, file string) string {
 	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", len(left), len(right))
 	for _, line := range lines {
 		b.WriteByte(line.prefix)
-		b.WriteString(line.text)
+		b.WriteString(terminalText(line.text))
 		b.WriteByte('\n')
+	}
+	if b.Len() > 128<<10 {
+		return diffSummary(current, desired, file, "escaped text exceeds output limit")
+	}
+	return b.String()
+}
+
+func diffSummary(current, desired []byte, file, reason string) string {
+	return fmt.Sprintf("--- %s\n+++ catalog/%s\n%s; local %d bytes sha256:%s; catalog %d bytes sha256:%s\n", terminalText(file), terminalText(file), reason, len(current), contentHash(current), len(desired), contentHash(desired))
+}
+
+func terminalText(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		} else {
+			b.WriteRune(r)
+		}
 	}
 	return b.String()
 }

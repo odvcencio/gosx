@@ -193,6 +193,7 @@ func TestUpdateAdvancesOnlyPreviouslyUnmodifiedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := cloneCatalog(catalog)
+	future.version = "1.1.0"
 	button := future.recipes["button"]
 	for i := range button.files {
 		if button.files[i].Target == "public/ui/button.css" {
@@ -254,6 +255,7 @@ func TestUpdateRejectsLocalModificationBeforeAdditiveWrite(t *testing.T) {
 
 	future := cloneCatalog(catalog)
 	button := future.recipes["button"]
+	button.Version = "1.1.0"
 	for i := range button.files {
 		if button.files[i].Target == "app/ui/button.gsx" {
 			button.files[i].Content = append(button.files[i].Content, []byte("// catalog 1.1\n")...)
@@ -423,7 +425,7 @@ func TestComponentStylesUseTokensAndCompleteInteractionStates(t *testing.T) {
 		}
 	}
 	input := string(recipeContent(t, catalog, "input", ".css"))
-	for _, want := range []string{":hover", ":focus-visible", ":active", ":disabled", "[data-invalid]", "prefers-reduced-motion"} {
+	for _, want := range []string{":hover", ":focus-visible", ":active", ":disabled", `[data-invalid="true"]`, "prefers-reduced-motion"} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("input CSS missing %q", want)
 		}
@@ -540,9 +542,10 @@ func TestInstalledManifestRejectsTraversal(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	catalog := mustCatalog(t)
 	manifest := installedManifest{
-		SchemaVersion: 1,
-		Recipes: []installedRecipe{{Name: "tokens", Version: "1", Files: []installedFile{{
+		SchemaVersion: 1, CatalogVersion: catalog.version, Source: catalog.source, License: catalog.license, Provenance: catalog.provenance,
+		Recipes: []installedRecipe{{Name: "tokens", Version: "1.0.0", Files: []installedFile{{
 			Path: "../outside", SHA256: strings.Repeat("0", 64),
 		}}}},
 	}
@@ -553,7 +556,12 @@ func TestInstalledManifestRejectsTraversal(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readInstalledManifest(root); err == nil || !strings.Contains(err.Error(), "invalid installed path") {
+	app, err := openAppRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if _, _, err := catalog.readInstalledManifest(app); err == nil || !strings.Contains(err.Error(), "invalid installed path") {
 		t.Fatalf("error = %v", err)
 	}
 }
