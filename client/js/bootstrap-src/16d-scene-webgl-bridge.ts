@@ -44,6 +44,10 @@
       sceneFallbackMaterialData: typeof sceneFallbackMaterialData === "function" ? sceneFallbackMaterialData : undefined,
       sceneMaterialEmissive: typeof sceneMaterialEmissive === "function" ? sceneMaterialEmissive : undefined,
       sceneMaterialOpacity: typeof sceneMaterialOpacity === "function" ? sceneMaterialOpacity : undefined,
+      // 13-scene-material.js — alpha-mask cutoff normalizer. The WebGL
+      // renderer calls it for every material upload; without this line the
+      // lazily loaded chunk cannot resolve it.
+      sceneNormalizeMaterialAlphaCutoff: typeof sceneNormalizeMaterialAlphaCutoff === "function" ? sceneNormalizeMaterialAlphaCutoff : undefined,
       compareSceneWorldPassEntries: typeof compareSceneWorldPassEntries === "function" ? compareSceneWorldPassEntries : undefined,
       sceneWorldObjectRenderPass: typeof sceneWorldObjectRenderPass === "function" ? sceneWorldObjectRenderPass : undefined,
       sceneWorldObjectRenderable: typeof sceneWorldObjectRenderable === "function" ? sceneWorldObjectRenderable : undefined,

@@ -47,7 +47,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
-    "out vec4 v_instanceColor;",
+    "flat out vec4 v_instanceColor;",
     "",
     SCENE_GLSL_AFFINE_NORMAL,
     "",
@@ -85,7 +85,7 @@
     "in vec2 v_uv;",
     "in vec3 v_tangent;",
     "in vec3 v_bitangent;",
-    "in vec4 v_instanceColor;",
+    "flat in vec4 v_instanceColor;",
     "",
     // Camera
     "uniform vec3 u_cameraPosition;",
@@ -105,6 +105,7 @@
     "uniform vec3 u_specularColorLog;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
+    "uniform float u_alphaCutoff;",
     "uniform bool u_unlit;",
     "",
     // Texture maps
@@ -375,9 +376,11 @@
     // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
     "    albedo *= v_instanceColor.rgb;",
+    "    float texAlpha = 1.0;",
     "    if (u_hasAlbedoMap) {",
     "        vec4 texAlbedo = texture(u_albedoMap, v_uv);",
     "        albedo *= texAlbedo.rgb;",
+    "        texAlpha = texAlbedo.a;",
     "    }",
     "",
     "    float roughness = u_roughness;",
@@ -392,6 +395,17 @@
     "        metalness *= texture(u_metalnessMap, v_uv).b;",
     "    }",
     "    metalness = clamp(metalness, 0.0, 1.0);",
+    "",
+    // Alpha-mask coverage: material opacity * clamped instance/vertex alpha
+    // * base-color texel alpha (texel alpha defaults to 1 with no map).
+    // Negative cutoff is the disabled sentinel; an exact match survives.
+    // v_instanceColor is flat-interpolated: perspective-correct smooth
+    // interpolation can drift alpha below an exact cutoff mid-triangle.
+    "    float coverage = u_opacity * clamp(v_instanceColor.a, 0.0, 1.0) * texAlpha;",
+    "    bool masked = u_alphaCutoff >= 0.0;",
+    "    if (masked && coverage < u_alphaCutoff) {",
+    "        discard;",
+    "    }",
     "",
     "    float ambientOcclusion = 1.0;",
     "#if GOSX_HDR_IBL",
@@ -411,7 +425,7 @@
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
     "        float opacity = u_opacity;",
     "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
-    "        fragColor = vec4(color, opacity * v_instanceColor.a);",
+    "        fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
     "        return;",
     "    }",
     "",
@@ -669,7 +683,7 @@
     "",
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
-    "    fragColor = vec4(color, opacity * v_instanceColor.a);",
+    "    fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
     "}",
   ].join("\n");
 
@@ -844,7 +858,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
-    "out vec4 v_instanceColor;",
+    "flat out vec4 v_instanceColor;",
     "",
     SCENE_GLSL_AFFINE_NORMAL,
     "",
@@ -891,7 +905,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
-    "out vec4 v_instanceColor;",
+    "flat out vec4 v_instanceColor;",
     "",
     SCENE_GLSL_AFFINE_NORMAL,
     "",
@@ -5250,6 +5264,7 @@
       specularColorLog: gl.getUniformLocation(program, "u_specularColorLog"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
+      alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
 
       albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
@@ -7334,6 +7349,16 @@
       gl.uniform3f(uniforms.specularColorLog, specularColorLogs[0], specularColorLogs[1], specularColorLogs[2]);
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
+      // Alpha-mask cutoff: the shared normalizer accepts finite numbers >= 0,
+      // including numeric strings; unresolved CSS var text, invalid values and
+      // null come back disabled at upload. Finite cutoffs above 1 can never
+      // be beaten by coverage (<= 1), so a float32-exact 2 represents them
+      // without rounding MAX_VALUE toward float32 Infinity.
+      const alphaCutoff = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
+      const cutoffValue = (typeof alphaCutoff === "number" && Number.isFinite(alphaCutoff) && alphaCutoff >= 0)
+        ? (alphaCutoff <= 1 ? Math.fround(alphaCutoff) : 2)
+        : -1;
+      gl.uniform1f(uniforms.alphaCutoff, cutoffValue);
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
 
       // Bind texture maps. Each map uses a dedicated texture unit.

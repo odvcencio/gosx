@@ -36,7 +36,7 @@ import (
 // material was ignored when it was not, which is the more expensive direction
 // of a wrong diagnostic: it invites deleting work that functions.
 //
-// Two remain, for different reasons.
+// Three remain, for different reasons.
 //
 // materialKind: render/bundle drops it before the GPU. materialFromRender reads
 // colour, opacity, the physical scalars and the map slots, and never reads Kind.
@@ -48,6 +48,10 @@ import (
 // material uniform at all. It needs a line-topology pipeline and an edge walk in
 // render/bundle, not a shading term, so no shader change can move it.
 //
+// alphaCutoff: the CPU rasterizer has no alpha-test stage, so only a numeric
+// cutoff promises a pixel effect it cannot produce. An omitted cutoff and an
+// explicit null disable promise nothing and are not counted.
+//
 // Note on metalnessMap and emissiveMap: both are MODULATING maps. They scale a
 // factor, so they change nothing when that factor is zero. They are sampled, and
 // therefore not ignored — but an author who sees no change should check the
@@ -55,6 +59,7 @@ import (
 var ignoredMaterialFields = []string{
 	"materialKind",
 	"wireframe",
+	"alphaCutoff",
 }
 
 // cpuBaselineMaterialKind is the one authored material kind that describes what
@@ -95,10 +100,12 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 	for _, object := range ir.Objects {
 		countIgnoredMaterialFields(count, boolValue(object.Wireframe))
 		count("materialKind", materialKindIgnored(object.MaterialKind))
+		count("alphaCutoff", alphaCutoffIgnored(object.AlphaCutoff))
 	}
 	for _, mesh := range ir.InstancedMeshes {
 		countIgnoredMaterialFields(count, boolValue(mesh.Wireframe))
 		count("materialKind", materialKindIgnored(mesh.MaterialKind))
+		count("alphaCutoff", alphaCutoffIgnored(mesh.AlphaCutoff))
 	}
 	if len(used) == 0 {
 		return engine.RenderDiagnostic{}, false
@@ -125,9 +132,19 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 // is the expensive direction of a wrong diagnostic.
 //
 // Keep this function in step with ignoredMaterialFields; the doc comment there
-// explains why materialKind and wireframe are the two that remain.
+// explains why materialKind, wireframe and alphaCutoff are the three that
+// remain.
 func countIgnoredMaterialFields(count func(string, bool), wireframe bool) {
 	count("wireframe", wireframe)
+}
+
+// alphaCutoffIgnored reports whether an authored alpha cutoff promises a pixel
+// effect the CPU rasterizer does not produce. Only a numeric cutoff promises
+// anything, so only a numeric cutoff is counted; an omitted cutoff and an
+// explicit null disable promise nothing and must not inflate the count.
+func alphaCutoffIgnored(cutoff scene.AlphaCutoff) bool {
+	_, ok := cutoff.Value()
+	return ok
 }
 
 // textureResolver rewrites base colour texture sources onto real files.

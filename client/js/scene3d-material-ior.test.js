@@ -662,12 +662,13 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   assert.strictEqual(packed.data[37], 1);
   assert.strictEqual(packed.data[38], 1);
   assert.strictEqual(packed.data[39], 0);
-  // Trailing scalar plus deterministic padding, then the effective specular
+  // Trailing scalar plus deterministic padding (the alpha cutoff slot holds
+  // the -1 disabled sentinel at f32 42), then the effective specular
   // factors at the vec3f-aligned slots: F0 = min(IOR F0 * white, 1) *
   // intensity and F90 = intensity 1.
   assert.ok(Math.abs(packed.data[40] - expectedDielectricF0(2.42)) <= 1e-6);
   assert.strictEqual(packed.data[41], 0);
-  assert.strictEqual(packed.data[42], 0);
+  assert.strictEqual(packed.data[42], -1);
   assert.strictEqual(packed.data[43], 0);
   assert.ok(Math.abs(packed.data[44] - expectedDielectricF0(2.42)) <= 1e-6);
   assert.ok(Math.abs(packed.data[45] - expectedDielectricF0(2.42)) <= 1e-6);

@@ -148,6 +148,7 @@ type IRMaterial struct {
 	MetalnessMap       string                       `json:"metalnessMap,omitempty"`
 	OcclusionMap       string                       `json:"occlusionMap,omitempty"`
 	EmissiveMap        string                       `json:"emissiveMap,omitempty"`
+	AlphaCutoff        AlphaCutoff                  `json:"alphaCutoff,omitzero"`
 	TextureDescriptors MaterialTextureDescriptors   `json:"textureDescriptors,omitzero"`
 	BlendMode          string                       `json:"blendMode,omitempty"`
 	RenderPass         string                       `json:"renderPass,omitempty"`
@@ -192,6 +193,7 @@ type IRMaterialVariant struct {
 	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
 	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
 	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
+	AlphaCutoff        AlphaCutoff                `json:"alphaCutoff,omitzero"`
 	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
 	BlendMode          string                     `json:"blendMode,omitempty"`
 	RenderPass         string                     `json:"renderPass,omitempty"`
@@ -928,6 +930,7 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		MetalnessMap:       object.MetalnessMap,
 		OcclusionMap:       object.OcclusionMap,
 		EmissiveMap:        object.EmissiveMap,
+		AlphaCutoff:        object.AlphaCutoff,
 		TextureDescriptors: object.TextureDescriptors,
 		BlendMode:          object.BlendMode,
 		RenderPass:         object.RenderPass,
@@ -970,6 +973,7 @@ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 		MetalnessMap:       mesh.MetalnessMap,
 		OcclusionMap:       mesh.OcclusionMap,
 		EmissiveMap:        mesh.EmissiveMap,
+		AlphaCutoff:        mesh.AlphaCutoff,
 		TextureDescriptors: mesh.TextureDescriptors,
 		BlendMode:          mesh.BlendMode,
 		RenderPass:         mesh.RenderPass,

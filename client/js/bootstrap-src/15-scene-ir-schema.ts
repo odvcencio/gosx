@@ -151,11 +151,13 @@
    * @property {string} [kind]
    * @property {string} [color]
    * @property {number} [opacity]
+   * @property {boolean} [unlit] Disable lighting response for this material. Absent inherits (normalizers default false); an explicit false overrides an inherited true.
    * @property {number} [roughness]
    * @property {number} [metalness]
    * @property {number} [ior] Index of refraction. Absent uses the renderer default (1.5); 0 selects the special 1-reflectance case; values must be 0 or at least 1.
    * @property {number} [specularIntensity] Specular intensity multiplier. Absent uses the renderer default (1); an explicit 0 is valid; valid values are finite within [0, 1] and anything else falls back to an inherited or hard default of 1.
    * @property {number[]} [specularColor] Linear RGB specular tint (never sRGB). Absent uses [1, 1, 1]; explicit black and HDR components above 1 are valid; a triple is valid only when all three components are finite and non-negative — one bad component invalidates the whole color, which then falls back to a valid inherited color or hard white.
+   * @property {number|string|null} [alphaCutoff] Alpha-mask cutoff for masked transparency. Absent inherits; an explicit null disables alpha masking; valid values are finite and >= 0 (numeric CSS text resolves before preparation). Built-in PBR renderers discard coverage below the cutoff and force survivors opaque; authored custom/Selena shaders retain their authored route.
    * @property {string} [shaderBackend]
    * @property {object} [shaderLayout]
    * @property {string} [shaderSource]
