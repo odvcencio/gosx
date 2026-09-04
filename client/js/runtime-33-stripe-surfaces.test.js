@@ -57,7 +57,15 @@ function confirmControl(id) {
   return { control, config };
 }
 
-function installStripeFake(context, captures) {
+function checkoutConfirmControl(id) {
+  const control = new FakeElement("button", null);
+  control.id = id;
+  control.setAttribute("type", "button");
+  control.setAttribute("data-gosx-stripe-checkout-confirm", "");
+  return control;
+}
+
+function installStripeFake(context, captures, overrides = {}) {
   context.Stripe = function(key, options) {
     captures.instances.push({ key, options });
     return {
@@ -100,6 +108,7 @@ function installStripeFake(context, captures) {
       },
       async initCheckout(init) {
         captures.checkoutInit.push(init);
+        if (overrides.initCheckout) return overrides.initCheckout(init);
         return {
           on() {},
           off() {},
@@ -125,8 +134,8 @@ function newCaptures() {
   };
 }
 
-async function bootStripe(env, captures) {
-  installStripeFake(env.context, captures);
+async function bootStripe(env, captures, overrides) {
+  installStripeFake(env.context, captures, overrides);
   runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
   await flushAsyncWork();
   runScript(stripeBridgeSource, env.context, "stripe-bridge.js");
@@ -331,6 +340,75 @@ test("disposing a surface aborts an in-flight session request", async () => {
   release({ text: JSON.stringify({ clientSecret: "late_secret" }), headers: { "content-type": "application/json" } });
   await flushAsyncWork();
   assert.equal(captures.mounts.length, 0);
+  assert.equal(root.getAttribute("data-gosx-stripe-state"), "disposed");
+});
+
+test("disposing custom Checkout while loadActions is pending prevents late confirmation", async () => {
+  let resolveActions;
+  const pendingActions = new Promise((resolve) => { resolveActions = resolve; });
+  let providerConfirmCalls = 0;
+  let checkoutDestroyed = 0;
+  const confirm = checkoutConfirmControl("checkout-confirm-pending-actions");
+  const root = stripeSurface("checkout", "checkout-pending-actions", "/session/checkout-actions", [confirm]);
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: {
+      "/session/checkout-actions": { text: JSON.stringify({ clientSecret: "secret_checkout_actions" }), headers: { "content-type": "application/json" } },
+    },
+  });
+  const captures = newCaptures();
+  await bootStripe(env, captures, {
+    initCheckout: async () => ({
+      on() {},
+      off() {},
+      destroy() { checkoutDestroyed += 1; },
+      loadActions() { return pendingActions; },
+    }),
+  });
+
+  confirm.dispatchEvent({ type: "click", preventDefault() {} });
+  await flushAsyncWork();
+  env.context.__gosx_dispose_runtime_surfaces(root);
+  assert.equal(checkoutDestroyed, 1);
+  resolveActions({
+    type: "success",
+    actions: {
+      confirm: async () => {
+        providerConfirmCalls += 1;
+        return { type: "success" };
+      },
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(providerConfirmCalls, 0, "a retired surface must not call provider confirmation");
+  assert.equal(root.getAttribute("data-gosx-stripe-state"), "disposed");
+});
+
+test("disposing custom Checkout while initCheckout is pending cleans up the late provider object", async () => {
+  let resolveInit;
+  const pendingInit = new Promise((resolve) => { resolveInit = resolve; });
+  let lateDestroyCalls = 0;
+  const root = stripeSurface("checkout", "checkout-pending-init", "/session/checkout-init");
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: {
+      "/session/checkout-init": { text: JSON.stringify({ clientSecret: "secret_checkout_init" }), headers: { "content-type": "application/json" } },
+    },
+  });
+  const captures = newCaptures();
+  await bootStripe(env, captures, {
+    initCheckout: () => pendingInit,
+  });
+  assert.equal(captures.checkoutInit.length, 1, "the provider init must be causally pending before disposal");
+
+  env.context.__gosx_dispose_runtime_surfaces(root);
+  resolveInit({
+    destroy() { lateDestroyCalls += 1; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(lateDestroyCalls, 1, "a provider object resolving after disposal must be destroyed exactly once");
   assert.equal(root.getAttribute("data-gosx-stripe-state"), "disposed");
 });
 

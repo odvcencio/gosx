@@ -347,9 +347,11 @@
       emit(record, "status", "confirm", { element: boundedID(button.id), status: "submitting" });
       try {
         const result = await checkoutActions(record);
+        if (isAborted(record)) return;
         if (!result || result.type !== "success" || !result.actions || typeof result.actions.confirm !== "function") {
           throw new Error("checkout_actions_unavailable");
         }
+        if (isAborted(record)) return;
         const confirmation = await result.actions.confirm({});
         if (confirmation && confirmation.type === "error") throw confirmation.error;
         if (isAborted(record)) return;
@@ -373,8 +375,15 @@
     record.stripe = values[0];
     const init = { clientSecret: values[1] };
     if (config.elementsOptions) init.elementsOptions = config.elementsOptions;
-    record.checkout = await record.stripe.initCheckout(init);
-    if (isAborted(record)) return;
+    const checkout = await record.stripe.initCheckout(init);
+    if (isAborted(record)) {
+      try {
+        if (checkout && typeof checkout.destroy === "function") checkout.destroy();
+        else if (checkout && typeof checkout.unmount === "function") checkout.unmount();
+      } catch (_) {}
+      return;
+    }
+    record.checkout = checkout;
     if (record.checkout && typeof record.checkout.on === "function") {
       const listener = function() { emit(record, "status", "checkout", { status: "changed" }); };
       record.checkout.on("change", listener);
