@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added: perspective spot-light shadows
+
+- WebGL2 and WebGPU now render and sample one perspective shadow map for a valid shadow-casting spot light. Directional and spot lights share two deterministic authored-order shadow-light slots; invalid spot projections fail closed before consuming a slot.
+- Typed SceneIR, canonical IR validation and identity, command diffs, and live planner signatures preserve every spot-shadow field. A shadowed spot cone must have a finite half-angle below pi/2 and may request at most one shadow map.
+- Spot shadow targets are retired when lights disappear or become invalid, and are released again during renderer disposal or GPU loss. Receiver shaders reject fragments behind the light or outside the full projected clip volume before sampling.
+- WebGPU keeps each shadow light's base and retained-caster matrices in separate aligned buffer regions through frame submission, including mixed directional/spot pairs.
+- Alpha cutoff remains a visible-surface feature: the shared depth-only shadow passes cast the mesh's closed silhouette rather than a texture-cutout silhouette. Point-light shadows remain unsupported.
+
 ### Added: consumer-backed image art direction
 
 - `server.ImageProps.Sources` accepts ordered `server.ImageSource` entries with `srcset`, `media`, `sizes`, `type`, and optional positive `width`/`height`. A non-empty source list opts the existing fallback `<img>` into native `<picture>` markup; source order is preserved because the browser's first matching source wins, while per-source dimensions reserve the correct box for crops with a different aspect ratio.
