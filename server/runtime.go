@@ -16,7 +16,19 @@ import (
 type PageRuntime struct {
 	renderer *island.Renderer
 	active   bool
-	head     []gosx.Node
+	head     []pageRuntimeHeadEntry
+	scripts  map[string]struct{}
+}
+
+type pageRuntimeHeadEntry struct {
+	node   gosx.Node
+	script *pageRuntimeManagedScript
+}
+
+type pageRuntimeManagedScript struct {
+	src  string
+	opts ManagedScriptOptions
+	args []any
 }
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
@@ -215,25 +227,42 @@ func (r *PageRuntime) AddHead(nodes ...gosx.Node) {
 		if node.IsZero() {
 			continue
 		}
-		r.head = append(r.head, node)
+		r.head = append(r.head, pageRuntimeHeadEntry{node: node})
 	}
 }
 
 // ManagedScript appends a GoSX-managed external script to the page runtime.
+// Rendering is deferred until HeadWithNonce so the request nonce reaches the
+// executable tag. Repeated registration of the same normalized role and URL
+// is idempotent; the first registration owns its attributes.
 func (r *PageRuntime) ManagedScript(src string, opts ManagedScriptOptions, args ...any) {
 	if r == nil {
 		return
 	}
-	r.AddHead(ManagedScript(src, opts, args...))
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return
+	}
+	key := normalizeManagedScriptRole(opts.Role) + "\x00" + AssetURL(src)
+	if r.scripts == nil {
+		r.scripts = make(map[string]struct{})
+	}
+	if _, exists := r.scripts[key]; exists {
+		return
+	}
+	r.scripts[key] = struct{}{}
+	r.head = append(r.head, pageRuntimeHeadEntry{script: &pageRuntimeManagedScript{
+		src: src, opts: opts, args: append([]any(nil), args...),
+	}})
 }
 
 // LifecycleScript appends a page lifecycle helper script after the shared
-// runtime assets so it can chain onto bootstrap/dispose hooks safely.
+// runtime assets so it can register with the framework-owned lifecycle facade.
 func (r *PageRuntime) LifecycleScript(src string, args ...any) {
 	if r == nil {
 		return
 	}
-	r.AddHead(LifecycleScript(src, args...))
+	r.ManagedScript(src, ManagedScriptOptions{Role: ManagedScriptRoleLifecycle}, args...)
 }
 
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.
@@ -254,7 +283,18 @@ func (r *PageRuntime) HeadWithNonce(nonce string) gosx.Node {
 			r.renderer.PageHeadWithNonce(nonce),
 		)
 	}
-	nodes = append(nodes, r.head...)
+	for _, entry := range r.head {
+		if entry.script != nil {
+			nodes = append(nodes, managedScriptWithNonce(
+				entry.script.src,
+				entry.script.opts,
+				nonce,
+				entry.script.args...,
+			))
+			continue
+		}
+		nodes = append(nodes, entry.node)
+	}
 	if len(nodes) == 0 {
 		return gosx.Text("")
 	}

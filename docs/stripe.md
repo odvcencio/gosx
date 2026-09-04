@@ -85,12 +85,13 @@ return stripeui.Elements(stripeui.ElementsSurfaceProps{
 		PublishableKey: os.Getenv("STRIPE_PUBLISHABLE_KEY"),
 	},
 	SessionAction: ctx.ActionPath("payment-intent"),
-	ElementsOptions: map[string]any{
-		"appearance": stripeui.AppearanceFromTokens(themeTokens),
+	ElementsOptions: stripeui.ElementsOptions{
+		Appearance: stripeui.AppearanceFromTokens(themeTokens),
+		Loader:     stripeui.LoaderAuto,
 	},
 },
 	stripeui.PaymentElement(stripeui.ElementProps{}),
-	stripeui.ConfirmForm(stripeui.ConfirmProps{
+	stripeui.ConfirmButton(stripeui.ConfirmProps{
 		ReturnPath: "/checkout/return",
 	}),
 )
@@ -115,6 +116,30 @@ request bodies are rejected by the public Go contract and checked again by the
 browser bridge. Session requests use the surface lifecycle signal, so page
 replacement cancels outstanding work.
 
+`ConfirmButton` is the only Elements confirmation listener target. It renders
+an accessible `type="button"` with `aria-busy`; clicks on fields, wrappers, or
+sibling controls never invoke Stripe confirmation. `ConfirmForm` remains a
+temporary pre-1.0 source alias, but now renders that exact button rather than a
+form or `role=group` listener.
+
+### Strict CSP
+
+`Require` registers all executable assets with the page runtime. The runtime
+renders the bootstrap first, then Stripe.js, then the local bridge, and threads
+the request nonce onto all three tags. Do not add the scripts to arbitrary head
+content yourself. A strict policy must also allow Stripe's directly hosted
+origin; adapt this baseline to the Stripe features in use:
+
+```text
+script-src 'nonce-{REQUEST_NONCE}' https://js.stripe.com;
+frame-src https://js.stripe.com https://hooks.stripe.com;
+connect-src https://api.stripe.com;
+```
+
+Applications using CSP3 `strict-dynamic` can retain the explicit
+`https://js.stripe.com` source as a readable fallback for user agents that do
+not implement that directive. GoSX never copies or self-hosts Stripe.js.
+
 GoSX emits only four document events: `gosx:stripe:ready`,
 `gosx:stripe:status`, `gosx:stripe:complete`, and `gosx:stripe:error`. Their
 details contain bounded scalar identifiers/status fields. Raw Stripe events,
@@ -133,10 +158,13 @@ fields would be less safe than a compile error.
 | `ClientSecret` / `ClientSecretRequest` | Return `clientSecret` from the session action |
 | `RedirectCheckoutForm` | `HostedCheckoutForm` and a server-owned 303 handler |
 | `RuntimeOptions.StripeJSURL` / `RuntimeConfig.StripeJSURL` | Stripe.js always loads directly from `js.stripe.com` |
+| `Head(RuntimeConfig)` or manually authored script tags | `Require(page, RuntimeConfig)` so bootstrap ordering and CSP nonces are runtime-owned |
+| `StripeOptions`, `ElementsOptions map[string]any`, `ElementProps.Options map[string]any` | Typed `ElementsOptions`, `Appearance`, and `ElementOptions` allowlists |
 | `BaseProps.Attrs` | Wrap the component, or use its explicit `ID` and `Class` |
 | `ElementProps.Events` | Fixed redacted `ready/status/complete/error` events |
 | `ConfirmProps.ClientSecret`, `Params`, `ConfirmParams`, `ReturnURL` | Surface session action plus `ReturnPath` and typed confirmation fields |
 | `CheckoutConfirm(ConfirmProps{...})` | `CheckoutConfirm(CheckoutConfirmProps{...})` |
+| A wrapper-oriented `ConfirmForm` | `ConfirmButton`; the old name temporarily renders the same explicit button |
 
 Treat every Stripe secret key, webhook signing secret, authorization header,
 and server response as server-only material. A publishable key is the only

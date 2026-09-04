@@ -38,8 +38,8 @@ const (
 	ElementIdealBank              = "idealBank"
 	ElementAUBankAccount          = "auBankAccount"
 
-	ConfirmPayment = "confirmPayment"
-	ConfirmSetup   = "confirmSetup"
+	ConfirmPayment ConfirmMethod = "confirmPayment"
+	ConfirmSetup   ConfirmMethod = "confirmSetup"
 
 	runtimeSurfaceElements = "stripe-elements"
 	runtimeSurfaceEmbedded = "stripe-embedded-checkout"
@@ -62,7 +62,6 @@ type RuntimeConfig struct {
 
 // Page is the narrow interface shared by server.Context and route.RouteContext.
 type Page interface {
-	AddHead(...gosx.Node)
 	Runtime() *server.PageRuntime
 }
 
@@ -72,34 +71,25 @@ func Require(page Page, cfg RuntimeConfig) {
 	if page == nil {
 		return
 	}
-	if runtime := page.Runtime(); runtime != nil {
-		runtime.EnableBootstrap()
+	runtime := page.Runtime()
+	if runtime == nil {
+		return
 	}
-	page.AddHead(Head(cfg))
-}
-
-// Head renders the assets required by managed Stripe surfaces. Stripe.js is
-// always loaded directly from Stripe; only the app-owned bridge path may be
-// configured.
-func Head(cfg RuntimeConfig) gosx.Node {
+	runtime.EnableBootstrap()
 	bridge := normalizeBridgePath(cfg.BridgePath)
 	if bridge == "" {
 		bridge = DefaultBridgePath
 	}
-	nodes := []gosx.Node{}
 	if cfg.Preconnect {
-		nodes = append(nodes, gosx.El("link", gosx.Attrs(
+		runtime.AddHead(gosx.El("link", gosx.Attrs(
 			gosx.Attr("rel", "preconnect"),
 			gosx.Attr("href", "https://js.stripe.com"),
 		)))
 	}
-	nodes = append(nodes,
-		server.ManagedScript(DefaultStripeJSURL, server.ManagedScriptOptions{
-			Role: server.ManagedScriptRoleManaged,
-		}, gosx.Attrs(gosx.BoolAttr("defer"))),
-		server.LifecycleScript(bridge, gosx.Attrs(gosx.BoolAttr("defer"))),
-	)
-	return gosx.Fragment(nodes...)
+	runtime.ManagedScript(DefaultStripeJSURL, server.ManagedScriptOptions{
+		Role: server.ManagedScriptRoleManaged,
+	}, gosx.Attrs(gosx.BoolAttr("defer")))
+	runtime.LifecycleScript(bridge, gosx.Attrs(gosx.BoolAttr("defer")))
 }
 
 // BaseProps are shared by rendered Stripe components. Arbitrary attributes
@@ -110,11 +100,83 @@ type BaseProps struct {
 	Class string
 }
 
-// RuntimeOptions configure Stripe(publishableKey, options). PublishableKey is
-// browser-safe. Secret-bearing option keys are removed before serialization.
+// RuntimeOptions contain the one provider value permitted in SSR HTML.
+// Secret keys are rejected by the pk_ prefix check during rendering.
 type RuntimeOptions struct {
 	PublishableKey string
-	StripeOptions  map[string]any
+}
+
+type LoaderBehavior string
+
+const (
+	LoaderAuto   LoaderBehavior = "auto"
+	LoaderAlways LoaderBehavior = "always"
+	LoaderNever  LoaderBehavior = "never"
+)
+
+type AppearanceTheme string
+
+const (
+	AppearanceStripe AppearanceTheme = "stripe"
+	AppearanceNight  AppearanceTheme = "night"
+	AppearanceFlat   AppearanceTheme = "flat"
+)
+
+type AppearanceLabels string
+
+const (
+	LabelsFloating AppearanceLabels = "floating"
+	LabelsAbove    AppearanceLabels = "above"
+)
+
+// AppearanceVariables are the allowlisted Stripe Appearance values that GoSX
+// can derive from a design system. There is intentionally no arbitrary rules
+// or key/value escape hatch.
+type AppearanceVariables struct {
+	FontFamily      string `json:"fontFamily,omitempty"`
+	ColorPrimary    string `json:"colorPrimary,omitempty"`
+	ColorBackground string `json:"colorBackground,omitempty"`
+	ColorText       string `json:"colorText,omitempty"`
+	ColorDanger     string `json:"colorDanger,omitempty"`
+	BorderRadius    string `json:"borderRadius,omitempty"`
+	SpacingUnit     string `json:"spacingUnit,omitempty"`
+}
+
+type Appearance struct {
+	Theme     AppearanceTheme      `json:"theme,omitempty"`
+	Labels    AppearanceLabels     `json:"labels,omitempty"`
+	Variables *AppearanceVariables `json:"variables,omitempty"`
+}
+
+// ElementsOptions is the typed subset of provider-level Elements options that
+// is safe to serialize into server HTML.
+type ElementsOptions struct {
+	Appearance *Appearance    `json:"appearance,omitempty"`
+	Loader     LoaderBehavior `json:"loader,omitempty"`
+}
+
+type ElementLayout string
+
+const (
+	LayoutAuto      ElementLayout = "auto"
+	LayoutTabs      ElementLayout = "tabs"
+	LayoutAccordion ElementLayout = "accordion"
+)
+
+type AddressMode string
+
+const (
+	AddressBilling  AddressMode = "billing"
+	AddressShipping AddressMode = "shipping"
+)
+
+// ElementOptions is shared by GoSX's managed element mounts. Fields that do
+// not apply to a particular Stripe element are ignored by Stripe; arbitrary
+// provider objects cannot be authored through this contract.
+type ElementOptions struct {
+	Layout   ElementLayout `json:"layout,omitempty"`
+	Mode     AddressMode   `json:"mode,omitempty"`
+	ReadOnly bool          `json:"readOnly,omitempty"`
 }
 
 // HostedCheckoutProps configures the zero-runtime Checkout form. Action is an
@@ -178,17 +240,16 @@ type ElementsSurfaceProps struct {
 	BaseProps
 	RuntimeOptions
 	SessionAction   string
-	ElementsOptions map[string]any
+	ElementsOptions ElementsOptions
 }
 
 // Elements renders a managed provider for PaymentIntent/SetupIntent Elements.
 func Elements(props ElementsSurfaceProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("surface"))
-	cfg := map[string]any{
-		"publishableKey":  normalizePublishableKey(props.PublishableKey),
-		"stripeOptions":   props.StripeOptions,
-		"sessionAction":   normalizeSessionAction(props.SessionAction),
-		"elementsOptions": props.ElementsOptions,
+	cfg := surfaceConfig{
+		PublishableKey:  normalizePublishableKey(props.PublishableKey),
+		SessionAction:   normalizeSessionAction(props.SessionAction),
+		ElementsOptions: normalizeElementsOptions(props.ElementsOptions),
 	}
 	configID, config := configScript("surface", cfg)
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-surface")
@@ -207,7 +268,7 @@ func Elements(props ElementsSurfaceProps, children ...gosx.Node) gosx.Node {
 type ElementProps struct {
 	BaseProps
 	Type    string
-	Options map[string]any
+	Options ElementOptions
 }
 
 // Element renders a generic Stripe Element mount. Use Type for newly added
@@ -215,7 +276,7 @@ type ElementProps struct {
 func Element(props ElementProps) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("element"))
 	typ := firstNonEmpty(props.Type, ElementPayment)
-	configID, config := configScript("element", map[string]any{"options": props.Options})
+	configID, config := configScript("element", elementConfig{Options: normalizeElementOptions(props.Options)})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-element")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
@@ -265,38 +326,51 @@ func TaxIDElement(props ElementProps) gosx.Node {
 // to an absolute URL by the browser bridge.
 type ConfirmProps struct {
 	BaseProps
-	Method     string
+	Method     ConfirmMethod
 	ReturnPath string
-	Redirect   string
+	Redirect   RedirectBehavior
 	SkipSubmit bool
 }
 
-// ConfirmForm retains the familiar component name but renders a non-submitting
-// group. Without the managed surface runtime it cannot accidentally POST card
-// UI state to the app.
-func ConfirmForm(props ConfirmProps, children ...gosx.Node) gosx.Node {
+type ConfirmMethod string
+
+type RedirectBehavior string
+
+const (
+	RedirectAlways     RedirectBehavior = "always"
+	RedirectIfRequired RedirectBehavior = "if_required"
+)
+
+// ConfirmButton renders the only interactive confirmation control. The
+// listener is scoped to this type=button element, so sibling fields, links,
+// and controls inside the Elements surface cannot trigger confirmation.
+func ConfirmButton(props ConfirmProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("confirm"))
 	if len(children) == 0 {
-		children = []gosx.Node{gosx.El("button", gosx.Attrs(gosx.Attr("type", "button")), gosx.Text("Pay"))}
+		children = []gosx.Node{gosx.Text("Pay")}
 	}
-	cfg := map[string]any{
-		"method":     normalizeConfirmMethod(props.Method),
-		"returnPath": normalizeReturnPath(props.ReturnPath),
-		"redirect":   normalizeRedirectMode(props.Redirect),
-	}
-	if props.SkipSubmit {
-		cfg["submit"] = false
-	}
-	configID, config := configScript("confirm", cfg)
+	configID, config := configScript("confirm", confirmConfig{
+		Method:     normalizeConfirmMethod(props.Method),
+		ReturnPath: normalizeReturnPath(props.ReturnPath),
+		Redirect:   normalizeRedirectMode(props.Redirect),
+		SkipSubmit: props.SkipSubmit,
+	})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-confirm")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
-		gosx.Attr("role", "group"),
-		gosx.Attr("data-gosx-stripe-confirm", normalizeConfirmMethod(props.Method)),
+		gosx.Attr("type", "button"),
+		gosx.Attr("aria-busy", "false"),
+		gosx.BoolAttr("data-gosx-stripe-confirm-control"),
 		gosx.Attr("data-gosx-stripe-config-id", configID),
 	)
-	nodes := append([]gosx.Node{config}, children...)
-	return gosx.El("div", nodeArgs(attrs, nodes...)...)
+	return gosx.Fragment(config, gosx.El("button", nodeArgs(attrs, children...)...))
+}
+
+// ConfirmForm is retained as a pre-1.0 migration alias. Despite its old name,
+// it renders exactly the explicit accessible button returned by ConfirmButton;
+// it never marks a form or role=group as a confirmation listener target.
+func ConfirmForm(props ConfirmProps, children ...gosx.Node) gosx.Node {
+	return ConfirmButton(props, children...)
 }
 
 // EmbeddedCheckoutProps configures stripe.initEmbeddedCheckout(...).
@@ -308,10 +382,9 @@ type EmbeddedCheckoutProps struct {
 
 func EmbeddedCheckout(props EmbeddedCheckoutProps) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("embedded"))
-	configID, config := configScript("embedded", map[string]any{
-		"publishableKey": normalizePublishableKey(props.PublishableKey),
-		"stripeOptions":  props.StripeOptions,
-		"sessionAction":  normalizeSessionAction(props.SessionAction),
+	configID, config := configScript("embedded", surfaceConfig{
+		PublishableKey: normalizePublishableKey(props.PublishableKey),
+		SessionAction:  normalizeSessionAction(props.SessionAction),
 	})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-embedded")
 	attrs = append(attrs,
@@ -329,16 +402,15 @@ type CheckoutProps struct {
 	BaseProps
 	RuntimeOptions
 	SessionAction   string
-	ElementsOptions map[string]any
+	ElementsOptions ElementsOptions
 }
 
 func Checkout(props CheckoutProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("checkout"))
-	configID, config := configScript("checkout", map[string]any{
-		"publishableKey":  normalizePublishableKey(props.PublishableKey),
-		"stripeOptions":   props.StripeOptions,
-		"sessionAction":   normalizeSessionAction(props.SessionAction),
-		"elementsOptions": props.ElementsOptions,
+	configID, config := configScript("checkout", surfaceConfig{
+		PublishableKey:  normalizePublishableKey(props.PublishableKey),
+		SessionAction:   normalizeSessionAction(props.SessionAction),
+		ElementsOptions: normalizeElementsOptions(props.ElementsOptions),
 	})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-checkout")
 	attrs = append(attrs,
@@ -353,15 +425,12 @@ func Checkout(props CheckoutProps, children ...gosx.Node) gosx.Node {
 
 type CheckoutElementProps struct {
 	ElementProps
-	Create string
 }
 
 func CheckoutElement(props CheckoutElementProps) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("checkout-element"))
 	typ := firstNonEmpty(props.Type, ElementPayment)
-	configID, config := configScript("checkout-element", map[string]any{
-		"create": props.Create, "options": props.Options,
-	})
+	configID, config := configScript("checkout-element", elementConfig{Options: normalizeElementOptions(props.Options)})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-checkout-element")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
@@ -373,13 +442,11 @@ func CheckoutElement(props CheckoutElementProps) gosx.Node {
 
 func CheckoutPaymentElement(props CheckoutElementProps) gosx.Node {
 	props.Type = ElementPayment
-	props.Create = firstNonEmpty(props.Create, "createPaymentElement")
 	return CheckoutElement(props)
 }
 
 func CheckoutExpressCheckoutElement(props CheckoutElementProps) gosx.Node {
 	props.Type = ElementExpressCheckout
-	props.Create = firstNonEmpty(props.Create, "createExpressCheckoutElement")
 	return CheckoutElement(props)
 }
 
@@ -405,7 +472,8 @@ func CheckoutConfirm(props CheckoutConfirmProps, children ...gosx.Node) gosx.Nod
 
 // DesignTokens can be mapped into Stripe's Appearance API variables.
 type DesignTokens struct {
-	Theme           string
+	Theme           AppearanceTheme
+	Labels          AppearanceLabels
 	FontFamily      string
 	ColorPrimary    string
 	ColorBackground string
@@ -415,84 +483,55 @@ type DesignTokens struct {
 	SpacingUnit     string
 }
 
-func AppearanceFromTokens(tokens DesignTokens) map[string]any {
-	variables := map[string]any{}
-	put := func(key, value string) {
-		if strings.TrimSpace(value) != "" {
-			variables[key] = strings.TrimSpace(value)
-		}
+func AppearanceFromTokens(tokens DesignTokens) *Appearance {
+	variables := AppearanceVariables{
+		FontFamily:      boundedOptionValue(tokens.FontFamily),
+		ColorPrimary:    boundedOptionValue(tokens.ColorPrimary),
+		ColorBackground: boundedOptionValue(tokens.ColorBackground),
+		ColorText:       boundedOptionValue(tokens.ColorText),
+		ColorDanger:     boundedOptionValue(tokens.ColorDanger),
+		BorderRadius:    boundedOptionValue(tokens.BorderRadius),
+		SpacingUnit:     boundedOptionValue(tokens.SpacingUnit),
 	}
-	put("fontFamily", tokens.FontFamily)
-	put("colorPrimary", tokens.ColorPrimary)
-	put("colorBackground", tokens.ColorBackground)
-	put("colorText", tokens.ColorText)
-	put("colorDanger", tokens.ColorDanger)
-	put("borderRadius", tokens.BorderRadius)
-	put("spacingUnit", tokens.SpacingUnit)
-	appearance := map[string]any{}
-	if strings.TrimSpace(tokens.Theme) != "" {
-		appearance["theme"] = strings.TrimSpace(tokens.Theme)
+	appearance := &Appearance{
+		Theme:  normalizeAppearanceTheme(tokens.Theme),
+		Labels: normalizeAppearanceLabels(tokens.Labels),
 	}
-	if len(variables) > 0 {
-		appearance["variables"] = variables
+	if variables != (AppearanceVariables{}) {
+		appearance.Variables = &variables
+	}
+	if appearance.Theme == "" && appearance.Labels == "" && appearance.Variables == nil {
+		return nil
 	}
 	return appearance
 }
 
+type surfaceConfig struct {
+	PublishableKey  string           `json:"publishableKey"`
+	SessionAction   string           `json:"sessionAction"`
+	ElementsOptions *ElementsOptions `json:"elementsOptions,omitempty"`
+}
+
+type elementConfig struct {
+	Options ElementOptions `json:"options"`
+}
+
+type confirmConfig struct {
+	Method     ConfirmMethod    `json:"method"`
+	ReturnPath string           `json:"returnPath,omitempty"`
+	Redirect   RedirectBehavior `json:"redirect,omitempty"`
+	SkipSubmit bool             `json:"skipSubmit,omitempty"`
+}
+
 func configScript(prefix string, value any) (string, gosx.Node) {
 	id := nextID(prefix + "-config")
-	raw, err := json.Marshal(value)
-	var decoded any
-	if err == nil {
-		err = json.Unmarshal(raw, &decoded)
-	}
-	data, marshalErr := json.Marshal(sanitizeConfigValue(decoded))
-	if err == nil {
-		err = marshalErr
-	}
+	data, err := json.Marshal(value)
 	if err != nil {
 		data = []byte("{}")
 	}
 	safe := strings.NewReplacer("<", "\\u003c", ">", "\\u003e", "&", "\\u0026").Replace(string(data))
 	htmlID := html.EscapeString(id)
 	return id, gosx.RawHTML(`<script id="` + htmlID + `" type="application/json" data-gosx-stripe-config>` + safe + `</script>`)
-}
-
-func sanitizeConfigValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		clean := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if forbiddenConfigKey(key) {
-				continue
-			}
-			clean[key] = sanitizeConfigValue(item)
-		}
-		return clean
-	case []any:
-		clean := make([]any, len(typed))
-		for index, item := range typed {
-			clean[index] = sanitizeConfigValue(item)
-		}
-		return clean
-	default:
-		return value
-	}
-}
-
-func forbiddenConfigKey(key string) bool {
-	normalized := strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return unicode.ToLower(r)
-		}
-		return -1
-	}, key)
-	switch normalized {
-	case "clientsecret", "authorization", "headers", "body", "apikey", "secretkey", "accesstoken":
-		return true
-	default:
-		return false
-	}
 }
 
 func normalizeSessionAction(raw string) string {
@@ -528,17 +567,104 @@ func normalizePublishableKey(raw string) string {
 	return key
 }
 
-func normalizeConfirmMethod(method string) string {
-	if strings.TrimSpace(method) == ConfirmSetup {
+func normalizeElementsOptions(options ElementsOptions) *ElementsOptions {
+	normalized := ElementsOptions{
+		Appearance: normalizeAppearance(options.Appearance),
+		Loader:     normalizeLoader(options.Loader),
+	}
+	if normalized.Appearance == nil && normalized.Loader == "" {
+		return nil
+	}
+	return &normalized
+}
+
+func normalizeAppearance(appearance *Appearance) *Appearance {
+	if appearance == nil {
+		return nil
+	}
+	normalized := &Appearance{
+		Theme:  normalizeAppearanceTheme(appearance.Theme),
+		Labels: normalizeAppearanceLabels(appearance.Labels),
+	}
+	if appearance.Variables != nil {
+		variables := AppearanceVariables{
+			FontFamily:      boundedOptionValue(appearance.Variables.FontFamily),
+			ColorPrimary:    boundedOptionValue(appearance.Variables.ColorPrimary),
+			ColorBackground: boundedOptionValue(appearance.Variables.ColorBackground),
+			ColorText:       boundedOptionValue(appearance.Variables.ColorText),
+			ColorDanger:     boundedOptionValue(appearance.Variables.ColorDanger),
+			BorderRadius:    boundedOptionValue(appearance.Variables.BorderRadius),
+			SpacingUnit:     boundedOptionValue(appearance.Variables.SpacingUnit),
+		}
+		if variables != (AppearanceVariables{}) {
+			normalized.Variables = &variables
+		}
+	}
+	if normalized.Theme == "" && normalized.Labels == "" && normalized.Variables == nil {
+		return nil
+	}
+	return normalized
+}
+
+func normalizeLoader(loader LoaderBehavior) LoaderBehavior {
+	switch loader {
+	case LoaderAuto, LoaderAlways, LoaderNever:
+		return loader
+	default:
+		return ""
+	}
+}
+
+func normalizeAppearanceTheme(theme AppearanceTheme) AppearanceTheme {
+	switch theme {
+	case AppearanceStripe, AppearanceNight, AppearanceFlat:
+		return theme
+	default:
+		return ""
+	}
+}
+
+func normalizeAppearanceLabels(labels AppearanceLabels) AppearanceLabels {
+	switch labels {
+	case LabelsFloating, LabelsAbove:
+		return labels
+	default:
+		return ""
+	}
+}
+
+func normalizeElementOptions(options ElementOptions) ElementOptions {
+	normalized := ElementOptions{ReadOnly: options.ReadOnly}
+	switch options.Layout {
+	case LayoutAuto, LayoutTabs, LayoutAccordion:
+		normalized.Layout = options.Layout
+	}
+	switch options.Mode {
+	case AddressBilling, AddressShipping:
+		normalized.Mode = options.Mode
+	}
+	return normalized
+}
+
+func boundedOptionValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	if len(value) > 256 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return value
+}
+
+func normalizeConfirmMethod(method ConfirmMethod) ConfirmMethod {
+	if method == ConfirmSetup {
 		return ConfirmSetup
 	}
 	return ConfirmPayment
 }
 
-func normalizeRedirectMode(mode string) string {
-	switch strings.TrimSpace(mode) {
-	case "always", "if_required":
-		return strings.TrimSpace(mode)
+func normalizeRedirectMode(mode RedirectBehavior) RedirectBehavior {
+	switch mode {
+	case RedirectAlways, RedirectIfRequired:
+		return mode
 	default:
 		return ""
 	}

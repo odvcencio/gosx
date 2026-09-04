@@ -11,14 +11,14 @@ import (
 
 type testPage struct {
 	runtime *server.PageRuntime
-	head    []gosx.Node
 }
 
-func (page *testPage) AddHead(nodes ...gosx.Node)   { page.head = append(page.head, nodes...) }
 func (page *testPage) Runtime() *server.PageRuntime { return page.runtime }
 
-func TestHeadLoadsStripeDirectlyAndBridgeLocally(t *testing.T) {
-	html := gosx.RenderHTML(Head(RuntimeConfig{Preconnect: true, BridgePath: "/assets/stripe.js"}))
+func TestRequireLoadsNoncedStripeAssetsAfterBootstrap(t *testing.T) {
+	page := &testPage{runtime: server.NewPageRuntime()}
+	Require(page, RuntimeConfig{Preconnect: true, BridgePath: "/assets/stripe.js"})
+	html := gosx.RenderHTML(page.runtime.HeadWithNonce("strict-csp-nonce"))
 	for _, snippet := range []string{
 		`rel="preconnect"`,
 		`href="https://js.stripe.com"`,
@@ -26,6 +26,7 @@ func TestHeadLoadsStripeDirectlyAndBridgeLocally(t *testing.T) {
 		`data-gosx-script="managed"`,
 		`src="/assets/stripe.js"`,
 		`data-gosx-script="lifecycle"`,
+		`nonce="strict-csp-nonce"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)
@@ -33,6 +34,15 @@ func TestHeadLoadsStripeDirectlyAndBridgeLocally(t *testing.T) {
 	}
 	if strings.Contains(html, "eval(") {
 		t.Fatalf("managed scripts must use ordinary CSP-compatible script loading: %q", html)
+	}
+	bootstrap := strings.Index(html, `data-gosx-script="bootstrap"`)
+	stripe := strings.Index(html, `src="https://js.stripe.com/clover/stripe.js"`)
+	bridge := strings.Index(html, `src="/assets/stripe.js"`)
+	if bootstrap < 0 || !(bootstrap < stripe && stripe < bridge) {
+		t.Fatalf("expected bootstrap, Stripe.js, bridge execution order in %q", html)
+	}
+	if got := strings.Count(html, `nonce="strict-csp-nonce"`); got != 3 {
+		t.Fatalf("nonced executable scripts = %d, want 3 in %q", got, html)
 	}
 }
 
@@ -42,23 +52,28 @@ func TestRequireEnablesFrameworkRuntimeSurfaceLifecycle(t *testing.T) {
 	if !page.runtime.Summary().Bootstrap {
 		t.Fatal("Stripe managed surfaces must enable the shared bootstrap lifecycle")
 	}
-	if len(page.head) != 1 {
-		t.Fatalf("head nodes = %d, want 1 fragment", len(page.head))
+	html := gosx.RenderHTML(page.runtime.Head())
+	if !strings.Contains(html, DefaultStripeJSURL) || !strings.Contains(html, DefaultBridgePath) {
+		t.Fatalf("managed Stripe assets missing from runtime head: %q", html)
 	}
 }
 
-func TestRequireStillAddsAssetsWhenRuntimeIsUnavailable(t *testing.T) {
+func TestRequireToleratesUnavailableRuntime(t *testing.T) {
 	page := &testPage{}
 	Require(page, RuntimeConfig{})
-	if len(page.head) != 1 {
-		t.Fatalf("head nodes = %d, want 1 fragment", len(page.head))
-	}
 }
 
-func TestHeadRejectsExternalBridgeOverride(t *testing.T) {
-	html := gosx.RenderHTML(Head(RuntimeConfig{BridgePath: "https://evil.example/bridge.js"}))
+func TestRequireIsIdempotentAndRejectsExternalBridgeOverride(t *testing.T) {
+	page := &testPage{runtime: server.NewPageRuntime()}
+	for range 2 {
+		Require(page, RuntimeConfig{BridgePath: "https://evil.example/bridge.js"})
+	}
+	html := gosx.RenderHTML(page.runtime.HeadWithNonce("nonce"))
 	if !strings.Contains(html, `src="/gosx/stripe-bridge.js"`) || strings.Contains(html, "evil.example") {
 		t.Fatalf("expected fail-closed local bridge path in %q", html)
+	}
+	if strings.Count(html, DefaultStripeJSURL) != 1 || strings.Count(html, DefaultBridgePath) != 1 {
+		t.Fatalf("repeated Require must emit each executable asset once: %q", html)
 	}
 }
 
@@ -111,28 +126,14 @@ func TestValidateSessionActionRejectsQueriesAndCrossOriginTargets(t *testing.T) 
 }
 
 func TestElementsSurfaceUsesActionReferenceAndRedactsSecretKeys(t *testing.T) {
-	const sentinel = "SENTINEL_DO_NOT_RENDER"
 	node := Elements(ElementsSurfaceProps{
-		RuntimeOptions: RuntimeOptions{
-			PublishableKey: "pk_test_public",
-			StripeOptions: map[string]any{
-				"locale":        "auto",
-				"Authorization": sentinel,
-			},
+		RuntimeOptions: RuntimeOptions{PublishableKey: "pk_test_public"},
+		SessionAction:  "/account/__actions/stripe-session",
+		ElementsOptions: ElementsOptions{
+			Appearance: AppearanceFromTokens(DesignTokens{ColorPrimary: "#111111"}),
+			Loader:     LoaderAuto,
 		},
-		SessionAction: "/account/__actions/stripe-session",
-		ElementsOptions: map[string]any{
-			"appearance":    AppearanceFromTokens(DesignTokens{ColorPrimary: "#111111"}),
-			"client_secret": sentinel,
-			"nested": map[string]any{
-				"headers":  map[string]string{"X-Secret": sentinel},
-				"metadata": map[string]string{"clientSecret": sentinel},
-			},
-		},
-	}, PaymentElement(ElementProps{Options: map[string]any{
-		"layout": "accordion",
-		"body":   sentinel,
-	}}))
+	}, PaymentElement(ElementProps{Options: ElementOptions{Layout: LayoutAccordion}}))
 	html := gosx.RenderHTML(node)
 	for _, snippet := range []string{
 		`data-gosx-runtime-surface="stripe-elements"`,
@@ -148,7 +149,7 @@ func TestElementsSurfaceUsesActionReferenceAndRedactsSecretKeys(t *testing.T) {
 			t.Fatalf("expected %q in %q", snippet, html)
 		}
 	}
-	if strings.Contains(html, sentinel) || strings.Contains(html, "client_secret") || strings.Contains(html, "Authorization") {
+	if strings.Contains(html, "client_secret") || strings.Contains(html, "clientSecret") || strings.Contains(html, "Authorization") {
 		t.Fatalf("secret-bearing config must not enter SSR HTML: %q", html)
 	}
 }
@@ -178,7 +179,7 @@ func TestManagedSurfacesRenderOnlyFixedActionContracts(t *testing.T) {
 		want []string
 	}{
 		{embedded, []string{`data-gosx-runtime-surface="stripe-embedded-checkout"`, `/checkout/embedded-session`}},
-		{checkout, []string{`data-gosx-runtime-surface="stripe-checkout"`, `/checkout/custom-session`, `createPaymentElement`, `data-gosx-stripe-checkout-confirm`}},
+		{checkout, []string{`data-gosx-runtime-surface="stripe-checkout"`, `/checkout/custom-session`, `data-gosx-stripe-checkout-element="payment"`, `data-gosx-stripe-checkout-confirm`}},
 	} {
 		for _, snippet := range item.want {
 			if !strings.Contains(item.html, snippet) {
@@ -204,16 +205,25 @@ func TestInvalidManagedSessionActionIsNotSerialized(t *testing.T) {
 func TestPublicPropsHaveNoSecretOrArbitraryRequestFields(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(RuntimeOptions{}),
+		reflect.TypeOf(ElementsOptions{}),
+		reflect.TypeOf(ElementOptions{}),
+		reflect.TypeOf(Appearance{}),
+		reflect.TypeOf(AppearanceVariables{}),
 		reflect.TypeOf(ElementsSurfaceProps{}),
+		reflect.TypeOf(ElementProps{}),
 		reflect.TypeOf(EmbeddedCheckoutProps{}),
 		reflect.TypeOf(CheckoutProps{}),
+		reflect.TypeOf(CheckoutElementProps{}),
 		reflect.TypeOf(ConfirmProps{}),
 	}
 	for _, typ := range types {
 		for index := 0; index < typ.NumField(); index++ {
 			field := typ.Field(index)
+			if field.Type.Kind() == reflect.Map || field.Type.Kind() == reflect.Interface {
+				t.Fatalf("generic serialized field %s remains on %s", field.Name, typ.Name())
+			}
 			switch field.Name {
-			case "ClientSecret", "ClientSecretRequest", "FetchRequest", "Headers", "Body":
+			case "ClientSecret", "ClientSecretRequest", "FetchRequest", "Headers", "Body", "Params", "Rules":
 				t.Fatalf("unsafe authoring field %s remains on %s", field.Name, typ.Name())
 			}
 		}
@@ -226,12 +236,29 @@ func TestConfirmFormUsesBoundedConfirmationContract(t *testing.T) {
 		ReturnPath: "https://evil.example/after",
 		Redirect:   "arbitrary",
 	}))
-	if !strings.Contains(html, `data-gosx-stripe-confirm="confirmPayment"`) {
-		t.Fatalf("expected fixed confirmation method in %q", html)
+	for _, snippet := range []string{
+		`<button`, `type="button"`, `aria-busy="false"`, `data-gosx-stripe-confirm-control`, `>Pay</button>`,
+		`"method":"confirmPayment"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected explicit accessible confirm control %q in %q", snippet, html)
+		}
 	}
-	for _, forbidden := range []string{"arbitraryProviderMethod", "evil.example", `"redirect":"arbitrary"`, "clientSecret"} {
+	for _, forbidden := range []string{"role=", "data-gosx-stripe-confirm=", "arbitraryProviderMethod", "evil.example", `"redirect":"arbitrary"`, "clientSecret"} {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("forbidden confirmation value %q in %q", forbidden, html)
+		}
+	}
+	alias := gosx.RenderHTML(ConfirmForm(ConfirmProps{BaseProps: BaseProps{ID: "pay"}}, gosx.Text("Purchase")))
+	canonical := gosx.RenderHTML(ConfirmButton(ConfirmProps{BaseProps: BaseProps{ID: "pay"}}, gosx.Text("Purchase")))
+	for name, rendered := range map[string]string{"ConfirmForm": alias, "ConfirmButton": canonical} {
+		for _, snippet := range []string{`id="pay"`, `data-gosx-stripe-confirm-control`, `>Purchase</button>`} {
+			if !strings.Contains(rendered, snippet) {
+				t.Fatalf("%s must render the canonical confirmation control %q in %q", name, snippet, rendered)
+			}
+		}
+		if strings.Contains(rendered, "role=") {
+			t.Fatalf("%s must not render a delegated wrapper: %q", name, rendered)
 		}
 	}
 }

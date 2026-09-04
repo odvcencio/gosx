@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
+const path = require("node:path");
 
 const {
   bootstrapLiteSource,
@@ -42,15 +44,17 @@ function paymentMount(id) {
   return { mount, config };
 }
 
-function confirmForm(id) {
-  const form = new FakeElement("div", null);
-  form.id = id;
-  form.setAttribute("data-gosx-stripe-confirm", "confirmPayment");
+function confirmControl(id) {
+  const control = new FakeElement("button", null);
+  control.id = id;
+  control.setAttribute("type", "button");
+  control.setAttribute("aria-busy", "false");
+  control.setAttribute("data-gosx-stripe-confirm-control", "");
   const config = new FakeElement("script", null);
   config.id = id + "-config";
   config.textContent = JSON.stringify({ method: "confirmPayment", returnPath: "/checkout/return" });
-  form.setAttribute("data-gosx-stripe-config-id", config.id);
-  return { form, config };
+  control.setAttribute("data-gosx-stripe-config-id", config.id);
+  return { control, config };
 }
 
 function installStripeFake(context, captures) {
@@ -83,6 +87,7 @@ function installStripeFake(context, captures) {
         };
       },
       async confirmPayment() {
+        captures.confirmCalls += 1;
         return { paymentIntent: { client_secret: "RAW_CONFIRM_RESULT_SECRET" } };
       },
       async initEmbeddedCheckout(init) {
@@ -116,6 +121,7 @@ function newCaptures() {
     embeddedMounts: [],
     embeddedDestroyed: 0,
     checkoutInit: [],
+    confirmCalls: 0,
   };
 }
 
@@ -142,10 +148,76 @@ test("Stripe bridge keeps a strict CSP and lifecycle authority boundary", () => 
   }
 });
 
+test("a rendered initial document executes runtime, Stripe.js, then bridge and mounts once", async () => {
+  const repoRoot = path.resolve(__dirname, "../..");
+  const html = childProcess.execFileSync("go", ["run", "./stripeui/testdata/renderdocument"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  const scripts = Array.from(html.matchAll(/<script\b([^>]*)>/g))
+    .map((match) => ({
+      src: /\bsrc="([^"]+)"/.exec(match[1])?.[1] || "",
+      nonce: /\bnonce="([^"]+)"/.exec(match[1])?.[1] || "",
+    }))
+    .filter((script) => script.src);
+  assert.deepEqual(scripts.map((script) => script.src), [
+    "/gosx/bootstrap-lite.js",
+    "https://js.stripe.com/clover/stripe.js",
+    "/gosx/stripe-bridge.js",
+  ]);
+  assert.deepEqual(scripts.map((script) => script.nonce), [
+    "strict-csp-nonce",
+    "strict-csp-nonce",
+    "strict-csp-nonce",
+  ]);
+
+  const child = paymentMount("payment-emitted-order");
+  const root = stripeSurface("elements", "elements-emitted-order", "/session/emitted-order", [child.config, child.mount]);
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: {
+      "/session/emitted-order": { text: JSON.stringify({ clientSecret: "secret_emitted_order" }), headers: { "content-type": "application/json" } },
+    },
+  });
+  const captures = newCaptures();
+  for (const script of scripts) {
+    if (script.src === "/gosx/bootstrap-lite.js") runScript(bootstrapLiteSource, env.context, script.src);
+    else if (script.src === "https://js.stripe.com/clover/stripe.js") installStripeFake(env.context, captures);
+    else if (script.src === "/gosx/stripe-bridge.js") runScript(stripeBridgeSource, env.context, script.src);
+    await flushAsyncWork();
+  }
+  assert.equal(env.fetchCalls.filter((call) => call.url === "/session/emitted-order").length, 1);
+  assert.equal(captures.mounts.length, 1);
+  assert.equal(root.getAttribute("data-gosx-stripe-state"), "ready");
+});
+
+test("repeated bridge execution keeps an existing surface mounted exactly once", async () => {
+  const child = paymentMount("payment-idempotent");
+  const root = stripeSurface("elements", "elements-idempotent", "/session/idempotent", [child.config, child.mount]);
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: {
+      "/session/idempotent": { text: JSON.stringify({ clientSecret: "secret_idempotent" }), headers: { "content-type": "application/json" } },
+    },
+  });
+  const captures = newCaptures();
+  await bootStripe(env, captures);
+  runScript(stripeBridgeSource, env.context, "stripe-bridge-second.js");
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.filter((call) => call.url === "/session/idempotent").length, 1);
+  assert.equal(captures.mounts.length, 1);
+  assert.equal(captures.destroyed.length, 0);
+  assert.equal(env.context.__gosx.runtimeSurfaces.size, 1);
+});
+
 test("Elements requests its secret through scoped same-origin transport and emits redacted events", async () => {
   const child = paymentMount("payment-one");
-  const confirm = confirmForm("confirm-one");
-  const root = stripeSurface("elements", "elements-one", "/account/__actions/stripe-session", [child.config, child.mount, confirm.config, confirm.form]);
+  const confirm = confirmControl("confirm-one");
+  const unrelated = new FakeElement("div", null);
+  unrelated.id = "unrelated-control";
+  unrelated.setAttribute("role", "group");
+  unrelated.setAttribute("data-gosx-stripe-confirm", "confirmPayment");
+  const root = stripeSurface("elements", "elements-one", "/account/__actions/stripe-session", [child.config, child.mount, confirm.config, confirm.control, unrelated]);
   const csrf = new FakeElement("meta", null);
   csrf.setAttribute("name", "csrf-token");
   csrf.setAttribute("content", "csrf-token-public");
@@ -178,8 +250,13 @@ test("Elements requests its secret through scoped same-origin transport and emit
   captures.elements[0].fire("loaderror", {
     error: { code: "loader_failed", raw: "RAW_VENDOR_ERROR_SECRET" },
   });
-  confirm.form.dispatchEvent({ type: "click", preventDefault() {} });
+  unrelated.dispatchEvent({ type: "click", preventDefault() {} });
   await flushAsyncWork();
+  assert.equal(captures.confirmCalls, 0, "a legacy role=group target must not confirm payment");
+  confirm.control.dispatchEvent({ type: "click", preventDefault() {} });
+  await flushAsyncWork();
+  assert.equal(captures.confirmCalls, 1);
+  assert.equal(confirm.control.getAttribute("aria-busy"), "false");
   const stripeEvents = env.document.dispatchedEvents.filter((event) => event.type.indexOf("gosx:stripe:") === 0);
   const serialized = JSON.stringify(stripeEvents.map((event) => ({ type: event.type, detail: event.detail })));
   assert.match(serialized, /gosx:stripe:status/);

@@ -9,7 +9,7 @@
   const CONFIG_ID_ATTR = "data-gosx-stripe-config-id";
   const ELEMENT_ATTR = "data-gosx-stripe-element";
   const CHECKOUT_ELEMENT_ATTR = "data-gosx-stripe-checkout-element";
-  const CONFIRM_ATTR = "data-gosx-stripe-confirm";
+  const CONFIRM_ATTR = "data-gosx-stripe-confirm-control";
   const CHECKOUT_CONFIRM_ATTR = "data-gosx-stripe-checkout-confirm";
   const STATUS_ATTR = "data-gosx-stripe-state";
   const SURFACE_ELEMENTS = "stripe-elements";
@@ -58,7 +58,11 @@
 
   function setState(element, value) {
     if (!element || typeof element.setAttribute !== "function") return;
-    element.setAttribute(STATUS_ATTR, boundedID(value || "idle"));
+    const stateValue = boundedID(value || "idle");
+    element.setAttribute(STATUS_ATTR, stateValue);
+    if (element.hasAttribute && element.hasAttribute(CONFIRM_ATTR)) {
+      element.setAttribute("aria-busy", stateValue === "submitting" ? "true" : "false");
+    }
     element.removeAttribute("data-gosx-stripe-message");
   }
 
@@ -141,10 +145,8 @@
     const StripeCtor = await ensureStripeScript();
     const key = String(config.publishableKey || "").trim();
     if (!key) throw new Error("publishable_key_missing");
-    const options = config.stripeOptions && typeof config.stripeOptions === "object" ? config.stripeOptions : {};
-    const cacheKey = key + "\n" + JSON.stringify(options);
-    if (!state.stripeInstances.has(cacheKey)) state.stripeInstances.set(cacheKey, StripeCtor(key, options));
-    return state.stripeInstances.get(cacheKey);
+    if (!state.stripeInstances.has(key)) state.stripeInstances.set(key, StripeCtor(key));
+    return state.stripeInstances.get(key);
   }
 
   function sessionAction(raw) {
@@ -257,7 +259,7 @@
     case "shipping-address":
       return "createShippingAddressElement";
     default:
-      return String(type || "");
+      return "";
     }
   }
 
@@ -273,7 +275,7 @@
       setState(control, "submitting");
       emit(record, "status", "confirm", { element: boundedID(control.id), status: "submitting" });
       try {
-        if (config.submit !== false && record.elements && typeof record.elements.submit === "function") {
+        if (!config.skipSubmit && record.elements && typeof record.elements.submit === "function") {
           const submitted = await record.elements.submit();
           if (submitted && submitted.error) throw submitted.error;
         }
@@ -436,7 +438,13 @@
 
   state.stripeFor = stripeFor;
   state.dispose = disposeRecord;
-  gosxHost.surfaces.register(SURFACE_ELEMENTS, surfaceFactory("elements", mountElements));
-  gosxHost.surfaces.register(SURFACE_EMBEDDED, surfaceFactory("embedded-checkout", mountEmbedded));
-  gosxHost.surfaces.register(SURFACE_CHECKOUT, surfaceFactory("checkout", mountCheckout));
+  const factories = state.factories || {
+    elements: surfaceFactory("elements", mountElements),
+    embedded: surfaceFactory("embedded-checkout", mountEmbedded),
+    checkout: surfaceFactory("checkout", mountCheckout),
+  };
+  state.factories = factories;
+  gosxHost.surfaces.register(SURFACE_ELEMENTS, factories.elements);
+  gosxHost.surfaces.register(SURFACE_EMBEDDED, factories.embedded);
+  gosxHost.surfaces.register(SURFACE_CHECKOUT, factories.checkout);
 })();
