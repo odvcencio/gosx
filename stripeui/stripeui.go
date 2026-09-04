@@ -1,20 +1,25 @@
-// Package stripeui provides GoSX-native components for the mandatory
-// Stripe.js browser boundary. The app keeps checkout state in Go while this
-// package owns the small runtime bridge needed for Stripe-hosted secure inputs.
+// Package stripeui provides a server-first Stripe integration for GoSX.
+// Hosted Checkout is an ordinary same-origin POST form; Stripe.js is only
+// required for Stripe-hosted secure inputs such as Elements and embedded
+// Checkout.
 package stripeui
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"html"
+	"net/url"
 	"strings"
 	"sync/atomic"
+	"unicode"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/server"
 )
 
 const (
+	// DefaultStripeJSURL is deliberately not configurable. Stripe.js must be
+	// loaded directly from Stripe rather than copied, proxied, or self-hosted.
 	DefaultStripeJSURL = "https://js.stripe.com/clover/stripe.js"
 	DefaultBridgePath  = "/gosx/stripe-bridge.js"
 
@@ -35,37 +40,49 @@ const (
 
 	ConfirmPayment = "confirmPayment"
 	ConfirmSetup   = "confirmSetup"
+
+	runtimeSurfaceElements = "stripe-elements"
+	runtimeSurfaceEmbedded = "stripe-embedded-checkout"
+	runtimeSurfaceCheckout = "stripe-checkout"
+	runtimeVersion         = "1"
 )
 
-var idSeq uint64
+var (
+	idSeq                   uint64
+	errInvalidSessionAction = errors.New("stripeui: session action must be a root-relative same-origin path without a query or fragment")
+)
 
-// RuntimeConfig declares the browser assets needed by Stripe surfaces.
+// RuntimeConfig declares the local bridge asset needed by managed Stripe
+// surfaces. It does not apply to HostedCheckoutForm, which needs no browser
+// runtime at all.
 type RuntimeConfig struct {
-	StripeJSURL string
-	BridgePath  string
-	Preconnect  bool
+	BridgePath string
+	Preconnect bool
 }
 
 // Page is the narrow interface shared by server.Context and route.RouteContext.
 type Page interface {
 	AddHead(...gosx.Node)
+	Runtime() *server.PageRuntime
 }
 
-// Require adds the Stripe.js direct script and the GoSX Stripe bridge to a page.
+// Require adds Stripe.js from js.stripe.com and the GoSX bridge to a page that
+// contains a managed Stripe surface. Hosted Checkout does not call Require.
 func Require(page Page, cfg RuntimeConfig) {
 	if page == nil {
 		return
 	}
+	if runtime := page.Runtime(); runtime != nil {
+		runtime.EnableBootstrap()
+	}
 	page.AddHead(Head(cfg))
 }
 
-// Head renders only the assets needed by pages that use Stripe components.
+// Head renders the assets required by managed Stripe surfaces. Stripe.js is
+// always loaded directly from Stripe; only the app-owned bridge path may be
+// configured.
 func Head(cfg RuntimeConfig) gosx.Node {
-	stripeJS := strings.TrimSpace(cfg.StripeJSURL)
-	if stripeJS == "" {
-		stripeJS = DefaultStripeJSURL
-	}
-	bridge := strings.TrimSpace(cfg.BridgePath)
+	bridge := normalizeBridgePath(cfg.BridgePath)
 	if bridge == "" {
 		bridge = DefaultBridgePath
 	}
@@ -77,7 +94,7 @@ func Head(cfg RuntimeConfig) gosx.Node {
 		)))
 	}
 	nodes = append(nodes,
-		server.ManagedScript(stripeJS, server.ManagedScriptOptions{
+		server.ManagedScript(DefaultStripeJSURL, server.ManagedScriptOptions{
 			Role: server.ManagedScriptRoleManaged,
 		}, gosx.Attrs(gosx.BoolAttr("defer"))),
 		server.LifecycleScript(bridge, gosx.Attrs(gosx.BoolAttr("defer"))),
@@ -85,66 +102,112 @@ func Head(cfg RuntimeConfig) gosx.Node {
 	return gosx.Fragment(nodes...)
 }
 
-// BaseProps are shared by rendered Stripe mount components.
+// BaseProps are shared by rendered Stripe components. Arbitrary attributes
+// are intentionally not accepted: security-owned runtime/action attributes
+// must not be shadowed by duplicate authored attributes.
 type BaseProps struct {
 	ID    string
 	Class string
-	Attrs gosx.AttrList
 }
 
-// FetchRequest describes a server endpoint the bridge can call for a client
-// secret or Checkout Session. Body can be any JSON-marshalable value.
-type FetchRequest struct {
-	URL     string            `json:"url,omitempty"`
-	Method  string            `json:"method,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    any               `json:"body,omitempty"`
-}
-
-// RuntimeOptions configure Stripe(publishableKey, options).
+// RuntimeOptions configure Stripe(publishableKey, options). PublishableKey is
+// browser-safe. Secret-bearing option keys are removed before serialization.
 type RuntimeOptions struct {
-	PublishableKey string         `json:"publishableKey,omitempty"`
-	StripeJSURL    string         `json:"stripeJS,omitempty"`
-	StripeOptions  map[string]any `json:"stripeOptions,omitempty"`
+	PublishableKey string
+	StripeOptions  map[string]any
 }
 
-// ElementsSurfaceProps configures stripe.elements(...).
+// HostedCheckoutProps configures the zero-runtime Checkout form. Action is an
+// app-owned endpoint that creates a Checkout Session with Stripe's API and
+// answers the native POST with a 303 redirect to the returned Checkout URL.
+type HostedCheckoutProps struct {
+	BaseProps
+	Action    string
+	CSRFToken string
+}
+
+// HostedCheckoutForm renders a native POST form. It never emits Stripe.js,
+// bridge metadata, a publishable key, or a Checkout Session value. Invalid
+// action paths render a non-submitting group rather than falling back to the
+// current document URL.
+func HostedCheckoutForm(props HostedCheckoutProps, children ...gosx.Node) gosx.Node {
+	id := firstNonEmpty(props.ID, nextID("hosted-checkout"))
+	if len(children) == 0 {
+		children = []gosx.Node{gosx.El("button", gosx.Attrs(gosx.Attr("type", "submit")), gosx.Text("Checkout"))}
+	}
+	actionPath := normalizeSessionAction(props.Action)
+	if actionPath == "" {
+		attrs := baseAttrs(props.BaseProps, "gosx-stripe-hosted-checkout")
+		attrs = append(attrs,
+			gosx.Attr("id", id),
+			gosx.Attr("role", "group"),
+			gosx.BoolAttr("data-gosx-stripe-invalid-action"),
+		)
+		return gosx.El("div", nodeArgs(attrs, children...)...)
+	}
+	if strings.TrimSpace(props.CSRFToken) != "" {
+		children = append([]gosx.Node{gosx.El("input", gosx.Attrs(
+			gosx.Attr("type", "hidden"),
+			gosx.Attr("name", "csrf_token"),
+			gosx.Attr("value", props.CSRFToken),
+		))}, children...)
+	}
+	attrs := baseAttrs(props.BaseProps, "gosx-stripe-hosted-checkout")
+	attrs = append(attrs,
+		gosx.Attr("id", id),
+		gosx.Attr("method", "post"),
+		gosx.Attr("action", actionPath),
+	)
+	return gosx.El("form", nodeArgs(attrs, children...)...)
+}
+
+// ValidateSessionAction checks the endpoint contract used by managed Stripe
+// surfaces and HostedCheckoutForm. Query strings are intentionally rejected:
+// session selection belongs in server-owned routing or POST data, not a
+// browser-visible capability URL.
+func ValidateSessionAction(path string) error {
+	if normalizeSessionAction(path) == "" {
+		return errInvalidSessionAction
+	}
+	return nil
+}
+
+// ElementsSurfaceProps configures stripe.elements(...). SessionAction is the
+// fixed same-origin POST endpoint that returns {"clientSecret":"..."}.
 type ElementsSurfaceProps struct {
 	BaseProps
 	RuntimeOptions
-	ClientSecret        string         `json:"clientSecret,omitempty"`
-	ClientSecretRequest *FetchRequest  `json:"clientSecretRequest,omitempty"`
-	ElementsOptions     map[string]any `json:"elementsOptions,omitempty"`
+	SessionAction   string
+	ElementsOptions map[string]any
 }
 
-// Elements renders a provider for PaymentIntent/SetupIntent Elements.
+// Elements renders a managed provider for PaymentIntent/SetupIntent Elements.
 func Elements(props ElementsSurfaceProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("surface"))
 	cfg := map[string]any{
-		"publishableKey":      props.PublishableKey,
-		"stripeJS":            firstNonEmpty(props.StripeJSURL, DefaultStripeJSURL),
-		"stripeOptions":       props.StripeOptions,
-		"clientSecret":        props.ClientSecret,
-		"clientSecretRequest": props.ClientSecretRequest,
-		"elementsOptions":     props.ElementsOptions,
+		"publishableKey":  normalizePublishableKey(props.PublishableKey),
+		"stripeOptions":   props.StripeOptions,
+		"sessionAction":   normalizeSessionAction(props.SessionAction),
+		"elementsOptions": props.ElementsOptions,
 	}
 	configID, config := configScript("surface", cfg)
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-surface")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
-		gosx.BoolAttr("data-gosx-stripe-surface"),
 		gosx.Attr("data-gosx-stripe-config-id", configID),
 	)
 	nodes := append([]gosx.Node{config}, children...)
-	return gosx.El("section", nodeArgs(attrs, nodes...)...)
+	return gosx.RuntimeSurface("section", gosx.RuntimeSurfaceOptions{
+		Name: runtimeSurfaceElements, Version: runtimeVersion, Fallback: "server",
+	}, nodeArgs(attrs, nodes...)...)
 }
 
-// ElementProps configures a single stripe.elements().create(type, options) mount.
+// ElementProps configures a single stripe.elements().create(type, options)
+// mount. Lifecycle events are fixed and redacted by the bridge.
 type ElementProps struct {
 	BaseProps
-	Type    string         `json:"type,omitempty"`
-	Options map[string]any `json:"options,omitempty"`
-	Events  []string       `json:"events,omitempty"`
+	Type    string
+	Options map[string]any
 }
 
 // Element renders a generic Stripe Element mount. Use Type for newly added
@@ -152,11 +215,7 @@ type ElementProps struct {
 func Element(props ElementProps) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("element"))
 	typ := firstNonEmpty(props.Type, ElementPayment)
-	cfg := map[string]any{
-		"options": props.Options,
-		"events":  props.Events,
-	}
-	configID, config := configScript("element", cfg)
+	configID, config := configScript("element", map[string]any{"options": props.Options})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-element")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
@@ -201,34 +260,29 @@ func TaxIDElement(props ElementProps) gosx.Node {
 	return Element(props)
 }
 
-// ConfirmProps configures a form that calls stripe.confirmPayment,
-// stripe.confirmSetup, or another Stripe.js confirmation method.
+// ConfirmProps configures a control that calls a fixed Stripe confirmation
+// method. ReturnPath must be a root-relative same-origin path and is expanded
+// to an absolute URL by the browser bridge.
 type ConfirmProps struct {
 	BaseProps
-	Method        string         `json:"method,omitempty"`
-	ClientSecret  string         `json:"clientSecret,omitempty"`
-	ReturnURL     string         `json:"returnUrl,omitempty"`
-	Redirect      string         `json:"redirect,omitempty"`
-	Params        map[string]any `json:"params,omitempty"`
-	ConfirmParams map[string]any `json:"confirmParams,omitempty"`
-	SkipSubmit    bool           `json:"skipSubmit,omitempty"`
+	Method     string
+	ReturnPath string
+	Redirect   string
+	SkipSubmit bool
 }
 
-// ConfirmForm renders a server-authored form whose submit is handled by the
-// Stripe bridge. Without JavaScript, it remains inert instead of posting card
-// details to the server.
+// ConfirmForm retains the familiar component name but renders a non-submitting
+// group. Without the managed surface runtime it cannot accidentally POST card
+// UI state to the app.
 func ConfirmForm(props ConfirmProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("confirm"))
 	if len(children) == 0 {
-		children = []gosx.Node{gosx.El("button", gosx.Attrs(gosx.Attr("type", "submit")), gosx.Text("Pay"))}
+		children = []gosx.Node{gosx.El("button", gosx.Attrs(gosx.Attr("type", "button")), gosx.Text("Pay"))}
 	}
 	cfg := map[string]any{
-		"method":        firstNonEmpty(props.Method, ConfirmPayment),
-		"clientSecret":  props.ClientSecret,
-		"returnUrl":     props.ReturnURL,
-		"redirect":      props.Redirect,
-		"params":        props.Params,
-		"confirmParams": props.ConfirmParams,
+		"method":     normalizeConfirmMethod(props.Method),
+		"returnPath": normalizeReturnPath(props.ReturnPath),
+		"redirect":   normalizeRedirectMode(props.Redirect),
 	}
 	if props.SkipSubmit {
 		cfg["submit"] = false
@@ -237,92 +291,77 @@ func ConfirmForm(props ConfirmProps, children ...gosx.Node) gosx.Node {
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-confirm")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
-		gosx.Attr("method", "post"),
-		gosx.Attr("data-gosx-stripe-confirm", firstNonEmpty(props.Method, ConfirmPayment)),
+		gosx.Attr("role", "group"),
+		gosx.Attr("data-gosx-stripe-confirm", normalizeConfirmMethod(props.Method)),
 		gosx.Attr("data-gosx-stripe-config-id", configID),
 	)
 	nodes := append([]gosx.Node{config}, children...)
-	return gosx.El("form", nodeArgs(attrs, nodes...)...)
+	return gosx.El("div", nodeArgs(attrs, nodes...)...)
 }
 
 // EmbeddedCheckoutProps configures stripe.initEmbeddedCheckout(...).
 type EmbeddedCheckoutProps struct {
 	BaseProps
 	RuntimeOptions
-	ClientSecret        string         `json:"clientSecret,omitempty"`
-	ClientSecretRequest *FetchRequest  `json:"clientSecretRequest,omitempty"`
-	Init                map[string]any `json:"init,omitempty"`
+	SessionAction string
 }
 
 func EmbeddedCheckout(props EmbeddedCheckoutProps) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("embedded"))
-	cfg := map[string]any{
-		"publishableKey":      props.PublishableKey,
-		"stripeJS":            firstNonEmpty(props.StripeJSURL, DefaultStripeJSURL),
-		"stripeOptions":       props.StripeOptions,
-		"clientSecret":        props.ClientSecret,
-		"clientSecretRequest": props.ClientSecretRequest,
-		"init":                props.Init,
-	}
-	configID, config := configScript("embedded", cfg)
+	configID, config := configScript("embedded", map[string]any{
+		"publishableKey": normalizePublishableKey(props.PublishableKey),
+		"stripeOptions":  props.StripeOptions,
+		"sessionAction":  normalizeSessionAction(props.SessionAction),
+	})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-embedded")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
-		gosx.BoolAttr("data-gosx-stripe-embedded-checkout"),
 		gosx.Attr("data-gosx-stripe-config-id", configID),
 	)
-	return gosx.Fragment(config, gosx.El("div", attrs))
+	return gosx.RuntimeSurface("div", gosx.RuntimeSurfaceOptions{
+		Name: runtimeSurfaceEmbedded, Version: runtimeVersion, Fallback: "server",
+	}, nodeArgs(attrs, config)...)
 }
 
-// CheckoutProps configures Stripe's Checkout Sessions custom checkout runtime
-// via stripe.initCheckout(...).
+// CheckoutProps configures Stripe's custom Checkout runtime. SessionAction is
+// the fixed same-origin POST endpoint that creates the client session.
 type CheckoutProps struct {
 	BaseProps
 	RuntimeOptions
-	ClientSecret        string         `json:"clientSecret,omitempty"`
-	ClientSecretRequest *FetchRequest  `json:"clientSecretRequest,omitempty"`
-	Init                map[string]any `json:"init,omitempty"`
-	ElementsOptions     map[string]any `json:"elementsOptions,omitempty"`
+	SessionAction   string
+	ElementsOptions map[string]any
 }
 
 func Checkout(props CheckoutProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("checkout"))
-	cfg := map[string]any{
-		"publishableKey":      props.PublishableKey,
-		"stripeJS":            firstNonEmpty(props.StripeJSURL, DefaultStripeJSURL),
-		"stripeOptions":       props.StripeOptions,
-		"clientSecret":        props.ClientSecret,
-		"clientSecretRequest": props.ClientSecretRequest,
-		"init":                props.Init,
-		"elementsOptions":     props.ElementsOptions,
-	}
-	configID, config := configScript("checkout", cfg)
+	configID, config := configScript("checkout", map[string]any{
+		"publishableKey":  normalizePublishableKey(props.PublishableKey),
+		"stripeOptions":   props.StripeOptions,
+		"sessionAction":   normalizeSessionAction(props.SessionAction),
+		"elementsOptions": props.ElementsOptions,
+	})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-checkout")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
-		gosx.BoolAttr("data-gosx-stripe-checkout"),
 		gosx.Attr("data-gosx-stripe-config-id", configID),
 	)
 	nodes := append([]gosx.Node{config}, children...)
-	return gosx.El("section", nodeArgs(attrs, nodes...)...)
+	return gosx.RuntimeSurface("section", gosx.RuntimeSurfaceOptions{
+		Name: runtimeSurfaceCheckout, Version: runtimeVersion, Fallback: "server",
+	}, nodeArgs(attrs, nodes...)...)
 }
 
-// CheckoutElementProps configures a Checkout object element factory such as
-// createPaymentElement or createExpressCheckoutElement.
 type CheckoutElementProps struct {
 	ElementProps
-	Create string `json:"create,omitempty"`
+	Create string
 }
 
 func CheckoutElement(props CheckoutElementProps) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("checkout-element"))
 	typ := firstNonEmpty(props.Type, ElementPayment)
-	cfg := map[string]any{
-		"create":  props.Create,
-		"options": props.Options,
-		"events":  props.Events,
-	}
-	configID, config := configScript("checkout-element", cfg)
+	configID, config := configScript("checkout-element", map[string]any{
+		"create": props.Create, "options": props.Options,
+	})
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-checkout-element")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
@@ -344,58 +383,24 @@ func CheckoutExpressCheckoutElement(props CheckoutElementProps) gosx.Node {
 	return CheckoutElement(props)
 }
 
-// CheckoutConfirm renders a button or form that calls Checkout actions.confirm.
-func CheckoutConfirm(props ConfirmProps, children ...gosx.Node) gosx.Node {
+type CheckoutConfirmProps struct {
+	BaseProps
+}
+
+// CheckoutConfirm renders a button that calls Checkout actions.confirm. Its
+// completion event is UX state only; webhooks remain authoritative.
+func CheckoutConfirm(props CheckoutConfirmProps, children ...gosx.Node) gosx.Node {
 	id := firstNonEmpty(props.ID, nextID("checkout-confirm"))
 	if len(children) == 0 {
 		children = []gosx.Node{gosx.Text("Pay")}
 	}
-	cfg := map[string]any{"params": props.Params}
-	configID, config := configScript("checkout-confirm", cfg)
 	attrs := baseAttrs(props.BaseProps, "gosx-stripe-checkout-confirm")
 	attrs = append(attrs,
 		gosx.Attr("id", id),
 		gosx.Attr("type", "button"),
 		gosx.BoolAttr("data-gosx-stripe-checkout-confirm"),
-		gosx.Attr("data-gosx-stripe-config-id", configID),
 	)
-	nodes := append([]gosx.Node{config}, gosx.El("button", nodeArgs(attrs, children...)...))
-	return gosx.Fragment(nodes...)
-}
-
-// RedirectCheckoutProps configures stripe.redirectToCheckout or direct Session
-// URL navigation for hosted Checkout.
-type RedirectCheckoutProps struct {
-	BaseProps
-	RuntimeOptions
-	SessionID      string        `json:"sessionId,omitempty"`
-	URL            string        `json:"url,omitempty"`
-	SessionRequest *FetchRequest `json:"sessionRequest,omitempty"`
-}
-
-func RedirectCheckoutForm(props RedirectCheckoutProps, children ...gosx.Node) gosx.Node {
-	id := firstNonEmpty(props.ID, nextID("redirect"))
-	if len(children) == 0 {
-		children = []gosx.Node{gosx.El("button", gosx.Attrs(gosx.Attr("type", "submit")), gosx.Text("Checkout"))}
-	}
-	cfg := map[string]any{
-		"publishableKey": props.PublishableKey,
-		"stripeJS":       firstNonEmpty(props.StripeJSURL, DefaultStripeJSURL),
-		"stripeOptions":  props.StripeOptions,
-		"sessionId":      props.SessionID,
-		"url":            props.URL,
-		"sessionRequest": props.SessionRequest,
-	}
-	configID, config := configScript("redirect", cfg)
-	attrs := baseAttrs(props.BaseProps, "gosx-stripe-redirect")
-	attrs = append(attrs,
-		gosx.Attr("id", id),
-		gosx.Attr("method", "post"),
-		gosx.BoolAttr("data-gosx-stripe-redirect"),
-		gosx.Attr("data-gosx-stripe-config-id", configID),
-	)
-	nodes := append([]gosx.Node{config}, children...)
-	return gosx.El("form", nodeArgs(attrs, nodes...)...)
+	return gosx.El("button", nodeArgs(attrs, children...)...)
 }
 
 // DesignTokens can be mapped into Stripe's Appearance API variables.
@@ -436,7 +441,15 @@ func AppearanceFromTokens(tokens DesignTokens) map[string]any {
 
 func configScript(prefix string, value any) (string, gosx.Node) {
 	id := nextID(prefix + "-config")
-	data, err := json.Marshal(value)
+	raw, err := json.Marshal(value)
+	var decoded any
+	if err == nil {
+		err = json.Unmarshal(raw, &decoded)
+	}
+	data, marshalErr := json.Marshal(sanitizeConfigValue(decoded))
+	if err == nil {
+		err = marshalErr
+	}
 	if err != nil {
 		data = []byte("{}")
 	}
@@ -445,13 +458,98 @@ func configScript(prefix string, value any) (string, gosx.Node) {
 	return id, gosx.RawHTML(`<script id="` + htmlID + `" type="application/json" data-gosx-stripe-config>` + safe + `</script>`)
 }
 
+func sanitizeConfigValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clean := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if forbiddenConfigKey(key) {
+				continue
+			}
+			clean[key] = sanitizeConfigValue(item)
+		}
+		return clean
+	case []any:
+		clean := make([]any, len(typed))
+		for index, item := range typed {
+			clean[index] = sanitizeConfigValue(item)
+		}
+		return clean
+	default:
+		return value
+	}
+}
+
+func forbiddenConfigKey(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, key)
+	switch normalized {
+	case "clientsecret", "authorization", "headers", "body", "apikey", "secretkey", "accesstoken":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeSessionAction(raw string) string {
+	if raw == "" || strings.TrimSpace(raw) != raw || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return ""
+	}
+	if strings.ContainsAny(raw, "\\?#") || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return ""
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Opaque != "" {
+		return ""
+	}
+	if parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	return raw
+}
+
+func normalizeReturnPath(raw string) string {
+	return normalizeSessionAction(raw)
+}
+
+func normalizeBridgePath(raw string) string {
+	return normalizeSessionAction(strings.TrimSpace(raw))
+}
+
+func normalizePublishableKey(raw string) string {
+	key := strings.TrimSpace(raw)
+	if !strings.HasPrefix(key, "pk_") || len(key) > 256 || strings.IndexFunc(key, unicode.IsSpace) >= 0 {
+		return ""
+	}
+	return key
+}
+
+func normalizeConfirmMethod(method string) string {
+	if strings.TrimSpace(method) == ConfirmSetup {
+		return ConfirmSetup
+	}
+	return ConfirmPayment
+}
+
+func normalizeRedirectMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case "always", "if_required":
+		return strings.TrimSpace(mode)
+	default:
+		return ""
+	}
+}
+
 func baseAttrs(props BaseProps, classes ...string) gosx.AttrList {
 	class := strings.TrimSpace(strings.Join(append(classes, props.Class), " "))
 	attrs := gosx.Attrs()
 	if class != "" {
 		attrs = append(attrs, gosx.Attr("class", class))
 	}
-	attrs = append(attrs, props.Attrs...)
 	return attrs
 }
 
@@ -476,9 +574,20 @@ func firstNonEmpty(values ...string) string {
 }
 
 func nextID(prefix string) string {
-	prefix = strings.Trim(strings.ToLower(prefix), "-")
-	if prefix == "" {
-		prefix = "stripe"
+	return "gosx-stripe-" + prefix + "-" + fmtID(atomic.AddUint64(&idSeq, 1))
+}
+
+func fmtID(value uint64) string {
+	const digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+	if value == 0 {
+		return "0"
 	}
-	return fmt.Sprintf("gosx-stripe-%s-%d", prefix, atomic.AddUint64(&idSeq, 1))
+	var buffer [32]byte
+	index := len(buffer)
+	for value > 0 {
+		index--
+		buffer[index] = digits[value%uint64(len(digits))]
+		value /= uint64(len(digits))
+	}
+	return string(buffer[index:])
 }

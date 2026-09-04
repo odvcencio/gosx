@@ -387,6 +387,8 @@ contract without pretending the approximate first pass is exact.
 
 **Runtime Surfaces** — `gosx.RuntimeSurface`, `gosx.Action`, and `gosx.Region` describe progressive-enhancement contracts in server HTML (`data-gosx-runtime-surface`), and the shared bootstrap owns discovery, navigation remounting, scoped DOM/query/fetch/listen access, stream-template consumption, and disposal — so rich pages register framework-managed behavior instead of shipping bespoke script tags.
 
+**Stripe** — Hosted Checkout is server-first: `stripeui.HostedCheckoutForm` posts to an app-owned Go endpoint that calls Stripe's API and returns a native 303, with no Stripe.js or GoSX browser runtime. Elements and embedded Checkout are explicit runtime surfaces whose HTML contains only a publishable key and a fixed same-origin session-action path; client secrets are fetched through scoped CSRF-aware transport and never serialized into the page or forwarded in events. See [the Stripe integration guide](./docs/stripe.md).
+
 ## Engines
 
 For work that doesn't fit the island model — canvas rendering, WebGL, background computation:

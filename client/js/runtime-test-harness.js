@@ -2170,11 +2170,24 @@ function createContext(options) {
     Uint32Array,
     AbortController: class AbortController {
       constructor() {
-        this.signal = { aborted: false };
+        const listeners = new Set();
+        this.signal = {
+          aborted: false,
+          addEventListener(type, listener) {
+            if (type === "abort" && typeof listener === "function") listeners.add(listener);
+          },
+          removeEventListener(type, listener) {
+            if (type === "abort") listeners.delete(listener);
+          },
+          _listeners: listeners,
+        };
       }
 
       abort() {
+        if (this.signal.aborted) return;
         this.signal.aborted = true;
+        for (const listener of Array.from(this.signal._listeners)) listener({ type: "abort", target: this.signal });
+        this.signal._listeners.clear();
       }
     },
     clearTimeout,

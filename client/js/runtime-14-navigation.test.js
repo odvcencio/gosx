@@ -2109,7 +2109,7 @@ test("navigation runtime reuses an engine with an identical scene: same canvas e
   assert.strictEqual(env.context.__gosx.engines.get("bg-scene"), recordBefore, "the SAME engine record must persist");
 });
 
-test("stripe-bridge wrapper forwards the reuse Set to the previous __gosx_bootstrap_page and __gosx_dispose_page handlers", async () => {
+test("stripe bridge never replaces the framework page lifecycle hooks", async () => {
   const env = createContext({});
 
   const bootstrapCalls = [];
@@ -2129,12 +2129,12 @@ test("stripe-bridge wrapper forwards the reuse Set to the previous __gosx_bootst
   await env.context.__gosx_dispose_page(reuseSet);
 
   assert.equal(bootstrapCalls.length, 1);
-  assert.strictEqual(bootstrapCalls[0], reuseSet, "stripe-bridge must forward the exact reuse Set to the wrapped bootstrap handler, not drop it");
+  assert.strictEqual(bootstrapCalls[0], reuseSet, "the Stripe sidecar must leave bootstrap ownership untouched");
   assert.equal(disposeCalls.length, 1);
-  assert.strictEqual(disposeCalls[0], reuseSet, "stripe-bridge must forward the exact reuse Set to the wrapped dispose handler, not drop it");
+  assert.strictEqual(disposeCalls[0], reuseSet, "the Stripe sidecar must leave disposal ownership untouched");
 });
 
-test("navigation runtime reuses an engine across a soft navigation when stripe-bridge wraps the page lifecycle hooks", async () => {
+test("navigation runtime reuses an engine across a soft navigation after Stripe surfaces register", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "bg-scene-stripe";
 
@@ -2174,10 +2174,8 @@ test("navigation runtime reuses an engine across a soft navigation when stripe-b
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
-  // stripe-bridge loads as a managed script AFTER bootstrap.js on a real
-  // page (see server/navigation_runtime.js's script-role ordering), wrapping
-  // whatever window.__gosx_bootstrap_page/__gosx_dispose_page bootstrap.js
-  // already installed.
+  // The Stripe bridge loads after bootstrap.js and registers managed runtime
+  // surfaces without wrapping the page bootstrap/disposal authorities.
   runScript(stripeBridgeSource, env.context, "stripe-bridge.js");
   await flushAsyncWork();
 
@@ -2213,7 +2211,7 @@ test("navigation runtime reuses an engine across a soft navigation when stripe-b
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/next");
   await flushAsyncWork();
 
-  assert.equal(disposed, false, "identical-scene navigation must not dispose the engine, even through the stripe-bridge wrapper");
+  assert.equal(disposed, false, "identical-scene navigation must not dispose the engine after Stripe surface registration");
   const liveMount = env.document.getElementById("bg-scene-stripe");
   assert.strictEqual(liveMount, mount, "the mount element itself must be the SAME live element, not a clone");
   assert.strictEqual(liveMount.children[0], canvasBefore, "the SAME canvas element must survive the navigation");
