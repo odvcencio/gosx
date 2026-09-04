@@ -700,6 +700,7 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		Quality:       int(numericValue(attrValue(node.Attrs, env, "quality"))),
 		Format:        stringValue(attrValue(node.Attrs, env, "format")),
 		Sources:       imageSourceListValue(attrValue(node.Attrs, env, "sources")),
+		PictureAttrs:  imagePictureAttrsValue(attrValue(node.Attrs, env, "pictureAttrs", "pictureattrs")),
 	}
 	if err := server.ValidateProducibleImageFormat(props.Format); err != nil {
 		panic(err)
@@ -3257,6 +3258,8 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 		"quality":       {},
 		"format":        {},
 		"sources":       {},
+		"pictureAttrs":  {},
+		"pictureattrs":  {},
 	}
 	out := []any{}
 	for _, attr := range attrs {
@@ -3757,6 +3760,31 @@ func videoSourceListValue(value any) []server.VideoSource {
 
 func imageSourceListValue(value any) []server.ImageSource {
 	return decodeListValue[server.ImageSource](value)
+}
+
+// imagePictureAttrsValue maps file-route data onto the wrapper's distinct
+// attribute channel. An AttrList keeps authored order; string-keyed maps use
+// the same deterministic ordering, name normalization, invalid-name filter,
+// boolean semantics, and gosx.Attr rendering path as ordinary spread attrs.
+func imagePictureAttrsValue(value any) gosx.AttrList {
+	if attrs, ok := value.(gosx.AttrList); ok {
+		return attrs
+	}
+	values := mapStringAnyValue(value)
+	if len(values) == 0 {
+		return nil
+	}
+	attrs := make([]any, 0, len(values))
+	for _, entry := range sortedStringAnyMap(values) {
+		name := normalizeFileAttrName(entry.Key)
+		if name == "" || !validRenderAttrName(name) {
+			continue
+		}
+		if attr, ok := fileNodeAttr(name, entry.Value); ok {
+			attrs = append(attrs, attr)
+		}
+	}
+	return gosx.Attrs(attrs...)
 }
 
 func videoAudioTrackListValue(value any) []server.VideoAudioTrack {

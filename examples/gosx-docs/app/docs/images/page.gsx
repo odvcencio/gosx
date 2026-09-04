@@ -122,6 +122,7 @@ func Page() Node {
 		</p>
 		<h2 id="art-direction">Art direction</h2>
 		<CodeBlock lang="go" source={data.artDirectionSample} />
+		<CodeBlock lang="go" source={data.builtinArtDirectionSample} />
 		<p>
 			Use ordered
 			<span class="inline-code">server.ImageSource</span>
@@ -139,9 +140,34 @@ func Page() Node {
 			<span class="inline-code">media</span>
 			,
 			<span class="inline-code">sizes</span>
-			, and
+			,
 			<span class="inline-code">type</span>
+			,
+			<span class="inline-code">width</span>
+			, and
+			<span class="inline-code">height</span>
 			keys.
+		</p>
+		<p>
+			Set positive source
+			<span class="inline-code">Width</span>
+			and
+			<span class="inline-code">Height</span>
+			when a crop has a different aspect ratio from the fallback image. Apply layout attributes to the wrapper through
+			<span class="inline-code">PictureAttrs: gosx.Attrs(...)</span>
+			in Go, or
+			<span class="inline-code">pictureAttrs</span>
+			in a file route. Route data may provide either a
+			<span class="inline-code">gosx.AttrList</span>
+			or a string-keyed
+			<span class="inline-code">map[string]any</span>
+			with a
+			<span class="inline-code">class</span>
+			key for
+			<span class="inline-code">responsive-picture</span>
+			; map keys render in deterministic order. Ordinary component attributes such as
+			<span class="inline-code">class="hero-image"</span>
+			stay on the fallback image. Picture attributes do nothing when no wrapper is emitted. Map-provided names are validated, and names and values render through GoSX's normal escaping path.
 		</p>
 		<p>
 			Source candidate strings are escaped into markup but otherwise remain author-owned. GoSX does not download, cache, or rewrite remote candidates, and this feature adds no browser JavaScript.

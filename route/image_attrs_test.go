@@ -14,6 +14,10 @@ import (
 // attributes (gosx#199).
 
 func compileImageFixture(t *testing.T, attrs string) string {
+	return compileImageFixtureWithEnv(t, attrs, ProgramRenderEnv{})
+}
+
+func compileImageFixtureWithEnv(t *testing.T, attrs string, env ProgramRenderEnv) string {
 	t.Helper()
 	src := "package docs\n\n" +
 		"func Page() Node {\n" +
@@ -23,7 +27,7 @@ func compileImageFixture(t *testing.T, attrs string) string {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	html, err := RenderProgramComponent(prog, "Page", env)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -119,7 +123,7 @@ func TestFileRendererImageSourcesEnableConsumerBackedArtDirection(t *testing.T) 
 	src := `package docs
 
 func Page() Node {
-	return <Image src={data.hero} alt="Ceramic bowl" width={1600} height={1200} sources={data.sources} priority />
+	return <Image src={data.hero} alt="Ceramic bowl" width={1600} height={900} sources={data.sources} pictureAttrs={data.pictureAttrs} class="hero-image" priority />
 }
 `
 	prog, err := gosx.Compile([]byte(src))
@@ -130,7 +134,14 @@ func Page() Node {
 		"data": map[string]any{
 			"hero": "https://images.example.com/hero.jpg",
 			"sources": []map[string]any{
-				{"media": "(max-width: 600px)", "srcset": "https://images.example.com/hero-mobile.jpg 800w", "sizes": "100vw", "type": "image/jpeg"},
+				{"media": "(max-width: 600px)", "srcset": "https://images.example.com/hero-mobile.jpg 800w", "sizes": "100vw", "type": "image/jpeg", "width": 800, "height": 1000},
+			},
+			"pictureAttrs": map[string]any{
+				"data-layout": "wide & narrow",
+				"className":   "responsive-picture",
+				"aria-label":  `Product view "mobile"`,
+				"hidden":      false,
+				"x onload":    "alert(1)",
 			},
 		},
 	}})
@@ -138,15 +149,46 @@ func Page() Node {
 		t.Fatalf("render: %v", err)
 	}
 	for _, snippet := range []string{
-		`<picture>`,
-		`<source srcset="https://images.example.com/hero-mobile.jpg 800w" media="(max-width: 600px)" sizes="100vw" type="image/jpeg" />`,
-		`<img src="https://images.example.com/hero.jpg" alt="Ceramic bowl" width="1600" height="1200" loading="eager" decoding="async" fetchpriority="high" />`,
+		`<picture aria-label="Product view &#34;mobile&#34;" class="responsive-picture" data-layout="wide &amp; narrow">`,
+		`<source srcset="https://images.example.com/hero-mobile.jpg 800w" media="(max-width: 600px)" sizes="100vw" type="image/jpeg" width="800" height="1000" />`,
+		`<img src="https://images.example.com/hero.jpg" alt="Ceramic bowl" width="1600" height="900" loading="eager" decoding="async" fetchpriority="high" class="hero-image" />`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)
 		}
 	}
-	if strings.Contains(html, " sources=") {
-		t.Fatalf("expected sources to be consumed, not leaked as an HTML attribute, got %q", html)
+	if strings.Contains(html, " sources=") || strings.Contains(html, "pictureAttrs") || strings.Contains(html, " pictureattrs=") {
+		t.Fatalf("expected image-only props to be consumed, not leaked as HTML attributes, got %q", html)
+	}
+	if strings.Contains(html, " hidden") {
+		t.Fatalf("expected a false boolean picture attr to be omitted, got %q", html)
+	}
+	if strings.Contains(html, "onload") || strings.Contains(html, "alert(1)") {
+		t.Fatalf("expected invalid picture attribute names to be dropped inertly, got %q", html)
+	}
+}
+
+func TestFileRendererPictureAttrsWithoutSourcesPreserveImgOnlyContract(t *testing.T) {
+	src := `package docs
+
+func Page() Node {
+	return <Image src="https://images.example.com/hero.jpg" alt="Hero" width={800} height={600} pictureAttrs={data.pictureAttrs} class="hero-image" />
+}
+`
+	prog, err := gosx.Compile([]byte(src))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Values: map[string]any{
+		"data": map[string]any{"pictureAttrs": map[string]any{"class": "responsive-picture"}},
+	}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "<picture") || strings.Contains(html, "responsive-picture") || strings.Contains(html, "pictureAttrs") {
+		t.Fatalf("expected pictureAttrs alone not to create or leak a wrapper, got %q", html)
+	}
+	if !strings.Contains(html, `<img`) || !strings.Contains(html, `class="hero-image"`) {
+		t.Fatalf("expected ordinary attrs to remain on the img, got %q", html)
 	}
 }

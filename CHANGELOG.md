@@ -4,8 +4,9 @@
 
 ### Added: consumer-backed image art direction
 
-- `server.ImageProps.Sources` accepts ordered `server.ImageSource` entries with `srcset`, `media`, `sizes`, and `type`. A non-empty source list opts the existing fallback `<img>` into native `<picture>` markup; source order is preserved because the browser's first matching source wins.
-- The file-routed `<Image>` builtin accepts the same contract through `sources={...}`. Authored art-direction sources precede any generic format source generated from the build manifest, so a media-specific crop cannot be shadowed by an unconditional WebP source.
+- `server.ImageProps.Sources` accepts ordered `server.ImageSource` entries with `srcset`, `media`, `sizes`, `type`, and optional positive `width`/`height`. A non-empty source list opts the existing fallback `<img>` into native `<picture>` markup; source order is preserved because the browser's first matching source wins, while per-source dimensions reserve the correct box for crops with a different aspect ratio.
+- `server.ImageProps.PictureAttrs` applies a distinct `gosx.AttrList` to the `<picture>` wrapper. Existing variadic attributes remain on the fallback `<img>`, and wrapper attributes alone do not create a wrapper. The file-routed `<Image>` builtin maps `pictureAttrs={...}` from an `AttrList` or a deterministically ordered string-keyed map and consumes the prop instead of leaking it onto the image.
+- The file-routed `<Image>` builtin accepts the source contract through `sources={...}`. Authored art-direction sources precede any generic format source generated from the build manifest, so a media-specific crop cannot be shadowed by an unconditional WebP source.
 - Source candidates remain author-owned: GoSX escapes them into HTML but does not fetch, cache, or rewrite remote media, and no client JavaScript is added. This slice follows the real Muddy Noni storefront layout that already had to hand-author mobile `<source media>` candidates.
 
 ## v0.55.2 (2026-09-04)

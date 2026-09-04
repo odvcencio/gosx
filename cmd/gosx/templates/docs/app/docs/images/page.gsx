@@ -60,7 +60,7 @@ func Page() Node {
 			<div class="card">
 				<strong>Art direction</strong>
 				<p>
-					Ordered server.ImageSource entries add media-specific crops through native picture markup, with no browser JavaScript or remote fetching.
+					Ordered server.ImageSource entries add media-specific crops through native picture markup, with per-crop dimensions and explicit wrapper attributes.
 				</p>
 			</div>
 		</section>
@@ -78,12 +78,28 @@ func Page() Node {
 		    Src:    "https://images.example.com/hero-wide.jpg",
 		    Alt:    "Potter shaping clay",
 		    Width:  1600,
-		    Height: 1200,
+		    Height: 900,
 		    Sources: []server.ImageSource{{
 		        Media:  "(max-width: 600px)",
 		        SrcSet: "https://images.example.com/hero-tight.jpg 800w",
+		        Width:   800,
+		        Height:  1000,
 		    }},
+		    PictureAttrs: gosx.Attrs(
+		        gosx.Attr("class", "responsive-picture"),
+		    ),
 		})`}
+		</pre>
+		<pre class="code-block">
+			{`<Image
+		    src={data.hero}
+		    alt="Potter shaping clay"
+		    width={1600}
+		    height={900}
+		    sources={data.sources}
+		    pictureAttrs={data.pictureAttrs}
+		    class="hero-image"
+		/>`}
 		</pre>
 		<div class="hero-actions">
 			<Link class="cta-link" href="/docs/runtime">Back to runtime</Link>

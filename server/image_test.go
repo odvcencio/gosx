@@ -55,15 +55,19 @@ func TestImageHelperRendersOrderedArtDirectionSources(t *testing.T) {
 		Src:    "https://images.example.com/hero-1600.jpg",
 		Alt:    "Ceramic bowl on a worktable",
 		Width:  1600,
-		Height: 1200,
+		Height: 900,
 		Sources: []ImageSource{
-			{Media: "(max-width: 600px)", SrcSet: "https://images.example.com/hero-mobile-480.jpg 480w, https://images.example.com/hero-mobile-800.jpg 800w", Sizes: "100vw", Type: "image/jpeg"},
+			{Media: "(max-width: 600px)", SrcSet: "https://images.example.com/hero-mobile-480.jpg 480w, https://images.example.com/hero-mobile-800.jpg 800w", Sizes: "100vw", Type: "image/jpeg", Width: 800, Height: 1000},
 			{Media: "(max-width: 1000px)", SrcSet: "https://images.example.com/hero-tablet-1000.jpg 1000w"},
 		},
-	})
+		PictureAttrs: gosx.Attrs(
+			gosx.Attr("class", "responsive-picture"),
+			gosx.Attr("data-layout", "wide & narrow"),
+		),
+	}, gosx.Attrs(gosx.Attr("class", "hero-image")))
 
 	html := gosx.RenderHTML(node)
-	if !strings.HasPrefix(html, "<picture>") || !strings.HasSuffix(html, "</picture>") {
+	if !strings.HasPrefix(html, `<picture class="responsive-picture" data-layout="wide &amp; narrow">`) || !strings.HasSuffix(html, "</picture>") {
 		t.Fatalf("expected sources to opt into a picture wrapper, got %q", html)
 	}
 	mobile := strings.Index(html, `media="(max-width: 600px)"`)
@@ -76,9 +80,12 @@ func TestImageHelperRendersOrderedArtDirectionSources(t *testing.T) {
 		`srcset="https://images.example.com/hero-mobile-480.jpg 480w, https://images.example.com/hero-mobile-800.jpg 800w"`,
 		`sizes="100vw"`,
 		`type="image/jpeg"`,
+		`width="800"`,
+		`height="1000"`,
 		`src="https://images.example.com/hero-1600.jpg"`,
 		`width="1600"`,
-		`height="1200"`,
+		`height="900"`,
+		`class="hero-image"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)
@@ -88,12 +95,30 @@ func TestImageHelperRendersOrderedArtDirectionSources(t *testing.T) {
 
 func TestImageHelperSkipsBlankArtDirectionSources(t *testing.T) {
 	html := gosx.RenderHTML(Image(ImageProps{
+		Src:          "/hero.png",
+		Alt:          "Hero",
+		Sources:      []ImageSource{{Media: "(max-width: 600px)", SrcSet: "  ", Width: 400, Height: 700}},
+		PictureAttrs: gosx.Attrs(gosx.Attr("class", "responsive-picture")),
+	}, gosx.Attrs(gosx.Attr("class", "hero-image"))))
+	if strings.Contains(html, "<picture") || strings.Contains(html, "<source") {
+		t.Fatalf("expected blank sources not to change the existing img-only contract, got %q", html)
+	}
+	if strings.Contains(html, "responsive-picture") || !strings.Contains(html, `class="hero-image"`) {
+		t.Fatalf("expected wrapper attrs to be ignored without a wrapper and ordinary attrs to remain on img, got %q", html)
+	}
+}
+
+func TestImageHelperOmitsNonPositiveSourceDimensions(t *testing.T) {
+	html := gosx.RenderHTML(Image(ImageProps{
 		Src:     "/hero.png",
 		Alt:     "Hero",
-		Sources: []ImageSource{{Media: "(max-width: 600px)", SrcSet: "  "}},
+		Sources: []ImageSource{{Media: "(max-width: 600px)", SrcSet: "/mobile.png 400w", Width: 0, Height: -1}},
 	}))
-	if strings.Contains(html, "<picture>") || strings.Contains(html, "<source") {
-		t.Fatalf("expected blank sources not to change the existing img-only contract, got %q", html)
+	sourceStart := strings.Index(html, "<source")
+	sourceEnd := strings.Index(html[sourceStart:], ">")
+	sourceTag := html[sourceStart : sourceStart+sourceEnd]
+	if strings.Contains(sourceTag, " width=") || strings.Contains(sourceTag, " height=") {
+		t.Fatalf("expected non-positive source dimensions to be omitted, got %q", sourceTag)
 	}
 }
 

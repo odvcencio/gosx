@@ -169,8 +169,18 @@ func TestFileRendererImagePicturePriorityFlipsLoadingAndFetchPriority(t *testing
 
 func TestFileRendererImagePictureExtraAttrsLandOnImgFallback(t *testing.T) {
 	buildManifestApp(t)
-	html := compileImageFixture(t, `src="/manifest-hero.jpg" alt="Hero" class="demo-image"`)
+	html := compileImageFixtureWithEnv(t, `src="/manifest-hero.jpg" alt="Hero" class="demo-image" pictureAttrs={data.pictureAttrs}`, ProgramRenderEnv{Values: map[string]any{
+		"data": map[string]any{
+			"pictureAttrs": gosx.Attrs(
+				gosx.Attr("class", "responsive-picture"),
+				gosx.Attr("data-layout", "manifest & responsive"),
+			),
+		},
+	}})
 
+	if !strings.HasPrefix(html, `<picture class="responsive-picture" data-layout="manifest &amp; responsive">`) {
+		t.Fatalf("expected explicit picture attributes on the manifest wrapper, got %q", html)
+	}
 	if !strings.Contains(html, `<img`) {
 		t.Fatalf("expected an <img> fallback, got %q", html)
 	}
@@ -186,6 +196,9 @@ func TestFileRendererImagePictureExtraAttrsLandOnImgFallback(t *testing.T) {
 	if strings.Contains(sourceTag, "demo-image") {
 		t.Fatalf("expected class not to leak onto <source>, got %q", sourceTag)
 	}
+	if strings.Contains(imgTag, "responsive-picture") || strings.Contains(imgTag, "pictureAttrs") {
+		t.Fatalf("expected picture attributes to stay off the <img> fallback, got %q", imgTag)
+	}
 }
 
 func TestFileRendererManifestPictureOrdersAuthoredSourcesBeforeFormatSources(t *testing.T) {
@@ -193,7 +206,7 @@ func TestFileRendererManifestPictureOrdersAuthoredSourcesBeforeFormatSources(t *
 	src := `package docs
 
 func Page() Node {
-	return <Image src="/manifest-hero.jpg" alt="Hero" sources={data.sources} />
+	return <Image src="/manifest-hero.jpg" alt="Hero" sources={data.sources} pictureAttrs={data.pictureAttrs} class="hero-image" />
 }
 `
 	prog, err := gosx.Compile([]byte(src))
@@ -202,17 +215,45 @@ func Page() Node {
 	}
 	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Values: map[string]any{
 		"data": map[string]any{
-			"sources": []map[string]any{{"media": "(max-width: 600px)", "srcset": "/mobile-crop-800.jpg 800w"}},
+			"sources": []map[string]any{
+				{"media": "(max-width: 600px)", "srcset": "/mobile-crop-800.jpg 800w", "width": 800, "height": 1000},
+				{"media": "(max-width: 1000px)", "srcset": "/tablet-crop-1000.jpg 1000w", "width": -1, "height": 0},
+			},
+			"pictureAttrs": map[string]any{"class": "responsive-picture"},
 		},
 	}})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	authored := strings.Index(html, `/mobile-crop-800.jpg 800w`)
+	invalidDimensions := strings.Index(html, `/tablet-crop-1000.jpg 1000w`)
 	format := strings.Index(html, `type="image/webp"`)
 	img := strings.Index(html, "<img")
-	if authored < 0 || format < 0 || img < 0 || !(authored < format && format < img) {
+	if authored < 0 || invalidDimensions < 0 || format < 0 || img < 0 || !(authored < invalidDimensions && invalidDimensions < format && format < img) {
 		t.Fatalf("expected authored art direction before generic format selection and fallback, got %q", html)
+	}
+	if !strings.HasPrefix(html, `<picture class="responsive-picture">`) {
+		t.Fatalf("expected pictureAttrs on the manifest wrapper, got %q", html)
+	}
+	authoredEnd := strings.Index(html[authored:], ">")
+	authoredTag := html[strings.LastIndex(html[:authored], "<source") : authored+authoredEnd]
+	for _, snippet := range []string{`width="800"`, `height="1000"`} {
+		if !strings.Contains(authoredTag, snippet) {
+			t.Fatalf("expected %q on the authored source with its distinct mobile aspect ratio, got %q", snippet, authoredTag)
+		}
+	}
+	invalidStart := strings.LastIndex(html[:invalidDimensions], "<source")
+	invalidEnd := strings.Index(html[invalidDimensions:], ">")
+	invalidTag := html[invalidStart : invalidDimensions+invalidEnd]
+	if strings.Contains(invalidTag, " width=") || strings.Contains(invalidTag, " height=") {
+		t.Fatalf("expected non-positive source dimensions to be omitted in manifest mode, got %q", invalidTag)
+	}
+	imgEnd := strings.Index(html[img:], ">")
+	imgTag := html[img : img+imgEnd]
+	for _, snippet := range []string{`width="1200"`, `height="800"`, `class="hero-image"`} {
+		if !strings.Contains(imgTag, snippet) {
+			t.Fatalf("expected %q on the desktop fallback, got %q", snippet, imgTag)
+		}
 	}
 }
 
@@ -220,7 +261,7 @@ func TestFileRendererImageWebPSourceSkipsPictureWrapper(t *testing.T) {
 	buildManifestApp(t)
 	html := compileImageFixture(t, `src="/manifest-only.webp" alt="Only"`)
 
-	if strings.Contains(html, "<picture>") || strings.Contains(html, "<source") {
+	if strings.Contains(html, "<picture") || strings.Contains(html, "<source") {
 		t.Fatalf("expected a plain <img>, no <picture>/<source> wrapper for a WebP-native source, got %q", html)
 	}
 	for _, snippet := range []string{
@@ -244,10 +285,15 @@ func TestFileRendererImageWebPSourceSkipsPictureWrapper(t *testing.T) {
 // <picture> wrapping an empty <source type="image/webp">.
 func TestFileRendererImageNativeOnlySourceSkipsPictureWrapper(t *testing.T) {
 	buildManifestApp(t)
-	html := compileImageFixture(t, `src="/manifest-native-only.png" alt="Native only"`)
+	html := compileImageFixtureWithEnv(t, `src="/manifest-native-only.png" alt="Native only" pictureAttrs={data.pictureAttrs} class="native-image"`, ProgramRenderEnv{Values: map[string]any{
+		"data": map[string]any{"pictureAttrs": map[string]any{"class": "responsive-picture"}},
+	}})
 
-	if strings.Contains(html, "<picture>") || strings.Contains(html, "<source") {
+	if strings.Contains(html, "<picture") || strings.Contains(html, "<source") {
 		t.Fatalf("expected a plain <img>, no <picture>/<source> wrapper for a native-only source, got %q", html)
+	}
+	if strings.Contains(html, "responsive-picture") || strings.Contains(html, "pictureAttrs") {
+		t.Fatalf("expected wrapper-only attrs not to create or leak from a native-only manifest image, got %q", html)
 	}
 	for _, snippet := range []string{
 		`<img`,
@@ -255,6 +301,7 @@ func TestFileRendererImageNativeOnlySourceSkipsPictureWrapper(t *testing.T) {
 		`srcset="/gosx/assets/images/native-320w.22222221.png 320w, /gosx/assets/images/native-640w.22222222.png 640w"`,
 		`width="640"`,
 		`height="480"`,
+		`class="native-image"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)

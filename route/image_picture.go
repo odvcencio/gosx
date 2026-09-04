@@ -14,10 +14,8 @@ import (
 // image variants gosx build's imagepipe stage recorded in
 // buildmanifest.Manifest.Images (issue #200), for the file-router's
 // <Image> BUILTIN TAG specifically (gosx#201). server.Image, the Go helper
-// function a page.server.go file calls directly, keeps its existing
-// single-<img> contract unchanged — only the JSX tag gains this markup, so
-// one Go function does not silently start returning a different element
-// shape out from under an existing direct caller.
+// function a page.server.go file calls directly, uses the same author-supplied
+// source and picture-attribute contracts but cannot use this manifest path.
 //
 // It returns ok=false — and renderImage falls straight through to the
 // unmodified #199-fixed server.Image call — in every one of these cases,
@@ -68,7 +66,7 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 			gosx.Attr("srcset", imageSrcsetValue(webp)),
 			gosx.Attr("sizes", sizes),
 		))
-		return manifestImagePicture(authored, source, manifestImageOnly(base, sizes, native, extra)), true
+		return manifestImagePicture(props.PictureAttrs, authored, source, manifestImageOnly(base, sizes, native, extra)), true
 	case len(native) > 0:
 		// The default case with no WebP encoder registered: every raster
 		// source resizes to its own native format only (cmd/gosx's
@@ -78,7 +76,7 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 		// empty <source> to render around.
 		img := manifestImageOnly(base, sizes, native, extra)
 		if len(authored) > 0 {
-			return manifestImagePicture(authored, img), true
+			return manifestImagePicture(props.PictureAttrs, authored, img), true
 		}
 		return img, true
 	case len(webp) > 0:
@@ -92,7 +90,7 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 		// bytes twice.
 		img := manifestImageOnly(base, sizes, webp, extra)
 		if len(authored) > 0 {
-			return manifestImagePicture(authored, img), true
+			return manifestImagePicture(props.PictureAttrs, authored, img), true
 		}
 		return img, true
 	default:
@@ -117,13 +115,20 @@ func manifestImageSourceNodes(sources []server.ImageSource) []gosx.Node {
 		if typ := strings.TrimSpace(source.Type); typ != "" {
 			attrs = append(attrs, gosx.Attr("type", typ))
 		}
+		if source.Width > 0 {
+			attrs = append(attrs, gosx.Attr("width", source.Width))
+		}
+		if source.Height > 0 {
+			attrs = append(attrs, gosx.Attr("height", source.Height))
+		}
 		nodes = append(nodes, gosx.El("source", gosx.Attrs(attrs...)))
 	}
 	return nodes
 }
 
-func manifestImagePicture(authored []gosx.Node, tail ...gosx.Node) gosx.Node {
-	children := make([]any, 0, len(authored)+len(tail))
+func manifestImagePicture(pictureAttrs gosx.AttrList, authored []gosx.Node, tail ...gosx.Node) gosx.Node {
+	children := make([]any, 0, 1+len(authored)+len(tail))
+	children = append(children, pictureAttrs)
 	for _, source := range authored {
 		children = append(children, source)
 	}

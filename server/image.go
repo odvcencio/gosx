@@ -36,12 +36,16 @@ type ImageTransform struct {
 // ImageSource describes one author-supplied <source> candidate for image art
 // direction. SrcSet is emitted as an HTML srcset value; GoSX does not fetch,
 // cache, or rewrite its candidates. Sources are evaluated in slice order, as
-// required by the browser's <picture> selection algorithm.
+// required by the browser's <picture> selection algorithm. Positive Width and
+// Height values declare that source crop's intrinsic dimensions; non-positive
+// values are omitted.
 type ImageSource struct {
 	SrcSet string `json:"srcset,omitempty"`
 	Media  string `json:"media,omitempty"`
 	Sizes  string `json:"sizes,omitempty"`
 	Type   string `json:"type,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 // ImageProps configures the server.Image helper.
@@ -61,6 +65,9 @@ type ImageProps struct {
 	Format        string
 	Resolver      string
 	Sources       []ImageSource
+	// PictureAttrs applies only when Image emits a <picture> wrapper. The
+	// variadic args passed to Image remain attributes on the fallback <img>.
+	PictureAttrs gosx.AttrList
 }
 
 // ImageURL builds an optimizer URL for a local public image source.
@@ -174,7 +181,7 @@ func Image(props ImageProps, args ...any) gosx.Node {
 		children = append(children, source)
 	}
 	children = append(children, img)
-	return gosx.El("picture", children...)
+	return gosx.El("picture", append([]any{props.PictureAttrs}, children...)...)
 }
 
 func imageSourceNodes(sources []ImageSource) []gosx.Node {
@@ -193,6 +200,12 @@ func imageSourceNodes(sources []ImageSource) []gosx.Node {
 		}
 		if typ := strings.TrimSpace(source.Type); typ != "" {
 			attrs = append(attrs, gosx.Attr("type", typ))
+		}
+		if source.Width > 0 {
+			attrs = append(attrs, gosx.Attr("width", source.Width))
+		}
+		if source.Height > 0 {
+			attrs = append(attrs, gosx.Attr("height", source.Height))
 		}
 		nodes = append(nodes, gosx.El("source", gosx.Attrs(attrs...)))
 	}
