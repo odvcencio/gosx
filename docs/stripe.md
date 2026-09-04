@@ -133,7 +133,7 @@ origin; adapt this baseline to the Stripe features in use:
 ```text
 script-src 'nonce-{REQUEST_NONCE}' https://js.stripe.com;
 frame-src https://js.stripe.com https://hooks.stripe.com;
-connect-src https://api.stripe.com;
+connect-src 'self' https://api.stripe.com;
 ```
 
 Applications using CSP3 `strict-dynamic` can retain the explicit
