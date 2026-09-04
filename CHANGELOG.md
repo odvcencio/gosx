@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.55.2 (2026-09-04)
 
 ### Fixed: comments inside GSX markup compile away
 - A `//` line inside GSX element children now compiles away, instead of rendering as page text. Text with `//` after other content on a line, and URLs, stay untouched.
