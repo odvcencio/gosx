@@ -18,6 +18,7 @@ func init() {
 					{"href": "#helper", "label": "Image Helper"},
 					{"href": "#builtin", "label": "<Image> Builtin"},
 					{"href": "#responsive", "label": "Responsive Images"},
+					{"href": "#art-direction", "label": "Art Direction"},
 					{"href": "#formats", "label": "Formats & Sizing"},
 					{"href": "#serving", "label": "Serving"},
 					{"href": "#caching", "label": "Caching"},
@@ -29,6 +30,7 @@ func init() {
 				// all, which reserves no layout box before the image
 				// loads (layout-shift-prone; flagged in review).
 				"responsiveSample":      "node := server.Image(server.ImageProps{\n\tSrc:        \"/photos/harbor.jpg\",\n\tAlt:        \"Harbor at dusk\",\n\tResponsive: true,\n\tWidth:      1200,\n\tHeight:     750,\n\tWidths:     []int{320, 640, 960, 1200},\n\tSizes:      \"(max-width: 720px) 100vw, 720px\",\n})",
+				"artDirectionSample":    "node := server.Image(server.ImageProps{\n\tSrc:    \"https://images.example.com/hero-wide.jpg\",\n\tAlt:    \"Potter shaping clay at the wheel\",\n\tWidth:  1600,\n\tHeight: 1200,\n\tSources: []server.ImageSource{\n\t\t{\n\t\t\tMedia:  \"(max-width: 600px)\",\n\t\t\tSrcSet: \"https://images.example.com/hero-tight-480.jpg 480w, https://images.example.com/hero-tight-800.jpg 800w\",\n\t\t\tSizes:  \"100vw\",\n\t\t},\n\t},\n})",
 				"urlSample":             "url := server.ImageURL(\"/photos/harbor.jpg\", server.ImageTransform{\n\tWidth:   640,\n\tQuality: 78,\n\tFormat:  \"jpeg\",\n})",
 				"builtinLocalSample":    `<Image src="/photos/harbor.jpg" alt="Harbor at dusk" />`,
 				"builtinExternalSample": `<Image src="https://cdn.example.com/harbor.jpg" alt="Harbor at dusk" width={1200} height={800} />`,

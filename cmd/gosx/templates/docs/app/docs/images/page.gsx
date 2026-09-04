@@ -57,6 +57,12 @@ func Page() Node {
 					The optimizer is still just an HTTP endpoint. No client framework magic is required.
 				</p>
 			</div>
+			<div class="card">
+				<strong>Art direction</strong>
+				<p>
+					Ordered server.ImageSource entries add media-specific crops through native picture markup, with no browser JavaScript or remote fetching.
+				</p>
+			</div>
 		</section>
 		<pre class="code-block">
 			{`server.Image(server.ImageProps{
@@ -65,6 +71,18 @@ func Page() Node {
 		    Width:  960,
 		    Height: 624,
 		    Widths: []int{320, 640, 960},
+		})`}
+		</pre>
+		<pre class="code-block">
+			{`server.Image(server.ImageProps{
+		    Src:    "https://images.example.com/hero-wide.jpg",
+		    Alt:    "Potter shaping clay",
+		    Width:  1600,
+		    Height: 1200,
+		    Sources: []server.ImageSource{{
+		        Media:  "(max-width: 600px)",
+		        SrcSet: "https://images.example.com/hero-tight.jpg 800w",
+		    }},
 		})`}
 		</pre>
 		<div class="hero-actions">

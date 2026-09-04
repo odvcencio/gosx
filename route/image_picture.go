@@ -47,6 +47,7 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 
 	webp := imageVariantsByFormat(asset.Variants, "webp")
 	native, _ := nativeImageVariants(asset.Variants)
+	authored := manifestImageSourceNodes(props.Sources)
 
 	width, height := manifestImageDisplaySize(props, asset)
 	base := manifestImageBaseAttrs(props, width, height)
@@ -67,7 +68,7 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 			gosx.Attr("srcset", imageSrcsetValue(webp)),
 			gosx.Attr("sizes", sizes),
 		))
-		return gosx.El("picture", source, manifestImageOnly(base, sizes, native, extra)), true
+		return manifestImagePicture(authored, source, manifestImageOnly(base, sizes, native, extra)), true
 	case len(native) > 0:
 		// The default case with no WebP encoder registered: every raster
 		// source resizes to its own native format only (cmd/gosx's
@@ -75,7 +76,11 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 		// produces for a JPEG or PNG source. A plain <img>, not a
 		// <picture> — real hashed files, no per-request resize, and no
 		// empty <source> to render around.
-		return manifestImageOnly(base, sizes, native, extra), true
+		img := manifestImageOnly(base, sizes, native, extra)
+		if len(authored) > 0 {
+			return manifestImagePicture(authored, img), true
+		}
+		return img, true
 	case len(webp) > 0:
 		// A WebP-native source with no same-source native-format rung
 		// alongside it (cmd/gosx never generates a redundant same-format
@@ -85,10 +90,47 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 		// render already produces — rather than a <picture> wrapping one
 		// <source type="image/webp"> and an <img> naming the identical
 		// bytes twice.
-		return manifestImageOnly(base, sizes, webp, extra), true
+		img := manifestImageOnly(base, sizes, webp, extra)
+		if len(authored) > 0 {
+			return manifestImagePicture(authored, img), true
+		}
+		return img, true
 	default:
 		return gosx.Node{}, false
 	}
+}
+
+func manifestImageSourceNodes(sources []server.ImageSource) []gosx.Node {
+	nodes := make([]gosx.Node, 0, len(sources))
+	for _, source := range sources {
+		srcset := strings.TrimSpace(source.SrcSet)
+		if srcset == "" {
+			continue
+		}
+		attrs := []any{gosx.Attr("srcset", srcset)}
+		if media := strings.TrimSpace(source.Media); media != "" {
+			attrs = append(attrs, gosx.Attr("media", media))
+		}
+		if sizes := strings.TrimSpace(source.Sizes); sizes != "" {
+			attrs = append(attrs, gosx.Attr("sizes", sizes))
+		}
+		if typ := strings.TrimSpace(source.Type); typ != "" {
+			attrs = append(attrs, gosx.Attr("type", typ))
+		}
+		nodes = append(nodes, gosx.El("source", gosx.Attrs(attrs...)))
+	}
+	return nodes
+}
+
+func manifestImagePicture(authored []gosx.Node, tail ...gosx.Node) gosx.Node {
+	children := make([]any, 0, len(authored)+len(tail))
+	for _, source := range authored {
+		children = append(children, source)
+	}
+	for _, node := range tail {
+		children = append(children, node)
+	}
+	return gosx.El("picture", children...)
 }
 
 // manifestImageOnly renders one <img> whose src/srcset/sizes come from one

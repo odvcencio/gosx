@@ -188,6 +188,34 @@ func TestFileRendererImagePictureExtraAttrsLandOnImgFallback(t *testing.T) {
 	}
 }
 
+func TestFileRendererManifestPictureOrdersAuthoredSourcesBeforeFormatSources(t *testing.T) {
+	buildManifestApp(t)
+	src := `package docs
+
+func Page() Node {
+	return <Image src="/manifest-hero.jpg" alt="Hero" sources={data.sources} />
+}
+`
+	prog, err := gosx.Compile([]byte(src))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Values: map[string]any{
+		"data": map[string]any{
+			"sources": []map[string]any{{"media": "(max-width: 600px)", "srcset": "/mobile-crop-800.jpg 800w"}},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	authored := strings.Index(html, `/mobile-crop-800.jpg 800w`)
+	format := strings.Index(html, `type="image/webp"`)
+	img := strings.Index(html, "<img")
+	if authored < 0 || format < 0 || img < 0 || !(authored < format && format < img) {
+		t.Fatalf("expected authored art direction before generic format selection and fallback, got %q", html)
+	}
+}
+
 func TestFileRendererImageWebPSourceSkipsPictureWrapper(t *testing.T) {
 	buildManifestApp(t)
 	html := compileImageFixture(t, `src="/manifest-only.webp" alt="Only"`)

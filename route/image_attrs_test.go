@@ -114,3 +114,39 @@ func TestFileRendererImageExplicitSizesWinsOverResponsiveDefault(t *testing.T) {
 		t.Fatalf("expected responsive default sizes not to override explicit sizes, got %q", html)
 	}
 }
+
+func TestFileRendererImageSourcesEnableConsumerBackedArtDirection(t *testing.T) {
+	src := `package docs
+
+func Page() Node {
+	return <Image src={data.hero} alt="Ceramic bowl" width={1600} height={1200} sources={data.sources} priority />
+}
+`
+	prog, err := gosx.Compile([]byte(src))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Values: map[string]any{
+		"data": map[string]any{
+			"hero": "https://images.example.com/hero.jpg",
+			"sources": []map[string]any{
+				{"media": "(max-width: 600px)", "srcset": "https://images.example.com/hero-mobile.jpg 800w", "sizes": "100vw", "type": "image/jpeg"},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, snippet := range []string{
+		`<picture>`,
+		`<source srcset="https://images.example.com/hero-mobile.jpg 800w" media="(max-width: 600px)" sizes="100vw" type="image/jpeg" />`,
+		`<img src="https://images.example.com/hero.jpg" alt="Ceramic bowl" width="1600" height="1200" loading="eager" decoding="async" fetchpriority="high" />`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+	if strings.Contains(html, " sources=") {
+		t.Fatalf("expected sources to be consumed, not leaked as an HTML attribute, got %q", html)
+	}
+}

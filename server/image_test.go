@@ -50,6 +50,53 @@ func TestImageHelperBuildsResponsiveMarkup(t *testing.T) {
 	}
 }
 
+func TestImageHelperRendersOrderedArtDirectionSources(t *testing.T) {
+	node := Image(ImageProps{
+		Src:    "https://images.example.com/hero-1600.jpg",
+		Alt:    "Ceramic bowl on a worktable",
+		Width:  1600,
+		Height: 1200,
+		Sources: []ImageSource{
+			{Media: "(max-width: 600px)", SrcSet: "https://images.example.com/hero-mobile-480.jpg 480w, https://images.example.com/hero-mobile-800.jpg 800w", Sizes: "100vw", Type: "image/jpeg"},
+			{Media: "(max-width: 1000px)", SrcSet: "https://images.example.com/hero-tablet-1000.jpg 1000w"},
+		},
+	})
+
+	html := gosx.RenderHTML(node)
+	if !strings.HasPrefix(html, "<picture>") || !strings.HasSuffix(html, "</picture>") {
+		t.Fatalf("expected sources to opt into a picture wrapper, got %q", html)
+	}
+	mobile := strings.Index(html, `media="(max-width: 600px)"`)
+	tablet := strings.Index(html, `media="(max-width: 1000px)"`)
+	img := strings.Index(html, "<img")
+	if mobile < 0 || tablet < 0 || img < 0 || !(mobile < tablet && tablet < img) {
+		t.Fatalf("expected authored source order before the fallback img, got %q", html)
+	}
+	for _, snippet := range []string{
+		`srcset="https://images.example.com/hero-mobile-480.jpg 480w, https://images.example.com/hero-mobile-800.jpg 800w"`,
+		`sizes="100vw"`,
+		`type="image/jpeg"`,
+		`src="https://images.example.com/hero-1600.jpg"`,
+		`width="1600"`,
+		`height="1200"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
+func TestImageHelperSkipsBlankArtDirectionSources(t *testing.T) {
+	html := gosx.RenderHTML(Image(ImageProps{
+		Src:     "/hero.png",
+		Alt:     "Hero",
+		Sources: []ImageSource{{Media: "(max-width: 600px)", SrcSet: "  "}},
+	}))
+	if strings.Contains(html, "<picture>") || strings.Contains(html, "<source") {
+		t.Fatalf("expected blank sources not to change the existing img-only contract, got %q", html)
+	}
+}
+
 func TestImageHelperBypassesOptimizerForSVG(t *testing.T) {
 	html := gosx.RenderHTML(Image(ImageProps{
 		Src: "/mark.svg",

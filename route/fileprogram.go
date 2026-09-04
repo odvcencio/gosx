@@ -699,6 +699,7 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		Priority:      truthy(attrValue(node.Attrs, env, "priority")),
 		Quality:       int(numericValue(attrValue(node.Attrs, env, "quality"))),
 		Format:        stringValue(attrValue(node.Attrs, env, "format")),
+		Sources:       imageSourceListValue(attrValue(node.Attrs, env, "sources")),
 	}
 	if err := server.ValidateProducibleImageFormat(props.Format); err != nil {
 		panic(err)
@@ -3255,6 +3256,7 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 		"priority":      {},
 		"quality":       {},
 		"format":        {},
+		"sources":       {},
 	}
 	out := []any{}
 	for _, attr := range attrs {
@@ -3750,15 +3752,19 @@ func mapStringAnyValue(value any) map[string]any {
 }
 
 func videoSourceListValue(value any) []server.VideoSource {
-	return decodeVideoListValue[server.VideoSource](value)
+	return decodeListValue[server.VideoSource](value)
+}
+
+func imageSourceListValue(value any) []server.ImageSource {
+	return decodeListValue[server.ImageSource](value)
 }
 
 func videoAudioTrackListValue(value any) []server.VideoAudioTrack {
-	return decodeVideoListValue[server.VideoAudioTrack](value)
+	return decodeListValue[server.VideoAudioTrack](value)
 }
 
 func videoTrackListValue(value any) []server.VideoTrack {
-	return decodeVideoListValue[server.VideoTrack](value)
+	return decodeListValue[server.VideoTrack](value)
 }
 
 func videoSyncTuningValue(value any) *server.SyncTuning {
@@ -3836,7 +3842,7 @@ func decodeVideoStructPointerValue[T comparable](value any) *T {
 	return &out
 }
 
-func decodeVideoListValue[T any](value any) []T {
+func decodeListValue[T any](value any) []T {
 	if value == nil {
 		return nil
 	}

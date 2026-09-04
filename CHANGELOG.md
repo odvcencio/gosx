@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added: consumer-backed image art direction
+
+- `server.ImageProps.Sources` accepts ordered `server.ImageSource` entries with `srcset`, `media`, `sizes`, and `type`. A non-empty source list opts the existing fallback `<img>` into native `<picture>` markup; source order is preserved because the browser's first matching source wins.
+- The file-routed `<Image>` builtin accepts the same contract through `sources={...}`. Authored art-direction sources precede any generic format source generated from the build manifest, so a media-specific crop cannot be shadowed by an unconditional WebP source.
+- Source candidates remain author-owned: GoSX escapes them into HTML but does not fetch, cache, or rewrite remote media, and no client JavaScript is added. This slice follows the real Muddy Noni storefront layout that already had to hand-author mobile `<source media>` candidates.
+
 ## v0.55.2 (2026-09-04)
 
 ### Fixed: comments inside GSX markup compile away

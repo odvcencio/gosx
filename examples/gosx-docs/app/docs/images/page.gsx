@@ -14,7 +14,9 @@ func Page() Node {
 			<span class="inline-code">server.Image</span>
 			returns an
 			<span class="inline-code">img</span>
-			node. It sets alt text, dimensions, and optimizer URLs, defaults to lazy loading and async decoding, and switches to eager/high priority when
+			node by default, or a native
+			<span class="inline-code">picture</span>
+			when art-direction sources are present. It sets alt text, dimensions, and optimizer URLs, defaults to lazy loading and async decoding, and switches to eager/high priority when
 			<span class="inline-code">Priority</span>
 			is true.
 		</p>
@@ -117,6 +119,32 @@ func Page() Node {
 			to
 			<span class="inline-code">100vw</span>
 			; set a real layout hint when the image is narrower than the viewport.
+		</p>
+		<h2 id="art-direction">Art direction</h2>
+		<CodeBlock lang="go" source={data.artDirectionSample} />
+		<p>
+			Use ordered
+			<span class="inline-code">server.ImageSource</span>
+			entries when a layout needs a different crop at a media breakpoint, not merely a smaller copy of the same composition. Supplying at least one non-empty
+			<span class="inline-code">SrcSet</span>
+			wraps the fallback image in
+			<span class="inline-code">&lt;picture&gt;</span>
+			and emits the authored sources first, in slice order. The
+			<span class="inline-code">&lt;Image&gt;</span>
+			builtin accepts the same contract through
+			<span class="inline-code">sources</span>
+			; legacy route data may use a slice of maps with
+			<span class="inline-code">srcset</span>
+			,
+			<span class="inline-code">media</span>
+			,
+			<span class="inline-code">sizes</span>
+			, and
+			<span class="inline-code">type</span>
+			keys.
+		</p>
+		<p>
+			Source candidate strings are escaped into markup but otherwise remain author-owned. GoSX does not download, cache, or rewrite remote candidates, and this feature adds no browser JavaScript.
 		</p>
 		<h2 id="formats">Formats and sizing</h2>
 		<ul>
