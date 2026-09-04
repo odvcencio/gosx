@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -947,39 +948,46 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 		})
 	}
 
-	expandedNodes := 0
-	limitReported := false
 	var walk func(NodeID, []string)
 	walk = func(id NodeID, stack []string) {
 		if int(id) >= len(prog.Nodes) {
 			return
 		}
-		expandedNodes++
-		if expandedNodes > 65535 {
-			if !limitReported {
-				limitReported = true
-				diags = append(diags, Diagnostic{
-					Span:    prog.Nodes[id].Span,
-					Message: fmt.Sprintf("island %s exceeds the 65,535 expanded-node limit while composing client-side components", comp.Name),
-				})
-			}
-			return
-		}
 
 		node := &prog.Nodes[id]
-		if node.Kind != NodeComponent || isEachComponent(node.Tag) || isConditionalComponent(node.Tag) || node.Tag == "Link" || node.Tag == "Image" {
+		if node.Kind != NodeComponent {
 			diags = append(diags, validateIslandNode(node, scope)...)
 			for _, child := range node.Children {
 				walk(child, stack)
 			}
-			for _, child := range node.Slots {
-				walk(child, stack)
+			for _, name := range sortedNodeSlotNames(node.Slots) {
+				walk(node.Slots[name], stack)
 			}
 			return
 		}
 
 		targetIdx, local := checker.componentIndex[node.Tag]
 		if !local {
+			if isEachComponent(node.Tag) || isConditionalComponent(node.Tag) || node.Tag == "Link" || node.Tag == "Image" {
+				diags = append(diags, validateIslandNode(node, scope)...)
+				for _, child := range node.Children {
+					walk(child, stack)
+				}
+				for _, name := range sortedNodeSlotNames(node.Slots) {
+					walk(node.Slots[name], stack)
+				}
+				return
+			}
+			if diag, unsupported := unsupportedIslandComponentDiagnostic(node); unsupported {
+				diags = append(diags, diag)
+				for _, child := range node.Children {
+					walk(child, stack)
+				}
+				for _, name := range sortedNodeSlotNames(node.Slots) {
+					walk(node.Slots[name], stack)
+				}
+				return
+			}
 			message := fmt.Sprintf("component <%s> is not supported inside island components", node.Tag)
 			hint := "use a same-file strict pure-view component or move the component outside the hydrated subtree"
 			if strings.Contains(node.Tag, ".") {
@@ -990,8 +998,8 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 			for _, child := range node.Children {
 				walk(child, stack)
 			}
-			for _, child := range node.Slots {
-				walk(child, stack)
+			for _, name := range sortedNodeSlotNames(node.Slots) {
+				walk(node.Slots[name], stack)
 			}
 			return
 		}
@@ -1030,10 +1038,9 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 			}
 		}
 		if len(stack) >= maxIslandCompositionDepth {
-			diags = append(diags, Diagnostic{
-				Span:    node.Span,
-				Message: fmt.Sprintf("island component composition exceeds the %d-component depth limit at <%s>", maxIslandCompositionDepth, target.Name),
-			})
+			// Physical composition depth can differ from definition ancestry
+			// when caller projections pass through multiple wrappers. The
+			// actual lowerer below is the sole exact authority for the cap.
 			return
 		}
 		if err := checker.composableCalleeError(target); err != nil {
@@ -1047,14 +1054,22 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 		for _, child := range node.Children {
 			walk(child, stack)
 		}
-		for _, child := range node.Slots {
-			walk(child, stack)
+		for _, name := range sortedNodeSlotNames(node.Slots) {
+			walk(node.Slots[name], stack)
 		}
 		if !callInvalid {
 			walk(target.Root, append(stack, target.Name))
 		}
 	}
 	walk(comp.Root, []string{comp.Name})
+	if compIdx, ok := checker.componentIndex[comp.Name]; ok {
+		if _, err := LowerIsland(prog, compIdx); err != nil {
+			var expansionErr *islandExpansionError
+			if errors.As(err, &expansionErr) {
+				diags = append(diags, Diagnostic{Span: comp.Span, Message: expansionErr.Error()})
+			}
+		}
+	}
 	return diags
 }
 

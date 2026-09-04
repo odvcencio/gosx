@@ -126,6 +126,29 @@ func TestIslandPureViewCompositionIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestIslandPureViewCompositionHonorsSameFileBuiltinShadows(t *testing.T) {
+	const sourceTemplate = `package app
+
+component SHADOW() {
+	return <span>shadowed</span>
+}
+
+//gosx:island
+component Root() {
+	return <SHADOW />
+}
+`
+	for _, tag := range []string{"If", "Each", "For", "Show", "When", "Link", "Image"} {
+		t.Run(tag, func(t *testing.T) {
+			source := strings.ReplaceAll(sourceTemplate, "SHADOW", tag)
+			lowered := compileIslandProgram(t, source, "Root")
+			if lowered.Nodes[lowered.Root].Tag != "span" {
+				t.Fatalf("lowered same-file %s shadow = %#v, want composed span", tag, lowered.Nodes)
+			}
+		})
+	}
+}
+
 func TestIslandPureViewCompositionRendersOneHydrationRoot(t *testing.T) {
 	prog, err := gosx.Compile([]byte(composedIslandSource))
 	if err != nil {

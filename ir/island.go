@@ -30,6 +30,9 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 		return nil, err
 	}
 	l.populateStaticMask()
+	if err := l.validateProgramIntegrity(); err != nil {
+		return nil, err
+	}
 
 	return l.dst, nil
 }
@@ -155,6 +158,21 @@ type islandLowerer struct {
 }
 
 const maxIslandCompositionDepth = 32
+const maxIslandProgramEntries = 1<<16 - 1
+
+// islandExpansionError marks a lowering failure whose exact answer depends on
+// the physically expanded island program (composition depth, emitted-node
+// count, or expression-table capacity). Validation delegates those answers to
+// LowerIsland so compile-time diagnostics and direct lowering cannot drift.
+type islandExpansionError struct {
+	message string
+}
+
+func (e *islandExpansionError) Error() string { return e.message }
+
+func newIslandExpansionError(format string, args ...any) error {
+	return &islandExpansionError{message: fmt.Sprintf(format, args...)}
+}
 
 type islandInlineExpr struct {
 	source  string
@@ -166,10 +184,10 @@ type islandProjection struct {
 	nodes   []NodeID
 	context *islandInlineContext
 	scope   *ExprScope
-	// stack belongs to the projection's caller. A finite nested use such as
+	// ancestry belongs to the projection's caller. A finite nested use such as
 	// <Wrapper><Wrapper /></Wrapper> is not a recursive component definition,
 	// even though the inner call is lowered while visiting Wrapper's hole.
-	stack []string
+	ancestry []string
 }
 
 // islandInlineContext is compile-time-only. It specializes a same-file
@@ -208,7 +226,7 @@ func newIslandLowerer(src *Program, name string, scope *ExprScope) *islandLowere
 }
 
 func (l *islandLowerer) lowerComponent(comp Component) error {
-	rootID, err := l.lowerNode(comp.Root, newIslandInlineContext(), []string{comp.Name})
+	rootID, err := l.lowerNode(comp.Root, newIslandInlineContext(), []string{comp.Name}, 1)
 	if err != nil {
 		return fmt.Errorf("lower %s: %w", comp.Name, err)
 	}
@@ -220,26 +238,32 @@ func (l *islandLowerer) emitComponentScope(scope *ComponentScope) error {
 	if scope == nil {
 		return nil
 	}
-	l.emitSignalDefs(scope.Signals)
+	if err := l.emitSignalDefs(scope.Signals); err != nil {
+		return err
+	}
 	if err := l.emitComputedDefs(scope.Computeds); err != nil {
 		return err
 	}
 	return l.emitHandlerDefs(scope.Handlers)
 }
 
-func (l *islandLowerer) emitSignalDefs(signals []SignalInfo) {
+func (l *islandLowerer) emitSignalDefs(signals []SignalInfo) error {
 	for _, sig := range signals {
-		initID := l.parseExprOrFallback(sig.InitExpr, l.scope, program.Expr{
+		initID, err := l.parseExprOrFallback(sig.InitExpr, l.scope, program.Expr{
 			Op:    program.OpLitString,
 			Value: sig.InitExpr,
 			Type:  program.TypeAny,
 		})
+		if err != nil {
+			return fmt.Errorf("emit signal %s initializer: %w", sig.Name, err)
+		}
 		l.dst.Signals = append(l.dst.Signals, program.SignalDef{
 			Name: sig.Name,
 			Type: typeHintToExprType(sig.TypeHint),
 			Init: initID,
 		})
 	}
+	return nil
 }
 
 func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) error {
@@ -263,7 +287,10 @@ func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) error {
 		if err != nil {
 			return fmt.Errorf("parse computed %s expression %q: %w", computed.Name, bodySource, err)
 		}
-		bodyID := l.appendExprs(exprs, rootID)
+		bodyID, err := l.appendExprs(exprs, rootID)
+		if err != nil {
+			return fmt.Errorf("emit computed %s expression: %w", computed.Name, err)
+		}
 		l.dst.Computeds = append(l.dst.Computeds, program.ComputedDef{
 			Name: computed.Name,
 			Type: program.TypeAny,
@@ -283,7 +310,11 @@ func (l *islandLowerer) emitHandlerDefs(handlers []HandlerInfo) error {
 			if err != nil {
 				return fmt.Errorf("parse handler %s statement %q: %w", handler.Name, stmtSource, err)
 			}
-			h.Body = append(h.Body, l.appendExprs(stmtExprs, stmtID))
+			bodyID, err := l.appendExprs(stmtExprs, stmtID)
+			if err != nil {
+				return fmt.Errorf("emit handler %s statement: %w", handler.Name, err)
+			}
+			h.Body = append(h.Body, bodyID)
 		}
 		l.dst.Handlers = append(l.dst.Handlers, h)
 	}
@@ -315,7 +346,7 @@ var islandEventFields = []string{
 	"data", "eventData",
 }
 
-func (l *islandLowerer) parseExprOrFallback(source string, scope *ExprScope, fallback program.Expr) program.ExprID {
+func (l *islandLowerer) parseExprOrFallback(source string, scope *ExprScope, fallback program.Expr) (program.ExprID, error) {
 	exprs, rootID, err := ParseExpr(source, scope)
 	if err != nil {
 		return l.addExprDirect(fallback)
@@ -378,16 +409,142 @@ func (l *islandLowerer) populateComposedStaticMask() {
 	}
 }
 
-func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, stack []string) (program.NodeID, error) {
+// validateProgramIntegrity is the final fail-closed wire-contract gate. The
+// binary format encodes collection counts and node/expression references as
+// uint16; reaching this point must prove that no earlier append or offset can
+// be truncated by serialization.
+func (l *islandLowerer) validateProgramIntegrity() error {
+	p := l.dst
+	checkCount := func(label string, count int) error {
+		if count > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d %s; the program limit is 65,535", p.Name, count, label)
+		}
+		return nil
+	}
+	counts := []struct {
+		label string
+		count int
+	}{
+		{"props", len(p.Props)},
+		{"nodes", len(p.Nodes)},
+		{"expressions", len(p.Exprs)},
+		{"signals", len(p.Signals)},
+		{"computeds", len(p.Computeds)},
+		{"handlers", len(p.Handlers)},
+		{"functions", len(p.Funcs)},
+		{"engine nodes", len(p.EngineNodes)},
+		{"static flags", len(p.StaticMask)},
+	}
+	for _, entry := range counts {
+		if err := checkCount(entry.label, entry.count); err != nil {
+			return err
+		}
+	}
+	if len(p.Nodes) == 0 || int(p.Root) >= len(p.Nodes) {
+		return newIslandExpansionError("island %s has invalid root node %d for %d nodes", p.Name, p.Root, len(p.Nodes))
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		return newIslandExpansionError("island %s has %d static flags for %d nodes", p.Name, len(p.StaticMask), len(p.Nodes))
+	}
+	validExpr := func(id program.ExprID) bool { return int(id) < len(p.Exprs) }
+	for i, expr := range p.Exprs {
+		if len(expr.Operands) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d operands on expression %d; the program limit is 65,535", p.Name, len(expr.Operands), i)
+		}
+		for _, operand := range expr.Operands {
+			if !validExpr(operand) {
+				return newIslandExpansionError("island %s expression %d references missing operand %d", p.Name, i, operand)
+			}
+		}
+	}
+	for i, node := range p.Nodes {
+		if len(node.Attrs) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d attributes on node %d; the program limit is 65,535", p.Name, len(node.Attrs), i)
+		}
+		if len(node.Children) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d children on node %d; the program limit is 65,535", p.Name, len(node.Children), i)
+		}
+		for _, child := range node.Children {
+			if int(child) >= len(p.Nodes) {
+				return newIslandExpansionError("island %s node %d references missing child %d", p.Name, i, child)
+			}
+		}
+		if (node.Kind == program.NodeExpr || node.Kind == program.NodeForEach || node.Kind == program.NodeConditional) && !validExpr(node.Expr) {
+			return newIslandExpansionError("island %s node %d references missing expression %d", p.Name, i, node.Expr)
+		}
+		for _, attr := range node.Attrs {
+			if attr.Kind == program.AttrExpr && !validExpr(attr.Expr) {
+				return newIslandExpansionError("island %s node %d attribute %q references missing expression %d", p.Name, i, attr.Name, attr.Expr)
+			}
+		}
+	}
+	for _, signal := range p.Signals {
+		if !validExpr(signal.Init) {
+			return newIslandExpansionError("island %s signal %s references missing initializer %d", p.Name, signal.Name, signal.Init)
+		}
+	}
+	for _, computed := range p.Computeds {
+		if !validExpr(computed.Expr) {
+			return newIslandExpansionError("island %s computed %s references missing expression %d", p.Name, computed.Name, computed.Expr)
+		}
+	}
+	for _, handler := range p.Handlers {
+		if len(handler.Body) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d expressions in handler %s; the program limit is 65,535", p.Name, len(handler.Body), handler.Name)
+		}
+		for _, id := range handler.Body {
+			if !validExpr(id) {
+				return newIslandExpansionError("island %s handler %s references missing expression %d", p.Name, handler.Name, id)
+			}
+		}
+	}
+	for _, fn := range p.Funcs {
+		if len(fn.Params) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d parameters in function %s; the program limit is 65,535", p.Name, len(fn.Params), fn.Name)
+		}
+		if len(fn.Body) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d expressions in function %s; the program limit is 65,535", p.Name, len(fn.Body), fn.Name)
+		}
+		for _, id := range fn.Body {
+			if !validExpr(id) {
+				return newIslandExpansionError("island %s function %s references missing expression %d", p.Name, fn.Name, id)
+			}
+		}
+	}
+	for i, node := range p.EngineNodes {
+		if len(node.Props) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d properties on engine node %d; the program limit is 65,535", p.Name, len(node.Props), i)
+		}
+		if len(node.Children) > maxIslandProgramEntries {
+			return newIslandExpansionError("island %s has %d children on engine node %d; the program limit is 65,535", p.Name, len(node.Children), i)
+		}
+		names := make([]string, 0, len(node.Props))
+		for name := range node.Props {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			id := node.Props[name]
+			if !validExpr(id) {
+				return newIslandExpansionError("island %s engine node %d property %s references missing expression %d", p.Name, i, name, id)
+			}
+		}
+	}
+	return nil
+}
+
+func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, ancestry []string, physicalDepth int) (program.NodeID, error) {
 	if int(srcID) >= len(l.src.Nodes) {
 		return 0, fmt.Errorf("node %d not found", srcID)
 	}
 	srcNode := l.src.NodeAt(srcID)
 
 	if srcNode.Kind == NodeComponent {
-		if targetIdx, ok := l.componentIndex[srcNode.Tag]; ok &&
-			!isEachComponent(srcNode.Tag) && !isConditionalComponent(srcNode.Tag) {
-			return l.lowerComposedCall(srcNode, targetIdx, context, stack)
+		// A same-file declaration is authoritative even when its name shadows
+		// an island builtin or element alias. The strict front end applies the
+		// same precedence before this VM lowering stage.
+		if targetIdx, ok := l.componentIndex[srcNode.Tag]; ok {
+			return l.lowerComposedCall(srcNode, targetIdx, context, ancestry, physicalDepth)
 		}
 		if strings.Contains(srcNode.Tag, ".") {
 			return 0, fmt.Errorf("imported component <%s> cannot be composed inside island %s in v1; use a same-file strict pure-view component", srcNode.Tag, l.dst.Name)
@@ -395,8 +552,8 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, st
 	}
 
 	// Check NodeID overflow (uint32 -> uint16)
-	if len(l.dst.Nodes) >= 65535 {
-		return 0, fmt.Errorf("island %s exceeds the 65,535 expanded-node limit while composing client-side components", l.dst.Name)
+	if len(l.dst.Nodes) >= maxIslandProgramEntries {
+		return 0, newIslandExpansionError("island %s exceeds the 65,535 expanded-node limit while composing client-side components", l.dst.Name)
 	}
 
 	dstID := program.NodeID(len(l.dst.Nodes))
@@ -476,7 +633,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, st
 		childScope = l.scopeForEach(node)
 		childContext, node = l.scopeInlineForEach(context, node)
 	}
-	children, err := l.lowerChildren(srcNode.Children, childScope, childContext, stack)
+	children, err := l.lowerChildren(srcNode.Children, childScope, childContext, ancestry, physicalDepth)
 	if err != nil {
 		return 0, err
 	}
@@ -486,16 +643,16 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, st
 	return dstID, nil
 }
 
-func (l *islandLowerer) lowerNodeWithScope(srcID NodeID, scope *ExprScope, context *islandInlineContext, stack []string) (program.NodeID, error) {
+func (l *islandLowerer) lowerNodeWithScope(srcID NodeID, scope *ExprScope, context *islandInlineContext, ancestry []string, physicalDepth int) (program.NodeID, error) {
 	prev := l.scope
 	l.scope = scope
 	defer func() {
 		l.scope = prev
 	}()
-	return l.lowerNode(srcID, context, stack)
+	return l.lowerNode(srcID, context, ancestry, physicalDepth)
 }
 
-func (l *islandLowerer) lowerChildren(srcIDs []NodeID, scope *ExprScope, context *islandInlineContext, stack []string) ([]program.NodeID, error) {
+func (l *islandLowerer) lowerChildren(srcIDs []NodeID, scope *ExprScope, context *islandInlineContext, ancestry []string, physicalDepth int) ([]program.NodeID, error) {
 	var out []program.NodeID
 	for _, srcID := range srcIDs {
 		if int(srcID) >= len(l.src.Nodes) {
@@ -504,14 +661,14 @@ func (l *islandLowerer) lowerChildren(srcIDs []NodeID, scope *ExprScope, context
 		srcNode := l.src.NodeAt(srcID)
 		if srcNode.Kind == NodeExpr && context != nil {
 			if name, projected := islandProjectionExpression(srcNode.Text); projected && name == "" {
-				projected, err := l.lowerProjection(context.children, stack)
+				projected, err := l.lowerProjection(context.children, ancestry, physicalDepth)
 				if err != nil {
 					return nil, err
 				}
 				out = append(out, projected...)
 				continue
 			} else if projected {
-				projected, err := l.lowerProjection(context.slots[name], stack)
+				projected, err := l.lowerProjection(context.slots[name], ancestry, physicalDepth)
 				if err != nil {
 					return nil, err
 				}
@@ -519,7 +676,7 @@ func (l *islandLowerer) lowerChildren(srcIDs []NodeID, scope *ExprScope, context
 				continue
 			}
 		}
-		dstID, err := l.lowerNodeWithScope(srcID, scope, context, stack)
+		dstID, err := l.lowerNodeWithScope(srcID, scope, context, ancestry, physicalDepth)
 		if err != nil {
 			return nil, err
 		}
@@ -555,26 +712,26 @@ func islandProjectionExpression(source string) (name string, ok bool) {
 	return rest, true
 }
 
-func (l *islandLowerer) lowerProjection(projection islandProjection, stack []string) ([]program.NodeID, error) {
+func (l *islandLowerer) lowerProjection(projection islandProjection, ancestry []string, physicalDepth int) ([]program.NodeID, error) {
 	if len(projection.nodes) == 0 {
 		return nil, nil
 	}
-	if projection.stack != nil {
-		stack = projection.stack
+	if projection.ancestry != nil {
+		ancestry = projection.ancestry
 	}
-	return l.lowerChildren(projection.nodes, projection.scope, projection.context, stack)
+	return l.lowerChildren(projection.nodes, projection.scope, projection.context, ancestry, physicalDepth)
 }
 
-func (l *islandLowerer) lowerComposedCall(call *Node, targetIdx int, callerContext *islandInlineContext, stack []string) (program.NodeID, error) {
+func (l *islandLowerer) lowerComposedCall(call *Node, targetIdx int, callerContext *islandInlineContext, ancestry []string, physicalDepth int) (program.NodeID, error) {
 	target := l.src.Components[targetIdx]
-	for _, name := range stack {
+	for _, name := range ancestry {
 		if name == target.Name {
-			path := append(append([]string(nil), stack...), target.Name)
+			path := append(append([]string(nil), ancestry...), target.Name)
 			return 0, fmt.Errorf("island component composition cycle: %s", strings.Join(path, " -> "))
 		}
 	}
-	if len(stack) >= maxIslandCompositionDepth {
-		return 0, fmt.Errorf("island component composition exceeds the %d-component depth limit at <%s>", maxIslandCompositionDepth, target.Name)
+	if physicalDepth >= maxIslandCompositionDepth {
+		return 0, newIslandExpansionError("island component composition exceeds the %d-component depth limit at <%s>", maxIslandCompositionDepth, target.Name)
 	}
 	calleeErr, checked := l.calleeErrors[targetIdx]
 	if !checked {
@@ -613,14 +770,23 @@ func (l *islandLowerer) lowerComposedCall(call *Node, targetIdx int, callerConte
 		}
 		context.props[attr.Name] = islandInlineExpr{source: source, context: callerContext, scope: callScope}
 	}
-	projectionStack := append([]string(nil), stack...)
-	context.children = islandProjection{nodes: call.Children, context: callerContext, scope: callScope, stack: projectionStack}
-	for name, nodeID := range call.Slots {
-		context.slots[name] = islandProjection{nodes: []NodeID{nodeID}, context: callerContext, scope: callScope, stack: projectionStack}
+	projectionAncestry := append([]string(nil), ancestry...)
+	context.children = islandProjection{nodes: call.Children, context: callerContext, scope: callScope, ancestry: projectionAncestry}
+	// A single map key has no ordering ambiguity. Keep the overwhelmingly
+	// common one-slot path allocation-free while sorting multi-slot calls.
+	if len(call.Slots) == 1 {
+		for name, nodeID := range call.Slots {
+			context.slots[name] = islandProjection{nodes: []NodeID{nodeID}, context: callerContext, scope: callScope, ancestry: projectionAncestry}
+		}
+	} else {
+		for _, name := range sortedNodeSlotNames(call.Slots) {
+			nodeID := call.Slots[name]
+			context.slots[name] = islandProjection{nodes: []NodeID{nodeID}, context: callerContext, scope: callScope, ancestry: projectionAncestry}
+		}
 	}
 
 	l.compositionIndex++
-	return l.lowerNodeWithScope(target.Root, l.scope, context, append(stack, target.Name))
+	return l.lowerNodeWithScope(target.Root, l.scope, context, append(ancestry, target.Name), physicalDepth+1)
 }
 
 func (l *islandLowerer) composableCalleeError(target *Component) error {
@@ -675,12 +841,25 @@ func (l *islandLowerer) composableViewTreeError(componentName string, id NodeID,
 			return err
 		}
 	}
-	for _, child := range node.Slots {
+	for _, name := range sortedNodeSlotNames(node.Slots) {
+		child := node.Slots[name]
 		if err := l.composableViewTreeError(componentName, child, seen); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func sortedNodeSlotNames(slots map[string]NodeID) []string {
+	if len(slots) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(slots))
+	for name := range slots {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (l *islandLowerer) scopeInlineForEach(context *islandInlineContext, node program.Node) (*islandInlineContext, program.Node) {
@@ -933,7 +1112,10 @@ func (l *islandLowerer) lowerInlineEvent(eventType, source string) (program.Attr
 	if err != nil {
 		return program.Attr{}, fmt.Errorf("parse data-on-%s expression %q: %w", eventType, expression, err)
 	}
-	bodyID := l.appendExprs(exprs, rootID)
+	bodyID, err := l.appendExprs(exprs, rootID)
+	if err != nil {
+		return program.Attr{}, fmt.Errorf("emit data-on-%s expression: %w", eventType, err)
+	}
 	l.dst.Handlers = append(l.dst.Handlers, program.Handler{
 		Name: handlerName,
 		Body: []program.ExprID{bodyID},
@@ -1095,11 +1277,10 @@ func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID
 		}
 		expr.Operands = operands
 	}
-	if len(l.dst.Exprs) >= 65535 {
-		return 0, fmt.Errorf("island %s exceeds the 65,535 expression limit while composing client-side components", l.dst.Name)
+	mapped, err := l.addExprDirect(expr)
+	if err != nil {
+		return 0, err
 	}
-	mapped := program.ExprID(len(l.dst.Exprs))
-	l.dst.Exprs = append(l.dst.Exprs, expr)
 	memo[id] = mapped
 	return mapped, nil
 }
@@ -1123,65 +1304,52 @@ func directPropsField(exprs []program.Expr, id program.ExprID) (string, bool) {
 	return field.Value, true
 }
 
-// addExpr parses a Go expression source string into typed opcodes and appends
-// them to the island program's expression table. Returns the root ExprID.
-func (l *islandLowerer) addExpr(source string) program.ExprID {
-	baseID := program.ExprID(len(l.dst.Exprs))
-
-	exprs, rootID, err := ParseExpr(source, l.scope)
-	if err != nil {
-		// If parsing fails, fall back to a simple prop/signal reference
-		id := program.ExprID(len(l.dst.Exprs))
-		l.dst.Exprs = append(l.dst.Exprs, program.Expr{
-			Op:    program.OpPropGet,
-			Value: source,
-			Type:  program.TypeAny,
-		})
-		return id
+// addExprDirect is the only expression-table allocator. Every caller receives
+// an error before len(Exprs) can overflow the uint16 count/ID wire contract.
+func (l *islandLowerer) addExprDirect(e program.Expr) (program.ExprID, error) {
+	if len(l.dst.Exprs) >= maxIslandProgramEntries {
+		return 0, newIslandExpansionError("island %s exceeds the 65,535 expression limit", l.dst.Name)
 	}
-
-	// Append all parsed expressions, adjusting IDs by the base offset
-	for _, e := range exprs {
-		adjusted := e
-		// Offset operand references by baseID
-		if len(adjusted.Operands) > 0 {
-			ops := make([]program.ExprID, len(adjusted.Operands))
-			for i, op := range adjusted.Operands {
-				ops[i] = op + baseID
-			}
-			adjusted.Operands = ops
-		}
-		l.dst.Exprs = append(l.dst.Exprs, adjusted)
-	}
-
-	return rootID + baseID
-}
-
-// addExprDirect appends a single expression to the program and returns its ID.
-func (l *islandLowerer) addExprDirect(e program.Expr) program.ExprID {
 	id := program.ExprID(len(l.dst.Exprs))
 	l.dst.Exprs = append(l.dst.Exprs, e)
-	return id
+	return id, nil
 }
 
 // appendExprs appends parsed expressions to the program, offsetting operand
 // references, and returns the adjusted root ID.
-func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID) program.ExprID {
-	baseID := program.ExprID(len(l.dst.Exprs))
-
+func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID) (program.ExprID, error) {
+	if len(exprs) == 0 || int(rootID) >= len(exprs) {
+		return 0, fmt.Errorf("island expression root %d is outside %d parsed opcodes", rootID, len(exprs))
+	}
+	base := len(l.dst.Exprs)
+	if len(exprs) > maxIslandProgramEntries-base {
+		return 0, newIslandExpansionError("island %s exceeds the 65,535 expression limit", l.dst.Name)
+	}
 	for _, e := range exprs {
 		adjusted := e
 		if len(adjusted.Operands) > 0 {
 			ops := make([]program.ExprID, len(adjusted.Operands))
 			for i, op := range adjusted.Operands {
-				ops[i] = op + baseID
+				if int(op) >= len(exprs) {
+					return 0, fmt.Errorf("island expression operand %d is outside %d parsed opcodes", op, len(exprs))
+				}
+				offset := base + int(op)
+				if offset >= maxIslandProgramEntries {
+					return 0, newIslandExpansionError("island %s exceeds the 65,535 expression limit", l.dst.Name)
+				}
+				ops[i] = program.ExprID(offset)
 			}
 			adjusted.Operands = ops
 		}
-		l.dst.Exprs = append(l.dst.Exprs, adjusted)
+		if _, err := l.addExprDirect(adjusted); err != nil {
+			return 0, err
+		}
 	}
-
-	return rootID + baseID
+	rootOffset := base + int(rootID)
+	if rootOffset >= maxIslandProgramEntries {
+		return 0, newIslandExpansionError("island %s exceeds the 65,535 expression limit", l.dst.Name)
+	}
+	return program.ExprID(rootOffset), nil
 }
 
 // typeHintToExprType converts a type hint string to an ExprType.
