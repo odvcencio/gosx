@@ -138,9 +138,130 @@
 
   // --- Shadow Map Infrastructure ---
 
+  // Build one perspective shadow matrix for a normalized spot light. The
+  // public light normalizer supplies the established zero-value defaults;
+  // this lower-level helper is deliberately fail-closed for values that
+  // cannot be represented by one planar map. In particular, a half-angle at
+  // or above 90 degrees needs multiple faces and therefore consumes no slot.
+  function sceneSpotShadowLightSpaceMatrix(light, sceneBounds) {
+    var px = sceneNumber(light && light.x, NaN);
+    var py = sceneNumber(light && light.y, NaN);
+    var pz = sceneNumber(light && light.z, NaN);
+    var dx = sceneNumber(light && light.directionX, NaN);
+    var dy = sceneNumber(light && light.directionY, NaN);
+    var dz = sceneNumber(light && light.directionZ, NaN);
+    var angle = sceneNumber(light && light.angle, NaN);
+    var range = sceneNumber(light && light.range, 0);
+    if (!isFinite(px) || !isFinite(py) || !isFinite(pz) ||
+        !isFinite(dx) || !isFinite(dy) || !isFinite(dz) ||
+        !isFinite(angle) || !(angle > 0) || angle >= Math.PI / 2) {
+      return null;
+    }
+
+    // Normalize after scaling by the largest component. This stays stable
+    // for very large and very small finite vectors where a direct square sum
+    // would overflow or underflow.
+    var scale = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+    if (!(scale > 0)) return null;
+    var sx = dx / scale;
+    var sy = dy / scale;
+    var sz = dz / scale;
+    var subLength = Math.sqrt(sx * sx + sy * sy + sz * sz);
+    dx = sx / subLength;
+    dy = sy / subLength;
+    dz = sz / subLength;
+
+    // Cover the furthest scene-bounds corner in front of the light. A finite
+    // positive authored range may tighten that extent. The near strategy is
+    // intentionally small but finite; geometry closer than it is outside the
+    // documented shadow volume.
+    var far = 0;
+    var boundCoordinateScale = 0;
+    if (sceneBounds &&
+        isFinite(sceneBounds.minX) && isFinite(sceneBounds.maxX) &&
+        isFinite(sceneBounds.minY) && isFinite(sceneBounds.maxY) &&
+        isFinite(sceneBounds.minZ) && isFinite(sceneBounds.maxZ)) {
+      boundCoordinateScale = Math.max(
+        Math.abs(sceneBounds.minX), Math.abs(sceneBounds.maxX),
+        Math.abs(sceneBounds.minY), Math.abs(sceneBounds.maxY),
+        Math.abs(sceneBounds.minZ), Math.abs(sceneBounds.maxZ));
+      for (var corner = 0; corner < 8; corner++) {
+        var bx = (corner & 1) ? sceneBounds.maxX : sceneBounds.minX;
+        var by = (corner & 2) ? sceneBounds.maxY : sceneBounds.minY;
+        var bz = (corner & 4) ? sceneBounds.maxZ : sceneBounds.minZ;
+        var depth = (bx - px) * dx + (by - py) * dy + (bz - pz) * dz;
+        if (isFinite(depth) && depth > far) far = depth;
+      }
+    }
+    if (!(far > 0)) far = 10;
+    if (range > 0 && isFinite(range)) far = Math.min(far, range);
+    if (!isFinite(far) || !(far > 0)) return null;
+    var near = Math.min(0.1, Math.max(0.01, far * 0.001));
+    if (near >= far) near = far * 0.5;
+
+    // Leave a conservative finite-precision guard beyond the logical far
+    // depth before producing Float32 view/projection matrices. Exact fits can
+    // round a boundary corner just past clip Z in the shader, especially when
+    // world-space translation is large or far/near is wide. The first term
+    // covers view-space multiply/add error; the second covers perspective
+    // coefficient quantization. An authored range remains the logical light
+    // limit (the BRDF still enforces it): only this projection guard extends
+    // beyond it. Refuse a numerically ill-conditioned projection rather than
+    // allowing padding to grow beyond one eighth of the selected depth.
+    var float32Epsilon = 1.1920928955078125e-7;
+    var coordinateScale = Math.abs(px) + Math.abs(py) + Math.abs(pz) + boundCoordinateScale + far;
+    var viewPadding = coordinateScale * 64 * float32Epsilon;
+    var projectionPadding = far * Math.max(1, far / near) * 64 * float32Epsilon;
+    var farPadding = Math.max(far * 64 * float32Epsilon, viewPadding, projectionPadding);
+    if (!isFinite(farPadding) || farPadding > far * 0.125) return null;
+    far += farPadding;
+    if (!isFinite(far)) return null;
+
+    var fx = dx, fy = dy, fz = dz;
+    var upX = 0, upY = 1, upZ = 0;
+    if (Math.abs(fy) > 0.99) {
+      upX = 0; upY = 0; upZ = 1;
+    }
+    var rx = fy * upZ - fz * upY;
+    var ry = fz * upX - fx * upZ;
+    var rz = fx * upY - fy * upX;
+    var rightLength = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (!(rightLength > 0.0001)) return null;
+    rx /= rightLength; ry /= rightLength; rz /= rightLength;
+    upX = ry * fz - rz * fy;
+    upY = rz * fx - rx * fz;
+    upZ = rx * fy - ry * fx;
+
+    var view = new Float32Array([
+      rx, upX, -fx, 0,
+      ry, upY, -fy, 0,
+      rz, upZ, -fz, 0,
+      -(rx * px + ry * py + rz * pz),
+      -(upX * px + upY * py + upZ * pz),
+      fx * px + fy * py + fz * pz,
+      1,
+    ]);
+    var tanHalf = Math.tan(angle);
+    var rangeInv = 1 / (near - far);
+    var projection = new Float32Array([
+      1 / tanHalf, 0, 0, 0,
+      0, 1 / tanHalf, 0, 0,
+      0, 0, (near + far) * rangeInv, -1,
+      0, 0, 2 * near * far * rangeInv, 0,
+    ]);
+    var matrix = sceneMat4Multiply(projection, view);
+    for (var i = 0; i < 16; i++) {
+      if (!isFinite(matrix[i])) return null;
+    }
+    return matrix;
+  }
+
   // Compute an orthographic light-space matrix for a directional light.
   // sceneBounds is { minX, minY, minZ, maxX, maxY, maxZ }.
   function sceneShadowLightSpaceMatrix(light, sceneBounds) {
+    if (light && typeof light.kind === "string" && light.kind.toLowerCase() === "spot") {
+      return sceneSpotShadowLightSpaceMatrix(light, sceneBounds);
+    }
     // Light direction (normalized).
     var dx = sceneNumber(light.directionX, 0);
     var dy = sceneNumber(light.directionY, -1);

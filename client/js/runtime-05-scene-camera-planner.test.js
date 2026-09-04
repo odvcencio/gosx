@@ -379,7 +379,7 @@ test("bootstrap resolves Scene3D CSS custom properties in the planner", async ()
   assert.ok(computedStyleCalls > firstComputedStyleCalls);
 });
 
-test("bootstrap Scene3D planner invalidates cached spot-light attenuation and cone fields", async () => {
+test("bootstrap Scene3D planner invalidates cached spot-light projection and shadow fields", async () => {
   const env = createContext({});
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
@@ -403,7 +403,12 @@ test("bootstrap Scene3D planner invalidates cached spot-light attenuation and co
     decay: 2,
   };
 
-  for (const [field, value] of [["range", 12], ["decay", 3], ["angle", 0.75], ["penumbra", 0.4]]) {
+  for (const [field, value] of [
+    ["x", 2], ["directionZ", -0.5],
+    ["range", 12], ["decay", 3], ["angle", 0.75], ["penumbra", 0.4],
+    ["castShadow", true], ["shadowBias", -0.001], ["shadowSize", 512],
+    ["shadowCascades", 1], ["shadowSoftness", 1.25],
+  ]) {
     const bundle = {
       bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
       camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
