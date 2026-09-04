@@ -199,6 +199,28 @@ test("authored range boundary stays inside bounded f32 projection padding", () =
   }
 });
 
+test("huge transverse bounds fail closed before shader-f32 cancellation", () => {
+  const diagonal = Math.SQRT1_2;
+  const axisDepth = 10;
+  const transverse = 9e8;
+  const x = diagonal * (axisDepth + transverse);
+  const y = diagonal * (axisDepth - transverse);
+  const projectedDepth = x * diagonal + y * diagonal;
+  const projectedTransverse = x * diagonal - y * diagonal;
+  assert.ok(Math.abs(projectedDepth - axisDepth) < 1e-6);
+  assert.ok(Math.abs(projectedTransverse - transverse) < 1e-6);
+  assert.ok(Math.atan2(projectedTransverse, projectedDepth) < Math.PI / 2 - 1e-8,
+    "the double-precision point is inside the authored cone");
+  const degenerateBounds = { minX: x, maxX: x, minY: y, maxY: y, minZ: 0, maxZ: 0 };
+  const matrix = build(matrixContext(), {
+    kind: "spot", x: 0, y: 0, z: 0,
+    directionX: diagonal, directionY: diagonal, directionZ: 0,
+    angle: Math.PI / 2 - 1e-8, range: 0, castShadow: true,
+  }, degenerateBounds);
+  assert.equal(matrix, null,
+    "vertex coordinate magnitude makes the bounded f32 guard fail closed");
+});
+
 test("WebGL and WebGPU receivers reject invalid perspective coordinates before sampling", () => {
   const webgl = read(path.join(runtimeRoot, "webgl.ts"));
   const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
