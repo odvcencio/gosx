@@ -1555,13 +1555,16 @@
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
-    "    return projCoords3 * 0.5 + 0.5;",
+    "    return vec3f(projCoords3.x * 0.5 + 0.5, 0.5 - projCoords3.y * 0.5, projCoords3.z);",
     "}",
     "",
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
     "fn shadowFactor0(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
+    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
+    "    if (lightSpacePos.w <= 0.0) { return 1.0; }",
     "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
+    "    if (!inside) { return 1.0; }",
     "    let poissonDisk = array<vec2f, 4>(",
     "        vec2f(-0.94201624, -0.39906216),",
     "        vec2f(0.94558609, -0.76890725),",
@@ -1578,13 +1581,16 @@
     "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
     "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap0, shadowSampler0, sampleUV, refDepth);",
     "    }",
-    "    return select(1.0, shadowVal / 4.0, inside);",
+    "    return shadowVal / 4.0;",
     "}",
     "",
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
     "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
+    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
+    "    if (lightSpacePos.w <= 0.0) { return 1.0; }",
     "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
+    "    if (!inside) { return 1.0; }",
     "    let poissonDisk = array<vec2f, 4>(",
     "        vec2f(-0.94201624, -0.39906216),",
     "        vec2f(0.94558609, -0.76890725),",
@@ -1601,7 +1607,7 @@
     "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
     "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap1, shadowSampler1, sampleUV, refDepth);",
     "    }",
-    "    return select(1.0, shadowVal / 4.0, inside);",
+    "    return shadowVal / 4.0;",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -1973,9 +1979,9 @@
     "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
     "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
-    // Shadow attenuation for directional lights.
+    // Shadow attenuation follows the light associated with each slot.
     "        var shadowAtten: f32 = 1.0;",
-    "        if (material.receiveShadow != 0u && lightType == 1u) {",
+    "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
     "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
     "                shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
     "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
@@ -6229,6 +6235,22 @@
       pointsModelMat = _pointsTilt;
     }
     return pointsModelMat;
+  }
+
+  // Shared light matrices use WebGL's [-w,+w] clip-Z convention. WebGPU
+  // clips depth to [0,w], so fold z'=(z+w)/2 into a fresh matrix used by
+  // both the depth pass and receiver sampling. Keeping one converted value
+  // prevents producer/consumer drift and never mutates shared input.
+  function sceneWebGPUShadowDepthMatrix(matrix) {
+    if (!matrix || matrix.length < 16) return null;
+    var out = new Float32Array(16);
+    for (var col = 0; col < 4; col++) {
+      out[col * 4] = matrix[col * 4];
+      out[col * 4 + 1] = matrix[col * 4 + 1];
+      out[col * 4 + 2] = (matrix[col * 4 + 2] + matrix[col * 4 + 3]) * 0.5;
+      out[col * 4 + 3] = matrix[col * 4 + 3];
+    }
+    return out;
   }
 
   function createSceneWebGPURenderer(canvas, options) {
@@ -17910,9 +17932,15 @@
         var light = lightArray[li];
         if (!light || !light.castShadow) continue;
         var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        if (kind !== "directional") continue;
+        if (kind !== "directional" && kind !== "spot") continue;
 
         if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
+
+        // Projection validation happens before authored-order slot selection.
+        // A malformed or unsupported spot consumes no slot and cannot crowd
+        // out a later eligible light.
+        var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+        if (!rawLightMatrix) continue;
 
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
@@ -17920,16 +17948,26 @@
         shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
         if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
-          if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
+          if (shadowSlots[slot]) destroyRendererGPUResource(shadowSlots[slot].texture);
           shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
         }
 
-        var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+        var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 
         renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers);
         activeShadowCount++;
+      }
+
+      // A light removal or newly invalid spot releases its no-longer-active
+      // texture immediately. This mirrors WebGL slot retirement instead of
+      // retaining stale GPU allocations until whole-renderer disposal.
+      for (var staleShadowSlot = activeShadowCount; staleShadowSlot < shadowSlots.length; staleShadowSlot++) {
+        if (shadowSlots[staleShadowSlot]) {
+          destroyRendererGPUResource(shadowSlots[staleShadowSlot].texture);
+          shadowSlots[staleShadowSlot] = null;
+        }
       }
 
       uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
