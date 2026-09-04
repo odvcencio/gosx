@@ -49,6 +49,11 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn, spawnSync } = require('child_process');
+const {
+  buildOwnedChromeStderrRanges,
+  chromeDiagnosticFailures,
+  scanOwnedChromeDiagnostics,
+} = require('./scene3d-browser-diagnostics.cjs');
 
 const REPO = process.argv[2];
 const ART = process.argv[3];
@@ -2189,44 +2194,34 @@ let finished = false;
 let exitCode = 0;
 let reportWriteFailed = false;
 
-function countDiagnostic(content, needle) {
-  let count = 0;
-  let offset = 0;
-  for (;;) {
-    const found = content.indexOf(needle, offset);
-    if (found < 0) return count;
-    count += 1;
-    offset = found + Math.max(1, needle.length);
-  }
-}
-
 function scanChromeDiagnostics() {
   const stderrPath = path.join(ART, 'chrome-stderr.log');
   try {
     const raw = fs.readFileSync(stderrPath);
-    const all = raw.toString('utf8').toLowerCase();
     const boundary = Number.isInteger(webGPUIntentionalTeardownStderrByte)
       ? Math.max(0, Math.min(raw.length, webGPUIntentionalTeardownStderrByte))
       : raw.length;
-    const beforeTeardown = raw.subarray(0, boundary).toString('utf8').toLowerCase();
-    const swapFindings = CHROME_SWAP_DIAGNOSTICS.map((needle) => ({
-      needle, count: countDiagnostic(all, needle),
-    })).filter((entry) => entry.count > 0);
-    const preTeardownLifecycleFindings =
-      CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS.map((needle) => ({
-        needle, count: countDiagnostic(beforeTeardown, needle),
-      })).filter((entry) => entry.count > 0);
+    const owned = scanOwnedChromeDiagnostics(
+      raw,
+      buildOwnedChromeStderrRanges(CAPABILITY_STDERR_RANGE, CASE_STDERR_RANGES),
+      CHROME_SWAP_DIAGNOSTICS,
+      CHROME_PRE_TEARDOWN_LIFECYCLE_DIAGNOSTICS,
+    );
     return {
       scannedBytes: raw.length,
       webgpuIntentionalTeardownStderrByte: boundary,
-      swapFindings,
-      preTeardownLifecycleFindings,
+      ownedStderrBytes: owned.ownedStderrBytes,
+      ownedStderrRanges: owned.ownedStderrRanges,
+      swapFindings: owned.swapFindings,
+      preTeardownLifecycleFindings: owned.preTeardownLifecycleFindings,
       scanError: '',
     };
   } catch (error) {
     return {
       scannedBytes: null,
       webgpuIntentionalTeardownStderrByte,
+      ownedStderrBytes: null,
+      ownedStderrRanges: [],
       swapFindings: [],
       preTeardownLifecycleFindings: [],
       scanError: String(error && error.message || error),
@@ -2513,16 +2508,8 @@ const watchdog = setTimeout(() => {
   }
   await cleanup();
   chromeDiagnostics = scanChromeDiagnostics();
-  if (chromeDiagnostics.scanError) {
-    fail('Chrome stderr diagnostic scan failed: ' + chromeDiagnostics.scanError);
-  }
-  if (chromeDiagnostics.swapFindings.length > 0) {
-    fail('Chrome stderr contains forbidden swap/SharedImage diagnostics: ' +
-      JSON.stringify(chromeDiagnostics.swapFindings));
-  }
-  if (chromeDiagnostics.preTeardownLifecycleFindings.length > 0) {
-    fail('Chrome stderr contains pre-teardown WebGPU lifecycle diagnostics: ' +
-      JSON.stringify(chromeDiagnostics.preTeardownLifecycleFindings));
+  for (const diagnosticFailure of chromeDiagnosticFailures(chromeDiagnostics)) {
+    fail(diagnosticFailure);
   }
   writeReport({});
   exitCode = (errors.length || warnings.length || notFound.length || unexpectedRequests.length ||
