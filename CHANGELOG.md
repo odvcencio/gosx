@@ -15,6 +15,14 @@
 - The boundary fails closed for nested islands, engines, legacy or imported callees, callee-owned reactive behavior, handler-valued props, nested/slice props, spreads, cycles, more than 32 component frames, and programs beyond the VM's 65,535-node/expression limits.
 - Root island call-site children and slots now fail explicitly instead of being omitted from the per-component `.gxi` program. Put a slot-bearing pure-view component inside the island instead.
 
+### Changed: Stripe integrations are server-first and secret-safe
+
+- `stripeui.HostedCheckoutForm` is now the default Checkout path: a native POST to an app-owned same-origin endpoint, followed by the app's server-side Stripe API call and 303 redirect. It requires no Stripe.js or GoSX client runtime.
+- Elements, embedded Checkout, and custom Checkout now use GoSX runtime surfaces and a fixed `SessionAction`. The shared scoped transport owns same-origin enforcement, CSRF headers, cancellation, and disposal; query-bearing and external action targets fail closed.
+- Stripe.js is always loaded directly from `js.stripe.com`. The bridge emits only bounded `ready`, `status`, `complete`, and `error` UX events; webhook/server state remains authoritative.
+- The pre-1.0 `ClientSecret`, `FetchRequest`, arbitrary request headers/body, raw provider event forwarding, custom Stripe.js URL, and ambient lifecycle-wrapper APIs were removed. See `docs/stripe.md` for migration examples.
+- Managed Stripe scripts now register through the nonce-aware page runtime after bootstrap, repeated `Require`/bridge execution is idempotent, Elements confirmation binds only an explicit accessible button, and every serialized provider option is a typed allowlisted field rather than an arbitrary map.
+
 ## v0.55.2 (2026-09-04)
 
 ### Fixed: comments inside GSX markup compile away

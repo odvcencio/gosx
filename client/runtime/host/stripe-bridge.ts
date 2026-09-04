@@ -1,58 +1,85 @@
-// GoSX Stripe bridge.
-// Loads Stripe.js directly from js.stripe.com and mounts only the Stripe
-// surfaces declared by server-rendered GoSX components.
+// GoSX Stripe managed surfaces.
+// Stripe.js is loaded directly from js.stripe.com. GoSX owns only lifecycle,
+// same-origin session transport, and redacted UX events around Stripe's secure
+// iframe surfaces.
 (function() {
   "use strict";
 
   const DEFAULT_STRIPE_JS = "https://js.stripe.com/clover/stripe.js";
-  const CONFIG_ATTR = "data-gosx-stripe-config";
   const CONFIG_ID_ATTR = "data-gosx-stripe-config-id";
-  const SURFACE_ATTR = "data-gosx-stripe-surface";
   const ELEMENT_ATTR = "data-gosx-stripe-element";
-  const CHECKOUT_ATTR = "data-gosx-stripe-checkout";
   const CHECKOUT_ELEMENT_ATTR = "data-gosx-stripe-checkout-element";
-  const EMBEDDED_ATTR = "data-gosx-stripe-embedded-checkout";
-  const REDIRECT_ATTR = "data-gosx-stripe-redirect";
-  const CONFIRM_ATTR = "data-gosx-stripe-confirm";
+  const CONFIRM_ATTR = "data-gosx-stripe-confirm-control";
   const CHECKOUT_CONFIRM_ATTR = "data-gosx-stripe-checkout-confirm";
   const STATUS_ATTR = "data-gosx-stripe-state";
-  const DEFAULT_ELEMENT_EVENTS = [
-    "ready",
-    "change",
-    "focus",
-    "blur",
-    "click",
-    "escape",
-    "loaderror",
-    "loaderstart",
-    "networkschange",
-    "confirm",
-    "cancel",
-    "shippingaddresschange",
-    "shippingratechange",
-  ];
+  const SURFACE_ELEMENTS = "stripe-elements";
+  const SURFACE_EMBEDDED = "stripe-embedded-checkout";
+  const SURFACE_CHECKOUT = "stripe-checkout";
+  const ALLOWED_ELEMENT_EVENTS = ["ready", "change", "focus", "blur", "loaderror"];
+
+  if (!gosxHost.surfaces || typeof gosxHost.surfaces.register !== "function") {
+    console.error("[gosx-stripe] runtime surfaces are unavailable; load the GoSX bootstrap before the Stripe bridge");
+    return;
+  }
 
   const state = gosxHost.stripe || {
-    version: "0.1.0",
+    version: "1.0.0",
     stripePromise: null,
     stripeInstances: new Map(),
     records: new Map(),
   };
+  state.version = "1.0.0";
   gosxHost.stripe = state;
   gosxHostCompatibility.install("__gosx_stripe", state);
 
-  function emit(name, detail) {
-    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
-    document.dispatchEvent(new CustomEvent("gosx:stripe:" + name, { detail: detail || {} }));
+  function boundedID(value) {
+    return String(value || "").replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 96);
   }
 
-  function setState(el, value, message) {
-    if (!el || typeof el.setAttribute !== "function") return;
-    el.setAttribute(STATUS_ATTR, value || "idle");
-    if (message) {
-      el.setAttribute("data-gosx-stripe-message", String(message));
-    } else {
-      el.removeAttribute("data-gosx-stripe-message");
+  function safeErrorCode(phase) {
+    const value = String(phase || "stripe")
+      .replace(/[^a-zA-Z0-9_.-]/g, "_")
+      .slice(0, 48);
+    return (value || "stripe") + "_failed";
+  }
+
+  function detailFor(record, phase, extra) {
+    return Object.assign({
+      kind: record.kind,
+      root: boundedID(record.root && record.root.id),
+      phase: boundedID(phase),
+    }, extra || {});
+  }
+
+  function emit(record, name, phase, extra) {
+    if (!record || record.disposed) return;
+    record.context.dispatch("gosx:stripe:" + name, detailFor(record, phase, extra));
+  }
+
+  function setState(element, value) {
+    if (!element || typeof element.setAttribute !== "function") return;
+    const stateValue = boundedID(value || "idle");
+    element.setAttribute(STATUS_ATTR, stateValue);
+    if (element.hasAttribute && element.hasAttribute(CONFIRM_ATTR)) {
+      element.setAttribute("aria-busy", stateValue === "submitting" ? "true" : "false");
+    }
+    element.removeAttribute("data-gosx-stripe-message");
+  }
+
+  function reportError(record, phase, error, element) {
+    if (!record || record.disposed || isAborted(record)) return;
+    const target = element || record.root;
+    setState(target, "error");
+    emit(record, "error", phase, {
+      element: boundedID(target && target.id),
+      code: safeErrorCode(phase),
+    });
+    if (record.context && typeof record.context.reportFailure === "function") {
+      record.context.reportFailure("stripe-" + boundedID(phase), new Error("Stripe surface operation failed"), {
+        provider: "stripe",
+        kind: record.kind,
+        code: safeErrorCode(phase),
+      });
     }
   }
 
@@ -62,47 +89,41 @@
     if (!script) return {};
     try {
       return JSON.parse(script.textContent || "{}") || {};
-    } catch (error) {
-      console.error("[gosx-stripe] invalid JSON config", id, error);
+    } catch (_) {
       return {};
     }
   }
 
-  function readInlineJSON(el) {
-    const raw = el && el.getAttribute(CONFIG_ATTR);
-    if (!raw) return {};
-    try {
-      return JSON.parse(raw) || {};
-    } catch (error) {
-      console.error("[gosx-stripe] invalid inline JSON config", error);
-      return {};
+  function configFor(element) {
+    return readJSONScript(element && element.getAttribute(CONFIG_ID_ATTR));
+  }
+
+  function findStripeScript() {
+    const scripts = document.querySelectorAll("script[src]");
+    for (const script of scripts) {
+      try {
+        if (new URL(script.getAttribute("src"), window.location.href).href === DEFAULT_STRIPE_JS) return script;
+      } catch (_) {}
     }
+    return null;
   }
 
-  function configFor(el) {
-    return Object.assign({}, readJSONScript(el && el.getAttribute(CONFIG_ID_ATTR)), readInlineJSON(el));
-  }
-
-  function ensureScript(src) {
-    src = src || DEFAULT_STRIPE_JS;
+  function ensureStripeScript() {
     if (window.Stripe) return Promise.resolve(window.Stripe);
     if (state.stripePromise) return state.stripePromise;
     state.stripePromise = new Promise(function(resolve, reject) {
-      const existing = findScript(src);
+      const existing = findStripeScript();
       if (existing) {
         existing.addEventListener("load", function() {
-          window.Stripe ? resolve(window.Stripe) : reject(new Error("Stripe.js loaded without window.Stripe"));
+          window.Stripe ? resolve(window.Stripe) : reject(new Error("stripe_constructor_missing"));
         }, { once: true });
-        existing.addEventListener("error", function() {
-          reject(new Error("failed to load Stripe.js"));
-        }, { once: true });
+        existing.addEventListener("error", function() { reject(new Error("stripe_script_failed")); }, { once: true });
         if (window.Stripe) resolve(window.Stripe);
         return;
       }
-
       const script = document.createElement("script");
-      script.src = src;
-      script.setAttribute("src", src);
+      script.src = DEFAULT_STRIPE_JS;
+      script.setAttribute("src", DEFAULT_STRIPE_JS);
       script.async = true;
       script.type = "text/javascript";
       script.setAttribute("type", "text/javascript");
@@ -112,144 +133,117 @@
       script.setAttribute("data-gosx-script-load", "dom");
       script.onload = function() {
         script.setAttribute("data-gosx-script-loaded", "true");
-        window.Stripe ? resolve(window.Stripe) : reject(new Error("Stripe.js loaded without window.Stripe"));
+        window.Stripe ? resolve(window.Stripe) : reject(new Error("stripe_constructor_missing"));
       };
-      script.onerror = function() {
-        reject(new Error("failed to load Stripe.js"));
-      };
+      script.onerror = function() { reject(new Error("stripe_script_failed")); };
       (document.head || document.documentElement).appendChild(script);
     });
     return state.stripePromise;
   }
 
-  function findScript(src) {
-    const absolute = absolutize(src);
-    const scripts = document.querySelectorAll("script[src]");
-    for (const script of scripts) {
-      if (absolutize(script.getAttribute("src")) === absolute) return script;
-    }
-    return null;
-  }
-
-  function absolutize(src) {
-    try {
-      return new URL(src, window.location.href).href;
-    } catch (_) {
-      return src || "";
-    }
-  }
-
   async function stripeFor(config) {
-    const StripeCtor = await ensureScript(config.stripeJS || config.stripeJs || DEFAULT_STRIPE_JS);
+    const StripeCtor = await ensureStripeScript();
     const key = String(config.publishableKey || "").trim();
-    if (!key) throw new Error("missing Stripe publishable key");
-    const options = config.stripeOptions && typeof config.stripeOptions === "object" ? config.stripeOptions : {};
-    const cacheKey = key + "\n" + JSON.stringify(options || {});
-    if (!state.stripeInstances.has(cacheKey)) {
-      state.stripeInstances.set(cacheKey, StripeCtor(key, options));
-    }
-    return state.stripeInstances.get(cacheKey);
+    if (!key) throw new Error("publishable_key_missing");
+    if (!state.stripeInstances.has(key)) state.stripeInstances.set(key, StripeCtor(key));
+    return state.stripeInstances.get(key);
   }
 
-  function ownSurfaceElement(root, selector) {
+  function sessionAction(raw) {
+    const authored = String(raw || "");
+    if (!authored || authored.trim() !== authored || authored[0] !== "/" || authored.indexOf("//") === 0) return "";
+    if (authored.indexOf("\\") >= 0 || authored.indexOf("?") >= 0 || authored.indexOf("#") >= 0) return "";
+    try {
+      const target = new URL(authored, window.location.href);
+      if (target.origin !== window.location.origin || target.search || target.hash) return "";
+      return target.pathname;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  async function requestClientSecret(record, action) {
+    const target = sessionAction(action);
+    if (!target) throw new Error("session_action_invalid");
+    const result = await record.context.requestJSON(target, {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (isAborted(record)) throw new Error("AbortError");
+    if (!result.response || !result.response.ok) throw new Error("session_action_failed");
+    const envelope = result.data && typeof result.data === "object" ? result.data : {};
+    const data = envelope.data && typeof envelope.data === "object" ? envelope.data : envelope;
+    const secret = String(data.clientSecret || data.client_secret || "");
+    if (!secret || secret.length > 4096) throw new Error("client_secret_missing");
+    return secret;
+  }
+
+  function isAborted(record) {
+    return !!(record.disposed || record.context.signal && record.context.signal.aborted);
+  }
+
+  function ownSurfaceElements(root, selector) {
     const nodes = root.querySelectorAll(selector);
     return Array.prototype.filter.call(nodes, function(node) {
-      return node.closest("[" + SURFACE_ATTR + "],[" + CHECKOUT_ATTR + "]") === root;
-    });
-  }
-
-  function formPayload(source) {
-    if (!source || source.tagName !== "FORM" || typeof FormData !== "function") return null;
-    const out = {};
-    const form = new FormData(source);
-    form.forEach(function(value, key) {
-      if (Object.prototype.hasOwnProperty.call(out, key)) {
-        if (!Array.isArray(out[key])) out[key] = [out[key]];
-        out[key].push(value);
-      } else {
-        out[key] = value;
+      let current = node;
+      while (current) {
+        if (current.getAttribute && current.getAttribute("data-gosx-runtime-surface")) return current === root;
+        current = current.parentNode;
       }
+      return false;
     });
-    return out;
   }
 
-  async function fetchValue(spec, fallbackMethod, source) {
-    if (!spec || !spec.url) return null;
-    const init = {
-      method: spec.method || fallbackMethod || "POST",
-      headers: Object.assign({ "Content-Type": "application/json" }, spec.headers || {}),
-    };
-    if (Object.prototype.hasOwnProperty.call(spec, "body")) {
-      init.body = typeof spec.body === "string" ? spec.body : JSON.stringify(spec.body || {});
-    } else {
-      const payload = formPayload(source);
-      if (payload) init.body = JSON.stringify(payload);
-    }
-    const response = await fetch(spec.url, init);
-    const data = await response.json().catch(function() { return {}; });
-    if (!response.ok) throw new Error(data.error || "Stripe endpoint failed");
-    return data;
-  }
-
-  async function resolveClientSecret(config) {
-    if (config.clientSecret) return config.clientSecret;
-    const data = await fetchValue(config.clientSecretRequest || config.fetchClientSecret, "POST");
-    return data && (data.clientSecret || data.client_secret);
-  }
-
-  async function mountElementsSurface(root) {
-    if (state.records.has(root)) disposeRoot(root);
-    const config = configFor(root);
-    setState(root, "loading");
-    try {
-      const stripe = await stripeFor(config);
-      const elementsOptions = Object.assign({}, config.elementsOptions || {});
-      const clientSecret = await resolveClientSecret(config);
-      if (clientSecret) elementsOptions.clientSecret = clientSecret;
-      const elements = stripe.elements(elementsOptions);
-      const record = {
-        kind: "elements",
-        root,
-        stripe,
-        elements,
-        mounted: [],
-        listeners: [],
+  function bindElementEvents(record, mount, element) {
+    for (const name of ALLOWED_ELEMENT_EVENTS) {
+      if (!element || typeof element.on !== "function") continue;
+      const listener = function(event) {
+        const elementID = boundedID(mount.id);
+        if (name === "ready") {
+          setState(mount, "ready");
+          emit(record, "ready", "element", { element: elementID });
+          return;
+        }
+        if (name === "loaderror") {
+          reportError(record, "element-load", event && event.error, mount);
+          return;
+        }
+        const detail = { element: elementID, status: name };
+        if (name === "change") {
+          detail.complete = !!(event && event.complete);
+          detail.empty = !!(event && event.empty);
+        }
+        emit(record, "status", "element", detail);
       };
-      state.records.set(root, record);
-
-      for (const el of ownSurfaceElement(root, "[" + ELEMENT_ATTR + "]")) {
-        mountElement(record, el, el.getAttribute(ELEMENT_ATTR), false);
-      }
-      for (const form of ownSurfaceElement(root, "[" + CONFIRM_ATTR + "]")) {
-        bindElementsConfirm(record, form);
-      }
-      setState(root, "ready");
-      emit("ready", { kind: "elements", root: root.id || "" });
-    } catch (error) {
-      setState(root, "error", error && error.message);
-      emit("error", { kind: "elements", root: root.id || "", error });
-      console.error("[gosx-stripe] elements surface failed", error);
+      try {
+        element.on(name, listener);
+        record.releases.push(function() {
+          if (typeof element.off === "function") element.off(name, listener);
+        });
+      } catch (_) {}
     }
   }
 
-  function mountElement(record, el, type, checkoutMode) {
-    const config = configFor(el);
-    const options = config.options || {};
+  function mountElement(record, mount, type, checkoutMode) {
+    const config = configFor(mount);
+    const options = config.options && typeof config.options === "object" ? config.options : {};
     const factory = checkoutMode ? record.checkout : record.elements;
     let element;
     if (checkoutMode) {
-      const method = config.create || el.getAttribute("data-gosx-stripe-create") || checkoutCreateMethod(type);
-      if (!factory || typeof factory[method] !== "function") {
-        throw new Error("Stripe Checkout element factory not found: " + method);
-      }
+      const method = config.create || checkoutCreateMethod(type);
+      if (!factory || typeof factory[method] !== "function") throw new Error("checkout_element_factory_missing");
       element = factory[method](options);
     } else {
       element = factory.create(type, options);
     }
-    element.mount(el);
-    setState(el, "ready");
+    if (isAborted(record)) {
+      if (element && typeof element.destroy === "function") element.destroy();
+      return;
+    }
+    element.mount(mount);
     record.mounted.push(element);
-    bindElementEvents(el, element, config.events);
+    bindElementEvents(record, mount, element);
   }
 
   function checkoutCreateMethod(type) {
@@ -258,210 +252,162 @@
     case "payment-element":
       return "createPaymentElement";
     case "express-checkout":
-    case "expresscheckoutelement":
+    case "expresscheckout":
       return "createExpressCheckoutElement";
     case "billing-address":
       return "createBillingAddressElement";
     case "shipping-address":
       return "createShippingAddressElement";
     default:
-      return type || "";
+      return "";
     }
   }
 
-  function bindElementEvents(mount, element, events) {
-    const names = Array.isArray(events) && events.length ? events : DEFAULT_ELEMENT_EVENTS;
-    for (const name of names) {
-      if (!name || typeof element.on !== "function") continue;
-      try {
-        element.on(name, function(event) {
-          emit("event", {
-            element: mount.id || "",
-            type: mount.getAttribute(ELEMENT_ATTR) || mount.getAttribute(CHECKOUT_ELEMENT_ATTR) || "",
-            event: name,
-            payload: event || null,
-          });
-        });
-      } catch (_) {}
-    }
+  function returnURL(path) {
+    const target = sessionAction(path);
+    return target ? new URL(target, window.location.origin).href : "";
   }
 
-  function bindElementsConfirm(record, form) {
-    const config = configFor(form);
+  function bindElementsConfirm(record, control) {
+    const config = configFor(control);
     const listener = async function(event) {
       event.preventDefault();
-      setState(form, "submitting");
+      setState(control, "submitting");
+      emit(record, "status", "confirm", { element: boundedID(control.id), status: "submitting" });
       try {
-        if (config.submit !== false && record.elements && typeof record.elements.submit === "function") {
-          const submit = await record.elements.submit();
-          if (submit && submit.error) throw submit.error;
+        if (!config.skipSubmit && record.elements && typeof record.elements.submit === "function") {
+          const submitted = await record.elements.submit();
+          if (submitted && submitted.error) throw submitted.error;
         }
-        const method = config.method || form.getAttribute(CONFIRM_ATTR) || "confirmPayment";
-        const args = elementsConfirmArgs(record, config);
+        if (isAborted(record)) return;
+        const method = config.method === "confirmSetup" ? "confirmSetup" : "confirmPayment";
+        const args = { elements: record.elements };
+        const target = returnURL(config.returnPath);
+        if (target) args.confirmParams = { return_url: target };
+        if (config.redirect === "always" || config.redirect === "if_required") args.redirect = config.redirect;
         const result = await record.stripe[method](args);
         if (result && result.error) throw result.error;
-        setState(form, "complete");
-        emit("complete", { kind: "elements", method, result });
-      } catch (error) {
-        setState(form, "error", error && error.message);
-        emit("error", { kind: "elements", error });
-      }
-    };
-    form.addEventListener("submit", listener);
-    record.listeners.push(function() { form.removeEventListener("submit", listener); });
-  }
-
-  function elementsConfirmArgs(record, config) {
-    if (Array.isArray(config.args)) return config.args;
-    const args = Object.assign({}, config.params || {});
-    if (!Object.prototype.hasOwnProperty.call(args, "elements")) args.elements = record.elements;
-    if (config.clientSecret) args.clientSecret = config.clientSecret;
-    const confirmParams = Object.assign({}, config.confirmParams || {});
-    if (config.returnUrl || config.return_url) confirmParams.return_url = config.returnUrl || config.return_url;
-    if (Object.keys(confirmParams).length) args.confirmParams = confirmParams;
-    if (config.redirect) args.redirect = config.redirect;
-    return args;
-  }
-
-  async function mountEmbeddedCheckout(root) {
-    if (state.records.has(root)) disposeRoot(root);
-    const config = configFor(root);
-    setState(root, "loading");
-    try {
-      const stripe = await stripeFor(config);
-      const init = Object.assign({}, config.init || {});
-      const clientSecret = await resolveClientSecret(config);
-      if (clientSecret) init.clientSecret = clientSecret;
-      if (!init.clientSecret && (config.clientSecretRequest || config.fetchClientSecret)) {
-        const spec = config.clientSecretRequest || config.fetchClientSecret;
-        init.fetchClientSecret = function() {
-          return fetchValue(spec, "POST").then(function(data) {
-            return data.clientSecret || data.client_secret;
-          });
-        };
-      }
-      const checkout = await stripe.initEmbeddedCheckout(init);
-      checkout.mount(root);
-      state.records.set(root, { kind: "embedded-checkout", root, checkout, mounted: [], listeners: [] });
-      setState(root, "ready");
-      emit("ready", { kind: "embedded-checkout", root: root.id || "" });
-    } catch (error) {
-      setState(root, "error", error && error.message);
-      emit("error", { kind: "embedded-checkout", root: root.id || "", error });
-      console.error("[gosx-stripe] embedded checkout failed", error);
-    }
-  }
-
-  async function mountCheckoutSurface(root) {
-    if (state.records.has(root)) disposeRoot(root);
-    const config = configFor(root);
-    setState(root, "loading");
-    try {
-      const stripe = await stripeFor(config);
-      const init = Object.assign({}, config.init || {});
-      const clientSecret = await resolveClientSecret(config);
-      if (clientSecret) init.clientSecret = clientSecret;
-      if (config.elementsOptions) init.elementsOptions = config.elementsOptions;
-      const checkout = await stripe.initCheckout(init);
-      const record = { kind: "checkout", root, stripe, checkout, mounted: [], listeners: [] };
-      state.records.set(root, record);
-
-      if (checkout && typeof checkout.on === "function") {
-        checkout.on("change", function(session) {
-          emit("checkout-change", { root: root.id || "", session });
+        if (isAborted(record)) return;
+        setState(control, "complete");
+        emit(record, "complete", "confirm", {
+          element: boundedID(control.id),
+          method,
+          authoritative: false,
         });
-      }
-      for (const el of ownSurfaceElement(root, "[" + CHECKOUT_ELEMENT_ATTR + "]")) {
-        mountElement(record, el, el.getAttribute(CHECKOUT_ELEMENT_ATTR), true);
-      }
-      for (const button of ownSurfaceElement(root, "[" + CHECKOUT_CONFIRM_ATTR + "]")) {
-        bindCheckoutConfirm(record, button);
-      }
-      setState(root, "ready");
-      emit("ready", { kind: "checkout", root: root.id || "" });
-    } catch (error) {
-      setState(root, "error", error && error.message);
-      emit("error", { kind: "checkout", root: root.id || "", error });
-      console.error("[gosx-stripe] checkout surface failed", error);
-    }
-  }
-
-  function bindCheckoutConfirm(record, button) {
-    const config = configFor(button);
-    const listener = async function(event) {
-      event.preventDefault();
-      setState(button, "submitting");
-      try {
-        const result = await checkoutActions(record);
-        if (result.type !== "success") throw result.error || new Error("checkout actions unavailable");
-        const args = Object.assign({}, config.params || {});
-        const confirmation = await result.actions.confirm(args);
-        if (confirmation && confirmation.type === "error") throw confirmation.error;
-        setState(button, "complete");
-        emit("complete", { kind: "checkout", result: confirmation || null });
       } catch (error) {
-        setState(button, "error", error && error.message);
-        emit("error", { kind: "checkout", error });
+        reportError(record, "confirm", error, control);
       }
     };
-    button.addEventListener(button.tagName === "FORM" ? "submit" : "click", listener);
-    record.listeners.push(function() {
-      button.removeEventListener(button.tagName === "FORM" ? "submit" : "click", listener);
+    record.context.listen(control, "click", listener);
+  }
+
+  async function mountElements(record) {
+    const config = configFor(record.root);
+    setState(record.root, "loading");
+    const values = await Promise.all([stripeFor(config), requestClientSecret(record, config.sessionAction)]);
+    if (isAborted(record)) return;
+    record.stripe = values[0];
+    const options = Object.assign({}, config.elementsOptions || {}, { clientSecret: values[1] });
+    record.elements = record.stripe.elements(options);
+    for (const mount of ownSurfaceElements(record.root, "[" + ELEMENT_ATTR + "]")) {
+      mountElement(record, mount, mount.getAttribute(ELEMENT_ATTR), false);
+    }
+    for (const control of ownSurfaceElements(record.root, "[" + CONFIRM_ATTR + "]")) bindElementsConfirm(record, control);
+    setState(record.root, "ready");
+    emit(record, "ready", "surface");
+  }
+
+  async function mountEmbedded(record) {
+    const config = configFor(record.root);
+    setState(record.root, "loading");
+    record.stripe = await stripeFor(config);
+    if (isAborted(record)) return;
+    const checkout = await record.stripe.initEmbeddedCheckout({
+      fetchClientSecret: function() { return requestClientSecret(record, config.sessionAction); },
     });
+    if (isAborted(record)) {
+      if (checkout && typeof checkout.destroy === "function") checkout.destroy();
+      return;
+    }
+    record.checkout = checkout;
+    checkout.mount(record.root);
+    setState(record.root, "ready");
+    emit(record, "ready", "surface");
   }
 
   function checkoutActions(record) {
-    if (!record.actionsPromise) {
-      record.actionsPromise = record.checkout.loadActions();
-    }
+    if (!record.actionsPromise) record.actionsPromise = record.checkout.loadActions();
     return record.actionsPromise;
   }
 
-  async function bindRedirect(root) {
-    if (state.records.has(root)) disposeRoot(root);
-    const config = configFor(root);
-    const record = { kind: "redirect", root, mounted: [], listeners: [] };
-    state.records.set(root, record);
+  function bindCheckoutConfirm(record, button) {
     const listener = async function(event) {
       event.preventDefault();
-      setState(root, "submitting");
+      setState(button, "submitting");
+      emit(record, "status", "confirm", { element: boundedID(button.id), status: "submitting" });
       try {
-        const stripe = await stripeFor(config);
-        let sessionId = config.sessionId || config.session_id;
-        let url = config.url;
-        if (!sessionId && !url && (config.sessionRequest || config.fetchSession)) {
-          const data = await fetchValue(config.sessionRequest || config.fetchSession, "POST", root);
-          sessionId = data.sessionId || data.session_id || data.id;
-          url = data.url;
+        const result = await checkoutActions(record);
+        if (isAborted(record)) return;
+        if (!result || result.type !== "success" || !result.actions || typeof result.actions.confirm !== "function") {
+          throw new Error("checkout_actions_unavailable");
         }
-        if (sessionId) {
-          const result = await stripe.redirectToCheckout({ sessionId });
-          if (result && result.error) throw result.error;
-          return;
-        }
-        if (url) {
-          window.location.href = url;
-          return;
-        }
-        throw new Error("missing Checkout session id or url");
+        if (isAborted(record)) return;
+        const confirmation = await result.actions.confirm({});
+        if (confirmation && confirmation.type === "error") throw confirmation.error;
+        if (isAborted(record)) return;
+        setState(button, "complete");
+        emit(record, "complete", "confirm", {
+          element: boundedID(button.id),
+          authoritative: false,
+        });
       } catch (error) {
-        setState(root, "error", error && error.message);
-        emit("error", { kind: "redirect", error });
+        reportError(record, "confirm", error, button);
       }
     };
-    root.addEventListener(root.tagName === "FORM" ? "submit" : "click", listener);
-    record.listeners.push(function() {
-      root.removeEventListener(root.tagName === "FORM" ? "submit" : "click", listener);
-    });
+    record.context.listen(button, "click", listener);
   }
 
-  function disposeRoot(root) {
-    const record = state.records.get(root);
-    if (!record) return;
-    for (const release of record.listeners || []) {
+  async function mountCheckout(record) {
+    const config = configFor(record.root);
+    setState(record.root, "loading");
+    const values = await Promise.all([stripeFor(config), requestClientSecret(record, config.sessionAction)]);
+    if (isAborted(record)) return;
+    record.stripe = values[0];
+    const init = { clientSecret: values[1] };
+    if (config.elementsOptions) init.elementsOptions = config.elementsOptions;
+    const checkout = await record.stripe.initCheckout(init);
+    if (isAborted(record)) {
+      try {
+        if (checkout && typeof checkout.destroy === "function") checkout.destroy();
+        else if (checkout && typeof checkout.unmount === "function") checkout.unmount();
+      } catch (_) {}
+      return;
+    }
+    record.checkout = checkout;
+    if (record.checkout && typeof record.checkout.on === "function") {
+      const listener = function() { emit(record, "status", "checkout", { status: "changed" }); };
+      record.checkout.on("change", listener);
+      record.releases.push(function() {
+        if (typeof record.checkout.off === "function") record.checkout.off("change", listener);
+      });
+    }
+    for (const mount of ownSurfaceElements(record.root, "[" + CHECKOUT_ELEMENT_ATTR + "]")) {
+      mountElement(record, mount, mount.getAttribute(CHECKOUT_ELEMENT_ATTR), true);
+    }
+    for (const button of ownSurfaceElements(record.root, "[" + CHECKOUT_CONFIRM_ATTR + "]")) {
+      bindCheckoutConfirm(record, button);
+    }
+    setState(record.root, "ready");
+    emit(record, "ready", "surface");
+  }
+
+  function disposeRecord(record) {
+    if (!record || record.disposed) return;
+    record.disposed = true;
+    for (const release of record.releases.splice(0)) {
       try { release(); } catch (_) {}
     }
-    for (const mounted of record.mounted || []) {
+    for (const mounted of record.mounted.splice(0)) {
       try {
         if (mounted && typeof mounted.destroy === "function") mounted.destroy();
         else if (mounted && typeof mounted.unmount === "function") mounted.unmount();
@@ -471,43 +417,43 @@
       if (record.checkout && typeof record.checkout.destroy === "function") record.checkout.destroy();
       else if (record.checkout && typeof record.checkout.unmount === "function") record.checkout.unmount();
     } catch (_) {}
-    state.records.delete(root);
+    if (state.records.get(record.root) === record) state.records.delete(record.root);
+    setState(record.root, "disposed");
   }
 
-  async function mountAll(root) {
-    const scope = root || document;
-    const tasks = [];
-    for (const node of scope.querySelectorAll("[" + SURFACE_ATTR + "]")) tasks.push(mountElementsSurface(node));
-    for (const node of scope.querySelectorAll("[" + EMBEDDED_ATTR + "]")) tasks.push(mountEmbeddedCheckout(node));
-    for (const node of scope.querySelectorAll("[" + CHECKOUT_ATTR + "]")) tasks.push(mountCheckoutSurface(node));
-    for (const node of scope.querySelectorAll("[" + REDIRECT_ATTR + "]")) tasks.push(bindRedirect(node));
-    await Promise.all(tasks);
+  function surfaceFactory(kind, mount) {
+    return function(context) {
+      const existing = state.records.get(context.root);
+      if (existing) disposeRecord(existing);
+      const record = {
+        kind,
+        root: context.root,
+        context,
+        disposed: false,
+        mounted: [],
+        releases: [],
+        stripe: null,
+        elements: null,
+        checkout: null,
+        actionsPromise: null,
+      };
+      state.records.set(record.root, record);
+      Promise.resolve()
+        .then(function() { return mount(record); })
+        .catch(function(error) { reportError(record, "mount", error); });
+      return { dispose: function() { disposeRecord(record); } };
+    };
   }
 
-  async function disposeAll() {
-    for (const root of Array.from(state.records.keys())) disposeRoot(root);
-  }
-
-  state.mountAll = mountAll;
-  state.disposeAll = disposeAll;
   state.stripeFor = stripeFor;
-
-  const previousBootstrap = gosxHostCompatibility.read("__gosx_bootstrap_page");
-  const previousDispose = gosxHostCompatibility.read("__gosx_dispose_page");
-
-  gosxHostCompatibility.install("__gosx_bootstrap_page", async function(reuseEngineIDs) {
-    if (typeof previousBootstrap === "function") await previousBootstrap(reuseEngineIDs);
-    await mountAll(document);
-  });
-
-  gosxHostCompatibility.install("__gosx_dispose_page", async function(reuseEngineIDs) {
-    await disposeAll();
-    if (typeof previousDispose === "function") await previousDispose(reuseEngineIDs);
-  });
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function() { mountAll(document); }, { once: true });
-  } else {
-    mountAll(document);
-  }
+  state.dispose = disposeRecord;
+  const factories = state.factories || {
+    elements: surfaceFactory("elements", mountElements),
+    embedded: surfaceFactory("embedded-checkout", mountEmbedded),
+    checkout: surfaceFactory("checkout", mountCheckout),
+  };
+  state.factories = factories;
+  gosxHost.surfaces.register(SURFACE_ELEMENTS, factories.elements);
+  gosxHost.surfaces.register(SURFACE_EMBEDDED, factories.embedded);
+  gosxHost.surfaces.register(SURFACE_CHECKOUT, factories.checkout);
 })();

@@ -65,22 +65,30 @@ type ManagedScriptOptions struct {
 // ManagedScript renders a script tag with GoSX runtime ownership metadata so
 // the navigation layer can reload and sequence it across page transitions.
 func ManagedScript(src string, opts ManagedScriptOptions, args ...any) gosx.Node {
+	return managedScriptWithNonce(src, opts, "", args...)
+}
+
+func managedScriptWithNonce(src string, opts ManagedScriptOptions, nonce string, args ...any) gosx.Node {
 	src = strings.TrimSpace(src)
 	if src == "" {
 		return gosx.Text("")
 	}
-	attrs := []any{
-		gosx.Attrs(
-			gosx.Attr("src", AssetURL(src)),
-			gosx.Attr("data-gosx-script", normalizeManagedScriptRole(opts.Role)),
-			gosx.Attr("type", normalizeManagedScriptType(opts.Type)),
-			gosx.Attr("crossorigin", normalizeManagedScriptCrossOrigin(opts.CrossOrigin)),
-			gosx.Attr("referrerpolicy", normalizeManagedScriptReferrerPolicy(opts.ReferrerPolicy)),
-		),
-	}
+	baseAttrs := gosx.Attrs(
+		gosx.Attr("src", AssetURL(src)),
+		gosx.Attr("data-gosx-script", normalizeManagedScriptRole(opts.Role)),
+		gosx.Attr("type", normalizeManagedScriptType(opts.Type)),
+		gosx.Attr("crossorigin", normalizeManagedScriptCrossOrigin(opts.CrossOrigin)),
+		gosx.Attr("referrerpolicy", normalizeManagedScriptReferrerPolicy(opts.ReferrerPolicy)),
+	)
 	if integrity := strings.TrimSpace(opts.Integrity); integrity != "" {
-		attrs = append(attrs, gosx.Attrs(gosx.Attr("integrity", integrity)))
+		baseAttrs = append(baseAttrs, gosx.Attr("integrity", integrity))
 	}
+	if nonce != "" {
+		// Keep the framework nonce in the first attribute list so a later
+		// caller-supplied duplicate cannot replace the request-scoped value.
+		baseAttrs = append(baseAttrs, gosx.Attr("nonce", nonce))
+	}
+	attrs := []any{baseAttrs}
 	attrs = append(attrs, args...)
 	return gosx.El("script", attrs...)
 }
