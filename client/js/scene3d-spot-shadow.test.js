@@ -51,6 +51,39 @@ function project(matrix, point) {
   ];
 }
 
+// Match the renderer's shader-visible f32 inputs and left-associated
+// multiply/add chain. Matrix entries are already f32, while vertex attributes
+// and every arithmetic result are rounded explicitly here.
+function projectShaderF32(matrix, point) {
+  const x = Math.fround(point[0]);
+  const y = Math.fround(point[1]);
+  const z = Math.fround(point[2]);
+  function component(row) {
+    let value = Math.fround(Math.fround(matrix[row]) * x);
+    value = Math.fround(value + Math.fround(Math.fround(matrix[4 + row]) * y));
+    value = Math.fround(value + Math.fround(Math.fround(matrix[8 + row]) * z));
+    return Math.fround(value + Math.fround(matrix[12 + row]));
+  }
+  return [component(0), component(1), component(2), component(3)];
+}
+
+function webGPUShadowMatrix(context, raw) {
+  if (typeof context.sceneWebGPUShadowDepthMatrix !== "function") {
+    const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
+    vm.runInContext(between(webgpu, "function sceneWebGPUShadowDepthMatrix", "function createSceneWebGPURenderer"), context);
+  }
+  context.raw = raw;
+  return vm.runInContext("sceneWebGPUShadowDepthMatrix(raw)", context);
+}
+
+function deterministicRandom(seed) {
+  let state = seed >>> 0;
+  return function next() {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
 const bounds = { minX: -1, minY: -5, minZ: -1, maxX: 1, maxY: 1, maxZ: 1 };
 const spot = {
   kind: "spot", x: 0, y: 3, z: 0,
@@ -90,6 +123,82 @@ test("spot shadow projection is stable and fail-closed at the one-map boundary",
   assert.ok(Math.abs(farAtRange[2] / farAtRange[3] - 1) < 1e-4);
 });
 
+test("spot far padding conservatively contains 10k shader-f32 boundary corners", () => {
+  const context = matrixContext();
+  const random = deterministicRandom(0x0552296);
+  for (let sample = 0; sample < 10000; sample++) {
+    const scale = Math.pow(10, random() * 4 - 2);
+    const cx = (random() - 0.5) * 64 * scale;
+    const cy = (random() - 0.5) * 64 * scale;
+    const cz = (random() - 0.5) * 64 * scale;
+    const ex = (0.25 + random() * 4) * scale;
+    const ey = (0.25 + random() * 4) * scale;
+    const ez = (0.25 + random() * 4) * scale;
+    const sampleBounds = {
+      minX: cx - ex, maxX: cx + ex,
+      minY: cy - ey, maxY: cy + ey,
+      minZ: cz - ez, maxZ: cz + ez,
+    };
+    const px = cx + (random() - 0.5) * 12 * scale;
+    const py = cy + (random() - 0.5) * 12 * scale;
+    const pz = cz + (random() - 0.5) * 12 * scale;
+    let dx = cx - px + (random() - 0.5) * 0.25 * scale;
+    let dy = cy - py + (random() - 0.5) * 0.25 * scale;
+    let dz = cz - pz + (random() - 0.5) * 0.25 * scale;
+    const directionLength = Math.hypot(dx, dy, dz);
+    dx /= directionLength;
+    dy /= directionLength;
+    dz /= directionLength;
+
+    let furthestDepth = -Infinity;
+    let furthestCorner = null;
+    for (let corner = 0; corner < 8; corner++) {
+      const point = [
+        (corner & 1) ? sampleBounds.maxX : sampleBounds.minX,
+        (corner & 2) ? sampleBounds.maxY : sampleBounds.minY,
+        (corner & 4) ? sampleBounds.maxZ : sampleBounds.minZ,
+      ];
+      const depth = (point[0] - px) * dx + (point[1] - py) * dy + (point[2] - pz) * dz;
+      if (depth > furthestDepth) {
+        furthestDepth = depth;
+        furthestCorner = point;
+      }
+    }
+
+    const raw = build(context, {
+      kind: "spot", x: px, y: py, z: pz,
+      directionX: dx, directionY: dy, directionZ: dz,
+      angle: 0.05 + random() * 1.45, range: 0, castShadow: true,
+    }, sampleBounds);
+    assert.ok(raw, "sample " + sample + " remains numerically projectable");
+    const converted = webGPUShadowMatrix(context, raw);
+    for (const [backend, matrix] of [["WebGL", raw], ["WebGPU", converted]]) {
+      const clip = projectShaderF32(matrix, furthestCorner);
+      assert.ok(Number.isFinite(clip[2]) && Number.isFinite(clip[3]) && clip[3] > 0,
+        backend + " sample " + sample + " has finite positive clip w");
+      assert.ok(clip[2] / clip[3] <= 1,
+        backend + " sample " + sample + " boundary escaped clip Z: " + clip[2] / clip[3]);
+    }
+  }
+});
+
+test("authored range boundary stays inside bounded f32 projection padding", () => {
+  const context = matrixContext();
+  const raw = build(context, Object.assign({}, spot, { range: 4 }), bounds);
+  assert.ok(raw);
+  const converted = webGPUShadowMatrix(context, raw);
+  const boundary = [0, -1, 0];
+  const outside = [0, -5, 0];
+  for (const [backend, matrix] of [["WebGL", raw], ["WebGPU", converted]]) {
+    const atRange = projectShaderF32(matrix, boundary);
+    assert.ok(atRange[2] / atRange[3] <= 1,
+      backend + " authored range boundary remains covered");
+    const twiceRange = projectShaderF32(matrix, outside);
+    assert.ok(twiceRange[2] / twiceRange[3] > 1,
+      backend + " padding remains bounded rather than doubling the authored range");
+  }
+});
+
 test("WebGL and WebGPU receivers reject invalid perspective coordinates before sampling", () => {
   const webgl = read(path.join(runtimeRoot, "webgl.ts"));
   const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
@@ -107,10 +216,7 @@ test("WebGL and WebGPU receivers reject invalid perspective coordinates before s
 test("WebGPU shadow depth conversion maps GL near/far to 0/1 without mutating input", () => {
   const context = matrixContext();
   const raw = build(context, spot, bounds);
-  const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
-  vm.runInContext(between(webgpu, "function sceneWebGPUShadowDepthMatrix", "function createSceneWebGPURenderer"), context);
-  context.raw = raw;
-  const converted = vm.runInContext("sceneWebGPUShadowDepthMatrix(raw)", context);
+  const converted = webGPUShadowMatrix(context, raw);
   assert.notEqual(converted, raw);
   const near = project(converted, [0, 2.99, 0]);
   const far = project(converted, [0, -5, 0]);
