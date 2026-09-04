@@ -346,6 +346,7 @@ test("disposing a surface aborts an in-flight session request", async () => {
 test("disposing custom Checkout while loadActions is pending prevents late confirmation", async () => {
   let resolveActions;
   const pendingActions = new Promise((resolve) => { resolveActions = resolve; });
+  let loadActionsCalls = 0;
   let providerConfirmCalls = 0;
   let checkoutDestroyed = 0;
   const confirm = checkoutConfirmControl("checkout-confirm-pending-actions");
@@ -362,12 +363,16 @@ test("disposing custom Checkout while loadActions is pending prevents late confi
       on() {},
       off() {},
       destroy() { checkoutDestroyed += 1; },
-      loadActions() { return pendingActions; },
+      loadActions() {
+        loadActionsCalls += 1;
+        return pendingActions;
+      },
     }),
   });
 
   confirm.dispatchEvent({ type: "click", preventDefault() {} });
   await flushAsyncWork();
+  assert.equal(loadActionsCalls, 1, "the click listener must start exactly one pending loadActions call");
   env.context.__gosx_dispose_runtime_surfaces(root);
   assert.equal(checkoutDestroyed, 1);
   resolveActions({
@@ -382,6 +387,46 @@ test("disposing custom Checkout while loadActions is pending prevents late confi
   await flushAsyncWork();
 
   assert.equal(providerConfirmCalls, 0, "a retired surface must not call provider confirmation");
+  assert.equal(root.getAttribute("data-gosx-stripe-state"), "disposed");
+});
+
+test("custom Checkout rechecks liveness after an adversarial confirm getter disposes the surface", async () => {
+  let confirmGetterCalls = 0;
+  let providerConfirmCalls = 0;
+  const confirm = checkoutConfirmControl("checkout-confirm-adversarial-getter");
+  const root = stripeSurface("checkout", "checkout-adversarial-getter", "/session/checkout-getter", [confirm]);
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: {
+      "/session/checkout-getter": { text: JSON.stringify({ clientSecret: "secret_checkout_getter" }), headers: { "content-type": "application/json" } },
+    },
+  });
+  const captures = newCaptures();
+  await bootStripe(env, captures, {
+    initCheckout: async () => ({
+      on() {},
+      off() {},
+      loadActions: async () => ({
+        type: "success",
+        actions: {
+          get confirm() {
+            confirmGetterCalls += 1;
+            env.context.__gosx_dispose_runtime_surfaces(root);
+            return async () => {
+              providerConfirmCalls += 1;
+              return { type: "success" };
+            };
+          },
+        },
+      }),
+    }),
+  });
+
+  confirm.dispatchEvent({ type: "click", preventDefault() {} });
+  await flushAsyncWork();
+
+  assert.equal(confirmGetterCalls, 1, "the validation path must reach the adversarial confirm getter exactly once");
+  assert.equal(providerConfirmCalls, 0, "confirmation must not run after its getter retires the surface");
   assert.equal(root.getAttribute("data-gosx-stripe-state"), "disposed");
 });
 
