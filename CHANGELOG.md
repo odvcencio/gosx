@@ -9,6 +9,12 @@
 - The file-routed `<Image>` builtin accepts the source contract through `sources={...}`. Authored art-direction sources precede any generic format source generated from the build manifest, so a media-specific crop cannot be shadowed by an unconditional WebP source.
 - Source candidates remain author-owned: GoSX escapes them into HTML but does not fetch, cache, or rewrite remote media, and no client JavaScript is added. This slice follows the real Muddy Noni storefront layout that already had to hand-author mobile `<source media>` candidates.
 
+### Added: strict pure-view composition inside islands
+
+- A `//gosx:island` component may call same-file strict pure-view components. The compiler inlines each invocation into the parent island program, including direct typed scalar props, caller children, and named slots; the browser still hydrates one root with one VM and no component-call opcode.
+- The boundary fails closed for nested islands, engines, legacy or imported callees, callee-owned reactive behavior, handler-valued props, nested/slice props, spreads, cycles, more than 32 component frames, and programs beyond the VM's 65,535-node/expression limits.
+- Root island call-site children and slots now fail explicitly instead of being omitted from the per-component `.gxi` program. Put a slot-bearing pure-view component inside the island instead.
+
 ## v0.55.2 (2026-09-04)
 
 ### Fixed: comments inside GSX markup compile away

@@ -123,6 +123,8 @@ func init() {
 					{"href": "#strict-loops-and-spread", "label": "Loops & Spread Props"},
 					{"href": "#legacy-components", "label": "Legacy Components"},
 					{"href": "#attributes", "label": "Elements & Attributes"},
+					{"href": "#children", "label": "Children"},
+					{"href": "#island-composition", "label": "Island Composition"},
 					{"href": "#tooling", "label": "Tooling"},
 					{"href": "#choosing", "label": "Choosing a Style"},
 				},

@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,9 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 	comp, err := islandComponent(prog, compIdx)
 	if err != nil {
 		return nil, err
+	}
+	if comp.AcceptsChildren || len(comp.AcceptsSlots) > 0 {
+		return nil, fmt.Errorf("island component %s cannot declare caller children or named slots: root island call-site content is rendered outside the per-component .gxi program; compose children and slots through a same-file pure-view component inside the island instead", comp.Name)
 	}
 
 	scope := mergedIslandScope(prog, comp)
@@ -141,23 +145,70 @@ func cloneExprScope(scope *ExprScope) *ExprScope {
 type islandLowerer struct {
 	src                *Program
 	dst                *program.Program
-	nodeMap            map[NodeID]program.NodeID
 	srcIDs             []NodeID // tracks source node ID for each dst node
 	scope              *ExprScope
 	inlineHandlerIndex int
+	componentIndex     map[string]int
+	calleeErrors       map[int]error
+	compositionIndex   int
+	composed           bool
+}
+
+const maxIslandCompositionDepth = 32
+
+type islandInlineExpr struct {
+	source  string
+	context *islandInlineContext
+	scope   *ExprScope
+}
+
+type islandProjection struct {
+	nodes   []NodeID
+	context *islandInlineContext
+	scope   *ExprScope
+	// stack belongs to the projection's caller. A finite nested use such as
+	// <Wrapper><Wrapper /></Wrapper> is not a recursive component definition,
+	// even though the inner call is lowered while visiting Wrapper's hole.
+	stack []string
+}
+
+// islandInlineContext is compile-time-only. It specializes a same-file
+// pure-view component call into its owning island program; no component frame
+// or virtual-DOM abstraction survives into the browser artifact.
+type islandInlineContext struct {
+	component    string
+	props        map[string]islandInlineExpr
+	children     islandProjection
+	slots        map[string]islandProjection
+	identAliases map[string]string
+	activeNames  map[string]bool
+}
+
+func newIslandInlineContext() *islandInlineContext {
+	return &islandInlineContext{
+		props:        make(map[string]islandInlineExpr),
+		slots:        make(map[string]islandProjection),
+		identAliases: make(map[string]string),
+		activeNames:  make(map[string]bool),
+	}
 }
 
 func newIslandLowerer(src *Program, name string, scope *ExprScope) *islandLowerer {
+	componentIndex := make(map[string]int, len(src.Components))
+	for i := range src.Components {
+		componentIndex[src.Components[i].Name] = i
+	}
 	return &islandLowerer{
-		src:     src,
-		dst:     &program.Program{Name: name},
-		nodeMap: make(map[NodeID]program.NodeID),
-		scope:   scope,
+		src:            src,
+		dst:            &program.Program{Name: name},
+		scope:          scope,
+		componentIndex: componentIndex,
+		calleeErrors:   make(map[int]error),
 	}
 }
 
 func (l *islandLowerer) lowerComponent(comp Component) error {
-	rootID, err := l.lowerNode(comp.Root)
+	rootID, err := l.lowerNode(comp.Root, newIslandInlineContext(), []string{comp.Name})
 	if err != nil {
 		return fmt.Errorf("lower %s: %w", comp.Name, err)
 	}
@@ -273,6 +324,10 @@ func (l *islandLowerer) parseExprOrFallback(source string, scope *ExprScope, fal
 }
 
 func (l *islandLowerer) populateStaticMask() {
+	if l.composed {
+		l.populateComposedStaticMask()
+		return
+	}
 	l.dst.StaticMask = make([]bool, len(l.dst.Nodes))
 	for i, srcID := range l.srcIDs {
 		if int(srcID) < len(l.src.Nodes) {
@@ -281,23 +336,70 @@ func (l *islandLowerer) populateStaticMask() {
 	}
 }
 
-func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
-	if mapped, ok := l.nodeMap[srcID]; ok {
-		return mapped, nil
+func (l *islandLowerer) populateComposedStaticMask() {
+	l.dst.StaticMask = make([]bool, len(l.dst.Nodes))
+	known := make([]bool, len(l.dst.Nodes))
+	var isStatic func(program.NodeID) bool
+	isStatic = func(id program.NodeID) bool {
+		if int(id) >= len(l.dst.Nodes) {
+			return false
+		}
+		if known[id] {
+			return l.dst.StaticMask[id]
+		}
+		known[id] = true
+		node := l.dst.Nodes[id]
+		static := false
+		switch node.Kind {
+		case program.NodeText:
+			static = true
+		case program.NodeElement, program.NodeFragment:
+			static = true
+			for _, attr := range node.Attrs {
+				if attr.Kind == program.AttrExpr || attr.Kind == program.AttrEvent {
+					static = false
+					break
+				}
+			}
+			if static {
+				for _, child := range node.Children {
+					if !isStatic(child) {
+						static = false
+						break
+					}
+				}
+			}
+		}
+		l.dst.StaticMask[id] = static
+		return static
 	}
+	for id := range l.dst.Nodes {
+		isStatic(program.NodeID(id))
+	}
+}
 
+func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, stack []string) (program.NodeID, error) {
 	if int(srcID) >= len(l.src.Nodes) {
 		return 0, fmt.Errorf("node %d not found", srcID)
 	}
 	srcNode := l.src.NodeAt(srcID)
 
+	if srcNode.Kind == NodeComponent {
+		if targetIdx, ok := l.componentIndex[srcNode.Tag]; ok &&
+			!isEachComponent(srcNode.Tag) && !isConditionalComponent(srcNode.Tag) {
+			return l.lowerComposedCall(srcNode, targetIdx, context, stack)
+		}
+		if strings.Contains(srcNode.Tag, ".") {
+			return 0, fmt.Errorf("imported component <%s> cannot be composed inside island %s in v1; use a same-file strict pure-view component", srcNode.Tag, l.dst.Name)
+		}
+	}
+
 	// Check NodeID overflow (uint32 -> uint16)
 	if len(l.dst.Nodes) >= 65535 {
-		return 0, fmt.Errorf("island exceeds 65,535 node limit")
+		return 0, fmt.Errorf("island %s exceeds the 65,535 expanded-node limit while composing client-side components", l.dst.Name)
 	}
 
 	dstID := program.NodeID(len(l.dst.Nodes))
-	l.nodeMap[srcID] = dstID
 
 	// Pre-allocate the slot
 	l.dst.Nodes = append(l.dst.Nodes, program.Node{})
@@ -311,7 +413,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 		node.Tag = srcNode.Tag
 		// Lower attributes
 		for _, attr := range srcNode.Attrs {
-			dstAttr, err := l.lowerAttr(attr)
+			dstAttr, err := l.lowerAttr(attr, context)
 			if err != nil {
 				return 0, err
 			}
@@ -320,7 +422,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 	case NodeComponent:
 		if isEachComponent(srcNode.Tag) {
 			var err error
-			node, err = l.lowerEachNode(srcNode)
+			node, err = l.lowerEachNode(srcNode, context)
 			if err != nil {
 				return 0, err
 			}
@@ -328,7 +430,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 		}
 		if isConditionalComponent(srcNode.Tag) {
 			var err error
-			node, err = l.lowerConditionalNode(srcNode)
+			node, err = l.lowerConditionalNode(srcNode, context)
 			if err != nil {
 				return 0, err
 			}
@@ -341,7 +443,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 			node.Kind = program.NodeElement
 			node.Tag = tag
 			for _, attr := range srcNode.Attrs {
-				dstAttr, err := l.lowerAttr(attr)
+				dstAttr, err := l.lowerAttr(attr, context)
 				if err != nil {
 					return 0, err
 				}
@@ -355,9 +457,10 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 		node.Text = srcNode.Text
 	case NodeExpr:
 		node.Kind = program.NodeExpr
-		// For now, store expression text as a simple signal/prop reference
-		// Full expression parsing comes in Task 10
-		exprID := l.addExpr(srcNode.Text)
+		exprID, err := l.addExprWithContext(srcNode.Text, context, l.scope)
+		if err != nil {
+			return 0, err
+		}
 		node.Expr = exprID
 	case NodeFragment:
 		node.Kind = program.NodeFragment
@@ -368,37 +471,289 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 
 	// Lower children
 	childScope := l.scope
+	childContext := context
 	if node.Kind == program.NodeForEach {
 		childScope = l.scopeForEach(node)
+		childContext, node = l.scopeInlineForEach(context, node)
 	}
-	for _, childSrcID := range srcNode.Children {
-		childDstID, err := l.lowerNodeWithScope(childSrcID, childScope)
-		if err != nil {
-			return 0, err
-		}
-		node.Children = append(node.Children, childDstID)
+	children, err := l.lowerChildren(srcNode.Children, childScope, childContext, stack)
+	if err != nil {
+		return 0, err
 	}
+	node.Children = append(node.Children, children...)
 
 	l.dst.Nodes[dstID] = node
 	return dstID, nil
 }
 
-func (l *islandLowerer) lowerNodeWithScope(srcID NodeID, scope *ExprScope) (program.NodeID, error) {
+func (l *islandLowerer) lowerNodeWithScope(srcID NodeID, scope *ExprScope, context *islandInlineContext, stack []string) (program.NodeID, error) {
 	prev := l.scope
 	l.scope = scope
 	defer func() {
 		l.scope = prev
 	}()
-	return l.lowerNode(srcID)
+	return l.lowerNode(srcID, context, stack)
 }
 
-func (l *islandLowerer) lowerEachNode(srcNode *Node) (program.Node, error) {
+func (l *islandLowerer) lowerChildren(srcIDs []NodeID, scope *ExprScope, context *islandInlineContext, stack []string) ([]program.NodeID, error) {
+	var out []program.NodeID
+	for _, srcID := range srcIDs {
+		if int(srcID) >= len(l.src.Nodes) {
+			return nil, fmt.Errorf("node %d not found", srcID)
+		}
+		srcNode := l.src.NodeAt(srcID)
+		if srcNode.Kind == NodeExpr && context != nil {
+			if name, projected := islandProjectionExpression(srcNode.Text); projected && name == "" {
+				projected, err := l.lowerProjection(context.children, stack)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, projected...)
+				continue
+			} else if projected {
+				projected, err := l.lowerProjection(context.slots[name], stack)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, projected...)
+				continue
+			}
+		}
+		dstID, err := l.lowerNodeWithScope(srcID, scope, context, stack)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dstID)
+	}
+	return out, nil
+}
+
+// islandProjectionExpression recognizes only the whole bare identifiers used
+// for children and named-slot holes. ParseExpr makes redundant parentheses
+// transparent while keeping this build-neutral; ir/island.go is compiled by
+// TinyGo, whereas the host strict-component validator depends on go/parser.
+// The empty returned name denotes the anonymous children projection.
+func islandProjectionExpression(source string) (name string, ok bool) {
+	exprs, root, err := ParseExpr(source, nil)
+	if err != nil || len(exprs) != 1 || int(root) >= len(exprs) {
+		return "", false
+	}
+	expr := exprs[root]
+	if expr.Op != program.OpPropGet {
+		return "", false
+	}
+	if expr.Value == "children" {
+		return "", true
+	}
+	if !strings.HasPrefix(expr.Value, "slot") || len(expr.Value) == len("slot") {
+		return "", false
+	}
+	rest := expr.Value[len("slot"):]
+	if rest[0] < 'A' || rest[0] > 'Z' {
+		return "", false
+	}
+	return rest, true
+}
+
+func (l *islandLowerer) lowerProjection(projection islandProjection, stack []string) ([]program.NodeID, error) {
+	if len(projection.nodes) == 0 {
+		return nil, nil
+	}
+	if projection.stack != nil {
+		stack = projection.stack
+	}
+	return l.lowerChildren(projection.nodes, projection.scope, projection.context, stack)
+}
+
+func (l *islandLowerer) lowerComposedCall(call *Node, targetIdx int, callerContext *islandInlineContext, stack []string) (program.NodeID, error) {
+	target := l.src.Components[targetIdx]
+	for _, name := range stack {
+		if name == target.Name {
+			path := append(append([]string(nil), stack...), target.Name)
+			return 0, fmt.Errorf("island component composition cycle: %s", strings.Join(path, " -> "))
+		}
+	}
+	if len(stack) >= maxIslandCompositionDepth {
+		return 0, fmt.Errorf("island component composition exceeds the %d-component depth limit at <%s>", maxIslandCompositionDepth, target.Name)
+	}
+	calleeErr, checked := l.calleeErrors[targetIdx]
+	if !checked {
+		calleeErr = l.composableCalleeError(&target)
+		l.calleeErrors[targetIdx] = calleeErr
+	}
+	if calleeErr != nil {
+		return 0, calleeErr
+	}
+	l.composed = true
+
+	callScope := cloneExprScope(l.scope)
+	context := newIslandInlineContext()
+	context.component = target.Name
+	if callerContext != nil {
+		for name, active := range callerContext.activeNames {
+			context.activeNames[name] = active
+		}
+	}
+	for _, attr := range call.Attrs {
+		var source string
+		switch attr.Kind {
+		case AttrStatic:
+			source = strconv.Quote(attr.Value)
+		case AttrBool:
+			source = "true"
+		case AttrExpr:
+			if attr.IsEvent || (l.scope != nil && l.scope.Handlers[strings.TrimSpace(attr.Expr)]) {
+				return 0, fmt.Errorf("component <%s> passes handler-valued prop %q inside island %s; v1 pure-view composition accepts typed scalar props only", target.Name, attr.Name, l.dst.Name)
+			}
+			source = attr.Expr
+		case AttrSpread:
+			return 0, fmt.Errorf("component <%s> uses a spread inside island %s; v1 pure-view composition requires explicit typed scalar props", target.Name, l.dst.Name)
+		default:
+			return 0, fmt.Errorf("component <%s> has unsupported prop %q inside island %s", target.Name, attr.Name, l.dst.Name)
+		}
+		context.props[attr.Name] = islandInlineExpr{source: source, context: callerContext, scope: callScope}
+	}
+	projectionStack := append([]string(nil), stack...)
+	context.children = islandProjection{nodes: call.Children, context: callerContext, scope: callScope, stack: projectionStack}
+	for name, nodeID := range call.Slots {
+		context.slots[name] = islandProjection{nodes: []NodeID{nodeID}, context: callerContext, scope: callScope, stack: projectionStack}
+	}
+
+	l.compositionIndex++
+	return l.lowerNodeWithScope(target.Root, l.scope, context, append(stack, target.Name))
+}
+
+func (l *islandLowerer) composableCalleeError(target *Component) error {
+	if target.IsIsland {
+		return fmt.Errorf("nested island <%s> is not allowed inside island %s; compose a non-island strict pure-view component so the subtree has one hydration root and one VM", target.Name, l.dst.Name)
+	}
+	if target.IsEngine || target.ServerOnly {
+		return fmt.Errorf("component <%s> is not a client pure-view component and cannot be composed inside island %s", target.Name, l.dst.Name)
+	}
+	if target.Syntax != ComponentSyntaxStrict {
+		return fmt.Errorf("component <%s> uses legacy component syntax; v1 island composition accepts same-file strict pure-view components only", target.Name)
+	}
+	if target.Scope != nil && (len(target.Scope.Signals) > 0 || len(target.Scope.Computeds) > 0 || len(target.Scope.Handlers) > 0 || len(target.Scope.Locals) > 0) {
+		return fmt.Errorf("component <%s> owns signals, computed values, handlers, or effects; v1 island composition requires a pure-view callee and keeps all state in the parent island", target.Name)
+	}
+	fields := make([]string, 0, len(target.PropsFields))
+	for field := range target.PropsFields {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	for _, field := range fields {
+		typ := target.PropsFields[field]
+		if !strictRendererScalarType(typ) {
+			return fmt.Errorf("component <%s> reads non-scalar prop %s (%s); v1 island composition accepts typed string, bool, integer, and floating-point props only", target.Name, field, typ)
+		}
+	}
+	if len(target.PropsPaths) > 0 || len(target.PropsSlices) > 0 {
+		return fmt.Errorf("component <%s> reads nested or slice props; v1 island composition accepts direct typed scalar props only", target.Name)
+	}
+	if err := l.composableViewTreeError(target.Name, target.Root, make(map[NodeID]bool)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (l *islandLowerer) composableViewTreeError(componentName string, id NodeID, seen map[NodeID]bool) error {
+	if int(id) >= len(l.src.Nodes) || seen[id] {
+		return nil
+	}
+	seen[id] = true
+	node := l.src.NodeAt(id)
+	for _, attr := range node.Attrs {
+		if attr.Kind == AttrSpread {
+			return fmt.Errorf("pure-view component <%s> contains a spread attribute; v1 island composition requires explicit attributes", componentName)
+		}
+		if attr.IsEvent || (attr.Kind == AttrStatic && strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Name)), "data-on-")) {
+			return fmt.Errorf("pure-view component <%s> contains handler attribute %q; keep behavior in the parent island and pass only scalar view data", componentName, attr.Name)
+		}
+	}
+	for _, child := range node.Children {
+		if err := l.composableViewTreeError(componentName, child, seen); err != nil {
+			return err
+		}
+	}
+	for _, child := range node.Slots {
+		if err := l.composableViewTreeError(componentName, child, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *islandLowerer) scopeInlineForEach(context *islandInlineContext, node program.Node) (*islandInlineContext, program.Node) {
+	if context == nil {
+		context = newIslandInlineContext()
+	}
+	next := &islandInlineContext{
+		component:    context.component,
+		props:        context.props,
+		children:     context.children,
+		slots:        context.slots,
+		identAliases: make(map[string]string, len(context.identAliases)+3),
+		activeNames:  make(map[string]bool, len(context.activeNames)+3),
+	}
+	for name, alias := range context.identAliases {
+		next.identAliases[name] = alias
+	}
+	for name, active := range context.activeNames {
+		next.activeNames[name] = active
+	}
+
+	itemName := forEachStaticAttr(node.Attrs, "as")
+	if itemName == "" {
+		itemName = "item"
+	}
+	actualItem := l.uniqueInlineBinding(itemName, next.activeNames)
+	next.identAliases[itemName] = actualItem
+	next.identAliases[itemName+"Key"] = actualItem + "Key"
+	next.activeNames[actualItem] = true
+	next.activeNames[actualItem+"Key"] = true
+	setForEachStaticAttr(node.Attrs, "as", actualItem)
+
+	if indexName := forEachStaticAttr(node.Attrs, "index"); indexName != "" {
+		actualIndex := l.uniqueInlineBinding(indexName, next.activeNames)
+		next.identAliases[indexName] = actualIndex
+		next.activeNames[actualIndex] = true
+		setForEachStaticAttr(node.Attrs, "index", actualIndex)
+	}
+	return next, node
+}
+
+func (l *islandLowerer) uniqueInlineBinding(name string, active map[string]bool) string {
+	if !active[name] {
+		return name
+	}
+	for {
+		l.compositionIndex++
+		candidate := "__gosx_inline_" + strconv.Itoa(l.compositionIndex) + "_" + name
+		if !active[candidate] {
+			return candidate
+		}
+	}
+}
+
+func setForEachStaticAttr(attrs []program.Attr, name, value string) {
+	for i := range attrs {
+		if attrs[i].Kind == program.AttrStatic && attrs[i].Name == name {
+			attrs[i].Value = value
+			return
+		}
+	}
+}
+
+func (l *islandLowerer) lowerEachNode(srcNode *Node, context *islandInlineContext) (program.Node, error) {
 	collectionExpr := eachAttrSource(srcNode.Attrs, "of", "each", "items")
 	if collectionExpr == "" {
 		return program.Node{}, fmt.Errorf("%s requires an of/each/items attribute", srcNode.Tag)
 	}
 
-	exprID := l.addExpr(collectionExpr)
+	exprID, err := l.addExprWithContext(collectionExpr, context, l.scope)
+	if err != nil {
+		return program.Node{}, err
+	}
 	node := program.Node{
 		Kind: program.NodeForEach,
 		Expr: exprID,
@@ -423,31 +778,43 @@ func (l *islandLowerer) lowerEachNode(srcNode *Node) (program.Node, error) {
 	}
 
 	if fallbackSource := eachAttrSource(srcNode.Attrs, "fallback", "empty"); fallbackSource != "" {
+		fallbackID, err := l.addExprWithContext(fallbackSource, context, l.scope)
+		if err != nil {
+			return program.Node{}, err
+		}
 		node.Attrs = append(node.Attrs, program.Attr{
 			Kind: program.AttrExpr,
 			Name: "fallback",
-			Expr: l.addExpr(fallbackSource),
+			Expr: fallbackID,
 		})
 	}
 
 	return node, nil
 }
 
-func (l *islandLowerer) lowerConditionalNode(srcNode *Node) (program.Node, error) {
+func (l *islandLowerer) lowerConditionalNode(srcNode *Node, context *islandInlineContext) (program.Node, error) {
 	conditionExpr := islandAttrSource(srcNode.Attrs, "when", "if", "cond", "test")
 	if conditionExpr == "" {
 		return program.Node{}, fmt.Errorf("%s requires a when/if/cond/test attribute", srcNode.Tag)
 	}
 
+	conditionID, err := l.addExprWithContext(conditionExpr, context, l.scope)
+	if err != nil {
+		return program.Node{}, err
+	}
 	node := program.Node{
 		Kind: program.NodeConditional,
-		Expr: l.addExpr(conditionExpr),
+		Expr: conditionID,
 	}
 	if fallbackSource := islandAttrSource(srcNode.Attrs, "fallback", "else"); fallbackSource != "" {
+		fallbackID, err := l.addExprWithContext(fallbackSource, context, l.scope)
+		if err != nil {
+			return program.Node{}, err
+		}
 		node.Attrs = append(node.Attrs, program.Attr{
 			Kind: program.AttrExpr,
 			Name: "fallback",
-			Expr: l.addExpr(fallbackSource),
+			Expr: fallbackID,
 		})
 	}
 	return node, nil
@@ -472,7 +839,7 @@ func (l *islandLowerer) scopeForEach(node program.Node) *ExprScope {
 	return scope
 }
 
-func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
+func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (program.Attr, error) {
 	switch attr.Kind {
 	case AttrStatic:
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Name)), "data-on-") {
@@ -500,8 +867,12 @@ func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
 				Event: attr.Expr, // handler name from expression
 			}, nil
 		}
-		// Expression attribute -- add to expr table
-		exprID := l.addExpr(attr.Expr)
+		// Expression attribute -- add to expr table, substituting any
+		// compile-time pure-view prop bindings before the opcode graph lands.
+		exprID, err := l.addExprWithContext(attr.Expr, context, l.scope)
+		if err != nil {
+			return program.Attr{}, err
+		}
 		return program.Attr{
 			Kind: program.AttrExpr,
 			Name: attr.Name,
@@ -673,6 +1044,83 @@ func forEachStaticAttr(attrs []program.Attr, name string) string {
 		}
 	}
 	return ""
+}
+
+// addExprWithContext parses one expression and rewrites direct props.Field
+// reads through the scalar expressions supplied at the component call site.
+// The rewrite happens on the opcode graph, not by source-text replacement, so
+// identifiers with matching substrings and string literals remain untouched.
+func (l *islandLowerer) addExprWithContext(source string, context *islandInlineContext, scope *ExprScope) (program.ExprID, error) {
+	exprs, rootID, err := ParseExpr(source, scope)
+	if err != nil {
+		return 0, fmt.Errorf("parse island expression %q: %w", source, err)
+	}
+	return l.appendInlineExpr(exprs, rootID, context, make(map[program.ExprID]program.ExprID))
+}
+
+func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID, context *islandInlineContext, memo map[program.ExprID]program.ExprID) (program.ExprID, error) {
+	if mapped, ok := memo[id]; ok {
+		return mapped, nil
+	}
+	if int(id) >= len(exprs) {
+		return 0, fmt.Errorf("island expression references invalid opcode %d", id)
+	}
+	if field, ok := directPropsField(exprs, id); ok && context != nil && context.component != "" {
+		binding, supplied := context.props[field]
+		if !supplied {
+			return 0, fmt.Errorf("composed component <%s> requires scalar prop %s, but the call does not supply it", context.component, field)
+		}
+		mapped, err := l.addExprWithContext(binding.source, binding.context, binding.scope)
+		if err != nil {
+			return 0, fmt.Errorf("compose <%s> prop %s: %w", context.component, field, err)
+		}
+		memo[id] = mapped
+		return mapped, nil
+	}
+
+	expr := exprs[id]
+	if expr.Op == program.OpPropGet && context != nil {
+		if alias := context.identAliases[expr.Value]; alias != "" {
+			expr.Value = alias
+		}
+	}
+	if len(expr.Operands) > 0 {
+		operands := make([]program.ExprID, len(expr.Operands))
+		for i, operand := range expr.Operands {
+			mapped, err := l.appendInlineExpr(exprs, operand, context, memo)
+			if err != nil {
+				return 0, err
+			}
+			operands[i] = mapped
+		}
+		expr.Operands = operands
+	}
+	if len(l.dst.Exprs) >= 65535 {
+		return 0, fmt.Errorf("island %s exceeds the 65,535 expression limit while composing client-side components", l.dst.Name)
+	}
+	mapped := program.ExprID(len(l.dst.Exprs))
+	l.dst.Exprs = append(l.dst.Exprs, expr)
+	memo[id] = mapped
+	return mapped, nil
+}
+
+func directPropsField(exprs []program.Expr, id program.ExprID) (string, bool) {
+	if int(id) >= len(exprs) {
+		return "", false
+	}
+	expr := exprs[id]
+	if expr.Op != program.OpIndex || len(expr.Operands) != 2 {
+		return "", false
+	}
+	receiverID, fieldID := expr.Operands[0], expr.Operands[1]
+	if int(receiverID) >= len(exprs) || int(fieldID) >= len(exprs) {
+		return "", false
+	}
+	receiver, field := exprs[receiverID], exprs[fieldID]
+	if receiver.Op != program.OpPropGet || receiver.Value != "props" || field.Op != program.OpLitString || field.Value == "" {
+		return "", false
+	}
+	return field.Value, true
 }
 
 // addExpr parses a Go expression source string into typed opcodes and appends

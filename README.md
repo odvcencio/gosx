@@ -114,6 +114,25 @@ Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
 discovery remain preview/post-v1. The v1 engine contract is the programmatic
 `engine.Config` / `ctx.Engine` surface described below.
 
+An island may compose same-file strict **pure-view** components. GoSX inlines
+each invocation into the parent island program at compile time, so composition
+adds no browser component runtime: the result still has one hydration root,
+one VM, and the same `.gxi` shape as equivalent hand-flattened markup. Direct
+typed scalar props, caller-owned children, and named slots are supported;
+projected children keep access to the parent island's signals and handlers.
+
+The v1 boundary is deliberately fail-closed. A composed callee cannot be an
+island, engine, legacy or imported component; own signals, computed values,
+handlers, or effects; accept handler-valued props; read nested/slice props; or
+use spreads. Recursion is rejected, composition depth is capped at 32, and the
+expanded island retains the VM's 65,535-node and expression limits. Put state
+and behavior in the parent island and pass scalar view data down.
+
+Root island call-site children and named slots are not supported: island
+program assets are compiled per component, before any individual server call
+site exists. Put the slot-bearing pure-view component *inside* the island when
+you need that composition shape.
+
 ### Legacy component syntax (deprecated)
 
 Earlier GoSX releases also accepted `func Name(props T) Node` as a

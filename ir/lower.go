@@ -1516,18 +1516,6 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 	walk(n)
 }
 
-func strictRendererScalarType(typeName string) bool {
-	switch strings.TrimSpace(typeName) {
-	case "string", "bool",
-		"int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-		"byte", "rune", "float32", "float64":
-		return true
-	default:
-		return false
-	}
-}
-
 func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentName, propsType string) {
 	reads := l.strictReads[componentName]
 	if len(reads) == 0 {
