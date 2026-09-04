@@ -30,7 +30,6 @@ var defaultStartupPolicy = startupPolicy{
 	attempts:       2,
 	attemptTimeout: 30 * time.Second,
 	overallTimeout: 65 * time.Second,
-	dialTimeout:    3 * time.Second,
 	retryDelay:     100 * time.Millisecond,
 }
 
@@ -68,7 +67,6 @@ type startupPolicy struct {
 	attempts       int
 	attemptTimeout time.Duration
 	overallTimeout time.Duration
-	dialTimeout    time.Duration
 	retryDelay     time.Duration
 }
 
@@ -142,7 +140,7 @@ func startWithPolicy(ctx context.Context, executable string, policy startupPolic
 		if !time.Now().Before(deadline) {
 			return nil, fmt.Errorf("chrome startup exhausted overall budget: %s", strings.Join(failures, "; "))
 		}
-		browser, failure := launchAttempt(ctx, executable, policy, deadline, extraArgs)
+		browser, failure := launchAttempt(ctx, executable, deadline, extraArgs)
 		if failure == nil {
 			return browser, nil
 		}
@@ -172,7 +170,7 @@ func startWithPolicy(ctx context.Context, executable string, policy startupPolic
 func validatePolicy(policy startupPolicy) error {
 	if policy.attempts < 1 || policy.attempts > 3 || policy.attemptTimeout <= 0 || policy.attemptTimeout > 30*time.Second ||
 		policy.overallTimeout <= cleanupAllowance || policy.overallTimeout > 65*time.Second ||
-		policy.dialTimeout <= 0 || policy.dialTimeout > policy.attemptTimeout || policy.retryDelay < 0 || policy.retryDelay > time.Second {
+		policy.retryDelay < 0 || policy.retryDelay > time.Second {
 		return errors.New("chrome startup: invalid bounded startup policy")
 	}
 	return nil
@@ -205,7 +203,7 @@ type attemptFailure struct {
 func (failure *attemptFailure) summary(timeout time.Duration) string {
 	var reason string
 	if failure.timedOut {
-		reason = fmt.Sprintf("Chrome startup exceeded its deadline (attempt limit %s)", timeout)
+		reason = fmt.Sprintf("Chrome startup timed out (attempt limit %s)", timeout)
 	} else {
 		reason = redactDiagnostics(failure.err.Error())
 	}
@@ -215,7 +213,7 @@ func (failure *attemptFailure) summary(timeout time.Duration) string {
 	return reason
 }
 
-func launchAttempt(ctx context.Context, executable string, policy startupPolicy, deadline time.Time, extraArgs []string) (*Browser, *attemptFailure) {
+func launchAttempt(ctx context.Context, executable string, deadline time.Time, extraArgs []string) (*Browser, *attemptFailure) {
 	diagnostics := &tailWriter{limit: diagnosticsLimit}
 	profileDir, err := os.MkdirTemp("", "gosx-chrome-startup-")
 	if err != nil {
@@ -247,10 +245,17 @@ func launchAttempt(ctx context.Context, executable string, policy startupPolicy,
 		if err := validateDevToolsEndpoint(endpoint); err != nil {
 			return fail(err, false)
 		}
+		// Endpoint publication does not imply the WebSocket handshake is ready.
+		// Share the remaining attempt/aggregate budget; a separate short dial
+		// cap can reject a healthy Chrome while ample startup time remains.
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fail(context.DeadlineExceeded, true)
+		}
 		allocatorContext, cancelAllocator := chromedp.NewRemoteAllocator(ctx, endpoint, chromedp.NoModifyURL)
 		browserContext, cancelBrowser := chromedp.NewContext(
 			allocatorContext,
-			chromedp.WithBrowserOption(chromedp.WithDialTimeout(policy.dialTimeout)),
+			chromedp.WithBrowserOption(chromedp.WithDialTimeout(remaining)),
 		)
 		result := make(chan error, 1)
 		go func() {
@@ -289,12 +294,15 @@ func launchAttempt(ctx context.Context, executable string, policy startupPolicy,
 					diagnostics:     diagnostics,
 				}, nil
 			}
-			// CDP protocol/dial failures are concrete errors and are not retried.
 			if err == nil {
 				err = context.DeadlineExceeded
 			}
+			// A typed dial timeout can race the outer attempt timer. Both
+			// paths permit a fresh attempt only while Chrome remains alive.
+			transient := retryableStartupTimeout(ctx, err, process.done)
 			cleanup(false)
-			return nil, &attemptFailure{err: err, diagnostics: redactDiagnostics(diagnostics.String())}
+			return nil, &attemptFailure{err: err, transient: transient, timedOut: transient,
+				diagnostics: redactDiagnostics(diagnostics.String())}
 		case <-process.done:
 			cleanup(true)
 			return nil, &attemptFailure{
@@ -333,6 +341,19 @@ func launchAttempt(ctx context.Context, executable string, policy startupPolicy,
 	case <-ctx.Done():
 		return fail(ctx.Err(), false)
 	}
+}
+
+func retryableStartupTimeout(ctx context.Context, err error, processExited <-chan struct{}) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	select {
+	case <-processExited:
+		return false
+	default:
+	}
+	var timeout net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout()
 }
 
 const (

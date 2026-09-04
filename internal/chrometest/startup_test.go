@@ -274,10 +274,17 @@ func TestEndpointParsingAndDiagnosticsAreBounded(t *testing.T) {
 // This small CDP peer only supplies the responses needed to bind an empty tab.
 // Tests observe real websocket lifetimes; they do not stub chromedp.Run or cleanup.
 func fakeCDP(t *testing.T, stall bool) (string, <-chan struct{}, <-chan struct{}) {
+	return fakeCDPBeforeUpgrade(t, stall, nil)
+}
+
+func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool) (string, <-chan struct{}, <-chan struct{}) {
 	t.Helper()
 	calls := make(chan struct{}, 1)
 	closed := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if beforeUpgrade != nil && !beforeUpgrade(w, r) {
+			return
+		}
 		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -323,6 +330,30 @@ func fakeCDP(t *testing.T, stall bool) (string, <-chan struct{}, <-chan struct{}
 	return "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/browser/test", calls, closed
 }
 
+func TestStartAllowsDelayedWebSocketHandshakeWithinAttempt(t *testing.T) {
+	requirePOSIXShell(t)
+	endpoint, _, _ := fakeCDPBeforeUpgrade(t, false, func(w http.ResponseWriter, r *http.Request) bool {
+		select {
+		case <-time.After(150 * time.Millisecond):
+			return true
+		case <-r.Context().Done():
+			return false
+		}
+	})
+	t.Setenv("GOSX_FAKE_ENDPOINT", endpoint)
+	executable := writeFakeChrome(t, `
+printf 'DevTools listening on %s\n' "$GOSX_FAKE_ENDPOINT" >&2
+exec tail -f /dev/null
+`)
+	policy := fastPolicy(1)
+	policy.attemptTimeout = time.Second
+	browser, err := startWithPolicy(t.Context(), executable, policy)
+	if err != nil {
+		t.Fatalf("handshake within the startup budget failed: %v", err)
+	}
+	defer browser.Close()
+}
+
 func TestStartCancellationIsImmediateAndDoesNotRetry(t *testing.T) {
 	requirePOSIXShell(t)
 	tempRoot := t.TempDir()
@@ -342,7 +373,6 @@ exec tail -f /dev/null
 			attempts:       3,
 			attemptTimeout: 2 * time.Second,
 			overallTimeout: 10 * time.Second,
-			dialTimeout:    time.Second,
 			retryDelay:     time.Millisecond,
 		})
 		result <- err
@@ -377,7 +407,6 @@ exec tail -f /dev/null
 		attempts:       1,
 		attemptTimeout: time.Second,
 		overallTimeout: 5 * time.Second,
-		dialTimeout:    100 * time.Millisecond,
 	})
 	if err == nil {
 		t.Fatal("expected fake CDP dial failure")
@@ -427,7 +456,6 @@ func fastPolicy(attempts int) startupPolicy {
 		attempts:       attempts,
 		attemptTimeout: 250 * time.Millisecond,
 		overallTimeout: 5 * time.Second,
-		dialTimeout:    40 * time.Millisecond,
 		retryDelay:     time.Millisecond,
 	}
 }
