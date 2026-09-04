@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/internal/chrometest"
 )
 
 type renderSmokeResult struct {
@@ -124,22 +125,15 @@ func findChrome(t *testing.T) string {
 
 func newChromeContext(t *testing.T, chrome string) (context.Context, context.CancelFunc) {
 	t.Helper()
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chrome),
-		chromedp.Headless,
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("use-angle", "swiftshader"),
-		chromedp.Flag("enable-webgl", true),
-	)
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	ctx, timeoutCancel := context.WithTimeout(browserCtx, 15*time.Second)
+	browser, err := chrometest.Start(t.Context(), chrome,
+		"--no-sandbox", "--use-angle=swiftshader", "--enable-webgl")
+	if err != nil {
+		t.Fatalf("start Chrome for render smoke: %v", err)
+	}
+	ctx, timeoutCancel := context.WithTimeout(browser.Context, 15*time.Second)
 	return ctx, func() {
 		timeoutCancel()
-		browserCancel()
-		allocCancel()
+		browser.Close()
 	}
 }
 
