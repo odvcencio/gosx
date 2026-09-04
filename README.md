@@ -389,6 +389,8 @@ contract without pretending the approximate first pass is exact.
 
 **Stripe** — Hosted Checkout is server-first: `stripeui.HostedCheckoutForm` posts to an app-owned Go endpoint that calls Stripe's API and returns a native 303, with no Stripe.js or GoSX browser runtime. Elements and embedded Checkout are explicit runtime surfaces whose HTML contains only a publishable key, typed allowlisted display options, and a fixed same-origin session-action path; client secrets are fetched through scoped CSRF-aware transport and never serialized into the page or forwarded in events. `stripeui.Require` emits the nonced bootstrap, direct Stripe.js loader, and local bridge in lifecycle order. See [the Stripe integration guide](./docs/stripe.md).
 
+**Polar** — Hosted Checkout stays entirely server-first: `polarui.CheckoutForm` submits only an opaque offer ID and CSRF token to `polaradapter`, which resolves typed server-owned checkout inputs, calls Polar through a bounded private-OAT client, and returns an empty 303 to an exact configured HTTPS checkout origin. It adds no browser runtime or provider data to SSR. See [the Polar integration guide](./docs/polar.md).
+
 ## Engines
 
 For work that doesn't fit the island model — canvas rendering, WebGL, background computation:
@@ -967,6 +969,8 @@ Three tiers:
 | `content` | mdpp-backed Markdown/MDX/Markdown++ collection loading with typed metadata, diagnostics, and renderer hooks |
 | `components` | Registry and binding adapters for server component libraries |
 | `ui` | GoSX UI primitives and registry-backed component library seed |
+| `polarui` | Zero-runtime native Polar hosted-checkout form |
+| `polaradapter` | Typed server-only Polar Checkout API and POST/303 adapter |
 | `action` | Named mutation handlers with validation |
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |

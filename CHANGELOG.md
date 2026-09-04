@@ -10,6 +10,13 @@
 - WebGPU keeps each shadow light's base and retained-caster matrices in separate aligned buffer regions through frame submission, including mixed directional/spot pairs.
 - Alpha cutoff remains a visible-surface feature: the shared depth-only shadow passes cast the mesh's closed silhouette rather than a texture-cutout silhouette. Point-light shadows remain unsupported.
 
+### Added: server-first Polar hosted checkout
+
+- `polarui.CheckoutForm` renders a zero-runtime native POST with only a bounded opaque offer ID and GoSX-compatible CSRF token. Root-relative action validation fails closed to a disabled non-form fallback.
+- `polaradapter` resolves the offer to typed server-owned product, customer, locale, billing, and callback inputs, then calls Polar's fixed production or sandbox Checkout API with a private OAT and returns an empty no-store 303.
+- Provider calls and responses are time/size bounded; redirects are disabled; callback URLs derive only from configured `PublicOrigin`; returned checkout URLs require an exact configured HTTPS origin; provider bodies, client secrets, and diagnostics are neither retained nor exposed.
+- This slice intentionally adds no browser runtime, embedded checkout, or webhook handler. Payment fulfillment remains authoritative only after a separately verified Polar webhook or server check.
+
 ### Added: consumer-backed image art direction
 
 - `server.ImageProps.Sources` accepts ordered `server.ImageSource` entries with `srcset`, `media`, `sizes`, `type`, and optional positive `width`/`height`. A non-empty source list opts the existing fallback `<img>` into native `<picture>` markup; source order is preserved because the browser's first matching source wins, while per-source dimensions reserve the correct box for crops with a different aspect ratio.
