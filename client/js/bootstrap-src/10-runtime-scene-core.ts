@@ -955,7 +955,9 @@
       shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
       shadowCascades: kind === "directional"
         ? Math.max(0, Math.min(4, Math.floor(sceneNumber(item.shadowCascades, sceneNumber(current.shadowCascades, 0)))))
-        : 0,
+        : (kind === "spot"
+          ? Math.max(0, Math.min(1, Math.floor(sceneNumber(item.shadowCascades, sceneNumber(current.shadowCascades, 0)))))
+          : 0),
       shadowSoftness: Math.max(0, sceneNumber(item.shadowSoftness, sceneNumber(current.shadowSoftness, 0))),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,

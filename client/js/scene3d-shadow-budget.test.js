@@ -623,6 +623,76 @@ test("16-unit WebGL negotiates 4+1 cascades for two CSM lights with an environme
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("spot shadow shares the cascade budget without invalid lights consuming authored-order slots", async () => {
+  const TrackingContext = trackingContextClass(16);
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-spot-shadow-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    createWebGL2Context: () => new TrackingContext(),
+    manifest: {
+      engines: [{
+        id: "gosx-engine-spot-shadow",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-spot-shadow-root",
+        props: {
+          width: 320,
+          height: 180,
+          camera: { x: 0, y: 0, z: 6, near: 0.1, far: 100, fov: 72 },
+          environment: { envMap: "/hdri/studio.png", envIntensity: 1 },
+          scene: {
+            lights: [
+              { id: "wide-a", kind: "spot", castShadow: true, x: -1, y: 3, z: 1,
+                directionX: 0, directionY: -1, directionZ: -0.2, angle: 1.8, shadowSize: 256 },
+              { id: "wide-b", kind: "spot", castShadow: true, x: 1, y: 3, z: 1,
+                directionX: 0, directionY: -1, directionZ: -0.2, angle: 2.2, shadowSize: 256 },
+              { id: "spot", kind: "spot", castShadow: true, x: 0, y: 3, z: 1,
+                directionX: 0, directionY: -1, directionZ: -0.2, angle: 0.5,
+                range: 8, shadowSize: 256, shadowBias: 0.005 },
+              { id: "sun", kind: "directional", castShadow: true,
+                directionX: 0.2, directionY: -1, directionZ: -0.35,
+                shadowCascades: 4, shadowSize: 256, shadowSoftness: 0.05 },
+            ],
+            objects: [JSON.parse(JSON.stringify(SCENE_TRIANGLE))],
+          },
+        },
+      }],
+    },
+  });
+  env.context.WebGL2RenderingContext = TrackingContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl2");
+  let snap = assertDrawTimeShadowEvidence(gl, 5);
+  assert.deepEqual(snap.lightIndices, [2, 3]);
+  assert.deepEqual(snap.cascades, [1, 4]);
+  assert.deepEqual(snap.hasShadow, [1, 1]);
+
+  const handle = env.context.__gosx.engines.get("gosx-engine-spot-shadow").handle;
+  await handle.applyCommands([{ kind: 1, objectId: "spot" }]);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  snap = assertDrawTimeShadowEvidence(gl, 4);
+  assert.deepEqual(snap.lightIndices, [2, -1]);
+  assert.deepEqual(snap.cascades, [4, 0]);
+
+  await handle.applyCommands([{ kind: 1, objectId: "sun" }]);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  snap = assertDrawTimeShadowEvidence(gl, 0);
+  assert.deepEqual(snap.hasShadow, [0, 0]);
+  assert.deepEqual(snap.lightIndices, [-1, -1]);
+
+  env.context.__gosx_dispose_engine("gosx-engine-spot-shadow");
+  assert.equal(gl.depthTargets.size, 0, "explicit disposal releases every shadow framebuffer/texture pair");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("32-unit WebGL retains 4+4 cascades for two CSM lights with an environment map", async () => {
   const { mount, gl, env } = await mountTwoCascadeShadowScene(32);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
