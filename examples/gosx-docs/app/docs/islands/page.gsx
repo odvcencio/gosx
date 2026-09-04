@@ -58,6 +58,19 @@ func Page() Node {
 			<span class="inline-code">gosx dev</span>
 			to produce and serve application assets.
 		</p>
+		<h2 id="composition">Pure-view composition</h2>
+		<CodeBlock lang="gosx" source={data.compositionSample} />
+		<p>
+			A parent island may call a same-file strict pure-view component. The compiler inlines every invocation into the parent's program, including direct typed scalar props, caller-owned children, and named slots. Projected child markup can read the parent island's signals and bind its handlers. The browser still hydrates one root with one VM, and the encoded program has no component-call opcode.
+		</p>
+		<p>
+			Pure-view means the callee owns no signals, computed values, handlers, or effects. Nested islands, engines, legacy and imported callees, handler-valued props, nested or slice props, spreads, recursion, and more than 32 composed component frames fail closed. Expanded programs retain the 65,535-node and expression limits.
+		</p>
+		<p>
+			Caller children and named slots belong on an inner pure-view component, as in the sample. The root island itself cannot declare those holes because its
+			<span class="inline-code">.gxi</span>
+			asset is compiled before any individual server call site supplies content.
+		</p>
 		<h2 id="vm-subset">Expression VM subset</h2>
 		<p>
 			The island VM implements a constrained expression and statement language for signal reads and writes, literals, supported operators, property/index access, conditionals, and known handlers. The compiler rejects constructs it cannot encode.

@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -937,13 +938,138 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	}
 
 	var diags []Diagnostic
-	nodeIDs := collectComponentNodeIDs(prog, comp.Root)
 	scope := mergedIslandScope(prog, *comp)
-	for _, id := range nodeIDs {
-		node := &prog.Nodes[id]
-		diags = append(diags, validateIslandNode(node, scope)...)
+	checker := newIslandLowerer(prog, comp.Name, scope)
+	if comp.AcceptsChildren || len(comp.AcceptsSlots) > 0 {
+		diags = append(diags, Diagnostic{
+			Span:    comp.Span,
+			Message: fmt.Sprintf("island component %s cannot declare caller children or named slots", comp.Name),
+			Hint:    "root island call-site content is outside the per-component .gxi program; compose children and slots through a same-file pure-view component inside the island instead",
+		})
 	}
 
+	var walk func(NodeID, []string)
+	walk = func(id NodeID, stack []string) {
+		if int(id) >= len(prog.Nodes) {
+			return
+		}
+
+		node := &prog.Nodes[id]
+		if node.Kind != NodeComponent || node.IsSyntheticConditional() {
+			diags = append(diags, validateIslandNode(node, scope)...)
+			for _, child := range node.Children {
+				walk(child, stack)
+			}
+			for _, name := range sortedNodeSlotNames(node.Slots) {
+				walk(node.Slots[name], stack)
+			}
+			return
+		}
+
+		targetIdx, local := checker.componentIndex[node.Tag]
+		if !local {
+			if isEachComponent(node.Tag) || isConditionalComponent(node.Tag) || node.Tag == "Link" || node.Tag == "Image" {
+				diags = append(diags, validateIslandNode(node, scope)...)
+				for _, child := range node.Children {
+					walk(child, stack)
+				}
+				for _, name := range sortedNodeSlotNames(node.Slots) {
+					walk(node.Slots[name], stack)
+				}
+				return
+			}
+			if diag, unsupported := unsupportedIslandComponentDiagnostic(node); unsupported {
+				diags = append(diags, diag)
+				for _, child := range node.Children {
+					walk(child, stack)
+				}
+				for _, name := range sortedNodeSlotNames(node.Slots) {
+					walk(node.Slots[name], stack)
+				}
+				return
+			}
+			message := fmt.Sprintf("component <%s> is not supported inside island components", node.Tag)
+			hint := "use a same-file strict pure-view component or move the component outside the hydrated subtree"
+			if strings.Contains(node.Tag, ".") {
+				message = fmt.Sprintf("imported component <%s> cannot be composed inside island %s in v1", node.Tag, comp.Name)
+				hint = "use a same-file strict pure-view component; imported island callees require a future package-aware composition contract"
+			}
+			diags = append(diags, Diagnostic{Span: node.Span, Message: message, Hint: hint})
+			for _, child := range node.Children {
+				walk(child, stack)
+			}
+			for _, name := range sortedNodeSlotNames(node.Slots) {
+				walk(node.Slots[name], stack)
+			}
+			return
+		}
+
+		callInvalid := false
+		for _, attr := range node.Attrs {
+			switch {
+			case attr.Kind == AttrSpread:
+				callInvalid = true
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: fmt.Sprintf("component <%s> uses a spread inside island %s", node.Tag, comp.Name),
+					Hint:    "v1 pure-view composition requires explicit typed scalar props",
+				})
+			case attr.IsEvent || (attr.Kind == AttrExpr && scope.Handlers[strings.TrimSpace(attr.Expr)]):
+				callInvalid = true
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: fmt.Sprintf("component <%s> passes handler-valued prop %q inside island %s", node.Tag, attr.Name, comp.Name),
+					Hint:    "keep behavior in the parent island and pass only typed scalar view data",
+				})
+			case attr.Kind == AttrExpr:
+				if diag, ok := validateIslandExprSource(node.Span, attr.Expr, scope); ok {
+					callInvalid = true
+					diags = append(diags, diag)
+				}
+			}
+		}
+
+		target := &prog.Components[targetIdx]
+		for _, name := range stack {
+			if name == target.Name {
+				path := append(append([]string(nil), stack...), target.Name)
+				diags = append(diags, Diagnostic{Span: node.Span, Message: "island component composition cycle: " + strings.Join(path, " -> ")})
+				return
+			}
+		}
+		if len(stack) >= maxIslandCompositionDepth {
+			// Physical composition depth can differ from definition ancestry
+			// when caller projections pass through multiple wrappers. The
+			// actual lowerer below is the sole exact authority for the cap.
+			return
+		}
+		if err := checker.composableCalleeError(target); err != nil {
+			callInvalid = true
+			diags = append(diags, Diagnostic{Span: node.Span, Message: err.Error()})
+		}
+
+		// Caller-owned projections retain the parent island scope. Validate
+		// them even when the callee boundary itself is invalid so diagnostics
+		// never hide an independently malformed child expression.
+		for _, child := range node.Children {
+			walk(child, stack)
+		}
+		for _, name := range sortedNodeSlotNames(node.Slots) {
+			walk(node.Slots[name], stack)
+		}
+		if !callInvalid {
+			walk(target.Root, append(stack, target.Name))
+		}
+	}
+	walk(comp.Root, []string{comp.Name})
+	if compIdx, ok := checker.componentIndex[comp.Name]; ok {
+		if _, err := LowerIsland(prog, compIdx); err != nil {
+			var expansionErr *islandExpansionError
+			if errors.As(err, &expansionErr) {
+				diags = append(diags, Diagnostic{Span: comp.Span, Message: expansionErr.Error()})
+			}
+		}
+	}
 	return diags
 }
 

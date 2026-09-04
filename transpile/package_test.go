@@ -162,3 +162,22 @@ func Page() Node {
 		t.Fatalf("TranspilePackage: %v", err)
 	}
 }
+
+func TestValidateStrictPackageBoundariesIgnoresSyntheticConditional(t *testing.T) {
+	files := []PackageFile{
+		packageTestFile(t, "/project/a_if.gsx", `package app
+component If() {
+	return <em>authored</em>
+}
+`),
+		packageTestFile(t, "/project/b_page.gsx", `package app
+type PageProps struct { Show bool }
+component Page(props: PageProps) {
+	return <main>{props.Show && <strong>shown</strong>}</main>
+}
+`),
+	}
+	if err := ValidateStrictPackageBoundaries(files); err != nil {
+		t.Fatalf("ValidateStrictPackageBoundaries treated compiler conditional as cross-file If call: %v", err)
+	}
+}

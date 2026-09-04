@@ -1516,18 +1516,6 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 	walk(n)
 }
 
-func strictRendererScalarType(typeName string) bool {
-	switch strings.TrimSpace(typeName) {
-	case "string", "bool",
-		"int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-		"byte", "rune", "float32", "float64":
-		return true
-	default:
-		return false
-	}
-}
-
 func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentName, propsType string) {
 	reads := l.strictReads[componentName]
 	if len(reads) == 0 {
@@ -3032,7 +3020,7 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 			// positions admit different identifier sets.
 			l.validateStrictServerChildExpression(node.Span, node.Text, componentName, propsType, scope)
 		}
-		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && !ifShadowed
+		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && (node.IsSyntheticConditional() || !ifShadowed)
 		isBuiltinEach := node.Kind == NodeComponent && node.Tag == "Each" && !eachShadowed
 		if isBuiltinEach {
 			childScope, ok := l.enterStrictEach(node, componentName, propsType, scope, slices)
@@ -3893,11 +3881,12 @@ func (l *lowerer) buildIfComponent(whenExpr string, children []NodeID, fallbackE
 		attrs = append(attrs, Attr{Kind: AttrExpr, Name: "fallback", Expr: fallbackExpr})
 	}
 	return l.prog.AddNode(Node{
-		Kind:     NodeComponent,
-		Tag:      "If",
-		Attrs:    attrs,
-		Children: children,
-		Span:     span,
+		Kind:                 NodeComponent,
+		Tag:                  "If",
+		Attrs:                attrs,
+		Children:             children,
+		Span:                 span,
+		syntheticConditional: true,
 	})
 }
 

@@ -304,7 +304,7 @@ func ValidateStrictPackageBoundaries(files []PackageFile) error {
 			continue
 		}
 		for _, node := range file.Program.Nodes {
-			if node.Kind != ir.NodeComponent {
+			if node.Kind != ir.NodeComponent || node.IsSyntheticConditional() {
 				continue
 			}
 			// The file renderer resolves a local definition first. A same-file

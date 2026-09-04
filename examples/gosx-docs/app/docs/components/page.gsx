@@ -264,6 +264,18 @@ func Page() Node {
 		<p>
 			A component that renders no children rejects child content with a diagnostic that names both remedies, rather than dropping the content silently.
 		</p>
+		<h2 id="island-composition">Composing inside an island</h2>
+		<p>
+			An island may call a same-file strict pure-view component. GoSX expands each call into the parent island program at compile time, so the browser still receives one hydration root and one VM—not a client component runtime. Direct typed scalar props, caller children, and named slots are supported. Projected child markup remains in the caller's scope, so it may read the parent island's signals and bind its handlers.
+		</p>
+		<p>
+			Keep state and behavior in the parent island. A v1 pure-view callee cannot be another island, an engine, a legacy or imported component; own signals, computed values, handlers, or effects; accept handler-valued props; read nested or slice props; or use spreads. Recursive composition fails with its cycle path, depth is capped at 32 components, and the expanded program keeps the VM's 65,535-node and expression limits.
+		</p>
+		<p>
+			Do not declare
+			<span class="inline-code">{"{children}"}</span>
+			or a named-slot hole on the root island itself. A root island program is compiled per component, before a server call site can supply content. Put a slot-bearing pure-view component inside the island instead.
+		</p>
 		<p>
 			Strict markup also accepts the familiar aliases
 			<span class="inline-code">className</span>
