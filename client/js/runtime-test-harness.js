@@ -301,6 +301,7 @@ class FakeWebGLContext {
     this.UNSIGNED_BYTE = 0x1401;
     this.UNSIGNED_INT = 0x1405;
     this.FRAMEBUFFER = 0x8D40;
+    this.FRAMEBUFFER_COMPLETE = 0x8CD5;
     this.DEPTH_ATTACHMENT = 0x8D00;
     this.DEPTH_COMPONENT = 0x1902;
     this.DEPTH_COMPONENT24 = 0x81A6;
@@ -427,6 +428,11 @@ class FakeWebGLContext {
     const framebuffer = { id: "fb-" + this.ops.length };
     this.ops.push(["createFramebuffer", framebuffer.id]);
     return framebuffer;
+  }
+
+  checkFramebufferStatus(target) {
+    this.ops.push(["checkFramebufferStatus", target]);
+    return this.FRAMEBUFFER_COMPLETE;
   }
 
   getAttribLocation(_program, name) {

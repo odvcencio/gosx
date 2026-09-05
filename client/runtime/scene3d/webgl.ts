@@ -980,7 +980,7 @@
         splitNear: 0,
         splitFar: 0,
         lightMatrix: null,
-        _lastPassHash: null,
+        _lastPassInputs: null,
       });
     }
     return {
@@ -1282,60 +1282,58 @@
     return sceneMat4Multiply(proj, view);
   }
 
-  // Computes a cheap change-detector hash for a shadow pass. When the
-  // hash matches the last rendered pass for this light, the previously
-  // drawn shadow map is still valid and the whole pass can be skipped.
-  //
-  // Inputs that move the hash:
-  //   - lightMatrix (16 floats) — summed
-  //   - For each shadow-casting mesh: vertexOffset + vertexCount +
-  //     depthNear + depthFar. depthNear/Far is the transform-sensitive
-  //     signal (recomputed by the cached sceneBoundsDepthMetrics), so
-  //     moving a caster or camera invalidates the hash. vertexOffset/
-  //     Count pick up topology changes (skinning, geometry swaps).
-  //
-  // Not hashed but acceptable:
-  //   - Position values themselves (too expensive). We rely on depthNear/
-  //     Far changing when vertices move, which is a reliable proxy for
-  //     any transform but misses pure topology edits that keep the AABB
-  //     constant (rare, and visually imperceptible because the shadow
-  //     silhouette is unchanged).
-  function sceneShadowPassHash(lightMatrix, meshObjects, options) {
-    var opts = options || {};
-    var h = 0;
-    if (lightMatrix) {
-      for (var i = 0; i < 16; i++) h += lightMatrix[i] || 0;
+  // A shadow map is reusable only for exact pass inputs and immutable,
+  // revisioned geometry. Equal AABBs/counts or scalar matrix sums cannot prove
+  // equal silhouettes. Soup and mutable/unversioned casters rerender instead.
+  // The renderer owns one scratch list and each resource one last snapshot;
+  // storage is proportional to the current caster list, never frame history.
+  function sceneShadowPassInputs(lightMatrix, meshObjects, resources, program, bindDirectCaster, inputs) {
+    inputs.length = 0;
+    inputs.push(resources.framebuffer, resources.depthTexture, resources.size,
+      resources.cascadeIndex, resources.splitNear, resources.splitFar,
+      program.program, program.attributes.position, program.uniforms.lightViewProjection,
+      program.uniforms.modelMatrix, bindDirectCaster);
+    if (!lightMatrix || lightMatrix.length !== 16) return null;
+    for (var i = 0; i < 16; i++) {
+      if (!Number.isFinite(lightMatrix[i])) return null;
+      inputs.push(lightMatrix[i]);
     }
-    h += sceneFiniteNumber(opts.cascadeIndex, 0) * 101.0;
-    h += sceneFiniteNumber(opts.splitNear, 0) * 103.0;
-    h += sceneFiniteNumber(opts.splitFar, 0) * 107.0;
-    h += sceneFiniteNumber(opts.shadowSize, 0) * 109.0;
-    var casterCount = 0;
     for (var j = 0; j < meshObjects.length; j++) {
       var o = meshObjects[j];
       if (!o || !o.castShadow || o.viewCulled) continue;
-      h += (o.vertexOffset || 0) + (o.vertexCount || 0)
-         + (o.depthNear || 0) + (o.depthFar || 0);
-      if (o.retainedGeometry && o.modelMatrix) {
-        // Retained casters draw from model-space vertices, so their
-        // transform belongs in the pass hash: a spin that keeps the bounds and
-        // depth metrics constant must still invalidate the shadow map.
-        for (var k = 0; k < 16; k++) h += o.modelMatrix[k] || 0;
+      var vertices = o.vertices;
+      if (!o.directVertices || o.retainedGeometry !== true || !vertices ||
+          vertices.immutable !== true || vertices.dynamic || vertices.dirty || vertices.needsUpdate ||
+          o.skin || o.computedMorph || o.dynamicGeometry || o.geometryDynamic || o.geometryDirty ||
+          !Number.isSafeInteger(o.geometryRevision) || o.geometryRevision < 0 ||
+          !(o.vertexCount > 0) || !(vertices.positions instanceof Float32Array) ||
+          typeof bindDirectCaster !== "function") return null;
+      inputs.push(vertices, vertices.positions, vertices.positions.length, vertices.indices,
+        vertices.indices ? vertices.indices.length : 0, o.geometryRevision, o.vertexCount);
+      var matrix = o.modelMatrix || SHADOW_IDENTITY_MODEL_MATRIX;
+      if (matrix.length !== 16) return null;
+      for (var k = 0; k < 16; k++) {
+        if (!Number.isFinite(matrix[k])) return null;
+        inputs.push(matrix[k]);
       }
-      casterCount++;
     }
-    h += casterCount * 17.0;
-    return h;
+    return inputs;
+  }
+
+  function sceneShadowPassInputsEqual(previous, next) {
+    if (!previous || !next || previous.length !== next.length) return false;
+    for (var i = 0; i < next.length; i++) {
+      if (previous[i] !== next[i]) return false;
+    }
+    return true;
   }
 
   // Render a depth-only shadow pass into the shadow framebuffer.
   // shadowState holds a persistent GL buffer and scratch typed array
   // to avoid per-object per-light per-frame allocations.
   //
-  // Skips the entire pass when the content hash matches the previous
-  // frame — on a static scene with static lights this reclaims every
-  // bit of the shadow pipeline (clear, N×bufferData, N×drawArrays)
-  // and lets the existing depth texture be sampled as-is.
+  // Static retained inputs can skip the pass and sample its existing texture.
+  // No reusable snapshot is published until every eligible caster was drawn.
   // Identity model matrix for soup casters. This lives beside the shadow pass
   // because the pass is defined outside the PBR renderer closure that owns
   // identityModelMatrix; retained casters overwrite it per draw via the
@@ -1343,19 +1341,23 @@
   var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
   function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindDirectCaster) {
-    var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
-      cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
-      splitNear: shadowResources && typeof shadowResources.splitNear === "number" ? shadowResources.splitNear : 0,
-      splitFar: shadowResources && typeof shadowResources.splitFar === "number" ? shadowResources.splitFar : 0,
-      shadowSize: shadowResources && typeof shadowResources.size === "number" ? shadowResources.size : 0,
-    });
-    if (shadowResources._lastPassHash === passHash) {
+    if (!shadowResources) return;
+    if (!shadowResources.framebuffer || !shadowResources.depthTexture || !shadowProgram || !shadowProgram.program ||
+        !shadowProgram.attributes || !shadowProgram.uniforms) {
+      shadowResources._lastPassInputs = null;
       return;
     }
-    shadowResources._lastPassHash = passHash;
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    var scratchInputs = shadowState.cacheInputs || (shadowState.cacheInputs = []);
+    var passInputs = sceneShadowPassInputs(lightMatrix, objects, shadowResources, shadowProgram, bindDirectCaster, scratchInputs);
+    if (sceneShadowPassInputsEqual(shadowResources._lastPassInputs, passInputs)) return;
+    shadowResources._lastPassInputs = null;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return;
+    }
     gl.viewport(0, 0, shadowResources.size, shadowResources.size);
     gl.clearDepth(1);
     gl.clear(gl.DEPTH_BUFFER_BIT);
@@ -1391,8 +1393,6 @@
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.FRONT);
 
-    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
@@ -1404,9 +1404,9 @@
         // procedural triangle lists use drawArrays. Both avoid per-frame CPU
         // expansion. The bind hook comes from the PBR renderer closure that owns
         // the retained attribute and optional element-buffer caches.
-        if (typeof bindDirectCaster !== "function") continue;
+        if (typeof bindDirectCaster !== "function") { passInputs = null; continue; }
         var casterDraw = bindDirectCaster(obj, shadowProgram);
-        if (!casterDraw || !(casterDraw.count > 0)) continue;
+        if (!casterDraw || !(casterDraw.count > 0)) { passInputs = null; continue; }
         gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
         if (casterDraw.indexed) {
           gl.drawElements(gl.TRIANGLES, casterDraw.count, gl.UNSIGNED_INT, 0);
@@ -1449,6 +1449,7 @@
     gl.disable(gl.CULL_FACE);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (passInputs) shadowResources._lastPassInputs = passInputs.slice();
   }
 
   // Compile the shadow depth shader program.
@@ -9609,7 +9610,6 @@
 
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_resource_api = Object.assign(window.__gosx_scene3d_resource_api || {}, {
-      shadowPassHash: sceneShadowPassHash,
       computeCascadeSplits: sceneShadowComputeCascadeSplits,
       frustumSubCorners: sceneShadowFrustumSubCorners,
       fitLightSpaceOrtho: sceneShadowFitLightSpaceOrtho,
