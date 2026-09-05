@@ -94,11 +94,10 @@ type SkinInfo struct {
 	MorphTargets bool `json:"morphTargets,omitempty"`
 }
 
-// skinInfoFromGLTF maps a probed GLTFInfo to SkinInfo. MorphTargets is always
-// false because the current gltfProbe does not inspect mesh.primitives[].targets;
-// the field is reserved for a future probe pass.
+// skinInfoFromGLTF includes morph-only assets: they also require deforming
+// geometry and must not be mistaken for rigid meshes by build consumers.
 func skinInfoFromGLTF(info GLTFInfo) SkinInfo {
-	return SkinInfo{Skinned: info.Skins > 0}
+	return SkinInfo{Skinned: info.Skins > 0, MorphTargets: info.MorphTargets > 0}
 }
 
 // Report is the JSON-serializable contract emitted by `gosx assets plan` and
@@ -112,7 +111,7 @@ type Report struct {
 	Warnings      []string     `json:"warnings,omitempty"`
 	Diagnostics   []Diagnostic `json:"diagnostics,omitempty"`
 	// SkinManifest maps each GLB/glTF asset path (relative slash path from the
-	// scan root) to its SkinInfo. Only assets with Skinned=true are included.
+	// scan root) to its SkinInfo. Skinned and morph-only assets are included.
 	SkinManifest map[string]SkinInfo `json:"skinManifest,omitempty"`
 }
 
@@ -218,16 +217,19 @@ func (v Variant) Exists() bool { return v.State == VariantBuilt }
 
 // GLTFInfo records cheap structural facts from glTF JSON.
 type GLTFInfo struct {
-	ExtensionsUsed     []string `json:"extensionsUsed,omitempty"`
-	ExtensionsRequired []string `json:"extensionsRequired,omitempty"`
-	Meshes             int      `json:"meshes,omitempty"`
-	Primitives         int      `json:"primitives,omitempty"`
-	Materials          int      `json:"materials,omitempty"`
-	Images             int      `json:"images,omitempty"`
-	Textures           int      `json:"textures,omitempty"`
-	Animations         int      `json:"animations,omitempty"`
-	Skins              int      `json:"skins,omitempty"`
-	Nodes              int      `json:"nodes,omitempty"`
+	ExtensionsUsed     []string            `json:"extensionsUsed,omitempty"`
+	ExtensionsRequired []string            `json:"extensionsRequired,omitempty"`
+	Meshes             int                 `json:"meshes,omitempty"`
+	Primitives         int                 `json:"primitives,omitempty"`
+	Materials          int                 `json:"materials,omitempty"`
+	Images             int                 `json:"images,omitempty"`
+	Textures           int                 `json:"textures,omitempty"`
+	Animations         int                 `json:"animations,omitempty"`
+	AnimationClips     []AnimationClipInfo `json:"animationClips,omitempty"`
+	Skins              int                 `json:"skins,omitempty"`
+	MorphTargets       int                 `json:"morphTargets,omitempty"`
+	MorphPrimitives    int                 `json:"morphPrimitives,omitempty"`
+	Nodes              int                 `json:"nodes,omitempty"`
 }
 
 // KTX2Info records upload-relevant texture metadata.
@@ -351,13 +353,13 @@ func Plan(roots []string, opts Options) (Report, error) {
 	report.Totals.FirstFrameUploadBytes = report.Budget.FirstFrameUploadBytes
 	report.Diagnostics = reportDiagnostics(report.Warnings, report.Assets)
 	sort.Strings(report.Roots)
-	// Populate SkinManifest from probed GLB/glTF assets that have skins.
+	// Include every probed asset that requires vertex deformation.
 	for _, asset := range report.Assets {
 		if asset.GLTF == nil {
 			continue
 		}
 		si := skinInfoFromGLTF(*asset.GLTF)
-		if !si.Skinned {
+		if !si.Skinned && !si.MorphTargets {
 			continue
 		}
 		if report.SkinManifest == nil {
@@ -1009,16 +1011,18 @@ type gltfProbe struct {
 	Materials          []struct {
 		Extensions map[string]json.RawMessage `json:"extensions"`
 	} `json:"materials"`
-	Images     []json.RawMessage `json:"images"`
-	Textures   []json.RawMessage `json:"textures"`
-	Animations []json.RawMessage `json:"animations"`
-	Skins      []json.RawMessage `json:"skins"`
-	Nodes      []json.RawMessage `json:"nodes"`
+	Images     []json.RawMessage            `json:"images"`
+	Textures   []json.RawMessage            `json:"textures"`
+	Animations []gltfAnimationProbe         `json:"animations"`
+	Accessors  []gltfAnimationAccessorProbe `json:"accessors"`
+	Skins      []json.RawMessage            `json:"skins"`
+	Nodes      []json.RawMessage            `json:"nodes"`
 }
 
 type gltfMeshProbe struct {
 	Primitives []struct {
 		Extensions map[string]json.RawMessage `json:"extensions"`
+		Targets    []map[string]int           `json:"targets"`
 	} `json:"primitives"`
 }
 
@@ -1039,10 +1043,14 @@ func inspectGLTF(data []byte) (GLTFInfo, []string) {
 			extensions.add(ext)
 		}
 	}
-	primitives := 0
+	primitives, morphPrimitives, morphTargets := 0, 0, 0
 	for _, mesh := range doc.Meshes {
 		primitives += len(mesh.Primitives)
 		for _, prim := range mesh.Primitives {
+			if len(prim.Targets) > 0 {
+				morphPrimitives++
+				morphTargets += len(prim.Targets)
+			}
 			for ext := range prim.Extensions {
 				extensions.add(ext)
 			}
@@ -1057,7 +1065,10 @@ func inspectGLTF(data []byte) (GLTFInfo, []string) {
 		Images:             len(doc.Images),
 		Textures:           len(doc.Textures),
 		Animations:         len(doc.Animations),
+		AnimationClips:     inspectAnimationClips(doc.Animations, doc.Accessors),
 		Skins:              len(doc.Skins),
+		MorphTargets:       morphTargets,
+		MorphPrimitives:    morphPrimitives,
 		Nodes:              len(doc.Nodes),
 	}
 	var warnings []string

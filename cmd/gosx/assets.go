@@ -103,6 +103,26 @@ func printAssetPlan(w io.Writer, report assetpipe.Report) {
 		report.Totals.Environment, report.Totals.Audio, report.Totals.USDZ, report.Totals.Shader)
 	for _, asset := range report.Assets {
 		fmt.Fprintf(w, "\n%s [%s, %d bytes]\n", asset.Path, asset.Kind, asset.Bytes)
+		if asset.GLTF != nil {
+			info := asset.GLTF
+			fmt.Fprintf(w, "  geometry: %d primitives, %d materials, %d skins, %d morph targets\n", info.Primitives, info.Materials, info.Skins, info.MorphTargets)
+			for _, clip := range info.AnimationClips {
+				name := clip.Name
+				if name == "" {
+					name = "(unnamed)"
+				}
+				fmt.Fprintf(w, "  clip %d %q: %d channels", clip.Index, name, clip.Channels)
+				if clip.Duration != nil {
+					fmt.Fprintf(w, ", %.3fs (accessor bounds)", *clip.Duration)
+				} else {
+					fmt.Fprint(w, ", duration unknown")
+				}
+				if len(clip.TargetPaths) > 0 {
+					fmt.Fprintf(w, ", %s", strings.Join(clip.TargetPaths, "/"))
+				}
+				fmt.Fprintln(w)
+			}
+		}
 		for _, warning := range asset.Warnings {
 			fmt.Fprintf(w, "  warning: %s\n", warning)
 		}

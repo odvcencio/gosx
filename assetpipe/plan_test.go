@@ -229,7 +229,7 @@ func TestSkinInfoFromGLTF(t *testing.T) {
 			t.Error("expected Skinned=true for Skins=2; got false")
 		}
 		if got.MorphTargets {
-			t.Error("expected MorphTargets=false (not probed); got true")
+			t.Error("expected MorphTargets=false for a model without morph targets; got true")
 		}
 	})
 
