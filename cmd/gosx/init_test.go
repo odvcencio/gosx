@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -77,11 +79,63 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		}
 	}
 
+	stackGSX := readFile(t, filepath.Join(dir, "app", "stack", "page.gsx"))
+	for _, snippet := range []string{
+		`type TransitionPanelProps struct`,
+		`Title       string`,
+		`Description string`,
+		`component Page()`,
+		`<TransitionPanel`,
+		`component TransitionPanel(props: TransitionPanelProps)`,
+		`{children}`,
+		`<a href="/" data-gosx-link class="button primary">Back home</a>`,
+	} {
+		if !strings.Contains(stackGSX, snippet) {
+			t.Fatalf("expected strict stack route to contain %q, got:\n%s", snippet, stackGSX)
+		}
+	}
+	if strings.Contains(stackGSX, `func Page() Node`) {
+		t.Fatalf("expected stack route to use strict component syntax, got:\n%s", stackGSX)
+	}
+
 	assertAllGSXCompile(t, dir)
 
 	perfBudget := readFile(t, filepath.Join(dir, "perf-budget.json"))
 	if !strings.Contains(perfBudget, `"js_total_kb <= 120"`) {
 		t.Fatalf("expected starter perf budget, got:\n%s", perfBudget)
+	}
+}
+
+func TestRunInitStarterStrictStackRouteChecksAndRenders(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "starter-strict-stack")
+	if err := RunInit(dir, "example.com/starter-strict-stack", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	stackFile := filepath.Join(dir, "app", "stack", "page.gsx")
+	var checkErr bytes.Buffer
+	if err := runCheck(stackFile, &checkErr); err != nil {
+		t.Fatalf("check strict stack route: %v\n%s", err, checkErr.String())
+	}
+	if got := checkErr.String(); !strings.Contains(got, "ok: 2 components") ||
+		!strings.Contains(got, "Page") ||
+		!strings.Contains(got, "TransitionPanel(TransitionPanelProps)") {
+		t.Fatalf("unexpected check output for strict stack route:\n%s", got)
+	}
+	if strings.Contains(checkErr.String(), "warning:") {
+		t.Fatalf("strict stack route should not emit check warnings:\n%s", checkErr.String())
+	}
+
+	want := `<main class="shell"><span class="eyebrow">Client Navigation</span><h1>Page transitions without a full reload</h1><p>This page was fetched as HTML, swapped into the live document, and re-used the same GoSX runtime lifecycle.</p><div class="actions"><a href="/" data-gosx-link class="button primary">Back home</a></div></main>
+`
+	for _, component := range []string{"", "Page"} {
+		var rendered bytes.Buffer
+		if err := runRender(stackFile, component, &rendered); err != nil {
+			t.Fatalf("render strict stack route component %q: %v", component, err)
+		}
+		if normalizeIntertagWhitespace(rendered.String()) != want {
+			t.Fatalf("rendered strict stack route component %q changed DOM:\n got %q\nwant %q", component, rendered.String(), want)
+		}
 	}
 }
 
@@ -379,6 +433,10 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+func normalizeIntertagWhitespace(html string) string {
+	return regexp.MustCompile(`>\s+<`).ReplaceAllString(html, "><")
 }
 
 func goTestModule(t *testing.T, dir string) {

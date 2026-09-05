@@ -567,15 +567,29 @@ func init() {
 func appStackTemplate() string {
 	return `package app
 
-func Page() Node {
-	return <main class="shell">
-		<span class="eyebrow">Client Navigation</span>
-		<h1>Page transitions without a full reload</h1>
-		<p>This page was fetched as HTML, swapped into the live document, and re-used the same GoSX runtime lifecycle.</p>
+type TransitionPanelProps struct {
+	Title       string
+	Description string
+}
 
+component Page() {
+	return <TransitionPanel
+		Title="Page transitions without a full reload"
+		Description="This page was fetched as HTML, swapped into the live document, and re-used the same GoSX runtime lifecycle."
+	>
 		<div class="actions">
 			<a href="/" data-gosx-link class="button primary">Back home</a>
 		</div>
+	</TransitionPanel>
+}
+
+component TransitionPanel(props: TransitionPanelProps) {
+	return <main class="shell">
+		<span class="eyebrow">Client Navigation</span>
+		<h1>{props.Title}</h1>
+		<p>{props.Description}</p>
+
+		{children}
 	</main>
 }
 `

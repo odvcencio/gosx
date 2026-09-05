@@ -220,6 +220,12 @@ cd my-app
 go run .
 ```
 
+The default app includes `app/stack/page.gsx` as a strict typed component
+example: a zero-props `Page` composes a same-file helper with scalar props and
+caller-owned children. The richer home route, layout, special pages, and docs
+template still use supported legacy route-context forms while their strict
+loader/action/layout migrations remain in progress.
+
 Or scaffold the docs template with nested layouts, auth, and forms:
 
 ```bash
