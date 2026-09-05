@@ -2,9 +2,12 @@ package lsp
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx"
 )
 
 func TestAnalyzeParseDiagnostic(t *testing.T) {
@@ -103,6 +106,56 @@ func Page() Node {
 	}
 	if !strings.Contains(string(formatted), "<span>Hi</span>") {
 		t.Fatalf("unexpected formatted output %q", string(formatted))
+	}
+}
+
+func TestFormatSourceRejectsMalformedGSX(t *testing.T) {
+	_, err := FormatSource([]byte(`package main
+
+func Broken() Node {
+	return <div>{</div>
+}
+`))
+	if err == nil {
+		t.Fatal("FormatSource succeeded on malformed GSX")
+	}
+	var parseErr *gosx.ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("FormatSource error = %T %[1]v, want *gosx.ParseError", err)
+	}
+	if parseErr.Line != 4 || parseErr.Column != 20 {
+		t.Fatalf("parse location = %d:%d, want 4:20 (%v)", parseErr.Line, parseErr.Column, err)
+	}
+	if !strings.Contains(parseErr.Message, "unexpected syntax") {
+		t.Fatalf("parse message = %q, want unexpected syntax", parseErr.Message)
+	}
+}
+
+func TestServerFormattingReturnsErrorForMalformedGSX(t *testing.T) {
+	input := bytes.NewBuffer(nil)
+	output := bytes.NewBuffer(nil)
+
+	writeFramedJSON(input, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	writeFramedJSON(input, `{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/broken.gsx","version":1,"text":"package main\n\nfunc Broken() Node {\n\treturn <div>{</div>\n}\n"}}}`)
+	writeFramedJSON(input, `{"jsonrpc":"2.0","id":2,"method":"textDocument/formatting","params":{"textDocument":{"uri":"file:///tmp/broken.gsx"}}}`)
+	writeFramedJSON(input, `{"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}`)
+
+	if err := Serve(input, output); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+
+	wire := output.String()
+	if !strings.Contains(wire, `"method":"textDocument/publishDiagnostics"`) {
+		t.Fatalf("expected publishDiagnostics notification, got %s", wire)
+	}
+	if !strings.Contains(wire, `"id":2`) || !strings.Contains(wire, `"error"`) {
+		t.Fatalf("expected formatting error response for id 2, got %s", wire)
+	}
+	if strings.Contains(wire, `"newText"`) {
+		t.Fatalf("malformed formatting returned a text edit, got %s", wire)
+	}
+	if !strings.Contains(wire, "unexpected syntax") {
+		t.Fatalf("expected parse diagnostic in wire output, got %s", wire)
 	}
 }
 

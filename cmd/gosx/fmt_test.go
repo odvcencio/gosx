@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,74 @@ func Page() Node {
 	}
 	if strings.Contains(formatted, "<main><section>") {
 		t.Fatalf("expected formatter to expand nested GSX elements, got %q", formatted)
+	}
+}
+
+func TestRunFmtRejectsMalformedGSXWithoutRewriting(t *testing.T) {
+	dir := t.TempDir()
+	source := `package main
+
+func Broken() Node {
+	return <div>{</div>
+}
+`
+	writeTempFile(t, dir, "broken.gsx", source)
+	path := filepath.Join(dir, "broken.gsx")
+
+	var stderr bytes.Buffer
+	count, err := RunFmt(path, &stderr)
+	if err == nil {
+		t.Fatal("RunFmt succeeded on malformed GSX")
+	}
+	if count != 0 {
+		t.Fatalf("formatted count = %d, want 0", count)
+	}
+	var parseErr *gosx.ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("RunFmt error = %T %[1]v, want *gosx.ParseError", err)
+	}
+	if parseErr.Line != 4 || parseErr.Column != 20 {
+		t.Fatalf("parse location = %d:%d, want 4:20 (%v)", parseErr.Line, parseErr.Column, err)
+	}
+	if strings.Contains(err.Error(), "needs formatting") {
+		t.Fatalf("syntax error was reported as formatting drift: %v", err)
+	}
+	if got := readFile(t, path); got != source {
+		t.Fatalf("RunFmt rewrote malformed file\n got:\n%s\nwant:\n%s", got, source)
+	}
+}
+
+func TestRunFmtCheckRejectsMalformedGSXAsParseError(t *testing.T) {
+	dir := t.TempDir()
+	source := `package main
+
+func Broken() Node {
+	return <div><script>var a = 1;</div>
+}
+`
+	writeTempFile(t, dir, "broken.gsx", source)
+	path := filepath.Join(dir, "broken.gsx")
+
+	var stderr bytes.Buffer
+	count, err := RunFmtCheck(path, &stderr)
+	if err == nil {
+		t.Fatal("RunFmtCheck succeeded on malformed GSX")
+	}
+	if count != 0 {
+		t.Fatalf("verified count = %d, want 0", count)
+	}
+	var parseErr *gosx.ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("RunFmtCheck error = %T %[1]v, want *gosx.ParseError", err)
+	}
+	if parseErr.Line != 4 || parseErr.Column != 37 {
+		t.Fatalf("parse location = %d:%d, want 4:37 (%v)", parseErr.Line, parseErr.Column, err)
+	}
+	if strings.Contains(err.Error(), "needs formatting") {
+		t.Fatalf("syntax error was reported as formatting drift: %v", err)
+	}
+	if got := readFile(t, path); got != source {
+		t.Fatalf("RunFmtCheck rewrote malformed file\n got:\n%s\nwant:\n%s", got, source)
 	}
 }
 

@@ -1,6 +1,7 @@
 package format
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -26,6 +27,56 @@ func Page() Node {
 		if !strings.Contains(output, snippet) {
 			t.Fatalf("expected %q in formatted output:\n%s", snippet, output)
 		}
+	}
+}
+
+func TestSourceRejectsMalformedExpressionWithParseError(t *testing.T) {
+	_, err := Source([]byte(`package main
+
+func Broken() Node {
+	return <div>{</div>
+}
+`))
+	if err == nil {
+		t.Fatal("Source succeeded on malformed expression container")
+	}
+	var parseErr *gosx.ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("Source error = %T %[1]v, want *gosx.ParseError", err)
+	}
+	if parseErr.Line != 4 || parseErr.Column != 20 {
+		t.Fatalf("parse location = %d:%d, want 4:20 (%v)", parseErr.Line, parseErr.Column, err)
+	}
+	if !strings.Contains(parseErr.Message, "unexpected syntax") {
+		t.Fatalf("parse message = %q, want unexpected syntax", parseErr.Message)
+	}
+	if parseErr.Snippet != "\treturn <div>{</div>" {
+		t.Fatalf("parse snippet = %q, want malformed return line", parseErr.Snippet)
+	}
+}
+
+func TestSourceRejectsUnterminatedRawTextWithParseError(t *testing.T) {
+	_, err := Source([]byte(`package main
+
+func Broken() Node {
+	return <div><script>var a = 1;</div>
+}
+`))
+	if err == nil {
+		t.Fatal("Source succeeded on unterminated raw-text element")
+	}
+	var parseErr *gosx.ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("Source error = %T %[1]v, want *gosx.ParseError", err)
+	}
+	if parseErr.Line != 4 || parseErr.Column != 37 {
+		t.Fatalf("parse location = %d:%d, want 4:37 (%v)", parseErr.Line, parseErr.Column, err)
+	}
+	if !strings.Contains(parseErr.Message, "unexpected syntax") {
+		t.Fatalf("parse message = %q, want unexpected syntax", parseErr.Message)
+	}
+	if parseErr.Snippet != "\treturn <div><script>var a = 1;</div>" {
+		t.Fatalf("parse snippet = %q, want malformed raw-text return line", parseErr.Snippet)
 	}
 }
 

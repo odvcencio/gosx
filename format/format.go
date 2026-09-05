@@ -18,6 +18,9 @@ func Source(source []byte) ([]byte, error) {
 		return nil, err
 	}
 	root := tree.RootNode()
+	if root.HasError() {
+		return nil, gosx.DescribeParseError(root, source, lang)
+	}
 	f := &formatter{
 		src:    source,
 		lang:   lang,
