@@ -86,6 +86,38 @@ component Page() {
 	}
 }
 
+func TestDefaultFileRendererExecutesSharedComponentCallWithNamedSlots(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "ui/frame.gsx", `package app
+
+component Bare() {
+	return <span class="bare">bare</span>
+}
+
+component Frame() {
+	return <section><header>{slotTitle}</header><main>{children}</main></section>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame><p>body</p><ui.Bare slot="Title" /></ui.Frame>
+}
+`)
+
+	node, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	html := gosx.RenderHTML(node)
+	want := `<section><header><span class="bare">bare</span></header><main><p>body</p></main></section>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
 // TestDefaultFileRendererRejectsSharedComponentChildrenWhenUnsupported
 // proves the render seam's own fail-closed guarantee: a shared callee that
 // does not place {children} refuses child content instead of silently
@@ -123,6 +155,29 @@ component Page() {
 	}
 }
 
+func TestDefaultFileRendererRejectsUnknownSharedComponentSlot(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "ui/frame.gsx", `package app
+
+component Frame() {
+	return <section>{children}</section>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame><h1 slot="Title">lost</h1></ui.Frame>
+}
+`)
+
+	_, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+	if err == nil || !strings.Contains(err.Error(), `declares no slot named "Title"`) {
+		t.Fatalf("error = %v, want unknown shared slot diagnostic", err)
+	}
+}
+
 // TestDefaultFileRendererRejectsUnknownSharedComponent proves a shared call
 // naming a component the target directory does not declare fails clearly
 // at render time rather than falling back to the unresolved-tag
@@ -154,5 +209,146 @@ component Page() {
 	}
 	if !strings.Contains(err.Error(), "declares no strict component named Missing") {
 		t.Fatalf("error = %v, want a message naming the missing component", err)
+	}
+}
+
+func TestDefaultFileRendererRejectsCalledSharedIslandTarget(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "ui/counter.gsx", `package app
+
+//gosx:island
+component Counter() {
+	return <button>count</button>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Counter />
+}
+`)
+
+	_, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+	if err == nil || !strings.Contains(err.Error(), "strict pure-view components only") {
+		t.Fatalf("error = %v, want called imported island target rejection", err)
+	}
+}
+
+func TestDefaultFileRendererAllowsUnusedSharedIslandNeighbor(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "ui/frame.gsx", `package app
+
+component Frame() {
+	return <section>{children}</section>
+}
+`)
+	writeRouteFile(t, root, "ui/counter.gsx", `package app
+
+//gosx:island
+component Counter() {
+	return <button>count</button>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame><p>body</p></ui.Frame>
+}
+`)
+
+	node, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	if html, want := gosx.RenderHTML(node), `<section><p>body</p></section>`; html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+func TestDefaultFileRendererRejectsDuplicateSharedComponentNames(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "ui/a.gsx", `package app
+
+component Badge() {
+	return <span>a</span>
+}
+`)
+	writeRouteFile(t, root, "ui/b.gsx", `package app
+
+component Badge() {
+	return <span>b</span>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Badge />
+}
+`)
+
+	_, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+	if err == nil || !strings.Contains(err.Error(), "duplicate strict component Badge") {
+		t.Fatalf("error = %v, want duplicate shared component diagnostic", err)
+	}
+}
+
+func TestDefaultFileRendererRejectsPureIslandDuplicateSharedComponentNamesBothOrders(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"pure first": {
+			"ui/a.gsx": `package app
+
+component Badge() {
+	return <span>pure</span>
+}
+`,
+			"ui/b.gsx": `package app
+
+//gosx:island
+component Badge() {
+	return <span>island</span>
+}
+`,
+		},
+		"island first": {
+			"ui/a.gsx": `package app
+
+//gosx:island
+component Badge() {
+	return <span>island</span>
+}
+`,
+			"ui/b.gsx": `package app
+
+component Badge() {
+	return <span>pure</span>
+}
+`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			for rel, source := range files {
+				writeRouteFile(t, root, rel, source)
+			}
+			writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Badge />
+}
+`)
+
+			_, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+			if err == nil || !strings.Contains(err.Error(), "duplicate strict component Badge") {
+				t.Fatalf("error = %v, want mixed pure/island duplicate shared component diagnostic", err)
+			}
+		})
 	}
 }

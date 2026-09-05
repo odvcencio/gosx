@@ -3646,7 +3646,12 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	}
 	children, slots := l.partitionCallSlots(IsComponent(tag), rawChildren)
 	l.validateStrictComponentCall(n, tag, attrs, children)
-	l.validateStrictCalleeSlots(n, tag, slots)
+	// Shared component calls are syntax-checked here, but target metadata is
+	// resolved later by gosx check/transpile. Same-file calls still prove
+	// declared slot names here against l.slotHoles.
+	if !l.isSharedComponentTag(tag) {
+		l.validateStrictCalleeSlots(n, tag, slots)
+	}
 	l.validateStrictHTMLElement(n, tag, attrs)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)

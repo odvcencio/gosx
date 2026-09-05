@@ -121,22 +121,32 @@ type SharedImport struct {
 	Components map[string]SharedComponent
 }
 
-// SharedComponent is one shared strict component's Go-facing call shape:
-// its props struct's bare type name, and the field-name aliases
-// (collectStructFieldsFromTypeDecl's own lower-camel rule) used to resolve
-// an attribute name to its exact exported Go field — the identical
-// resolution a same-file struct call already runs.
+// SharedComponent is one shared strict component's Go-facing call shape.
+// It is deliberately a small projection contract, not a complete VM or
+// renderer schema: props fields resolve generated Go composite literals,
+// while children and named slots carry only arity/placement facts.
 type SharedComponent struct {
 	// PropsType is the props struct's bare (unqualified) type name, e.g.
 	// "TeamMarkProps". The caller's alias is prepended at the call site
 	// (transpiler.sharedPropsType), so this field never carries a package
-	// qualifier of its own.
+	// qualifier of its own. Empty means the strict component declares no
+	// props parameter; it is still a valid shared target.
 	PropsType string
 	// Fields maps an attribute spelling — exact or lower-camel — to its
 	// exact exported Go field name, matching t.propsFields' alias
 	// convention. An empty value marks an ambiguous lower-camel spelling,
 	// which projection rejects the same way a same-file call already does.
+	// This is the full declared-field alias map for Go projection, not a
+	// rendered-read schema and not a complete client VM transport shape.
 	Fields map[string]string
+	// AcceptsChildren records the IR-owned "renders {children}" predicate.
+	// It is used only to reject shared call-site child content that the
+	// generated variadic signature would otherwise accept and silently drop.
+	AcceptsChildren bool
+	// AcceptsSlots is the IR-owned, sorted list of named slots declared by
+	// the strict component body. Missing caller slots project as empty
+	// gosx.Fragment values; unknown caller slots fail projection.
+	AcceptsSlots []string
 }
 
 // CollectSharedComponents builds a shared directory's component map from
@@ -146,9 +156,18 @@ type SharedComponent struct {
 // same rules as a same-file call and the two projections cannot drift
 // apart. A legacy component (a func, not a `component` declaration) is
 // omitted: shared components design section 4.3 admits only a strict
-// component as a shared call target.
+// component as a shared call target. Files with a nil Program are compiled
+// from Source in memory, preserving the old source-only helper behavior
+// while keeping component identity, props type, children, and slot facts
+// sourced from one IR component record. Duplicate strict component names
+// are omitted rather than resolved by file order; the map-only API has no
+// place to report a diagnostic, and projection must not invent a winner
+// for an invalid Go package.
 func CollectSharedComponents(files []PackageFile) map[string]SharedComponent {
 	components := make(map[string]SharedComponent)
+	seenStrict := make(map[string]struct{})
+	ambiguous := make(map[string]struct{})
+	propsFields := make(map[string]map[string]string)
 	for _, file := range files {
 		tree, lang, err := gosx.Parse(file.Source)
 		if err != nil {
@@ -161,11 +180,37 @@ func CollectSharedComponents(files []PackageFile) map[string]SharedComponent {
 		ft := &transpiler{src: file.Source, lang: lang}
 		ft.collectStructFields(root)
 		ft.collectComponentProps(root)
-		for name := range ft.strictNames {
-			propsType := strings.TrimSpace(ft.propsTypes[name])
-			if propsType == "" {
+		for name, fields := range ft.propsFields {
+			propsFields[name] = fields
+		}
+	}
+	for _, file := range files {
+		prog := file.Program
+		if prog == nil {
+			compiled, err := gosx.Compile(file.Source)
+			if err != nil {
 				continue
 			}
+			prog = compiled
+		}
+		for _, comp := range prog.Components {
+			if comp.Syntax != ir.ComponentSyntaxStrict {
+				continue
+			}
+			name := comp.Name
+			if _, dup := ambiguous[name]; dup {
+				continue
+			}
+			if _, exists := seenStrict[name]; exists {
+				delete(components, name)
+				ambiguous[name] = struct{}{}
+				continue
+			}
+			seenStrict[name] = struct{}{}
+			if comp.IsIsland || comp.IsEngine {
+				continue
+			}
+			propsType := strings.TrimSpace(comp.PropsType)
 			baseType := propsType
 			if idx := strings.LastIndex(baseType, "."); idx >= 0 {
 				baseType = baseType[idx+1:]
@@ -174,8 +219,10 @@ func CollectSharedComponents(files []PackageFile) map[string]SharedComponent {
 				baseType = baseType[:idx]
 			}
 			components[name] = SharedComponent{
-				PropsType: propsType,
-				Fields:    ft.propsFields[baseType],
+				PropsType:       propsType,
+				Fields:          propsFields[baseType],
+				AcceptsChildren: comp.AcceptsChildren,
+				AcceptsSlots:    append([]string(nil), comp.AcceptsSlots...),
 			}
 		}
 	}

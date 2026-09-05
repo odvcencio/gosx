@@ -20,6 +20,7 @@ import (
 type sharedComponentTarget struct {
 	prog *ir.Program
 	comp *ir.Component
+	path string
 }
 
 // loadSharedDirComponents compiles every .gsx file in dir through the same
@@ -58,6 +59,7 @@ func loadSharedDirComponents(dir string) (map[string]sharedComponentTarget, erro
 	sort.Strings(names)
 
 	targets := make(map[string]sharedComponentTarget)
+	duplicates := make(map[string][]string)
 	targetPackage := ""
 	for i, name := range names {
 		path := filepath.Join(dir, name)
@@ -75,16 +77,28 @@ func loadSharedDirComponents(dir string) (map[string]sharedComponentTarget, erro
 			if comp.Syntax != ir.ComponentSyntaxStrict {
 				continue
 			}
-			if _, exists := targets[comp.Name]; exists {
-				// First declaration wins, in sorted file order — a defensive
-				// tie-break for a same-named strict component declared twice
-				// in one shared directory. gosx check independently rejects a
-				// same-package Go redeclaration (validatePackageDeclCollisions'
-				// sibling stage) long before a render ever reaches this.
+			if existing, exists := targets[comp.Name]; exists {
+				duplicates[comp.Name] = append(duplicates[comp.Name], existing.path, path)
+				delete(targets, comp.Name)
 				continue
 			}
-			targets[comp.Name] = sharedComponentTarget{prog: prog, comp: comp}
+			if len(duplicates[comp.Name]) > 0 {
+				duplicates[comp.Name] = append(duplicates[comp.Name], path)
+				continue
+			}
+			targets[comp.Name] = sharedComponentTarget{prog: prog, comp: comp, path: path}
 		}
+	}
+	if len(duplicates) > 0 {
+		names := make([]string, 0, len(duplicates))
+		for name := range duplicates {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		name := names[0]
+		paths := append([]string(nil), duplicates[name]...)
+		sort.Strings(paths)
+		return nil, fmt.Errorf("shared directory %s declares duplicate strict component %s in %s", dir, name, strings.Join(paths, ", "))
 	}
 	return targets, nil
 }
@@ -139,6 +153,10 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 	target, ok := targets[name]
 	if !ok {
 		r.err = fmt.Errorf("render shared component %s: %s declares no strict component named %s", node.Tag, rawPath, name)
+		return true
+	}
+	if target.comp.IsIsland || target.comp.IsEngine {
+		r.err = fmt.Errorf("render shared component %s: imported island/engine target %s in %s is not supported; shared composition currently admits strict pure-view components only", node.Tag, name, target.path)
 		return true
 	}
 	// Fail closed instead of truncating silently, the same guarantee

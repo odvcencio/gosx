@@ -139,13 +139,18 @@ type transpiler struct {
 	// <pre> nested inside the first still reads as "inside" after the
 	// inner one closes.
 	verbatimTextDepth int
-	errs              []string
-	hasStrict         bool
-	strict            int
-	gosxAlias         string
-	injectGosx        bool
-	strictProjection  bool
-	importNames       map[string]string
+	// suppressSlotAttr is true only while emitting a direct child already
+	// identified as a named-slot payload by its parent. The slot attribute
+	// routes the child to the callee slot; it is not an HTML attribute or a
+	// typed prop the child itself should observe.
+	suppressSlotAttr bool
+	errs             []string
+	hasStrict        bool
+	strict           int
+	gosxAlias        string
+	injectGosx       bool
+	strictProjection bool
+	importNames      map[string]string
 	// sharedImports resolves a shared import's raw source path text (e.g.
 	// "./ui") to its Go projection facts. See Options.SharedImports.
 	sharedImports map[string]SharedImport
@@ -1002,12 +1007,17 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 	}
 
 	if isComponent(tag) {
+		if comp, ok := t.sharedComponent(tag); ok {
+			t.validateSharedComponentProjection(openNode, tag, comp, children, slots)
+		}
 		if propsType, ok := t.typedPropsType(tag); ok {
 			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, openNode), children, t.orderedSlotArgs(tag, slots))
 		}
 		if rawPath, shared := t.sharedImportPath(memberTagAlias(tag)); shared {
-			t.errUnresolvedSharedCall(openNode, tag, rawPath)
-			return ""
+			if _, resolved := t.sharedComponent(tag); !resolved {
+				t.errUnresolvedSharedCall(openNode, tag, rawPath)
+				return ""
+			}
 		}
 		return t.emitComponentCall(tag, t.emitAttrs(openNode), children, t.orderedSlotArgs(tag, slots))
 	}
@@ -1020,11 +1030,16 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 // emitStrictComponent orders its own slot parameters), so the returned
 // slice lines up 1:1 with those parameters regardless of what the call
 // site did or did not supply. A slot the call site did not tag falls back
-// to the zero gosx.Node{} — the same "declared but not supplied" sentinel
-// the render-entry EntrySlots path (route/fileprogram.go) leaves
-// unresolved, which renders empty.
+// to an empty fragment, matching the file renderer's "declared but not
+// supplied renders empty" behavior without leaking the zero Node marker in
+// generated RenderHTML output.
 func (t *transpiler) orderedSlotArgs(tag string, slots map[string]string) []string {
 	declared := t.slotNames[tag]
+	if len(declared) == 0 {
+		if comp, ok := t.sharedComponent(tag); ok {
+			declared = comp.AcceptsSlots
+		}
+	}
 	if len(declared) == 0 {
 		return nil
 	}
@@ -1034,7 +1049,7 @@ func (t *transpiler) orderedSlotArgs(tag string, slots map[string]string) []stri
 			args[i] = value
 			continue
 		}
-		args[i] = t.gosxRef("Node") + "{}"
+		args[i] = t.gosxRef("Fragment") + "()"
 	}
 	return args
 }
@@ -1333,15 +1348,20 @@ func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	if isComponent(tag) {
 		// A self-closing tag has no children at all, so no direct child
 		// can ever carry a static slot="Name" attribute here — nil slots
-		// (orderedSlotArgs' zero value) correctly produces one zero
-		// gosx.Node{} per slot tag declares, and none where it declares
+		// (orderedSlotArgs' zero value) correctly produces one empty
+		// fragment per slot tag declares, and none where it declares
 		// none.
+		if comp, ok := t.sharedComponent(tag); ok {
+			t.validateSharedComponentProjection(n, tag, comp, nil, nil)
+		}
 		if propsType, ok := t.typedPropsType(tag); ok {
 			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, n), nil, t.orderedSlotArgs(tag, nil))
 		}
 		if rawPath, shared := t.sharedImportPath(memberTagAlias(tag)); shared {
-			t.errUnresolvedSharedCall(n, tag, rawPath)
-			return ""
+			if _, resolved := t.sharedComponent(tag); !resolved {
+				t.errUnresolvedSharedCall(n, tag, rawPath)
+				return ""
+			}
 		}
 		return t.emitComponentCall(tag, t.emitAttrs(n), nil, t.orderedSlotArgs(tag, nil))
 	}
@@ -1493,6 +1513,9 @@ func (t *transpiler) emitElementCall(tag string, attrs []string, children []stri
 // only ever needs to rule the propless case in or out.
 func (t *transpiler) isProplessStrictComponent(tag string) bool {
 	if _, ok := t.strictNames[tag]; !ok {
+		if comp, shared := t.sharedComponent(tag); shared {
+			return strings.TrimSpace(comp.PropsType) == ""
+		}
 		return false
 	}
 	return strings.TrimSpace(t.propsTypes[tag]) == ""
@@ -1533,8 +1556,8 @@ func (t *transpiler) emitComponentCall(tag string, attrs []string, children []st
 	// parameter (emitStrictComponent). slotArgs (orderedSlotArgs,
 	// emitGSXElement) already lines up 1:1 with those parameters — a
 	// statically slot-tagged child's own projection where the call site
-	// supplied one, the zero gosx.Node{} where it did not — so this loop
-	// only ever places what it is given, in the order it is given.
+	// supplied one, an empty gosx.Fragment() where it did not — so this
+	// loop only ever places what it is given, in the order it is given.
 	for _, arg := range slotArgs {
 		if wroteArg {
 			b.WriteString(", ")
@@ -1560,7 +1583,7 @@ func (t *transpiler) emitComponentCall(tag string, attrs []string, children []st
 func (t *transpiler) typedPropsType(tag string) (string, bool) {
 	propsType := strings.TrimSpace(t.propsTypes[tag])
 	if propsType == "" || isAttrListPropsType(propsType) {
-		if sharedType, ok := t.sharedPropsType(tag); ok {
+		if sharedType, ok := t.sharedPropsType(tag); ok && strings.TrimSpace(sharedType) != "" {
 			return sharedType, true
 		}
 		return t.gosxUIPropsType(tag)
@@ -1605,7 +1628,9 @@ func (t *transpiler) isSharedCallTag(tag string) bool {
 // directory's own loaded programs (design section 5.2). transpile has no
 // filesystem access of its own to try harder (design rule 1), so it
 // reports ok only when both the import path and the component name are
-// present in the supplied map.
+// present in the supplied map. PropsType may be empty: propless strict
+// components are valid shared targets and still need children/slot
+// projection metadata.
 func (t *transpiler) sharedComponent(tag string) (SharedComponent, bool) {
 	alias, component, ok := splitMemberTag(tag)
 	if !ok {
@@ -1620,7 +1645,7 @@ func (t *transpiler) sharedComponent(tag string) (SharedComponent, bool) {
 		return SharedComponent{}, false
 	}
 	comp, ok := target.Components[component]
-	if !ok || strings.TrimSpace(comp.PropsType) == "" {
+	if !ok {
 		return SharedComponent{}, false
 	}
 	return comp, true
@@ -1639,7 +1664,66 @@ func (t *transpiler) sharedPropsType(tag string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return alias + "." + comp.PropsType, true
+	propsType := strings.TrimSpace(comp.PropsType)
+	if propsType == "" {
+		return "", false
+	}
+	return alias + "." + propsType, true
+}
+
+// validateSharedComponentProjection applies the strict callee arity facts
+// that IR owns for same-file calls and route/shared_component.go owns at
+// render time for shared calls. Generated strict Go stays variadic for all
+// callees, so projection must reject shared children and unknown slots here
+// rather than letting the Go call compile and silently lose caller-owned
+// content. This remains intentionally narrow: it is not a props schema for
+// the VM and it does not make sibling-file rendered reads legal.
+func (t *transpiler) validateSharedComponentProjection(n *gotreesitter.Node, tag string, comp SharedComponent, children []string, slots map[string]string) {
+	if strings.TrimSpace(comp.PropsType) == "" && t.hasCallAttrs(n) {
+		t.errorf(n, "shared component %s declares no props; remove the attributes or add a props parameter to %s", tag, tag)
+	}
+	if len(children) > 0 && !comp.AcceptsChildren {
+		t.errorf(n, "shared component %s renders no children; remove the child content or render {children} in %s's body", tag, tag)
+	}
+	if len(slots) == 0 {
+		return
+	}
+	declared := make(map[string]struct{}, len(comp.AcceptsSlots))
+	for _, name := range comp.AcceptsSlots {
+		declared[name] = struct{}{}
+	}
+	names := make([]string, 0, len(slots))
+	for name := range slots {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := declared[name]; !ok {
+			t.errorf(n, "shared component %s declares no slot named %q; declare {%s} in %s's body or remove this slot", tag, name, strictcomponent.SlotBindingName(name), tag)
+		}
+	}
+}
+
+func (t *transpiler) hasCallAttrs(n *gotreesitter.Node) bool {
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		switch t.nodeType(child) {
+		case "jsx_attribute", "jsx_spread_attribute":
+			if t.suppressSlotAttr && t.isSlotRoutingAttribute(child) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func (t *transpiler) isSlotRoutingAttribute(n *gotreesitter.Node) bool {
+	if t.nodeType(n) != "jsx_attribute" {
+		return false
+	}
+	nameNode := t.childByField(n, "name")
+	return nameNode != nil && t.text(nameNode) == "slot"
 }
 
 // errUnresolvedSharedCall reports the one outcome the shared components
@@ -1786,6 +1870,9 @@ func (t *transpiler) emitTypedAttrsWithAliases(tag string, aliases map[string]st
 			}
 			t.errorf(child, "spread attributes are not supported for typed component props")
 		case "jsx_attribute":
+			if t.suppressSlotAttr && t.isSlotRoutingAttribute(child) {
+				continue
+			}
 			nameNode := t.childByField(child, "name")
 			if nameNode == nil {
 				continue
@@ -1901,6 +1988,9 @@ func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed, htmlElement 
 		child := n.NamedChild(i)
 		switch t.nodeType(child) {
 		case "jsx_attribute":
+			if t.suppressSlotAttr && t.isSlotRoutingAttribute(child) {
+				continue
+			}
 			attr := t.emitAttrWithMode(child, typed, htmlElement)
 			if attr != "" {
 				attrs = append(attrs, attr)
@@ -2010,11 +2100,17 @@ func (t *transpiler) emitChildrenAndSlots(n *gotreesitter.Node) (children []stri
 			typ == "jsx_self_closing_element" ||
 			typ == "jsx_expression_container" || typ == "jsx_fragment" ||
 			typ == "jsx_text" {
+			name, hasSlot := t.staticSlotName(child)
+			prevSuppressSlotAttr := t.suppressSlotAttr
+			if hasSlot {
+				t.suppressSlotAttr = true
+			}
 			result := t.emit(child)
+			t.suppressSlotAttr = prevSuppressSlotAttr
 			if result == "" {
 				continue
 			}
-			if name, ok := t.staticSlotName(child); ok {
+			if hasSlot {
 				if slots == nil {
 					slots = make(map[string]string)
 				}

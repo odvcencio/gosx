@@ -2,14 +2,16 @@ package transpile
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
 )
 
 // This file covers WP4 of the shared-.gsx-components design (see
@@ -91,17 +93,6 @@ func StandingRow(tone, abbreviation string) gosx.Node {
 // shared call adds to both the function name and the composite literal
 // type. If a future change lets the two shapes drift apart, this test
 // catches it independent of any wording in either message.
-//
-// Both sides use a strict caller body — the spec's own headline example
-// (section 1.2) — projected with transpileProjectionOnly, which runs only
-// t.emit, skipping Transpile's gosx.Compile semantic gate. WP1 (the ir.Lower
-// relaxation that will let a strict body reach a shared call through the
-// full gosx.Compile pipeline) is a separate, independently dispatched work
-// package; exercising the projection layer directly is what proves WP4's
-// own scope without waiting on it, exactly as designed (spec section 1.3:
-// "type safety... is already proven today. Execution is not" — the same
-// split applies to this test rig: the shape is proven here, the semantic
-// gate is WP1's).
 func TestSharedCallStructurallyMatchesSameFileShape(t *testing.T) {
 	sameFile := []byte(`package app
 
@@ -123,9 +114,9 @@ component StandingRow(props: StandingRowProps) {
 	return <div><TeamMark Tone={props.Tone} Abbreviation={props.Abbreviation}></TeamMark></div>
 }
 `)
-	sameFileOut, err := transpileProjectionOnly(t, sameFile, Options{SourceFile: "same.gsx"})
+	sameFileOut, err := Transpile(sameFile, Options{SourceFile: "same.gsx"})
 	if err != nil {
-		t.Fatalf("transpile same-file (projection only): %v", err)
+		t.Fatalf("transpile same-file: %v", err)
 	}
 
 	shared := CollectSharedComponents([]PackageFile{sharedTeamMarkPackageFile(t)})
@@ -142,14 +133,14 @@ component StandingRow(props: StandingRowProps) {
 	return <div><ui.TeamMark Tone={props.Tone} Abbreviation={props.Abbreviation}></ui.TeamMark></div>
 }
 `)
-	sharedOut, err := transpileProjectionOnly(t, sharedCaller, Options{
+	sharedOut, err := Transpile(sharedCaller, Options{
 		SourceFile: "page.gsx",
 		SharedImports: map[string]SharedImport{
 			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
 		},
 	})
 	if err != nil {
-		t.Fatalf("transpile shared (projection only): %v", err)
+		t.Fatalf("transpile shared: %v", err)
 	}
 
 	// Strip exactly the alias qualifier a shared call adds to the call and
@@ -161,37 +152,6 @@ component StandingRow(props: StandingRowProps) {
 	if sameFileCall != sharedCall {
 		t.Fatalf("shared call shape drifted from same-file call shape:\nsame-file: %s\nshared (normalized): %s", sameFileCall, sharedCall)
 	}
-}
-
-// transpileProjectionOnly runs exactly the projection half of Transpile:
-// parse, then t.emit(root). It skips Transpile's gosx.Compile semantic
-// gate, which is how ir.Lower's pending WP1 relaxation (shared-call
-// admission for a strict caller body) would otherwise block this test from
-// exercising transpile's own, already-complete half of the feature.
-func transpileProjectionOnly(t *testing.T, source []byte, opts Options) (string, error) {
-	t.Helper()
-	tree, lang, err := gosx.Parse(source)
-	if err != nil {
-		return "", err
-	}
-	root := tree.RootNode()
-	if root.HasError() {
-		return "", gosx.DescribeParseError(root, source, lang)
-	}
-	tp := &transpiler{
-		src:              source,
-		lang:             lang,
-		sourceFile:       opts.SourceFile,
-		imports:          make(map[string]string),
-		strictProjection: opts.strictProjection,
-		importNames:      opts.importNames,
-		sharedImports:    opts.SharedImports,
-	}
-	result := tp.emit(root)
-	if len(tp.errs) > 0 {
-		return "", errors.New(strings.Join(tp.errs, "\n"))
-	}
-	return result, nil
 }
 
 // extractCall returns the balanced-parenthesis call expression starting at
@@ -326,12 +286,7 @@ component StandingRow(props: StandingRowProps) {
 	return <div><ui.TeamMark Tone={props.Tone} Abbreviation={props.Abbreviation}></ui.TeamMark></div>
 }
 `)
-	// Uses transpileProjectionOnly for the same reason as
-	// TestSharedCallStructurallyMatchesSameFileShape above: a strict
-	// caller's shared call does not yet clear Transpile's gosx.Compile gate
-	// (that relaxation is WP1's, not WP4's), so this test exercises
-	// strict-projection emission directly.
-	out, err := transpileProjectionOnly(t, caller, Options{
+	out, err := Transpile(caller, Options{
 		SourceFile:       "page.gsx",
 		strictProjection: true,
 		SharedImports: map[string]SharedImport{
@@ -346,6 +301,635 @@ component StandingRow(props: StandingRowProps) {
 	}
 	if want := `ui.TeamMark(ui.TeamMarkProps{`; !strings.Contains(out, want) {
 		t.Fatalf("strict projection missing shared call; got:\n%s", out)
+	}
+}
+
+func TestCollectSharedComponentsIncludesProplessChildrenAndNamedSlots(t *testing.T) {
+	source := []byte(`package ui
+
+component Chrome() {
+	return <section><h1>{slotTitle}</h1><main>{children}</main></section>
+}
+`)
+	prog, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{{Path: "ui/chrome.gsx", Source: source, Program: prog}})
+	comp, ok := shared["Chrome"]
+	if !ok {
+		t.Fatalf("Chrome missing from shared components: %#v", shared)
+	}
+	if comp.PropsType != "" {
+		t.Fatalf("PropsType = %q, want propless", comp.PropsType)
+	}
+	if !comp.AcceptsChildren {
+		t.Fatal("AcceptsChildren = false, want true")
+	}
+	if got := strings.Join(comp.AcceptsSlots, ","); got != "Title" {
+		t.Fatalf("AcceptsSlots = %q, want Title", got)
+	}
+}
+
+func TestCollectSharedComponentsSourceOnlyMatchesPrecompiledMetadata(t *testing.T) {
+	source := []byte(`package ui
+
+type ChromeProps struct {
+	HTMLFor string
+}
+
+component Chrome(props: ChromeProps) {
+	return <section for={props.HTMLFor}>{slotTitle}{children}</section>
+}
+`)
+	prog, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	precompiled := CollectSharedComponents([]PackageFile{{Path: "ui/chrome.gsx", Source: source, Program: prog}})
+	sourceOnly := CollectSharedComponents([]PackageFile{{Path: "ui/chrome.gsx", Source: source}})
+	if !reflect.DeepEqual(sourceOnly, precompiled) {
+		t.Fatalf("source-only metadata drifted from precompiled:\nsource-only: %#v\nprecompiled: %#v", sourceOnly, precompiled)
+	}
+}
+
+func TestCollectSharedComponentsSkipsIslandNeighborButKeepsPureView(t *testing.T) {
+	pureSource := []byte(`package ui
+
+component Frame() {
+	return <section>{children}</section>
+}
+`)
+	islandSource := []byte(`package ui
+
+//gosx:island
+component Counter() {
+	return <button>count</button>
+}
+`)
+	pureProg, err := gosx.Compile(pureSource)
+	if err != nil {
+		t.Fatalf("compile pure source: %v", err)
+	}
+	islandProg, err := gosx.Compile(islandSource)
+	if err != nil {
+		t.Fatalf("compile island source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{
+		{Path: "ui/frame.gsx", Source: pureSource, Program: pureProg},
+		{Path: "ui/counter.gsx", Source: islandSource, Program: islandProg},
+	})
+	if _, ok := shared["Frame"]; !ok {
+		t.Fatalf("pure Frame missing from shared components: %#v", shared)
+	}
+	if _, ok := shared["Counter"]; ok {
+		t.Fatalf("island Counter entered pure-view shared catalog: %#v", shared)
+	}
+}
+
+func TestCollectSharedComponentsOmitsDuplicateNamesIndependentOfInputOrder(t *testing.T) {
+	first := []byte(`package ui
+
+component Badge() {
+	return <span>a</span>
+}
+`)
+	second := []byte(`package ui
+
+component Badge() {
+	return <span>b</span>
+}
+`)
+	firstProg, err := gosx.Compile(first)
+	if err != nil {
+		t.Fatalf("compile first source: %v", err)
+	}
+	secondProg, err := gosx.Compile(second)
+	if err != nil {
+		t.Fatalf("compile second source: %v", err)
+	}
+	for name, files := range map[string][]PackageFile{
+		"forward": {
+			{Path: "ui/a.gsx", Source: first, Program: firstProg},
+			{Path: "ui/b.gsx", Source: second, Program: secondProg},
+		},
+		"reversed": {
+			{Path: "ui/b.gsx", Source: second, Program: secondProg},
+			{Path: "ui/a.gsx", Source: first, Program: firstProg},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			shared := CollectSharedComponents(files)
+			if _, ok := shared["Badge"]; ok {
+				t.Fatalf("duplicate Badge selected a winner from %s input order: %#v", name, shared)
+			}
+		})
+	}
+}
+
+func TestCollectSharedComponentsOmitsPureIslandDuplicateNamesIndependentOfInputOrder(t *testing.T) {
+	pure := []byte(`package ui
+
+component Badge() {
+	return <span>pure</span>
+}
+`)
+	island := []byte(`package ui
+
+//gosx:island
+component Badge() {
+	return <span>island</span>
+}
+`)
+	pureProg, err := gosx.Compile(pure)
+	if err != nil {
+		t.Fatalf("compile pure source: %v", err)
+	}
+	islandProg, err := gosx.Compile(island)
+	if err != nil {
+		t.Fatalf("compile island source: %v", err)
+	}
+	for name, files := range map[string][]PackageFile{
+		"pure first": {
+			{Path: "ui/a.gsx", Source: pure, Program: pureProg},
+			{Path: "ui/b.gsx", Source: island, Program: islandProg},
+		},
+		"island first": {
+			{Path: "ui/a.gsx", Source: island, Program: islandProg},
+			{Path: "ui/b.gsx", Source: pure, Program: pureProg},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			shared := CollectSharedComponents(files)
+			if _, ok := shared["Badge"]; ok {
+				t.Fatalf("mixed pure/island duplicate Badge selected a projection target from %s input order: %#v", name, shared)
+			}
+		})
+	}
+}
+
+func TestSharedProplessCallsProjectWithoutPropsArgument(t *testing.T) {
+	source := []byte(`package ui
+
+component Badge() {
+	return <span>badge</span>
+}
+
+component Wrap() {
+	return <section>{children}</section>
+}
+`)
+	prog, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{{Path: "ui/badge.gsx", Source: source, Program: prog}})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <div><ui.Badge /><ui.Wrap><b>caller</b></ui.Wrap></div>
+}
+`)
+	out, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	for _, want := range []string{
+		`ui.Badge()`,
+		`ui.Wrap(gosx.El("b", gosx.Text("caller")))`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestSharedTypedNamedSlotsProjectByDeclaredName(t *testing.T) {
+	source := []byte(`package ui
+
+type LayoutProps struct {
+	ID string
+}
+
+component Layout(props: LayoutProps) {
+	return <section id={props.ID}>{slotTitle}<nav>{slotNav}</nav>{children}</section>
+}
+`)
+	prog, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{{Path: "ui/layout.gsx", Source: source, Program: prog}})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.Layout ID="main"><p>body</p><h1 slot="Title">Title</h1></ui.Layout>
+}
+`)
+	out, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	want := `ui.Layout(ui.LayoutProps{ID: "main"}, gosx.Fragment(), gosx.El("h1", gosx.Text("Title")), gosx.El("p", gosx.Text("body")))`
+	if !strings.Contains(out, want) {
+		t.Fatalf("shared slot args did not follow declared slot order with zero omitted slot and caller-owned children:\nwant %q\nin:\n%s", want, out)
+	}
+}
+
+func TestSharedNamedSlotPayloadMayBeASharedComponent(t *testing.T) {
+	source := []byte(`package ui
+
+component Bare() {
+	return <span>bare</span>
+}
+
+component Frame() {
+	return <section>{slotTitle}{children}</section>
+}
+`)
+	prog, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{{Path: "ui/frame.gsx", Source: source, Program: prog}})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.Frame><p>body</p><ui.Bare slot="Title" /></ui.Frame>
+}
+`)
+	out, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	want := `ui.Frame(ui.Bare(), gosx.El("p", gosx.Text("body")))`
+	if !strings.Contains(out, want) {
+		t.Fatalf("shared component slot payload did not stay caller-owned:\nwant %q\nin:\n%s", want, out)
+	}
+}
+
+func TestSharedProjectionRejectsChildrenForLeafComponent(t *testing.T) {
+	shared := CollectSharedComponents([]PackageFile{sharedTeamMarkPackageFile(t)})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.TeamMark Tone="home" Abbreviation="NE"><b>lost</b></ui.TeamMark>
+}
+`)
+	_, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "renders no children") {
+		t.Fatalf("error = %v, want shared children rejection", err)
+	}
+}
+
+func TestSharedProjectionIgnoresWhitespaceOnlyLeafBody(t *testing.T) {
+	shared := CollectSharedComponents([]PackageFile{sharedTeamMarkPackageFile(t)})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.TeamMark Tone="home" Abbreviation="NE">` + "\n\t\t\n" + `</ui.TeamMark>
+}
+`)
+	if _, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	}); err != nil {
+		t.Fatalf("Transpile rejected whitespace-only shared leaf body: %v", err)
+	}
+
+	routerRoot := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(routerRoot, "ui", "team_mark.gsx"), sharedTeamMarkSource)
+	mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(caller))
+	node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
+	if err == nil {
+		t.Fatalf("DefaultFileRenderer accepted whitespace-only shared leaf body as %q; update this test if route starts matching Transpile's ignored-whitespace projection rule", gosx.RenderHTML(node))
+	}
+	if !strings.Contains(err.Error(), "renders no children") {
+		t.Fatalf("DefaultFileRenderer error = %v, want current route shared-leaf whitespace rejection", err)
+	}
+}
+
+func TestSharedProjectionRejectsUnknownNamedSlot(t *testing.T) {
+	shared := CollectSharedComponents([]PackageFile{sharedTeamMarkPackageFile(t)})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.TeamMark Tone="home" Abbreviation="NE"><h1 slot="Title">lost</h1></ui.TeamMark>
+}
+`)
+	_, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `declares no slot named "Title"`) {
+		t.Fatalf("error = %v, want shared unknown-slot rejection", err)
+	}
+}
+
+func TestSharedProjectionRejectsAttributesForProplessComponent(t *testing.T) {
+	source := []byte(`package ui
+
+component Badge() {
+	return <span>badge</span>
+}
+`)
+	prog, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{{Path: "ui/badge.gsx", Source: source, Program: prog}})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.Badge Label="lost" />
+}
+`)
+	_, err = Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "declares no props") {
+		t.Fatalf("error = %v, want propless shared attribute rejection", err)
+	}
+}
+
+func TestSharedSiblingFilePropsShapeProjectsDeclaredFields(t *testing.T) {
+	typeSource := []byte(`package ui
+
+type CardProps struct {
+	Label string
+}
+`)
+	cardSource := []byte(`package ui
+
+component Card(props: CardProps) {
+	return <article>card</article>
+}
+`)
+	typeProg, err := gosx.Compile(typeSource)
+	if err != nil {
+		t.Fatalf("compile type source: %v", err)
+	}
+	cardProg, err := gosx.Compile(cardSource)
+	if err != nil {
+		t.Fatalf("compile card source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{
+		{Path: "ui/types.gsx", Source: typeSource, Program: typeProg},
+		{Path: "ui/card.gsx", Source: cardSource, Program: cardProg},
+	})
+	caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.Card label="Visible" />
+}
+`)
+	out, err := Transpile(caller, Options{
+		SourceFile: "page.gsx",
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `ui.Card(ui.CardProps{Label: "Visible"})`; !strings.Contains(out, want) {
+		t.Fatalf("sibling-file props shape was not used for shared projection; want %q in:\n%s", want, out)
+	}
+}
+
+func TestSameFileTypedSlotPropAtDirectRootRendersLikeFileRouter(t *testing.T) {
+	source := []byte(`package app
+
+type BadgeProps struct {
+	Slot string
+}
+
+component Badge(props: BadgeProps) {
+	return <span data-slot={props.Slot}>{props.Slot}</span>
+}
+
+component Page() {
+	return <Badge slot="direct" />
+}
+`)
+	generated, err := Transpile(source, Options{SourceFile: "app/page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `Badge(BadgeProps{Slot: "direct"})`; !strings.Contains(generated, want) {
+		t.Fatalf("direct slot prop was not projected as a typed prop; want %q in:\n%s", want, generated)
+	}
+	assertGeneratedAppAndFileRouterHTML(t, generated, source, `<span data-slot="direct">direct</span>`)
+}
+
+func TestSharedTypedSlotPropAtDirectRootRendersLikeFileRouter(t *testing.T) {
+	sharedSource := []byte(`package ui
+
+type BadgeProps struct {
+	Slot string
+}
+
+component Badge(props: BadgeProps) {
+	return <span data-slot={props.Slot}>{props.Slot}</span>
+}
+`)
+	callerSource := []byte(`package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Badge slot="direct" />
+}
+`)
+	sharedProg, err := gosx.Compile(sharedSource)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	sharedComponents := CollectSharedComponents([]PackageFile{{Path: "app/ui/badge.gsx", Source: sharedSource, Program: sharedProg}})
+	sharedGo, err := Transpile(sharedSource, Options{SourceFile: "app/ui/badge.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile shared: %v", err)
+	}
+	callerGo, err := Transpile(callerSource, Options{
+		SourceFile:       "app/page.gsx",
+		strictProjection: true,
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/render/app/ui", Components: sharedComponents},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile caller: %v", err)
+	}
+	if want := `ui.Badge(ui.BadgeProps{Slot: "direct"})`; !strings.Contains(callerGo, want) {
+		t.Fatalf("direct shared slot prop was not projected as a typed prop; want %q in:\n%s", want, callerGo)
+	}
+
+	module := newActualGoSXRenderModule(t)
+	mustWriteGoFile(t, filepath.Join(module, "app", "ui", "badge.go"), sharedGo)
+	mustWriteGoFile(t, filepath.Join(module, "app", "page.go"), callerGo)
+	runGeneratedRenderTest(t, module, `<span data-slot="direct">direct</span>`, sharedGo, callerGo)
+
+	routerRoot := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(routerRoot, "ui", "badge.gsx"), string(sharedSource))
+	mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(callerSource))
+	node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	if got, want := gosx.RenderHTML(node), `<span data-slot="direct">direct</span>`; got != want {
+		t.Fatalf("file-router html = %q, want %q", got, want)
+	}
+}
+
+func TestSharedGeneratedGoRendersLikeFileRouterForSlotsAndChildren(t *testing.T) {
+	sharedSource := []byte(`package ui
+
+type FrameProps struct {
+	ID string
+}
+
+component Badge() {
+	return <span class="badge">badge</span>
+}
+
+component Shell() {
+	return <div class="shell">{children}</div>
+}
+
+component Frame(props: FrameProps) {
+	return <section id={props.ID}><header>{slotTitle}</header><aside>{slotAside}</aside><footer>{slotFooter}</footer><main>{children}</main></section>
+}
+`)
+	callerSource := []byte(`package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame ID="home"><ui.Shell><p>body</p></ui.Shell><ui.Badge slot="Title" /><strong slot="Aside">aside</strong></ui.Frame>
+}
+`)
+	sharedFile := PackageFile{Path: "app/ui/frame.gsx", Source: sharedSource}
+	callerFile := PackageFile{Path: "app/page.gsx", Source: callerSource}
+	sharedProg, err := gosx.Compile(sharedSource)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	callerProg, err := gosx.Compile(callerSource)
+	if err != nil {
+		t.Fatalf("compile caller source: %v", err)
+	}
+	sharedFile.Program = sharedProg
+	callerFile.Program = callerProg
+	sharedComponents := CollectSharedComponents([]PackageFile{sharedFile})
+
+	sharedGo, err := Transpile(sharedSource, Options{SourceFile: sharedFile.Path})
+	if err != nil {
+		t.Fatalf("Transpile shared: %v", err)
+	}
+	callerGo, err := Transpile(callerSource, Options{
+		SourceFile:       callerFile.Path,
+		strictProjection: true,
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/render/app/ui", Components: sharedComponents},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile caller: %v", err)
+	}
+	if strings.Contains(callerGo, `Attr("slot"`) {
+		t.Fatalf("slot routing attribute leaked into generated component call:\n%s", callerGo)
+	}
+
+	module := newActualGoSXRenderModule(t)
+	mustWriteGoFile(t, filepath.Join(module, "app", "ui", "frame.go"), sharedGo)
+	mustWriteGoFile(t, filepath.Join(module, "app", "page.go"), callerGo)
+	mustWriteGoFile(t, filepath.Join(module, "app", "page_render_test.go"), "package app_test\n\nimport (\n\t\"testing\"\n\n\t\"example.test/render/app\"\n\t\"m31labs.dev/gosx\"\n)\n\nfunc TestGeneratedPageRender(t *testing.T) {\n\tgot := gosx.RenderHTML(app.Page())\n\twant := `<section id=\"home\"><header><span class=\"badge\">badge</span></header><aside><strong>aside</strong></aside><footer></footer><main><div class=\"shell\"><p>body</p></div></main></section>`\n\tif got != want {\n\t\tt.Fatalf(\"generated html = %q, want %q\", got, want)\n\t}\n}\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "test", "./app", "-count=1")
+	cmd.Dir = module
+	cmd.Env = append(os.Environ(), "GOFLAGS=-buildvcs=false -mod=mod", "GOWORK=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated render go test failed: %v\n%s\n--- ui/frame.go ---\n%s\n--- app/page.go ---\n%s", err, out, sharedGo, callerGo)
+	}
+
+	routerRoot := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(routerRoot, "ui", "frame.gsx"), string(sharedSource))
+	mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(callerSource))
+	node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	want := `<section id="home"><header><span class="badge">badge</span></header><aside><strong>aside</strong></aside><footer></footer><main><div class="shell"><p>body</p></div></main></section>`
+	if got := gosx.RenderHTML(node); got != want {
+		t.Fatalf("file-router html = %q, want %q", got, want)
 	}
 }
 
@@ -463,6 +1047,51 @@ func Map[T any](items []T, fn func(T, int) Node) Node { return Node{} }
 	mustWriteGoFile(t, filepath.Join(dir, "go.mod"),
 		"module example.test/app\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => "+filepath.ToSlash(stub)+"\n")
 	return dir
+}
+
+func newActualGoSXRenderModule(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteGoFile(t, filepath.Join(dir, "go.mod"),
+		"module example.test/render\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => "+filepath.ToSlash(root)+"\n")
+	if sum, err := os.ReadFile(filepath.Join(root, "go.sum")); err == nil {
+		mustWriteGoFile(t, filepath.Join(dir, "go.sum"), string(sum))
+	}
+	return dir
+}
+
+func assertGeneratedAppAndFileRouterHTML(t *testing.T, generated string, source []byte, want string) {
+	t.Helper()
+	module := newActualGoSXRenderModule(t)
+	mustWriteGoFile(t, filepath.Join(module, "app", "page.go"), generated)
+	runGeneratedRenderTest(t, module, want, "", generated)
+
+	routerRoot := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(source))
+	node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	if got := gosx.RenderHTML(node); got != want {
+		t.Fatalf("file-router html = %q, want %q", got, want)
+	}
+}
+
+func runGeneratedRenderTest(t *testing.T, module, want, sharedGo, callerGo string) {
+	t.Helper()
+	mustWriteGoFile(t, filepath.Join(module, "app", "page_render_test.go"), "package app_test\n\nimport (\n\t\"testing\"\n\n\t\"example.test/render/app\"\n\t\"m31labs.dev/gosx\"\n)\n\nfunc TestGeneratedPageRender(t *testing.T) {\n\tgot := gosx.RenderHTML(app.Page())\n\twant := `"+want+"`\n\tif got != want {\n\t\tt.Fatalf(\"generated html = %q, want %q\", got, want)\n\t}\n}\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "test", "./app", "-count=1")
+	cmd.Dir = module
+	cmd.Env = append(os.Environ(), "GOFLAGS=-buildvcs=false -mod=mod", "GOWORK=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated render go test failed: %v\n%s\n--- shared.go ---\n%s\n--- app/page.go ---\n%s", err, out, sharedGo, callerGo)
+	}
 }
 
 func mustWriteGoFile(t *testing.T, path, contents string) {

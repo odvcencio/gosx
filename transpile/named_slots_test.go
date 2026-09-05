@@ -37,7 +37,7 @@ component Page() {
 		// The slot-tagged child's own projection must be the FIRST argument
 		// (slotTitle's position), even though it is the SECOND child in
 		// source order.
-		`Layout(gosx.El("div", gosx.Attrs(gosx.Attr("slot", "Title")), gosx.Text("Standings")), gosx.El("p", gosx.Text("content")))`,
+		`Layout(gosx.El("div", gosx.Text("Standings")), gosx.El("p", gosx.Text("content")))`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
@@ -75,7 +75,7 @@ component Page() {
 	}
 	for _, want := range []string{
 		`func Layout(props LayoutProps, slotTitle gosx.Node, children ...gosx.Node) gosx.Node`,
-		`Layout(LayoutProps{ID: "x"}, gosx.El("div", gosx.Attrs(gosx.Attr("slot", "Title")), gosx.Text("Standings")), gosx.El("p", gosx.Text("content")))`,
+		`Layout(LayoutProps{ID: "x"}, gosx.El("div", gosx.Text("Standings")), gosx.El("p", gosx.Text("content")))`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
@@ -83,13 +83,13 @@ component Page() {
 	}
 }
 
-// TestTranspileComponentCallFillsUnsuppliedSlotWithZeroNode proves the
+// TestTranspileComponentCallFillsUnsuppliedSlotWithEmptyNode proves the
 // "declared but not supplied" half at the transpile level: a call that
-// supplies no slot at all still produces a call with a zero gosx.Node{}
-// in the slot's parameter position, so the projection keeps compiling —
+// supplies no slot at all still produces an empty gosx.Node value in the
+// slot's parameter position, so the projection keeps compiling —
 // the render-time equivalent of an unresolved {slotTitle} rendering
 // empty (route/fileprogram.go).
-func TestTranspileComponentCallFillsUnsuppliedSlotWithZeroNode(t *testing.T) {
+func TestTranspileComponentCallFillsUnsuppliedSlotWithEmptyNode(t *testing.T) {
 	source := []byte(`package app
 
 component Layout() {
@@ -104,7 +104,7 @@ component Page() {
 	if err != nil {
 		t.Fatalf("Transpile: %v", err)
 	}
-	want := `Layout(gosx.Node{}, gosx.El("p", gosx.Text("content")))`
+	want := `Layout(gosx.Fragment(), gosx.El("p", gosx.Text("content")))`
 	if !strings.Contains(out, want) {
 		t.Fatalf("missing %q in:\n%s", want, out)
 	}
