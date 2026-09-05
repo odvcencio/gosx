@@ -2092,6 +2092,10 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		l.validateStrictConditionalCall(n, attrs)
 		return
 	}
+	if l.strictServer && l.isStrictBuiltinLink(tag) {
+		l.validateStrictLinkCall(n, attrs)
+		return
+	}
 	if l.strictServer && tag == "Each" && !strictCallee {
 		// Shape, binding, and type rules for a strict <Each> run in the
 		// second validation pass (validateStrictServerExpressions), which
@@ -3033,6 +3037,9 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 			return
 		}
 		for _, attr := range node.Attrs {
+			if node.Kind == NodeComponent && l.isStrictBuiltinLink(node.Tag) {
+				l.validateStrictLinkAttrType(node.Span, attr, propsType, scope)
+			}
 			if isBuiltinIf && attr.Name == "cond" && attr.Kind == AttrExpr {
 				l.validateStrictConditionalExpression(node.Span, attr.Expr, componentName, propsType, scope)
 				continue
@@ -3059,6 +3066,16 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 		}
 		for _, child := range node.Children {
 			visit(child, scope)
+		}
+		// Slots are child subtrees too: validate their reads under the caller's
+		// lexical scope, deterministically, instead of skipping their expressions.
+		names := make([]string, 0, len(node.Slots))
+		for name := range node.Slots {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			visit(node.Slots[name], scope)
 		}
 	}
 	visit(root, nil)

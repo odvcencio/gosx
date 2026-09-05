@@ -64,7 +64,8 @@ func Transpile(source []byte, opts Options) (string, error) {
 	// Transpilation must apply the same semantic gate as the IR renderer. In
 	// particular, strict components may not contain Go statements that would
 	// survive in generated Go but be ignored by file-routed IR rendering.
-	if _, err := gosx.Compile(source); err != nil {
+	program, err := gosx.Compile(source)
+	if err != nil {
 		return "", err
 	}
 
@@ -78,6 +79,10 @@ func Transpile(source []byte, opts Options) (string, error) {
 		sharedImports:    opts.SharedImports,
 	}
 
+	t.serverComponents = make(map[string]bool)
+	for _, comp := range program.Components {
+		t.serverComponents[comp.Name] = !comp.IsIsland && !comp.IsEngine
+	}
 	result := t.emit(root)
 	if len(t.errs) > 0 {
 		return "", fmt.Errorf("transpile errors:\n%s", strings.Join(t.errs, "\n"))
@@ -147,6 +152,8 @@ type transpiler struct {
 	errs             []string
 	hasStrict        bool
 	strict           int
+	strictServer     bool
+	serverComponents map[string]bool
 	gosxAlias        string
 	injectGosx       bool
 	strictProjection bool
@@ -856,10 +863,13 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 	params += strictcomponent.ChildrenBinding + " ..." + t.gosxRef("Node")
 
 	prevPropsType := t.currentPropsType
+	prevServer := t.strictServer
+	t.strictServer = t.serverComponents[t.text(nameNode)]
 	t.currentPropsType = t.propsTypes[t.text(nameNode)]
 	t.strict++
 	body := t.emitDefault(bodyNode)
 	t.strict--
+	t.strictServer = prevServer
 	t.currentPropsType = prevPropsType
 	return "func " + t.text(nameNode) + "(" + params + ") " + t.gosxRef("Node") + " " + body
 }
@@ -1000,6 +1010,9 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		if cond, ok := t.strictConditionalCondExpr(openNode); ok {
 			return t.emitStrictConditional(cond, children)
 		}
+	}
+	if t.isStrictManagedLinkTag(tag) {
+		return t.emitStrictManagedLink(openNode, children)
 	}
 
 	if verbatim, ok := t.strictSpreadCallVerbatim(tag, openNode); ok {
@@ -1330,6 +1343,9 @@ func rawTextBody(raw string) string {
 
 func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	tag := t.extractTagName(n)
+	if t.isStrictManagedLinkTag(tag) {
+		return t.emitStrictManagedLink(n, nil)
+	}
 
 	if t.isStrictEachTag(tag) {
 		return t.emitStrictEach(n, nil)
