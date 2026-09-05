@@ -1623,6 +1623,8 @@
     }
     var size = 1.25;
     var drag = null;
+    var disposed = false;
+    var finishing = false;
 
     function pointerRay(event) {
       var bundle = typeof readSceneBundle === "function" ? readSceneBundle() : null;
@@ -1643,7 +1645,7 @@
     }
 
     function onPointerDown(event) {
-      if (event.button !== 0 || drag) return;
+      if (disposed || finishing || event.button !== 0 || drag) return;
       var context = readGizmoContext();
       if (!context || !context.targetID || !context.mode || !context.anchor) return;
       var ray = pointerRay(event);
@@ -1693,7 +1695,7 @@
       }
       document.addEventListener("pointermove", onPointerMove);
       document.addEventListener("pointerup", onPointerUp);
-      document.addEventListener("pointercancel", onPointerUp);
+      document.addEventListener("pointercancel", onPointerCancel);
       if (typeof emitGizmo === "function") emitGizmo(payloadFor("start"));
     }
 
@@ -1724,32 +1726,62 @@
 
     function onPointerMove(event) {
       if (!drag || (drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      if (!validateDrag()) return;
       if (applyPointer(event) && typeof emitGizmo === "function") emitGizmo(payloadFor("move"));
     }
 
     function onPointerUp(event) {
       if (!drag || (drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      if (!validateDrag()) return;
       applyPointer(event);
-      var payload = payloadFor("end");
+      finishDrag("end");
+    }
+
+    function onPointerCancel(event) {
+      if (!drag || (drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      finishDrag("cancel");
+    }
+
+    function validateDrag() {
+      if (!drag) return false;
+      var context = readGizmoContext();
+      if (!context || context.valid === false || context.targetID !== drag.target || context.mode !== drag.mode) {
+        finishDrag("cancel");
+        return false;
+      }
+      return true;
+    }
+
+    function finishDrag(phase) {
+      if (!drag) return;
+      var payload = payloadFor(phase);
       var pointerId = drag.pointerId;
       drag = null;
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-      document.removeEventListener("pointercancel", onPointerUp);
-      if (typeof canvas.releasePointerCapture === "function" && pointerId != null) {
-        try { canvas.releasePointerCapture(pointerId); } catch (_) {}
+      finishing = true;
+      try {
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        document.removeEventListener("pointercancel", onPointerCancel);
+        if (typeof canvas.releasePointerCapture === "function" && pointerId != null) {
+          try { canvas.releasePointerCapture(pointerId); } catch (_) {}
+        }
+        if (typeof emitGizmo === "function") emitGizmo(payload);
+      } finally {
+        finishing = false;
       }
-      if (typeof emitGizmo === "function") emitGizmo(payload);
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("lostpointercapture", onPointerCancel);
     return {
+      validate: validateDrag,
+      cancel: function() { finishDrag("cancel"); },
       dispose: function() {
+        if (disposed) return;
+        disposed = true;
         canvas.removeEventListener("pointerdown", onPointerDown);
-        document.removeEventListener("pointermove", onPointerMove);
-        document.removeEventListener("pointerup", onPointerUp);
-        document.removeEventListener("pointercancel", onPointerUp);
-        drag = null;
+        canvas.removeEventListener("lostpointercapture", onPointerCancel);
+        finishDrag("cancel");
       },
     };
   }

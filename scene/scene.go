@@ -148,6 +148,9 @@ type Props struct {
 	// each drag phase ({target, mode, axis, phase, position, rotation, scale})
 	// into this shared signal, in addition to dispatching the
 	// "gosx:scene3d:input" mount event with kind "gizmo-commit".
+	// Only phase "end" requests persistence. "cancel" terminates an interrupted
+	// gesture without committing; translate previews roll back only while the
+	// mount still owns the last preview record. These client events are untrusted.
 	GizmoOutputSignal string       `json:"gizmoOutputSignal,omitempty"`
 	CapabilityTier    string       `json:"capabilityTier,omitempty"`
 	Compression       *Compression `json:"compression,omitempty"`

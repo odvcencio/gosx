@@ -1366,6 +1366,7 @@
 	    let sceneControlHandle = null;
 	    let dragHandle = null;
 	    let gizmoDragHandle = null;
+	    let gizmoPreview = null;
 	    let pickHandle = null;
 	    let latestScenePickDetail = null;
 
@@ -2141,13 +2142,22 @@
 	        }
 	        if (!target) return null;
 	        const anchor = sceneGizmoTargetAnchor(target);
-	        return { targetID: lastAppliedSelectionID, mode: lastAppliedGizmoMode, anchor: anchor };
+	        return { targetID: lastAppliedSelectionID, mode: lastAppliedGizmoMode, anchor: anchor, valid: !gizmoPreview || target === gizmoPreview.expected };
 	      }, function(payload) {
-	        if (payload && payload.phase !== "start" && payload.mode === "translate" && payload.position) {
-	          applySceneObjectPatch(sceneState, payload.target, { x: payload.position.x, y: payload.position.y, z: payload.position.z });
-	          syncMountedSceneGizmoHelpers();
-	          scheduleRender("gizmo-drag");
+	        const target = payload && sceneState.objects.get(sceneObjectKey(payload.target));
+	        if (payload && payload.phase === "start" && target) {
+	          gizmoPreview = { expected: target, original: { x: target.x, y: target.y, z: target.z } };
 	        }
+	        if (payload && payload.mode === "translate" && gizmoPreview && target === gizmoPreview.expected) {
+	          const position = payload.phase === "cancel" ? gizmoPreview.original : payload.position;
+	          if (position) {
+	            applySceneObjectPatch(sceneState, payload.target, { x: position.x, y: position.y, z: position.z });
+	            gizmoPreview.expected = sceneState.objects.get(sceneObjectKey(payload.target));
+	            scheduleRender("gizmo-drag");
+	          }
+	        }
+	        if (payload && (payload.phase === "end" || payload.phase === "cancel")) gizmoPreview = null;
+	        syncMountedSceneGizmoHelpers();
 	        if (typeof props.gizmoOutputSignal === "string" && props.gizmoOutputSignal) {
 	          queueInputSignal(props.gizmoOutputSignal, payload);
 	        }
@@ -2236,6 +2246,7 @@
     // for any plain Mesh.GizmoRing=true object that doesn't opt into the
     // full gizmoHelper group.
     function syncMountedSceneGizmoHelpers() {
+      if (gizmoDragHandle && typeof gizmoDragHandle.validate === "function") gizmoDragHandle.validate();
       const objects = sceneStateObjects(sceneState);
       const mode = lastAppliedGizmoMode || "translate";
       const selID = lastAppliedSelectionID || "";
@@ -2272,6 +2283,7 @@
     function applyMountedSceneSelection(selectedID) {
       const id = typeof selectedID === "string" ? selectedID : "";
       if (id === lastAppliedSelectionID) return;
+      if (gizmoDragHandle && typeof gizmoDragHandle.cancel === "function") gizmoDragHandle.cancel();
       applyingSignalSelection = true;
       const objects = sceneStateObjects(sceneState);
       for (let i = 0; i < objects.length; i++) {
@@ -3412,6 +3424,7 @@
       if (initialModelSignal) initialModelSignal.removeEventListener("abort", cancelInitialModelOwnership);
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
       disposed = true;
+      disposeSceneCanvasInteractionHandles();
       if (sceneAnimationToggle) {
         if (typeof sceneAnimationToggle.removeEventListener === "function") {
           sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
@@ -3470,9 +3483,6 @@
       releaseManagedControlForms();
       releaseTextLayoutListener();
       releaseSceneDebugSurface();
-      dragHandle.dispose();
-      pickHandle.dispose();
-      sceneControlHandle.dispose();
       renderer.dispose();
       disposeSceneHTMLTextureState(htmlTextureState);
       if (typeof releaseTextureLoadListener === "function") releaseTextureLoadListener();
