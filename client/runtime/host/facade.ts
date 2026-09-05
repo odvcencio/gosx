@@ -309,6 +309,26 @@
     return String(root && root.getAttribute && root.getAttribute("data-gosx-runtime-surface") || "").trim();
   }
 
+  function surfaceVersion(root) {
+    return String(root && root.getAttribute && root.getAttribute("data-gosx-runtime-surface-version") || "").trim();
+  }
+
+  function surfaceConnected(root) {
+    if (!root) return false;
+    if (typeof root.isConnected === "boolean") return root.isConnected;
+    const host = document.body || document.documentElement;
+    return !host || root === host || (typeof host.contains === "function" && host.contains(root));
+  }
+
+  function runSurfaceCallback(label, callback) {
+    try {
+      return typeof callback === "function" ? callback() : null;
+    } catch (error) {
+      console.error("[gosx] runtime surface " + label + " failed:", error);
+      return null;
+    }
+  }
+
   function surfaceNodes(root) {
     const host = root || document.body || document.documentElement;
     if (!host) return [];
@@ -475,7 +495,7 @@
     return {
       name,
       root,
-      version: String(root && root.getAttribute && root.getAttribute("data-gosx-runtime-surface-version") || "").trim(),
+      version: surfaceVersion(root),
       window,
       document,
       namespace: window.__gosx || null,
@@ -540,20 +560,22 @@
         document.dispatchEvent(new CustomEvent(type, { detail }));
       },
       abort() {
-        if (domScope) domScope.dispose();
-        if (transportScope) transportScope.dispose();
-        if (schedulerScope) schedulerScope.dispose();
+        if (domScope) runSurfaceCallback("dom scope dispose", () => domScope.dispose());
+        if (transportScope) runSurfaceCallback("transport scope dispose", () => transportScope.dispose());
+        if (schedulerScope) runSurfaceCallback("scheduler scope dispose", () => schedulerScope.dispose());
         for (const record of Array.from(requestControllers.values())) {
-          if (record && record.controller && typeof record.controller.abort === "function") record.controller.abort();
-          if (record && typeof record.detach === "function") record.detach();
+          if (record && record.controller && typeof record.controller.abort === "function") {
+            runSurfaceCallback("request abort", () => record.controller.abort());
+          }
+          if (record && typeof record.detach === "function") runSurfaceCallback("request detach", record.detach);
         }
         requestControllers.clear();
         if (controller) {
-          controller.abort();
+          runSurfaceCallback("context abort", () => controller.abort());
           cleanups.clear();
           return;
         }
-        for (const cleanup of Array.from(cleanups)) cleanup();
+        for (const cleanup of Array.from(cleanups)) runSurfaceCallback("listener cleanup", cleanup);
       },
     };
   }
@@ -563,38 +585,185 @@
     return value && typeof value === "object" ? value : {};
   }
 
+  function runtimeSurfaceThen(value) {
+    if (!value || (typeof value !== "object" && typeof value !== "function")) return null;
+    const then = value.then;
+    return typeof then === "function" ? then : null;
+  }
+
+  function resolveRuntimeSurfaceThenable(value, then) {
+    return new Promise((resolve, reject) => {
+      try {
+        then.call(value, resolve, reject);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
   function emit(type, detail) {
     if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
     document.dispatchEvent(new CustomEvent(type, { detail }));
   }
 
-  function observe(level, message, fields) {
-    if (typeof window.__gosx_emit !== "function") return;
-    window.__gosx_emit(level, "runtime-surface", message, fields || {});
+  function emitSurfaceEvent(type, detail) {
+    runSurfaceCallback("lifecycle event", () => emit(type, detail));
   }
 
-  function mark(root, state, issue) {
-    if (!root || typeof root.setAttribute !== "function") return;
-    root.setAttribute("data-gosx-runtime-state", state);
-    if (issue) root.setAttribute("data-gosx-runtime-issue", issue);
-    else root.removeAttribute("data-gosx-runtime-issue");
+  function observe(level, message, fields) {
+    if (typeof window.__gosx_emit !== "function") return;
+    runSurfaceCallback("telemetry observer", () => window.__gosx_emit(level, "runtime-surface", message, fields || {}));
+  }
+
+  function surfaceRecordOwnsRoot(record) {
+    return !!(record && record.root && mounts.get(record.root) === record);
+  }
+
+  function surfaceRecordLive(record) {
+    return !!(record && record.status === "pending" && surfaceRecordOwnsRoot(record) && surfaceConnected(record.root) && surfaceRecordIdentityCurrent(record));
+  }
+
+  function surfaceRecordDisposing(record) {
+    return !!(record && record.status === "disposing" && surfaceRecordOwnsRoot(record));
+  }
+
+  function surfaceRecordFailing(record) {
+    return !!(record && record.status === "disposing" && surfaceRecordOwnsRoot(record) && surfaceConnected(record.root) && surfaceRecordIdentityCurrent(record));
+  }
+
+  function markRecord(record, state, issue, predicate) {
+    const root = record && record.root;
+    const stillValid = typeof predicate === "function" ? predicate : surfaceRecordOwnsRoot;
+    if (!root || typeof root.setAttribute !== "function" || !stillValid(record)) return false;
+    runSurfaceCallback("state mark", () => root.setAttribute("data-gosx-runtime-state", state));
+    if (!stillValid(record)) return false;
+    if (issue) {
+      runSurfaceCallback("issue mark", () => root.setAttribute("data-gosx-runtime-issue", issue));
+    } else if (typeof root.removeAttribute === "function") {
+      runSurfaceCallback("issue clear mark", () => root.removeAttribute("data-gosx-runtime-issue"));
+    }
+    return stillValid(record);
+  }
+
+  function clearSurfaceIssues(record) {
+    if (!window.__gosx || typeof window.__gosx.clearIssues !== "function") return;
+    runSurfaceCallback("issue clear observer", () => window.__gosx.clearIssues({ root: record.root }));
+  }
+
+  function reportSurfaceIssue(record, error) {
+    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+      runSurfaceCallback("issue observer", () => window.__gosx.reportIssue({
+        scope: "runtime-surface",
+        type: "mount",
+        component: record.name,
+        element: record.root,
+        error,
+        fallback: "server",
+      }));
+    } else {
+      console.error("[gosx] runtime surface mount failed:", record.name, error);
+    }
+  }
+
+  function reportMountFailure(root, record, error, handle) {
+    if (!surfaceRecordLive(record)) {
+      releaseUnpublishedRecord(root, record, handle);
+      return;
+    }
+    record.status = "disposing";
+    try {
+      disposeHandle(record, handle);
+      if (record.handle && record.handle !== handle) disposeHandle(record, record.handle);
+      record.handle = null;
+      if (surfaceRecordFailing(record) && markRecord(record, "error", "mount", surfaceRecordFailing)) {
+        if (surfaceRecordFailing(record)) reportSurfaceIssue(record, error);
+        if (surfaceRecordFailing(record)) observe("error", "runtime surface mount failed", { name: record.name, version: record.version || "" });
+      }
+      record.context.abort();
+    } finally {
+      record.status = "error";
+      if (surfaceRecordOwnsRoot(record)) mounts.delete(record.root);
+    }
+  }
+
+  function disposeHandle(record, handle) {
+    try {
+      if (handle && typeof handle.dispose === "function") handle.dispose();
+    } catch (error) {
+      console.error("[gosx] runtime surface dispose failed:", record.name, error);
+    }
+  }
+
+  function markRecordReady(root, record, handle) {
+    if (!surfaceRecordLive(record)) {
+      releaseUnpublishedRecord(root, record, handle);
+      return;
+    }
+    if (!markRecord(record, "ready", null, surfaceRecordLive)) {
+      releaseUnpublishedRecord(root, record, handle);
+      return;
+    }
+    if (!surfaceRecordLive(record)) {
+      releaseUnpublishedRecord(root, record, handle);
+      return;
+    }
+    record.handle = handle;
+    record.status = "ready";
+    record.mounted = true;
+    emitSurfaceEvent("gosx:runtime-surface:mount", { name: record.name, root, context: record.context, handle, version: record.version });
+    if (!surfaceRecordOwnsRoot(record) || record.status !== "ready" || !surfaceRecordIdentityCurrent(record)) return;
+    observe("info", "runtime surface mounted", { name: record.name, version: record.version || "" });
+  }
+
+  function surfaceRecordIdentityCurrent(record) {
+    if (!record || !record.root) return false;
+    return surfaceName(record.root) === record.name
+      && surfaceVersion(record.root) === record.version
+      && factories[record.name] === record.factory;
+  }
+
+  function releaseUnpublishedRecord(root, record, handle) {
+    if (!record) {
+      disposeHandle({ name: "unknown" }, handle);
+      return;
+    }
+    const ownsRoot = surfaceRecordOwnsRoot(record);
+    if (ownsRoot && record.status !== "disposing" && record.status !== "disposed") record.status = "disposing";
+    try {
+      disposeHandle(record, handle);
+      if (record.handle && record.handle !== handle) disposeHandle(record, record.handle);
+      record.handle = null;
+      if (ownsRoot) {
+        record.context.abort();
+        markRecord(record, "disposed", null, surfaceRecordDisposing);
+      }
+    } finally {
+      if (ownsRoot) {
+        record.status = "disposed";
+        if (surfaceRecordOwnsRoot(record)) mounts.delete(record.root);
+      }
+    }
   }
 
   function disposeRecord(root, record) {
     if (!record) return;
+    if (record.status === "disposed" || record.status === "disposing") return;
+    record.status = "disposing";
+    const emitUnmount = !!record.mounted;
     try {
-      if (record.handle && typeof record.handle.dispose === "function") record.handle.dispose();
-    } catch (error) {
-      console.error("[gosx] runtime surface dispose failed:", record.name, error);
+      disposeHandle(record, record.handle);
+      record.handle = null;
+      record.context.abort();
+      if (surfaceRecordDisposing(record)) clearSurfaceIssues(record);
+      if (surfaceRecordDisposing(record)) markRecord(record, "disposed", null, surfaceRecordDisposing);
+      if (emitUnmount) {
+        if (surfaceRecordDisposing(record)) emitSurfaceEvent("gosx:runtime-surface:unmount", { name: record.name, root });
+        if (surfaceRecordDisposing(record)) observe("info", "runtime surface unmounted", { name: record.name, version: record.version || "" });
+      }
+    } finally {
+      record.status = "disposed";
+      if (surfaceRecordOwnsRoot(record)) mounts.delete(record.root);
     }
-    record.context.abort();
-    mounts.delete(root);
-    if (window.__gosx && typeof window.__gosx.clearIssues === "function") {
-      window.__gosx.clearIssues({ root: root });
-    }
-    mark(root, "disposed");
-    emit("gosx:runtime-surface:unmount", { name: record.name, root });
-    observe("info", "runtime surface unmounted", { name: record.name, version: record.version || "" });
   }
 
   function disposeRuntimeSurfaces(root) {
@@ -611,38 +780,59 @@
     const factory = name ? factories[name] : null;
     if (!factory) return null;
 
+    const version = surfaceVersion(root);
     const current = mounts.get(root);
-    if (current && current.factory === factory) return current.handle;
-    if (current) disposeRecord(root, current);
+    if (current && current.status === "disposing") return null;
+    if (current && current.status === "pending") return current.handle;
+    if (current && current.status !== "disposed" && current.factory === factory && current.name === name && current.version === version) return current.handle;
+    if (current) {
+      disposeRecord(root, current);
+      const latestName = surfaceName(root);
+      const latestFactory = latestName ? factories[latestName] : null;
+      if (latestName !== name || latestFactory !== factory || surfaceVersion(root) !== version) {
+        return null;
+      }
+    }
 
     const context = surfaceContext(name, root);
-    if (window.__gosx && typeof window.__gosx.clearIssues === "function") {
-      window.__gosx.clearIssues({ root: root });
+    const record = { name, root, factory, context, handle: null, version: context.version, status: "pending", mounted: false };
+    mounts.set(root, record);
+    if (!markRecord(record, "pending", null, surfaceRecordLive)) {
+      releaseUnpublishedRecord(root, record, null);
+      return null;
     }
+    clearSurfaceIssues(record);
+    if (!surfaceRecordLive(record)) {
+      releaseUnpublishedRecord(root, record, null);
+      return null;
+    }
+    let value = null;
     try {
-      const handle = normalizeHandle(factory(context));
-      const record = { name, root, factory, context, handle, version: context.version };
-      mounts.set(root, record);
-      mark(root, "ready");
-      emit("gosx:runtime-surface:mount", { name, root, context, handle, version: context.version });
-      observe("info", "runtime surface mounted", { name, version: context.version || "" });
-      return handle;
-    } catch (error) {
-      mark(root, "error", "mount");
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "runtime-surface",
-          type: "mount",
-          component: name,
-          element: root,
-          error,
-          fallback: "server",
-        });
-      } else {
-        console.error("[gosx] runtime surface mount failed:", name, error);
+      value = factory(context);
+      let then;
+      try {
+        then = runtimeSurfaceThen(value);
+      } catch (error) {
+        reportMountFailure(root, record, error, normalizeHandle(value));
+        return null;
       }
-      observe("error", "runtime surface mount failed", { name, version: context.version || "" });
-      context.abort();
+      if (then) {
+        resolveRuntimeSurfaceThenable(value, then).then((resolved) => {
+          markRecordReady(root, record, normalizeHandle(resolved));
+        }, (error) => {
+          reportMountFailure(root, record, error, null);
+        });
+        return null;
+      }
+      if (!surfaceRecordLive(record)) {
+        releaseUnpublishedRecord(root, record, normalizeHandle(value));
+        return null;
+      }
+      const handle = normalizeHandle(value);
+      markRecordReady(root, record, handle);
+      return record.status === "ready" ? handle : null;
+    } catch (error) {
+      reportMountFailure(root, record, error, normalizeHandle(value));
       return null;
     }
   }
