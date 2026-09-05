@@ -37,5 +37,6 @@ const stylesheet = `
 .gosx-ui-tabs{display:flex;gap:.25rem;border-bottom:1px solid #e5e7eb}
 .gosx-ui-tab{appearance:none;border:0;border-bottom:2px solid transparent;background:transparent;color:#6b7280;font:inherit;font-weight:600;text-decoration:none;padding:.625rem .75rem;cursor:pointer}
 .gosx-ui-tab.is-active{border-bottom-color:#111827;color:#111827}
+@media (forced-colors:active){.gosx-ui-tab[aria-current=page]{text-decoration:underline}}
 .gosx-ui-table{width:100%;border-collapse:collapse;font-size:.95rem}.gosx-ui-table th,.gosx-ui-table td{border-bottom:1px solid #e5e7eb;text-align:left;padding:.75rem}.gosx-ui-table th{font-weight:700;color:#374151;background:#f9fafb}
 `

@@ -114,14 +114,14 @@ type CheckboxProps struct {
 	Disabled bool
 }
 
-// TabsProps configures Tabs.
+// TabsProps configures a static navigation/action strip, not an ARIA tab widget.
 type TabsProps struct {
 	BaseProps
 	Active string
 	Items  []TabItem
 }
 
-// TabItem is one tab trigger.
+// TabItem is one static link or action. ID is a selection key, not a DOM ID.
 type TabItem struct {
 	ID       string
 	Label    string
@@ -336,29 +336,55 @@ func Checkbox(props CheckboxProps) gosx.Node {
 	)
 }
 
-// Tabs renders a static tab list.
+// Tabs renders a static navigation/action strip using native controls.
+// It does not own panels, keyboard activation, or interactive tab state.
+// Active selects the first matching ID, without fallback if that item is not
+// an enabled link. Otherwise the first active enabled link is current.
 func Tabs(props TabsProps) gosx.Node {
+	current := -1
+	for i, item := range props.Items {
+		if props.Active != "" {
+			if item.ID != props.Active {
+				continue
+			}
+			if item.Href != "" && !item.Disabled {
+				current = i
+			}
+			break
+		}
+		if item.Active && item.Href != "" && !item.Disabled {
+			current = i
+			break
+		}
+	}
 	items := make([]gosx.Node, 0, len(props.Items))
-	for _, item := range props.Items {
+	for i, item := range props.Items {
 		active := item.Active || (props.Active != "" && props.Active == item.ID)
 		attrs := gosx.Attrs(
 			gosx.Attr("class", gosx.Classes("gosx-ui-tab", activeClass(active))),
-			gosx.Attr("role", "tab"),
-			gosx.Attr("aria-selected", fmt.Sprint(active)),
 		)
 		if item.Disabled {
-			attrs = append(attrs, gosx.Attr("aria-disabled", "true"), gosx.Attr("tabindex", "-1"))
+			attrs = append(attrs, gosx.Attr("aria-disabled", "true"))
 		}
 		if item.Href != "" {
+			if item.Disabled {
+				items = append(items, gosx.El("span", attrs, gosx.Text(item.Label)))
+				continue
+			}
+			if i == current {
+				attrs = append(attrs, gosx.Attr("aria-current", "page"))
+			}
 			attrs = append(attrs, gosx.Attr("href", item.Href))
 			items = append(items, gosx.El("a", attrs, gosx.Text(item.Label)))
 			continue
 		}
 		attrs = append(attrs, gosx.Attr("type", "button"))
+		if item.Disabled {
+			attrs = append(attrs, gosx.BoolAttr("disabled"))
+		}
 		items = append(items, gosx.El("button", attrs, gosx.Text(item.Label)))
 	}
 	attrs := baseAttrs(props.BaseProps, "gosx-ui-tabs")
-	attrs = append(attrs, gosx.Attr("role", "tablist"))
 	return gosx.El("div", nodeArgs(attrs, items...)...)
 }
 
@@ -463,7 +489,7 @@ func definitions() []components.Definition {
 		definition("Checkbox", meta("Checkbox control", "form"), func(props components.Props, children ...gosx.Node) gosx.Node {
 			return Checkbox(checkboxProps(props))
 		}),
-		definition("Tabs", meta("Static tab list", "navigation"), func(props components.Props, children ...gosx.Node) gosx.Node {
+		definition("Tabs", meta("Static navigation/action strip; not a panel-owning tab widget", "navigation"), func(props components.Props, children ...gosx.Node) gosx.Node {
 			return Tabs(tabsProps(props))
 		}),
 		definition("Table", meta("Data table", "data"), func(props components.Props, children ...gosx.Node) gosx.Node {

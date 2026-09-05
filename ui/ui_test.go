@@ -63,7 +63,7 @@ func TestFieldInputWiresAccessibleDescriptions(t *testing.T) {
 	}
 }
 
-func TestTabsExposeTabListSemantics(t *testing.T) {
+func TestTabsExposeStaticNativeSemantics(t *testing.T) {
 	node := Tabs(TabsProps{
 		Active: "settings",
 		Items: []TabItem{
@@ -74,14 +74,69 @@ func TestTabsExposeTabListSemantics(t *testing.T) {
 	})
 	html := gosx.RenderHTML(node)
 	for _, want := range []string{
-		`role="tablist"`,
 		`href="/overview">Overview</a>`,
-		`role="tab" aria-selected="true" type="button">Settings</button>`,
-		`aria-disabled="true" tabindex="-1"`,
+		`class="gosx-ui-tab is-active" type="button">Settings</button>`,
+		`aria-disabled="true" type="button" disabled`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("expected %q in %q", want, html)
 		}
+	}
+	for _, forbidden := range []string{`role="tab`, `aria-selected`, `aria-current`, `tabindex`} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("unexpected %s in %s", forbidden, html)
+		}
+	}
+}
+
+func TestTabsCurrentSelectionAndRegistryParity(t *testing.T) {
+	for _, tc := range []struct {
+		name, active string
+		items        []TabItem
+		current      string
+	}{
+		{"first-active", "", []TabItem{{ID: "a", Label: "A", Href: "/a", Active: true}, {ID: "b", Label: "B", Href: "/b", Active: true}}, "/a"},
+		{"explicit", "b", []TabItem{{ID: "a", Href: "/a", Active: true}, {ID: "b", Href: "/b"}}, "/b"},
+		{"missing-no-fallback", "missing", []TabItem{{ID: "a", Href: "/a", Active: true}}, ""},
+		{"disabled-no-fallback", "a", []TabItem{{ID: "a", Href: "/a", Disabled: true}, {ID: "a", Href: "/duplicate", Active: true}}, ""},
+		{"button-no-fallback", "a", []TabItem{{ID: "a"}, {ID: "a", Href: "/duplicate", Active: true}}, ""},
+		{"duplicate-first", "a", []TabItem{{ID: "a", Href: "/first"}, {ID: "a", Href: "/second"}}, "/first"},
+		{"implicit-skip-ineligible", "", []TabItem{{Active: true}, {Href: "/disabled", Active: true, Disabled: true}, {Href: "/ok", Active: true}}, "/ok"},
+		{"empty", "", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			props := TabsProps{Active: tc.active, Items: tc.items}
+			html := gosx.RenderHTML(Tabs(props))
+			count := strings.Count(html, `aria-current="page"`)
+			if tc.current == "" && count != 0 || tc.current != "" && (count != 1 || !strings.Contains(html, `aria-current="page" href="`+tc.current+`"`)) {
+				t.Fatalf("current %q: %s", tc.current, html)
+			}
+			node, ok := Registry().Render("Tabs", components.Props{"active": tc.active, "items": tc.items})
+			if !ok || gosx.RenderHTML(node) != html {
+				t.Fatal("registry differs")
+			}
+			for _, item := range tc.items {
+				if item.ID != "" && strings.Contains(html, ` id="`+item.ID+`"`) {
+					t.Fatal("logical ID leaked into DOM")
+				}
+			}
+		})
+	}
+}
+
+func TestTabsMapPropsEscapingAndDisabledLink(t *testing.T) {
+	node, ok := Registry().Render("Tabs", components.Props{"items": []map[string]any{{"id": "logical", "label": "<unsafe>", "href": "/a?x=1&y=2", "active": true}, {"label": "Disabled", "href": "/blocked", "disabled": true}}})
+	if !ok {
+		t.Fatal("registry missing")
+	}
+	html := gosx.RenderHTML(node)
+	for _, want := range []string{`href="/a?x=1&amp;y=2"`, `&lt;unsafe&gt;`, `<span class="gosx-ui-tab" aria-disabled="true">Disabled</span>`} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %s in %s", want, html)
+		}
+	}
+	if strings.Contains(html, "/blocked") {
+		t.Fatal("disabled target retained")
 	}
 }
 
