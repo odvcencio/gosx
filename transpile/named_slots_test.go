@@ -109,3 +109,80 @@ component Page() {
 		t.Fatalf("missing %q in:\n%s", want, out)
 	}
 }
+
+func TestTranspileExpressionWrappedSlotChildRoutesByName(t *testing.T) {
+	source := []byte(`package app
+
+component Layout() {
+	return <div>{slotTitle}{children}</div>
+}
+
+component Page() {
+	return <Layout>{<h1 slot="Title">Title</h1>}<p>body</p></Layout>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	want := `Layout(gosx.El("h1", gosx.Text("Title")), gosx.El("p", gosx.Text("body")))`
+	if !strings.Contains(out, want) {
+		t.Fatalf("expression-wrapped slot child was not routed by name; want %q in:\n%s", want, out)
+	}
+	if strings.Contains(out, `Attr("slot"`) {
+		t.Fatalf("slot routing attribute leaked into expression-wrapped generated Go:\n%s", out)
+	}
+}
+
+func TestTranspileIgnoresWhitespaceAndCommentOnlySameFileLeafBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"whitespace":  "\n\t\t\n",
+		"commentOnly": "\n\t\t// staging note\n\t\t\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := []byte(`package app
+
+component Badge() {
+	return <span>badge</span>
+}
+
+component Page() {
+	return <Badge>` + body + `</Badge>
+}
+`)
+			out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+			if err != nil {
+				t.Fatalf("Transpile: %v", err)
+			}
+			if want := `Badge()`; !strings.Contains(out, want) {
+				t.Fatalf("formatting-only leaf body projected unexpected children; want %q in:\n%s", want, out)
+			}
+		})
+	}
+}
+
+func TestTranspileRejectsEncodedWhitespaceAndEmptyFragmentSameFileLeafBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"nbsp":          "&nbsp;",
+		"encodedSpace":  "&#32;",
+		"encodedTab":    "&#9;",
+		"emptyFragment": "<></>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := []byte(`package app
+
+component Badge() {
+	return <span>badge</span>
+}
+
+component Page() {
+	return <Badge>` + body + `</Badge>
+}
+`)
+			_, err := Transpile(source, Options{SourceFile: "page.gsx"})
+			if err == nil || !strings.Contains(err.Error(), "renders no children") {
+				t.Fatalf("Transpile error = %v, want meaningful child rejection", err)
+			}
+		})
+	}
+}

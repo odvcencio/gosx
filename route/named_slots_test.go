@@ -269,6 +269,79 @@ component Page() {
 	}
 }
 
+func TestCallerSideExpressionWrappedSlotAttributeFillsANamedSlot(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div><h1>{slotTitle}</h1><aside>{slotAside}</aside><main>{children}</main></div>
+}
+component Page() {
+	return <Layout>{<div slot="Title">Standings</div>}<p>page content</p>{<strong slot="Aside">Links</strong>}</Layout>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := `<div><h1><div>Standings</div></h1><aside><strong>Links</strong></aside><main><p>page content</p></main></div>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+func TestSameFileLeafIgnoresWhitespaceAndCommentOnlyBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"whitespace":  "\n\t\t\n",
+		"commentOnly": "\n\t\t// staging note\n\t\t\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			prog, err := gosx.Compile([]byte(`package app
+component Badge() {
+	return <span>badge</span>
+}
+component Page() {
+	return <Badge>` + body + `</Badge>
+}
+`))
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+			if err != nil {
+				t.Fatalf("RenderProgramComponent: %v", err)
+			}
+			if want := `<span>badge</span>`; html != want {
+				t.Fatalf("html = %q, want %q", html, want)
+			}
+		})
+	}
+}
+
+func TestSameFileLeafRejectsEncodedWhitespaceAndEmptyFragmentBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"nbsp":          "&nbsp;",
+		"encodedSpace":  "&#32;",
+		"encodedTab":    "&#9;",
+		"emptyFragment": "<></>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := gosx.Compile([]byte(`package app
+component Badge() {
+	return <span>badge</span>
+}
+component Page() {
+	return <Badge>` + body + `</Badge>
+}
+`))
+			if err == nil || !strings.Contains(err.Error(), "renders no children") {
+				t.Fatalf("Compile error = %v, want meaningful child rejection", err)
+			}
+		})
+	}
+}
+
 // TestCallerSideSlotOrderIndependent proves the slot-tagged child binds by
 // NAME, not by its position among its siblings: placing it after an
 // ordinary child must produce the identical result placing it before one

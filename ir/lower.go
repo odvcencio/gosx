@@ -3644,6 +3644,9 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	if verbatim {
 		l.verbatimTextDepth--
 	}
+	if l.isStrictCompositionCallBoundary(tag) {
+		rawChildren = l.filterInsignificantCallBoundaryChildren(n, rawChildren)
+	}
 	children, slots := l.partitionCallSlots(IsComponent(tag), rawChildren)
 	l.validateStrictComponentCall(n, tag, attrs, children)
 	// Shared component calls are syntax-checked here, but target metadata is
@@ -4073,6 +4076,81 @@ func (l *lowerer) extractChildren(n *gotreesitter.Node) []NodeID {
 		}
 	}
 	return children
+}
+
+func (l *lowerer) filterInsignificantCallBoundaryChildren(n *gotreesitter.Node, children []NodeID) []NodeID {
+	if len(children) == 0 {
+		return children
+	}
+	insignificant := make(map[NodeID]struct{})
+	childIndex := 0
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		typ := l.nodeType(child)
+		if typ == "jsx_opening_element" || typ == "jsx_closing_element" {
+			continue
+		}
+		if typ != "jsx_element" && typ != "jsx_raw_text_element" &&
+			typ != "jsx_self_closing_element" &&
+			typ != "jsx_expression_container" && typ != "jsx_fragment" &&
+			typ != "jsx_text" {
+			continue
+		}
+		if childIndex >= len(children) {
+			break
+		}
+		childID := children[childIndex]
+		childIndex++
+		if l.isInsignificantCallBoundaryChild(child, childID) {
+			insignificant[childID] = struct{}{}
+		}
+	}
+	if len(insignificant) == 0 {
+		return children
+	}
+	filtered := children[:0]
+	for _, childID := range children {
+		if _, drop := insignificant[childID]; drop {
+			continue
+		}
+		filtered = append(filtered, childID)
+	}
+	return filtered
+}
+
+func (l *lowerer) isInsignificantCallBoundaryChild(child *gotreesitter.Node, childID NodeID) bool {
+	switch l.nodeType(child) {
+	case "jsx_text":
+		text := l.text(child)
+		if l.verbatimTextDepth == 0 {
+			text = stripCommentOnlyLines(text)
+		}
+		return strings.TrimSpace(text) == ""
+	case "jsx_expression_container":
+		if int(childID) >= len(l.prog.Nodes) {
+			return false
+		}
+		node := l.prog.NodeAt(childID)
+		return node.Kind == NodeText && node.Text == ""
+	default:
+		return false
+	}
+}
+
+func (l *lowerer) isStrictCompositionCallBoundary(tag string) bool {
+	if !IsComponent(tag) {
+		return false
+	}
+	if l.isSharedComponentTag(tag) {
+		return true
+	}
+	if _, ok := l.strictNames[tag]; ok {
+		return true
+	}
+	if _, ok := l.typedLegacyProps[tag]; ok {
+		return true
+	}
+	return false
 }
 
 // partitionCallSlots splits rawChildren — n's own already-lowered direct

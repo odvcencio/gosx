@@ -170,6 +170,99 @@ component Page() {
 	}
 }
 
+func TestCheckFileAcceptsSharedExpressionWrappedNamedSlots(t *testing.T) {
+	root := newTestModule(t)
+	mustWrite(t, filepath.Join(root, "app", "ui", "frame.gsx"), `package ui
+
+component Frame() {
+	return <section>{slotTitle}{slotAside}{children}</section>
+}
+`)
+	page := filepath.Join(root, "app", "page.gsx")
+	mustWrite(t, page, `package main
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame>{<h1 slot="Title">Title</h1>}<p>body</p>{<strong slot="Aside">aside</strong>}</ui.Frame>
+}
+`)
+	if err := CheckFile(context.Background(), page); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+func TestCheckFileAcceptsSameFileExpressionWrappedNamedSlots(t *testing.T) {
+	root := newTestModule(t)
+	page := filepath.Join(root, "app", "page.gsx")
+	mustWrite(t, page, `package main
+
+component Frame() {
+	return <section>{slotTitle}{slotAside}{children}</section>
+}
+
+component Page() {
+	return <Frame>{<h1 slot="Title">Title</h1>}<p>body</p>{<strong slot="Aside">aside</strong>}</Frame>
+}
+`)
+	if err := CheckFile(context.Background(), page); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+func TestCheckFileAcceptsSameFileWhitespaceAndCommentOnlyLeafBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"whitespace":  "\n\t\t\n",
+		"commentOnly": "\n\t\t// staging note\n\t\t\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newTestModule(t)
+			page := filepath.Join(root, "app", "page.gsx")
+			mustWrite(t, page, `package main
+
+component Badge() {
+	return <span>badge</span>
+}
+
+component Page() {
+	return <Badge>`+body+`</Badge>
+}
+`)
+			if err := CheckFile(context.Background(), page); err != nil {
+				t.Fatalf("CheckFile: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckFileRejectsEncodedWhitespaceAndEmptyFragmentSameFileLeafBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"nbsp":          "&nbsp;",
+		"encodedSpace":  "&#32;",
+		"encodedTab":    "&#9;",
+		"emptyFragment": "<></>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newTestModule(t)
+			page := filepath.Join(root, "app", "page.gsx")
+			mustWrite(t, page, `package main
+
+component Badge() {
+	return <span>badge</span>
+}
+
+component Page() {
+	return <Badge>`+body+`</Badge>
+}
+`)
+			err := CheckFile(context.Background(), page)
+			if err == nil || !strings.Contains(err.Error(), "renders no children") {
+				t.Fatalf("CheckFile error = %v, want meaningful child rejection", err)
+			}
+		})
+	}
+}
+
 func TestCheckFileRejectsSharedComponentChildrenWhenUnsupported(t *testing.T) {
 	root := newTestModule(t)
 	mustWrite(t, filepath.Join(root, "app", "ui", "team_mark.gsx"), `package ui

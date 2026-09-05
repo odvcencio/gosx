@@ -622,9 +622,16 @@ func Page() gosx.Node {
 	}
 }
 
-func TestSharedProjectionIgnoresWhitespaceOnlyLeafBody(t *testing.T) {
+func TestSharedProjectionRejectsEncodedWhitespaceAndEmptyFragmentLeafBody(t *testing.T) {
 	shared := CollectSharedComponents([]PackageFile{sharedTeamMarkPackageFile(t)})
-	caller := []byte(`package app
+	for name, body := range map[string]string{
+		"nbsp":          "&nbsp;",
+		"encodedSpace":  "&#32;",
+		"encodedTab":    "&#9;",
+		"emptyFragment": "<></>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			caller := []byte(`package app
 
 import (
 	"m31labs.dev/gosx"
@@ -632,27 +639,61 @@ import (
 )
 
 func Page() gosx.Node {
-	return <ui.TeamMark Tone="home" Abbreviation="NE">` + "\n\t\t\n" + `</ui.TeamMark>
+	return <ui.TeamMark Tone="home" Abbreviation="NE">` + body + `</ui.TeamMark>
 }
 `)
-	if _, err := Transpile(caller, Options{
-		SourceFile: "page.gsx",
-		SharedImports: map[string]SharedImport{
-			"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
-		},
-	}); err != nil {
-		t.Fatalf("Transpile rejected whitespace-only shared leaf body: %v", err)
+			_, err := Transpile(caller, Options{
+				SourceFile: "page.gsx",
+				SharedImports: map[string]SharedImport{
+					"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), "renders no children") {
+				t.Fatalf("Transpile error = %v, want meaningful child rejection", err)
+			}
+		})
 	}
+}
 
-	routerRoot := t.TempDir()
-	mustWriteGoFile(t, filepath.Join(routerRoot, "ui", "team_mark.gsx"), sharedTeamMarkSource)
-	mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(caller))
-	node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
-	if err == nil {
-		t.Fatalf("DefaultFileRenderer accepted whitespace-only shared leaf body as %q; update this test if route starts matching Transpile's ignored-whitespace projection rule", gosx.RenderHTML(node))
-	}
-	if !strings.Contains(err.Error(), "renders no children") {
-		t.Fatalf("DefaultFileRenderer error = %v, want current route shared-leaf whitespace rejection", err)
+func TestSharedProjectionIgnoresWhitespaceAndCommentOnlyLeafBody(t *testing.T) {
+	shared := CollectSharedComponents([]PackageFile{sharedTeamMarkPackageFile(t)})
+	for name, body := range map[string]string{
+		"whitespace":  "\n\t\t\n",
+		"commentOnly": "\n\t\t// staging note\n\t\t\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			caller := []byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page() gosx.Node {
+	return <ui.TeamMark Tone="home" Abbreviation="NE">` + body + `</ui.TeamMark>
+}
+`)
+			if _, err := Transpile(caller, Options{
+				SourceFile: "page.gsx",
+				SharedImports: map[string]SharedImport{
+					"./ui": {GoImportPath: "example.test/app/ui", Components: shared},
+				},
+			}); err != nil {
+				t.Fatalf("Transpile rejected formatting-only shared leaf body: %v", err)
+			}
+
+			routerRoot := t.TempDir()
+			mustWriteGoFile(t, filepath.Join(routerRoot, "ui", "team_mark.gsx"), sharedTeamMarkSource)
+			mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(caller))
+			node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
+			if err != nil {
+				t.Fatalf("DefaultFileRenderer rejected formatting-only shared leaf body after Transpile accepted it: %v", err)
+			}
+			want := `<span class="team-mark tone-home">NE</span>`
+			if got := gosx.RenderHTML(node); got != want {
+				t.Fatalf("file-router html = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -931,6 +972,91 @@ component Page() {
 	if got := gosx.RenderHTML(node); got != want {
 		t.Fatalf("file-router html = %q, want %q", got, want)
 	}
+}
+
+func TestSharedExpressionWrappedSlotChildRendersLikeFileRouter(t *testing.T) {
+	sharedSource := []byte(`package ui
+
+component Frame() {
+	return <section><header>{slotTitle}</header><aside>{slotAside}</aside><main>{children}</main></section>
+}
+`)
+	callerSource := []byte(`package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame>
+		{<h1 slot="Title">Title</h1>}
+		<p>body</p>
+		{<strong slot="Aside">aside</strong>}
+	</ui.Frame>
+}
+`)
+	sharedProg, err := gosx.Compile(sharedSource)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	sharedComponents := CollectSharedComponents([]PackageFile{{Path: "app/ui/frame.gsx", Source: sharedSource, Program: sharedProg}})
+	sharedGo, err := Transpile(sharedSource, Options{SourceFile: "app/ui/frame.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile shared: %v", err)
+	}
+	callerGo, err := Transpile(callerSource, Options{
+		SourceFile:       "app/page.gsx",
+		strictProjection: true,
+		SharedImports: map[string]SharedImport{
+			"./ui": {GoImportPath: "example.test/render/app/ui", Components: sharedComponents},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transpile caller: %v", err)
+	}
+	if strings.Contains(callerGo, `Attr("slot"`) {
+		t.Fatalf("slot routing attribute leaked into expression-wrapped shared generated Go:\n%s", callerGo)
+	}
+	want := `<section><header><h1>Title</h1></header><aside><strong>aside</strong></aside><main><p>body</p></main></section>`
+	module := newActualGoSXRenderModule(t)
+	mustWriteGoFile(t, filepath.Join(module, "app", "ui", "frame.go"), sharedGo)
+	mustWriteGoFile(t, filepath.Join(module, "app", "page.go"), callerGo)
+	runGeneratedRenderTest(t, module, want, sharedGo, callerGo)
+
+	routerRoot := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(routerRoot, "ui", "frame.gsx"), string(sharedSource))
+	mustWriteGoFile(t, filepath.Join(routerRoot, "page.gsx"), string(callerSource))
+	node, err := route.DefaultFileRenderer(nil, route.FilePage{FilePath: filepath.Join(routerRoot, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	if got := gosx.RenderHTML(node); got != want {
+		t.Fatalf("file-router html = %q, want %q", got, want)
+	}
+}
+
+func TestSameFileIndentedSlotAndBodyRendersLikeFileRouter(t *testing.T) {
+	source := []byte(`package app
+
+component Frame() {
+	return <section><header>{slotTitle}</header><aside>{slotAside}</aside><main>{children}</main></section>
+}
+
+component Page() {
+	return <Frame>
+		{<h1 slot="Title">Title</h1>}
+		<p>body</p>
+		{<strong slot="Aside">aside</strong>}
+	</Frame>
+}
+`)
+	generated, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if strings.Contains(generated, `Attr("slot"`) {
+		t.Fatalf("slot routing attribute leaked into generated Go:\n%s", generated)
+	}
+	want := `<section><header><h1>Title</h1></header><aside><strong>aside</strong></aside><main><p>body</p></main></section>`
+	assertGeneratedAppAndFileRouterHTML(t, generated, source, want)
 }
 
 // TestSharedCallResolvesLowerCamelAttribute proves CollectSharedComponents

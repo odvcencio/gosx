@@ -155,6 +155,98 @@ component Page() {
 	}
 }
 
+func TestDefaultFileRendererIgnoresWhitespaceAndCommentOnlySharedLeafBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"whitespace":  "\n\t\t\n",
+		"commentOnly": "\n\t\t// staging note\n\t\t\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRouteFile(t, root, "ui/badge.gsx", `package app
+
+component Badge() {
+	return <span>badge</span>
+}
+`)
+			writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Badge>`+body+`</ui.Badge>
+}
+`)
+
+			node, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+			if err != nil {
+				t.Fatalf("DefaultFileRenderer: %v", err)
+			}
+			if html, want := gosx.RenderHTML(node), `<span>badge</span>`; html != want {
+				t.Fatalf("html = %q, want %q", html, want)
+			}
+		})
+	}
+}
+
+func TestDefaultFileRendererRejectsEncodedWhitespaceAndEmptyFragmentSharedLeafBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"nbsp":          "&nbsp;",
+		"encodedSpace":  "&#32;",
+		"encodedTab":    "&#9;",
+		"emptyFragment": "<></>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRouteFile(t, root, "ui/badge.gsx", `package app
+
+component Badge() {
+	return <span>badge</span>
+}
+`)
+			writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Badge>`+body+`</ui.Badge>
+}
+`)
+
+			_, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+			if err == nil || !strings.Contains(err.Error(), "renders no children") {
+				t.Fatalf("DefaultFileRenderer error = %v, want meaningful shared child rejection", err)
+			}
+		})
+	}
+}
+
+func TestDefaultFileRendererRendersSharedExpressionWrappedSlotChildren(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "ui/frame.gsx", `package app
+
+component Frame() {
+	return <section><header>{slotTitle}</header><aside>{slotAside}</aside><main>{children}</main></section>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+import ui "./ui"
+
+component Page() {
+	return <ui.Frame>{<h1 slot="Title">Title</h1>}<p>body</p>{<strong slot="Aside">aside</strong>}</ui.Frame>
+}
+`)
+
+	node, err := DefaultFileRenderer(nil, FilePage{FilePath: filepath.Join(root, "page.gsx"), Pattern: "/"})
+	if err != nil {
+		t.Fatalf("DefaultFileRenderer: %v", err)
+	}
+	want := `<section><header><h1>Title</h1></header><aside><strong>aside</strong></aside><main><p>body</p></main></section>`
+	if got := gosx.RenderHTML(node); got != want {
+		t.Fatalf("html = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultFileRendererRejectsUnknownSharedComponentSlot(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "ui/frame.gsx", `package app

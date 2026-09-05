@@ -2150,11 +2150,17 @@ func (t *transpiler) emitChildrenAndSlots(n *gotreesitter.Node) (children []stri
 // except reading the generated source by hand.
 func (t *transpiler) staticSlotName(child *gotreesitter.Node) (name string, ok bool) {
 	var attrsHost *gotreesitter.Node
-	switch t.nodeType(child) {
+	candidate := child
+	if t.nodeType(candidate) == "jsx_expression_container" {
+		if expr := t.childByField(candidate, "expression"); expr != nil && (t.nodeType(expr) == "jsx_element" || t.nodeType(expr) == "jsx_self_closing_element") {
+			candidate = expr
+		}
+	}
+	switch t.nodeType(candidate) {
 	case "jsx_element":
-		attrsHost = t.childByField(child, "open")
+		attrsHost = t.childByField(candidate, "open")
 	case "jsx_self_closing_element":
-		attrsHost = child
+		attrsHost = candidate
 	default:
 		return "", false
 	}
