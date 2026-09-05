@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // This is a real WebGL2 depth-texture pixel oracle, not a full app/mount or
@@ -21,21 +23,18 @@ import (
 func TestScene3DCacheIdentityPixels(t *testing.T) {
 	chrome := e2eChromePath(t)
 	root := e2eRepoRoot(t)
-	source, err := os.ReadFile(filepath.Join(root, "client/runtime/scene3d/webgl.ts"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := scene3drenderersource.ReadBackend(t, "webgl")
 	slice := func(start, end string) string {
 		t.Helper()
-		first := strings.Index(string(source), start)
+		first := strings.Index(source, start)
 		if first < 0 {
 			t.Fatalf("missing source start %q", start)
 		}
-		last := strings.Index(string(source[first:]), end)
+		last := strings.Index(source[first:], end)
 		if last < 0 {
 			t.Fatalf("missing source end %q", end)
 		}
-		return string(source[first : first+last])
+		return source[first : first+last]
 	}
 	passSource := "var sceneAffineDeterminant = window.__gosx_scene3d_api.sceneAffineDeterminant;\n" +
 		"function sceneFiniteNumber(v, fallback) { return Number.isFinite(Number(v)) ? Number(v) : fallback; }\n" +
