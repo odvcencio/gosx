@@ -43,8 +43,8 @@ dashboards, and interactive scenes. Its supported boundary is:
 - Desktop orbit/fly/first-person controls, pointer lock, picking, object drag,
   and transform-gizmo commits are the v1 interaction boundary.
 - Supported browser post effects preserve declaration order. Native/headless
-  custom-post behavior remains blocked until S5 provides backend-specific
-  degradation and telemetry evidence; it is not claimed as browser parity.
+  preview custom-post degradation is locally enforced through identity-copy and
+  caller-visible telemetry tests below; it is not claimed as browser parity.
 - Hub updates either emit complete commands or reject a remount-required diff
   atomically. Generic hydration must not discard Scene3D command output.
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
@@ -74,6 +74,22 @@ adding `data:` to an application's image CSP. The typed textured-GLB software
 WebGL test is bounded evidence only: the corpus row below remains blocked until
 its WebGPU and CI ownership obligations are satisfied.
 
+### Native custom-post degradation
+
+Headless previews preserve the scene when a `CustomPost` cannot run: a supplied
+WGSL custom pass copies its input, while a pass without WGSL is skipped. Typed,
+SceneIR and JSON preview results report `scene.preview.unsupported_custom-post`
+with backend `headless` and a converted post-effect index/name target. Custom
+shader, uniform, depth/DOM and stage behavior is not claimed to execute.
+Explicit `DisablePostFX` does not produce a false unsupported-execution warning.
+
+The warning survives harness telemetry and poster serialization. Default poster
+fidelity rejects the omitted authored effect; explicit `AllowDroppedRecords`
+permits output without hiding its diagnostic. Real rendered identity and
+supported-neighbor order tests belong to the existing Go CI lane. This contract
+does not add diagnostics to arbitrary real-device `bundle.Renderer.Stats`, nor
+does local verification establish hosted CI or release-hardware completion.
+
 | Corpus ID | Current state | Closure needed |
 | --- | --- | --- |
 | `gltf-single-buffer-textured` | blocked | Typed Go software-WebGL2 textured GLB pixels have local coverage; require WebGPU textured-pixel proof and explicit CI ownership before certification. |
@@ -88,7 +104,7 @@ its WebGPU and CI ownership obligations are satisfied.
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |
 | `desktop-gizmo-commit` | blocked | Add one end-to-end fly/pointer-lock/object-drag/gizmo commit proof. |
 | `ordered-post-custom-uniforms` | blocked | Add one cross-backend order/uniform-patch proof before certifying this row. |
-| `native-preview-degradation` | blocked | S5 must add backend-specific `CustomPost` degradation and telemetry evidence before this can be certified. |
+| `native-preview-degradation` | enforced | Headless custom-post identity/skipping is explicit in typed/IR/JSON results, harness telemetry and poster gating; real pixels and supported-neighbor order have named Go CI ownership. |
 | `hub-command-diff` | enforced | Diffable fields produce a lossless command stream. |
 | `hub-remount-atomic-reject` | enforced | Remount fields reject before mutation or watcher notification. |
 | `scene-p95-budget-route` | blocked | Add a dedicated corpus route and measured p95/p99 evidence. |

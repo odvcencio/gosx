@@ -150,7 +150,7 @@ func RenderJSON(data []byte, opts Options) (*Result, error) {
 	frame := BundleIR(ir, opts)
 	for _, raw := range doc.PostEffects {
 		if effect, ok := renderPostEffectJSON(raw); ok {
-			frame.PostEffects = append(frame.PostEffects, effect)
+			appendPreviewPostEffect(&frame, effect, opts)
 		}
 	}
 	return renderBundle(frame, opts)
@@ -356,7 +356,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	}
 	for _, effect := range ir.PostEffects {
 		if converted, ok := renderPostEffect(effect); ok {
-			frame.PostEffects = append(frame.PostEffects, converted)
+			appendPreviewPostEffect(&frame, converted, opts)
 		}
 	}
 	for _, model := range ir.Models {
@@ -652,6 +652,27 @@ func parseColor(value string) (float64, float64, float64, float64) {
 		a = parse(s[6:8])
 	}
 	return parse(s[0:2]), parse(s[2:4]), parse(s[4:6]), a
+}
+
+// appendPreviewPostEffect reports only the headless preview's degradation.
+// It makes no claim about a real-device bundle renderer executing the same IR.
+func appendPreviewPostEffect(frame *engine.RenderBundle, effect engine.RenderPostEffect, opts Options) {
+	index := len(frame.PostEffects)
+	frame.PostEffects = append(frame.PostEffects, effect)
+	if opts.DisablePostFX || !strings.EqualFold(strings.TrimSpace(effect.Kind), "customPost") {
+		return
+	}
+	// The index distinguishes repeated named and unnamed declarations without
+	// exposing shader source or uniform values in diagnostics.
+	target := "postEffects[" + strconv.Itoa(index) + "]"
+	if name := strings.TrimSpace(effect.Name); name != "" {
+		target += ":" + name
+	}
+	message := "headless preview preserves the scene through an identity copy but does not execute this custom post shader; custom uniforms, depth/DOM inputs and stage semantics are not applied"
+	if strings.TrimSpace(effect.FragmentWGSL) == "" {
+		message = "headless preview skips this custom post because no WGSL fragment is supplied; the scene is preserved but the authored custom effect is not applied"
+	}
+	frame.Diagnostics = append(frame.Diagnostics, unsupported("custom-post", target, message))
 }
 
 func renderPostEffect(effect scene.PostEffectIR) (engine.RenderPostEffect, bool) {

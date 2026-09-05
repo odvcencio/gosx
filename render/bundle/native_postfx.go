@@ -398,13 +398,11 @@ func (r *Renderer) buildColorGradePipeline() error {
 //
 // Headless behavior: the headless device accepts all CreateRenderPipeline /
 // CreateShaderModule calls but the subsequent Draw call in recordNativePostFXPasses
-// falls through isFullscreenCopyPass → identity copy, so custom passes behave
-// as passthrough on headless. This keeps headless captures stable and
-// meaningful without requiring the native renderer to implement Selena's post
-// contract. The label "bundle.postfx.custom:<name>" is intentionally NOT in
-// isFullscreenCopyPass, so headless skips the draw (no-op rather than copy),
-// which is the right behavior — the custom effect should be invisible in
-// headless captures just like it is a transparent pass.
+// falls through isFullscreenCopyPass → identity copy. The
+// "bundle.postfx.custom:<name>" label matches that copy prefix, so the source
+// survives each cleared ping-pong destination. A skipped draw would not be an
+// identity operation. The preview reports this unsupported effect explicitly;
+// headless does not interpret its shader, uniforms or browser post contract.
 func (r *Renderer) ensureCustomPostPipeline(effect nativePostFXEffect) *nativeCustomPostResources {
 	if r.customPostCache == nil {
 		r.customPostCache = make(map[string]*nativeCustomPostResources)
@@ -765,10 +763,10 @@ func (r *Renderer) recordNativePostFXPasses(enc gpu.CommandEncoder, effects []na
 		case nativePostFXCustom:
 			// Custom post pass compiled from Selena-emitted WGSL.
 			// Headless behavior: ensureCustomPostPipeline's pipeline label is
-			// "bundle.postfx.custom:<name>", which is NOT in isFullscreenCopyPass,
-			// so headless Draw() is a no-op (identity passthrough). This keeps
-			// headless captures stable — the custom effect is invisible on headless,
-			// which is correct: native doesn't implement the full Selena post contract.
+			// "bundle.postfx.custom:<name>", which matches isFullscreenCopyPass.
+			// Headless copies the current source into this pass's destination;
+			// it does not execute the custom shader. Preview diagnostics report
+			// that degradation without claiming full native Selena post support.
 			customRes := r.ensureCustomPostPipeline(effect)
 			if customRes == nil {
 				// Shader/pipeline failed; skip this pass (identity for this slot).
@@ -778,7 +776,7 @@ func (r *Renderer) recordNativePostFXPasses(enc gpu.CommandEncoder, effects []na
 			pipeline = customRes.pipeline
 			// Custom passes use a simple 2-binding BG: sceneColor + sampler.
 			// Depth and user-uniforms are not bound on the native path — the
-			// headless draw is a no-op anyway; live rendering is browser-only.
+			// headless draw only copies the source; full post execution is browser-only.
 			customBG, bgErr := r.device.CreateBindGroup(gpu.BindGroupDesc{
 				Layout: customRes.bgLayout,
 				Entries: []gpu.BindGroupEntry{
