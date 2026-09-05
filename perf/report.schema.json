@@ -11,7 +11,8 @@
       "type": "array",
       "items": { "$ref": "#/$defs/page" }
     },
-    "scene": { "$ref": "#/$defs/scene" }
+    "scene": { "$ref": "#/$defs/scene" },
+    "measurements": { "$ref": "#/$defs/measurements" }
   },
   "additionalProperties": true,
   "$defs": {
@@ -79,6 +80,29 @@
           "additionalProperties": { "$ref": "#/$defs/series" }
         },
         "status": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "collectorStatus": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "enum": ["ok", "failed", "unsupported", "unobserved", "skipped", "unknown"]
+        },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "measurements": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": { "const": 1 },
+        "groups": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/collectorStatus" }
+        }
       },
       "additionalProperties": false
     },
@@ -173,7 +197,8 @@
       "required": ["url"],
       "properties": {
         "url": { "type": "string" },
-        "scene": { "$ref": "#/$defs/scene" }
+        "scene": { "$ref": "#/$defs/scene" },
+        "measurements": { "$ref": "#/$defs/measurements" }
       },
       "additionalProperties": true
     }

@@ -1727,12 +1727,21 @@ func compareSample(source SourceIdentity, metrics map[string]float64, mutator fu
 		SampleIndex:   0,
 		Source:        source,
 		Page: &perf.PageReport{
-			TTFBMs:            metrics["ttfbMs"],
-			DCLMs:             metrics["dclMs"],
-			FullyLoadedMs:     metrics["fullyLoadedMs"],
-			IslandHydrationMs: 10,
-			Islands:           []perf.IslandMetric{{ID: "island", HydrationMs: 10}},
-			Interactions:      []perf.InteractionMetric{{Action: "click", DispatchMs: 10, PatchCount: 1}},
+			TTFBMs:                metrics["ttfbMs"],
+			DCLMs:                 metrics["dclMs"],
+			FullyLoadedMs:         metrics["fullyLoadedMs"],
+			IslandHydrationMs:     10,
+			Resources:             []perf.ResourceEntry{{Name: "app.js", TransferSize: metrics["transferBytes"]}},
+			TotalBytesTransferred: int64(metrics["transferBytes"]),
+			LongTaskCount:         int(metrics["longTaskTotalMs"] / 60),
+			LongTaskTotalMs:       metrics["longTaskTotalMs"],
+			TotalBlockingTimeMs:   metrics["totalBlockingTimeMs"],
+			Measurements: &perf.MeasurementStatus{Version: 1, Groups: map[string]perf.CollectorStatus{
+				"resource-waterfall": {State: perf.MeasurementOK},
+				"long-tasks":         {State: perf.MeasurementOK},
+			}},
+			Islands:      []perf.IslandMetric{{ID: "island", HydrationMs: 10}},
+			Interactions: []perf.InteractionMetric{{Action: "click", DispatchMs: 10, PatchCount: 1}},
 			Scene: &perf.SceneMetric{
 				FirstFrameMs: 10,
 				FrameStats:   perf.FrameStats{P95: metrics["sceneCpuP95Ms"], Count: 1},
@@ -1750,6 +1759,59 @@ func compareSample(source SourceIdentity, metrics map[string]float64, mutator fu
 		mutator(&sample)
 	}
 	return sample
+}
+
+func TestDeriveSampleMetricsDoesNotReviveLegacyOptionalMapZeros(t *testing.T) {
+	source := compareSource("")
+	metrics := compareMetrics()
+	metrics["transferBytes"] = 0
+	metrics["longTaskTotalMs"] = 0
+	metrics["totalBlockingTimeMs"] = 0
+	sample := compareSample(source, metrics, func(s *BrowserRawSample) {
+		s.Page.Measurements = nil
+	})
+
+	derived := deriveSampleMetrics(sample)
+	if _, ok := derived["browser.transferBytes"]; ok {
+		t.Fatalf("legacy transferBytes map entry bypassed missing PageReport status: %#v", derived)
+	}
+	if _, ok := derived["longTaskTotalMs"]; ok {
+		t.Fatalf("legacy longTaskTotalMs map entry bypassed missing PageReport status: %#v", derived)
+	}
+	if got := derived["runtime.transferBytes"]; got != 10 {
+		t.Fatalf("independent CDP runtime transfer should remain, got %.2f in %#v", got, derived)
+	}
+}
+
+func TestCompareRequiredBrowserTransferIncompleteWhenOneKeptSampleUnavailable(t *testing.T) {
+	root := writeNoisyFixture(t, t.TempDir())
+	mutateRawSamples(t, root, func(samples []BrowserRawSample) []BrowserRawSample {
+		extra := samples[0]
+		extra.SampleIndex = len(samples)
+		extra.Metrics = compareMetrics()
+		extra.Page.Measurements = nil
+		return append(samples, extra)
+	})
+
+	report := runSmokeCompare(t, root, root)
+	if report.ExitCode != 1 || !reportHasCheck(report, "R00.cold.browser.transferBytes", "fail") ||
+		!reportHasMessage(report, "required metric is incomplete") {
+		t.Fatalf("partial missing browser transfer evidence escaped compare: exit=%d summary=%+v checks=%+v", report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func mutateRawSamples(t *testing.T, artifactRoot string, mutate func([]BrowserRawSample) []BrowserRawSample) {
+	t.Helper()
+	rawPath := filepath.Join(artifactRoot, "perf", "raw-samples.jsonl")
+	samples, err := ReadBrowserRawSamplesJSONLStrict(rawPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples = mutate(samples)
+	writeRawSamples(t, rawPath, samples)
+	summary := SummarizeBrowserSamples(samples, "smoke", samples[0].Source)
+	summary.GeneratedAt = "2026-08-09T00:00:00Z"
+	writeFixtureJSON(t, filepath.Join(artifactRoot, "summaries", "browser-summary.json"), summary)
 }
 
 func compareEnvironmentFixture() EnvironmentReport {

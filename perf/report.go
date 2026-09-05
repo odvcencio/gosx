@@ -136,44 +136,56 @@ func FormatTable(r *Report) string {
 		}
 	}
 
+	lcp, lcpOK := ResolvePageMetric("lcp", p)
+	cls, clsOK := ResolvePageMetric("cls", p)
+	fid, fidOK := ResolvePageMetric("fid", p)
 	// Core Web Vitals
-	if p.LargestContentfulPaintMs > 0 || p.CumulativeLayoutShift > 0 || p.FirstInputDelayMs > 0 {
+	if lcpOK || clsOK || fidOK {
 		b.WriteString("\n  Core Web Vitals\n")
-		if p.LargestContentfulPaintMs > 0 {
+		if lcpOK {
 			rating := " (good)"
-			if p.LargestContentfulPaintMs > 4000 {
+			if lcp > 4000 {
 				rating = " (poor)"
-			} else if p.LargestContentfulPaintMs > 2500 {
+			} else if lcp > 2500 {
 				rating = " (needs improvement)"
 			}
-			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "LCP", p.LargestContentfulPaintMs, rating))
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "LCP", lcp, rating))
 		}
-		if p.CumulativeLayoutShift > 0 {
+		if clsOK {
 			rating := " (good)"
-			if p.CumulativeLayoutShift > 0.25 {
+			if cls > 0.25 {
 				rating = " (poor)"
-			} else if p.CumulativeLayoutShift > 0.1 {
+			} else if cls > 0.1 {
 				rating = " (needs improvement)"
 			}
-			b.WriteString(fmt.Sprintf("    %-24s%.3f%s\n", "CLS", p.CumulativeLayoutShift, rating))
+			b.WriteString(fmt.Sprintf("    %-24s%.3f%s\n", "CLS", cls, rating))
 		}
-		if p.FirstInputDelayMs > 0 {
+		if fidOK {
 			rating := " (good)"
-			if p.FirstInputDelayMs > 300 {
+			if fid > 300 {
 				rating = " (poor)"
-			} else if p.FirstInputDelayMs > 100 {
+			} else if fid > 100 {
 				rating = " (needs improvement)"
 			}
-			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "FID", p.FirstInputDelayMs, rating))
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "FID", fid, rating))
 		}
 	}
 
+	longTasks, longTasksOK := ResolvePageMetric("long_tasks", p)
+	longTaskTotal, longTaskTotalOK := ResolvePageMetric("long_task_total", p)
+	tbt, tbtOK := ResolvePageMetric("tbt", p)
 	// Long tasks — main thread blocking
-	if p.LongTaskCount > 0 {
+	if longTasksOK || longTaskTotalOK || tbtOK {
 		b.WriteString("\n  Main-Thread Blocking\n")
-		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Long tasks", p.LongTaskCount))
-		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Long task total", p.LongTaskTotalMs))
-		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Total blocking time", p.TotalBlockingTimeMs))
+		if longTasksOK {
+			b.WriteString(fmt.Sprintf("    %-24s%.0f\n", "Long tasks", longTasks))
+		}
+		if longTaskTotalOK {
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Long task total", longTaskTotal))
+		}
+		if tbtOK {
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Total blocking time", tbt))
+		}
 		// Show top 5 longest
 		show := len(p.LongTasks)
 		if show > 5 {
@@ -188,15 +200,27 @@ func FormatTable(r *Report) string {
 		}
 	}
 
+	signalWrites, signalWritesOK := ResolvePageMetric("signal_writes", p)
+	signalReads, signalReadsOK := ResolvePageMetric("signal_reads", p)
+	hubMessages, hubMessagesOK := ResolvePageMetric("hub_messages", p)
+	hubBytes, hubBytesOK := ResolvePageMetric("hub_bytes", p)
+	hubSends, hubSendsOK := ResolvePageMetric("hub_sends", p)
 	// GoSX runtime throughput
-	if p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0 {
+	if signalWritesOK || signalReadsOK || hubMessagesOK || hubBytesOK || hubSendsOK {
 		b.WriteString("\n  Runtime Throughput\n")
-		if p.SignalWrites > 0 || p.SignalReads > 0 {
-			b.WriteString(fmt.Sprintf("    %-24sw:%d  r:%d\n", "Signal ops", p.SignalWrites, p.SignalReads))
+		if signalWritesOK || signalReadsOK {
+			b.WriteString(fmt.Sprintf("    %-24sw:%.0f  r:%.0f\n", "Signal ops", signalWrites, signalReads))
 		}
-		if p.HubMessageCount > 0 {
-			b.WriteString(fmt.Sprintf("    %-24srecv:%d (%dB)  send:%d\n",
-				"Hub messages", p.HubMessageCount, p.HubMessageBytes, p.HubSendCount))
+		if hubMessagesOK || hubBytesOK || hubSendsOK {
+			b.WriteString(fmt.Sprintf("    %-24srecv:%.0f (%.0fB)  send:%.0f\n",
+				"Hub messages", hubMessages, hubBytes, hubSends))
+		}
+	}
+
+	if rows := optionalMeasurementStatusRows(p); len(rows) > 0 {
+		b.WriteString("\n  Optional Measurements\n")
+		for _, row := range rows {
+			b.WriteString(fmt.Sprintf("    %-24s%s\n", row.label, row.text))
 		}
 	}
 
@@ -330,13 +354,80 @@ func FormatTable(r *Report) string {
 // FormatWaterfallTable formats the resource waterfall as a detailed table.
 func FormatWaterfallTable(r *Report) string {
 	p := &r.PageReport
+	status := p.measurementStatus("resource-waterfall")
+	if !metricAvailableForStatus(status) {
+		return "  Resource waterfall unavailable: " + metricStatusReason(status) + "\n"
+	}
 	if len(p.Resources) == 0 {
-		return "  No resources captured.\n"
+		return "  Resource Waterfall (0 entries)\n  No resources captured.\n"
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\n  Resource Waterfall (%d entries)\n", len(p.Resources)))
 	b.WriteString("  " + FormatWaterfall(p.Resources))
 	return b.String()
+}
+
+type optionalMeasurementStatusRow struct {
+	label string
+	text  string
+}
+
+func optionalMeasurementStatusRows(p *PageReport) []optionalMeasurementStatusRow {
+	if p == nil {
+		return nil
+	}
+	labels := map[string]string{
+		"resource-waterfall": "Resource waterfall",
+		"lcp":                "LCP",
+		"cls":                "CLS",
+		"fid":                "FID",
+		"long-tasks":         "Long tasks",
+		"runtime-counters":   "Runtime counters",
+		"webgl-info":         "WebGL info",
+	}
+	groups := make([]string, 0)
+	if p.Measurements == nil {
+		if p.TotalBytesTransferred > 0 || len(p.Resources) > 0 {
+			groups = append(groups, "resource-waterfall")
+		}
+		if p.LargestContentfulPaintMs > 0 {
+			groups = append(groups, "lcp")
+		}
+		if p.CumulativeLayoutShift > 0 {
+			groups = append(groups, "cls")
+		}
+		if p.FirstInputDelayMs > 0 {
+			groups = append(groups, "fid")
+		}
+		if p.LongTaskCount > 0 || p.LongTaskTotalMs > 0 || p.TotalBlockingTimeMs > 0 {
+			groups = append(groups, "long-tasks")
+		}
+		if p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0 || p.HubMessageBytes > 0 || p.HubSendCount > 0 {
+			groups = append(groups, "runtime-counters")
+		}
+	} else {
+		for group := range p.Measurements.Groups {
+			groups = append(groups, group)
+		}
+	}
+	sort.Strings(groups)
+	rows := make([]optionalMeasurementStatusRow, 0, len(groups))
+	for _, group := range groups {
+		status := p.measurementStatus(group)
+		label := labels[group]
+		if label == "" {
+			label = group
+		}
+		text := string(status.State)
+		if text == "" {
+			text = string(MeasurementUnknown)
+		}
+		if status.Reason != "" {
+			text += ": " + status.Reason
+		}
+		rows = append(rows, optionalMeasurementStatusRow{label: label, text: text})
+	}
+	return rows
 }
 
 // FormatJSON returns the report as indented JSON.

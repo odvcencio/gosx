@@ -127,8 +127,24 @@ func cmdPerf() {
 		results := perf.EvalAssertions(parsed, report)
 		allPassed := true
 		for _, r := range results {
+			if !r.Found && r.Skipped {
+				reason := r.Reason
+				if reason == "" {
+					reason = "optional metric unavailable"
+				}
+				fmt.Fprintf(os.Stderr, "  ↷ %s %s %.2f skipped: %s\n", r.Metric, r.Op, r.Value, reason)
+				continue
+			}
 			if !r.Passed {
-				fmt.Fprintf(os.Stderr, "  \u2717 %s %s %.2f (actual: %.2f)\n", r.Metric, r.Op, r.Value, r.Actual)
+				if !r.Found {
+					reason := r.Reason
+					if reason == "" {
+						reason = "metric unavailable"
+					}
+					fmt.Fprintf(os.Stderr, "  \u2717 %s %s %.2f unavailable: %s\n", r.Metric, r.Op, r.Value, reason)
+				} else {
+					fmt.Fprintf(os.Stderr, "  \u2717 %s %s %.2f (actual: %.2f)\n", r.Metric, r.Op, r.Value, r.Actual)
+				}
 				allPassed = false
 			} else {
 				fmt.Fprintf(os.Stderr, "  \u2713 %s %s %.2f\n", r.Metric, r.Op, r.Value)
@@ -203,7 +219,7 @@ func cmdPerfCompare() {
 		fmt.Print(perf.FormatComparison(cmp, *threshold))
 	}
 
-	if perf.AnyRegression(cmp, *threshold) {
+	if perf.AnyRegression(cmp, *threshold) || perf.AnyIncomplete(cmp) {
 		os.Exit(1)
 	}
 }

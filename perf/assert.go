@@ -19,8 +19,11 @@ type Assertion struct {
 // AssertionResult is the outcome of evaluating one assertion.
 type AssertionResult struct {
 	Assertion
-	Actual float64
-	Passed bool
+	Actual  float64
+	Passed  bool
+	Found   bool
+	Skipped bool
+	Reason  string
 }
 
 // ParseAssertion parses "p95 < 12" into an Assertion.
@@ -61,11 +64,16 @@ func EvalAssertions(assertions []Assertion, r *Report) []AssertionResult {
 		res := AssertionResult{
 			Assertion: a,
 			Actual:    actual,
+			Found:     ok,
 		}
 		if ok {
 			res.Passed = compare(actual, a.Op, a.Value)
 		} else if a.Optional {
 			res.Passed = true
+			res.Skipped = true
+			res.Reason = metricUnavailableReason(a.Metric, &r.PageReport)
+		} else {
+			res.Reason = metricUnavailableReason(a.Metric, &r.PageReport)
 		}
 		results[i] = res
 	}
@@ -74,12 +82,24 @@ func EvalAssertions(assertions []Assertion, r *Report) []AssertionResult {
 
 // ResolveMetric extracts a named metric value from a Report.
 func ResolveMetric(name string, r *Report) (float64, bool) {
+	if r == nil {
+		return 0, false
+	}
 	p := &r.PageReport
 	return ResolvePageMetric(name, p)
 }
 
 // ResolvePageMetric extracts a named metric value from one page report.
 func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
+	if p == nil {
+		return 0, false
+	}
+	if group := measurementGroupForMetric(name); group != "" {
+		status := p.measurementStatus(group)
+		if !metricAvailableForStatus(status) {
+			return 0, false
+		}
+	}
 	switch name {
 	case "ttfb":
 		return p.TTFBMs, true
@@ -109,6 +129,10 @@ func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
 		return float64(p.TotalBytesTransferred) / 1024, true
 	case "requests":
 		return float64(len(p.Resources)), true
+	case "signal_writes":
+		return float64(p.SignalWrites), true
+	case "signal_reads":
+		return float64(p.SignalReads), true
 	case "hub_messages":
 		return float64(p.HubMessageCount), true
 	case "hub_bytes":
@@ -215,6 +239,13 @@ func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
 		return value, ok
 	}
 	return 0, false
+}
+
+func metricUnavailableReason(name string, p *PageReport) string {
+	if group := measurementGroupForMetric(name); group != "" {
+		return metricStatusReason(p.measurementStatus(group))
+	}
+	return "metric not found"
 }
 
 func telemetryStat(series *TelemetrySeries, phase, stat string) (float64, bool) {

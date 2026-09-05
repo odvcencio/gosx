@@ -48,3 +48,9 @@ Useful aliases include `cpu_submit_p95`, `presented_p50|p95|p99`,
 `gpu_total_warm_p95`, and `gpu_pass_<name>_p50|p95|p99|max`.
 
 The report schema is [`report.schema.json`](./report.schema.json).
+
+First Input Delay (`fid` / `fid_ms`; JSON field `fidMs`) is only measured when
+the profiled scenario actually produces a qualifying first-input event. A run
+with no input sample is reported as unavailable for strict assertions and as an
+inconclusive comparison, not as a successful zero-latency interaction. Add an
+explicit scenario input when a FID gate is intended.

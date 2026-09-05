@@ -32,17 +32,54 @@ const (
 
 // ComparedMetric is a single side-by-side comparison row.
 type ComparedMetric struct {
-	Name      string    `json:"name"`
-	Unit      string    `json:"unit"`
-	Baseline  float64   `json:"baseline"`
-	Candidate float64   `json:"candidate"`
-	DeltaPct  float64   `json:"deltaPct"`
-	Direction Direction `json:"direction"`
+	Name             string    `json:"name"`
+	Unit             string    `json:"unit"`
+	Baseline         float64   `json:"baseline"`
+	Candidate        float64   `json:"candidate"`
+	DeltaPct         float64   `json:"deltaPct"`
+	Direction        Direction `json:"direction"`
+	BaselineFound    bool      `json:"baselineFound"`
+	CandidateFound   bool      `json:"candidateFound"`
+	Incomplete       bool      `json:"incomplete,omitempty"`
+	IncompleteReason string    `json:"incompleteReason,omitempty"`
+}
+
+func (m ComparedMetric) MarshalJSON() ([]byte, error) {
+	type comparedMetricJSON struct {
+		Name             string    `json:"name"`
+		Unit             string    `json:"unit"`
+		Baseline         float64   `json:"baseline"`
+		Candidate        float64   `json:"candidate"`
+		DeltaPct         *float64  `json:"deltaPct,omitempty"`
+		Direction        Direction `json:"direction"`
+		BaselineFound    bool      `json:"baselineFound"`
+		CandidateFound   bool      `json:"candidateFound"`
+		Incomplete       bool      `json:"incomplete,omitempty"`
+		IncompleteReason string    `json:"incompleteReason,omitempty"`
+	}
+	row := comparedMetricJSON{
+		Name:             m.Name,
+		Unit:             m.Unit,
+		Baseline:         m.Baseline,
+		Candidate:        m.Candidate,
+		Direction:        m.Direction,
+		BaselineFound:    m.BaselineFound,
+		CandidateFound:   m.CandidateFound,
+		Incomplete:       m.Incomplete,
+		IncompleteReason: m.IncompleteReason,
+	}
+	if !m.Incomplete {
+		row.DeltaPct = &m.DeltaPct
+	}
+	return json.Marshal(row)
 }
 
 // IsRegression returns true if the delta moves the wrong way beyond the
 // threshold (expressed as a percentage, e.g. 5 for 5%).
 func (m ComparedMetric) IsRegression(threshold float64) bool {
+	if m.Incomplete {
+		return false
+	}
 	if m.Baseline == 0 && m.Candidate == 0 {
 		return false
 	}
@@ -71,7 +108,10 @@ func LoadReport(path string) (*Report, error) {
 	// Backfill: single-page reports sometimes lack Pages but have the
 	// embedded PageReport populated. Normalize so downstream code can
 	// always read from Pages[0].
-	if len(r.Pages) == 0 && r.PageReport.URL != "" {
+	if len(r.Pages) == 0 && (r.PageReport.URL != "" || r.URL != "") {
+		if r.PageReport.URL == "" {
+			r.PageReport.URL = r.URL
+		}
 		r.Pages = []PageReport{r.PageReport}
 	}
 	return &r, nil
@@ -83,10 +123,15 @@ func LoadReport(path string) (*Report, error) {
 // running gosx perf compare separately for each URL.
 func CompareReports(baseline, candidate *Report) Comparison {
 	cmp := Comparison{
-		Baseline:  baseline.URL,
-		Candidate: candidate.URL,
+		Baseline:  reportURL(baseline),
+		Candidate: reportURL(candidate),
+	}
+	if baseline == nil || candidate == nil {
+		cmp.Metrics = append(cmp.Metrics, incompleteComparisonRow("Report pages", "baseline or candidate report is nil"))
+		return cmp
 	}
 	if len(baseline.Pages) == 0 || len(candidate.Pages) == 0 {
+		cmp.Metrics = append(cmp.Metrics, incompleteComparisonRow("Report pages", "baseline or candidate report has no comparable pages"))
 		return cmp
 	}
 	b := baseline.Pages[0]
@@ -94,13 +139,53 @@ func CompareReports(baseline, candidate *Report) Comparison {
 
 	add := func(name, unit string, bv, cv float64, dir Direction) {
 		cmp.Metrics = append(cmp.Metrics, ComparedMetric{
-			Name:      name,
-			Unit:      unit,
-			Baseline:  bv,
-			Candidate: cv,
-			DeltaPct:  percentDelta(bv, cv),
-			Direction: dir,
+			Name:           name,
+			Unit:           unit,
+			Baseline:       bv,
+			Candidate:      cv,
+			DeltaPct:       percentDelta(bv, cv),
+			Direction:      dir,
+			BaselineFound:  true,
+			CandidateFound: true,
 		})
+	}
+	statusRecorded := func(p PageReport, metric string) bool {
+		group := measurementGroupForMetric(metric)
+		if group == "" || p.Measurements == nil || p.Measurements.Version != measurementStatusVersion {
+			return false
+		}
+		_, ok := p.Measurements.Groups[group]
+		return ok
+	}
+	shouldAddMetric := func(metric string, rawPresent bool) bool {
+		return rawPresent || statusRecorded(b, metric) || statusRecorded(c, metric)
+	}
+	addMetric := func(label, metric, unit string, dir Direction) {
+		bv, bok := ResolvePageMetric(metric, &b)
+		cv, cok := ResolvePageMetric(metric, &c)
+		row := ComparedMetric{
+			Name:           label,
+			Unit:           unit,
+			Baseline:       bv,
+			Candidate:      cv,
+			Direction:      dir,
+			BaselineFound:  bok,
+			CandidateFound: cok,
+		}
+		if bok && cok {
+			row.DeltaPct = percentDelta(bv, cv)
+		} else {
+			row.Incomplete = true
+			switch {
+			case !bok && !cok:
+				row.IncompleteReason = "baseline and candidate unavailable: " + metricUnavailableReason(metric, &b)
+			case !bok:
+				row.IncompleteReason = "baseline unavailable: " + metricUnavailableReason(metric, &b)
+			case !cok:
+				row.IncompleteReason = "candidate unavailable: " + metricUnavailableReason(metric, &c)
+			}
+		}
+		cmp.Metrics = append(cmp.Metrics, row)
 	}
 
 	// Lifecycle — lower is better across the board.
@@ -111,17 +196,20 @@ func CompareReports(baseline, candidate *Report) Comparison {
 	}
 
 	// Web vitals.
-	if b.LargestContentfulPaintMs > 0 || c.LargestContentfulPaintMs > 0 {
-		add("LCP", "ms", b.LargestContentfulPaintMs, c.LargestContentfulPaintMs, LowerBetter)
+	if shouldAddMetric("lcp", b.LargestContentfulPaintMs > 0 || c.LargestContentfulPaintMs > 0) {
+		addMetric("LCP", "lcp", "ms", LowerBetter)
 	}
-	if b.CumulativeLayoutShift > 0 || c.CumulativeLayoutShift > 0 {
-		add("CLS", "", b.CumulativeLayoutShift, c.CumulativeLayoutShift, LowerBetter)
+	if shouldAddMetric("cls", b.CumulativeLayoutShift > 0 || c.CumulativeLayoutShift > 0) {
+		addMetric("CLS", "cls", "", LowerBetter)
+	}
+	if shouldAddMetric("fid", b.FirstInputDelayMs > 0 || c.FirstInputDelayMs > 0) {
+		addMetric("FID", "fid", "ms", LowerBetter)
 	}
 
 	// Main-thread blocking.
-	add("Long tasks", "", float64(b.LongTaskCount), float64(c.LongTaskCount), LowerBetter)
-	add("Long task total", "ms", b.LongTaskTotalMs, c.LongTaskTotalMs, LowerBetter)
-	add("TBT", "ms", b.TotalBlockingTimeMs, c.TotalBlockingTimeMs, LowerBetter)
+	addMetric("Long tasks", "long_tasks", "", LowerBetter)
+	addMetric("Long task total", "long_task_total", "ms", LowerBetter)
+	addMetric("TBT", "tbt", "ms", LowerBetter)
 
 	// Scene frame stats if both reports have them.
 	if b.Scene != nil && c.Scene != nil {
@@ -132,13 +220,13 @@ func CompareReports(baseline, candidate *Report) Comparison {
 	}
 
 	// Runtime throughput.
-	if b.HubMessageBytes > 0 || c.HubMessageBytes > 0 {
-		add("Hub bytes", "B", float64(b.HubMessageBytes), float64(c.HubMessageBytes), LowerBetter)
+	if shouldAddMetric("hub_bytes", b.HubMessageBytes > 0 || c.HubMessageBytes > 0) {
+		addMetric("Hub bytes", "hub_bytes", "B", LowerBetter)
 	}
 
 	// Network.
-	add("Network bytes", "KB", float64(b.TotalBytesTransferred)/1024, float64(c.TotalBytesTransferred)/1024, LowerBetter)
-	add("Requests", "", float64(len(b.Resources)), float64(len(c.Resources)), LowerBetter)
+	addMetric("Network bytes", "network_kb", "KB", LowerBetter)
+	addMetric("Requests", "requests", "", LowerBetter)
 
 	// JS coverage (overall) — higher is better.
 	if len(b.Coverage) > 0 && len(c.Coverage) > 0 {
@@ -148,6 +236,17 @@ func CompareReports(baseline, candidate *Report) Comparison {
 	}
 
 	return cmp
+}
+
+func reportURL(r *Report) string {
+	if r == nil {
+		return ""
+	}
+	return r.URL
+}
+
+func incompleteComparisonRow(name, reason string) ComparedMetric {
+	return ComparedMetric{Name: name, Incomplete: true, IncompleteReason: reason}
 }
 
 func percentDelta(baseline, candidate float64) float64 {
@@ -200,6 +299,17 @@ func FormatComparison(cmp Comparison, threshold float64) string {
 		status := formatDeltaStatus(m, threshold)
 		bv := formatMetricValue(m.Baseline, m.Unit)
 		cv := formatMetricValue(m.Candidate, m.Unit)
+		if !m.BaselineFound {
+			bv = "unavailable"
+		}
+		if !m.CandidateFound {
+			cv = "unavailable"
+		}
+		if m.Incomplete {
+			b.WriteString(fmt.Sprintf("    %-22s%14s%14s%12s  %s: %s\n",
+				m.Name, bv, cv, "n/a", status, m.IncompleteReason))
+			continue
+		}
 		b.WriteString(fmt.Sprintf("    %-22s%14s%14s%11.1f%%  %s\n",
 			m.Name, bv, cv, m.DeltaPct, status))
 	}
@@ -217,6 +327,9 @@ func formatMetricValue(v float64, unit string) string {
 }
 
 func formatDeltaStatus(m ComparedMetric, threshold float64) string {
+	if m.Incomplete {
+		return "inconclusive"
+	}
 	if math.Abs(m.DeltaPct) < threshold {
 		return "~"
 	}
@@ -235,6 +348,15 @@ func formatDeltaStatus(m ComparedMetric, threshold float64) string {
 func AnyRegression(cmp Comparison, threshold float64) bool {
 	for _, m := range cmp.Metrics {
 		if m.IsRegression(threshold) {
+			return true
+		}
+	}
+	return false
+}
+
+func AnyIncomplete(cmp Comparison) bool {
+	for _, m := range cmp.Metrics {
+		if m.Incomplete {
 			return true
 		}
 	}

@@ -21,6 +21,14 @@ func TestDefaultBudgetFileProfilesResolveAndAssertionsEvaluate(t *testing.T) {
 		return PageReport{
 			URL:              url,
 			CoverageCaptured: true,
+			Measurements: &MeasurementStatus{Version: measurementStatusVersion, Groups: map[string]CollectorStatus{
+				"resource-waterfall": {State: MeasurementOK},
+				"lcp":                {State: MeasurementOK},
+				"cls":                {State: MeasurementOK},
+				"fid":                {State: MeasurementOK},
+				"long-tasks":         {State: MeasurementOK},
+				"runtime-counters":   {State: MeasurementOK},
+			}},
 			Scene: &SceneMetric{
 				Presentation: &PresentationMetric{
 					TelemetrySeries: TelemetrySeries{Stats: FrameStats{Count: 1}},
