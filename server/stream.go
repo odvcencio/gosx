@@ -92,7 +92,8 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 		status = http.StatusOK
 	}
 
-	html := gosx.RenderHTML(res.Node)
+	renderContext := gosx.RenderContext{RequestTarget: documentContextPath(res.Request)}
+	html := gosx.RenderHTMLWithContext(res.Node, renderContext)
 	streaming := res.Deferred != nil && res.Deferred.HasDeferred()
 	stripNonce := ""
 
@@ -141,7 +142,8 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	stream := deferredStream{
-		ctx: ctx, writer: w, controller: http.NewResponseController(w), options: opts,
+		renderContext: renderContext,
+		ctx:           ctx, writer: w, controller: http.NewResponseController(w), options: opts,
 		requestID: RequestID(res.Request), nonce: res.Nonce, stripNonce: stripNonce,
 	}
 	// Real net/http writers support write deadlines. Canceling a stream then
@@ -235,13 +237,14 @@ func splitStreamTail(html string) (string, string, bool) {
 }
 
 type deferredStream struct {
-	ctx        context.Context
-	writer     http.ResponseWriter
-	controller *http.ResponseController
-	options    StreamOptions
-	requestID  string
-	nonce      string
-	stripNonce string
+	renderContext gosx.RenderContext
+	ctx           context.Context
+	writer        http.ResponseWriter
+	controller    *http.ResponseController
+	options       StreamOptions
+	requestID     string
+	nonce         string
+	stripNonce    string
 }
 
 func (s *deferredStream) write(markup string) error {
@@ -318,7 +321,7 @@ func (s *deferredStream) run(blocks []deferredBlock) error {
 			// response owner. Workers never receive a ResponseWriter.
 			go func() {
 				defer func() { <-deferredAdmission }()
-				chunk := resolveDeferredHTML(ctx, block)
+				chunk := resolveDeferredHTMLWithContext(ctx, block, s.renderContext)
 				select {
 				case chunks <- chunk:
 				case <-ctx.Done():
@@ -346,14 +349,18 @@ func (s *deferredStream) run(blocks []deferredBlock) error {
 	return nil
 }
 
-func resolveDeferredHTML(ctx context.Context, block deferredBlock) (chunk deferredChunk) {
+func resolveDeferredHTML(ctx context.Context, block deferredBlock) deferredChunk {
+	return resolveDeferredHTMLWithContext(ctx, block, gosx.RenderContext{})
+}
+
+func resolveDeferredHTMLWithContext(ctx context.Context, block deferredBlock, renderContext gosx.RenderContext) (chunk deferredChunk) {
 	chunk.slotID = block.id
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			chunk.err = panicError(recovered)
 			chunk.panic = true
 			// SafeMessage applies to returned errors, never to panics.
-			chunk.html = gosx.RenderHTML(defaultDeferredError(nil))
+			chunk.html = gosx.RenderHTMLWithContext(defaultDeferredError(nil), renderContext)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -365,7 +372,7 @@ func resolveDeferredHTML(ctx context.Context, block deferredBlock) (chunk deferr
 	if err != nil {
 		node = defaultDeferredError(err)
 	}
-	chunk.html = gosx.RenderHTML(node)
+	chunk.html = gosx.RenderHTMLWithContext(node, renderContext)
 	return
 }
 

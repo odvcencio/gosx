@@ -861,8 +861,8 @@ func renderDocumentHTML(doc *DocumentContext) string {
 	// The viewport is owned and emitted by this document shell. Head remains an
 	// authoritative application-owned node tree; RawHTML is an explicit
 	// structure/trust escape hatch and is never parsed or rewritten here.
-	headHTML := gosx.RenderHTML(HeadOutlet(head))
-	bodyHTML := gosx.RenderHTML(body)
+	headHTML := gosx.RenderHTMLWithContext(HeadOutlet(head), gosx.RenderContext{RequestTarget: doc.Path})
+	bodyHTML := gosx.RenderHTMLWithContext(body, gosx.RenderContext{RequestTarget: doc.Path})
 
 	// Pre-size the builder to roughly the static template size plus
 	// the dynamic chunks. Avoids 2-3 grow doublings on a typical page.
@@ -1020,7 +1020,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defaultTitle string) gosx.Node {
 	// Render the body once up front so islands/engines/hubs register with the
 	// page runtime before we finalize managed head assets.
-	bodyHTML := gosx.RenderHTML(body)
+	bodyHTML := gosx.RenderHTMLWithContext(body, gosx.RenderContext{RequestTarget: documentContextPath(ctx.Request)})
 	renderedBody := gosx.RawHTML(bodyHTML)
 	a.decoratePageContext(ctx)
 	doc := ctx.documentContext(pattern, defaultTitle, renderedBody, a.navigation)
@@ -1028,15 +1028,19 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.document != nil:
 		return a.document(doc)
 	case a.layout != nil:
-		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head())
+		return renderLegacyLayoutWithContext(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head(), gosx.RenderContext{RequestTarget: documentContextPath(ctx.Request)})
 	default:
 		return HTMLDocument(doc)
 	}
 }
 
 func renderLegacyLayout(document, extraHead gosx.Node) gosx.Node {
-	rendered := gosx.RenderHTML(document)
-	head := gosx.RenderHTML(extraHead)
+	return renderLegacyLayoutWithContext(document, extraHead, gosx.RenderContext{})
+}
+
+func renderLegacyLayoutWithContext(document, extraHead gosx.Node, renderContext gosx.RenderContext) gosx.Node {
+	rendered := gosx.RenderHTMLWithContext(document, renderContext)
+	head := gosx.RenderHTMLWithContext(extraHead, renderContext)
 	if strings.TrimSpace(head) == "" {
 		return gosx.RawHTML(rendered)
 	}

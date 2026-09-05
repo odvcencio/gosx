@@ -243,7 +243,7 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 	case ir.NodeText:
 		b.WriteString(html.EscapeString(node.Text))
 	case ir.NodeExpr:
-		b.WriteString(renderFileEvaluatedExpr(evalFileExpr(node.Text, env)))
+		b.WriteString(renderFileEvaluatedExprWithEnv(evalFileExpr(node.Text, env), env))
 	case ir.NodeFragment:
 		r.writeChildren(b, node.Children, env)
 	case ir.NodeRawHTML:
@@ -424,7 +424,7 @@ func (r *fileProgramRenderer) writeConditional(b *strings.Builder, node *ir.Node
 		return
 	}
 	fallback := attrValue(node.Attrs, env, "fallback", "else")
-	b.WriteString(renderFileEvaluatedExpr(fallback))
+	b.WriteString(renderFileEvaluatedExprWithEnv(fallback, env))
 }
 
 func (r *fileProgramRenderer) writeEach(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
@@ -442,7 +442,7 @@ func (r *fileProgramRenderer) writeEach(b *strings.Builder, node *ir.Node, env f
 	items := fileEachEntries(collection)
 	if len(items) == 0 {
 		fallback := attrValue(node.Attrs, env, "fallback", "empty")
-		b.WriteString(renderFileEvaluatedExpr(fallback))
+		b.WriteString(renderFileEvaluatedExprWithEnv(fallback, env))
 		return
 	}
 
@@ -477,9 +477,13 @@ func fileEachBindingsPerItem(items []fileEachEntry, indexName string) int {
 
 func (r *fileProgramRenderer) writeLink(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	b.WriteString("<a")
-	contract := fileManagedLinkContractForAttrs(node.Attrs, env)
 	r.renderLinkAttrs(b, node.Attrs, env)
-	r.writeManagedLinkContract(b, node.Attrs, env, contract)
+	var resolved gosx.AttrList
+	resolved = append(resolved, gosx.Attr("current", attrValue(node.Attrs, env, "data-gosx-link-current-policy", "data-gosx-link-current", "current")), gosx.Attr("prefetch", attrValue(node.Attrs, env, "data-gosx-prefetch", "prefetch")), gosx.Attr("aria-current", attrValue(node.Attrs, env, "aria-current", "ariaCurrent")))
+	for _, name := range []string{"data-gosx-link", "data-gosx-link-state", "data-gosx-prefetch-state", "data-gosx-enhance", "data-gosx-enhance-layer", "data-gosx-fallback"} {
+		resolved = append(resolved, gosx.Attr(name, attrValue(node.Attrs, env, name)))
+	}
+	b.WriteString(gosx.RenderAttrs(gosx.ManagedLinkContractAttributes(stringValue(attrValue(node.Attrs, env, "href")), resolved, gosx.RenderContext{RequestTarget: fileCurrentRequestPath(env)})))
 	b.WriteByte('>')
 	r.writeChildren(b, node.Children, env)
 	b.WriteString("</a>")
@@ -727,9 +731,9 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 	}
 
 	if picture, ok := buildManifestImagePicture(props, args); ok {
-		return gosx.RenderHTML(picture)
+		return renderFileNodeHTML(env, picture)
 	}
-	return gosx.RenderHTML(server.Image(props, args...))
+	return renderFileNodeHTML(env, server.Image(props, args...))
 }
 
 func (r *fileProgramRenderer) renderMotion(node *ir.Node, env fileRenderEnv) string {
@@ -764,7 +768,7 @@ func (r *fileProgramRenderer) renderMotion(node *ir.Node, env fileRenderEnv) str
 	if childrenHTML != "" {
 		args = append(args, gosx.RawHTML(childrenHTML))
 	}
-	return gosx.RenderHTML(server.Motion(props, args...))
+	return renderFileNodeHTML(env, server.Motion(props, args...))
 }
 
 func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) string {
@@ -845,7 +849,7 @@ func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) stri
 		args = append(args, gosx.RawHTML(childrenHTML))
 	}
 	fallback := server.Video(props, args...)
-	return gosx.RenderHTML(env.engine(server.VideoEngineConfig(props), fallback))
+	return renderFileNodeHTML(env, env.engine(server.VideoEngineConfig(props), fallback))
 }
 
 func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) string {
@@ -899,7 +903,7 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 	if childrenHTML != "" {
 		args = append(args, gosx.RawHTML(childrenHTML))
 	}
-	return gosx.RenderHTML(server.TextBlock(props, args...))
+	return renderFileNodeHTML(env, server.TextBlock(props, args...))
 }
 
 func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv) string {
@@ -909,7 +913,7 @@ func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv)
 	if len(extra) > 0 {
 		args = append(args, gosx.Attrs(extra...))
 	}
-	return gosx.RenderHTML(server.DocumentStylesheet(href, opts, args...))
+	return renderFileNodeHTML(env, server.DocumentStylesheet(href, opts, args...))
 }
 
 type fileEngineDefaults struct {
@@ -965,7 +969,7 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 			return r.renderError(err)
 		}
 	}
-	return gosx.RenderHTML(env.engine(cfg, fallback))
+	return renderFileNodeHTML(env, env.engine(cfg, fallback))
 }
 
 func normalizeScene3DScalarProps(raw json.RawMessage) json.RawMessage {
@@ -1079,7 +1083,7 @@ func (r *fileProgramRenderer) writeScene3DFallbackConditional(b *strings.Builder
 		return
 	}
 	fallback := attrValue(node.Attrs, env, "fallback", "else")
-	b.WriteString(renderFileEvaluatedExpr(fallback))
+	b.WriteString(renderFileEvaluatedExprWithEnv(fallback, env))
 }
 
 func (r *fileProgramRenderer) writeScene3DFallbackEach(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
@@ -1097,7 +1101,7 @@ func (r *fileProgramRenderer) writeScene3DFallbackEach(b *strings.Builder, node 
 	items := fileEachEntries(collection)
 	if len(items) == 0 {
 		fallback := attrValue(node.Attrs, env, "fallback", "empty")
-		b.WriteString(renderFileEvaluatedExpr(fallback))
+		b.WriteString(renderFileEvaluatedExprWithEnv(fallback, env))
 		return
 	}
 
@@ -1230,7 +1234,7 @@ func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRender
 		}
 	}
 
-	if rendered, ok := renderBoundComponentValue(component, candidates); ok {
+	if rendered, ok := renderBoundComponentValueWithEnv(component, candidates, env); ok {
 		return true, rendered
 	}
 	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
@@ -1361,7 +1365,7 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 
 	prog, err := r.islandProgram(name)
 	if err != nil {
-		return gosx.RenderHTML(gosx.El("div",
+		return renderFileNodeHTML(env, gosx.El("div",
 			gosx.Attrs(gosx.Attr("class", "gosx-error")),
 			gosx.Text(fmt.Sprintf("island error: %v", err)),
 		))
@@ -1376,7 +1380,7 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 		}
 		props = converted
 	}
-	return gosx.RenderHTML(env.island(prog, props))
+	return renderFileNodeHTML(env, env.island(prog, props))
 }
 
 func (r *fileProgramRenderer) islandProgram(name string) (*islandprogram.Program, error) {
@@ -1822,23 +1826,31 @@ type fileLayoutChildren struct {
 }
 
 func renderFileEvaluatedExpr(value any) string {
+	return renderFileEvaluatedExprWithEnv(value, fileRenderEnv{})
+}
+
+func renderFileNodeHTML(env fileRenderEnv, node gosx.Node) string {
+	return gosx.RenderHTMLWithContext(node, gosx.RenderContext{RequestTarget: fileCurrentRequestPath(env)})
+}
+
+func renderFileEvaluatedExprWithEnv(value any, env fileRenderEnv) string {
 	switch v := value.(type) {
 	case fileLayoutChildren:
 		v.onRender()
-		return gosx.RenderHTML(v.node)
+		return renderFileNodeHTML(env, v.node)
 	case nil:
 		return ""
 	case gosx.Node:
-		return gosx.RenderHTML(v)
+		return renderFileNodeHTML(env, v)
 	case *gosx.Node:
 		if v == nil {
 			return ""
 		}
-		return gosx.RenderHTML(*v)
+		return renderFileNodeHTML(env, *v)
 	case []gosx.Node:
 		var b strings.Builder
 		for _, node := range v {
-			b.WriteString(gosx.RenderHTML(node))
+			b.WriteString(renderFileNodeHTML(env, node))
 		}
 		return b.String()
 	case []string:
@@ -2952,9 +2964,13 @@ func singleComponentPropValue(props map[string]any) (any, bool) {
 }
 
 func renderBoundComponentValue(component any, candidates [][]any) (string, bool) {
+	return renderBoundComponentValueWithEnv(component, candidates, fileRenderEnv{})
+}
+
+func renderBoundComponentValueWithEnv(component any, candidates [][]any, env fileRenderEnv) (string, bool) {
 	switch component.(type) {
 	case gosx.Node, *gosx.Node, []gosx.Node, string, fmt.Stringer:
-		return renderFileEvaluatedExpr(component), true
+		return renderFileEvaluatedExprWithEnv(component, env), true
 	}
 
 	rv := reflect.ValueOf(component)
@@ -2970,7 +2986,7 @@ func renderBoundComponentValue(component any, candidates [][]any) (string, bool)
 		}
 		seen[key] = struct{}{}
 		if value, ok := tryCallValue(component, candidate); ok {
-			return renderFileEvaluatedExpr(value), true
+			return renderFileEvaluatedExprWithEnv(value, env), true
 		}
 	}
 	return "", false

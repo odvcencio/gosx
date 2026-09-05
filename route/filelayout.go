@@ -225,7 +225,11 @@ func buildFileLayout(file string, page FilePage, module FileModule, opts FileLay
 func renderFileLayout(file string, ctx *RouteContext, content gosx.Node, page FilePage, module FileModule, opts FileLayoutOptions) (gosx.Node, error) {
 	slotHTML := ""
 	if !content.IsZero() {
-		slotHTML = gosx.RenderHTML(content)
+		target := "/"
+		if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil {
+			target = ctx.Request.URL.RequestURI()
+		}
+		slotHTML = gosx.RenderHTMLWithContext(content, gosx.RenderContext{RequestTarget: target})
 	}
 	// Reuse the legacy marker's already-rendered content. Rendering the
 	// original Node again at every strict children expression duplicates work.

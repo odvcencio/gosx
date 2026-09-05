@@ -26,6 +26,7 @@ const (
 	kindExpr
 	kindFragment
 	kindRawHTML
+	kindManagedLink
 )
 
 type nodeAttr struct {
@@ -169,9 +170,23 @@ func Props(pairs ...any) AttrList {
 // is to eliminate the 3-5 doublings a typical page would otherwise trigger
 // during renderNodeHTML.
 func RenderHTML(n Node) string {
+	return RenderHTMLWithContext(n, RenderContext{})
+}
+
+// RenderContext supplies the request target (path and optional query) at the
+// HTML boundary. An empty RequestTarget deterministically means "/".
+// It is a value, never retained in a Node or shared through global state.
+type RenderContext struct{ RequestTarget string }
+
+// RenderHTMLWithContext renders a tree using explicit request-local context.
+// Already-rendered RawHTML remains opaque and is never reinterpreted.
+func RenderHTMLWithContext(n Node, ctx RenderContext) string {
 	var b strings.Builder
 	b.Grow(estimateRenderSize(n))
-	renderNodeHTML(&b, n)
+	if strings.TrimSpace(ctx.RequestTarget) == "" {
+		ctx.RequestTarget = "/"
+	}
+	renderNodeHTMLWithContext(&b, n, ctx)
 	return b.String()
 }
 
@@ -182,7 +197,7 @@ func RenderHTML(n Node) string {
 // Builder — if we under-allocate by a few bytes, Builder still grows once.
 func estimateRenderSize(n Node) int {
 	switch n.kind {
-	case kindElement:
+	case kindElement, kindManagedLink:
 		// <tag ...attrs...></tag> = 2*len(tag) + 5 bytes of fixed structure
 		// (`<`, `>`, `</`, `>`). Each attribute is ` name="value"` → 4 bytes
 		// of structure plus the name+value length.
@@ -220,6 +235,14 @@ func PlainText(n Node) string {
 }
 
 func renderNodeHTML(b *strings.Builder, n Node) {
+	renderNodeHTMLWithContext(b, n, RenderContext{RequestTarget: "/"})
+}
+
+func renderNodeHTMLWithContext(b *strings.Builder, n Node, ctx RenderContext) {
+	if n.kind == kindManagedLink {
+		n.kind = kindElement
+		n.attrs = managedLinkAttrs(n.text, n.attrs, ctx)
+	}
 	switch n.kind {
 	case kindElement:
 		safeTag := html.EscapeString(n.tag)
@@ -238,7 +261,7 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 		}
 		b.WriteByte('>')
 		for _, child := range n.children {
-			renderNodeHTML(b, child)
+			renderNodeHTMLWithContext(b, child, ctx)
 		}
 		b.WriteString("</")
 		b.WriteString(safeTag)
@@ -252,7 +275,7 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 
 	case kindFragment:
 		for _, child := range n.children {
-			renderNodeHTML(b, child)
+			renderNodeHTMLWithContext(b, child, ctx)
 		}
 
 	case kindRawHTML:
@@ -362,7 +385,7 @@ func writePlainText(b *strings.Builder, n Node) {
 	switch n.kind {
 	case kindText, kindExpr:
 		b.WriteString(n.text)
-	case kindElement, kindFragment:
+	case kindElement, kindFragment, kindManagedLink:
 		for _, child := range n.children {
 			writePlainText(b, child)
 		}
