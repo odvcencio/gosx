@@ -2142,7 +2142,9 @@
 	        }
 	        if (!target) return null;
 	        const anchor = sceneGizmoTargetAnchor(target);
-	        return { targetID: lastAppliedSelectionID, mode: lastAppliedGizmoMode, anchor: anchor, valid: !gizmoPreview || target === gizmoPreview.expected };
+	        const group = sceneGizmoControlGroup(objects, lastAppliedGizmoMode);
+	        mount.setAttribute("data-gosx-scene3d-gizmo-diagnostic", group.diagnostic);
+	        return { targetID: lastAppliedSelectionID, mode: lastAppliedGizmoMode, anchor: anchor, gizmoControlID: group.gizmoControlID, gizmoSize: group.gizmoSize, valid: group.valid && (!gizmoPreview || target === gizmoPreview.expected) };
 	      }, function(payload) {
 	        const target = payload && sceneState.objects.get(sceneObjectKey(payload.target));
 	        if (payload && payload.phase === "start" && target) {

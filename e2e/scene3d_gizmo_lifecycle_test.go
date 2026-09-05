@@ -107,3 +107,60 @@ func TestScene3DGizmoCancelServedWebGL(t *testing.T) {
 	}
 	t.Logf("typed software-WebGL centroid before=%.2f preview=%.2f cancelled=%.2f committed=%.2f", before, preview, after, committed)
 }
+
+func TestScene3DGizmoSizeServedWebGL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		size, x float64
+		hit     bool
+	}{
+		{"default-hit", 0, 205, true}, {"small-miss", .25, 205, false},
+		{"default-miss", 0, 245, false}, {"large-hit", 2, 245, true},
+		{"same-id-same-size", 1, 205, false}, {"same-id-different-size", 2, 205, false}, {"auto-explicit-collision", 0, 205, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := server.New()
+			app.SetRuntimeRoot(e2eRepoRoot(t))
+			app.Page("/", func(ctx *server.Context) gosx.Node {
+				duplicate := tc.name == "same-id-same-size" || tc.name == "same-id-different-size" || tc.name == "auto-explicit-collision"
+				props := scene.Props{Width: 360, Height: 240, AutoRotate: scene.Bool(false), ForceWebGL: scene.Bool(true), RequireWebGL: scene.Bool(true), Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 0, 6), FOV: 60}, SelectionInputSignal: "$size.selection", GizmoInputSignal: "$size.mode", Graph: scene.NewGraph(scene.Mesh{ID: "cube", Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1}, Material: scene.FlatMaterial{Color: "#ffffff"}}, scene.TransformControls{ID: "handles", Target: "cube", Mode: "translate", Size: tc.size})}
+				if duplicate {
+					first, second := scene.TransformControls{ID: "handles", Mode: "translate", Size: tc.size}, scene.TransformControls{ID: "handles", Mode: "translate", Size: 1}
+					if tc.name == "auto-explicit-collision" {
+						first.ID = ""
+						second.ID = "scene-transform-controls-1"
+					}
+					props.Graph = scene.NewGraph(scene.Mesh{ID: "cube", Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1}, Material: scene.FlatMaterial{Color: "#ffffff"}}, first, second)
+				}
+				return gosx.El("div", gosx.Attrs(gosx.Attr("style", "width:360px;height:240px")), ctx.Engine(props.EngineConfig(), gosx.Text("loading")))
+			})
+			srv := httptest.NewServer(app.Build())
+			defer srv.Close()
+			page := newBrowserPage(t, e2eChromePath(t), map[string]any{"use-gl": "angle", "use-angle": "swiftshader", "enable-unsafe-swiftshader": true, "enable-webgl": true, "ignore-gpu-blocklist": true}, 640, 480, `window.__sizePhases=[];document.addEventListener('gosx:scene3d:input',e=>{if(e.detail.kind==='gizmo-commit')__sizePhases.push(e.detail.input.phase)});`, 20*time.Second)
+			page.navigate(t, srv.URL)
+			page.waitFor(t, `!!document.querySelector('[data-gosx-scene3d-renderer="webgl"][data-gosx-scene3d-ready="true"]')`, 10*time.Second, "typed size scene")
+			page.eval(t, `__gosx_notify_shared_signal('$size.selection',JSON.stringify('cube'));__gosx_notify_shared_signal('$size.mode',JSON.stringify('translate'));`, nil)
+			var rect map[string]float64
+			page.eval(t, `(()=>{const r=document.querySelector('canvas').getBoundingClientRect();return {x:r.left,y:r.top}})()`, &rect)
+			if err := chromedp.Run(page.ctx, input.DispatchMouseEvent(input.MousePressed, rect["x"]+tc.x, rect["y"]+120).WithButton(input.Left).WithClickCount(1), input.DispatchMouseEvent(input.MouseReleased, rect["x"]+tc.x, rect["y"]+120).WithButton(input.Left)); err != nil {
+				t.Fatal(err)
+			}
+			var phases []string
+			page.eval(t, `__sizePhases`, &phases)
+			if tc.name == "same-id-same-size" || tc.name == "same-id-different-size" || tc.name == "auto-explicit-collision" {
+				var diagnostic string
+				page.eval(t, `document.querySelector('[data-gosx-scene3d-gizmo-diagnostic]').getAttribute('data-gosx-scene3d-gizmo-diagnostic')`, &diagnostic)
+				if diagnostic != "ambiguous-control-group" {
+					t.Fatalf("duplicate diagnostic: %q", diagnostic)
+				}
+			}
+			if tc.hit {
+				if len(phases) != 2 || phases[0] != "start" || phases[1] != "end" {
+					t.Fatalf("expected hit: %v", phases)
+				}
+			} else if len(phases) != 0 {
+				t.Fatalf("unexpected capture: %v", phases)
+			}
+		})
+	}
+}

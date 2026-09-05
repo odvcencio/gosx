@@ -209,8 +209,10 @@ type ObjectIR struct {
 	GizmoRing bool `json:"gizmoRing,omitempty"`
 	// GizmoHelper / GizmoFormMode: see scene.Mesh.GizmoHelper and
 	// scene.Mesh.GizmoFormMode.
-	GizmoHelper   bool   `json:"gizmoHelper,omitempty"`
-	GizmoFormMode string `json:"gizmoFormMode,omitempty"`
+	GizmoHelper    bool    `json:"gizmoHelper,omitempty"`
+	GizmoFormMode  string  `json:"gizmoFormMode,omitempty"`
+	GizmoControlID string  `json:"gizmoControlID,omitempty"`
+	GizmoSize      float64 `json:"gizmoSize,omitempty"`
 	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
 	// (scene/quality_ladder.go). Empty means unconditionally visible.
 	QualityGroup       string                     `json:"qualityGroup,omitempty"`
@@ -2003,6 +2005,8 @@ func (item ObjectIR) legacyProps() map[string]any {
 		record["gizmoHelper"] = true
 	}
 	setString(record, "gizmoFormMode", item.GizmoFormMode)
+	setString(record, "gizmoControlID", item.GizmoControlID)
+	setNumeric(record, "gizmoSize", item.GizmoSize)
 	setString(record, "qualityGroup", item.QualityGroup)
 	setString(record, "outlineColor", item.OutlineColor)
 	setNumeric(record, "outlineWidth", item.OutlineWidth)

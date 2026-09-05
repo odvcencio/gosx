@@ -27,8 +27,39 @@ function harness(onEmit) {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src/17-scene-input.ts"), "utf8");
   vm.runInContext(source.slice(source.indexOf("  function sceneGizmoAxisParameter"), source.indexOf("  function setupSceneDragInteractions")), context);
   const handle = context.setupSceneGizmoDragInteractions(canvas, {}, () => ({}), () => ({ camera: {} }), () => current, p => { phases.push(JSON.parse(JSON.stringify(p))); if (onEmit) onEmit(p); });
-  return { canvas, document, phases, handle, samples: () => samples, change: value => { current = value; } };
+  return { canvas, document, phases, handle, group: context.sceneGizmoControlGroup, samples: () => samples, change: value => { current = value; } };
 }
+
+test("gizmo missing and partial annotated groups reserve no gesture", () => {
+  const h=harness();
+  for(const objects of [[],[{id:"one",gizmoHelper:true,gizmoFormMode:"translate",gizmoControlID:"a",gizmoSize:1}]]){
+    const result=h.group(objects,"translate");assert.equal(result.valid,false);
+    h.change({...result,targetID:"object",mode:"translate",anchor:{x:0,y:0,z:0}});h.canvas.fire("pointerdown");assert.equal(h.phases.length,0);
+  }
+});
+
+test("gizmo explicit group resolution rejects ambiguity, malformed and mixed metadata", () => {
+  const h=harness(), helper={id:"x",gizmoHelper:true,gizmoFormMode:"translate",gizmoControlID:"a",gizmoSize:.25};
+  const complete=[helper,{...helper,id:"y"},{...helper,id:"z"}];
+  assert.equal(h.group(complete,"translate").gizmoSize,.25);
+  for (const patch of [{gizmoControlID:"b"},{gizmoSize:2},{gizmoSize:null},{gizmoSize:"1"},{gizmoControlID:""},{gizmoSize:NaN},{gizmoSize:0},{gizmoControlID:undefined,gizmoSize:undefined}]) {
+    const result=h.group([helper,{...helper,...patch}],"translate"); assert.equal(result.valid,false); assert.ok(result.diagnostic);
+    h.change({...result,targetID:"object",mode:"translate",anchor:{x:0,y:0,z:0}}); h.canvas.fire("pointerdown"); assert.equal(h.phases.length,0);
+  }
+  assert.equal(h.group([{gizmoHelper:true,gizmoFormMode:"translate"}],"translate").gizmoSize,1.25);
+  assert.equal(h.group([...complete,{...helper,gizmoControlID:"b",gizmoFormMode:"rotate"}],"translate").valid,true);
+});
+
+for (const [size, x, hit] of [[0.25, 0.5, false], [2, 2, true], [1.25, 0.5, true]]) test(`authored gizmo size ${size} controls boundary ${x}`, () => {
+  const h = harness(); h.change({targetID:"object",mode:"translate",anchor:{x:0,y:0,z:0},gizmoControlID:"control",gizmoSize:size});
+  h.canvas.fire("pointerdown", {clientX:x}); assert.equal(h.phases.length, hit ? 1 : 0); h.handle.dispose();
+});
+
+test("gizmo group size change cancels active gesture", () => {
+  const h = harness(); const context={targetID:"object",mode:"translate",anchor:{x:0,y:0,z:0},gizmoControlID:"control",gizmoSize:1.25};
+  h.change(context); h.canvas.fire("pointerdown"); h.change({...context,gizmoSize:2}); h.document.fire("pointerup");
+  assert.deepEqual(h.phases.map(p=>p.phase),["start","cancel"]);
+});
 
 test("gizmo pointer cancel is not a commit and never samples cancellation coordinates", () => {
   const h = harness(); h.canvas.fire("pointerdown"); h.document.fire("pointermove", { clientX: 1 });
@@ -87,14 +118,14 @@ for (const terminal of ["pointerup", "pointercancel", "lostpointercapture"]) tes
 });
 
 const { FakeElement, createContext, runScript, bootstrapRuntimeSource, freshFeatureBundleSource, flushAsyncWork } = require("./runtime-test-harness.js");
-for (const interruption of ["cancel", "external", "replacement", "selection", "mode", "dispose"]) test(`mounted gizmo ${interruption} preserves ownership of translation rollback`, async () => {
+for (const interruption of ["cancel", "external", "replacement", "selection", "mode", "dispose", "sizechange", "ambiguity", "malformed"]) test(`mounted gizmo ${interruption} preserves ownership of translation rollback`, async () => {
   const mount = new FakeElement("div", null); mount.id = "gizmo-lifecycle";
   const env = createContext({ elements: [mount], enableWebGL: true, disableCanvas2D: true,
     fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: freshFeatureBundleSource("engines") }, "/gosx/bootstrap-feature-scene3d-webgl.js": { text: freshFeatureBundleSource("scene3d-webgl") } },
     manifest: { engines: [{ id: "gizmo-engine", component: "GoSXScene3D", kind: "surface", mountId: mount.id,
       props: { width: 640, height: 360, autoRotate: false, controls: "orbit", camera: { x: 0, y: 0, z: 6, fov: 72 },
         selectionInputSignal: "$selection", gizmoInputSignal: "$mode", gizmoOutputSignal: "$result",
-        scene: { objects: [{ id: "cube", kind: "box", size: 1, x: 0, y: 0, z: 0 }] } } }] } });
+        scene: { objects: [{ id: "cube", kind: "box", size: 1, x: 0, y: 0, z: 0 }, ...(["sizechange","ambiguity","malformed"].includes(interruption) ? ["helper","helper-y","helper-z"].map(id=>({id,kind:"box",gizmoHelper:true,gizmoFormMode:"translate",gizmoControlID:"controls",gizmoSize:1.25})) : [{id:"legacy-helper",kind:"box",gizmoHelper:true,gizmoFormMode:"translate"}])] } } }] } });
   const phases = []; mount.addEventListener("gosx:scene3d:input", e => { if (e.detail.kind === "gizmo-commit") phases.push(e.detail.input); });
   // Observe real patch output; do not replace its implementation or selection logic.
   const original = freshFeatureBundleSource("scene3d");
@@ -112,6 +143,11 @@ for (const interruption of ["cancel", "external", "replacement", "selection", "m
   assert.deepEqual(phases.map(p => p.phase), ["start", "move"]);
   const cube = () => env.context.__gizmoState.objects.get("cube");
   assert.ok(cube().x > 0.1, "real mount applied preview");
+  if (["sizechange","ambiguity","malformed"].includes(interruption)) {
+    assert.equal(env.context.__gizmoState.objects.get("helper").gizmoSize,1.25,"normalization and selection patches preserve metadata");
+    const commands=interruption==="ambiguity" ? [{kind:0,objectId:"other",data:{kind:"box",props:{id:"other",gizmoHelper:true,gizmoFormMode:"translate",gizmoControlID:"other",gizmoSize:1.25}}}] : [{kind:2,objectId:"helper",data:{gizmoSize:interruption==="malformed" ? null : 2}}];
+    mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands",{detail:{revision:1,commands}}));
+  }
   if (interruption === "external") {
     mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", { detail: { revision: 1, commands: [{ kind: 2, objectId: "cube", data: { x: 9, y: 0, z: 0 } }] } }));
   }
@@ -119,10 +155,14 @@ for (const interruption of ["cancel", "external", "replacement", "selection", "m
   if (interruption === "selection") env.context.__gosx_notify_shared_signal("$selection", JSON.stringify(""));
   else if (interruption === "mode") env.context.__gosx_notify_shared_signal("$mode", JSON.stringify("rotate"));
   else if (interruption === "dispose") env.context.__gosx_dispose_engine("gizmo-engine");
-  else env.context.document.dispatchEvent(event(interruption === "external" || interruption === "replacement" ? "pointerup" : "pointercancel", 999));
+  else env.context.document.dispatchEvent(event(["external","replacement","sizechange","ambiguity","malformed"].includes(interruption) ? "pointerup" : "pointercancel", 999));
   await flushAsyncWork();
   assert.deepEqual(phases.map(p => p.phase), ["start", "move", "cancel"]);
   assert.equal(cube().x, interruption === "external" || interruption === "replacement" ? 9 : 0);
+  if (interruption==="ambiguity" || interruption==="malformed") {
+    assert.match(mount.getAttribute("data-gosx-scene3d-gizmo-diagnostic"), /control-group/);
+    canvas.dispatchEvent(event("pointerdown",340)); assert.equal(phases.length,3,"invalid group reserves no new gesture");
+  }
   env.context.document.dispatchEvent(event("pointerup", 360));
   assert.equal(phases.length, 3);
 });

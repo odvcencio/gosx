@@ -832,6 +832,9 @@
       // gizmoFormMode matches the active gizmo-mode signal (see
       // syncMountedSceneGizmoHelpers in 20-scene-mount.js).
       gizmoHelper: sceneBool(Object.prototype.hasOwnProperty.call(item, "gizmoHelper") ? item.gizmoHelper : current.gizmoHelper, false),
+      // Preserve malformed explicit values so interaction fails closed, not legacy-defaults.
+      gizmoControlID: Object.prototype.hasOwnProperty.call(item, "gizmoControlID") ? item.gizmoControlID : current.gizmoControlID,
+      gizmoSize: Object.prototype.hasOwnProperty.call(item, "gizmoSize") ? item.gizmoSize : current.gizmoSize,
       gizmoFormMode: typeof item.gizmoFormMode === "string" && item.gizmoFormMode
         ? item.gizmoFormMode
         : (typeof current.gizmoFormMode === "string" ? current.gizmoFormMode : ""),

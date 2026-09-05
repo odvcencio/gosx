@@ -1617,6 +1617,30 @@
 
   var SCENE_GIZMO_AXES = { x: { x: 1, y: 0, z: 0 }, y: { x: 0, y: 1, z: 0 }, z: { x: 0, y: 0, z: 1 } };
 
+  function sceneGizmoControlGroup(objects, mode) {
+    var group = null;
+    var legacy = false;
+    var count = 0;
+    var ids = new Set();
+    for (var i = 0; i < objects.length; i++) {
+      var item = objects[i];
+      if (!item.gizmoHelper || item.gizmoFormMode !== mode) continue;
+      if (item.gizmoControlID === undefined && item.gizmoSize === undefined) {
+        legacy = true;
+        continue;
+      }
+      if (typeof item.gizmoControlID !== "string" || !item.gizmoControlID.trim() || typeof item.gizmoSize !== "number" || !Number.isFinite(item.gizmoSize) || item.gizmoSize <= 0) return { valid: false, diagnostic: "malformed-control-group" };
+      if (group && (group.gizmoControlID !== item.gizmoControlID || group.gizmoSize !== item.gizmoSize)) return { valid: false, diagnostic: "ambiguous-control-group" };
+      if (typeof item.id !== "string" || !item.id || ids.has(item.id)) return { valid: false, diagnostic: "malformed-control-group" };
+      ids.add(item.id);
+      count++;
+      group = { valid: true, gizmoControlID: item.gizmoControlID, gizmoSize: item.gizmoSize, diagnostic: "" };
+    }
+    if (legacy && group) return { valid: false, diagnostic: "mixed-control-group" };
+    if (group && count !== (mode === "rotate" ? 1 : 3)) return { valid: false, diagnostic: "incomplete-control-group" };
+    return group || (legacy ? { valid: true, gizmoSize: 1.25, diagnostic: "legacy-default" } : { valid: false, diagnostic: "missing-control-group" });
+  }
+
   function setupSceneGizmoDragInteractions(canvas, props, readViewport, readSceneBundle, readGizmoContext, emitGizmo) {
     if (!canvas || typeof readGizmoContext !== "function") {
       return { dispose: function() {} };
@@ -1647,7 +1671,10 @@
     function onPointerDown(event) {
       if (disposed || finishing || event.button !== 0 || drag) return;
       var context = readGizmoContext();
-      if (!context || !context.targetID || !context.mode || !context.anchor) return;
+      if (!context || context.valid === false || !context.targetID || !context.mode || !context.anchor) return;
+      var controlID = context.gizmoControlID;
+      size = context.gizmoSize === undefined ? 1.25 : context.gizmoSize;
+      if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return;
       var ray = pointerRay(event);
       if (!ray) return;
       var anchor = context.anchor;
@@ -1679,6 +1706,8 @@
       drag = {
         pointerId: event.pointerId,
         target: context.targetID,
+        gizmoControlID: controlID,
+        gizmoSize: size,
         mode: mode,
         axis: reserve.axis,
         anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
@@ -1745,7 +1774,7 @@
     function validateDrag() {
       if (!drag) return false;
       var context = readGizmoContext();
-      if (!context || context.valid === false || context.targetID !== drag.target || context.mode !== drag.mode) {
+      if (!context || context.valid === false || context.targetID !== drag.target || context.mode !== drag.mode || context.gizmoControlID !== drag.gizmoControlID || (context.gizmoSize === undefined ? 1.25 : context.gizmoSize) !== drag.gizmoSize) {
         finishDrag("cancel");
         return false;
       }

@@ -374,15 +374,19 @@ type Mesh struct {
 	// (handle cubes). Compared against Props.GizmoInputSignal's live value by
 	// the client to decide which single form is visible at a time.
 	GizmoFormMode string
-	OutlineColor  string
-	OutlineWidth  float64
-	CastShadow    bool
-	ReceiveShadow bool
-	DepthWrite    *bool // nil = default (true), false = no depth writes
-	Spin          Euler
-	Drift         Vector3
-	DriftSpeed    float64
-	DriftPhase    float64
+	// GizmoControlID and GizmoSize identify a consistent interaction group.
+	// TransformControls supplies these on every lowered helper.
+	GizmoControlID string
+	GizmoSize      float64
+	OutlineColor   string
+	OutlineWidth   float64
+	CastShadow     bool
+	ReceiveShadow  bool
+	DepthWrite     *bool // nil = default (true), false = no depth writes
+	Spin           Euler
+	Drift          Vector3
+	DriftSpeed     float64
+	DriftPhase     float64
 	// RigidBody, when non-nil, attaches a physics body to this mesh. The
 	// body's initial pose is taken from Position/Rotation above; after
 	// simulation starts, the mesh's transform is driven by the physics
@@ -1325,9 +1329,12 @@ type SkeletonHelper struct {
 // The first implementation is a visual helper surface; interactive pointer
 // mutation is handled by the browser controls layer.
 type TransformControls struct {
-	ID       string
-	Target   string
-	Mode     string // "translate", "rotate", "scale"
+	ID     string
+	Target string
+	Mode   string // "translate", "rotate", "scale"
+	// Size controls helper geometry and browser hit regions; nonpositive values
+	// use 1.25. Browser interaction requires one consistent active helper group.
+	// Ambiguous/malformed groups refuse gestures and expose a mount diagnostic.
 	Size     float64
 	Position Vector3
 	Rotation Euler
@@ -1538,6 +1545,7 @@ type pendingHTML struct {
 }
 
 type graphLowerer struct {
+	controlGroups      map[string]bool
 	objects            []ObjectIR
 	models             []ModelIR
 	points             []PointsIR
@@ -2682,21 +2690,46 @@ func (l *graphLowerer) lowerTransformControls(control TransformControls, parent 
 		}
 	}
 	id := l.nextSceneHelperID("scene-transform-controls", control.ID)
+	if l.controlGroups == nil {
+		l.controlGroups = make(map[string]bool)
+	}
+	baseID := id
+	helperSuffixes := []string{"-x", "-y", "-z", "-ring", "-scale-x", "-scale-y", "-scale-z"}
+	available := func(candidate string) bool {
+		if l.controlGroups["group:"+candidate] {
+			return false
+		}
+		for _, suffix := range helperSuffixes {
+			if l.controlGroups["object:"+candidate+suffix] {
+				return false
+			}
+		}
+		return true
+	}
+	for suffix := 2; !available(id); suffix++ {
+		id = baseID + "-control-" + intString(suffix)
+	}
+	l.controlGroups["group:"+id] = true
+	for _, suffix := range helperSuffixes {
+		l.controlGroups["object:"+id+suffix] = true
+	}
 	mode := strings.ToLower(strings.TrimSpace(control.Mode))
 
 	l.lowerGizmoAxesHelper(id, position, control.Rotation, size, width, mode == "translate", parent)
 
 	rotateMode := mode == "rotate"
 	l.lowerMesh(Mesh{
-		ID:            id + "-ring",
-		Geometry:      helperRingGeometry(size, 48, width),
-		Material:      LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
-		Position:      position,
-		Rotation:      control.Rotation,
-		Visible:       Bool(rotateMode),
-		GizmoRing:     true,
-		GizmoHelper:   true,
-		GizmoFormMode: "rotate",
+		ID:             id + "-ring",
+		Geometry:       helperRingGeometry(size, 48, width),
+		Material:       LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
+		Position:       position,
+		Rotation:       control.Rotation,
+		Visible:        Bool(rotateMode),
+		GizmoRing:      true,
+		GizmoHelper:    true,
+		GizmoFormMode:  "rotate",
+		GizmoControlID: id,
+		GizmoSize:      size,
 	}, parent)
 
 	l.lowerGizmoScaleHandles(id, position, control.Rotation, size, width, mode == "scale", parent)
@@ -2712,14 +2745,16 @@ func (l *graphLowerer) lowerGizmoAxesHelper(id string, position Vector3, rotatio
 	v := Bool(visible)
 	lowerLineHelper := func(suffix, color string, points []Vector3) {
 		l.lowerMesh(Mesh{
-			ID:            id + "-" + suffix,
-			Geometry:      LinesGeometry{Points: points, Segments: [][2]int{{0, 1}}, Width: width},
-			Material:      LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
-			Position:      position,
-			Rotation:      rotation,
-			Visible:       v,
-			GizmoHelper:   true,
-			GizmoFormMode: "translate",
+			ID:             id + "-" + suffix,
+			Geometry:       LinesGeometry{Points: points, Segments: [][2]int{{0, 1}}, Width: width},
+			Material:       LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
+			Position:       position,
+			Rotation:       rotation,
+			Visible:        v,
+			GizmoHelper:    true,
+			GizmoFormMode:  "translate",
+			GizmoControlID: id,
+			GizmoSize:      size,
 		}, parent)
 	}
 	lowerLineHelper("x", "#ef4444", []Vector3{{}, {X: size}})
@@ -2743,14 +2778,16 @@ func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotat
 	v := Bool(visible)
 	lowerHandle := func(suffix, color string, offset Vector3) {
 		l.lowerMesh(Mesh{
-			ID:            id + "-scale-" + suffix,
-			Geometry:      boxHelperGeometry(handle, handle, handle, width),
-			Material:      LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
-			Position:      Vector3{X: position.X + offset.X, Y: position.Y + offset.Y, Z: position.Z + offset.Z},
-			Rotation:      rotation,
-			Visible:       v,
-			GizmoHelper:   true,
-			GizmoFormMode: "scale",
+			ID:             id + "-scale-" + suffix,
+			Geometry:       boxHelperGeometry(handle, handle, handle, width),
+			Material:       LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
+			Position:       Vector3{X: position.X + offset.X, Y: position.Y + offset.Y, Z: position.Z + offset.Z},
+			Rotation:       rotation,
+			Visible:        v,
+			GizmoHelper:    true,
+			GizmoFormMode:  "scale",
+			GizmoControlID: id,
+			GizmoSize:      size,
 		}, parent)
 	}
 	lowerHandle("x", "#ef4444", Vector3{X: size})
@@ -2816,6 +2853,8 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.GizmoRing = mesh.GizmoRing
 	record.GizmoHelper = mesh.GizmoHelper
 	record.GizmoFormMode = strings.TrimSpace(mesh.GizmoFormMode)
+	record.GizmoControlID = mesh.GizmoControlID
+	record.GizmoSize = mesh.GizmoSize
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
 	record.OutlineWidth = mesh.OutlineWidth
 	record.CastShadow = mesh.CastShadow
