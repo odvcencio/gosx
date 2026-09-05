@@ -227,11 +227,18 @@ func renderFileLayout(file string, ctx *RouteContext, content gosx.Node, page Fi
 	if !content.IsZero() {
 		slotHTML = gosx.RenderHTML(content)
 	}
+	// Reuse the legacy marker's already-rendered content. Rendering the
+	// original Node again at every strict children expression duplicates work.
+	layoutChildren := gosx.Fragment()
+	if slotHTML != "" {
+		layoutChildren = gosx.RawHTML(slotHTML)
+	}
 	return renderFileNode(file, fileRenderOptions{
 		ComponentReplacements: slotComponentReplacements(slotHTML, opts),
 		HTMLPlaceholders:      htmlSlotPlaceholders(opts),
 		EvalEnv:               filePageRenderEnv(ctx, page, module),
 		RequireReplacement:    true,
+		LayoutChildren:        layoutChildren,
 	})
 }
 
@@ -266,6 +273,10 @@ func layoutFilePage(root, file string) FilePage {
 }
 
 type fileRenderOptions struct {
+	// LayoutChildren is supplied only by the file-layout path. Unlike legacy
+	// markers, strict entries consume it through their lexical children binding.
+	// A nonzero empty Fragment distinguishes an empty page from no supply.
+	LayoutChildren        gosx.Node
 	ComponentReplacements map[string]string
 	HTMLPlaceholders      []string
 	EvalEnv               fileRenderEnv
@@ -387,6 +398,11 @@ func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.No
 		return gosx.Node{}, fmt.Errorf("render %s: %w", path, err)
 	}
 	if opts.RequireReplacement && !replaced {
+		for _, entry := range prog.Components {
+			if entry.Name == component && entry.Syntax == ir.ComponentSyntaxStrict {
+				return gosx.Node{}, fmt.Errorf("layout %s is missing an evaluated {children} binding", path)
+			}
+		}
 		return gosx.Node{}, fmt.Errorf("layout %s is missing a <Slot /> or <Outlet /> component", path)
 	}
 	htmlOut = scopeHTMLFragmentRoots(htmlOut, scopeID)

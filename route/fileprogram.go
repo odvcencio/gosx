@@ -63,6 +63,12 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		return "", false, fmt.Errorf("component %q not found", component)
 	}
 	entryEnv := opts.EvalEnv
+	if !opts.LayoutChildren.IsZero() && comp.Syntax == ir.ComponentSyntaxStrict && comp.AcceptsChildren {
+		entryEnv = entryEnv.withValue("children", fileLayoutChildren{
+			node:     opts.LayoutChildren,
+			onRender: func() { renderer.replaced = true },
+		})
+	}
 	if comp.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(comp.PropsType) != "" {
 		// gosx#226: a strict component rendered as the render entry (not as a
 		// nested <Component/> call inside some other component's body) has no
@@ -1805,8 +1811,21 @@ func fileScalarText(value any) (string, bool) {
 	}
 }
 
+// fileLayoutChildren tracks evaluation of the supplied root binding, not an
+// identifier spelling. Local component scopes replace it with their own Node.
+// Like legacy Slot replacement, evaluation into an eager temporary buffer
+// counts even if a later component discards that buffer; this is not a
+// final-output provenance guarantee.
+type fileLayoutChildren struct {
+	node     gosx.Node
+	onRender func()
+}
+
 func renderFileEvaluatedExpr(value any) string {
 	switch v := value.(type) {
+	case fileLayoutChildren:
+		v.onRender()
+		return gosx.RenderHTML(v.node)
 	case nil:
 		return ""
 	case gosx.Node:

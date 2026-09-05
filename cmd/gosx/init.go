@@ -372,7 +372,7 @@ func getenv(key string, fallback string) string {
 func appLayoutTemplate() string {
 	return `package app
 
-func Layout() Node {
+component Layout() {
 	return <div class="site-shell">
 		<header class="site-header">
 			<a href="/" data-gosx-link class="site-brand">GoSX Starter</a>
@@ -382,7 +382,7 @@ func Layout() Node {
 				<a href="/api/health" class="site-link">API</a>
 			</nav>
 		</header>
-		<Slot />
+		{children}
 	</div>
 }
 `
