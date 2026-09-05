@@ -4841,17 +4841,13 @@
         for (var cpKey in customPostPrograms) {
           var cpProg = customPostPrograms[cpKey];
           if (cpProg) {
-            gl.deleteShader(cpProg.vertexShader);
-            gl.deleteShader(cpProg.fragmentShader);
-            gl.deleteProgram(cpProg.program);
+            sceneWebGLDisposeProgram(gl, cpProg);
           }
         }
         customPostPrograms = {};
         customPostFailed = {};
         if (blitProg) {
-          gl.deleteShader(blitProg.vertexShader);
-          gl.deleteShader(blitProg.fragmentShader);
-          gl.deleteProgram(blitProg.program);
+          sceneWebGLDisposeProgram(gl, blitProg);
           blitProg = null;
         }
         if (quad) {
@@ -6649,6 +6645,68 @@
     );
   }
 
+  // Look up or generate geometry for an instanced mesh entry.
+  function sceneWebGLDisposeProgram(gl, record) {
+    gl.deleteShader(record.vertexShader);
+    gl.deleteShader(record.fragmentShader);
+    gl.deleteProgram(record.program);
+  }
+
+  function sceneWebGLInstancedGeometry(mesh, cache) {
+    if (mesh && mesh._importedGeometry) return mesh._importedGeometry;
+    var kind = normalizeInstancedGeometryKind(mesh && mesh.kind);
+    const dims = {
+      size: sceneNumber(mesh.size, 0),
+      width: sceneNumber(mesh.width, 1),
+      height: sceneNumber(mesh.height, 1),
+      depth: sceneNumber(mesh.depth, 1),
+      radius: sceneNumber(mesh.radius, 0.5),
+      tube: sceneNumber(mesh.tube, 0.3),
+      segments: sceneNumber(mesh.segments, 32),
+      radialSegments: sceneNumber(mesh.radialSegments, 32),
+      tubularSegments: sceneNumber(mesh.tubularSegments, 16),
+    };
+    dims.radiusTop = sceneNumber(mesh.radiusTop, dims.radius);
+    dims.radiusBottom = sceneNumber(mesh.radiusBottom, dims.radius);
+    const key = kind + ":" + Object.values(dims).join(":");
+    if (!cache[key]) cache[key] = generateInstancedGeometry(kind, dims);
+    return cache[key];
+  }
+
+  function createSceneRigidGLBWebGLStreams(gl, trackedBuffers, staticCache, staticBuffer) {
+    const streams = new Map();
+    function sweep(bundle) {
+      if (!bundle) return false;
+      const live = new Set((bundle.instancedMeshes || []).filter(function(mesh) { return mesh && mesh._importedGeometry; }).map(function(mesh) { return mesh.id; }));
+      for (const [id, stream] of streams) {
+        if (live.has(id)) continue;
+        gl.deleteBuffer(stream.buffer);
+        trackedBuffers.delete(stream.buffer);
+        streams.delete(id);
+      }
+      return true;
+    }
+    function bind(mesh, data, useCullVBOs) {
+      if (!mesh._importedGeometry) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, useCullVBOs ? mesh._cpuCullTransformVBO : staticBuffer(staticCache, data));
+        return;
+      }
+      let stream = streams.get(mesh.id);
+      if (!stream) {
+        stream = { buffer: gl.createBuffer(), capacity: 0 };
+        trackedBuffers.add(stream.buffer);
+        streams.set(mesh.id, stream);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, stream.buffer);
+      if (stream.capacity < data.byteLength) {
+        stream.capacity = Math.max(data.byteLength, stream.capacity * 2, 64);
+        gl.bufferData(gl.ARRAY_BUFFER, stream.capacity, gl.DYNAMIC_DRAW);
+      }
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+    }
+    return { sweep, bind, clear: function() { streams.clear(); } };
+  }
+
   function createScenePBRRenderer(gl, canvas) {
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -6761,6 +6819,7 @@
     };
     var webGLTelemetryAttributeCache = Object.create(null);
     const staticPointEntries = new Set();
+    const rigidGLBStreams = createSceneRigidGLBWebGLStreams(gl, pointsEntryBuffers, staticMeshArrayVBOs, ensureStaticArrayVBO);
     const activeStaticPointEntries = new Set();
     const staticPointKeyedVBOs = new Map();
     const activeStaticPointKeys = new Set();
@@ -7438,6 +7497,7 @@
 
       for (var i = 0; i < objects.length; i++) {
         const obj = objects[i];
+        if (obj && obj._colorInstanced) continue;
         // Render truth: split the two reasons an authored mesh never draws.
         // "in the bundle" and "on screen" are different numbers, and conflating
         // them is what let three Selena planes read healthy for two weeks.
@@ -7468,7 +7528,7 @@
     }
 
     function render(bundle, viewport) {
-      if (!bundle) {
+      if (!rigidGLBStreams.sweep(bundle)) {
         return;
       }
 
@@ -9070,39 +9130,6 @@
 	      return instancedProgram;
 	    }
 
-    // Look up or generate geometry for an instanced mesh entry.
-    function getInstancedGeometry(mesh) {
-      var kind = normalizeInstancedGeometryKind(mesh && mesh.kind);
-      var size = sceneNumber(mesh && mesh.size, 0);
-      var w = sceneNumber(mesh.width, 1);
-      var h = sceneNumber(mesh.height, 1);
-      var d = sceneNumber(mesh.depth, 1);
-      var r = sceneNumber(mesh.radius, 0.5);
-      var rt = sceneNumber(mesh.radiusTop, r);
-      var rb = sceneNumber(mesh.radiusBottom, r);
-      var tube = sceneNumber(mesh.tube, 0.3);
-      var s = sceneNumber(mesh.segments, 32);
-      var radial = sceneNumber(mesh.radialSegments, 32);
-      var tubular = sceneNumber(mesh.tubularSegments, 16);
-      var key = kind + ":" + size + ":" + w + ":" + h + ":" + d + ":" + r + ":" + rt + ":" + rb + ":" + tube + ":" + s + ":" + radial + ":" + tubular;
-      if (instancedGeometryCache[key]) return instancedGeometryCache[key];
-      var geom = generateInstancedGeometry(kind, {
-        size: size,
-        width: w,
-        height: h,
-        depth: d,
-        radius: r,
-        radiusTop: rt,
-        radiusBottom: rb,
-        tube: tube,
-        segments: s,
-        radialSegments: radial,
-        tubularSegments: tubular,
-      });
-      instancedGeometryCache[key] = geom;
-      return geom;
-    }
-
     // Draw all instanced meshes from the render bundle.
     function sceneInstancedColorBuffer(mesh, count) {
       if (!mesh || count <= 0) {
@@ -9120,10 +9147,7 @@
         mesh._cachedInstanceColors = new Float32Array(count * 4);
         for (var ci = 0; ci < count; ci++) {
           var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-          mesh._cachedInstanceColors[ci * 4] = rgba[0];
-          mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
-          mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
-          mesh._cachedInstanceColors[ci * 4 + 3] = rgba[3];
+          mesh._cachedInstanceColors.set(rgba, ci * 4);
         }
         return mesh._cachedInstanceColors;
       }
@@ -9184,7 +9208,7 @@
         if (instanceCount <= 0) continue;
 
         // Generate or retrieve cached geometry for this mesh kind.
-        var geom = getInstancedGeometry(mesh);
+        var geom = sceneWebGLInstancedGeometry(mesh, instancedGeometryCache);
         if (!geom || geom.vertexCount <= 0) continue;
 
         // Upload material uniforms.
@@ -9331,11 +9355,7 @@
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
 
         // Bind transforms VBO: dynamic cull VBO or static cached VBO.
-        if (useCullVBOs) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
-        } else {
-          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
-        }
+        rigidGLBStreams.bind(mesh, transformData, useCullVBOs);
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
         // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
@@ -9398,6 +9418,7 @@
         gl.deleteBuffer(buf);
       }
       pointsEntryBuffers.clear();
+      rigidGLBStreams.clear();
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
       staticPointKeyedVBOs.clear();
@@ -9437,24 +9458,18 @@
       }
 
       if (shadowProgram) {
-        gl.deleteShader(shadowProgram.vertexShader);
-        gl.deleteShader(shadowProgram.fragmentShader);
-        gl.deleteProgram(shadowProgram.program);
+        sceneWebGLDisposeProgram(gl, shadowProgram);
       }
 
       // Clean up skinned PBR program.
       if (skinnedProgram) {
-        gl.deleteShader(skinnedProgram.vertexShader);
-        gl.deleteShader(skinnedProgram.fragmentShader);
-        gl.deleteProgram(skinnedProgram.program);
+        sceneWebGLDisposeProgram(gl, skinnedProgram);
         skinnedProgram = null;
       }
 
       // Clean up points program.
       if (pointsProgram) {
-        gl.deleteShader(pointsProgram.vertexShader);
-        gl.deleteShader(pointsProgram.fragmentShader);
-        gl.deleteProgram(pointsProgram.program);
+        sceneWebGLDisposeProgram(gl, pointsProgram);
         pointsProgram = null;
       }
       // Authored points programs own their shader objects independently of the
@@ -9462,41 +9477,24 @@
       // delete the same GL objects twice or retain failed layer IDs.
       for (const authoredRecord of pointsAuthoredGLPrograms.values()) {
         if (!authoredRecord || authoredRecord.failed) continue;
-        gl.deleteShader(authoredRecord.vertexShader);
-        gl.deleteShader(authoredRecord.fragmentShader);
-        gl.deleteProgram(authoredRecord.program);
+        sceneWebGLDisposeProgram(gl, authoredRecord);
       }
       pointsAuthoredGLPrograms.clear();
       pointsAuthoredGLFailed.clear();
 
       // Clean up instanced PBR program.
       if (instancedProgram) {
-        gl.deleteShader(instancedProgram.vertexShader);
-        gl.deleteShader(instancedProgram.fragmentShader);
-        gl.deleteProgram(instancedProgram.program);
+        sceneWebGLDisposeProgram(gl, instancedProgram);
         instancedProgram = null;
       }
       instancedGeometryCache = {};
 
-      for (const record of customProgramCache.values()) {
-        const cp = record && record.program;
-        if (cp) {
-          gl.deleteShader(cp.vertexShader);
-          gl.deleteShader(cp.fragmentShader);
-          gl.deleteProgram(cp.program);
+      for (const cache of [customProgramCache, selenaProgramCache]) {
+        for (const record of cache.values()) {
+          if (record && record.program) sceneWebGLDisposeProgram(gl, record.program);
         }
+        cache.clear();
       }
-      customProgramCache.clear();
-
-      for (const record of selenaProgramCache.values()) {
-        const sp = record && record.program;
-        if (sp) {
-          gl.deleteShader(sp.vertexShader);
-          gl.deleteShader(sp.fragmentShader);
-          gl.deleteProgram(sp.program);
-        }
-      }
-      selenaProgramCache.clear();
 
       if (lineProgram && lineResources) {
         disposeSceneWebGLRenderer(gl, lineProgram, lineResources);
@@ -9567,6 +9565,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
+      supportsRigidGLBInstancing: true,
       render: render,
       dispose: dispose,
       diagnostics: diagnostics,

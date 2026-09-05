@@ -1327,7 +1327,7 @@
 
     for (let index = 0; index < objects.length; index += 1) {
       const object = objects[index];
-      if (!scenePlannerRenderableObject(object)) {
+      if (!scenePlannerRenderableObject(object) || object._colorInstanced) {
         continue;
       }
       const material = materials[object.materialIndex] || null;
@@ -1645,6 +1645,7 @@
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+    hash = scenePlannerHashNumber(hash, object && object._colorInstanced ? 1 : 0);
     // Pass routing and derived provenance participate in the signature so a
     // raw/derived override toggle on an unchanged material cannot reuse a
     // stale prepared bucket — before the retained fast-path return.

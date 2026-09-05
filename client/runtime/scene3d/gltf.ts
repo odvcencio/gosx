@@ -2220,6 +2220,9 @@
       var object = {
         id: objectID,
         kind: "gltf-mesh",
+        // glTF primitives are filled surfaces unless extras explicitly
+        // request wireframe. Preserve this through Scene3D normalization.
+        wireframe: false,
         vertices: vertices,
         material: material,
         transform: worldTransform,

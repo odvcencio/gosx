@@ -1049,7 +1049,12 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     const normalized = normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
-      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource);
+      const rigidBatch = model && model._instancedGLBBatchID && !normalized.skin && !morphSource && !nodeAnimSource &&
+        !(model._live && model._live.length) &&
+        !["in", "out", "update"].some(function(name) { return model._transition && model._transition[name] && model._transition[name].duration > 0; }) &&
+        sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) > 0.000001;
+      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource,
+        rigidBatch ? sceneRigidGLBGeometry(rawObject, normalized.vertices) : null);
     }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
@@ -1104,7 +1109,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return out;
   }
 
-  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource) {
+  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, rigidGeometry) {
     const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
     if (!vertices || !vertices.positions || !vertices.count) {
       return null;
@@ -1130,7 +1135,12 @@ function gosxConfigureSceneScript(script, role, src) {
     const hasSkin = instanced.skin && typeof instanced.skin === "object";
     const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
     const modelOrientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
-    if (hasSkin) {
+    if (rigidGeometry) {
+      // Keep the imported mesh in asset space. Pose changes update a matrix;
+      // the source geometry is shared by every instance and hydration epoch.
+      instanced.vertices = rigidGeometry.vertices;
+      instanced.parentMatrix = sceneModelTransformMatrix(model);
+    } else if (hasSkin) {
       instanced.vertices = {
         count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
@@ -1186,7 +1196,11 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneApplyModelLOD(instanced, model);
     const normalized = normalizeSceneObject(instanced, prefix);
     sceneApplyModelMaterialName(normalized, model);
-    if (!hasSkin && normalized && normalized.vertices) {
+    if (rigidGeometry && normalized) {
+      normalized.vertices = rigidGeometry.vertices;
+      normalized._rigidGLBGeometry = rigidGeometry;
+      normalized._instancedGLBBatchID = model._instancedGLBBatchID;
+    } else if (!hasSkin && normalized && normalized.vertices) {
       normalized._modelLocalVertices = {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),

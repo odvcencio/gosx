@@ -493,6 +493,8 @@
 
   function sceneDebugBundleCounts(bundle, state) {
     const meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+    const colorMeshObjects = Array.isArray(bundle && bundle.meshObjects)
+      ? bundle.meshObjects.filter(function(object) { return object && !object._colorInstanced; }).length : 0;
     const worldObjects = Array.isArray(bundle && bundle.objects) ? bundle.objects.length : 0;
     const points = Array.isArray(bundle && bundle.points) ? bundle.points.length : 0;
     const instancedMeshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
@@ -509,6 +511,7 @@
     const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials.length : 0;
     return {
       meshObjects,
+      colorMeshObjects,
       worldObjects,
       points,
       instancedMeshes,
@@ -523,9 +526,18 @@
       lights,
       postEffects,
       materials,
-      drawCalls: meshObjects + worldObjects + points + instancedMeshes + instancedGLBMeshes + computeParticles + waterSystems + surfaces + lines + postEffects,
+      drawCalls: colorMeshObjects + worldObjects + points + instancedMeshes + instancedGLBMeshes + computeParticles + waterSystems + surfaces + lines + postEffects,
       worldVertexCount: Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0))),
       worldMeshVertexCount: Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0))),
+    };
+  }
+
+  function sceneRendererBundleCapabilities(renderer) {
+    return {
+      retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
+      rigidGLBInstancing: Boolean(renderer && renderer.supportsRigidGLBInstancing === true),
+      // Canvas2D's compatibility renderer draws mesh edges.
+      meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
     };
   }
 

@@ -2359,6 +2359,8 @@
         engineID: String(ctx.id || ""),
         component: String(ctx.component || ""),
         renderer: rendererKind,
+        rendererType: renderer && renderer.type || "",
+        rendererCapabilities: sceneRendererBundleCapabilities(renderer),
         fallbackReason: sceneDebugAttr(mount, sceneAttr("renderer-fallback")),
         ready: sceneDebugAttr(mount, readyAttr) === "true",
         active: sceneDebugAttr(mount, sceneAttr("active")) !== "false",
@@ -2380,6 +2382,7 @@
         snapshot.webgpuStats = sceneDebugClone(mount && mount.__gosxScene3DWebGPUStats, 3);
         snapshot.waterShaderSources = { sceneState: [], bundle: [] };
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
+        snapshot.rigidGLBBatching = sceneDebugClone(latestBundle && latestBundle.rigidGLBStats, 2);
       }
       return snapshot;
     }
@@ -2977,7 +2980,7 @@
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
-        { retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true) },
+        sceneRendererBundleCapabilities(renderer),
       );
       latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);

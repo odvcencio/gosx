@@ -1592,7 +1592,9 @@
       if (batch.alphaCutoff !== undefined) {
         raw.alphaCutoff = batch.alphaCutoff;
       }
-      models.push(normalizeSceneModel(raw, batchIndex + "-" + index));
+      const model = normalizeSceneModel(raw, batchIndex + "-" + index);
+      model._instancedGLBBatchID = batch.id;
+      models.push(model);
     }
     return models;
   }
@@ -4810,6 +4812,10 @@
       // Fail closed: callers which do not identify a retained-capable
       // renderer receive a backend-neutral, fully baked bundle.
       retainedGeometryEnabled: Boolean(rendererCapabilities && rendererCapabilities.retainedGeometry === true),
+      rigidGLBInstancingEnabled: Boolean(rendererCapabilities && rendererCapabilities.rigidGLBInstancing === true),
+      rigidGLBStats: { candidates: 0, instances: 0, batches: 0, fallbacks: {} },
+      meshWireframeFallback: Boolean(rendererCapabilities && rendererCapabilities.meshWireframeFallback === true),
+      _rigidGLBBatches: new Map(),
       retainedGeometryTelemetry: {
         eligible: 0,
         retained: 0,
@@ -4837,6 +4843,12 @@
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
     appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes);
+    for (const entry of bundle._rigidGLBBatches.values()) {
+      entry.transforms = new Float32Array(entry.transforms);
+      bundle.instancedMeshes.push(entry);
+    }
+    delete bundle._rigidGLBBatches;
+    bundle.rigidGLBStats.batches = bundle.instancedMeshes.filter(function(entry) { return Boolean(entry._importedGeometry); }).length;
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;
@@ -4857,6 +4869,99 @@
       bundleBuildStartedAt
     ));
     return bundle;
+  }
+
+  // Imported geometry is immutable for the lifetime of a loaded asset. Expand
+  // indices once per source primitive, never once per actor or rendered frame.
+  const sceneRigidGLBGeometryCache = new WeakMap();
+  let sceneRigidGLBGeometrySequence = 0;
+
+  function sceneRigidGLBGeometry(source, vertices) {
+    if (!source || !vertices || !vertices.positions || vertices.count < 3) return null;
+    const cached = sceneRigidGLBGeometryCache.get(source);
+    if (cached) return cached;
+    const indices = vertices.indices instanceof Uint32Array && vertices.indices.length % 3 === 0
+      ? vertices.indices : null;
+    const count = Math.floor((indices ? indices.length : vertices.count) / 3) * 3;
+    if (count < 3) return null;
+    const expanded = { count, immutable: true, geometryRevision: 1 };
+    for (const spec of [["positions", 3, [0, 0, 0]], ["normals", 3, [0, 1, 0]], ["uvs", 2, [0, 0]], ["tangents", 4, [1, 0, 0, 1]]]) {
+      const name = spec[0], stride = spec[1], defaults = spec[2];
+      const values = vertices[name];
+      const out = new Float32Array(count * stride);
+      for (let vertex = 0; vertex < count; vertex += 1) {
+        const from = indices ? indices[vertex] : vertex;
+        if (from >= vertices.count) return null;
+        for (let component = 0; component < stride; component += 1) {
+          out[vertex * stride + component] = sceneNumber(values && values[from * stride + component], defaults[component]);
+        }
+      }
+      expanded[name] = out;
+    }
+    const geometry = {
+      id: "rigid-glb-" + (++sceneRigidGLBGeometrySequence),
+      vertexCount: count,
+      positions: expanded.positions, normals: expanded.normals,
+      uvs: expanded.uvs, tangents: expanded.tangents,
+      vertices: expanded,
+      bounds: sceneMeshLocalBounds(expanded, 1),
+    };
+    sceneRigidGLBGeometryCache.set(source, geometry);
+    return geometry;
+  }
+
+  function appendSceneRigidGLBInstance(bundle, camera, object, material, materialIndex, emitWireSegments, timeSeconds) {
+    const geometry = object && object._rigidGLBGeometry;
+    if (!geometry) return false;
+    bundle.rigidGLBStats.candidates += 1;
+    const fallback = !bundle.rigidGLBInstancingEnabled ? "backend" :
+      emitWireSegments || object.selected ? "outline" : object.doubleSided ? "double-sided" :
+      object.depthWrite === false ? "depth-write" : sceneMaterialUsesAuthoredMeshShader(material) ? "shader" :
+      sceneWorldObjectRenderPass(object, material) !== "opaque" ? "transparency" :
+      bundle.waterSystems && bundle.waterSystems.length ? "water" : "";
+    if (fallback) {
+      bundle.rigidGLBStats.fallbacks[fallback] = (bundle.rigidGLBStats.fallbacks[fallback] || 0) + 1;
+      return false;
+    }
+    const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
+    const bounds = sceneTransformMeshBounds(geometry.bounds, modelMatrix);
+    if (!bounds) return false;
+    const depth = sceneBoundsDepthMetrics(bounds, camera, object);
+    const viewCulled = Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera, object);
+    // Preserve per-object picking and shadow semantics. Colour is drawn by
+    // the shared instanced batch; shadow passes keep the established retained
+    // geometry path until they gain a separate instanced caster contract.
+    bundle.meshObjects.push({
+      id: object.id, kind: object.kind, pickable: object.pickable,
+      materialIndex, renderPass: "opaque", _colorInstanced: true,
+      static: Boolean(object.static), castShadow: Boolean(object.castShadow),
+      receiveShadow: Boolean(object.receiveShadow), depthWrite: object.depthWrite,
+      bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
+      viewCulled, doubleSided: false, skin: null,
+      vertices: geometry.vertices, directVertices: true, retainedGeometry: true,
+      resourceOwner: geometry, geometryRevision: 1, modelMatrix,
+      vertexOffset: 0, vertexCount: geometry.vertexCount,
+    });
+    bundle.retainedMeshObjectCount += 1;
+    bundle.retainedMeshVertexCount += geometry.vertexCount;
+    bundle.retainedGeometryTelemetry.eligible += 1;
+    bundle.retainedGeometryTelemetry.retained += 1;
+    if (viewCulled) return true;
+    bundle.rigidGLBStats.instances += 1;
+    const key = JSON.stringify([object._instancedGLBBatchID, geometry.id, materialIndex, Boolean(object.receiveShadow)]);
+    let batch = bundle._rigidGLBBatches.get(key);
+    if (!batch) {
+      batch = {
+        id: key, kind: "imported-mesh", _importedGeometry: geometry,
+        materialIndex, materialKind: material.kind, renderPass: "opaque",
+        receiveShadow: Boolean(object.receiveShadow), castShadow: false,
+        count: 0, transforms: [],
+      };
+      bundle._rigidGLBBatches.set(key, batch);
+    }
+    batch.count += 1;
+    for (let i = 0; i < 16; i += 1) batch.transforms.push(modelMatrix[i]);
+    return true;
   }
 
   function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes) {
@@ -5516,7 +5621,10 @@
     const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
-    const emitWireSegments = !sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0);
+    const emitWireSegments = bundle.meshWireframeFallback || (!sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0));
+    if (appendSceneRigidGLBInstance(bundle, camera, object, material, materialIndex, emitWireSegments, timeSeconds)) {
+      return;
+    }
     const geometryRevision = sceneMeshGeometryRevision(object, vertices);
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.eligible += 1;

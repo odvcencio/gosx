@@ -6231,6 +6231,83 @@
     return pointsModelMat;
   }
 
+  // Imported batches are recreated by planning; GPU owners stay renderer-local.
+  function createSceneRigidGLBWebGPUResources(trackedBuffers, destroyResource) {
+    const batches = new Map(), geometries = new Map();
+    function retire(owners, live) {
+      for (const [id, owner] of owners) {
+        if (live.has(id)) continue;
+        for (const value of Object.values(owner)) {
+          if (value && trackedBuffers.has(value)) {
+            trackedBuffers.delete(value);
+            destroyResource(value);
+          }
+        }
+        owners.delete(id);
+      }
+    }
+    return {
+      owner(mesh) { return mesh && mesh._importedGeometry && batches.get(mesh.id) || mesh; },
+      geometryOwner(geom) { return geom && geom.id && geometries.get(geom.id) || geom; },
+      prepare(bundle, initFailed) {
+        if (initFailed || !bundle) return false;
+        const liveBatches = new Set(), liveGeometry = new Set();
+        for (const mesh of bundle.instancedMeshes || []) {
+          if (!mesh || !mesh._importedGeometry) continue;
+          liveBatches.add(mesh.id);
+          liveGeometry.add(mesh._importedGeometry.id);
+          if (!batches.has(mesh.id)) batches.set(mesh.id, { id: mesh.id });
+          if (!geometries.has(mesh._importedGeometry.id)) geometries.set(mesh._importedGeometry.id, {});
+        }
+        retire(batches, liveBatches);
+        retire(geometries, liveGeometry);
+        return true;
+      },
+      clear() { batches.clear(); geometries.clear(); }
+    };
+  }
+
+  function instancedMeshColorData(mesh, count) {
+    if (!mesh || count <= 0) return null;
+    var rawColors = mesh.colors;
+    var source = rawColors || null;
+    if (
+      mesh._cachedWGPUInstanceColors &&
+      mesh._cachedWGPUInstanceColorCount === count &&
+      mesh._cachedWGPUInstanceColorSource === source
+    ) {
+      return mesh._cachedWGPUInstanceColors;
+    }
+
+    var data = null;
+    if (rawColors && typeof rawColors.length === "number" && rawColors.length > 0) {
+      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+        data = new Float32Array(count * 4);
+        for (var ci = 0; ci < count; ci++) {
+          var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+          data.set(rgba, ci * 4);
+        }
+      } else if (rawColors.length >= count * 4) {
+        data = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
+      } else if (rawColors.length >= count * 3) {
+        data = new Float32Array(count * 4);
+        for (var ni = 0; ni < count; ni++) {
+          data[ni * 4] = rawColors[ni * 3];
+          data[ni * 4 + 1] = rawColors[ni * 3 + 1];
+          data[ni * 4 + 2] = rawColors[ni * 3 + 2];
+          data[ni * 4 + 3] = 1;
+        }
+      }
+    }
+
+    if (!data) data = new Float32Array(count * 4).fill(1);
+
+    mesh._cachedWGPUInstanceColors = data;
+    mesh._cachedWGPUInstanceColorCount = count;
+    mesh._cachedWGPUInstanceColorSource = source;
+    return data;
+  }
+
   function createSceneWebGPURenderer(canvas, options) {
     function sceneWebGPUFactoryFailure(reason) {
       var text = String(reason || "unknown");
@@ -15370,6 +15447,7 @@
 
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
+        if (obj && obj._colorInstanced) continue;
         if (!obj || obj.viewCulled) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
         var mat = materials[obj.materialIndex] || null;
@@ -15718,6 +15796,8 @@
       }
     }
 
+    const rigidGLBResources = createSceneRigidGLBWebGPUResources(pointsEntryGPUBuffers, destroyRendererGPUResource);
+
     function instancedMeshCount(mesh) {
       if (!mesh) return 0;
       return Math.max(0, Math.floor(sceneNumber(mesh.instanceCount, sceneNumber(mesh.count, 0))));
@@ -15750,103 +15830,41 @@
       return data && data.length >= count * 16 ? data : null;
     }
 
-    function instancedMeshColorData(mesh, count) {
-      if (!mesh || count <= 0) return null;
-      var rawColors = mesh.colors;
-      var source = rawColors || null;
-      if (
-        mesh._cachedWGPUInstanceColors &&
-        mesh._cachedWGPUInstanceColorCount === count &&
-        mesh._cachedWGPUInstanceColorSource === source
-      ) {
-        return mesh._cachedWGPUInstanceColors;
-      }
-
-      var data = null;
-      if (rawColors && typeof rawColors.length === "number" && rawColors.length > 0) {
-        if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-          data = new Float32Array(count * 4);
-          for (var ci = 0; ci < count; ci++) {
-            var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-            data[ci * 4] = rgba[0];
-            data[ci * 4 + 1] = rgba[1];
-            data[ci * 4 + 2] = rgba[2];
-            data[ci * 4 + 3] = rgba[3];
-          }
-        } else if (rawColors.length >= count * 4) {
-          data = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
-        } else if (rawColors.length >= count * 3) {
-          data = new Float32Array(count * 4);
-          for (var ni = 0; ni < count; ni++) {
-            data[ni * 4] = rawColors[ni * 3];
-            data[ni * 4 + 1] = rawColors[ni * 3 + 1];
-            data[ni * 4 + 2] = rawColors[ni * 3 + 2];
-            data[ni * 4 + 3] = 1;
-          }
-        }
-      }
-
-      if (!data) {
-        data = new Float32Array(count * 4);
-        for (var di = 0; di < count; di++) {
-          data[di * 4] = 1;
-          data[di * 4 + 1] = 1;
-          data[di * 4 + 2] = 1;
-          data[di * 4 + 3] = 1;
-        }
-      }
-
-      mesh._cachedWGPUInstanceColors = data;
-      mesh._cachedWGPUInstanceColorCount = count;
-      mesh._cachedWGPUInstanceColorSource = source;
-      return data;
-    }
-
     function getInstancedGeometry(mesh) {
+      if (mesh && mesh._importedGeometry) return mesh._importedGeometry;
       if (typeof generateInstancedGeometry !== "function") return null;
       var kind = typeof normalizeInstancedGeometryKind === "function"
         ? normalizeInstancedGeometryKind(mesh && mesh.kind)
         : (typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box");
-      var size = sceneNumber(mesh && mesh.size, 0);
-      var w = sceneNumber(mesh.width, 1);
-      var h = sceneNumber(mesh.height, 1);
-      var d = sceneNumber(mesh.depth, 1);
-      var r = sceneNumber(mesh.radius, 0.5);
-      var rt = sceneNumber(mesh.radiusTop, r);
-      var rb = sceneNumber(mesh.radiusBottom, r);
-      var tube = sceneNumber(mesh.tube, 0.3);
-      var s = sceneNumber(mesh.segments, 32);
-      var radial = sceneNumber(mesh.radialSegments, 32);
-      var tubular = sceneNumber(mesh.tubularSegments, 16);
-      var key = kind + ":" + size + ":" + w + ":" + h + ":" + d + ":" + r + ":" + rt + ":" + rb + ":" + tube + ":" + s + ":" + radial + ":" + tubular;
-      if (instancedGeometryCache[key]) return instancedGeometryCache[key];
-      var geom = generateInstancedGeometry(kind, {
-        size: size,
-        width: w,
-        height: h,
-        depth: d,
-        radius: r,
-        radiusTop: rt,
-        radiusBottom: rb,
-        tube: tube,
-        segments: s,
-        radialSegments: radial,
-        tubularSegments: tubular,
-      });
-      instancedGeometryCache[key] = geom;
-      return geom;
+      const dims = {
+        size: sceneNumber(mesh.size, 0),
+        width: sceneNumber(mesh.width, 1),
+        height: sceneNumber(mesh.height, 1),
+        depth: sceneNumber(mesh.depth, 1),
+        radius: sceneNumber(mesh.radius, 0.5),
+        tube: sceneNumber(mesh.tube, 0.3),
+        segments: sceneNumber(mesh.segments, 32),
+        radialSegments: sceneNumber(mesh.radialSegments, 32),
+        tubularSegments: sceneNumber(mesh.tubularSegments, 16),
+      };
+      dims.radiusTop = sceneNumber(mesh.radiusTop, dims.radius);
+      dims.radiusBottom = sceneNumber(mesh.radiusBottom, dims.radius);
+      const key = kind + ":" + Object.values(dims).join(":");
+      if (!instancedGeometryCache[key]) instancedGeometryCache[key] = generateInstancedGeometry(kind, dims);
+      return instancedGeometryCache[key];
     }
 
     function ensureInstancedGeometryGPUBuffer(geom, slot, data) {
-      return wgpuCachedTrackedBuffer(geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
+      var owner = rigidGLBResources.geometryOwner(geom);
+      return wgpuCachedTrackedBuffer(owner, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
     }
 
     function ensureInstancedTransformGPUBuffer(mesh, data) {
-      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+      return wgpuCachedTrackedBuffer(rigidGLBResources.owner(mesh), "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
 
     function ensureInstancedColorGPUBuffer(mesh, data) {
-      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+      return wgpuCachedTrackedBuffer(rigidGLBResources.owner(mesh), "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
 
     function buildInstancedDrawList(bundle, materials) {
@@ -15881,7 +15899,7 @@
         if (!geom || geom.vertexCount <= 0) continue;
 
         var mat = instancedMeshMaterial(mesh, materials);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, mesh));
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, rigidGLBResources.owner(mesh)));
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
@@ -15909,7 +15927,7 @@
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
           pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
           pass.setVertexBuffer(4, ensureInstancedTransformGPUBuffer(mesh, transformData));
-          pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(mesh, instanceCount)));
+          pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(rigidGLBResources.owner(mesh), instanceCount)));
           pass.draw(geom.vertexCount, instanceCount);
         }
       }
@@ -15942,6 +15960,9 @@
     //      indirect draw beat a plain draw-all.
     function webGPUBuiltinCullEligible(mesh) {
       if (!mesh) return false;
+      // Imported batches retain per-object picking and shadow ownership;
+      // keep that contract separate from the primitive-only cull pipeline.
+      if (mesh._importedGeometry) return false;
       if (typeof window !== "undefined" && window.__gosx_scene3d_webgpu_builtin_cull === false) return false;
       var colors = mesh.colors;
       if (colors && typeof colors.length === "number" && colors.length > 0) return false;
@@ -15949,6 +15970,7 @@
     }
 
     function instancedLocalBounds(mesh) {
+      if (mesh && mesh._importedGeometry) return mesh._importedGeometry.bounds;
       var kind = typeof normalizeInstancedGeometryKind === "function"
         ? normalizeInstancedGeometryKind(mesh && mesh.kind)
         : (typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box");
@@ -17724,7 +17746,7 @@
         startInit();
         return;
       }
-      if (initFailed || !bundle) return;
+      if (!rigidGLBResources.prepare(bundle, initFailed)) return;
 
       var hasPBRData = Boolean(
         bundle.worldMeshPositions &&
@@ -18412,8 +18434,9 @@
     // -----------------------------------------------------------------------
 
     function destroyRendererGPUResource(resource) {
-      if (!resource || typeof resource.destroy !== "function") return;
+      if (!resource || typeof resource.destroy !== "function") return null;
       try { resource.destroy(); } catch (_err) {}
+      return null;
     }
 
     function dispose() {
@@ -18444,37 +18467,23 @@
         webGPURetireRetainedMeshEntry(pair[0], pair[1]);
       }
 
-      destroyRendererGPUResource(frameUniformBuffer);
-      frameUniformBuffer = null;
-      destroyRendererGPUResource(lightStorageBuffer);
-      lightStorageBuffer = null;
+      frameUniformBuffer = destroyRendererGPUResource(frameUniformBuffer);
+      lightStorageBuffer = destroyRendererGPUResource(lightStorageBuffer);
       // Release the light buffers that capacity growth replaced.
-      for (var retiredLight = 0; retiredLight < _retiredLightBuffers.length; retiredLight++) {
-        destroyRendererGPUResource(_retiredLightBuffers[retiredLight]);
-      }
+      _retiredLightBuffers.forEach(destroyRendererGPUResource);
       _retiredLightBuffers.length = 0;
-      destroyRendererGPUResource(fogUniformBuffer);
-      fogUniformBuffer = null;
-      destroyRendererGPUResource(envUniformBuffer);
-      envUniformBuffer = null;
-      destroyRendererGPUResource(shadowUniformBuffer);
-      shadowUniformBuffer = null;
-      destroyRendererGPUResource(positionBuffer);
-      positionBuffer = null;
-      destroyRendererGPUResource(normalBuffer);
-      normalBuffer = null;
-      destroyRendererGPUResource(uvBuffer);
-      uvBuffer = null;
-      destroyRendererGPUResource(tangentBuffer);
-      tangentBuffer = null;
-      destroyRendererGPUResource(shadowPositionBuffer);
-      shadowPositionBuffer = null;
-      destroyRendererGPUResource(shadowFrameBuffer);
-      shadowFrameBuffer = null;
-      pointsEntryGPUBuffers.forEach(function(buffer) {
-        destroyRendererGPUResource(buffer);
-      });
+      fogUniformBuffer = destroyRendererGPUResource(fogUniformBuffer);
+      envUniformBuffer = destroyRendererGPUResource(envUniformBuffer);
+      shadowUniformBuffer = destroyRendererGPUResource(shadowUniformBuffer);
+      positionBuffer = destroyRendererGPUResource(positionBuffer);
+      normalBuffer = destroyRendererGPUResource(normalBuffer);
+      uvBuffer = destroyRendererGPUResource(uvBuffer);
+      tangentBuffer = destroyRendererGPUResource(tangentBuffer);
+      shadowPositionBuffer = destroyRendererGPUResource(shadowPositionBuffer);
+      shadowFrameBuffer = destroyRendererGPUResource(shadowFrameBuffer);
+      pointsEntryGPUBuffers.forEach(destroyRendererGPUResource);
       pointsEntryGPUBuffers.clear();
+      rigidGLBResources.clear();
       // Board glyph atlases are textures (not tracked in pointsEntryGPUBuffers);
       // destroy them explicitly. The per-label glyph buffers are tracked buffers,
       // already freed above; just drop the owner map.
@@ -18497,20 +18506,15 @@
       waterPoolPipelineCache = {};
       waterObjectMeshPipelineCache = {};
 
-      destroyRendererGPUResource(mainDepthTexture);
-      mainDepthTexture = null;
+      mainDepthTexture = destroyRendererGPUResource(mainDepthTexture);
       mainDepthView = null;
-      destroyRendererGPUResource(mainMSAATexture);
-      mainMSAATexture = null;
+      mainMSAATexture = destroyRendererGPUResource(mainMSAATexture);
       mainMSAAView = null;
-      destroyRendererGPUResource(dummyShadowTex);
-      dummyShadowTex = null;
+      dummyShadowTex = destroyRendererGPUResource(dummyShadowTex);
       dummyShadowView = null;
-      destroyRendererGPUResource(placeholderTex);
-      placeholderTex = null;
+      placeholderTex = destroyRendererGPUResource(placeholderTex);
       placeholderView = null;
-      destroyRendererGPUResource(placeholderCubeTex);
-      placeholderCubeTex = null;
+      placeholderCubeTex = destroyRendererGPUResource(placeholderCubeTex);
       placeholderCubeView = null;
 
       for (var si = 0; si < shadowSlots.length; si++) {
@@ -18707,13 +18711,14 @@
       // moment it recovers — often before a watchdog poll gets to read it.
       out.deviceLostInfo = lastDeviceLostInfo || (base && base.lost ? base.lost : null);
       out.frameSeq = webGPUFrameSeq;
-      out.frameAt = lastWebGPUFrameStats && lastWebGPUFrameStats.frameAt || 0;
+      const numericFrameFields = [
+        "frameAt", "waterSimulationTickSeq", "waterSolverSubstepSeq",
+        "waterDroppedTicks", "waterNormalDispatchSeq", "waterSampledStateSyncSeq",
+        "customMaterialFallbacks", "skinnedMeshObjects", "computedMorphDispatches",
+        "computedMorphVertices", "elioSkinningDispatches", "elioSkinningVertices",
+      ];
+      for (const key of numericFrameFields) out[key] = lastWebGPUFrameStats && lastWebGPUFrameStats[key] || 0;
       out.lastError = lastWebGPUFrameStats && lastWebGPUFrameStats.lastError || "";
-      out.waterSimulationTickSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSimulationTickSeq || 0;
-      out.waterSolverSubstepSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSolverSubstepSeq || 0;
-      out.waterDroppedTicks = lastWebGPUFrameStats && lastWebGPUFrameStats.waterDroppedTicks || 0;
-      out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
-      out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
       out.postProcessing = !!postProcessor;
       // Frame-error resilience state (see reportWebGPUFrameError /
       // disablePostProcessing / enablePostProcessing above and
@@ -18722,14 +18727,8 @@
       out.frameErrorStreak = webGPUConsecutiveFrameErrors;
       out.frameCleanStreak = webGPUConsecutiveCleanFrames;
       out.postFXDisabled = postFXForceDisabled;
-      out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
-      out.skinnedMeshObjects = lastWebGPUFrameStats && lastWebGPUFrameStats.skinnedMeshObjects || 0;
-      out.computedMorphDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphDispatches || 0;
-      out.computedMorphVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphVertices || 0;
       out.computedMorphKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphKernel || "";
-      out.elioSkinningDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningDispatches || 0;
-      out.elioSkinningVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningVertices || 0;
       out.elioSkinningKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningKernel || "";
       // GPU picking. gpuPicking stays true whether or not a pick has run yet —
       // it reports the renderer capability, matching the gpu-picking cell in
@@ -18760,6 +18759,7 @@
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
+      supportsRigidGLBInstancing: true,
       supportsBundle: supportsBundle,
       queuePick: queuePick,
       setLifecycle: setLifecycle,

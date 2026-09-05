@@ -554,7 +554,7 @@ function assertRendererABI(renderer, backend) {
   assert.equal(typeof renderer.dispose, "function");
   for (const key of contract.optional) {
     if (!(key in renderer)) continue;
-    if (key === "supportsRetainedGeometry") assert.equal(typeof renderer[key], "boolean");
+    if (key === "supportsRetainedGeometry" || key === "supportsRigidGLBInstancing") assert.equal(typeof renderer[key], "boolean");
     else if (key === "textureVariantContext") assert.equal(typeof renderer[key], "object");
     else assert.equal(typeof renderer[key], "function");
   }
