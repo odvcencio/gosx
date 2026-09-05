@@ -63,12 +63,15 @@ func resolveSharedImports(ctx context.Context, files []transpile.PackageFile, op
 		if appRoot != "" && !withinDir(appRoot, targetDir) {
 			return nil, nil, fmt.Errorf("shared import %q in %s resolves to %s, outside %s; gosx build stages only app/, content/, and public/ into the deployment bundle, so a shared component directory must live under app/", rawPath, dir, targetDir, appRoot)
 		}
-		targetFiles, err := transpile.LoadPackageDir(targetDir)
+		targetFiles, err := transpile.LoadPackageDirWithOptions(ctx, targetDir, transpile.PackageOptions{GoModels: true, Env: commandEnv(opts)})
 		if err != nil {
 			return nil, nil, fmt.Errorf("shared import %q in %s: %w", rawPath, dir, err)
 		}
 		if err := checkSharedComponentDuplicates(targetFiles); err != nil {
 			return nil, nil, fmt.Errorf("shared import %q in %s: %w", rawPath, dir, err)
+		}
+		if opts.modelChecks != nil {
+			*opts.modelChecks = append(*opts.modelChecks, targetFiles...)
 		}
 		targetImportNames, err := resolveImportNames(ctx, targetFiles, opts)
 		if err != nil {

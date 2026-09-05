@@ -1,6 +1,7 @@
 package transpile
 
 import (
+	"context"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -11,14 +12,33 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/modelschema"
 	"m31labs.dev/gosx/ir"
 )
 
 // PackageFile is one .gsx source participating in package validation.
 type PackageFile struct {
-	Path    string
-	Source  []byte
-	Program *ir.Program
+	Path           string
+	Source         []byte
+	Program        *ir.Program
+	Schemas        *ir.SchemaSet
+	verifySnapshot func() error
+}
+
+// VerifySnapshot detects edits since an owning package load; manually supplied
+// PackageFiles retain their existing in-memory-only behavior.
+func (f PackageFile) VerifySnapshot() error {
+	if f.verifySnapshot == nil {
+		return nil
+	}
+	return f.verifySnapshot()
+}
+
+// PackageOptions requests owning Go model selection with the checker's effective
+// build environment. Zero options preserve source-only loading.
+type PackageOptions struct {
+	GoModels bool
+	Env      []string
 }
 
 // LoadPackageDir loads every .gsx file in dir belonging to one package, the
@@ -29,6 +49,10 @@ type PackageFile struct {
 // this way and the identical directory loaded by naming one of its files
 // directly can never resolve two different package sets.
 func LoadPackageDir(dir string) ([]PackageFile, error) {
+	return LoadPackageDirWithOptions(context.Background(), dir, PackageOptions{})
+}
+
+func LoadPackageDirWithOptions(ctx context.Context, dir string, opts PackageOptions) ([]PackageFile, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -45,13 +69,17 @@ func LoadPackageDir(dir string) ([]PackageFile, error) {
 	if first == "" {
 		return nil, fmt.Errorf("no .gsx files found in %s", dir)
 	}
-	return LoadPackage(filepath.Join(dir, first))
+	return LoadPackageWithOptions(ctx, filepath.Join(dir, first), opts)
 }
 
 // LoadPackage reads and compiles every .gsx file in the same directory and
 // package as path. The target file selects the package; an alphabetically
 // earlier route helper with a different package can never redirect the load.
 func LoadPackage(path string) ([]PackageFile, error) {
+	return LoadPackageWithOptions(context.Background(), path, PackageOptions{})
+}
+
+func LoadPackageWithOptions(ctx context.Context, path string, opts PackageOptions) ([]PackageFile, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -60,8 +88,9 @@ func LoadPackage(path string) ([]PackageFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", abs, err)
 	}
-	targetProgram, err := gosx.Compile(targetSource)
-	if err != nil {
+	packageName, ok := sourcePackageName(targetSource)
+	if !ok {
+		_, err := gosx.Compile(targetSource)
 		return nil, fmt.Errorf("compile %s: %w", abs, err)
 	}
 
@@ -79,6 +108,7 @@ func LoadPackage(path string) ([]PackageFile, error) {
 	sort.Strings(paths)
 
 	files := make([]PackageFile, 0, len(paths))
+	captured := map[string][]byte{}
 	for _, file := range paths {
 		source := targetSource
 		if !samePackageFile(file, abs) {
@@ -87,18 +117,55 @@ func LoadPackage(path string) ([]PackageFile, error) {
 				return nil, fmt.Errorf("read %s: %w", file, err)
 			}
 		}
-		packageName, ok := sourcePackageName(source)
-		if !ok || packageName != targetProgram.Package {
+		captured[filepath.Base(file)] = source
+		name, ok := sourcePackageName(source)
+		if !ok || name != packageName {
 			continue
 		}
-		program := targetProgram
-		if !samePackageFile(file, abs) {
-			program, err = gosx.Compile(source)
-			if err != nil {
-				return nil, fmt.Errorf("compile %s: %w", file, err)
+		files = append(files, PackageFile{Path: file, Source: source})
+	}
+	var snapshots []modelschema.Snapshot
+	if opts.GoModels {
+		refs := make([]modelschema.Refs, len(files))
+		for i := range files {
+			tree, lang, e := gosx.Parse(files[i].Source)
+			if e != nil {
+				return nil, e
 			}
+			if tree.RootNode().HasError() {
+				_, e := gosx.Compile(files[i].Source)
+				return nil, e
+			}
+			refs[i] = modelschema.SourceRefs(tree.RootNode(), lang, files[i].Source)
 		}
-		files = append(files, PackageFile{Path: file, Source: source, Program: program})
+		snapshots, err = modelschema.ResolvePackage(ctx, filepath.Dir(abs), refs, modelschema.Selection{GoTool: true, Env: opts.Env})
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i := range files {
+		var schemas *ir.SchemaSet
+		if opts.GoModels {
+			schemas = snapshots[i].Schemas()
+		}
+		program, e := gosx.CompileWithOptions(files[i].Source, gosx.CompileOptions{Schemas: schemas})
+		if e != nil {
+			return nil, fmt.Errorf("compile %s: %w", files[i].Path, e)
+		}
+		files[i].Program = program
+		files[i].Schemas = schemas
+		files[i].verifySnapshot = func() error {
+			if err := modelschema.VerifyDirectory(filepath.Dir(abs), ".gsx", captured); err != nil {
+				return err
+			}
+			if len(snapshots) > 0 {
+				return snapshots[0].Verify()
+			}
+			return nil
+		}
+	}
+	if err := modelschema.VerifyDirectory(filepath.Dir(abs), ".gsx", captured); err != nil {
+		return nil, err
 	}
 	return files, nil
 }
@@ -179,6 +246,9 @@ func CollectSharedComponents(files []PackageFile) map[string]SharedComponent {
 		}
 		ft := &transpiler{src: file.Source, lang: lang}
 		ft.collectStructFields(root)
+		for _, decl := range file.Schemas.Structs() {
+			ft.propsFields[decl.Name] = ir.SchemaAliases(decl)
+		}
 		ft.collectComponentProps(root)
 		for name, fields := range ft.propsFields {
 			propsFields[name] = fields
@@ -266,6 +336,7 @@ func StrictProjection(file PackageFile) (string, bool, error) {
 func StrictProjectionWithImportNames(file PackageFile, importNames map[string]string) (string, bool, error) {
 	hasStrict := fileHasStrict(file)
 	generated, err := Transpile(file.Source, Options{
+		Schemas:          file.Schemas,
 		SourceFile:       file.Path,
 		strictProjection: true,
 		importNames:      importNames,
@@ -416,6 +487,7 @@ func TranspilePackageWithSharedImports(files []PackageFile, importNames map[stri
 	out := make(map[string]string, len(files))
 	for _, file := range files {
 		generated, err := Transpile(file.Source, Options{
+			Schemas:          file.Schemas,
 			SourceFile:       file.Path,
 			strictProjection: true,
 			importNames:      importNames,

@@ -1,6 +1,7 @@
 package route
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"html"
@@ -13,36 +14,25 @@ import (
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
+	"m31labs.dev/gosx/internal/modelschema"
 	"m31labs.dev/gosx/ir"
 )
 
-// gsxCompileCache caches compiled .gsx IR programs.
-//
-// WHY two keys: the old cache keyed only on the content hash, so every request
-// paid os.ReadFile plus fmt.Sprintf("%x", sha256.Sum256(data)) — a full file
-// hash and a 64-byte hex allocation — just to look the program up. The `files`
-// map keys on path plus modification time plus size, which one os.Stat
-// supplies. The hash map stays as the fallback for callers that already hold
-// the bytes and for the rare case where os.Stat fails but the read succeeds.
-//
-// Hot reload still works: an edit changes the modification time, the key misses
-// and the template recompiles. The trade-off matches the Go build cache — an
-// edit that keeps both the byte length and the modification time serves the
-// stale program. Filesystems with one-second time resolution can hit that; ext4
-// and APFS report nanoseconds and cannot.
+// gsxCompileCache caches programs by captured GSX bytes and owning Go model
+// snapshot identity. The file front cache includes the same digest, so model
+// additions, deletion, same-stat edits and repaired errors cannot hit stale IR.
 var gsxCompileCache struct {
 	mu    sync.RWMutex
 	progs map[string]*ir.Program
 	files map[string]gsxFileProgram
 }
 
-// gsxFileProgram is one stat-keyed cache entry. It stores the compile error too
+// gsxFileProgram is one snapshot-keyed cache entry. It stores the compile error too
 // so a broken template does not recompile on every request.
 type gsxFileProgram struct {
-	modTimeNano int64
-	size        int64
-	prog        *ir.Program
-	err         error
+	prog   *ir.Program
+	err    error
+	digest string
 }
 
 func init() {
@@ -52,50 +42,40 @@ func init() {
 
 // loadCachedGSXProgram returns the compiled program for a .gsx file, reading
 // and compiling it only when the file changed since the last request.
-func loadCachedGSXProgram(path string) (*ir.Program, error) {
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		// Stat failed. Read the bytes and fall back to the content hash.
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		prog, err := compileCachedGSX(data)
-		if err != nil {
-			return nil, fmt.Errorf("compile %s: %w", path, err)
-		}
-		return prog, nil
-	}
-
-	modTimeNano := info.ModTime().UnixNano()
-	size := info.Size()
-
-	gsxCompileCache.mu.RLock()
-	entry, ok := gsxCompileCache.files[path]
-	gsxCompileCache.mu.RUnlock()
-	if ok && entry.modTimeNano == modTimeNano && entry.size == size {
-		return entry.prog, entry.err
-	}
-
+func loadCachedGSXProgram(path string) (prog *ir.Program, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	prog, compileErr := compileCachedGSX(data)
-	if compileErr != nil {
-		compileErr = fmt.Errorf("compile %s: %w", path, compileErr)
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("compile %s: %w", path, err)
+		}
+	}()
+	tree, lang, err := gosx.Parse(data)
+	if err != nil {
+		return nil, err
 	}
-
+	if tree.RootNode().HasError() {
+		return gosx.Compile(data)
+	}
+	refs := modelschema.SourceRefs(tree.RootNode(), lang, data)
+	snapshot, err := modelschema.Resolve(context.Background(), filepath.Dir(path), refs, modelschema.Selection{})
+	if err != nil {
+		return nil, err
+	}
+	digest := fmt.Sprintf("%x:%s", sha256.Sum256(data), snapshot.Digest())
+	gsxCompileCache.mu.RLock()
+	cached, ok := gsxCompileCache.files[path]
+	gsxCompileCache.mu.RUnlock()
+	if ok && cached.digest == digest {
+		return cached.prog, cached.err
+	}
+	prog, err = compileCachedGSXWithSchemas(data, snapshot.Schemas(), digest)
 	gsxCompileCache.mu.Lock()
-	gsxCompileCache.files[path] = gsxFileProgram{
-		modTimeNano: modTimeNano,
-		size:        size,
-		prog:        prog,
-		err:         compileErr,
-	}
+	gsxCompileCache.files[path] = gsxFileProgram{prog: prog, err: err, digest: digest}
 	gsxCompileCache.mu.Unlock()
-
-	return prog, compileErr
+	return prog, err
 }
 
 // htmlSourceCache caches the raw text of an .html layout or page.
@@ -146,6 +126,10 @@ func loadCachedHTMLSource(path string) (string, error) {
 
 func compileCachedGSX(data []byte) (*ir.Program, error) {
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
+	return compileCachedGSXWithSchemas(data, nil, hash)
+}
+
+func compileCachedGSXWithSchemas(data []byte, schemas *ir.SchemaSet, hash string) (*ir.Program, error) {
 
 	gsxCompileCache.mu.RLock()
 	if prog, ok := gsxCompileCache.progs[hash]; ok {
@@ -154,7 +138,7 @@ func compileCachedGSX(data []byte) (*ir.Program, error) {
 	}
 	gsxCompileCache.mu.RUnlock()
 
-	prog, err := gosx.Compile(data)
+	prog, err := gosx.CompileWithOptions(data, gosx.CompileOptions{Schemas: schemas})
 	if err != nil {
 		return nil, err
 	}

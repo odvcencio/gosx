@@ -120,11 +120,6 @@ func main() {
 
 	pageGSX := `package wire
 
-type SignalCardProps struct {
-	Label string
-	Value string
-}
-
 component SignalCard(props: SignalCardProps) {
 	return <li class="signal-card">{props.Label}: {props.Value}</li>
 }
@@ -143,9 +138,8 @@ import "net/http"
 
 import "m31labs.dev/gosx/route"
 
-// SignalCardProps mirrors page.gsx's declared props struct by field
-// coverage, not by name (a same-shaped struct under a different Go type
-// name satisfies the strict boundary by design).
+// SignalCardProps is authored once in ordinary Go and supplies the renderer
+// schema for page.gsx as well as the fragment handler's props value.
 type SignalCardProps struct {
 	Label string
 	Value string

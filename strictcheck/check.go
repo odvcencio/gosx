@@ -22,9 +22,10 @@ import (
 // caller's process environment; build/dev pass their dependency-resolution
 // environment explicitly while interactive check/render remain workspace-aware.
 type Options struct {
-	Env     []string
-	GOWORK  string
-	GOFLAGS string
+	modelChecks *[]transpile.PackageFile
+	Env         []string
+	GOWORK      string
+	GOFLAGS     string
 
 	// ExtraLints registers third-party, per-file lints that run alongside
 	// strictcheck's own checks and report through the same error returned by
@@ -83,7 +84,7 @@ func CheckFile(ctx context.Context, path string) error {
 // CheckFileWithOptions checks the package containing path with an explicit Go
 // command environment.
 func CheckFileWithOptions(ctx context.Context, path string, opts Options) error {
-	files, err := transpile.LoadPackage(path)
+	files, err := transpile.LoadPackageWithOptions(ctx, path, transpile.PackageOptions{GoModels: true, Env: commandEnv(opts)})
 	if err != nil {
 		return err
 	}
@@ -137,6 +138,8 @@ func CheckPackageWithOptions(ctx context.Context, dir string, opts Options) erro
 // every file a lint can check (see LintFile.Program). Their findings join
 // into every return path, including every one of those early-error paths.
 func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Options, root string) error {
+	modelChecks := append([]transpile.PackageFile(nil), files...)
+	opts.modelChecks = &modelChecks
 	builtinErr := runBuiltinChecks(ctx, files, opts, root)
 	extraErr := runExtraLints(files, opts.ExtraLints)
 	switch {
@@ -216,7 +219,22 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	if err := validatePackageDeclCollisions(files, generated); err != nil {
 		return err
 	}
-	return goCheck(ctx, files, generated, sharedOverlay, opts)
+	checks := files
+	if opts.modelChecks != nil {
+		checks = *opts.modelChecks
+	}
+	for _, file := range checks {
+		if err := file.VerifySnapshot(); err != nil {
+			return err
+		}
+	}
+	checkErr := goCheck(ctx, files, generated, sharedOverlay, opts)
+	for _, file := range checks {
+		if err := file.VerifySnapshot(); err != nil {
+			return err
+		}
+	}
+	return checkErr
 }
 
 // validateStrictRenderEntries refuses a strict render entry's declared props
@@ -520,7 +538,7 @@ func checkSourcePackages(ctx context.Context, paths []string, opts Options, root
 	seen := make(map[string]struct{})
 	var errs []error
 	for _, path := range paths {
-		files, err := transpile.LoadPackage(path)
+		files, err := transpile.LoadPackageWithOptions(ctx, path, transpile.PackageOptions{GoModels: true, Env: commandEnv(opts)})
 		if err != nil {
 			errs = append(errs, err)
 			continue
