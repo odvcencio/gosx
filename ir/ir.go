@@ -172,6 +172,9 @@ type Component struct {
 	// never enters PropsFields, PropsPaths, or PropsSlices, and no boundary
 	// proof reads it.
 	AcceptsSlots []string
+	// ServerSlots is distinct from generic caller slots: island-owned shells
+	// adopt these server-owned descendants without adding them to the VM.
+	ServerSlots []string
 
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.

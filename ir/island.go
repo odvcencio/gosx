@@ -33,6 +33,19 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 	if err := l.validateProgramIntegrity(); err != nil {
 		return nil, err
 	}
+	if l.dst.HasServerSlots() {
+		keys := make([]string, 0, len(comp.PropsFields))
+		for name := range comp.PropsFields {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+		for _, name := range keys {
+			l.dst.Props = append(l.dst.Props, program.PropDef{Name: name, Type: typeHintToExprType(comp.PropsFields[name])})
+		}
+	}
+	if err := l.dst.ValidateServerSlots(); err != nil {
+		return nil, err
+	}
 
 	return l.dst, nil
 }
@@ -577,6 +590,14 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, an
 			node.Attrs = append(node.Attrs, dstAttr)
 		}
 	case NodeComponent:
+		if srcNode.Tag == "ServerSlot" {
+			var err error
+			node, err = l.lowerServerSlot(srcNode, context)
+			if err != nil {
+				return 0, err
+			}
+			break
+		}
 		if isEachComponent(srcNode.Tag) {
 			var err error
 			node, err = l.lowerEachNode(srcNode, context)

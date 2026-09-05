@@ -968,7 +968,7 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 
 		targetIdx, local := checker.componentIndex[node.Tag]
 		if !local {
-			if isEachComponent(node.Tag) || isConditionalComponent(node.Tag) || node.Tag == "Link" || node.Tag == "Image" {
+			if isEachComponent(node.Tag) || isConditionalComponent(node.Tag) || node.Tag == "Link" || node.Tag == "Image" || node.Tag == "ServerSlot" {
 				diags = append(diags, validateIslandNode(node, scope)...)
 				for _, child := range node.Children {
 					walk(child, stack)

@@ -14,10 +14,11 @@ import (
 // PageRuntime tracks page-scoped islands, engines, and hubs plus the bootstrap
 // assets needed to mount them on the client.
 type PageRuntime struct {
-	renderer *island.Renderer
-	active   bool
-	head     []pageRuntimeHeadEntry
-	scripts  map[string]struct{}
+	renderingIslandEntry bool
+	renderer             *island.Renderer
+	active               bool
+	head                 []pageRuntimeHeadEntry
+	scripts              map[string]struct{}
 }
 
 type pageRuntimeHeadEntry struct {
@@ -92,6 +93,15 @@ func (r *PageRuntime) Island(prog *islandprogram.Program, props any) gosx.Node {
 	}
 	r.active = true
 	return r.renderer.RenderIslandFromProgram(prog, props)
+}
+
+// IslandWithServerSlots keeps caller DOM outside the client prop snapshot.
+func (r *PageRuntime) IslandWithServerSlots(prog *islandprogram.Program, props any, slots island.ServerSlots) (gosx.Node, error) {
+	node, err := r.renderer.RenderWithServerSlots(prog, props, slots)
+	if err == nil {
+		r.active = true
+	}
+	return node, err
 }
 
 // IslandWithProgramAsset registers an exact browser-loadable program asset

@@ -221,6 +221,7 @@ var outputs = []output{
 			sourceFile(tailPageDisposeFile),
 			sourceFile(tailCapabilityProbeFile),
 			sourceFile(tailHydrationFile),
+			sourceFile("../runtime/host/server-slot-loader.ts"),
 			sourceFile(tailRuntimeReadyFile),
 			sourceFile(tailInitFile),
 		},
@@ -278,6 +279,7 @@ var outputs = []output{
 			// extract range contained the probe extract range.
 			sourceFile(tailCapabilityProbeFile),
 			sourceFile(tailHydrationFile),
+			sourceFile("../runtime/host/server-slot-loader.ts"),
 			sourceFile("bootstrap-src/26a-feature-islands-suffix.ts"),
 		},
 	},
@@ -582,6 +584,7 @@ var outputs = []output{
 // client/runtime/host/navigation_asset.go go:embeds it straight into the Go
 // binary that the framework-owned navigation head writes inline into the page.
 var inlineAssets = []output{
+	{name: "../runtime/host/server-slots-runtime.min.js", sources: []source{sourceFile("../runtime/host/server-slots.ts")}},
 	{
 		name: "../runtime/host/navigation-runtime.min.js",
 		sources: []source{

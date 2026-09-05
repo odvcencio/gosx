@@ -1286,8 +1286,11 @@ func (vm *VM) resolveNodeWithSource(source int, node program.Node) ResolvedNode 
 		rn.Text = node.Text
 	case program.NodeExpr:
 		rn.Text = vm.Eval(node.Expr).String()
-	case program.NodeElement:
+	case program.NodeElement, program.NodeServerSlot:
 		vm.resolveElementNode(&rn, source, node)
+		if node.Kind == program.NodeServerSlot {
+			rn.ServerSlot = node.Text
+		}
 	}
 
 	return rn
@@ -1340,8 +1343,11 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 		tree.Nodes[idx].Text = node.Text
 	case program.NodeExpr:
 		tree.Nodes[idx].Text = vm.Eval(node.Expr).String()
-	case program.NodeElement:
+	case program.NodeElement, program.NodeServerSlot:
 		vm.resolveElementNode(&tree.Nodes[idx], source, node)
+		if node.Kind == program.NodeServerSlot {
+			tree.Nodes[idx].ServerSlot = node.Text
+		}
 		// resolveChildren recurses back into appendNodeRefs for every
 		// descendant, and each one can append to tree.Nodes. An append
 		// past capacity moves the backing array, so tree.Nodes[idx] must

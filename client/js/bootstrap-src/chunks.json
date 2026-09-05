@@ -79,6 +79,7 @@
         "../runtime/host/page-disposal.ts",
         "bootstrap-src/30h-tail-capability-probe.ts",
         "../runtime/host/hydration.ts",
+        "../runtime/host/server-slot-loader.ts",
         "bootstrap-src/30j-tail-runtime-ready.ts",
         "bootstrap-src/30k-tail-init.ts"
       ]
@@ -132,6 +133,7 @@
         "../runtime/host/disposal.ts",
         "bootstrap-src/30h-tail-capability-probe.ts",
         "../runtime/host/hydration.ts",
+        "../runtime/host/server-slot-loader.ts",
         "bootstrap-src/26a-feature-islands-suffix.ts"
       ]
     },

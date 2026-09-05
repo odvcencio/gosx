@@ -59,6 +59,7 @@ func LowerWithOptions(root *gotreesitter.Node, source []byte, lang *gotreesitter
 	}
 
 	l.lowerSourceFile(root)
+	l.validateServerSlotCallerOwnership()
 
 	if len(l.errs) > 0 {
 		return nil, NewDiagnosticsError("lower", l.errs)
@@ -137,7 +138,8 @@ type lowerer struct {
 	// solves), and a legacy component already reads an arbitrary value out
 	// of its flattened props map with no reserved-identifier scheme to
 	// collide with.
-	slotHoles map[string][]string
+	slotHoles       map[string][]string
+	serverSlotHoles map[string][]string
 
 	// currentStrictComponent and currentStrictPropsType name the strict
 	// component whose body lowerGSXNode is currently walking (empty
@@ -1100,6 +1102,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.typedLegacyProps = make(map[string]string)
 	l.childrenHoles = make(map[string]bool)
 	l.slotHoles = make(map[string][]string)
+	l.serverSlotHoles = make(map[string][]string)
 	// Pass 1: every same-file strict component's name and props type,
 	// every legacy (non-strict) top-level renderer function's name and
 	// declared props type, every component's {children} hole, and every
@@ -1152,6 +1155,9 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				}
 				if slots := l.componentDeclaredSlots(child); len(slots) > 0 {
 					l.slotHoles[componentName] = slots
+				}
+				if l.hasIslandDirective(child) {
+					l.serverSlotHoles[componentName] = l.componentServerSlots(child)
 				}
 			}
 		case "type_declaration":
@@ -2287,6 +2293,9 @@ func (l *lowerer) validateStrictCalleeSlots(n *gotreesitter.Node, tag string, sl
 	for _, name := range l.slotHoles[tag] {
 		declared[name] = struct{}{}
 	}
+	for _, name := range l.serverSlotHoles[tag] {
+		declared[name] = struct{}{}
+	}
 	names := make([]string, 0, len(slots))
 	for name := range slots {
 		names = append(names, name)
@@ -2806,6 +2815,7 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 		// read the same map. One owner.
 		AcceptsChildren: l.childrenHoles[componentName],
 		AcceptsSlots:    l.slotHoles[componentName],
+		ServerSlots:     l.serverSlotHoles[componentName],
 		Syntax:          ComponentSyntaxStrict,
 		Root:            rootID,
 		IsIsland:        isIsland,

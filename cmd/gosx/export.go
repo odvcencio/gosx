@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/env"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 )
@@ -106,6 +107,19 @@ func RunExport(dir string) error {
 
 func copyExportRuntime(buildDir, outputDir string, manifest exportManifest) error {
 	for _, ref := range manifest.AssetRefs {
+		if ref == "/gosx/server-slots.js" {
+			dst, ok := exportRuntimeOutputPath(outputDir, ref)
+			if !ok {
+				return fmt.Errorf("invalid ServerSlot export path")
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(dst, []byte(runtimehost.ServerSlotRuntime()), 0644); err != nil {
+				return err
+			}
+			continue
+		}
 		src, ok := exportRuntimeBuildPath(buildDir, ref)
 		if !ok {
 			continue
