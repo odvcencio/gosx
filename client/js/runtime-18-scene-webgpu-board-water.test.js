@@ -2311,6 +2311,232 @@ test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-eli
   await runSkinPackCase("B-default-normals-tangents", false);
 });
 
+const G1B_IDENTITY = new Float32Array([
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+]);
+
+function g1bDirectionalShadowLight(kind) {
+  return {
+    id: "g1b-shadow-" + (kind || "directional"),
+    kind: kind || "directional",
+    x: 4,
+    y: 6,
+    z: 8,
+    intensity: 1,
+    castShadow: true,
+  };
+}
+
+function g1bBundle(meshObject, lights) {
+  return {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [],
+    lights: lights || [],
+    meshObjects: [meshObject],
+    objects: [],
+    points: [],
+    instancedMeshes: [],
+    labels: [],
+    sprites: [],
+    postEffects: [],
+    computeParticles: [],
+    waterSystems: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+  };
+}
+
+function g1bSkinnedMesh(overrides) {
+  const options = overrides || {};
+  const valid = options.valid !== false;
+  const count = options.zeroCount ? 0 : 3;
+  return {
+    id: options.id || "g1b-skinned",
+    kind: "gltf-mesh",
+    materialIndex: 0,
+    vertexOffset: 0,
+    vertexCount: count,
+    viewCulled: options.viewCulled !== false,
+    castShadow: options.castShadow !== false,
+    directVertices: true,
+    retainedGeometry: false,
+    modelMatrix: G1B_IDENTITY,
+    skin: { jointMatrices: G1B_IDENTITY },
+    vertices: {
+      count,
+      positions: new Float32Array(count ? [0, 0, 0, 1, 0, 0, 0, 1, 0] : []),
+      joints: valid ? new Float32Array(count ? [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] : []) : null,
+      weights: valid ? new Float32Array(count ? [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] : []) : null,
+      uvs: new Float32Array(count ? [0, 0, 1, 0, 0, 1] : []),
+      normals: new Float32Array(count ? [0, 0, 1, 0, 0, 1, 0, 0, 1] : []),
+      tangents: new Float32Array(count ? [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1] : []),
+      indices: new Uint32Array(count ? [0, 1, 2] : []),
+    },
+  };
+}
+
+function g1bMorphMesh(overrides) {
+  const options = overrides || {};
+  const valid = options.valid !== false;
+  const count = options.zeroCount ? 0 : 3;
+  return {
+    id: options.id || "g1b-morph",
+    kind: "gltf-mesh",
+    materialIndex: 0,
+    vertexOffset: 0,
+    vertexCount: count,
+    viewCulled: options.viewCulled !== false,
+    castShadow: options.castShadow !== false,
+    directVertices: true,
+    retainedGeometry: false,
+    modelMatrix: G1B_IDENTITY,
+    vertices: {
+      count,
+      positions: new Float32Array(count ? [0, 0, 0, 1, 0, 0, 0, 1, 0] : []),
+      normals: new Float32Array(count ? [0, 0, 1, 0, 0, 1, 0, 0, 1] : []),
+      uvs: new Float32Array(count ? [0, 0, 1, 0, 0, 1] : []),
+      tangents: new Float32Array(count ? [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1] : []),
+      indices: new Uint32Array(count ? [0, 1, 2] : []),
+    },
+    computedMorph: valid ? {
+      count,
+      alpha: 0.5,
+      sourcePositions: new Float32Array(count ? [0, 0, 0, 1, 0, 0, 0, 1, 0] : []),
+      targetPositions: new Float32Array(count ? [0, 0.2, 0, 1, 0.2, 0, 0, 1.2, 0] : []),
+      sourceNormals: new Float32Array(count ? [0, 0, 1, 0, 0, 1, 0, 0, 1] : []),
+      sourceTangents: new Float32Array(count ? [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1] : []),
+    } : {
+      count,
+      alpha: 0.5,
+      sourcePositions: new Float32Array(count ? [0, 0, 0, 1, 0, 0, 0, 1, 0] : []),
+    },
+  };
+}
+
+function g1bComputeDispatches(fake, label, start) {
+  return fake.state.computePasses.slice(start || 0).flatMap((pass) =>
+    pass.dispatches
+      .filter((dispatch) => dispatch.pipeline && dispatch.pipeline.label === label)
+      .map((dispatch) => ({ pass, dispatch }))
+  );
+}
+
+function g1bDepthOnlyPasses(fake, start) {
+  return fake.state.renderPasses.slice(start || 0).filter((pass) =>
+    pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) &&
+    pass.descriptor.colorAttachments.length === 0
+  );
+}
+
+function g1bMainPasses(fake, start) {
+  return fake.state.renderPasses.slice(start || 0).filter((pass) =>
+    pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) &&
+    pass.descriptor.colorAttachments.length > 0
+  );
+}
+
+test("G1b WebGPU skinned shadow prep consumes off-camera caster output in shadow depth only", async (t) => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  t.after(() => harness.renderer.dispose());
+  const mesh = g1bSkinnedMesh({ id: "g1b-skinned-off-camera" });
+  const renderStart = harness.fake.state.renderPasses.length;
+  const computeStart = harness.fake.state.computePasses.length;
+  harness.renderer.render(g1bBundle(mesh, [g1bDirectionalShadowLight()]), {});
+
+  const dispatches = g1bComputeDispatches(harness.fake, "gosx-elio-skin-lbs", computeStart);
+  assert.equal(dispatches.length, 1, "off-camera skinned caster dispatches the real LBS prep path");
+  const outputBuffer = mesh._gosxWGPUElioSkinOutputBuffer;
+  assert.ok(outputBuffer, "LBS prep publishes its output buffer on the scene object");
+
+  const shadowPass = g1bDepthOnlyPasses(harness.fake, renderStart).find((pass) =>
+    pass.drawIndexeds.some((draw) => draw.indexCount === 3)
+  );
+  assert.ok(shadowPass, "shadow depth pass consumes the indexed skinned caster");
+  assert.strictEqual(
+    shadowPass.vertexBuffers.find((binding) => binding.slot === 0).buffer,
+    outputBuffer,
+    "shadow depth binds the exact LBS output buffer",
+  );
+  assert.equal(
+    g1bMainPasses(harness.fake, renderStart).some((pass) =>
+      pass.drawIndexeds.some((draw) => draw.indexCount === 3) || pass.draws.some((draw) => draw.vertexCount === 3)
+    ),
+    false,
+    "camera culling still suppresses the main color draw",
+  );
+});
+
+test("G1b WebGPU computed-morph shadow prep consumes off-camera caster output in shadow depth only", async (t) => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  t.after(() => harness.renderer.dispose());
+  const mesh = g1bMorphMesh({ id: "g1b-morph-off-camera" });
+  const renderStart = harness.fake.state.renderPasses.length;
+  const computeStart = harness.fake.state.computePasses.length;
+  harness.renderer.render(g1bBundle(mesh, [g1bDirectionalShadowLight()]), {});
+
+  const dispatches = g1bComputeDispatches(harness.fake, "gosx-computed-morph", computeStart);
+  assert.equal(dispatches.length, 1, "off-camera morph caster dispatches the real computed-morph prep path");
+  const outputBuffer = mesh._gosxWGPUComputedMorphRecord && mesh._gosxWGPUComputedMorphRecord.positionBuffer;
+  assert.ok(outputBuffer, "computed morph prep publishes its position output buffer on the scene object");
+
+  const shadowPass = g1bDepthOnlyPasses(harness.fake, renderStart).find((pass) =>
+    pass.drawIndexeds.some((draw) => draw.indexCount === 3)
+  );
+  assert.ok(shadowPass, "shadow depth pass consumes the indexed morphed caster");
+  assert.strictEqual(
+    shadowPass.vertexBuffers.find((binding) => binding.slot === 0).buffer,
+    outputBuffer,
+    "shadow depth binds the exact computed-morph position output buffer",
+  );
+  assert.equal(
+    g1bMainPasses(harness.fake, renderStart).some((pass) =>
+      pass.drawIndexeds.some((draw) => draw.indexCount === 3) || pass.draws.some((draw) => draw.vertexCount === 3)
+    ),
+    false,
+    "camera culling still suppresses the main color draw",
+  );
+});
+
+test("G1b WebGPU deformation prep preserves visible meshes and rejects non-directional off-camera cases", async (t) => {
+  async function runCase(label, mesh, lights, expectedDispatches) {
+    const harness = await createBoardWebGPUHarness({ fresh: true });
+    t.after(() => harness.renderer.dispose());
+    const computeStart = harness.fake.state.computePasses.length;
+    harness.renderer.render(g1bBundle(mesh, lights), {});
+    assert.equal(
+      g1bComputeDispatches(harness.fake, "gosx-elio-skin-lbs", computeStart).length,
+      expectedDispatches.skin || 0,
+      label + ": skinned dispatch count",
+    );
+    assert.equal(
+      g1bComputeDispatches(harness.fake, "gosx-computed-morph", computeStart).length,
+      expectedDispatches.morph || 0,
+      label + ": computed-morph dispatch count",
+    );
+  }
+
+  await runCase("visible skinned non-caster still prepares for color", g1bSkinnedMesh({ viewCulled: false, castShadow: false }), [], { skin: 1 });
+  await runCase("visible morph non-caster still prepares for color", g1bMorphMesh({ viewCulled: false, castShadow: false }), [], { morph: 1 });
+  await runCase("off-camera skinned non-caster stays skipped", g1bSkinnedMesh({ castShadow: false }), [g1bDirectionalShadowLight()], {});
+  await runCase("off-camera morph non-caster stays skipped", g1bMorphMesh({ castShadow: false }), [g1bDirectionalShadowLight()], {});
+  await runCase("off-camera skinned caster without active light stays skipped", g1bSkinnedMesh({}), [], {});
+  await runCase("off-camera morph caster without active light stays skipped", g1bMorphMesh({}), [], {});
+  await runCase("off-camera skinned caster with point/spot shadow lights stays skipped", g1bSkinnedMesh({}), [g1bDirectionalShadowLight("point"), g1bDirectionalShadowLight("spot")], {});
+  await runCase("off-camera morph caster with point/spot shadow lights stays skipped", g1bMorphMesh({}), [g1bDirectionalShadowLight("point"), g1bDirectionalShadowLight("spot")], {});
+  await runCase("zero-count skinned caster stays skipped", g1bSkinnedMesh({ zeroCount: true }), [g1bDirectionalShadowLight()], {});
+  await runCase("zero-count morph caster stays skipped", g1bMorphMesh({ zeroCount: true }), [g1bDirectionalShadowLight()], {});
+  await runCase("invalid skinned caster stays skipped", g1bSkinnedMesh({ valid: false }), [g1bDirectionalShadowLight()], {});
+  await runCase("invalid morph caster stays skipped", g1bMorphMesh({ valid: false }), [g1bDirectionalShadowLight()], {});
+});
+
 test("16a skinned LBS output survives renderer disposal with a fresh bind group on the next WebGPU renderer", async () => {
   // Regression: a scene object keeps its _gosxWGPUElioSkinRecord (output
   // buffer + compute bind group) across renderer rebuilds, but dispose()

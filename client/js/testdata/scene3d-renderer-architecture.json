@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2700,
-    "actualGovernanceLinesAtReview": 2659,
-    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
+    "revisedGovernanceLineBudget": 2928,
+    "actualGovernanceLinesAtReview": 2887,
+    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots. G1b-C2b preserves the original 41-line governance headroom while recording the reviewed C1 matcher-test/governance expansion (+237 authored lines) and the stale renderShadowPass exception prune (-9 authored lines); this is not a runtime physical-line, complexity, source-roster or generated-artifact budget waiver."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -307,7 +307,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4667:14",
+      "name": "anonymous@4666:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -352,7 +352,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7471:5",
+      "name": "render@7470:5",
       "lines": 283,
       "cyclomatic": 73,
       "cognitive": 105,
@@ -424,7 +424,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "anonymous@4456:14",
+      "name": "anonymous@4463:14",
       "lines": 303,
       "cyclomatic": 29,
       "cognitive": 81,
@@ -442,7 +442,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "queuePick@5285:5",
+      "name": "queuePick@5292:5",
       "lines": 31,
       "cyclomatic": 9,
       "cognitive": 18,
@@ -583,15 +583,6 @@
       "cognitive": 63,
       "maxNesting": 7,
       "parameters": 1
-    },
-    {
-      "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderShadowPass@15412:5",
-      "lines": 102,
-      "cyclomatic": 31,
-      "cognitive": 61,
-      "maxNesting": 4,
-      "parameters": 5
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",

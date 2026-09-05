@@ -261,13 +261,39 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /Emitted by m31labs\.dev\/elio\/emit\/wgsl from stdlib\.Skin\(\)/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
   assert.match(source, /device\.createComputePipeline\(\{[\s\S]*label: "gosx-elio-skin-lbs"/);
-  assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder\)/);
+  assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder, shadowPrepActive\)/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
   assert.match(source, /webGPUBindElioSkinnedBuffers\(pass, obj, count\)/);
   assert.match(source, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-dispatches/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
+});
+
+test("Scene3D WebGPU deformation prep admits off-camera shadow casters only for active directional shadows", () => {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const frameStart = source.indexOf("function render(bundle, viewport, frameMeta)");
+  const frameEnd = source.indexOf("var computeParticleRecords = updateComputeParticleSystems", frameStart);
+  assert.ok(frameStart >= 0 && frameEnd > frameStart, "WebGPU render frame setup must be extractable");
+  const frame = source.slice(frameStart, frameEnd);
+  const frameAfterPrep = source.slice(frameEnd, source.indexOf("uploadShadowUniforms", frameEnd));
+  assert.doesNotMatch(source, /function sceneWebGPUHasActiveDirectionalShadow\(bundle\)/,
+    "shadow-only deformation prep must reuse the frame's directional-shadow selection, not duplicate it");
+  assert.doesNotMatch(source, /function sceneWebGPUShouldPrepareOutsideView\(obj,\s*shadowPrepActive\)/,
+    "off-camera caster gating should remain local to the deformation prep loops");
+  assert.match(source, /function sceneWebGPUShouldSkipDeformationPrep\(obj,\s*shadowPrepActive\)/);
+  assert.match(source, /function updateComputedMorphMeshes\(bundle,\s*encoder,\s*shadowPrepActive\)/);
+  assert.match(source, /function updateElioSkinnedMeshes\(bundle,\s*encoder,\s*shadowPrepActive\)/);
+  assert.match(frame, /activeShadowCount < 2/);
+  assert.match(frame, /sceneShadowLightSpaceMatrix\(light,\s*sceneBounds\)/);
+  assert.match(frame, /var shadowPrepActive = activeShadowCount > 0/,
+    "deformation prep must key off the actual selected directional shadow slots");
+  assert.match(frameAfterPrep, /updateComputedMorphMeshes\(bundle,\s*encoder,\s*shadowPrepActive\)/);
+  assert.match(frameAfterPrep, /updateElioSkinnedMeshes\(bundle,\s*encoder,\s*shadowPrepActive\)/);
+  assert.match(source, /sceneWebGPUShouldSkipDeformationPrep\(obj,\s*shadowPrepActive\)/,
+    "ordinary off-camera non-casters must keep skipping deformation prep");
+  assert.match(frameAfterPrep, /updateInstancedCullSystems\(bundle\.instancedMeshes,[\s\S]*sceneWebGPURenderSelectedShadowPasses\(renderShadowPass,/,
+    "deformation and cull prep must still run before shadow pass consumption");
 });
 
 test("Scene3D WebGPU water supports compound sphere object displacement", () => {

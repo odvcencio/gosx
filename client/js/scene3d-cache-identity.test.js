@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const vm = require("node:vm");
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 const { bootstrapRuntimeSource, createContext, freshFeatureBundleSource, runScript } = require("./runtime-test-harness.js");
@@ -183,7 +185,48 @@ test("WebGL shadow caster eligibility changes clear stale content but otherwise 
   assert.deepEqual(f.counts(), { clear: 2, draw: 1 });
   f.draw(); assert.deepEqual(f.counts(), { clear: 2, draw: 1 });
   f.caster.castShadow = true; f.caster.viewCulled = true; f.draw();
-  assert.deepEqual(f.counts(), { clear: 2, draw: 1 }, "camera-cull eligibility intentionally remains unchanged in G1a");
+  assert.deepEqual(f.counts(), { clear: 3, draw: 2 }, "camera-cull must not suppress a retained directional shadow caster");
   f.caster.viewCulled = false; f.draw();
   assert.deepEqual(f.counts(), { clear: 3, draw: 2 });
+});
+
+function loadSharedShadowBounds() {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
+  const start = source.indexOf("  function sceneShadowComputeBounds");
+  const end = source.indexOf("  // Generate PBR vertex data", start);
+  assert.ok(start >= 0 && end > start, "sceneShadowComputeBounds must be extractable");
+  const context = vm.createContext({ Number, Math, isFinite });
+  vm.runInContext(source.slice(start, end), context);
+  return context.sceneShadowComputeBounds;
+}
+
+test("shared shadow bounds keep visible receivers and admit off-camera retained casters", () => {
+  const computeBounds = loadSharedShadowBounds();
+  const bounds = computeBounds({
+    worldMeshPositions: new Float32Array([
+      -1, -1, 0, 1, -1, 0, 0, 1, 0,
+      40, 40, 40, 41, 40, 40, 40, 41, 40,
+    ]),
+    meshObjects: [
+      { id: "visible-soup-receiver", viewCulled: false, directVertices: false, castShadow: false, vertexOffset: 0, vertexCount: 3 },
+      {
+        id: "off-camera-retained-caster",
+        viewCulled: true,
+        castShadow: true,
+        directVertices: true,
+        retainedGeometry: true,
+        bounds: { minX: 10, minY: 2, minZ: -3, maxX: 12, maxY: 4, maxZ: -1 },
+      },
+      {
+        id: "off-camera-non-caster",
+        viewCulled: true,
+        castShadow: false,
+        directVertices: true,
+        retainedGeometry: true,
+        bounds: { minX: 99, minY: 99, minZ: 99, maxX: 100, maxY: 100, maxZ: 100 },
+      },
+      { id: "off-camera-soup-non-caster", viewCulled: true, directVertices: false, castShadow: false, vertexOffset: 3, vertexCount: 3 },
+    ],
+  });
+  assert.deepEqual(Object.assign({}, bounds), { minX: -1, minY: -1, minZ: -3, maxX: 12, maxY: 4, maxZ: 0 });
 });

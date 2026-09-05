@@ -1240,14 +1240,14 @@
     var extend = Math.max(0.0, sceneBoundsRadius || 0.0);
     minF -= extend;
 
-    // Eye = centroid shifted back along -forward by (maxF - minF) so that the
-    // frustum box sits entirely in front of the eye along the light axis.
-    // With the standard GL view convention (+forward becomes the *negative*
-    // Z row in the view matrix), points inside the box have view_z in
-    // [-(maxF-minF), 0], which matches what the ortho proj below expects.
-    var eyeX = cx - fx * maxF;
-    var eyeY = cy - fy * maxF;
-    var eyeZ = cz - fz * maxF;
+    // Eye = the extended near-side plane in light space. With the standard GL
+    // view convention (+forward becomes the *negative* Z row below), pf=minF
+    // maps to view_z=0 and pf=maxF maps to view_z=-(maxF-minF). This consumes
+    // the minF extension above instead of leaving upstream casters behind the
+    // eye.
+    var eyeX = cx + fx * minF;
+    var eyeY = cy + fy * minF;
+    var eyeZ = cz + fz * minF;
 
     // View matrix rows: right, up, -forward. The negative-forward row is the
     // standard GL lookAt convention that makes view_z negative for points in
@@ -1300,7 +1300,7 @@
     }
     for (var j = 0; j < meshObjects.length; j++) {
       var o = meshObjects[j];
-      if (!o || !o.castShadow || o.viewCulled) continue;
+      if (!o || !o.castShadow) continue;
       var vertices = o.vertices;
       if (!o.directVertices || o.retainedGeometry !== true || !vertices ||
           vertices.immutable !== true || vertices.dynamic || vertices.dirty || vertices.needsUpdate ||
@@ -1395,8 +1395,7 @@
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
-      if (!obj || obj.viewCulled) continue;
-      if (!obj.castShadow) continue;
+      if (!obj || !obj.castShadow) continue;
 
       if (obj.directVertices) {
         // Retained geometry casts from its cached model-space position buffer.

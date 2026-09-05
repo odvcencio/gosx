@@ -12,6 +12,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const {
   FakeDocument,
@@ -331,14 +332,18 @@ test("bootstrap Scene3D ortho-2D helpers apply the native defaults (zoom<=0→1,
 test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D camera normalizer", () => {
   const source = readSceneRendererBackendSrc("webgpu");
   const start = source.indexOf("function uploadFrameUniforms(");
-  const end = source.indexOf("function uploadLights(");
+  const end = source.indexOf("function uploadWaterReflectionFrameUniforms(");
   assert.notEqual(start, -1, "uploadFrameUniforms must exist in 16a");
-  assert.notEqual(end, -1, "uploadLights anchor must exist in 16a");
+  assert.notEqual(end, -1, "uploadWaterReflectionFrameUniforms anchor must exist in 16a");
+  assert.ok(end > start, "uploadFrameUniforms slice must stop before reflection uniforms so reflection remap cannot mask main-frame removal");
   const body = source.slice(start, end);
 
   const orthoGate = body.indexOf('camera.mode === "ortho2d"');
   const normalizer = body.indexOf("sceneRenderCamera(camera)");
-  const depthRemap = body.indexOf("scratchProjMatrix[2]");
+  const depthRemaps = body.match(/sceneWebGPUApplyClipDepthRemap\(scratchProjMatrix\)/g) || [];
+  const depthRemap = body.indexOf("sceneWebGPUApplyClipDepthRemap(scratchProjMatrix)");
+  const viewProjection = body.indexOf("sceneMat4MultiplyInto(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix)");
+  const uploadProjection = body.indexOf("f.set(scratchProjMatrix, 16)");
   assert.notEqual(orthoGate, -1, "uploadFrameUniforms must gate on camera.mode === \"ortho2d\"");
   assert.notEqual(normalizer, -1, "the 3D path must still normalize through sceneRenderCamera");
   assert.ok(
@@ -349,8 +354,14 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
   assert.match(body, /sceneMat4Ortho2DProj\(camera,\s*width,\s*height,\s*scratchProjMatrix\)/);
   // The ortho proj is emitted in WebGL convention (z in [-1,1], matching the
   // native golden) and must still flow through the WebGPU depth remap.
-  assert.notEqual(depthRemap, -1, "WebGL→WebGPU depth remap must remain");
+  assert.equal(depthRemaps.length, 1, "main frame projection must be remapped exactly once");
+  assert.notEqual(depthRemap, -1, "WebGL→WebGPU depth remap helper call must remain");
   assert.ok(depthRemap > orthoGate, "depth remap must stay downstream of the ortho-2D branch");
+  assert.ok(depthRemap > normalizer, "depth remap must stay downstream of the 3D projection branch");
+  assert.notEqual(viewProjection, -1, "view-projection consumer must remain in uploadFrameUniforms");
+  assert.notEqual(uploadProjection, -1, "frame uniform projection upload must remain in uploadFrameUniforms");
+  assert.ok(depthRemap < viewProjection, "depth remap must happen before view-projection multiplication");
+  assert.ok(depthRemap < uploadProjection, "depth remap must happen before frame uniform upload");
 
   // The sceneApi bridge: the chunked build's 26e prefix must import the
   // helpers, and 10-runtime-scene-core.js must export them.
@@ -369,4 +380,45 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
   assert.match(core, /sceneMat4Ortho2DView:/);
   assert.match(core, /sceneMat4Ortho2DProj:/);
   assert.match(core, /sceneMat4Ortho2DViewProj:/);
+});
+
+test("bootstrap 16a WebGPU clip-depth remap helper maps GL clip z to WebGPU once", () => {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const helperMatch = source.match(/function sceneWebGPUApplyClipDepthRemap\(matrix\) \{[\s\S]*?\n    \}/);
+  assert.ok(helperMatch, "sceneWebGPUApplyClipDepthRemap helper source must exist");
+  const applyRemap = vm.runInNewContext(helperMatch[0] + "\nsceneWebGPUApplyClipDepthRemap;");
+
+  const coefficients = [
+    1, 0, 0.20, 0.40,
+    0, 1, -0.30, 0.10,
+    0, 0, 2.00, -0.50,
+    0, 0, -1.00, 3.00,
+  ];
+  const before = coefficients.slice();
+  const returned = applyRemap(coefficients);
+  assert.equal(returned, coefficients, "helper remaps the uploaded scratch matrix in place");
+  for (const index of [2, 6, 10, 14]) {
+    assert.equal(coefficients[index], 0.5 * (before[index] + before[index + 1]), `row-2 coefficient ${index} must be averaged with row 3`);
+  }
+  for (const index of [0, 1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 15]) {
+    assert.equal(coefficients[index], before[index], `non-row-2 coefficient ${index} must be unchanged`);
+  }
+
+  const projection = [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 2,
+  ];
+  applyRemap(projection);
+  function ndcDepth(z) {
+    const clipZ = projection[10] * z + projection[14];
+    const clipW = projection[11] * z + projection[15];
+    return clipZ / clipW;
+  }
+  assert.equal(ndcDepth(-2), 0, "GL near plane z=-w maps to WebGPU near 0 when w != 1");
+  assert.equal(ndcDepth(0), 0.5, "GL center depth maps to WebGPU 0.5 when w != 1");
+  assert.equal(ndcDepth(2), 1, "GL far plane z=w maps to WebGPU far 1 when w != 1");
+  assert.equal(projection[10], 0.5, "single remap changes row2.z once");
+  assert.equal(projection[14], 1, "single remap changes row2.w once");
 });

@@ -21,10 +21,11 @@ scratch list per renderer and one snapshot per active shadow resource are
 proportional to current caster count. Missing program/resources, incomplete
 framebuffers, and failed caster binding do not publish reusable results.
 
-Caster eligibility is unchanged here, including the existing camera-view-cull
-filter. Camera versus light visibility, alpha-mask silhouettes, deformation and
-instancing coverage remain separate correctness work. This fix does not close
-the WebGL/WebGPU visual parity or hardware-performance signoff.
+Directional shadow caster admission is independent of the main camera
+near/far cull: view-culled casters may still extend light bounds and submit to
+shadow depth passes, while color, pick, water-projection and non-caster paths
+keep their existing visibility gates. Alpha-mask silhouettes and full visual
+hardware-performance signoff remain separate correctness work.
 
 `client/js/scene3d-cache-identity.test.js` checks consumed culling and production
 depth-pass submissions. `TestScene3DCacheIdentityPixels` serves the generated

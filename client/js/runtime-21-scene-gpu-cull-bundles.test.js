@@ -58,7 +58,7 @@ test("gpu-cull T1: WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT and cull pipeline acces
     "cull pipeline must reference cull layout");
 
   // No shadow variant for cull (D2: shadows stay draw-all).
-  assert.doesNotMatch(webgpu, /wgpuCreateShadow.*[Cc]ull|[Cc]ull.*shadow/,
+  assert.doesNotMatch(webgpu, /function\s+wgpuCreateShadow.*[Cc]ull|function\s+.*[Cc]ull.*Shadow/,
     "no shadow cull pipeline must exist (shadows stay draw-all)");
 });
 
@@ -564,6 +564,52 @@ test("gpu-driven draw: a small instanced mesh stays on the draw-all path", async
   assert.ok(mainPass.draws.some((d) => d.instanceCount === 8), "all eight instances must draw");
 });
 
+test("gpu-driven draw: instanced shadow casters are not rejected by camera culling", async (t) => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  t.after(() => harness.renderer.dispose());
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const mesh = bundleInstancedMesh(8, 1);
+  mesh.castShadow = true;
+  mesh.viewCulled = true;
+  const light = api.normalizeSceneLight({
+    id: "sun",
+    kind: "directional",
+    x: 3,
+    y: 6,
+    z: 4,
+    intensity: 1,
+    castShadow: true,
+  }, 0, null);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 40, fov: 60, near: 0.05, far: 256 },
+    [], [], [], [], [light], {}, 0, [], [mesh], [], [], [], 0, false,
+  );
+
+  const passStart = harness.fake.state.renderPasses.length;
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await flushAsyncWork();
+  const passes = harness.fake.state.renderPasses.slice(passStart);
+  const shadowPass = passes.find((pass) =>
+    pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) &&
+    pass.descriptor.colorAttachments.length === 0
+  );
+  assert.ok(shadowPass, "active directional light opens a shadow pass");
+  assert.ok(
+    shadowPass.draws.some((draw) => draw.instanceCount === 8),
+    "camera-cull must not suppress an instanced shadow caster",
+  );
+  const mainPass = passes[passes.length - 1];
+  assert.equal(
+    mainPass.draws.some((draw) => draw.instanceCount === 8),
+    false,
+    "camera-cull still suppresses the main instanced color draw",
+  );
+});
+
 test("gpu-driven draw: per-instance colours keep a mesh off the cull path", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true });
   const api = harness.env.context.__gosx_scene3d_api;
@@ -1064,7 +1110,7 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   // Use the call site, not the function definition — the definition appears first
   // in the file but runs only when invoked.  The call passes `shadowSlots[slot]`
   // which is unique to the call site; the definition uses parameter names.
-  const shadowPos = webgpu.indexOf("renderShadowPass(encoder, lightMatrix, bundle, shadowSlots");
+  const shadowPos = webgpu.indexOf("sceneWebGPURenderSelectedShadowPasses(renderShadowPass", cullPos);
   // The main color pass is identified by `var mainPass = encoder.beginRenderPass(`
   // to avoid matching earlier shadow/utility beginRenderPass calls.
   const mainPassPos = webgpu.indexOf("var mainPass = encoder.beginRenderPass(");

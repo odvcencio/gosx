@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -214,17 +215,7 @@ func rendererChunkRoleAuthorities(backend string, governedSources []string) map[
 
 func TestRendererCompleteFunctionInventoryRatchetsOffline(t *testing.T) {
 	clientJS, baseline := loadRendererArchitectureBaseline(t)
-	defaults := baseline.FunctionDefaults
-	exceptions := map[string]rendererSymbolMetric{}
-	for _, exception := range baseline.FunctionExceptions {
-		key := exception.Source + "\x00" + exception.Name
-		if _, ok := exceptions[key]; ok {
-			t.Fatalf("duplicate renderer function exception %s:%s", exception.Source, exception.Name)
-		}
-		exceptions[key] = exception
-	}
-	seen := map[string]bool{}
-	neededExceptions := map[string]bool{}
+	var inventory []rendererSymbolMetric
 	for _, sourceSet := range baseline.SourceSets {
 		for _, source := range sourceSet.Sources {
 			raw, err := os.ReadFile(filepath.Join(clientJS, filepath.FromSlash(source)))
@@ -235,32 +226,11 @@ func TestRendererCompleteFunctionInventoryRatchetsOffline(t *testing.T) {
 			if err != nil {
 				t.Fatalf("measure function inventory for %s: %v", source, err)
 			}
-			for _, metric := range metrics {
-				key := metric.Source + "\x00" + metric.Name
-				seen[key] = true
-				if regressions := rendererMetricRegressions(metric, defaults); len(regressions) == 0 {
-					continue
-				}
-				exception, ok := exceptions[key]
-				if !ok {
-					t.Errorf("%s:%s exceeds default renderer function budget without an explicit exception: %s", metric.Source, metric.Name, strings.Join(rendererMetricRegressions(metric, defaults), ", "))
-					continue
-				}
-				neededExceptions[key] = true
-				if regressions := rendererMetricRegressions(metric, exception); len(regressions) != 0 {
-					t.Errorf("%s:%s complexity regressed beyond exception: %s", metric.Source, metric.Name, strings.Join(regressions, ", "))
-				}
-			}
+			inventory = append(inventory, metrics...)
 		}
 	}
-	for key, exception := range exceptions {
-		if !seen[key] {
-			t.Errorf("renderer function exception no longer matches a governed function: %s:%s", exception.Source, exception.Name)
-			continue
-		}
-		if !neededExceptions[key] {
-			t.Errorf("renderer function exception no longer exceeds default budgets and must be pruned: %s:%s", exception.Source, exception.Name)
-		}
+	for _, problem := range rendererCompleteFunctionInventoryProblems(inventory, baseline.FunctionDefaults, baseline.FunctionExceptions) {
+		t.Error(problem)
 	}
 }
 
@@ -360,6 +330,273 @@ func TestRendererFunctionExceptionMustRemainAboveDefaults(t *testing.T) {
 	}, defaults); len(regressions) != 1 || regressions[0] != "lines 201 > 200" {
 		t.Fatalf("default budget fixture stopped catching actual growth: %v", regressions)
 	}
+}
+
+func TestRendererCompleteFunctionExceptionIdentityAllowsUniqueNamedCoordinateMoves(t *testing.T) {
+	defaults := rendererSymbolMetric{Lines: 4, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+	actual := []rendererSymbolMetric{{
+		Source:     "../runtime/scene3d/probe.ts",
+		Name:       "stableName@20:3",
+		Lines:      5,
+		Cyclomatic: 1,
+		Cognitive:  1,
+		MaxNesting: 1,
+		Parameters: 1,
+	}}
+	exceptions := []rendererSymbolMetric{{
+		Source:     "../runtime/scene3d/probe.ts",
+		Name:       "stableName@10:3",
+		Lines:      5,
+		Cyclomatic: 1,
+		Cognitive:  1,
+		MaxNesting: 1,
+		Parameters: 1,
+	}}
+	if problems := rendererCompleteFunctionInventoryProblems(actual, defaults, exceptions); len(problems) != 0 {
+		t.Fatalf("unique named coordinate move should resolve by source+base name: %v", problems)
+	}
+}
+
+func TestRendererCompleteFunctionExceptionIdentityStillRejectsRegressions(t *testing.T) {
+	defaults := rendererSymbolMetric{Lines: 4, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+	exception := rendererSymbolMetric{
+		Source:     "../runtime/scene3d/probe.ts",
+		Name:       "stableName@10:3",
+		Lines:      5,
+		Cyclomatic: 2,
+		Cognitive:  2,
+		MaxNesting: 2,
+		Parameters: 2,
+	}
+	cases := []struct {
+		name string
+		edit func(*rendererSymbolMetric)
+		want string
+	}{
+		{"lines", func(m *rendererSymbolMetric) { m.Lines = 6 }, "lines 6 > 5"},
+		{"cyclomatic", func(m *rendererSymbolMetric) { m.Cyclomatic = 3 }, "cyclomatic 3 > 2"},
+		{"cognitive", func(m *rendererSymbolMetric) { m.Cognitive = 3 }, "cognitive 3 > 2"},
+		{"max nesting", func(m *rendererSymbolMetric) { m.MaxNesting = 3 }, "max nesting 3 > 2"},
+		{"parameters", func(m *rendererSymbolMetric) { m.Parameters = 3 }, "parameters 3 > 2"},
+	}
+	for _, tc := range cases {
+		actual := exception
+		actual.Name = "stableName@20:3"
+		tc.edit(&actual)
+		problems := rendererCompleteFunctionInventoryProblems([]rendererSymbolMetric{actual}, defaults, []rendererSymbolMetric{exception})
+		if !rendererProblemContains(problems, tc.want) {
+			t.Fatalf("%s regression was not rejected: %v", tc.name, problems)
+		}
+	}
+}
+
+func TestRendererCompleteFunctionExceptionIdentityRejectsAmbiguousAndStaleFallbacks(t *testing.T) {
+	defaults := rendererSymbolMetric{Lines: 4, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+	metric := func(name string) rendererSymbolMetric {
+		return rendererSymbolMetric{Source: "../runtime/scene3d/probe.ts", Name: name, Lines: 5, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+	}
+	exception := func(name string) rendererSymbolMetric {
+		return rendererSymbolMetric{Source: "../runtime/scene3d/probe.ts", Name: name, Lines: 5, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+	}
+	cases := []struct {
+		name       string
+		actual     []rendererSymbolMetric
+		exceptions []rendererSymbolMetric
+		want       string
+	}{
+		{"new-hotspot", []rendererSymbolMetric{metric("newHotspot@20:3")}, nil, "without an explicit exception"},
+		{"duplicate-actual-base", []rendererSymbolMetric{metric("repeat@20:3"), metric("repeat@40:3")}, []rendererSymbolMetric{exception("repeat@10:3")}, "ambiguous"},
+		{"duplicate-exception-base", []rendererSymbolMetric{metric("repeat@20:3")}, []rendererSymbolMetric{exception("repeat@10:3"), exception("repeat@12:3")}, "ambiguous"},
+		{"anonymous-move", []rendererSymbolMetric{metric("anonymous@20:3")}, []rendererSymbolMetric{exception("anonymous@10:3")}, "without an explicit exception"},
+		{"renamed-or-deleted", []rendererSymbolMetric{metric("actual@20:3")}, []rendererSymbolMetric{exception("deleted@10:3")}, "no longer matches"},
+		{"shrunk-below-default", []rendererSymbolMetric{{Source: "../runtime/scene3d/probe.ts", Name: "stableName@20:3", Lines: 3, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}}, []rendererSymbolMetric{exception("stableName@10:3")}, "must be pruned"},
+		{"source-mismatch", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{{Source: "../runtime/scene3d/other.ts", Name: "stableName@10:3", Lines: 5, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}}, "without an explicit exception"},
+		{"malformed-suffix", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@old:3")}, "malformed"},
+		{"line-plus-sign", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@+10:3")}, "malformed"},
+		{"column-plus-sign", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:+3")}, "malformed"},
+		{"line-leading-zero", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@010:3")}, "malformed"},
+		{"column-leading-zero", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:03")}, "malformed"},
+		{"line-zero", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@0:3")}, "malformed"},
+		{"column-zero", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:0")}, "malformed"},
+		{"line-negative", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@-10:3")}, "malformed"},
+		{"column-negative", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:-3")}, "malformed"},
+		{"line-whitespace", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@ 10:3")}, "malformed"},
+		{"column-whitespace", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:3 ")}, "malformed"},
+		{"line-overflow", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@999999999999999999999999999999999999999999:3")}, "malformed"},
+		{"column-overflow", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:999999999999999999999999999999999999999999")}, "malformed"},
+		{"duplicate-exact-exception", []rendererSymbolMetric{metric("stableName@20:3")}, []rendererSymbolMetric{exception("stableName@10:3"), exception("stableName@10:3")}, "duplicate renderer function exception"},
+	}
+	for _, tc := range cases {
+		problems := rendererCompleteFunctionInventoryProblems(tc.actual, defaults, tc.exceptions)
+		if !rendererProblemContains(problems, tc.want) {
+			t.Fatalf("%s did not report %q: %v", tc.name, tc.want, problems)
+		}
+	}
+}
+
+func TestRendererCompleteFunctionExceptionIdentityKeepsExactAnonymousAndDuplicateCoordinateControls(t *testing.T) {
+	defaults := rendererSymbolMetric{Lines: 4, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+	for _, name := range []string{"anonymous@20:3", "repeat@20:3", "repeat@40:3"} {
+		actual := rendererSymbolMetric{Source: "../runtime/scene3d/probe.ts", Name: name, Lines: 5, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1}
+		exception := actual
+		if problems := rendererCompleteFunctionInventoryProblems([]rendererSymbolMetric{actual}, defaults, []rendererSymbolMetric{exception}); len(problems) != 0 {
+			t.Fatalf("exact identity %s should still match: %v", name, problems)
+		}
+	}
+	duplicateBaseActual := []rendererSymbolMetric{
+		{Source: "../runtime/scene3d/probe.ts", Name: "repeat@20:3", Lines: 5, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1},
+		{Source: "../runtime/scene3d/probe.ts", Name: "repeat@40:3", Lines: 5, Cyclomatic: 1, Cognitive: 1, MaxNesting: 1, Parameters: 1},
+	}
+	duplicateBaseExceptions := append([]rendererSymbolMetric(nil), duplicateBaseActual...)
+	if problems := rendererCompleteFunctionInventoryProblems(duplicateBaseActual, defaults, duplicateBaseExceptions); len(problems) != 0 {
+		t.Fatalf("duplicate base names should still match exact coordinate exceptions independently: %v", problems)
+	}
+}
+
+func rendererCompleteFunctionInventoryProblems(metrics []rendererSymbolMetric, defaults rendererSymbolMetric, exceptionList []rendererSymbolMetric) []string {
+	exceptions := map[string]rendererSymbolMetric{}
+	exceptionBaseCounts := map[string]int{}
+	var problems []string
+	for _, exception := range exceptionList {
+		key := exception.Source + "\x00" + exception.Name
+		if _, ok := exceptions[key]; ok {
+			problems = append(problems, fmt.Sprintf("duplicate renderer function exception %s:%s", exception.Source, exception.Name))
+			continue
+		}
+		exceptions[key] = exception
+		identity, err := parseRendererFunctionIdentity(exception.Name)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("malformed renderer function exception %s:%s: %v", exception.Source, exception.Name, err))
+			continue
+		}
+		if rendererFunctionIdentityCanFallback(identity) {
+			exceptionBaseCounts[exception.Source+"\x00"+identity.Base]++
+		}
+	}
+	actualBaseCounts := map[string]int{}
+	for _, metric := range metrics {
+		identity, err := parseRendererFunctionIdentity(metric.Name)
+		if err != nil || !rendererFunctionIdentityCanFallback(identity) {
+			continue
+		}
+		actualBaseCounts[metric.Source+"\x00"+identity.Base]++
+	}
+	seen := map[string]bool{}
+	neededExceptions := map[string]bool{}
+	for _, metric := range metrics {
+		key := metric.Source + "\x00" + metric.Name
+		seen[key] = true
+		regressions := rendererMetricRegressions(metric, defaults)
+		if len(regressions) == 0 {
+			continue
+		}
+		exception, ok := exceptions[key]
+		if !ok {
+			var resolved bool
+			if identity, err := parseRendererFunctionIdentity(metric.Name); err == nil && rendererFunctionIdentityCanFallback(identity) {
+				baseKey := metric.Source + "\x00" + identity.Base
+				if actualBaseCounts[baseKey] == 1 && exceptionBaseCounts[baseKey] == 1 {
+					for candidateKey, candidate := range exceptions {
+						candidateIdentity, err := parseRendererFunctionIdentity(candidate.Name)
+						if err != nil || !rendererFunctionIdentityCanFallback(candidateIdentity) {
+							continue
+						}
+						if candidate.Source == metric.Source && candidateIdentity.Base == identity.Base {
+							exception = candidate
+							neededExceptions[candidateKey] = true
+							resolved = true
+							break
+						}
+					}
+				} else if actualBaseCounts[baseKey] > 1 || exceptionBaseCounts[baseKey] > 1 {
+					problems = append(problems, fmt.Sprintf("%s:%s cannot use coordinate-resilient exception fallback because base name %q is ambiguous", metric.Source, metric.Name, identity.Base))
+					continue
+				}
+			}
+			if !resolved {
+				problems = append(problems, fmt.Sprintf("%s:%s exceeds default renderer function budget without an explicit exception: %s", metric.Source, metric.Name, strings.Join(regressions, ", ")))
+				continue
+			}
+		} else {
+			neededExceptions[key] = true
+		}
+		if regressions := rendererMetricRegressions(metric, exception); len(regressions) != 0 {
+			problems = append(problems, fmt.Sprintf("%s:%s complexity regressed beyond exception: %s", metric.Source, metric.Name, strings.Join(regressions, ", ")))
+		}
+	}
+	for key, exception := range exceptions {
+		if !seen[key] {
+			identity, err := parseRendererFunctionIdentity(exception.Name)
+			if err != nil || !rendererFunctionIdentityCanFallback(identity) ||
+				actualBaseCounts[exception.Source+"\x00"+identity.Base] != 1 ||
+				exceptionBaseCounts[exception.Source+"\x00"+identity.Base] != 1 {
+				problems = append(problems, fmt.Sprintf("renderer function exception no longer matches a governed function: %s:%s", exception.Source, exception.Name))
+				continue
+			}
+		}
+		if !neededExceptions[key] {
+			problems = append(problems, fmt.Sprintf("renderer function exception no longer exceeds default budgets and must be pruned: %s:%s", exception.Source, exception.Name))
+		}
+	}
+	return problems
+}
+
+type rendererFunctionIdentity struct {
+	Base      string
+	Line, Col int
+	Anonymous bool
+}
+
+func parseRendererFunctionIdentity(name string) (rendererFunctionIdentity, error) {
+	at := strings.LastIndex(name, "@")
+	if at <= 0 || at == len(name)-1 {
+		return rendererFunctionIdentity{}, fmt.Errorf("must end with @line:column")
+	}
+	coords := strings.Split(name[at+1:], ":")
+	if len(coords) != 2 || coords[0] == "" || coords[1] == "" {
+		return rendererFunctionIdentity{}, fmt.Errorf("must end with @line:column")
+	}
+	if !rendererCanonicalPositiveDecimal(coords[0]) {
+		return rendererFunctionIdentity{}, fmt.Errorf("line must be a canonical positive decimal integer")
+	}
+	line, err := strconv.Atoi(coords[0])
+	if err != nil {
+		return rendererFunctionIdentity{}, fmt.Errorf("line must fit in an int")
+	}
+	if !rendererCanonicalPositiveDecimal(coords[1]) {
+		return rendererFunctionIdentity{}, fmt.Errorf("column must be a canonical positive decimal integer")
+	}
+	col, err := strconv.Atoi(coords[1])
+	if err != nil {
+		return rendererFunctionIdentity{}, fmt.Errorf("column must fit in an int")
+	}
+	base := name[:at]
+	return rendererFunctionIdentity{Base: base, Line: line, Col: col, Anonymous: base == "anonymous"}, nil
+}
+
+func rendererCanonicalPositiveDecimal(value string) bool {
+	if value == "" || value[0] < '1' || value[0] > '9' {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func rendererFunctionIdentityCanFallback(identity rendererFunctionIdentity) bool {
+	return identity.Base != "" && !identity.Anonymous
+}
+
+func rendererProblemContains(problems []string, needle string) bool {
+	for _, problem := range problems {
+		if strings.Contains(problem, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func rendererMetricRegressions(actual, baseline rendererSymbolMetric) []string {
