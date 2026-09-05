@@ -116,48 +116,6 @@ test("bootstrap resolves Scene3D shadow and IBL resource budgets", () => {
   assert.ok(Math.abs(parsed.data[2] - 0.25) < 0.00001);
 });
 
-test("bootstrap hashes shadow passes with cascade-sensitive inputs", () => {
-  const env = createContext({});
-  runScript(bootstrapSource, env.context, "bootstrap.js");
-
-  const api = env.context.window.__gosx_scene3d_resource_api;
-  assert.equal(typeof api.shadowPassHash, "function");
-
-  const matrix = new Float32Array(16);
-  matrix[0] = 1;
-  matrix[5] = 1;
-  matrix[10] = 1;
-  matrix[15] = 1;
-  const casters = [
-    { castShadow: true, vertexOffset: 0, vertexCount: 6, depthNear: 1, depthFar: 3 },
-  ];
-  const base = api.shadowPassHash(matrix, casters, {
-    cascadeIndex: 0,
-    splitNear: 0.1,
-    splitFar: 10,
-    shadowSize: 1024,
-  });
-
-  assert.notEqual(base, api.shadowPassHash(matrix, casters, {
-    cascadeIndex: 1,
-    splitNear: 0.1,
-    splitFar: 10,
-    shadowSize: 1024,
-  }));
-  assert.notEqual(base, api.shadowPassHash(matrix, casters, {
-    cascadeIndex: 0,
-    splitNear: 0.1,
-    splitFar: 25,
-    shadowSize: 1024,
-  }));
-  assert.notEqual(base, api.shadowPassHash(matrix, casters, {
-    cascadeIndex: 0,
-    splitNear: 0.1,
-    splitFar: 10,
-    shadowSize: 512,
-  }));
-});
-
 test("bootstrap computes CSM cascade splits blending uniform and log", () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");

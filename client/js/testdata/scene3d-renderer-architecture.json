@@ -244,7 +244,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2137:3",
+      "name": "createSceneWaterSimWebGL@2138:3",
       "lines": 255,
       "cyclomatic": 78,
       "cognitive": 84,
@@ -253,7 +253,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@2911:3",
+      "name": "createSceneWaterRendererWebGL@2912:3",
       "lines": 1287,
       "cyclomatic": 354,
       "cognitive": 437,
@@ -262,7 +262,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3097:5",
+      "name": "waterShadowSignature@3098:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,
@@ -271,7 +271,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3538:5",
+      "name": "applyWaterQualityProfile@3539:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -280,7 +280,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3696:5",
+      "name": "renderMeshTextureTarget@3697:5",
       "lines": 28,
       "cyclomatic": 6,
       "cognitive": 5,
@@ -289,7 +289,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3725:5",
+      "name": "drawFrame@3726:5",
       "lines": 398,
       "cyclomatic": 103,
       "cognitive": 126,
@@ -298,7 +298,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4264:3",
+      "name": "createScenePostProcessor@4265:3",
       "lines": 550,
       "cyclomatic": 140,
       "cognitive": 200,
@@ -307,7 +307,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4666:14",
+      "name": "anonymous@4667:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -316,7 +316,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6035:3",
+      "name": "scenePBRUploadLights@6036:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -325,7 +325,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@6508:3",
+      "name": "scenePBRUploadEnvironmentMap@6509:3",
       "lines": 110,
       "cyclomatic": 49,
       "cognitive": 95,
@@ -334,7 +334,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@6652:3",
+      "name": "createScenePBRRenderer@6653:3",
       "lines": 2716,
       "cyclomatic": 765,
       "cognitive": 1173,
@@ -343,7 +343,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@7284:5",
+      "name": "uploadCustomUniforms@7285:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -352,7 +352,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7470:5",
+      "name": "render@7471:5",
       "lines": 283,
       "cyclomatic": 73,
       "cognitive": 105,
@@ -361,7 +361,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@8265:5",
+      "name": "drawPBRObjectList@8266:5",
       "lines": 256,
       "cyclomatic": 71,
       "cognitive": 167,
@@ -370,7 +370,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@8670:5",
+      "name": "applyPointsAuthoredCustomUniforms@8671:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -379,7 +379,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@8846:5",
+      "name": "drawPointsEntries@8847:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -388,7 +388,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@9147:5",
+      "name": "drawInstancedMeshes@9148:5",
       "lines": 206,
       "cyclomatic": 55,
       "cognitive": 117,

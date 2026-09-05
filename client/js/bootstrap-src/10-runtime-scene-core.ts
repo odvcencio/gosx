@@ -4572,6 +4572,12 @@
       return { near: depth, far: depth, center: depth };
     }
     const cam = sceneRenderCamera(camera, _sceneBoundsDepthCameraScratch);
+    const minX = sceneNumber(bounds.minX, 0);
+    const minY = sceneNumber(bounds.minY, 0);
+    const minZ = sceneNumber(bounds.minZ, 0);
+    const maxX = sceneNumber(bounds.maxX, 0);
+    const maxY = sceneNumber(bounds.maxY, 0);
+    const maxZ = sceneNumber(bounds.maxZ, 0);
 
     // Optional per-object cache. appendSceneObjectToBundle calls this
     // function twice per frame per object (once for depth, once via
@@ -4579,27 +4585,17 @@
     // change on a static scene — so the second call and all subsequent
     // frames can reuse a stored result.
     //
-    // Change detection uses the sum of bounds extents + camera position
-    // and rotation. Any real edit moves at least one term; numerical
-    // coincidences that sum to the same value without actually matching
-    // are possible in theory but statistically irrelevant for real
-    // world coordinates (and invisible to the viewer if they do hit).
-    //
-    // Worst case on a miss: same cost as before. Best case (static
-    // scene): saves the 30 Math.sin/cos + 8 iterations of matrix math
-    // per object per frame. For a 100-object scene that's ~0.3-0.5 ms
-    // per frame reclaimed, plus a second-call hit on every frame.
-    let cacheHash = 0;
-    if (cacheOwner) {
-      cacheHash = sceneNumber(bounds.minX, 0) + sceneNumber(bounds.minY, 0) + sceneNumber(bounds.minZ, 0)
-        + sceneNumber(bounds.maxX, 0) + sceneNumber(bounds.maxY, 0) + sceneNumber(bounds.maxZ, 0)
-        + cam.x + cam.y + cam.z
-        + cam.rotationX + cam.rotationY + cam.rotationZ
-        + (cam.kind === "orthographic" ? 17 : 0)
-        + cam.left + cam.right + cam.top + cam.bottom + cam.zoom;
-      if (cacheOwner._depthCacheHash === cacheHash && cacheOwner._depthCacheResult) {
-        return cacheOwner._depthCacheResult;
-      }
+    // Compare the actual depth inputs, not their sum: equal sums can move an
+    // object across the far plane. One fixed snapshot per owner also detects
+    // in-place edits. Projection extents and near/far do not enter depth math;
+    // sceneBoundsViewCulled reads the current near/far on every call.
+    const cached = cacheOwner && cacheOwner._depthCacheInputs;
+    if (cached && cacheOwner._depthCacheResult &&
+        cached[0] === minX && cached[1] === minY && cached[2] === minZ &&
+        cached[3] === maxX && cached[4] === maxY && cached[5] === maxZ &&
+        cached[6] === cam.x && cached[7] === cam.y && cached[8] === cam.z &&
+        cached[9] === cam.rotationX && cached[10] === cam.rotationY && cached[11] === cam.rotationZ) {
+      return cacheOwner._depthCacheResult;
     }
 
     const sinX = Math.sin(-cam.rotationX);
@@ -4608,13 +4604,6 @@
     const cosY = Math.cos(-cam.rotationY);
     const sinZ = Math.sin(-cam.rotationZ);
     const cosZ = Math.cos(-cam.rotationZ);
-
-    const minX = sceneNumber(bounds.minX, 0);
-    const minY = sceneNumber(bounds.minY, 0);
-    const minZ = sceneNumber(bounds.minZ, 0);
-    const maxX = sceneNumber(bounds.maxX, 0);
-    const maxY = sceneNumber(bounds.maxY, 0);
-    const maxZ = sceneNumber(bounds.maxZ, 0);
 
     let near = Infinity;
     let far = -Infinity;
@@ -4657,7 +4646,12 @@
       center: (near + far) / 2,
     };
     if (cacheOwner) {
-      cacheOwner._depthCacheHash = cacheHash;
+      const inputs = cached || new Float64Array(12);
+      inputs[0] = minX; inputs[1] = minY; inputs[2] = minZ;
+      inputs[3] = maxX; inputs[4] = maxY; inputs[5] = maxZ;
+      inputs[6] = cam.x; inputs[7] = cam.y; inputs[8] = cam.z;
+      inputs[9] = cam.rotationX; inputs[10] = cam.rotationY; inputs[11] = cam.rotationZ;
+      cacheOwner._depthCacheInputs = inputs;
       cacheOwner._depthCacheResult = result;
     }
     return result;
