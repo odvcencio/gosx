@@ -2563,9 +2563,11 @@
         ? worldNormal.subarray(start, endP)
         : new Float32Array(worldNormal.slice(start, endP));
     }
+    var material = bundle.materials && bundle.materials[chosen.obj.materialIndex] || chosen.obj;
     return {
       positions: positions, normals: normals, uvs: uvs, count: chosen.count,
       id: chosen.id, texture: chosen.obj && chosen.obj.texture || "",
+      textureDescriptor: material.textureDescriptors && material.textureDescriptors.baseColor,
     };
   }
 
@@ -2583,12 +2585,12 @@
 
   // Load a 2D texture from a URL. Returns a texture immediately (1x1 grey
   // placeholder) and uploads the decoded image when it arrives.
-  function sceneWaterRenderLoad2D(gl, url) {
+  function sceneWaterRenderLoad2D(gl, url, descriptor, owner) {
     var tex = sceneWaterRenderSolidTexture(gl, 128, 128, 128, 255);
-    if (!url || typeof Image === "undefined") return tex;
-    var img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = function() {
+    if ((!url && !(descriptor && descriptor.imageSource)) || typeof Image === "undefined") return tex;
+    owner = owner || {};
+    owner.dispose = function() { owner.disposed = true; if (owner.releaseImage) owner.releaseImage(); };
+    sceneLoadTextureImage(owner, descriptor, url, function(img) {
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
@@ -2602,9 +2604,35 @@
       } else {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       }
-    };
-    img.src = url;
+      owner.loaded = true;
+    }, null, "anonymous");
     return tex;
+  }
+
+  function sceneWaterImageTexture(gl, url, descriptor) {
+    const owner = {};
+    const texture = sceneWaterRenderLoad2D(gl, url, descriptor, owner);
+    return { texture, dispose() {
+      if (owner.disposed) return;
+      sceneDisposeTextureImage(owner);
+      gl.deleteTexture(texture);
+    } };
+  }
+
+  function sceneWaterReleaseTexture(record) {
+    if (record) record.dispose();
+  }
+
+  function sceneWaterModelTexture(gl, mesh, previous) {
+    const descriptor = mesh && mesh.textureDescriptor;
+    const sourceKey = descriptor && sceneImageSourceKey(descriptor.imageSource);
+    const url = mesh && mesh.texture || (sourceKey ? "" : "/water/models/duck/DuckCM.png");
+    const key = sourceKey ? "image:" + sourceKey : "uri:" + url;
+    if (previous && previous.key === key) return previous;
+    sceneWaterReleaseTexture(previous);
+    const next = sceneWaterImageTexture(gl, url, descriptor);
+    next.key = key;
+    return next;
   }
 
   // Resolve the 6 cube-map face URLs from a base, mirroring the WebGPU path's
@@ -3036,7 +3064,8 @@
     // their own RTTs each frame (sizes mirror the WebGPU path: caustics =
     // causticsResolution, shadow = objectShadowResolution). The solid stubs
     // remain as the fallback when the RTT or its program is unavailable.
-    var tileTex = sceneWaterRenderLoad2D(gl, entry.tileTexture);
+    var tileImageOwner = sceneWaterImageTexture(gl, entry.tileTexture, null);
+    var tileTex = tileImageOwner.texture;
     var skyTex = sceneWaterRenderLoadCube(gl, entry.cubeMap);
     var causticStub = sceneWaterRenderSolidTexture(gl, 14, 16, 18, 255); // ~0.06 grey
     var shadowStub = sceneWaterRenderSolidTexture(gl, 0, 0, 0, 255);     // 0 => no shadow
@@ -3207,7 +3236,7 @@
     var meshUploadSource = null;
     var meshUploadProgram = null;
     var meshModelTex = null;     // glTF albedo texture for the active mesh
-    var meshModelTexURL = "";
+    var meshImageOwner = null;
     // Projection matrices the surface uses to sample the object-texture targets.
     // refraction = current mvp; reflection = mvp * reflectAcrossWaterPlane.
     var objectRefractionMatrix = new Float32Array(16);
@@ -3840,12 +3869,8 @@
       objectReflectionMatrix.set(sceneMat4Multiply(mvp, reflectAcrossWater));
       // The duck's albedo texture (lazy-loaded on first duck selection).
       if (liveMeshID === "float-duck" && meshUsesModelTex) {
-        var wantTexURL = (meshData && meshData.texture) || "/water/models/duck/DuckCM.png";
-        if (!meshModelTex || meshModelTexURL !== wantTexURL) {
-          if (meshModelTex && meshModelTex !== objectTextureStub) gl.deleteTexture(meshModelTex);
-          meshModelTex = sceneWaterRenderLoad2D(gl, wantTexURL);
-          meshModelTexURL = wantTexURL;
-        }
+        meshImageOwner = sceneWaterModelTexture(gl, meshData, meshImageOwner);
+        meshModelTex = meshImageOwner.texture;
       }
 
       // ---- pre-pass A: caustics RTT ----
@@ -4182,8 +4207,9 @@
       });
       if (causticsTarget) { gl.deleteTexture(causticsTarget.tex); gl.deleteFramebuffer(causticsTarget.fbo); }
       if (shadowTarget) { gl.deleteTexture(shadowTarget.tex); gl.deleteFramebuffer(shadowTarget.fbo); }
-      [tileTex, skyTex, causticStub, shadowStub, objectTextureStub].forEach(function(t) { if (t) gl.deleteTexture(t); });
-      if (meshModelTex && meshModelTex !== objectTextureStub) gl.deleteTexture(meshModelTex);
+      [skyTex, causticStub, shadowStub, objectTextureStub].forEach(function(t) { if (t) gl.deleteTexture(t); });
+      sceneWaterReleaseTexture(tileImageOwner);
+      sceneWaterReleaseTexture(meshImageOwner);
     }
 
     return {
@@ -5020,34 +5046,11 @@
   }
 
   function scenePBRTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
-    var descriptor = raw && typeof raw === "object" ? raw : {};
-    return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
-      role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
-      colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
-        ? descriptor.colorSpace.trim().toLowerCase()
-        : String(fallbackColorSpace || "linear"),
-      view: typeof descriptor.view === "string" && descriptor.view.trim() ? descriptor.view.trim().toLowerCase() : "2d",
-      format: typeof descriptor.format === "string" ? descriptor.format.trim().toLowerCase() : "",
-      mipLevels: Math.max(0, Math.floor(sceneNumber(descriptor.mipLevels, 0))),
-      width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
-      height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
-      faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
-    };
+    return sceneTextureUploadDescriptor(raw, url, fallbackRole, fallbackColorSpace);
   }
 
   function scenePBRTextureCacheKey(descriptor) {
-    return [
-      descriptor.uri,
-      descriptor.role,
-      descriptor.colorSpace,
-      descriptor.view,
-      descriptor.format,
-      descriptor.width,
-      descriptor.height,
-      descriptor.faces,
-      descriptor.mipLevels,
-    ].join("\u0000");
+    return sceneTextureCacheKey(descriptor);
   }
 
   function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
@@ -5055,7 +5058,7 @@
     const textureMap = cache;
     var descriptor = scenePBRTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
     const key = descriptor.uri;
-    if (!key) {
+    if (!key && !descriptor.imageSource) {
       return null;
     }
     var cacheKey = scenePBRTextureCacheKey(descriptor);
@@ -5112,10 +5115,7 @@
       record.failed = true;
       record.error = "cube descriptors require a KTX2 upload path";
     } else if (typeof Image === "function") {
-      const image = new Image();
-      record.image = image;
-      image.onload = function() {
-        if (record.disposed || record.generation && record.generation.disposed) return;
+      sceneLoadTextureImage(record, descriptor, key, function(image) {
         gl.bindTexture(gl.TEXTURE_2D, texture);
         var srgb = descriptor.colorSpace === "srgb";
         var internalFormat = srgb ? (gl.SRGB8_ALPHA8 || 0x8C43) : (gl.RGBA8 || 0x8058);
@@ -5129,14 +5129,7 @@
         record.colorSpace = srgb ? "srgb" : "linear";
         record.format = srgb ? "srgb8-alpha8" : "rgba8";
         record.loaded = true;
-        scenePBRNotifyTextureSettled(record);
-      };
-      image.onerror = function() {
-        if (record.disposed || record.generation && record.generation.disposed) return;
-        record.failed = true;
-        scenePBRNotifyTextureSettled(record);
-      };
-      image.src = key;
+      }, scenePBRNotifyTextureSettled);
     }
 
     return record;
@@ -5641,6 +5634,12 @@
     if (count === 16) return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
     if (count === 9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
     return 0;
+  }
+
+  function sceneSelenaLoadTexture(gl, material, texture, index, cache) {
+    const url = sceneSelenaTextureURL(material, texture, index);
+    const descriptor = sceneCustomImageDescriptor(material, texture.name, index, url);
+    return sceneHasTextureSource(url, descriptor) ? scenePBRLoadTexture(gl, url, cache, descriptor) : null;
   }
 
   function sceneSelenaTextureURL(material, texture, index) {
@@ -7379,7 +7378,7 @@
         var url = descriptor && typeof descriptor.uri === "string" && descriptor.uri.trim()
           ? descriptor.uri.trim()
           : mat[tm.prop];
-        var record = url ? scenePBRLoadTexture(gl, url, textureCache, descriptor, tm.role, tm.colorSpace) : null;
+        var record = sceneHasTextureSource(url, descriptor) ? scenePBRLoadTexture(gl, url, textureCache, descriptor, tm.role, tm.colorSpace) : null;
         var loaded = Boolean(record && record.texture && record.loaded);
         if (record && !record.loaded && !record.failed) {
           uniforms._lastMaterialTexturesReady = false;
@@ -7954,8 +7953,7 @@
         var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
         if (!loc) continue;
         var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
-        var url = sceneSelenaTextureURL(material, tex, i);
-        var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
+        var record = sceneSelenaLoadTexture(gl, material, tex, i, textureCache);
         scenePBRBindTexture(gl, unit, record && record.texture ? record.texture : selenaPlaceholderTexture);
         gl.uniform1i(loc, unit);
       }
@@ -9411,13 +9409,7 @@
 
       textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {
-        if (record) {
-          record.disposed = true;
-          if (record.image) {
-            record.image.onload = null;
-            record.image.onerror = null;
-          }
-        }
+        sceneDisposeTextureImage(record);
         if (record && record.texture) {
           gl.deleteTexture(record.texture);
         }

@@ -297,6 +297,7 @@
   }
 
   function sceneCloneData(value) {
+    if (sceneImageSourceKey(value)) return value;
     if (Array.isArray(value)) {
       return value.map(sceneCloneData);
     }
@@ -2792,13 +2793,118 @@
     };
   }
 
+  function sceneImageSourceKey(value) {
+    const api = typeof window !== "undefined" && window.__gosx_scene3d_gltf_api;
+    return api && typeof api.imageSourceKey === "function" ? api.imageSourceKey(value) : "";
+  }
+
+  function sceneAcquireTextureImage(descriptor, url) {
+    const source = descriptor && descriptor.imageSource;
+    const api = typeof window !== "undefined" && window.__gosx_scene3d_gltf_api;
+    return source && api && typeof api.acquireImageSource === "function" ? api.acquireImageSource(source) : null;
+  }
+
+  function sceneCustomImageDescriptor(material, name, index, override) {
+    if (override) return null;
+    const descriptors = material && material.textureDescriptors;
+    const descriptor = descriptors && (descriptors.data && descriptors.data[name] || (index === 0 && descriptors.baseColor));
+    return descriptor && sceneImageSourceKey(descriptor.imageSource) ? descriptor : null;
+  }
+
+  function sceneTextureUploadDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
+    const descriptor = raw && typeof raw === "object" ? raw : {};
+    return {
+      ...(sceneImageSourceKey(descriptor.imageSource) ? { imageSource: descriptor.imageSource } : {}),
+      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
+      colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
+        ? descriptor.colorSpace.trim().toLowerCase() : String(fallbackColorSpace || "linear"),
+      view: typeof descriptor.view === "string" && descriptor.view.trim() ? descriptor.view.trim().toLowerCase() : "2d",
+      format: typeof descriptor.format === "string" ? descriptor.format.trim().toLowerCase() : "",
+      mipLevels: Math.max(0, Math.floor(sceneNumber(descriptor.mipLevels, 0))),
+      width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
+      height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
+      faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
+    };
+  }
+
+  function sceneHasTextureSource(url, descriptor) {
+    return Boolean(url || descriptor && sceneImageSourceKey(descriptor.imageSource));
+  }
+
+  function sceneDisposeTextureImage(record) {
+    if (!record) return;
+    record.disposed = true;
+    if (record.releaseImage) record.releaseImage();
+    if (record.image) { record.image.onload = null; record.image.onerror = null; record.image = null; }
+  }
+
+  function sceneTextureCacheKey(descriptor) {
+    return [
+      descriptor.imageSource ? "image:" + sceneImageSourceKey(descriptor.imageSource) : "uri:" + descriptor.uri,
+      descriptor.role,
+      descriptor.colorSpace,
+      descriptor.view,
+      descriptor.format,
+      descriptor.width,
+      descriptor.height,
+      descriptor.faces,
+      descriptor.mipLevels,
+    ].join("\u0000");
+  }
+
+  // Decode records, not parsed assets, own temporary URLs. Cancellation detaches
+  // callbacks immediately; an upload promise may finish later but cannot publish.
+  function sceneLoadTextureImage(record, descriptor, url, upload, notify, crossOrigin) {
+    let image = null, ownership = null, started = false, released = false, completed = false;
+    const current = () => !record.disposed && !(record.generation && record.generation.disposed);
+    record.releaseImage = function() {
+      released = true;
+      if (image) { image.onload = null; image.onerror = null; }
+      image = null;
+      record.image = null;
+      if (ownership) { ownership.release(); ownership = null; }
+      if (record.releaseUpload) record.releaseUpload();
+    };
+    function finish(error) {
+      if (completed) return;
+      completed = true;
+      record.releaseImage();
+      if (!current()) return;
+      if (error) { record.failed = true; record.error = String(error); }
+      record.pending = false;
+      if (notify) {
+        try { notify(record); } catch (_error) { /* notification cannot undo a completed upload */ }
+      }
+    }
+    try {
+      image = new Image(); record.image = image;
+      if (crossOrigin !== undefined) image.crossOrigin = crossOrigin;
+      image.onload = function() {
+        if (started || released) return;
+        started = true;
+        if (!current()) { record.releaseImage(); return; }
+        try {
+          const work = upload(image);
+          if (work && typeof work.then === "function") Promise.resolve(work).then(() => finish(null), finish);
+          else finish(null);
+        } catch (error) { finish(error); }
+      };
+      image.onerror = function() { finish(new Error("texture image decode failed")); };
+      ownership = sceneAcquireTextureImage(descriptor);
+      image.src = ownership ? ownership.url : url;
+    } catch (error) { finish(error); }
+  }
+
   function normalizeSceneTextureDescriptor(raw, fallback) {
     const source = sceneIsPlainObject(raw) ? raw : (sceneIsPlainObject(fallback) ? fallback : null);
-    if (!source || typeof source.uri !== "string" || !source.uri.trim()) {
+    const imageSource = source && sceneImageSourceKey(source.imageSource) ? source.imageSource : null;
+    if (!source || !imageSource && (typeof source.uri !== "string" || !source.uri.trim())) {
       return null;
     }
     return {
-      uri: source.uri.trim(),
+      uri: typeof source.uri === "string" ? source.uri.trim() : "",
+      ...(imageSource ? { imageSource } : {}),
       role: typeof source.role === "string" ? source.role.trim().toLowerCase() : "",
       colorSpace: typeof source.colorSpace === "string" ? source.colorSpace.trim().toLowerCase() : "",
       channels: typeof source.channels === "string" ? source.channels.trim().toLowerCase() : "",
@@ -6181,6 +6287,14 @@
   // loaded as a separate feature chunk, they destructure from this
   // namespace instead.
   window.__gosx_scene3d_api = {
+    sceneImageSourceKey: sceneImageSourceKey,
+    sceneAcquireTextureImage: sceneAcquireTextureImage,
+    sceneCustomImageDescriptor: sceneCustomImageDescriptor,
+    sceneLoadTextureImage: sceneLoadTextureImage,
+    sceneTextureCacheKey: sceneTextureCacheKey,
+    sceneTextureUploadDescriptor: sceneTextureUploadDescriptor,
+    sceneHasTextureSource: sceneHasTextureSource,
+    sceneDisposeTextureImage: sceneDisposeTextureImage,
     appendSceneObjectToBundle,
     appendSceneSurfaceToBundle,
     applySceneCommands,

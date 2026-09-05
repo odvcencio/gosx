@@ -27,6 +27,14 @@
   }
 
   var sceneApi = window.__gosx_scene3d_api;
+  var sceneImageSourceKey = sceneApi.sceneImageSourceKey;
+  var sceneAcquireTextureImage = sceneApi.sceneAcquireTextureImage;
+  var sceneCustomImageDescriptor = sceneApi.sceneCustomImageDescriptor;
+  var sceneLoadTextureImage = sceneApi.sceneLoadTextureImage;
+  var sceneTextureCacheKey = sceneApi.sceneTextureCacheKey;
+  var sceneTextureUploadDescriptor = sceneApi.sceneTextureUploadDescriptor;
+  var sceneHasTextureSource = sceneApi.sceneHasTextureSource;
+  var sceneDisposeTextureImage = sceneApi.sceneDisposeTextureImage;
   var runtimeApi = window.__gosx_runtime_api || {};
 
   // --- Scene math / geometry / material helpers used by 16a + 16b.

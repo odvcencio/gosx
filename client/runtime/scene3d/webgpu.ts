@@ -3193,41 +3193,26 @@
   }
 
   function wgpuTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
-    var descriptor = raw && typeof raw === "object" ? raw : {};
-    return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
-      role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
-      colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
-        ? descriptor.colorSpace.trim().toLowerCase()
-        : String(fallbackColorSpace || "linear"),
-      view: typeof descriptor.view === "string" && descriptor.view.trim() ? descriptor.view.trim().toLowerCase() : "2d",
-      format: typeof descriptor.format === "string" ? descriptor.format.trim().toLowerCase() : "",
-      mipLevels: Math.max(0, Math.floor(sceneNumber(descriptor.mipLevels, 0))),
-      width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
-      height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
-      faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
-    };
+    return sceneTextureUploadDescriptor(raw, url, fallbackRole, fallbackColorSpace);
   }
 
   function wgpuTextureCacheKey(descriptor) {
-    return [
-      descriptor.uri,
-      descriptor.role,
-      descriptor.colorSpace,
-      descriptor.view,
-      descriptor.format,
-      descriptor.width,
-      descriptor.height,
-      descriptor.faces,
-      descriptor.mipLevels,
-    ].join("\u0000");
+    return sceneTextureCacheKey(descriptor);
+  }
+
+  function wgpuLoadSelenaTexture(device, material, texture, index, cache, liveView, resolveURL) {
+    if (liveView) return null;
+    const url = resolveURL(material, texture, index);
+    if (texture.dimension === "cube") return url ? wgpuLoadCubeTexture(device, url, cache) : null;
+    const descriptor = sceneCustomImageDescriptor(material, texture.name, index, url);
+    return sceneHasTextureSource(url, descriptor) ? wgpuLoadTexture(device, url, cache, descriptor) : null;
   }
 
   function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
     if (!cache) return null;
     var descriptor = wgpuTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
     var key = descriptor.uri;
-    if (!key) return null;
+    if (!key && !descriptor.imageSource) return null;
     var cacheKey = wgpuTextureCacheKey(descriptor);
     if (cache.has(cacheKey)) return cache.get(cacheKey);
 
@@ -3275,10 +3260,7 @@
       record.error = "cube descriptors require a KTX2 upload path";
       wgpuNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
-      var image = new Image();
-      record.image = image;
-      image.onload = function() {
-        if (record.disposed || record.generation && record.generation.disposed) return;
+      sceneLoadTextureImage(record, descriptor, key, function(image) {
         // Specular-color and base-color maps store meaningful RGB under a
         // possibly-zero alpha channel; base-color alpha additionally drives
         // MASK coverage. Browser bitmap decode can premultiply, zeroing RGB
@@ -3293,13 +3275,15 @@
           format: descriptor.colorSpace === "srgb" ? "rgba8unorm-srgb" : "rgba8unorm",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         });
+        record.releaseUpload = function() {
+          if (tex) { tex.destroy(); tex = null; }
+        };
         // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
           var bitmapOptions = needsUnpremultipliedAlpha ? { premultiplyAlpha: "none" } : undefined;
-          createImageBitmap(image, bitmapOptions).then(function(bitmap) {
+          return createImageBitmap(image, bitmapOptions).then(function(bitmap) {
+            try {
             if (record.disposed || record.generation && record.generation.disposed) {
-              tex.destroy();
-              if (bitmap && typeof bitmap.close === "function") bitmap.close();
               return;
             }
             device.queue.copyExternalImageToTexture(
@@ -3307,35 +3291,20 @@
               needsUnpremultipliedAlpha ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
+            var view = tex.createView();
             record.texture.destroy();
             record.texture = tex;
-            record.view = tex.createView();
+            record.view = view;
+            tex = null; // ownership transferred into the renderer cache
             record.colorSpace = descriptor.colorSpace === "srgb" ? "srgb" : "linear";
             record.loaded = true;
             record.pending = false;
-            if (bitmap && typeof bitmap.close === "function") bitmap.close();
-            wgpuNotifyTextureSettled(record);
-          }).catch(function() {
-            tex.destroy();
-            if (record.disposed || record.generation && record.generation.disposed) return;
-            record.failed = true;
-            record.pending = false;
-            wgpuNotifyTextureSettled(record);
+            } finally { if (bitmap && typeof bitmap.close === "function") bitmap.close(); }
           });
         } else {
-          record.failed = true;
-          record.pending = false;
-          wgpuNotifyTextureSettled(record);
+          throw new Error("createImageBitmap unavailable");
         }
-      };
-      image.onerror = function() {
-        if (record.disposed || record.generation && record.generation.disposed) return;
-        record.failed = true;
-        record.pending = false;
-        wgpuNotifyTextureSettled(record);
-      };
-      image.crossOrigin = "anonymous";
-      image.src = key;
+      }, wgpuNotifyTextureSettled, "anonymous");
     } else {
       record.failed = true;
       record.pending = false;
@@ -8497,13 +8466,12 @@
         var tex = textures[i] || {};
         var isCube = tex.dimension === "cube";
         var liveView = sceneSelenaLiveTextureView(material, tex);
-        var url = liveView ? "" : sceneSelenaTextureURL(material, tex, i);
         // dimension:"cube" (the water surface/surface-below "sky" environment
         // map) loads through wgpuLoadCubeTexture/placeholderCubeView instead
         // of the plain-2d wgpuLoadTexture/placeholderView path every other
         // Selena texture uses; this mirrors the hand-written
         // createWaterRenderBindGroup's cubeMap handling.
-        var record = url ? (isCube ? wgpuLoadCubeTexture(device, url, textureCache) : wgpuLoadTexture(device, url, textureCache)) : null;
+        var record = wgpuLoadSelenaTexture(device, material, tex, i, textureCache, liveView, sceneSelenaTextureURL);
         var view = liveView || (record && record.view ? record.view : (isCube ? placeholderCubeView : placeholderView));
         var wgsl = tex.wgsl || {};
         entries.push({ binding: sceneNumber(wgsl.textureBinding, 1 + i * 2), resource: view });
@@ -14316,7 +14284,7 @@
         var url = descriptor && typeof descriptor.uri === "string" && descriptor.uri.trim()
           ? descriptor.uri.trim()
           : mat[tm.prop];
-        var record = url ? wgpuLoadTexture(device, url, textureCache, descriptor, tm.role, tm.colorSpace) : null;
+        var record = sceneHasTextureSource(url, descriptor) ? wgpuLoadTexture(device, url, textureCache, descriptor, tm.role, tm.colorSpace) : null;
         var loaded = Boolean(record && record.loaded);
         u[tm.index] = loaded ? 1 : 0;
         texViews.push(loaded ? record.view : placeholderView);
@@ -18521,11 +18489,7 @@
       textureCache._gosxGeneration.disposed = true;
       for (var record of textureCache.values()) {
         if (record) {
-          record.disposed = true;
-          if (record.image) {
-            record.image.onload = null;
-            record.image.onerror = null;
-          }
+          sceneDisposeTextureImage(record);
           destroyRendererGPUResource(record.texture);
         }
       }

@@ -39,6 +39,14 @@
   }
 
   var sceneApi = window.__gosx_scene3d_api;
+  var sceneImageSourceKey = sceneApi.sceneImageSourceKey;
+  var sceneAcquireTextureImage = sceneApi.sceneAcquireTextureImage;
+  var sceneCustomImageDescriptor = sceneApi.sceneCustomImageDescriptor;
+  var sceneLoadTextureImage = sceneApi.sceneLoadTextureImage;
+  var sceneTextureCacheKey = sceneApi.sceneTextureCacheKey;
+  var sceneTextureUploadDescriptor = sceneApi.sceneTextureUploadDescriptor;
+  var sceneHasTextureSource = sceneApi.sceneHasTextureSource;
+  var sceneDisposeTextureImage = sceneApi.sceneDisposeTextureImage;
 
   // --- Primitives and scalar helpers (10-runtime-primitives.js,
   // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).

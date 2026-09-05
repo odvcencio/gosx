@@ -1669,13 +1669,37 @@
     };
   }
 
+  // Handles retain private image bytes without registering a browser URL. Only
+  // a renderer decoding an image owns a temporary URL; callers cannot mutate
+  // bytes or forge a handle by copying its public shape.
+  const gltfImageSources = new WeakMap();
+  let gltfNextImageSource = 0;
+  function gltfIsImageSource(value) { return Boolean(value && gltfImageSources.has(value)); }
+  function gltfImageSourceKey(value) {
+    const record = value && gltfImageSources.get(value);
+    return record ? record.id : "";
+  }
+  function gltfAcquireImageSource(value) {
+    const record = value && gltfImageSources.get(value);
+    if (!record) return null;
+    const url = URL.createObjectURL(new Blob([record.bytes], { type: record.mimeType }));
+    let released = false;
+    return Object.freeze({ url, release() {
+      if (released) return;
+      released = true;
+      URL.revokeObjectURL(url);
+    } });
+  }
+
   function gltfTextureDescriptor(uri, role, colorSpace, channels) {
+    const source = gltfIsImageSource(uri) ? uri : null;
     uri = typeof uri === "string" ? uri.trim() : "";
-    if (!uri) {
+    if (!uri && !source) {
       return null;
     }
     return {
       uri: uri,
+      ...(source ? { imageSource: source } : {}),
       role: role,
       colorSpace: colorSpace,
       channels: channels,
@@ -1701,7 +1725,7 @@
     return descriptors;
   }
 
-  function gltfResolveTexture(gltf, textureInfo, binaryBuffer) {
+  function gltfResolveTexture(gltf, textureInfo, binaryBuffer, imageSources) {
     if (!textureInfo || textureInfo.index == null) {
       return "";
     }
@@ -1736,21 +1760,25 @@
       return image.uri;
     }
 
-    // Embedded image: create a blob URL from the buffer view.
+    // Embedded image: retain an owned snapshot, not an externally registered URL.
     if (image.bufferView != null) {
-      return gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer);
+      if (imageSources && imageSources.has(image)) return imageSources.get(image);
+      const source = gltfImageSourceFromBufferView(gltf, image, binaryBuffer);
+      if (imageSources) imageSources.set(image, source);
+      return source;
     }
 
     return "";
   }
 
-  function gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer) {
+  function gltfImageSourceFromBufferView(gltf, image, binaryBuffer) {
     var view = gltfResolveBufferView(gltf, binaryBuffer, image.bufferView, "image");
     var mimeType = image.mimeType || "application/octet-stream";
     var start = view.bytes.byteOffset + view.offset;
-    var slice = view.bytes.buffer.slice(start, start + view.byteLength);
-    var blob = new Blob([slice], { type: mimeType });
-    return URL.createObjectURL(blob);
+    const handle = Object.freeze({});
+    gltfImageSources.set(handle, { id: "embedded-image-" + (++gltfNextImageSource), mimeType,
+      bytes: new Uint8Array(view.bytes.buffer, start, view.byteLength).slice() });
+    return handle;
   }
 
   // ---------------------------------------------------------------------------
@@ -1807,7 +1835,8 @@
     return uvs;
   }
 
-  function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
+  function gltfExtractMaterial(gltf, materialIndex, binaryBuffer, imageSources) {
+    imageSources = imageSources || new WeakMap();
     if (materialIndex == null || !gltf.materials || materialIndex >= gltf.materials.length) {
       return gltfDefaultPBRMaterial();
     }
@@ -1818,14 +1847,14 @@
     // glTF metallicRoughnessTexture packs metalness in the B channel and
     // roughness in the G channel. The PBR shader already samples these
     // channels separately, so we assign the same texture to both maps.
-    var baseColorURL = gltfResolveTexture(gltf, pbr.baseColorTexture, binaryBuffer);
-    var normalURL = gltfResolveTexture(gltf, mat.normalTexture, binaryBuffer);
-    var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer);
-    var occlusionURL = gltfResolveTexture(gltf, mat.occlusionTexture, binaryBuffer);
-    var emissiveURL = gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer);
+    var baseColorURL = gltfResolveTexture(gltf, pbr.baseColorTexture, binaryBuffer, imageSources);
+    var normalURL = gltfResolveTexture(gltf, mat.normalTexture, binaryBuffer, imageSources);
+    var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer, imageSources);
+    var occlusionURL = gltfResolveTexture(gltf, mat.occlusionTexture, binaryBuffer, imageSources);
+    var emissiveURL = gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer, imageSources);
     var specular = gltfExtension(mat, "KHR_materials_specular");
-    var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer) : "";
-    var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer) : "";
+    var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer, imageSources) : "";
+    var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer, imageSources) : "";
 
     var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
     var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
@@ -1884,6 +1913,9 @@
     }
     if (Object.keys(textureDescriptors).length) {
       record.textureDescriptors = textureDescriptors;
+    }
+    for (const prop of ["texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "specularIntensityMap", "specularColorMap"]) {
+      if (gltfIsImageSource(record[prop])) record[prop] = "";
     }
 
     // KHR_materials_clearcoat -> StandardMaterial.Clearcoat, range 0 to 1.
@@ -2059,7 +2091,7 @@
     return { positions: transformed, count: Math.floor(transformed.length / 3) };
   }
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex, instanceMatrix, animateTRSFlag) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex, instanceMatrix, animateTRSFlag, imageSources) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
@@ -2075,7 +2107,7 @@
       var primitive = mesh.primitives[p];
       gltfRejectCompressedPrimitive(primitive);
       var mode = primitive.mode != null ? primitive.mode : 4;
-      var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
+      var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer, imageSources);
       var extras = gltfCollectScene3DExtras(node, mesh, primitive);
 
       if (mode === 0) {
@@ -2315,7 +2347,7 @@
     return out;
   }
 
-  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated, sharedMeshes) {
+  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated, sharedMeshes, imageSources) {
     var node = gltf.nodes[nodeIndex];
     if (!node) {
       return;
@@ -2346,17 +2378,18 @@
             "-inst-" + n + nodeSuffix,
             nodeIndex,
             instances[n],
-            animated
+            animated,
+            imageSources
           );
         }
       } else {
-        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, nodeSuffix, nodeIndex, null, animated);
+        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, nodeSuffix, nodeIndex, null, animated, imageSources);
       }
     }
 
     var children = node.children || [];
     for (var i = 0; i < children.length; i++) {
-      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result, animatedTRS, animated, sharedMeshes);
+      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result, animatedTRS, animated, sharedMeshes, imageSources);
     }
   }
 
@@ -2494,6 +2527,7 @@
   }
 
   function gltfExtractScene(gltf, binaryBuffer) {
+    const imageSources = new WeakMap();
     gltfReportUnsupportedRequiredExtensions(gltf);
     var result = {
       objects: [],
@@ -2525,7 +2559,7 @@
     var animatedTRS = gltfDirectTRSNodes(gltf);
     var sharedMeshes = gltfSharedMeshMap(gltf, scene);
     for (var i = 0; i < scene.nodes.length; i++) {
-      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result, animatedTRS, false, sharedMeshes);
+      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result, animatedTRS, false, sharedMeshes, imageSources);
     }
 
     // Extract animations.
@@ -3113,6 +3147,9 @@
     window.__gosx_scene3d_gltf_api = {
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
+      isImageSource: gltfIsImageSource,
+      imageSourceKey: gltfImageSourceKey,
+      acquireImageSource: gltfAcquireImageSource,
       applyMorphPose: gltfApplyAnimatedMorphPose,
       applyNodeAnimPose: gltfApplyNodeAnimPose,
     };
