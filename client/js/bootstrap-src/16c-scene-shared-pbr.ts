@@ -189,16 +189,18 @@
     upY = rz * fx - rx * fz;
     upZ = rx * fy - ry * fx;
 
-    // View matrix (column-major).
+    // View matrix (column-major). Use the standard GL convention: forward
+    // points in the light direction, but view-space z is negative for points
+    // in front of the light eye so the orthographic projection below maps
+    // the scene into the GL clip-depth interval.
     var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
     var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
-    var tz = -(fx * eyeX + fy * eyeY + fz * eyeZ);
+    var tz = -(-fx * eyeX + -fy * eyeY + -fz * eyeZ);
 
-    // Note: forward is positive — we look along +forward, so no negation.
     var view = new Float32Array([
-      rx,  upX, fx,  0,
-      ry,  upY, fy,  0,
-      rz,  upZ, fz,  0,
+      rx,  upX, -fx, 0,
+      ry,  upY, -fy, 0,
+      rz,  upZ, -fz, 0,
       tx,  ty,  tz,  1,
     ]);
 
@@ -227,12 +229,14 @@
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
-      if (!obj || obj.viewCulled) continue;
+      if (!obj) continue;
+      var directionalCaster = obj.castShadow === true;
+      if (obj.viewCulled && !directionalCaster) continue;
       if (obj.directVertices) {
         // Retained casters draw from model-space vertex buffers and never land
         // in the baked soup, so fold their transformed world bounds into the
         // light-frustum fit instead of skipping them outright.
-        if (!obj.retainedGeometry || !obj.castShadow) continue;
+        if (!obj.retainedGeometry || !directionalCaster) continue;
         var casterBounds = obj.bounds;
         if (
           casterBounds &&

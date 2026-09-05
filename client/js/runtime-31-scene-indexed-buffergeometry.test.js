@@ -311,6 +311,44 @@ test("WebGPU indexed shadow casters bind distinct aligned matrix slots", async (
   harness.renderer.dispose();
 });
 
+test("WebGPU retained caster shadow admission ignores camera culling while color pass stays culled", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
+  const api = harness.env.context.__gosx_scene3d_api;
+  const F32 = vm.runInContext("Float32Array", harness.env.context);
+  const U32 = vm.runInContext("Uint32Array", harness.env.context);
+  const viewport = { cssWidth: 640, cssHeight: 480, pixelWidth: 640, pixelHeight: 480, pixelRatio: 1 };
+  const caster = api.normalizeSceneObject(indexedQuad({ id: "culled-caster", castShadow: true }, F32, U32), 0, null);
+  caster.viewCulled = true;
+  const light = api.normalizeSceneLight({
+    id: "sun",
+    kind: "directional",
+    x: 4,
+    y: 6,
+    z: 8,
+    intensity: 1,
+    castShadow: true,
+  }, 0, null);
+
+  const passStart = harness.fake.state.renderPasses.length;
+  harness.renderer.render(renderBundle(api, caster, 0, [], true, [light]), viewport);
+  const passes = harness.fake.state.renderPasses.slice(passStart);
+  const shadowPass = passes.find((pass) =>
+    pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) &&
+    pass.descriptor.colorAttachments.length === 0
+  );
+  assert.ok(shadowPass, "an active directional shadow pass must still be encoded");
+  assert.ok(
+    shadowPass.drawIndexeds.some((draw) => draw.indexCount === 6),
+    "camera-cull must not suppress an otherwise eligible retained shadow caster",
+  );
+  const colorDraws = passes
+    .filter((pass) => !pass.descriptor || !Array.isArray(pass.descriptor.colorAttachments) || pass.descriptor.colorAttachments.length > 0)
+    .flatMap((pass) => pass.drawIndexeds.concat(pass.draws));
+  assert.equal(colorDraws.length, 0, "camera-cull remains authoritative for the main color pass");
+  harness.renderer.dispose();
+});
+
 test("WebGPU retained expanded caster draws its cached positions without an index buffer", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true });
   harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;

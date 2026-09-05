@@ -41,6 +41,13 @@
     return WEBGPU_RENDER_TRUTH_NOOP;
   }
 
+  function sceneWebGPUShouldSkipDeformationPrep(obj, shadowPrepActive) {
+    return !obj || (obj.viewCulled && (!shadowPrepActive || obj.castShadow !== true));
+  }
+  function sceneWebGPURenderSelectedShadowPasses(renderShadowPass, encoder, bundle, shadowSlots, pbrSceneBuffers, shadowLightMatrices, activeShadowCount) {
+    for (var i = 0; i < activeShadowCount; i++) renderShadowPass(encoder, shadowLightMatrices[i], bundle, shadowSlots[i], pbrSceneBuffers);
+  }
+
   function sceneWebGPUSRGBChannelToLinear(value) {
     var channel = Math.max(0, Math.min(1, sceneNumber(value, 0)));
     return channel <= 0.04045
@@ -1555,7 +1562,7 @@
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
-    "    return projCoords3 * 0.5 + 0.5;",
+    "    return vec3f(projCoords3.x * 0.5 + 0.5, 0.5 - projCoords3.y * 0.5, projCoords3.z);",
     "}",
     "",
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
@@ -13688,6 +13695,12 @@
       return 1;
     }
 
+    function sceneWebGPUApplyClipDepthRemap(matrix) {
+      if (!matrix || matrix.length < 16) return matrix;
+      for (var i = 2; i <= 14; i += 4) matrix[i] = 0.5 * (matrix[i] + matrix[i + 1]);
+      return matrix;
+    }
+
     function uploadFrameUniforms(camera, width, height, toneMapMode) {
       var cam;
       var camPosZ;
@@ -13737,10 +13750,7 @@
       // WebGPU pipeline that consumes frame.projMatrix (PBR meshes, world
       // lines, surfaces, points, compute particles). For the ortho-2D
       // board (near=-1, far=1) the board plane z=0 lands at clip z=0.5.
-      scratchProjMatrix[2]  = 0.5 * (scratchProjMatrix[2]  + scratchProjMatrix[3]);
-      scratchProjMatrix[6]  = 0.5 * (scratchProjMatrix[6]  + scratchProjMatrix[7]);
-      scratchProjMatrix[10] = 0.5 * (scratchProjMatrix[10] + scratchProjMatrix[11]);
-      scratchProjMatrix[14] = 0.5 * (scratchProjMatrix[14] + scratchProjMatrix[15]);
+      sceneWebGPUApplyClipDepthRemap(scratchProjMatrix);
       sceneMat4MultiplyInto(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix);
 
       // FrameUniforms layout (std140):
@@ -13792,10 +13802,7 @@
         scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
       }
 
-      scratchProjMatrix[2]  = 0.5 * (scratchProjMatrix[2]  + scratchProjMatrix[3]);
-      scratchProjMatrix[6]  = 0.5 * (scratchProjMatrix[6]  + scratchProjMatrix[7]);
-      scratchProjMatrix[10] = 0.5 * (scratchProjMatrix[10] + scratchProjMatrix[11]);
-      scratchProjMatrix[14] = 0.5 * (scratchProjMatrix[14] + scratchProjMatrix[15]);
+      sceneWebGPUApplyClipDepthRemap(scratchProjMatrix);
       sceneMat4MultiplyInto(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix);
 
       var f = _frameUniformF;
@@ -14969,7 +14976,7 @@
       return record;
     }
 
-    function updateElioSkinnedMeshes(bundle, encoder) {
+    function updateElioSkinnedMeshes(bundle, encoder, shadowPrepActive) {
       var stats = {
         elioSkinningDispatches: 0,
         elioSkinningVertices: 0,
@@ -14979,7 +14986,7 @@
       var pass = null;
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled || !webGPUObjectIsSkinned(obj)) continue;
+        if (sceneWebGPUShouldSkipDeformationPrep(obj, shadowPrepActive) || !webGPUObjectIsSkinned(obj)) continue;
         var record = webGPUElioSkinRecord(obj);
         if (!record) continue;
         if (!pass) {
@@ -15175,7 +15182,7 @@
       return record;
     }
 
-    function updateComputedMorphMeshes(bundle, encoder) {
+    function updateComputedMorphMeshes(bundle, encoder, shadowPrepActive) {
       var stats = {
         computedMorphDispatches: 0,
         computedMorphVertices: 0,
@@ -15185,7 +15192,7 @@
       var pass = null;
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled || webGPUObjectIsSkinned(obj)) continue;
+        if (sceneWebGPUShouldSkipDeformationPrep(obj, shadowPrepActive) || webGPUObjectIsSkinned(obj)) continue;
         var record = webGPUComputedMorphRecord(obj);
         if (!record) continue;
         if (!pass) {
@@ -15449,8 +15456,7 @@
 
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled) continue;
-        if (!obj.castShadow) continue;
+        if (!obj || !obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
         if (webGPUObjectIsSkinned(obj)) {
@@ -16022,7 +16028,7 @@
       var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
-        if (!mesh || mesh.viewCulled) continue;
+        if (!mesh || (mesh.viewCulled && !mesh.castShadow)) continue;
         var count = instancedMeshCount(mesh);
         var transforms = instancedMeshTransformData(mesh, count);
         if (!transforms) continue;
@@ -16036,7 +16042,7 @@
       var drew = false;
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
-        if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+        if (!mesh || !mesh.castShadow) continue;
         var instanceCount = instancedMeshCount(mesh);
         var transformData = instancedMeshTransformData(mesh, instanceCount);
         if (!transformData) continue;
@@ -17851,9 +17857,8 @@
       uploadEnvUniforms(bundle.environment);
 
       // --- Shadow Pass ---
-      var shadowLightMatrices = [null, null];
-      var shadowLightIndices = [-1, -1];
-      var activeShadowCount = 0;
+      var shadowLightMatrices = [null, null], shadowLightIndices = [-1, -1], sceneBounds = null;
+      var activeShadowCount = 0, lightArray = Array.isArray(bundle.lights) ? bundle.lights : [], shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
       var encoder = device.createCommandEncoder({ label: "gosx-frame" });
       gpuTimingFrameSeq += 1;
@@ -17881,9 +17886,32 @@
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
       selenaFrame.time = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
+
+      for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+        var light = lightArray[li];
+        if (!light || !light.castShadow) continue;
+        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+        if (kind !== "directional") continue;
+
+        if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
+
+        var slot = activeShadowCount;
+        var shadowSize = resolveShadowSize(Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))), shadowMaxPixels);
+
+        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
+          if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
+          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
+        }
+
+        shadowLightMatrices[slot] = sceneWebGPUApplyClipDepthRemap(sceneShadowLightSpaceMatrix(light, sceneBounds));
+        shadowLightIndices[slot] = li;
+        activeShadowCount++;
+      }
+
+      var shadowPrepActive = activeShadowCount > 0;
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
-      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
-      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
+      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder, shadowPrepActive);
+      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder, shadowPrepActive);
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
       activePickMeshPositions = pbrSceneBuffers;
       if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
@@ -17902,35 +17930,7 @@
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
-      var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
-      var sceneBounds = null;
-      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
-
-      for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
-        var light = lightArray[li];
-        if (!light || !light.castShadow) continue;
-        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        if (kind !== "directional") continue;
-
-        if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
-
-        var slot = activeShadowCount;
-        var shadowSize = sceneNumber(light.shadowSize, 1024);
-        shadowSize = Math.max(256, Math.min(4096, shadowSize));
-        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
-
-        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
-          if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
-          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
-        }
-
-        var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
-        shadowLightMatrices[slot] = lightMatrix;
-        shadowLightIndices[slot] = li;
-
-        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers);
-        activeShadowCount++;
-      }
+      sceneWebGPURenderSelectedShadowPasses(renderShadowPass, encoder, bundle, shadowSlots, pbrSceneBuffers, shadowLightMatrices, activeShadowCount);
 
       uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
 
