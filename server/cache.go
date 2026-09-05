@@ -91,6 +91,9 @@ type CacheState struct {
 	// built from this digest describes the representation that the client
 	// received, so a conditional request can never win a wrong 304.
 	bodyDigest string
+	// unknownRepresentation suppresses request-derived validators for a stream
+	// whose complete representation does not exist when headers are written.
+	unknownRepresentation bool
 }
 
 // NewCacheState creates an empty request cache state.
@@ -224,6 +227,9 @@ func (c *CacheState) effectiveETag(r *http.Request, status int, revalidator *Rev
 	if c.etag != "" {
 		return c.etag
 	}
+	if c.unknownRepresentation {
+		return ""
+	}
 	if !c.policySet && c.lastModified.IsZero() && len(c.tags) == 0 && len(c.keys) == 0 {
 		return ""
 	}
@@ -354,12 +360,24 @@ func (r *Revalidator) tagVersion(tag string) uint64 {
 // exists, because the resulting ETag describes the bytes that the client
 // receives.
 //
-// Pass a nil body when the response streams and the full body is unknown. The
-// validator then stays request-derived, and a caller must accept that a 304 can
-// hide a changed body until an explicit RevalidatePath or RevalidateTag call.
+// Pass a nil body when the full representation is unknown (for example a
+// stream). No automatic ETag is generated in that case. Explicit SetETag and
+// SetLastModified remain caller-owned resource-version contracts. A non-nil
+// empty slice describes a known empty body and still receives a body digest.
 func ApplyCacheHeadersForBody(r *http.Request, headers http.Header, status int, cache *CacheState, revalidator *Revalidator, body []byte) bool {
-	if cache != nil && body != nil {
-		cache.SetRepresentation(body)
+	if cache != nil {
+		if body != nil {
+			cache.SetRepresentation(body)
+		} else {
+			// Do not mutate a caller's state or reuse a digest of only the shell.
+			unknown := *cache
+			unknown.bodyDigest = ""
+			unknown.unknownRepresentation = true
+			cache = &unknown
+			if cache.etag == "" && headers != nil {
+				headers.Del("ETag")
+			}
+		}
 	}
 	return ApplyCacheHeaders(r, headers, status, cache, revalidator)
 }
@@ -388,8 +406,10 @@ func ApplyCacheHeaders(r *http.Request, headers http.Header, status int, cache *
 	if !isConditionalCacheRequest(r, status) {
 		return false
 	}
-	if etag != "" && matchETag(r.Header.Get("If-None-Match"), etag) {
-		return true
+	if r.Header.Get("If-None-Match") != "" {
+		// If-None-Match takes precedence even when it does not match; a date
+		// validator must not turn a changed explicit version into a stale 304.
+		return etag != "" && matchETag(r.Header.Get("If-None-Match"), etag)
 	}
 	if !cache.lastModified.IsZero() {
 		if modifiedSince, err := http.ParseTime(r.Header.Get("If-Modified-Since")); err == nil && !cache.lastModified.After(modifiedSince) {

@@ -856,12 +856,16 @@ func (w *responseWriter) Write(data []byte) (int, error) {
 }
 
 func (w *responseWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		if !w.committed {
-			w.WriteHeader(http.StatusOK)
-		}
-		flusher.Flush()
+	_ = w.FlushError()
+}
+
+// FlushError commits the cookie before exposing a flush failure to streaming
+// handlers. Unwrap still lets ResponseController reach transport deadlines.
+func (w *responseWriter) FlushError() error {
+	if !w.committed {
+		w.WriteHeader(http.StatusOK)
 	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
 func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {

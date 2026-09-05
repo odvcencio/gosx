@@ -366,7 +366,7 @@ a same-origin root-relative path, with unsafe values resolving to `/`.
 
 **Navigation** — `app.EnableNavigation()` adds server-driven soft transitions with managed head swaps, conservative keyed body reconciliation, and intent-prefetching. Same-origin anchors, GET forms, and GoSX `/__actions/` forms are managed automatically; `data-gosx-native` is the explicit native-browser opt-out. Stable `id`/`data-gosx-key` elements keep DOM identity and dirty focused form state while incoming attributes and content update. Pages remain server-first and progressively enhanced.
 
-**Streaming** — Deferred page regions via `ctx.Defer()` and component-level `ctx.Suspense()` boundaries render fallback content immediately, then stream resolved content into place as each boundary completes.
+**Streaming** — Deferred page regions via `ctx.Defer()` and component-level `ctx.Suspense()` boundaries render fallback content immediately, then stream resolved content into place as each boundary completes. Context-aware variants add cooperative cancellation, bounded admission and timeout, safe public errors, and explicit cache ownership; see [streaming contracts](docs/streaming.md).
 
 **Image and Font Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, immutable caching, auto responsive `server.Image` markup, ordered `server.ImageSource` art direction through native `<picture>` markup with explicit wrapper attributes and per-crop dimensions, and a `server.Font` helper for preload plus `@font-face`.
 

@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"m31labs.dev/gosx"
 )
@@ -87,8 +90,55 @@ type DocumentContext struct {
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
-// shell has been written.
+// shell has been written. It cannot be forcibly canceled. Prefer
+// ContextDeferredResolver for work that performs I/O or waits.
 type DeferredResolver func() (gosx.Node, error)
+
+// ContextDeferredResolver resolves a fragment with the stream's deadline and
+// cancellation. The context ends on request cancellation, stream timeout, or
+// output failure. Resolvers must not mutate page/session state or write to the
+// response: headers and the shell have already been committed.
+type ContextDeferredResolver func(context.Context) (gosx.Node, error)
+
+// StreamError is a server-only diagnostic. It deliberately carries no request
+// body, URL, query, or headers. Err may contain internal details; never forward
+// it to a browser. SlotID is empty for stream-wide failures.
+type StreamError struct {
+	RequestID string
+	SlotID    string
+	Operation string
+	Err       error
+}
+
+// StreamOptions bounds one streamed response. Zero values select the defaults:
+// eight concurrent resolvers and a 30-second lifetime. Concurrency must be in
+// [1, 128] when set; Timeout must be positive when set. A shared process-wide
+// ceiling of 128 active resolvers also applies, including abandoned callbacks
+// until they return. Waiting for admission consumes the stream's timeout.
+type StreamOptions struct {
+	Concurrency int
+	Timeout     time.Duration
+	// OnError receives server-only diagnostics on the response goroutine. It
+	// must return promptly and must not write to the response. Nil logs errors
+	// through the standard logger. Configure it before streaming begins.
+	OnError func(StreamError)
+}
+
+func (opts StreamOptions) normalized() (StreamOptions, error) {
+	if opts.Concurrency < 0 || opts.Concurrency > 128 {
+		return StreamOptions{}, fmt.Errorf("stream concurrency must be between 1 and 128, or zero for the default")
+	}
+	if opts.Timeout < 0 {
+		return StreamOptions{}, fmt.Errorf("stream timeout must be positive, or zero for the default")
+	}
+	if opts.Concurrency == 0 {
+		opts.Concurrency = 8
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = 30 * time.Second
+	}
+	return opts, nil
+}
 
 // DeferredOptions configures a streamed placeholder region.
 type DeferredOptions struct {
@@ -100,13 +150,14 @@ type DeferredOptions struct {
 
 type deferredBlock struct {
 	id      string
-	resolve DeferredResolver
+	resolve ContextDeferredResolver
 }
 
 // DeferredRegistry tracks deferred page fragments for streaming responses.
 type DeferredRegistry struct {
 	blocks []deferredBlock
 	nextID int
+	stream StreamOptions
 }
 
 // Context carries request-scoped page metadata, headers, and status.
@@ -327,6 +378,21 @@ func NewDeferredRegistry() *DeferredRegistry {
 	return &DeferredRegistry{}
 }
 
+// SetStreamOptions configures lifetime, admission, and diagnostics before
+// WriteHTML starts. Registration/configuration must not race with streaming.
+// Invalid options leave the previous configuration unchanged.
+func (r *DeferredRegistry) SetStreamOptions(opts StreamOptions) error {
+	if r == nil {
+		return fmt.Errorf("cannot configure a nil deferred registry")
+	}
+	normalized, err := opts.normalized()
+	if err != nil {
+		return err
+	}
+	r.stream = normalized
+	return nil
+}
+
 // HasDeferred reports whether any deferred fragments have been registered.
 func (r *DeferredRegistry) HasDeferred() bool {
 	return r != nil && len(r.blocks) > 0
@@ -356,6 +422,34 @@ func (r *DeferredRegistry) SuspenseWithOptions(opts DeferredOptions, fallback go
 // DeferWithOptions renders fallback content immediately, then streams the
 // resolved node into place once the resolver finishes.
 func (r *DeferredRegistry) DeferWithOptions(opts DeferredOptions, fallback gosx.Node, resolve DeferredResolver) gosx.Node {
+	if resolve == nil {
+		return fallback
+	}
+	return r.DeferContextWithOptions(opts, fallback, func(context.Context) (gosx.Node, error) { return resolve() })
+}
+
+// DeferContext is Defer with cooperative cancellation and a stream deadline.
+func (r *DeferredRegistry) DeferContext(fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	return r.DeferContextWithOptions(DeferredOptions{}, fallback, resolve)
+}
+
+// SuspenseContext is Suspense with cooperative cancellation.
+func (r *DeferredRegistry) SuspenseContext(fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	return r.SuspenseContextWithOptions(DeferredOptions{}, fallback, resolve)
+}
+
+// SuspenseContextWithOptions configures a cancellable component boundary.
+func (r *DeferredRegistry) SuspenseContextWithOptions(opts DeferredOptions, fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	if opts.Boundary == "" {
+		opts.Boundary = "component"
+	}
+	return r.DeferContextWithOptions(opts, fallback, resolve)
+}
+
+// DeferContextWithOptions registers a cancellable streamed fragment. Only the
+// returned node belongs in the fragment; page headers, sessions, and other
+// request response state must be finalized before the resolver runs.
+func (r *DeferredRegistry) DeferContextWithOptions(opts DeferredOptions, fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
 	if resolve == nil {
 		return fallback
 	}

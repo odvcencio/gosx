@@ -436,6 +436,32 @@ func (s *PageState) DeferWithOptions(opts DeferredOptions, fallback gosx.Node, r
 	return s.DeferredRegistry().DeferWithOptions(opts, fallback, resolve)
 }
 
+// SetStreamOptions configures this page's deferred lifetime, concurrency, and
+// diagnostics. Call it before response rendering begins.
+func (s *PageState) SetStreamOptions(opts StreamOptions) error {
+	return s.DeferredRegistry().SetStreamOptions(opts)
+}
+
+// DeferContext streams a fragment with cooperative request/output cancellation.
+func (s *PageState) DeferContext(fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	return s.DeferContextWithOptions(DeferredOptions{}, fallback, resolve)
+}
+
+// DeferContextWithOptions configures a cancellable deferred placeholder.
+func (s *PageState) DeferContextWithOptions(opts DeferredOptions, fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	return s.DeferredRegistry().DeferContextWithOptions(opts, fallback, resolve)
+}
+
+// SuspenseContext streams a cancellable component boundary.
+func (s *PageState) SuspenseContext(fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	return s.SuspenseContextWithOptions(DeferredOptions{}, fallback, resolve)
+}
+
+// SuspenseContextWithOptions configures a cancellable component boundary.
+func (s *PageState) SuspenseContextWithOptions(opts DeferredOptions, fallback gosx.Node, resolve ContextDeferredResolver) gosx.Node {
+	return s.DeferredRegistry().SuspenseContextWithOptions(opts, fallback, resolve)
+}
+
 // DeferredRegistry returns the page-scoped deferred fragment registry.
 func (s *PageState) DeferredRegistry() *DeferredRegistry {
 	if s == nil {
