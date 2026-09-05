@@ -7,6 +7,9 @@
   window.__gosx_scene3d_gltf_api = {
     sceneLoadGLTFModel: sceneLoadGLTFModel,
     gltfSceneToModelAsset: gltfSceneToModelAsset,
+    isImageSource: gltfIsImageSource,
+    imageSourceKey: gltfImageSourceKey,
+    acquireImageSource: gltfAcquireImageSource,
     // The split bundle's suffix republishes the API object AFTER the main
     // glTF chunk, so every public entry must be re-exported here or the
     // split-bundle load silently drops it (gltfApplyAnimatedMorphPose is in

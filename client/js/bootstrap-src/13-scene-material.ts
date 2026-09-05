@@ -769,7 +769,9 @@
       String(profile && profile.metalnessMap || ""),
       String(profile && profile.occlusionMap || ""),
       String(profile && profile.emissiveMap || ""),
-      JSON.stringify(profile && profile.textureDescriptors || null),
+      JSON.stringify(profile && profile.textureDescriptors || null, function(_name, value) {
+        return typeof sceneImageSourceKey === "function" ? sceneImageSourceKey(value) || value : value;
+      }),
     ];
     if (registryProfile) {
       parts.push("profile:" + registryProfile.version + ":" + String(registryProfile.key || ""));

@@ -71,7 +71,16 @@ function loadGateGlobal(chunkSource) {
 
 function loadInternalTextureLoader(chunkSource, functionName) {
   const win = makeWindow();
+  win.sceneNumber = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
   const context = vm.createContext(win);
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  const start = core.indexOf("  function sceneImageSourceKey(");
+  const stop = core.indexOf("  function normalizeSceneTextureDescriptor(", start);
+  assert.ok(start >= 0 && stop > start);
+  vm.runInContext(core.slice(start, stop) + `
+    Object.assign(window.__gosx_scene3d_api, {sceneImageSourceKey, sceneAcquireTextureImage,
+      sceneCustomImageDescriptor, sceneLoadTextureImage, sceneTextureCacheKey, sceneTextureUploadDescriptor,
+      sceneHasTextureSource, sceneDisposeTextureImage});`, context);
   const marker = "})();";
   const end = chunkSource.lastIndexOf(marker);
   assert.ok(end >= 0, "fresh feature bundle must end in an IIFE");

@@ -330,7 +330,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4666:14",
+      "name": "anonymous@4692:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -375,7 +375,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7470:5",
+      "name": "render@7469:5",
       "lines": 283,
       "cyclomatic": 73,
       "cognitive": 105,
@@ -447,7 +447,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "anonymous@4463:14",
+      "name": "anonymous@4432:14",
       "lines": 303,
       "cyclomatic": 29,
       "cognitive": 81,
@@ -465,7 +465,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "queuePick@5292:5",
+      "name": "queuePick@5261:5",
       "lines": 31,
       "cyclomatic": 9,
       "cognitive": 18,
@@ -672,7 +672,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@18668:5",
+      "name": "diagnostics@18632:5",
       "lines": 90,
       "cyclomatic": 49,
       "cognitive": 49,

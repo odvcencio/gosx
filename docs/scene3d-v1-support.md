@@ -52,9 +52,31 @@ dashboards, and interactive scenes. Its supported boundary is:
 
 ## Executable corpus status
 
+### Embedded image ownership
+
+Typed Go `scene.Model{Src: ...}` authoring is unchanged. Imported bufferView
+images retain private byte snapshots; renderer image decoding owns temporary
+Blob URLs and releases them on completion, error or disposal. A retained model
+can be reused after parsed-cache eviction or renderer restoration. This is an
+image-URL lifetime contract, not a decoded-byte, browser-heap or GPU-memory bound.
+
+Runtime preload results retain their asset collections. Embedded image maps now
+use `textureDescriptors.<role>.imageSource`, an opaque runtime handle, rather
+than an indefinitely registered Blob URL in `material.texture`. Handles are not
+serializable image data or application-authored objects; cloning material state
+inside Scene3D preserves their identity without sharing mutable materials.
+Code that previously extracted an embedded `material.texture` string must not
+treat the opaque handle as `Image.src`. External URI strings, including
+caller-owned Blob URLs, remain unchanged and are never revoked by Scene3D.
+
+Temporary decode URLs continue to use `blob:`, so this change does not require
+adding `data:` to an application's image CSP. The typed textured-GLB software
+WebGL test is bounded evidence only: the corpus row below remains blocked until
+its WebGPU and CI ownership obligations are satisfied.
+
 | Corpus ID | Current state | Closure needed |
 | --- | --- | --- |
-| `gltf-single-buffer-textured` | blocked | Add one end-to-end textured GLB case, not only isolated loader tests. |
+| `gltf-single-buffer-textured` | blocked | Typed Go software-WebGL2 textured GLB pixels have local coverage; require WebGPU textured-pixel proof and explicit CI ownership before certification. |
 | `gltf-multi-buffer-external` | enforced | Indexed data-URI and same-origin external buffers are tested. |
 | `glb-bin-plus-external` | enforced | GLB BIN buffer 0 plus external buffer 1 is tested. |
 | `gltf-sparse-embedded-image` | enforced | Sparse overlays and embedded bufferView images are tested. |

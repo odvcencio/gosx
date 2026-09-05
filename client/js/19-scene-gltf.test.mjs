@@ -507,6 +507,26 @@ test("sparse overlays normalize after merging without mutating base bytes", () =
   );
 });
 
+test("embedded image ownership: parsing must not register persistent object URLs", () => {
+  const live = new Set();
+  let created = 0;
+  const { context, sandbox } = createLoaderContext({ urlAPI: {
+    createObjectURL() { const uri = "blob:owned-" + (++created); live.add(uri); return uri; },
+    revokeObjectURL(uri) { live.delete(uri); },
+  } });
+  sandbox.__ownershipImageBytes = new Uint8Array([137, 80, 78, 71]).buffer;
+  sandbox.__ownershipImageDoc = {
+    asset: { version: "2.0" }, buffers: [{ byteLength: 4 }],
+    bufferViews: [{ buffer: 0, byteLength: 4 }],
+    images: [{ bufferView: 0, mimeType: "image/png" }], textures: [{ source: 0 }],
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } }, normalTexture: { index: 0 } }],
+  };
+  for (let i = 0; i < 100; i++) {
+    call(context, "gltfExtractMaterial(__ownershipImageDoc, 0, __ownershipImageBytes)");
+  }
+  assert.equal(live.size, 0, `parser retained ${live.size} registered image URLs after 100 discarded materials (${created} created)`);
+});
+
 test("embedded bufferView images resolve the referenced buffer in a multi-buffer source", () => {
   const { context, sandbox } = createLoaderContext();
   const payload = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -530,9 +550,11 @@ test("embedded bufferView images resolve the referenced buffer in a multi-buffer
   };
   sandbox.__imageDoc = doc;
   sandbox.__imageBuffers = buffers;
-  const material = plain(call(context,
-    "gltfExtractMaterial(__imageDoc, 0, __imageBuffers)"));
-  assert.equal(material.texture, "blob:multi-image-1");
+  const material = call(context, "gltfExtractMaterial(__imageDoc, 0, __imageBuffers)");
+  assert.equal(material.texture, "");
+  assert.equal(blobs.length, 0, "parsing does not register URLs");
+  const lease = sandbox.__gosx_scene3d_gltf_api.acquireImageSource(material.textureDescriptors.baseColor.imageSource);
+  assert.equal(lease.url, "blob:multi-image-1");
   assert.equal(blobs.length, 1);
   assert.equal(blobs[0].type, "image/png");
   assert.deepEqual(Array.from(new Uint8Array(blobs[0].parts[0])), payload);
@@ -872,13 +894,15 @@ test("KHR_materials_specular resolves bufferView-embedded images from one ArrayB
     return "blob:fake-" + blobs.length;
   };
 
-  const material = plain(call(context,
-    `gltfExtractMaterial(${JSON.stringify(doc)}, 0, __embeddedSpecBuffer)`));
+  const material = call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, __embeddedSpecBuffer)`);
 
   // Both slots resolve to their own blob URL with distinct roles over the
   // same embedded bytes.
-  assert.equal(material.textureDescriptors.specularIntensity.uri, "blob:fake-1");
-  assert.equal(material.textureDescriptors.specularColor.uri, "blob:fake-2");
+  assert.equal(material.textureDescriptors.specularIntensity.uri, "");
+  assert.equal(material.textureDescriptors.specularColor.uri, "");
+  assert.equal(blobs.length, 0, "retained images allocate URLs only for a decoder");
+  sandbox.__gosx_scene3d_gltf_api.acquireImageSource(material.textureDescriptors.specularIntensity.imageSource);
+  sandbox.__gosx_scene3d_gltf_api.acquireImageSource(material.textureDescriptors.specularColor.imageSource);
   assert.equal(material.textureDescriptors.specularIntensity.role, "specular-intensity");
   assert.equal(material.textureDescriptors.specularColor.role, "specular-color");
   assert.equal(material.textureDescriptors.specularIntensity.colorSpace, "linear");
