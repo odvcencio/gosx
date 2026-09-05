@@ -4,6 +4,7 @@ import "testing"
 
 func TestScene3DBundlesUseTypedRuntimeAuthorities(t *testing.T) {
 	want := map[string]bool{
+		"../runtime/scene3d/model-assets.ts":    false,
 		"../runtime/scene3d/animation.ts":       false,
 		"../runtime/scene3d/command-bridge.ts":  false,
 		"../runtime/scene3d/command-runtime.ts": false,

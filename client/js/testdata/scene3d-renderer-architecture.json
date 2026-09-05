@@ -16,7 +16,7 @@
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2928,
-    "actualGovernanceLinesAtReview": 2887,
+    "actualGovernanceLinesAtReview": 2910,
     "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots. G1b-C2b preserves the original 41-line governance headroom while recording the reviewed C1 matcher-test/governance expansion (+237 authored lines) and the stale renderShadowPass exception prune (-9 authored lines); this is not a runtime physical-line, complexity, source-roster or generated-artifact budget waiver."
   },
   "rendererSourceNamingContract": [
@@ -25,10 +25,12 @@
     "The lazy backend chunks may not add runtime Scene3D sources outside sourceSets without updating this contract and its ratchets."
   ],
   "extraProtectedSources": [
+    "../runtime/scene3d/model-assets.ts",
     "../runtime/scene3d/hydrate-input.ts",
     "../runtime/scene3d/mount-webgl.ts"
   ],
   "directRendererReferenceSources": [
+    "model-assets.ts",
     "16a1-scene-webgpu-selena-uniforms.ts",
     "hydrate-input.ts",
     "mount-webgl.ts",
@@ -36,6 +38,26 @@
     "webgpu.ts"
   ],
   "intentionalDirectRendererReferences": [
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "model-assets.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
+      "source": "model-assets.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/runtime-test-harness.js",
+      "source": "model-assets.ts",
+      "count": 1
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "model-assets.ts",
+      "count": 2
+    },
     {
       "file": "client/js/16a-scene-webgpu-pick.test.mjs",
       "source": "webgpu.ts",
@@ -227,6 +249,7 @@
     }
   },
   "files": {
+    "../runtime/scene3d/model-assets.ts": 200,
     "../runtime/scene3d/webgl.ts": 9661,
     "../runtime/scene3d/webgpu.ts": 18827,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,

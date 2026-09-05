@@ -362,8 +362,6 @@ function gosxConfigureSceneScript(script, role, src) {
     return null;
   }
 
-  const sceneModelAssetCache = new Map();
-  const sceneModelAssetReady = new Set();
   let sceneModelTextureVariantScopeSequence = 0;
 
   function normalizeSceneModelTextureVariantContext(value, fallbackBackend) {
@@ -448,6 +446,7 @@ function gosxConfigureSceneScript(script, role, src) {
       return { changed: false, scope: current };
     }
     const scope = createSceneModelTextureVariantScope(context);
+    retireSceneModelTextureVariantScope(current);
     state._modelTextureVariantScope = scope;
     return { changed: true, scope };
   }
@@ -2124,6 +2123,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!state) return 0;
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
     state._modelHydrationGeneration = generation;
+    sceneReleaseModelAssetOwner(state);
     return generation;
   }
 
@@ -2291,6 +2291,7 @@ function gosxConfigureSceneScript(script, role, src) {
   function cancelSceneProgressiveModelLifecycle(state) {
     if (!state || !state._modelProgressiveToken) return;
     state._modelProgressiveToken.cancelled = true;
+    sceneReleaseModelAssetOwner(state._modelProgressiveToken);
     if (typeof state._modelProgressiveToken.resolveRender === "function") {
       state._modelProgressiveToken.resolveRender(false);
     }
@@ -2385,9 +2386,12 @@ function gosxConfigureSceneScript(script, role, src) {
           modelID: entry.model.id || "",
           modelIndex: entry.index,
           stage: "progressive-preload",
+          token,
           variantScope,
         }).then(function(asset) {
+          if (!sceneProgressiveModelTokenCurrent(state, token)) return { ok: false, entry, cancelled: true };
           if (!sceneModelAssetHasContent(asset)) {
+            sceneReleaseModelAssetOwner(token, function(lease) { return lease.modelIndex === entry.index; });
             publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
               modelID: entry.model.id,
               modelIndex: entry.index,
@@ -2399,6 +2403,8 @@ function gosxConfigureSceneScript(script, role, src) {
           }
           return { ok: true, entry, asset };
         }, function(error) {
+          if (!sceneProgressiveModelTokenCurrent(state, token)) return { ok: false, entry, cancelled: true };
+          sceneReleaseModelAssetOwner(token, function(lease) { return lease.modelIndex === entry.index; });
           publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
             modelID: entry.model.id,
             modelIndex: entry.index,
@@ -2432,6 +2438,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const swapResult = applyModels(nextModels);
       token.fullGeneration = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
       return Promise.resolve(swapResult).then(function(outcome) {
+        if (!sceneProgressiveModelTokenCurrent(state, token)) return null;
         const hydration = sceneModelHydrationOutcomeDetail(outcome, token.fullGeneration);
         if (!sceneProgressiveModelTokenCurrent(state, token) || !hydration || hydration.committed !== true || hydration.stale === true || Number(hydration.generation) !== Number(token.fullGeneration)) {
           if (restorePreview) {
@@ -2473,90 +2480,10 @@ function gosxConfigureSceneScript(script, role, src) {
           error: error && error.message ? error.message : error,
         });
       }
+    }).finally(function() {
+      sceneReleaseModelAssetOwner(token);
     });
     return lifecycle;
-  }
-
-  async function loadSceneModelAsset(src, mount, hydrationMeta) {
-    const key = String(src || "").trim();
-    if (!key) {
-      return parseSceneModelAsset({}, key);
-    }
-    const format = sceneModelAssetFormat(key);
-    const variantScope = hydrationMeta && hydrationMeta.variantScope
-      ? hydrationMeta.variantScope
-      : (hydrationMeta && hydrationMeta.state ? hydrationMeta.state._modelTextureVariantScope : null);
-    const cacheKey = (format === "glb" || format === "gltf") && variantScope && variantScope.key
-      ? String(variantScope.key) + "\u0000" + key
-      : key;
-    const statusMeta = hydrationMeta
-      ? Object.assign({}, hydrationMeta, { variantScope })
-      : { variantScope };
-    const cached = sceneModelAssetCache.has(cacheKey);
-    if (sceneModelAssetReady.has(cacheKey)) {
-      const readyResult = await sceneModelAssetCache.get(cacheKey);
-      if (sceneModelHydrationIsCurrent(hydrationMeta)) {
-        publishSceneModelAssetStatus(mount, "cached", key, true, "", statusMeta);
-      }
-      return readyResult.asset;
-    }
-    if (sceneModelHydrationIsCurrent(hydrationMeta)) {
-      publishSceneModelAssetStatus(mount, "loading", key, cached, "", statusMeta);
-    }
-    if (!cached) {
-      const loadPromise = (async function() {
-        try {
-          if (format === "glb" || format === "gltf") {
-            // GLTF parsing lives in a sub-feature chunk that's fetched
-            // on demand — the first .glb/.gltf request on a page pays
-            // the download + parse cost, subsequent ones reuse the
-            // cached module. Pages that never load models never fetch
-            // the chunk at all.
-            var gltfApi = await ensureGLTFFeatureLoaded();
-            const variantContext = variantScope ? variantScope.ready : null;
-            const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(
-              await gltfApi.sceneLoadGLTFModel(key, variantContext),
-              key
-            ), key);
-            sceneModelAssetReady.add(cacheKey);
-            return { asset, error: null };
-          }
-          const response = await fetch(key, { credentials: "same-origin" });
-          if (!response || !response.ok) {
-            throw new Error("HTTP " + String(response && response.status || 0));
-          }
-          const asset = parseSceneModelAsset(await response.json(), key);
-          sceneModelAssetReady.add(cacheKey);
-          return { asset, error: null };
-        } catch (error) {
-          console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
-          gosxSceneEmit("warn", "model-asset-load-failed", {
-            asset: String(key || ""),
-            error: error && error.message ? String(error.message) : String(error),
-          });
-          return { asset: parseSceneModelAsset({}, key), error };
-        }
-      })();
-      sceneModelAssetCache.set(cacheKey, loadPromise);
-      // Failed entries must not poison the page for its lifetime. Keep the
-      // in-flight Promise long enough to deduplicate current waiters, then
-      // evict it before a subsequent request so a transient failure can retry.
-      loadPromise.then(function(result) {
-        if (result && result.error && sceneModelAssetCache.get(cacheKey) === loadPromise) {
-          sceneModelAssetCache.delete(cacheKey);
-        }
-      });
-    }
-    const result = await sceneModelAssetCache.get(cacheKey);
-    if (sceneModelHydrationIsCurrent(hydrationMeta)) {
-      if (result.error) {
-        publishSceneModelAssetStatus(mount, "error", key, cached,
-          result.error && result.error.message ? result.error.message : "model asset failed to load", statusMeta);
-      } else {
-        publishSceneModelAssetStatus(mount, cached ? "cached" : "loaded", key, cached, "", statusMeta);
-      }
-    }
-    return result.asset;
   }
 
   // Public prewarm hook for progressive single-engine upgrades (e.g. a boot
@@ -2581,6 +2508,7 @@ function gosxConfigureSceneScript(script, role, src) {
     };
     window.__gosx = window.__gosx || {};
     window.__gosx.scene3d = window.__gosx.scene3d || {};
+    window.__gosx.scene3d.modelAssetResidency = function() { return sceneModelAssetResidency(); };
     window.__gosx.scene3d.preloadModel = function(src) {
       return window.__gosx_scene3d_preload_model(src);
     };
@@ -3732,8 +3660,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!state) {
       return sceneModelHydrationOutcome(sceneModelHydrationCounts(0), 0, "failed", false, false, "state");
     }
-    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
-    state._modelHydrationGeneration = generation;
+    const generation = invalidateSceneModelHydration(state);
     let models;
     try {
       // Commands can replace the declaration arrays while their assets are in
@@ -3798,6 +3725,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const failure = results.find(function(result) { return !result || result.ok !== true; });
     if (failure) {
       sceneDestroyStagedModelHydrations(results);
+      sceneReleaseModelAssetOwner(state, function(lease) { return !lease.token && lease.generation === generation; });
       const failedStage = failure && failure.stage ? failure.stage : "unknown";
       const failedError = failure && failure.error;
       const failedStaged = failure && failure.staged;

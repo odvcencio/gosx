@@ -4328,6 +4328,7 @@ function readBootstrapSrc(...names) {
 function readSceneMountSrc() {
   return readBootstrapSrc(
     "../runtime/scene3d/mount-backend.ts",
+    "../runtime/scene3d/model-assets.ts",
     "../runtime/scene3d/mount-webgl.ts",
     "../runtime/scene3d/mount-quality.ts",
     "../runtime/scene3d/overlays.ts",

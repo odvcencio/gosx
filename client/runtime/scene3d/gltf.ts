@@ -2695,15 +2695,35 @@
   // One model-side GET policy: same-origin credentials and one error shape.
   // kind names the asset role in the thrown message so each error stays
   // byte-identical to the inline copies it replaces.
-  async function gltfFetchModelResource(url, kind) {
-    var response = await fetch(url, { credentials: "same-origin" });
+  function gltfCheckModelSignal(signal) {
+    if (signal && signal.aborted) throw new Error("model acquisition cancelled");
+  }
+
+  function gltfAwaitModelWork(work, signal) {
+    if (!signal) return Promise.resolve(work);
+    return new Promise(function(resolve, reject) {
+      function cleanup() { signal.removeEventListener("abort", aborted); }
+      function aborted() { cleanup(); reject(new Error("model acquisition cancelled")); }
+      // Handle work even when already aborted: the caller may have created a
+      // rejecting transport promise before passing it to this helper.
+      Promise.resolve(work).then(function(value) { cleanup(); resolve(value); }, function(error) { cleanup(); reject(error); });
+      if (signal.aborted) aborted();
+      else signal.addEventListener("abort", aborted, { once: true });
+    });
+  }
+
+  async function gltfFetchModelResource(url, kind, signal) {
+    gltfCheckModelSignal(signal);
+    var response = await gltfAwaitModelWork(fetch(url, { credentials: "same-origin", signal }), signal);
+    gltfCheckModelSignal(signal);
     if (!response.ok) {
       throw new Error("Failed to fetch " + kind + ": " + url + " (HTTP " + response.status + ")");
     }
     return response;
   }
 
-  async function gltfFetchExternalBuffers(gltf, baseURL, embeddedBuffer) {
+  async function gltfFetchExternalBuffers(gltf, baseURL, embeddedBuffer, signal) {
+    gltfCheckModelSignal(signal);
     var declarations = gltf && gltf.buffers;
     if (declarations != null && !Array.isArray(declarations)) {
       throw new Error("glTF buffers are invalid");
@@ -2736,8 +2756,9 @@
         throw new Error("glTF buffer " + i + " has no URI or embedded data");
       }
       var resolved = /^data:/i.test(uri) ? uri : new URL(uri, baseURL).toString();
-      var response = await gltfFetchModelResource(resolved, "glTF buffer " + i);
-      var data = await response.arrayBuffer();
+      var response = await gltfFetchModelResource(resolved, "glTF buffer " + i, signal);
+      var data = await gltfAwaitModelWork(response.arrayBuffer(), signal);
+      gltfCheckModelSignal(signal);
       var declaredLength = declaration.byteLength;
       if (declaredLength != null && !gltfNonnegativeInteger(declaredLength)) {
         throw new Error("glTF buffer " + i + " has invalid byteLength " + declaredLength);
@@ -2983,7 +3004,8 @@
     return "";
   }
 
-  async function sceneLoadGLTFModel(url, variantContext) {
+  async function sceneLoadGLTFModel(url, variantContext, signal) {
+    gltfCheckModelSignal(signal);
     var isGLB = sceneGLTFAssetFormat(url) === "glb";
     var assetURL = gltfAbsoluteURL(url);
     var response;
@@ -2995,21 +3017,25 @@
       : Promise.resolve(variantContext).then(gltfTextureVariantContext, function() { return null; });
 
     if (isGLB) {
-      response = await gltfFetchModelResource(url, "GLB");
-      var arrayBuffer = await response.arrayBuffer();
+      response = await gltfFetchModelResource(url, "GLB", signal);
+      var arrayBuffer = await gltfAwaitModelWork(response.arrayBuffer(), signal);
+      gltfCheckModelSignal(signal);
       var parsed = sceneParseGLB(arrayBuffer);
-      var parsedBufferPromise = gltfFetchExternalBuffers(parsed.json, assetURL, parsed.binaryBuffer);
+      var parsedBufferPromise = gltfFetchExternalBuffers(parsed.json, assetURL, parsed.binaryBuffer, signal);
       parsedBufferPromise.catch(function() {});
       var baseSrc = gltfPointOverlayBaseSrc(parsed.json);
       if (baseSrc) {
         var baseURL = new URL(baseSrc, assetURL).toString();
-        var baseResponse = await gltfFetchModelResource(baseURL, "GLB base");
-        var baseParsed = sceneParseGLB(await baseResponse.arrayBuffer());
-        var baseBufferPromise = gltfFetchExternalBuffers(baseParsed.json, baseURL, baseParsed.binaryBuffer);
+        var baseResponse = await gltfFetchModelResource(baseURL, "GLB base", signal);
+        var baseBytes = await gltfAwaitModelWork(baseResponse.arrayBuffer(), signal);
+        gltfCheckModelSignal(signal);
+        var baseParsed = sceneParseGLB(baseBytes);
+        var baseBufferPromise = gltfFetchExternalBuffers(baseParsed.json, baseURL, baseParsed.binaryBuffer, signal);
         baseBufferPromise.catch(function() {});
-        gltfResolveExternalImageURIs(baseParsed.json, baseURL, await variantContextPromise);
+        gltfResolveExternalImageURIs(baseParsed.json, baseURL, await gltfAwaitModelWork(variantContextPromise, signal));
         var baseBuffers = await baseBufferPromise;
         var parsedBuffers = await parsedBufferPromise;
+        gltfCheckModelSignal(signal);
         var baseScene = gltfExtractScene(baseParsed.json, baseBuffers);
         gltfApplyPointOverlay(baseScene, gltfCollectPointOverlay(parsed.json, parsedBuffers));
         // A layer that exists only in this rotation — a phenomenon absent from
@@ -3031,22 +3057,26 @@
         }
         return baseScene;
       }
-      gltfResolveExternalImageURIs(parsed.json, assetURL, await variantContextPromise);
-      return gltfExtractScene(parsed.json, await parsedBufferPromise);
+      gltfResolveExternalImageURIs(parsed.json, assetURL, await gltfAwaitModelWork(variantContextPromise, signal));
+      var parsedBuffersFinal = await parsedBufferPromise;
+      gltfCheckModelSignal(signal);
+      return gltfExtractScene(parsed.json, parsedBuffersFinal);
     }
 
     // .gltf JSON file.
-    response = await gltfFetchModelResource(url, "glTF");
-    var json = await response.json();
+    response = await gltfFetchModelResource(url, "glTF", signal);
+    var json = await gltfAwaitModelWork(response.json(), signal);
+    gltfCheckModelSignal(signal);
     // External buffers do not depend on image variant selection, so fetch them
     // while the renderer context is still settling.
-    var bufferPromise = gltfFetchExternalBuffers(json, assetURL);
+    var bufferPromise = gltfFetchExternalBuffers(json, assetURL, null, signal);
     // Mark an early network failure handled immediately. The original Promise
     // remains rejected, so the later await still throws the same error after
     // renderer-context settlement without opening an unhandledrejection window.
     bufferPromise.catch(function() {});
-    gltfResolveExternalImageURIs(json, assetURL, await variantContextPromise);
+    gltfResolveExternalImageURIs(json, assetURL, await gltfAwaitModelWork(variantContextPromise, signal));
     var bufferData = await bufferPromise;
+    gltfCheckModelSignal(signal);
     return gltfExtractScene(json, bufferData);
   }
 

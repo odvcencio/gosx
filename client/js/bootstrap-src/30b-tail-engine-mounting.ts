@@ -451,6 +451,9 @@
     if (!pending || pending.closed) return;
     const owned = pendingEngineOwned(pending);
     pending.closed = true;
+    // Revoke in-flight factory work even if a new page generation owns the id.
+    // Successful transfer uses a separate path and deliberately never aborts.
+    if (pending.factoryController) pending.factoryController.abort();
     if (pendingEngineRuntimes.get(pending.id) === pending) {
       pendingEngineRuntimes.delete(pending.id);
     }
@@ -4432,6 +4435,8 @@
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
       runtime: runtime,
+      // Pending factory lifetime only; a successful transfer does not abort it.
+      signal: pending && pending.factoryController ? pending.factoryController.signal : null,
       isCurrent() { return pendingEngineOwned(pending); },
       emit: function(name, detail) {
         if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
@@ -4477,6 +4482,7 @@
       moduleWaiter: null,
       moduleRecord: null,
       runtimeDisposed: false,
+      factoryController: typeof AbortController === "function" ? new AbortController() : null,
       closed: false,
     };
     pendingEngineRuntimes.set(entry.id, pending);

@@ -18,7 +18,7 @@
     const props = ctx.props || {};
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
-      return !ctx.isCurrent || ctx.isCurrent();
+      return !(ctx.signal && ctx.signal.aborted) && (!ctx.isCurrent || ctx.isCurrent());
     }
     let initialRuntimeCommands = null;
     if (runtimeScene) {
@@ -62,6 +62,18 @@
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
+    // Pending engine cancellation can precede this factory's returned handle.
+    // Release only model ownership here: full renderer disposal uses the owned
+    // terminal path after hydration settles, when every closure is initialized.
+    function cancelInitialModelOwnership() {
+      invalidateSceneModelHydration(sceneState);
+      retireSceneModelTextureVariantScope(sceneState._modelTextureVariantScope);
+    }
+    const initialModelSignal = ctx.signal;
+    if (initialModelSignal) {
+      if (initialModelSignal.aborted) cancelInitialModelOwnership();
+      else initialModelSignal.addEventListener("abort", cancelInitialModelOwnership, { once: true });
+    }
     // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
@@ -388,6 +400,8 @@
       // Fence model hydration before returning the unsupported handle so a late
       // asset can only finish as stale and release its staged resources.
       invalidateSceneModelHydration(sceneState);
+      retireSceneModelTextureVariantScope(sceneState._modelTextureVariantScope);
+      if (initialModelSignal) initialModelSignal.removeEventListener("abort", cancelInitialModelOwnership);
       settleSceneModelTextureVariantScope(
         sceneState._modelTextureVariantScope,
         sceneModelTextureVariantContextForRenderer(null)
@@ -3128,7 +3142,11 @@
     // fail. The mount continues with the prior committed generation (or no
     // model-derived records on initial hydration).
     let handle = null;
-    await sceneModelHydration;
+    try {
+      await sceneModelHydration;
+    } finally {
+      if (initialModelSignal) initialModelSignal.removeEventListener("abort", cancelInitialModelOwnership);
+    }
     if (!scene3DFactoryOwned()) {
       disposeMountedScene();
       return {};
@@ -3391,6 +3409,7 @@
     };
 
     function disposeMountedScene() {
+      if (initialModelSignal) initialModelSignal.removeEventListener("abort", cancelInitialModelOwnership);
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
       disposed = true;
       if (sceneAnimationToggle) {
@@ -3409,6 +3428,7 @@
       // releasing committed records. Its terminal generation check will
       // dispose staged mixers and refuse all late status/scene mutation.
       invalidateSceneModelHydration(sceneState);
+      retireSceneModelTextureVariantScope(sceneState._modelTextureVariantScope);
       initPending = false;
       if (initHandle != null) {
         cancelEngineFrame(initHandle);
