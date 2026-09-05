@@ -467,10 +467,18 @@ func (c *isrConfig) regenerate(artifact isrArtifact, revalidator *Revalidator, d
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "http://gosx.local"+artifact.page.Path, nil)
+	// Status 200 only confirms the shell committed. Keep the last healthy
+	// artifact when a deferred resolver, rendering, cancellation or output
+	// fails, independently of the application's stream observer.
+	outcome := &streamOutcome{}
+	req = req.WithContext(context.WithValue(req.Context(), streamOutcomeKey{}, outcome))
 	req.Header.Set("Accept", "text/html")
 	req.Header.Set(isrBypassHeader, "1")
 	rec := httptest.NewRecorder()
 	dispatch(rec, req, true)
+	if outcome.err != nil {
+		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate %s: incomplete stream: %w", artifact.page.Path, outcome.err)
+	}
 	result := rec.Result()
 	defer result.Body.Close()
 	if result.StatusCode != http.StatusOK {

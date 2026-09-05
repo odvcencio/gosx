@@ -110,14 +110,14 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 }
 
 func (w *observedResponseWriter) Flush() {
-	flusher, ok := w.ResponseWriter.(http.Flusher)
-	if !ok {
-		return
-	}
+	_ = w.FlushError()
+}
+
+func (w *observedResponseWriter) FlushError() error {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
-	flusher.Flush()
+	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
 func (w *observedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {

@@ -1603,6 +1603,7 @@ type interceptResponseWriter struct {
 	body        strings.Builder
 	statusCode  int
 	passthrough bool
+	commitErr   error
 }
 
 func newInterceptResponseWriter(dst http.ResponseWriter) *interceptResponseWriter {
@@ -1617,6 +1618,9 @@ func (w *interceptResponseWriter) Header() http.Header {
 }
 
 func (w *interceptResponseWriter) Write(data []byte) (int, error) {
+	if w.commitErr != nil {
+		return 0, w.commitErr
+	}
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
@@ -1635,13 +1639,17 @@ func (w *interceptResponseWriter) WriteHeader(status int) {
 
 // Flush sends the buffered bytes and then flushes the real writer.
 func (w *interceptResponseWriter) Flush() {
+	_ = w.FlushError()
+}
+
+func (w *interceptResponseWriter) FlushError() error {
 	if w.dst == nil {
-		return
+		return http.ErrNotSupported
 	}
-	w.commit()
-	if flusher, ok := w.dst.(http.Flusher); ok {
-		flusher.Flush()
+	if err := w.commit(); err != nil {
+		return err
 	}
+	return http.NewResponseController(w.dst).Flush()
 }
 
 // Hijack hands the raw connection to the caller. The buffer is dropped, because
@@ -1670,9 +1678,9 @@ func (w *interceptResponseWriter) escaped() bool {
 	return w.passthrough
 }
 
-func (w *interceptResponseWriter) commit() {
+func (w *interceptResponseWriter) commit() error {
 	if w.passthrough || w.dst == nil {
-		return
+		return w.commitErr
 	}
 	w.passthrough = true
 	copyHeaders(w.dst.Header(), w.header)
@@ -1684,7 +1692,12 @@ func (w *interceptResponseWriter) commit() {
 	}
 	w.dst.WriteHeader(w.statusCode)
 	if w.body.Len() > 0 {
-		_, _ = io.WriteString(w.dst, w.body.String())
+		n, err := io.WriteString(w.dst, w.body.String())
+		if err == nil && n != w.body.Len() {
+			err = io.ErrShortWrite
+		}
+		w.commitErr = err
 	}
 	w.body.Reset()
+	return w.commitErr
 }

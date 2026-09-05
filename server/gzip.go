@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"compress/gzip"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -39,7 +40,7 @@ func GzipMiddleware() Middleware {
 			}
 			defer func() {
 				// Only close if we actually wrote gzipped content.
-				if gw.started {
+				if gw.started && gw.writeErr == nil {
 					gz.Close()
 				}
 				gzipWriterPool.Put(gz)
@@ -56,6 +57,7 @@ type gzipWriter struct {
 	started     bool
 	headersSent bool
 	passthrough bool
+	writeErr    error
 }
 
 func (w *gzipWriter) WriteHeader(code int) {
@@ -80,6 +82,9 @@ func (w *gzipWriter) WriteHeader(code int) {
 }
 
 func (w *gzipWriter) Write(b []byte) (int, error) {
+	if w.writeErr != nil {
+		return 0, w.writeErr
+	}
 	if !w.headersSent {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -87,7 +92,9 @@ func (w *gzipWriter) Write(b []byte) (int, error) {
 		return w.ResponseWriter.Write(b)
 	}
 	w.started = true
-	return w.Writer.Write(b)
+	n, err := w.Writer.Write(b)
+	w.writeErr = err
+	return n, err
 }
 
 // Hijack supports WebSocket upgrades. If the underlying writer doesn't
@@ -101,16 +108,28 @@ func (w *gzipWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // Flush supports streaming responses (SSE, chunked transfer).
 func (w *gzipWriter) Flush() {
+	_ = w.FlushError()
+}
+
+func (w *gzipWriter) FlushError() error {
+	if w.writeErr != nil {
+		return w.writeErr
+	}
 	if !w.headersSent {
 		w.WriteHeader(http.StatusOK)
 	}
 	if !w.passthrough {
 		w.started = true
-		_ = w.Writer.(*gzip.Writer).Flush()
+		if err := w.Writer.(*gzip.Writer).Flush(); err != nil {
+			w.writeErr = err
+			return err
+		}
 	}
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		w.writeErr = err
 	}
+	return err
 }
 
 // Unwrap lets http.ResponseController find the underlying writer.
