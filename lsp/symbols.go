@@ -49,13 +49,13 @@ type componentSymbol struct {
 	name           string
 	detail         string
 	description    string
-	fullRange      Range
-	selectionRange Range
+	fullRange      byteRange
+	selectionRange byteRange
 }
 
 type componentRef struct {
 	tag            string
-	selectionRange Range
+	selectionRange byteRange
 }
 
 func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
@@ -66,17 +66,17 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
-		return idx, diagnosticsForError(err)
+		return idx, diagnosticsForSourceError(source, err)
 	}
 
 	root := tree.RootNode()
 	if root.HasError() {
-		return idx, diagnosticsForError(gosx.DescribeParseError(root, source, lang))
+		return idx, diagnosticsForSourceError(source, gosx.DescribeParseError(root, source, lang))
 	}
 
 	prog, err := ir.Lower(root, source, lang)
 	if err != nil {
-		return idx, diagnosticsForError(err)
+		return idx, diagnosticsForSourceError(source, err)
 	}
 	idx.program = prog
 	idx.indexComponents()
@@ -96,7 +96,7 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 	diags := make([]Diagnostic, 0, len(errs)+len(warnings))
 	for _, diag := range errs {
 		diags = append(diags, Diagnostic{
-			Range:    rangeFromSpan(diag.Span),
+			Range:    rangeFromSpanInSource(source, diag.Span),
 			Severity: severityFromIR(diag.Severity),
 			Source:   diagnosticSource(path),
 			Message:  diagnosticMessage(diag),
@@ -104,7 +104,7 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 	}
 	for _, diag := range warnings {
 		diags = append(diags, Diagnostic{
-			Range:    rangeFromSpan(diag.Span),
+			Range:    rangeFromSpanInSource(source, diag.Span),
 			Severity: severityFromIR(diag.Severity),
 			Source:   diagnosticSource(path),
 			Message:  diagnosticMessage(diag),
@@ -119,7 +119,7 @@ func (idx *sourceIndex) indexComponents() {
 		return
 	}
 	for _, comp := range idx.program.Components {
-		fullRange := rangeFromSpan(comp.Span)
+		fullRange := byteRangeFromSpan(idx.source, comp.Span)
 		prefix := "func "
 		if comp.Syntax == ir.ComponentSyntaxStrict {
 			prefix = "component "
@@ -167,8 +167,8 @@ func DocumentSymbols(path string, source []byte) []DocumentSymbol {
 			Name:           sym.name,
 			Detail:         sym.detail,
 			Kind:           symbolKindFunction,
-			Range:          sym.fullRange,
-			SelectionRange: sym.selectionRange,
+			Range:          protocolRangeForByteRange(idx.source, sym.fullRange),
+			SelectionRange: protocolRangeForByteRange(idx.source, sym.selectionRange),
 		})
 	}
 	return out
@@ -180,13 +180,17 @@ func HoverAt(path string, source []byte, pos Position) *Hover {
 	if idx.program == nil {
 		return nil
 	}
+	offset := byteOffsetForProtocolPosition(idx.source, pos)
 	for _, sym := range idx.components {
-		if positionInRange(pos, sym.selectionRange) {
-			return componentHover(sym)
+		if !offsetInByteRange(offset, sym.selectionRange) {
+			continue
 		}
+		hover := componentHover(sym)
+		hover.Range = protocolRangeForByteRange(idx.source, sym.selectionRange)
+		return hover
 	}
 	for _, ref := range idx.refs {
-		if !positionInRange(pos, ref.selectionRange) {
+		if !offsetInByteRange(offset, ref.selectionRange) {
 			continue
 		}
 		sym, ok := idx.components[ref.tag]
@@ -194,20 +198,20 @@ func HoverAt(path string, source []byte, pos Position) *Hover {
 			return nil
 		}
 		hover := componentHover(sym)
-		hover.Range = ref.selectionRange
+		hover.Range = protocolRangeForByteRange(idx.source, ref.selectionRange)
 		return hover
 	}
 	return nil
 }
 
-// DefinitionAt resolves a local component reference to its component definition.
 func DefinitionAt(uri, path string, source []byte, pos Position) *Location {
 	idx, _ := indexSource(path, source)
 	if idx.program == nil {
 		return nil
 	}
+	offset := byteOffsetForProtocolPosition(idx.source, pos)
 	for _, ref := range idx.refs {
-		if !positionInRange(pos, ref.selectionRange) {
+		if !offsetInByteRange(offset, ref.selectionRange) {
 			continue
 		}
 		sym, ok := idx.components[ref.tag]
@@ -216,10 +220,14 @@ func DefinitionAt(uri, path string, source []byte, pos Position) *Location {
 		}
 		return &Location{
 			URI:   uri,
-			Range: sym.selectionRange,
+			Range: protocolRangeForByteRange(idx.source, sym.selectionRange),
 		}
 	}
 	return nil
+}
+
+func offsetInByteRange(offset int, r byteRange) bool {
+	return offset >= r.start && offset < r.end
 }
 
 func componentHover(sym componentSymbol) *Hover {
@@ -229,7 +237,6 @@ func componentHover(sym componentSymbol) *Hover {
 			Kind:  "markdown",
 			Value: value,
 		},
-		Range: sym.selectionRange,
 	}
 }
 
@@ -261,8 +268,8 @@ func componentDescription(comp ir.Component) string {
 	}
 }
 
-func (idx sourceIndex) nameRangeInSpan(span ir.Span, name, prefix string) Range {
-	fallback := rangeFromSpan(span)
+func (idx sourceIndex) nameRangeInSpan(span ir.Span, name, prefix string) byteRange {
+	fallback := byteRangeFromSpan(idx.source, span)
 	if name == "" {
 		return fallback
 	}
@@ -288,29 +295,33 @@ func (idx sourceIndex) nameRangeInSpan(span ir.Span, name, prefix string) Range 
 		return fallback
 	}
 	absolute := start + offset
-	return rangeForOffset(idx.source, absolute, len(name))
+	return byteRange{start: absolute, end: absolute + len(name)}
+}
+
+func byteRangeFromSpan(source string, span ir.Span) byteRange {
+	start := byteOffsetForSourcePoint(source, clampZeroBased(span.StartLine-1), clampZeroBased(span.StartCol-1))
+	endLine := span.EndLine
+	if endLine <= 0 {
+		endLine = span.StartLine
+	}
+	endCol := span.EndCol
+	if endCol <= 0 {
+		endCol = span.StartCol + 1
+	}
+	end := byteOffsetForSourcePoint(source, clampZeroBased(endLine-1), clampZeroBased(endCol-1))
+	if end <= start {
+		end = nextRuneBoundary(source, start)
+	}
+	return byteRange{start: start, end: end}
 }
 
 func spanOffsets(source string, span ir.Span) (int, int) {
-	start := positionOffset(source, Position{
-		Line:      clampZeroBased(span.StartLine - 1),
-		Character: clampZeroBased(span.StartCol - 1),
-	})
-	end := positionOffset(source, Position{
-		Line:      clampZeroBased(span.EndLine - 1),
-		Character: clampZeroBased(span.EndCol - 1),
-	})
-	return start, end
+	r := byteRangeFromSpan(source, span)
+	return r.start, r.end
 }
 
 func rangeForOffset(source string, offset, length int) Range {
-	if length < 0 {
-		length = 0
-	}
-	return Range{
-		Start: positionForOffset(source, offset),
-		End:   positionForOffset(source, offset+length),
-	}
+	return protocolRangeForByteRange(source, byteRange{start: offset, end: offset + length})
 }
 
 func positionInRange(pos Position, r Range) bool {
@@ -337,60 +348,9 @@ func comparePosition(a, b Position) int {
 }
 
 func positionOffset(source string, pos Position) int {
-	if pos.Line <= 0 && pos.Character <= 0 {
-		return 0
-	}
-	line := 0
-	lineStart := 0
-	for i := 0; i < len(source); i++ {
-		if line == pos.Line {
-			offset := lineStart + pos.Character
-			if offset > len(source) {
-				return len(source)
-			}
-			lineEnd := strings.IndexByte(source[lineStart:], '\n')
-			if lineEnd < 0 {
-				lineEnd = len(source)
-			} else {
-				lineEnd += lineStart
-			}
-			if offset > lineEnd {
-				return lineEnd
-			}
-			return offset
-		}
-		if source[i] == '\n' {
-			line++
-			lineStart = i + 1
-		}
-	}
-	if line == pos.Line {
-		offset := lineStart + pos.Character
-		if offset > len(source) {
-			return len(source)
-		}
-		return offset
-	}
-	return len(source)
+	return byteOffsetForProtocolPosition(source, pos)
 }
 
 func positionForOffset(source string, offset int) Position {
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(source) {
-		offset = len(source)
-	}
-	line := 0
-	lineStart := 0
-	for i := 0; i < offset; i++ {
-		if source[i] == '\n' {
-			line++
-			lineStart = i + 1
-		}
-	}
-	return Position{
-		Line:      line,
-		Character: offset - lineStart,
-	}
+	return protocolPositionForByteOffset(source, offset)
 }

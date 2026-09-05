@@ -3,10 +3,19 @@ package lsp
 import (
 	"context"
 	"errors"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/strictcheck"
 )
+
+type ownedDiagnostics struct {
+	URI         string
+	Diagnostics []Diagnostic
+}
 
 // AnalyzeProject runs the whole-project checks (gosx#249's form-action,
 // required-reachability, and data-loader-key checks) against the package
@@ -23,6 +32,14 @@ import (
 // editor should pay. It still runs at `gosx check`/build-gate time
 // through strictcheck.CheckTreeWithOptions.
 func AnalyzeProject(path string) []Diagnostic {
+	var out []Diagnostic
+	for _, owned := range analyzeProjectOwned(path) {
+		out = append(out, owned.Diagnostics...)
+	}
+	return out
+}
+
+func analyzeProjectOwned(path string) []ownedDiagnostics {
 	var warnings []ir.Diagnostic
 	err := strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{Warnings: &warnings})
 
@@ -32,25 +49,58 @@ func AnalyzeProject(path string) []Diagnostic {
 	// per-keystroke path already reports every parse/lower error this
 	// package surfaces today, and widening what didSave reports is a
 	// separate change from the one this function exists for.
-	diags := make([]Diagnostic, 0, len(warnings))
+	byPath := make(map[string][]ir.Diagnostic)
 	var diagErr *ir.DiagnosticsError
 	if errors.As(err, &diagErr) {
 		for _, raw := range diagErr.Diagnostics {
-			diags = append(diags, Diagnostic{
-				Range:    rangeFromSpan(raw.Span),
-				Severity: SeverityError,
-				Source:   diagnosticSource(path),
-				Message:  diagnosticMessage(raw),
-			})
+			owner := diagnosticOwnerPath(path, raw.Span)
+			byPath[owner] = append(byPath[owner], raw)
 		}
 	}
 	for _, diag := range warnings {
-		diags = append(diags, Diagnostic{
-			Range:    rangeFromSpan(diag.Span),
-			Severity: SeverityWarning,
-			Source:   diagnosticSource(path),
-			Message:  diagnosticMessage(diag),
+		owner := diagnosticOwnerPath(path, diag.Span)
+		byPath[owner] = append(byPath[owner], diag)
+	}
+	owners := make([]string, 0, len(byPath))
+	for owner := range byPath {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+
+	out := make([]ownedDiagnostics, 0, len(owners))
+	for _, owner := range owners {
+		raws := byPath[owner]
+		source, _ := os.ReadFile(owner)
+		diags := make([]Diagnostic, 0, len(raws))
+		for _, raw := range raws {
+			diags = append(diags, Diagnostic{
+				Range:    rangeFromSpanInSource(source, raw.Span),
+				Severity: severityFromIR(raw.Severity),
+				Source:   diagnosticSource(owner),
+				Message:  diagnosticMessage(raw),
+			})
+		}
+		out = append(out, ownedDiagnostics{
+			URI:         pathToURI(owner),
+			Diagnostics: diags,
 		})
 	}
-	return diags
+	return out
+}
+
+func diagnosticOwnerPath(requested string, span ir.Span) string {
+	if span.File == "" {
+		return requested
+	}
+	if filepath.IsAbs(span.File) {
+		return span.File
+	}
+	return filepath.Join(filepath.Dir(requested), span.File)
+}
+
+func pathToURI(path string) string {
+	if path == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }

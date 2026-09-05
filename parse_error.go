@@ -5,13 +5,17 @@ package gosx
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 // ParseError describes a syntax problem in GoSX source.
 type ParseError struct {
-	Line    int
+	Line int
+	// Column is a 1-based UTF-8 byte column in Line. Human-facing renderers may
+	// translate it to display width, but protocol adapters must convert it to
+	// their own coordinate encoding before publication.
 	Column  int
 	Message string
 	Snippet string
@@ -201,7 +205,7 @@ func approximateParsePoint(text string, source []byte) (line int, column int, sn
 	trimmedSnippet := strings.TrimRight(snippet, "\r")
 	trimmedLine := strings.TrimRight(lines[target], "\r")
 	trimmedLine = strings.TrimRight(trimmedLine, " \t")
-	column = len([]rune(trimmedLine))
+	column = lastRuneByteColumn(trimmedLine)
 	if column == 0 {
 		column = 1
 	}
@@ -214,20 +218,40 @@ func approximateParsePoint(text string, source []byte) (line int, column int, sn
 	return target + 1, column, trimmedSnippet, excerpt
 }
 
+func lastRuneByteColumn(line string) int {
+	if line == "" {
+		return 0
+	}
+	last := 0
+	for i := range line {
+		last = i
+	}
+	return last + 1
+}
+
 func caretPadding(snippet string, column int) string {
 	if column <= 1 || snippet == "" {
 		return ""
 	}
 	width := 0
-	for _, r := range snippet {
-		if width >= column-1 {
+	byteColumn := column - 1
+	if byteColumn > len(snippet) {
+		byteColumn = len(snippet)
+	}
+	for i := 0; i < len(snippet) && i < byteColumn; {
+		r, size := utf8.DecodeRuneInString(snippet[i:])
+		if size <= 0 {
+			size = 1
+		}
+		if i+size > byteColumn {
 			break
 		}
 		if r == '\t' {
 			width += 4
-			continue
+		} else {
+			width++
 		}
-		width++
+		i += size
 	}
 	if width <= 0 {
 		return ""
