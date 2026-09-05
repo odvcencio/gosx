@@ -125,6 +125,13 @@ func ReconcileTrees(prev, next *ResolvedTree, staticMask []bool) []PatchOp {
 // spans must come from the walk that produced next, against prev. Pass nil
 // when the caller cannot promise that, and the diff compares every node.
 func reconcileTreesInto(w *diffWalk, prev, next *ResolvedTree, staticMask []bool, spans []nodeSpan) []PatchOp {
+	if err := ValidateServerSlotTransition(prev, next); err != nil {
+		return nil
+	}
+	return reconcileValidatedTreesInto(w, prev, next, staticMask, spans)
+}
+
+func reconcileValidatedTreesInto(w *diffWalk, prev, next *ResolvedTree, staticMask []bool, spans []nodeSpan) []PatchOp {
 	if prev == nil || next == nil || len(prev.Nodes) == 0 || len(next.Nodes) == 0 {
 		return nil
 	}
@@ -258,6 +265,10 @@ func reconcileLeafNodePair(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode, ne
 }
 
 func reconcileElementNodePair(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode) {
+	if pn.ServerSlot != "" || nn.ServerSlot != "" {
+		reconcileAttrs(ops, pn, nn, &w.path)
+		return
+	}
 	if pn.Text != nn.Text && (pn.Text != "" || nn.Text != "") {
 		appendTextPatch(ops, &w.path, nn.Text)
 	}

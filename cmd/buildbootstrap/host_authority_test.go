@@ -133,8 +133,18 @@ func TestBuilderUsesTypedHostAuthorities(t *testing.T) {
 func TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph(t *testing.T) {
 	clientJS := shippedClientJS(t)
 	runtimeDir := filepath.Clean(filepath.Join(clientJS, "..", "runtime"))
+	unreferenced, err := unreferencedRuntimeAuthorities(clientJS, runtimeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range unreferenced {
+		t.Errorf("runtime TypeScript authority is outside the semantic build graph: %s", path)
+	}
+}
+
+func unreferencedRuntimeAuthorities(clientJS, runtimeDir string) ([]string, error) {
 	reachable := make(map[string]bool)
-	for _, entry := range outputs {
+	for _, entry := range append(append([]output(nil), outputs...), inlineAssets...) {
 		for _, src := range entry.sources {
 			absolute := filepath.Clean(filepath.Join(clientJS, filepath.FromSlash(src.rel)))
 			if strings.HasPrefix(absolute, runtimeDir+string(filepath.Separator)) {
@@ -145,8 +155,8 @@ func TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph(t *testing.T) {
 	exempt := map[string]string{
 		filepath.Join(runtimeDir, "types.d.ts"):                  "strict-check ambient declarations",
 		filepath.Join(runtimeDir, "generated", "runtime-abi.ts"): "consumed by wasm/abi.ts and checked by test-runtime-types",
-		filepath.Join(runtimeDir, "host", "navigation.ts"):       "embedded by host/navigation_asset.go and exercised by the runtime test harness",
 	}
+	var unreferenced []string
 	err := filepath.WalkDir(runtimeDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -165,11 +175,31 @@ func TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph(t *testing.T) {
 			return nil
 		}
 		if !reachable[path] && exempt[path] == "" {
-			t.Errorf("runtime TypeScript authority is outside the semantic build graph: %s", path)
+			unreferenced = append(unreferenced, path)
 		}
 		return nil
 	})
+	return unreferenced, err
+}
+
+func TestInlineRuntimeAuthorityGraphRetainsUnreferencedGuard(t *testing.T) {
+	root := t.TempDir()
+	clientJS := filepath.Join(root, "js")
+	runtimeDir := filepath.Join(root, "runtime")
+	if err := os.MkdirAll(filepath.Join(runtimeDir, "host"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"server-slots.ts", "unreferenced.ts"} {
+		if err := os.WriteFile(filepath.Join(runtimeDir, "host", name), []byte("// authority fixture\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := unreferencedRuntimeAuthorities(clientJS, runtimeDir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	want := filepath.Join(runtimeDir, "host", "unreferenced.ts")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("inline authority vs unreferenced guard: %v", got)
 	}
 }

@@ -38,15 +38,16 @@ func (tree *ResolvedTree) releaseTail() {
 
 // ResolvedNode is a single node in the resolved tree.
 type ResolvedNode struct {
-	Source    int
-	HasSource bool
-	Tag       string
-	Text      string
-	Key       string // stable identity for list diffing (from "key" attr)
-	Attrs     []ResolvedAttr
-	DOMAttrs  []ResolvedAttr
-	Events    []ResolvedEvent
-	Children  []int
+	Source     int
+	HasSource  bool
+	Tag        string
+	Text       string
+	Key        string // stable identity for list diffing (from "key" attr)
+	Attrs      []ResolvedAttr
+	DOMAttrs   []ResolvedAttr
+	Events     []ResolvedEvent
+	Children   []int
+	ServerSlot string // opaque server descendants, absent from the VM tree
 }
 
 // ResolvedAttr is a resolved attribute with a concrete string value.

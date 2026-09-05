@@ -24,6 +24,7 @@ const (
 	NodeFragment                    // Fragment (no wrapper element)
 	NodeForEach                     // Iteration
 	NodeConditional                 // Conditional children
+	NodeServerSlot                  // Opaque server-owned children; Text is the literal slot key.
 )
 
 // String returns a human-readable name for the node kind.
@@ -41,6 +42,8 @@ func (k NodeKind) String() string {
 		return "ForEach"
 	case NodeConditional:
 		return "Conditional"
+	case NodeServerSlot:
+		return "ServerSlot"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", k)
 	}

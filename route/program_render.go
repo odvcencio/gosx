@@ -7,6 +7,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island"
 	islandprogram "m31labs.dev/gosx/island/program"
 )
 
@@ -43,11 +44,12 @@ import (
 //     (gosx#185). A nil Profile reproduces today's rendering exactly, byte
 //     for byte. See RenderProfile.
 type ProgramRenderEnv struct {
-	Values       map[string]any
-	Funcs        map[string]any
-	Props        any
-	RenderIsland func(*islandprogram.Program, any) gosx.Node
-	Profile      *RenderProfile
+	Values            map[string]any
+	Funcs             map[string]any
+	Props             any
+	RenderIsland      func(*islandprogram.Program, any) gosx.Node
+	RenderServerSlots func(*islandprogram.Program, any, island.ServerSlots) (gosx.Node, error)
+	Profile           *RenderProfile
 	// IslandPreloadHints and IslandPageHead compute the two framework-filled
 	// named slots a strict component may declare — {slotPreloadHints} and
 	// {slotPageHead} (gosx#249) — from the same island runtime RenderIsland
@@ -123,6 +125,7 @@ func RenderProgramComponent(prog *ir.Program, component string, env ProgramRende
 			values:             env.Values,
 			funcs:              env.Funcs,
 			renderIsland:       env.RenderIsland,
+			renderServerSlots:  env.RenderServerSlots,
 			islandPreloadHints: env.IslandPreloadHints,
 			islandPageHead:     env.IslandPageHead,
 		},

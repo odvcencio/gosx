@@ -14,6 +14,7 @@ import (
 
 // Manifest describes all islands and engines on a page.
 type Manifest struct {
+	ServerSlotHost *ServerSlotHostRef `json:"serverSlotHost,omitempty"`
 	// Version of the manifest format.
 	Version string `json:"version"`
 
@@ -50,6 +51,15 @@ type Manifest struct {
 	// browser. SetTextureVariants fills the map from a variant manifest, which
 	// assetpipe.BuildVariantManifest already filtered on the built state.
 	TextureVariants map[string][]ManifestVariantRef `json:"textureVariants,omitempty"`
+}
+
+// ServerSlotHostRef identifies the projection-only host asset. It is absent
+// from ordinary island pages; caller Node data never enters this descriptor.
+type ServerSlotHostRef struct {
+	Path      string `json:"path"`
+	Hash      string `json:"hash"`
+	Integrity string `json:"integrity"`
+	Version   int    `json:"version"`
 }
 
 // ManifestVariantRef is one built asset variant a client may choose.
@@ -254,6 +264,9 @@ type RuntimeRef struct {
 
 // IslandEntry describes a single island instance in the rendered HTML.
 type IslandEntry struct {
+	// ServerSlots is the literal opaque outlet inventory; no caller nodes cross the wire.
+	ServerSlots []string `json:"serverSlots,omitempty"`
+	Requires    string   `json:"requires,omitempty"`
 	// ID is the stable DOM anchor ID (e.g., "gosx-island-0").
 	ID string `json:"id"`
 

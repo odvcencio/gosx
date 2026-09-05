@@ -206,8 +206,8 @@
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
-  function setupEventDelegation(islandRoot, islandID, eventSlots) {
-    const entries = [];
+  function setupEventDelegation(islandRoot, islandID, eventSlots, journal) {
+    const entries = journal || [];
     const declared = delegatedEventSet(eventSlots);
 
     for (const eventType of DELEGATED_EVENTS) {

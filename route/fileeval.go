@@ -14,6 +14,7 @@ import (
 	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/auth"
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island"
 	islandprogram "m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/session"
@@ -24,11 +25,12 @@ type fileRenderEnv struct {
 	funcs  map[string]any
 	// scope holds the copy-on-write chain of loop and component bindings that
 	// shadow values. See fileRenderScope.
-	scope           *fileRenderScope
-	components      map[string]any
-	renderEngine    func(engine.Config, gosx.Node) gosx.Node
-	renderIsland    func(*islandprogram.Program, any) gosx.Node
-	enableBootstrap func()
+	scope             *fileRenderScope
+	components        map[string]any
+	renderEngine      func(engine.Config, gosx.Node) gosx.Node
+	renderIsland      func(*islandprogram.Program, any) gosx.Node
+	renderServerSlots func(*islandprogram.Program, any, island.ServerSlots) (gosx.Node, error)
+	enableBootstrap   func()
 	// islandPreloadHints and islandPageHead compute the two framework-filled
 	// named slots a strict component may declare — {slotPreloadHints} and
 	// {slotPageHead} (gosx#249) — from the same page runtime renderIsland
@@ -215,6 +217,7 @@ func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderE
 		components:         make(map[string]any, len(env.components)+len(bindings.Components)),
 		renderEngine:       env.renderEngine,
 		renderIsland:       env.renderIsland,
+		renderServerSlots:  env.renderServerSlots,
 		enableBootstrap:    env.enableBootstrap,
 		islandPreloadHints: env.islandPreloadHints,
 		islandPageHead:     env.islandPageHead,
@@ -293,6 +296,7 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.values["params"] = cloneStringMap(ctx.Params)
 		env.renderEngine = ctx.Engine
 		env.renderIsland = ctx.Runtime().Island
+		env.renderServerSlots = ctx.Runtime().IslandWithServerSlots
 		env.enableBootstrap = ctx.Runtime().EnableBootstrap
 		env.islandPreloadHints = ctx.Runtime().PreloadHints
 		env.islandPageHead = func() gosx.Node { return ctx.Runtime().PageHeadWithNonce(ctx.Nonce()) }

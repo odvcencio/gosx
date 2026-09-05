@@ -485,6 +485,9 @@ func rewriteStaticExportHTML(routePath, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := validateExportServerSlotHost(root); err != nil {
+		return "", err
+	}
 
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {

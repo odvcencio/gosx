@@ -168,6 +168,9 @@ func putUint32(buf *bytes.Buffer, val uint32) {
 
 // EncodeBinary serializes an IslandProgram to a compact binary format.
 func EncodeBinary(p *Program) ([]byte, error) {
+	if err := p.ValidateServerSlots(); err != nil {
+		return nil, err
+	}
 	st := newStringTable()
 	st.internAll(p)
 
@@ -179,7 +182,11 @@ func EncodeBinary(p *Program) ([]byte, error) {
 
 	// Header: magic + version + section count
 	buf.Write(magic[:])
-	putUint16(&buf, binaryVersion)
+	version := binaryVersion
+	if p.HasServerSlots() {
+		version = 2
+	}
+	putUint16(&buf, version)
 	putUint16(&buf, sectionCount)
 
 	// writeSection writes tag + 4-byte length placeholder, invokes the
@@ -475,7 +482,7 @@ func DecodeBinary(data []byte) (*Program, error) {
 	if br.err != nil {
 		return nil, fmt.Errorf("binary decode: reading version: %w", br.err)
 	}
-	if version != binaryVersion {
+	if version != binaryVersion && version != 2 {
 		return nil, fmt.Errorf("binary decode: unsupported version %d", version)
 	}
 
@@ -530,6 +537,12 @@ func DecodeBinary(data []byte) (*Program, error) {
 		}
 	}
 
+	if p.HasServerSlots() && version != 2 {
+		return nil, fmt.Errorf("ServerSlot requires binary version 2")
+	}
+	if err := p.ValidateServerSlots(); err != nil {
+		return nil, err
+	}
 	return &p, nil
 }
 

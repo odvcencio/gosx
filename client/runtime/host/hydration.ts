@@ -5,13 +5,20 @@
 //
 // Chunks: bootstrap.js, bootstrap-feature-islands.js.
 // Calls 30h for the capability probe and 30a for event delegation.
-  async function hydrateIsland(entry) {
+  async function hydrateIsland(entry, serverSlotHost) {
     const root = islandRoot(entry);
     if (!root) return;
     if (entry.static) return;
 
     const program = await loadIslandProgram(entry, root);
     if (!program) return;
+    if (entry.requires === "server-slots-v1") {
+      const host = await ensureServerSlotHost(serverSlotHost);
+      // Loading is shared, but each owner revalidates its own live root.
+      if (document.getElementById(entry.id) !== root) return;
+      host.hydrate(entry, root, program);
+      return;
+    }
     if (!runIslandHydration(entry, root, program)) return;
     const listeners = gosxHost.events.setup(root, entry.id, entry.events);
     rememberHydratedIsland(entry, root, listeners);
@@ -280,7 +287,7 @@
 
     // Hydrate islands concurrently — each is independent.
     const promises = islands.map(function(entry) {
-      return hydrateIsland(entry).catch(function(e) {
+      return hydrateIsland(entry, manifest.serverSlotHost).catch(function(e) {
         console.error(`[gosx] unexpected error hydrating ${entry.id}:`, e);
       });
     });

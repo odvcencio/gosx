@@ -15,9 +15,12 @@ import (
 
 // Bridge manages active island instances and shared state.
 type Bridge struct {
-	islands        map[string]*vm.Island
-	computeIslands map[string]struct{}
-	engines        map[string]*vm.SceneAdapter
+	preparingServerSlots bool
+	serverSlotStages     map[string]*serverSlotStage
+	serverSlotToken      uint64
+	islands              map[string]*vm.Island
+	computeIslands       map[string]struct{}
+	engines              map[string]*vm.SceneAdapter
 	// boards holds canvas2d adapter instances (Phase 2). Typed as the
 	// Reconciler interface so the islands-only build can elide the concrete
 	// *vm.CanvasBoardAdapter from the binary entirely; the full build's
@@ -253,11 +256,14 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 	if err != nil {
 		return fmt.Errorf("decode program %q: %w", componentName, err)
 	}
+	if prog.HasServerSlots() && !b.preparingServerSlots {
+		return fmt.Errorf("ServerSlot requires staged ownership adoption")
+	}
 	propsJSON, err = normalizePropsJSON(componentName, propsJSON)
 	if err != nil {
 		return err
 	}
-	if _, exists := b.islands[id]; exists {
+	if _, exists := b.islands[id]; exists || b.serverSlotStages[id] != nil {
 		b.DisposeIsland(id)
 	}
 
@@ -414,6 +420,10 @@ func MarshalPatches(patches []vm.PatchOp) (string, error) {
 
 // DisposeIsland cleans up an island and unsubscribes from all shared signals.
 func (b *Bridge) DisposeIsland(id string) {
+	if stage := b.serverSlotStages[id]; stage != nil {
+		delete(b.serverSlotStages, id)
+		stage.bridge.DisposeIsland(id)
+	}
 	// Unsubscribe from shared signals first — prevents the subscription
 	// callback from firing on a disposed island.
 	if unsubs, ok := b.unsubs[id]; ok {

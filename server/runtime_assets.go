@@ -118,6 +118,10 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		serveYouTubeAudioBridge(w, r)
 		return
 	}
+	if name == "server-slots.js" {
+		serveServerSlotRuntime(w, r)
+		return
+	}
 
 	root := a.effectiveRuntimeRoot()
 	if root == "" {

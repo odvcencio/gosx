@@ -1380,6 +1380,22 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 		}
 		props = converted
 	}
+	if prog.HasServerSlots() {
+		if env.renderServerSlots == nil {
+			r.err = fmt.Errorf("ServerSlot island %s requires an ownership renderer", name)
+			return ""
+		}
+		slots := r.renderCallSlots(node.Slots, env)
+		if r.err != nil {
+			return ""
+		}
+		content, err := env.renderServerSlots(prog, props, slots)
+		if err != nil {
+			r.err = err
+			return ""
+		}
+		return renderFileNodeHTML(env, content)
+	}
 	return renderFileNodeHTML(env, env.island(prog, props))
 }
 

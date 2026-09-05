@@ -29,6 +29,9 @@ import (
 
 // Options controls transpiler behavior.
 type Options struct {
+	// RuntimeIslands emits explicit PageRuntime entries and threads a private
+	// request-local context through same-file strict component calls.
+	RuntimeIslands bool
 	// Schemas supplies explicit immutable ordinary-Go model visibility. It
 	// never injects declarations or resolves a filesystem package.
 	Schemas    *ir.SchemaSet
@@ -85,8 +88,19 @@ func Transpile(source []byte, opts Options) (string, error) {
 	}
 
 	t.serverComponents = make(map[string]bool)
+	if opts.RuntimeIslands {
+		if err := t.prepareRuntimeIslands(program); err != nil {
+			return "", err
+		}
+	}
+	t.serverSlotNames = make(map[string][]string)
+	t.slotNames = make(map[string][]string)
 	for _, comp := range program.Components {
 		t.serverComponents[comp.Name] = !comp.IsIsland && !comp.IsEngine
+		t.serverSlotNames[comp.Name] = append([]string(nil), comp.ServerSlots...)
+		if len(comp.ServerSlots) > 0 {
+			t.slotNames[comp.Name] = append([]string(nil), comp.ServerSlots...)
+		}
 	}
 	result := t.emit(root)
 	if len(t.errs) > 0 {
@@ -107,14 +121,17 @@ func Transpile(source []byte, opts Options) (string, error) {
 }
 
 type transpiler struct {
-	sourceStructs map[string]bool
-	schemas       *ir.SchemaSet
-	src           []byte
-	lang          *gotreesitter.Language
-	sourceFile    string
-	imports       map[string]string // alias -> path
-	propsTypes    map[string]string
-	propsFields   map[string]map[string]string
+	runtimeNames    map[string]string
+	runtimePrograms map[string]string
+	runtimePrefix   string
+	sourceStructs   map[string]bool
+	schemas         *ir.SchemaSet
+	src             []byte
+	lang            *gotreesitter.Language
+	sourceFile      string
+	imports         map[string]string // alias -> path
+	propsTypes      map[string]string
+	propsFields     map[string]map[string]string
 	// structFieldTypes records, per same-file struct name, each field's raw
 	// declared type text — collectStructFields' companion map, populated
 	// alongside propsFields. emitStrictEach uses it to name a strict
@@ -135,7 +152,9 @@ type transpiler struct {
 	// why that same tradeoff was made once already), so this walks the CST
 	// directly through componentDeclaredSlots, the same shape
 	// ir/lower.go's componentDeclaredSlots uses.
-	slotNames map[string][]string
+	slotNames          map[string][]string
+	serverSlotNames    map[string][]string
+	currentServerSlots []string
 	// currentPropsType is the props type of the strict component whose body
 	// is currently being emitted (empty outside strict emission) — needed
 	// to resolve a same-file <Each of> or spread source's element/struct
@@ -234,6 +253,9 @@ func (t *transpiler) emitSourceFile(n *gotreesitter.Node) string {
 	}
 	t.collectComponentProps(n)
 	t.resolveGoSXQualifier()
+	if t.runtimeNames != nil {
+		return t.emitRuntimeSourceFile(n)
+	}
 	if t.strictProjection {
 		return t.emitStrictSourceFile(n)
 	}
@@ -857,7 +879,8 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 	// walks the same body this function is about to emit, so the parameter
 	// list and the body's own {slotName} references can never name a
 	// different slot set.
-	for _, slot := range t.componentDeclaredSlots(bodyNode) {
+	declaredSlots := append(t.componentDeclaredSlots(bodyNode), t.serverSlotNames[t.text(nameNode)]...)
+	for _, slot := range declaredSlots {
 		if params != "" {
 			params += ", "
 		}
@@ -886,13 +909,19 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 
 	prevPropsType := t.currentPropsType
 	prevServer := t.strictServer
+	prevSlots := t.currentServerSlots
+	t.currentServerSlots = t.serverSlotNames[t.text(nameNode)]
 	t.strictServer = t.serverComponents[t.text(nameNode)]
 	t.currentPropsType = t.propsTypes[t.text(nameNode)]
 	t.strict++
 	body := t.emitDefault(bodyNode)
 	t.strict--
 	t.strictServer = prevServer
+	t.currentServerSlots = prevSlots
 	t.currentPropsType = prevPropsType
+	if t.runtimeNames != nil {
+		return t.emitRuntimeComponent(n, params, body)
+	}
 	return "func " + t.text(nameNode) + "(" + params + ") " + t.gosxRef("Node") + " " + body
 }
 
@@ -1365,6 +1394,9 @@ func rawTextBody(raw string) string {
 
 func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	tag := t.extractTagName(n)
+	if tag == "ServerSlot" && len(t.currentServerSlots) > 0 {
+		return t.emitServerSlot(n)
+	}
 	if t.isStrictManagedLinkTag(tag) {
 		return t.emitStrictManagedLink(n, nil)
 	}
@@ -1563,7 +1595,11 @@ func (t *transpiler) emitComponentCall(tag string, attrs []string, children []st
 	proplessStrict := t.isProplessStrictComponent(tag)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s(", tag)
+	callName := tag
+	if internal, ok := t.runtimeNames[tag]; ok {
+		callName = internal
+	}
+	fmt.Fprintf(&b, "%s(", callName)
 
 	// wroteArg tracks whether the call has written its first argument yet,
 	// so the slot loop below can prepend its own separating comma correctly
@@ -1582,7 +1618,14 @@ func (t *transpiler) emitComponentCall(tag string, attrs []string, children []st
 	// (strictcheck/check_test.go), which fails on the unfixed code and
 	// passes here — independent of and predating gosx#249's named slots.
 	wroteArg := false
+	if callName != tag {
+		b.WriteString(t.runtimePrefix + "ctx")
+		wroteArg = true
+	}
 	if !proplessStrict && (len(attrs) > 0 || len(children) > 0) {
+		if wroteArg {
+			b.WriteString(", ")
+		}
 		b.WriteString(t.gosxRef("Props") + "(")
 		b.WriteString(strings.Join(attrs, ", "))
 		b.WriteByte(')')
@@ -1788,8 +1831,15 @@ func (t *transpiler) gosxUIPropsType(tag string) (string, bool) {
 func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []string, children []string, slotArgs []string) string {
 	var b strings.Builder
 	literalType, pointer := typedPropsLiteralType(propsType)
-	b.WriteString(tag)
+	callName := tag
+	if internal, ok := t.runtimeNames[tag]; ok {
+		callName = internal
+	}
+	b.WriteString(callName)
 	b.WriteByte('(')
+	if callName != tag {
+		b.WriteString(t.runtimePrefix + "ctx, ")
+	}
 	if pointer {
 		b.WriteByte('&')
 	}

@@ -52,6 +52,7 @@ func registerRuntime(b *bridge.Bridge) {
 	// gosx-preview=1 query parameter.
 	registerCrossFrameRelay(b)
 	registerRuntimeABI(b)
+	registerServerSlotRuntime(b)
 }
 
 func setRuntimeFunc(name string, fn js.Func) {

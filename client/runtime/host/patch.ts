@@ -89,6 +89,12 @@
     var root = islandWrapper.firstElementChild || islandWrapper;
 
     if (!ops || ops.length === 0) return;
+    const owner = window.__gosx && window.__gosx.islands && window.__gosx.islands.get(islandID);
+    if (owner && owner.serverSlots) {
+	  if (!gosxHost.serverSlots || gosxHost.serverSlots.version !== 1 || typeof gosxHost.serverSlots.validatePatches !== "function") throw new Error("ServerSlot patch capability unavailable");
+      if (owner.root !== islandWrapper) throw new Error("ServerSlot root ownership changed");
+      gosxHost.serverSlots.validatePatches(islandWrapper, ops, owner.serverSlots);
+    }
 
     // Preserve the user's focus and selection so patching doesn't disrupt them.
     var focusState = saveFocus(root);

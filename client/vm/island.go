@@ -354,13 +354,27 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 // carried a whole subtree by itself. The read-set analysis proves the same
 // property for a subtree and covers the dynamic-but-unchanged case too.
 func (island *Island) Reconcile() []PatchOp {
+	if island.program.HasServerSlots() {
+		if err := island.ValidateServerSlotValues(); err != nil {
+			island.vm.recordDiagnostic(Diagnostic{Severity: DiagnosticError, Code: "server_slot_value", Message: err.Error()})
+			return nil
+		}
+	}
 	island.ensureReuse()
 	next := island.nextTreeBuffer()
 	island.evalTreeInto(next)
+	if err := ValidateServerSlotTransition(island.prev, next); err != nil {
+		island.vm.recordDiagnostic(Diagnostic{Severity: DiagnosticError, Code: "server_slot_transition", Message: err.Error()})
+		// Evaluation refreshed reuse epochs/spans against the rejected tree.
+		// Rebuild that private plan before the next accepted reconciliation.
+		island.reuse = nil
+		island.reuseBuilt = false
+		return nil
+	}
 	if island.diff == nil {
 		island.diff = &diffWalk{}
 	}
-	ops := reconcileTreesInto(island.diff, island.prev, next, island.program.StaticMask, island.verbatimSpans())
+	ops := reconcileValidatedTreesInto(island.diff, island.prev, next, island.program.StaticMask, island.verbatimSpans())
 	// The tree that was current becomes the buffer the walk after next
 	// writes into. It stays readable until then, which is what
 	// CurrentTree's one-reconcile validity window states.
