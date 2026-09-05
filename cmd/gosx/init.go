@@ -604,7 +604,7 @@ component TransitionPanel(props: TransitionPanelProps) {
 func appNotFoundTemplate() string {
 	return `package app
 
-func Page() Node {
+component NotFound() {
 	return <main class="shell">
 		<span class="eyebrow">404</span>
 		<h1>Page not found</h1>
@@ -623,7 +623,7 @@ func Page() Node {
 func appErrorTemplate() string {
 	return `package app
 
-func Page() Node {
+component Error() {
 	return <main class="shell">
 		<span class="eyebrow">500</span>
 		<h1>Something broke</h1>

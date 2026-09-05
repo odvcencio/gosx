@@ -1,6 +1,6 @@
 package docs
 
-func Layout() Node {
+component Layout() {
 	return <section class="docs-section">
 		<div class="docs-section-head">
 			<span class="eyebrow">Docs Path</span>
@@ -15,6 +15,6 @@ func Layout() Node {
 				</p>
 			</div>
 		</div>
-		<Slot />
+		{children}
 	</section>
 }

@@ -1,6 +1,6 @@
 package docs
 
-func Page() Node {
+component NotFound() {
 	return <article class="prose">
 		<div class="page-topper">
 			<span class="eyebrow">Docs Missing</span>
