@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/format"
@@ -57,12 +58,16 @@ func Analyze(path string, source []byte) []Diagnostic {
 }
 
 func diagnosticsForError(err error) []Diagnostic {
+	return diagnosticsForSourceError(nil, err)
+}
+
+func diagnosticsForSourceError(source []byte, err error) []Diagnostic {
 	var diagErr *ir.DiagnosticsError
 	if errors.As(err, &diagErr) && diagErr != nil && len(diagErr.Diagnostics) > 0 {
 		diags := make([]Diagnostic, 0, len(diagErr.Diagnostics))
 		for _, raw := range diagErr.Diagnostics {
 			diags = append(diags, Diagnostic{
-				Range:    rangeFromSpan(raw.Span),
+				Range:    rangeFromSpanInSource(source, raw.Span),
 				Severity: SeverityError,
 				Source:   "gosx",
 				Message:  diagnosticMessage(raw),
@@ -70,7 +75,7 @@ func diagnosticsForError(err error) []Diagnostic {
 		}
 		return diags
 	}
-	return []Diagnostic{diagnosticForError(err)}
+	return []Diagnostic{diagnosticForSourceError(source, err)}
 }
 
 // FormatSource runs the canonical GoSX formatter.
@@ -79,6 +84,10 @@ func FormatSource(source []byte) ([]byte, error) {
 }
 
 func diagnosticForError(err error) Diagnostic {
+	return diagnosticForSourceError(nil, err)
+}
+
+func diagnosticForSourceError(source []byte, err error) Diagnostic {
 	if err == nil {
 		return Diagnostic{
 			Range:    zeroRange(),
@@ -92,6 +101,16 @@ func diagnosticForError(err error) Diagnostic {
 	if errors.As(err, &parseErr) {
 		line := clampZeroBased(parseErr.Line - 1)
 		col := clampZeroBased(parseErr.Column - 1)
+		start := byteOffsetForSourcePoint(string(source), line, col)
+		end := nextRuneBoundary(string(source), start)
+		if len(source) > 0 {
+			return Diagnostic{
+				Range:    protocolRangeForByteRange(string(source), byteRange{start: start, end: end}),
+				Severity: SeverityError,
+				Source:   "gosx",
+				Message:  parseErr.Message,
+			}
+		}
 		return Diagnostic{
 			Range: Range{
 				Start: Position{Line: line, Character: col},
@@ -119,6 +138,10 @@ func diagnosticMessage(diag ir.Diagnostic) string {
 }
 
 func rangeFromSpan(span ir.Span) Range {
+	return rangeFromSpanInSource(nil, span)
+}
+
+func rangeFromSpanInSource(source []byte, span ir.Span) Range {
 	startLine := clampZeroBased(span.StartLine - 1)
 	startCol := clampZeroBased(span.StartCol - 1)
 	endLine := startLine
@@ -132,10 +155,33 @@ func rangeFromSpan(span ir.Span) Range {
 			endCol = startCol + 1
 		}
 	}
-	return Range{
-		Start: Position{Line: startLine, Character: startCol},
-		End:   Position{Line: endLine, Character: endCol},
+	if len(source) == 0 {
+		return Range{
+			Start: Position{Line: startLine, Character: startCol},
+			End:   Position{Line: endLine, Character: endCol},
+		}
 	}
+	sourceText := string(source)
+	start := byteOffsetForSourcePoint(sourceText, startLine, startCol)
+	end := byteOffsetForSourcePoint(sourceText, endLine, endCol)
+	if end <= start {
+		end = nextRuneBoundary(sourceText, start)
+	}
+	return protocolRangeForByteRange(sourceText, byteRange{start: start, end: end})
+}
+
+func nextRuneBoundary(source string, offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	if offset >= len(source) {
+		return len(source)
+	}
+	_, size := utf8.DecodeRuneInString(source[offset:])
+	if size <= 0 {
+		return offset + 1
+	}
+	return offset + size
 }
 
 func zeroRange() Range {

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -34,10 +37,11 @@ type responseError struct {
 }
 
 type server struct {
-	docs     map[string]string
-	reader   *bufio.Reader
-	writer   io.Writer
-	shutdown bool
+	docs                  map[string]string
+	projectDiagnosticURIs map[string]map[string]struct{}
+	reader                *bufio.Reader
+	writer                io.Writer
+	shutdown              bool
 }
 
 type textDocumentItem struct {
@@ -103,9 +107,10 @@ type textEdit struct {
 // Serve runs a minimal LSP server over stdio.
 func Serve(stdin io.Reader, stdout io.Writer) error {
 	s := &server{
-		docs:   make(map[string]string),
-		reader: bufio.NewReader(stdin),
-		writer: stdout,
+		docs:                  make(map[string]string),
+		projectDiagnosticURIs: make(map[string]map[string]struct{}),
+		reader:                bufio.NewReader(stdin),
+		writer:                stdout,
 	}
 
 	for {
@@ -219,7 +224,7 @@ func (s *server) handle(req request) error {
 		return s.respond(req.ID, []textEdit{{
 			Range: Range{
 				Start: Position{Line: 0, Character: 0},
-				End:   Position{Line: 1 << 20, Character: 0},
+				End:   protocolPositionForByteOffset(source, len(source)),
 			},
 			NewText: string(formatted),
 		}})
@@ -282,12 +287,103 @@ func (s *server) publishDiagnostics(uri string) error {
 func (s *server) publishProjectDiagnostics(uri string) error {
 	source := s.docs[uri]
 	path := URIToPath(uri)
+	scopeKey := projectDiagnosticScopeKey(path)
 	diags := Analyze(path, []byte(source))
-	diags = append(diags, AnalyzeProject(path)...)
+	owned := analyzeProjectOwned(path)
+	current := make(map[string]struct{}, len(owned))
+	ownedByURI := make(map[string][]Diagnostic, len(owned))
+	for _, result := range owned {
+		if result.URI == "" {
+			continue
+		}
+		if openSource, open := s.docs[result.URI]; open {
+			ownerPath := URIToPath(result.URI)
+			diskSource, err := os.ReadFile(ownerPath)
+			if err != nil || openSource != string(diskSource) {
+				// Project diagnostics are derived from saved disk source. If an
+				// editor has a newer unsaved buffer for the owning document, keep
+				// only its fast in-memory diagnostics instead of publishing stale
+				// disk ranges into that buffer.
+				continue
+			}
+		}
+		current[result.URI] = struct{}{}
+		ownedByURI[result.URI] = append(ownedByURI[result.URI], result.Diagnostics...)
+	}
+	if _, ok := current[uri]; !ok {
+		current[uri] = struct{}{}
+	}
+	if len(diags) > 0 || len(ownedByURI[uri]) > 0 {
+		ownedByURI[uri] = append(diags, ownedByURI[uri]...)
+	}
+	for _, ownerURI := range sortedStringKeys(ownedByURI) {
+		if ownerURI == uri {
+			continue
+		}
+		projectDiags := ownedByURI[ownerURI]
+		all := s.fastDiagnostics(ownerURI)
+		all = append(all, projectDiags...)
+		if err := s.publishDiagnosticsList(ownerURI, all); err != nil {
+			return err
+		}
+	}
+	if err := s.publishDiagnosticsList(uri, ownedByURI[uri]); err != nil {
+		return err
+	}
+	for _, previous := range sortedSetKeys(s.projectDiagnosticURIs[scopeKey]) {
+		if _, stillOwned := current[previous]; stillOwned {
+			continue
+		}
+		if err := s.publishDiagnosticsList(previous, s.fastDiagnostics(previous)); err != nil {
+			return err
+		}
+	}
+	s.projectDiagnosticURIs[scopeKey] = current
+	return nil
+}
+
+func (s *server) fastDiagnostics(uri string) []Diagnostic {
+	source, ok := s.docs[uri]
+	if !ok {
+		return nil
+	}
+	return Analyze(URIToPath(uri), []byte(source))
+}
+
+func (s *server) publishDiagnosticsList(uri string, diags []Diagnostic) error {
+	if diags == nil {
+		diags = []Diagnostic{}
+	}
 	return s.notify("textDocument/publishDiagnostics", map[string]any{
 		"uri":         uri,
 		"diagnostics": diags,
 	})
+}
+
+func projectDiagnosticScopeKey(path string) string {
+	dir := filepath.Dir(path)
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return filepath.Clean(dir)
+}
+
+func sortedSetKeys(set map[string]struct{}) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedStringKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (s *server) notify(method string, params any) error {
