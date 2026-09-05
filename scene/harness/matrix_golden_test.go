@@ -334,6 +334,7 @@ func shadowScene(headingRadians float64) scene.Props {
 
 	nodes := []scene.Node{
 		scene.Mesh{ID: "ground", Position: scene.Vec3(groundX, 0, groundZ),
+			Rotation:      scene.Euler{Y: -headingRadians},
 			Geometry:      scene.PlaneGeometry{Width: 40, Height: 40},
 			Material:      scene.StandardMaterial{Color: "#8a8a8a", Roughness: 0.9},
 			ReceiveShadow: true},
@@ -342,6 +343,7 @@ func shadowScene(headingRadians float64) scene.Props {
 		nodes = append(nodes, scene.Mesh{
 			ID:         fmt.Sprintf("caster%d", index),
 			Position:   scene.Vec3(groundX+rightX*offset, 2, groundZ+rightZ*offset),
+			Rotation:   scene.Euler{Y: -headingRadians},
 			Geometry:   scene.CubeGeometry{Size: 1.6},
 			Material:   scene.StandardMaterial{Color: "#8a8a8a", Roughness: 0.9},
 			CastShadow: true,
@@ -694,11 +696,34 @@ func meanLuminance(img *image.RGBA) float64 {
 // shadow at every heading. The rotation-blind fit produced shadows only near
 // heading zero, and every test in the repository passed.
 func TestShadowAreaHoldsAcrossHeadings(t *testing.T) {
+	pairedCount := func(heading float64) int {
+		on, err := preview.Render(shadowScene(heading), shadowOptions(heading, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		off, err := preview.Render(shadowScene(heading), shadowOptions(heading, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		diff, err := imagediff.Compare(off.Image, on.Image, imagediff.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff.ChangedPixels == 0 {
+			t.Errorf("heading %.2f shadows changed no pixels", heading)
+		}
+		return diff.ChangedPixels
+	}
+	basePaired := pairedCount(0)
 	reference := shadowedPixelCount(t, 0)
 	if reference == 0 {
 		t.Fatal("heading zero painted no shadow, so this test cannot measure the fit")
 	}
 	for _, heading := range []float64{math.Pi / 2, math.Pi, -math.Pi / 2, 2.3} {
+		paired := pairedCount(heading)
+		if math.Abs(float64(paired-basePaired)) > float64(basePaired)*0.05+12 {
+			t.Errorf("heading %.2f paired shadow pixels=%d, heading zero=%d", heading, paired, basePaired)
+		}
 		got := shadowedPixelCount(t, heading)
 		if got == 0 {
 			t.Errorf("heading %.2f painted no shadow; the cascade fit ignores the camera heading", heading)

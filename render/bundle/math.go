@@ -186,8 +186,34 @@ func computeMVP(cam engine.RenderCamera, width, height int) mat4 {
 	if far <= 0 {
 		far = 100
 	}
-	proj := mat4Perspective(fov, aspect, near, far)
+	var proj mat4
+	if cam.Mode == "orthographic" {
+		left, right, bottom, top := orthographicCameraBounds(cam, width, height)
+		proj = mat4OrthographicAsym(left, right, bottom, top, near, far)
+	} else {
+		proj = mat4Perspective(fov, aspect, near, far)
+	}
 	return mat4Mul(proj, cameraViewMatrix(cam))
+}
+
+// orthographicCameraBounds preserves the authored midpoint while zooming the
+// spans, matching Scene3D's browser bounds resolver. A Go zero-value zoom is
+// the omitted/default value, not the browser's explicitly authored zero.
+func orthographicCameraBounds(cam engine.RenderCamera, width, height int) (left, right, bottom, top float32) {
+	l, r, b, t := cam.Left, cam.Right, cam.Bottom, cam.Top
+	if math.Abs(r-l) <= 1e-6 || math.Abs(t-b) <= 1e-6 {
+		aspect := math.Max(.0001, float64(width)/float64(max(1, height)))
+		l, r, b, t = -3*aspect, 3*aspect, -3, 3
+	}
+	zoom := cam.Zoom
+	if zoom <= 0 {
+		zoom = 1
+	}
+	zoom = math.Max(.0001, zoom)
+	cx, cy := (l+r)/2, (b+t)/2
+	hw := math.Max(1e-6, math.Abs(r-l)/2/zoom)
+	hh := math.Max(1e-6, math.Abs(t-b)/2/zoom)
+	return float32(cx - hw), float32(cx + hw), float32(cy - hh), float32(cy + hh)
 }
 
 // cameraViewMatrix builds the world-to-view matrix for a 3D camera:

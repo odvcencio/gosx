@@ -563,20 +563,11 @@ func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay 
 	nxNorm := (float32(x)+0.5)/float32(max(1, width))*2 - 1
 	nyNorm := 1 - (float32(y)+0.5)/float32(max(1, height))*2
 	if cam.Mode == "orthographic" {
-		zoom := float32(cam.Zoom)
-		if zoom <= 0 {
-			zoom = 1
-		}
-		halfWidth := float32(cam.Right-cam.Left) / 2 / zoom
-		halfHeight := float32(cam.Top-cam.Bottom) / 2 / zoom
-		if halfWidth <= 0 {
-			halfWidth = 1
-		}
-		if halfHeight <= 0 {
-			halfHeight = 1
-		}
+		left, right, bottom, top := orthographicCameraBounds(cam, width, height)
+		localX := (left+right)/2 + nxNorm*(right-left)/2
+		localY := (bottom+top)/2 + nyNorm*(top-bottom)/2
 		invRot := mat4Mul(mat4RotateY(-float32(cam.RotationY)), mat4RotateX(-float32(cam.RotationX)))
-		offset := transformVector(invRot, [3]float32{nxNorm * halfWidth, nyNorm * halfHeight, 0})
+		offset := transformVector(invRot, [3]float32{localX, localY, 0})
 		forward := transformVector(invRot, [3]float32{0, 0, -1})
 		forward = normalize3(forward[0], forward[1], forward[2])
 		return pickRay{

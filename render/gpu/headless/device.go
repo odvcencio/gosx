@@ -1491,9 +1491,14 @@ func projectClip(clip [4]float32, width, height int) (float32, float32, float32,
 		math.IsInf(float64(ndcY), 0) || math.IsInf(float64(ndcZ), 0) {
 		return 0, 0, 0, false
 	}
-	sx := (ndcX*0.5 + 0.5) * float32(width-1)
-	sy := (1 - (ndcY*0.5 + 0.5)) * float32(height-1)
+	sx, sy := viewportCoordinates(ndcX, ndcY, width, height)
 	return sx, sy, ndcZ, true
+}
+
+// viewportCoordinates maps clip edges to framebuffer edges. Raster samples
+// lie at half-integer pixel centers, including in a one-pixel viewport.
+func viewportCoordinates(ndcX, ndcY float32, width, height int) (float32, float32) {
+	return (ndcX*0.5 + 0.5) * float32(width), (0.5 - ndcY*0.5) * float32(height)
 }
 
 func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int) {
@@ -1557,7 +1562,7 @@ func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int)
 			continue
 		}
 		x, y, depth, ok := transformToScreen(viewProj, pos, target.width, target.height)
-		if !ok || pointOutsideClip(depth) || !depthPasses(target, int(x+0.5), int(y+0.5), depth) {
+		if !ok || pointOutsideClip(depth) {
 			continue
 		}
 		size := mix(sizeStart, sizeEnd, t)
@@ -1568,15 +1573,15 @@ func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int)
 			B: clampByte(mix(colorStart[2], colorEnd[2], t) * alpha),
 			A: clampByte(alpha),
 		}
-		cx := int(math.Round(float64(x)))
-		cy := int(math.Round(float64(y)))
+		cx := int(math.Floor(float64(x)))
+		cy := int(math.Floor(float64(y)))
 		for py := cy - radius; py <= cy+radius; py++ {
 			for px := cx - radius; px <= cx+radius; px++ {
 				if px < 0 || px >= target.width || py < 0 || py >= target.height {
 					continue
 				}
-				dx := float64(px - cx)
-				dy := float64(py - cy)
+				dx := float64(px) + 0.5 - float64(x)
+				dy := float64(py) + 0.5 - float64(y)
 				if dx*dx+dy*dy > float64(radius*radius) {
 					continue
 				}
@@ -1844,8 +1849,7 @@ func transformToScreen(m [16]float32, p [3]float32, width, height int) (float32,
 		math.IsInf(float64(ndcY), 0) || math.IsInf(float64(ndcZ), 0) {
 		return 0, 0, 0, false
 	}
-	sx := (ndcX*0.5 + 0.5) * float32(width-1)
-	sy := (1 - (ndcY*0.5 + 0.5)) * float32(height-1)
+	sx, sy := viewportCoordinates(ndcX, ndcY, width, height)
 	return sx, sy, ndcZ, true
 }
 

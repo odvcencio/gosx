@@ -10,6 +10,7 @@ import (
 
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/bundle"
+	"m31labs.dev/gosx/scene/imagediff"
 )
 
 // shadowSceneWidth and shadowSceneHeight keep the rasterized shadow fixtures
@@ -43,9 +44,9 @@ func shadowScene(headingRadians float64) engine.RenderBundle {
 	groundX := forward[0] * 8
 	groundZ := forward[1] * 8
 	ground := []float64{
-		1, 0, 0, 0,
+		cos, 0, sin, 0,
 		0, 1, 0, 0,
-		0, 0, 1, 0,
+		-sin, 0, cos, 0,
 		groundX, 0, groundZ, 1,
 	}
 
@@ -55,9 +56,9 @@ func shadowScene(headingRadians float64) engine.RenderBundle {
 		x := groundX + right[0]*offset
 		z := groundZ + right[1]*offset
 		cubes = append(cubes,
-			1, 0, 0, 0,
+			cos, 0, sin, 0,
 			0, 1, 0, 0,
-			0, 0, 1, 0,
+			-sin, 0, cos, 0,
 			x, 2, z, 1,
 		)
 	}
@@ -113,6 +114,10 @@ func renderShadowScene(t *testing.T, headingRadians float64) *image.RGBA {
 // renderShadowSceneWithToneMap draws one heading under one tone-map name. An
 // empty name takes the default, which resolveToneMapConfig turns into ACES.
 func renderShadowSceneWithToneMap(t *testing.T, headingRadians float64, toneMapping string) *image.RGBA {
+	return renderShadowSceneWithOptions(t, headingRadians, toneMapping, true)
+}
+
+func renderShadowSceneWithOptions(t *testing.T, headingRadians float64, toneMapping string, shadows bool) *image.RGBA {
 	t.Helper()
 	d, surface := New(shadowSceneWidth, shadowSceneHeight)
 	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
@@ -121,6 +126,11 @@ func renderShadowSceneWithToneMap(t *testing.T, headingRadians float64, toneMapp
 	}
 	defer r.Destroy()
 	frame := shadowScene(headingRadians)
+	if !shadows {
+		for i := range frame.InstancedMeshes {
+			frame.InstancedMeshes[i].CastShadow = false
+		}
+	}
 	frame.Environment.ToneMapping = toneMapping
 	if err := r.Frame(frame, shadowSceneWidth, shadowSceneHeight, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
@@ -168,6 +178,18 @@ func shadowedPixels(img *image.RGBA) (shadowed, lit int) {
 // heading zero and left the ground flat-lit everywhere else.
 func TestShadowedSceneRendersShadowsAtEveryHeading(t *testing.T) {
 	base := renderShadowScene(t, 0)
+	pairedCount := func(heading float64, on *image.RGBA) int {
+		off := renderShadowSceneWithOptions(t, heading, "", false)
+		diff, err := imagediff.Compare(off, on, imagediff.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff.ChangedPixels == 0 {
+			t.Errorf("heading %.2f shadows changed no pixels", heading)
+		}
+		return diff.ChangedPixels
+	}
+	basePaired := pairedCount(0, base)
 	baseShadow, baseLit := shadowedPixels(base)
 	if baseShadow == 0 {
 		t.Fatalf("heading 0 rendered no shadow at all: %d lit pixels", baseLit)
@@ -178,6 +200,10 @@ func TestShadowedSceneRendersShadowsAtEveryHeading(t *testing.T) {
 
 	for _, heading := range []float64{math.Pi / 2, math.Pi, -math.Pi / 2, 2.3} {
 		img := renderShadowScene(t, heading)
+		paired := pairedCount(heading, img)
+		if math.Abs(float64(paired-basePaired)) > float64(basePaired)*0.03+8 {
+			t.Errorf("heading %.2f paired shadow pixels=%d, heading zero=%d", heading, paired, basePaired)
+		}
 		shadow, lit := shadowedPixels(img)
 		if shadow == 0 {
 			t.Errorf("heading %.2f rendered no shadow; the cascade fit ignores the camera heading", heading)
@@ -521,7 +547,8 @@ func TestLuminanceGoldenCodecRoundTrips(t *testing.T) {
 // The curve separated two levels that used to share a ramp step. A shadowed
 // ground sample now reads 2 and an unlit cube face reads 1. Read the shape of
 // the three patches first; the gap between those two values is small.
-const shadowGoldenHeading0 = `0*240,6*47,0,6*64,1,6*13,1,6*26,1*8,6*4,1*5,6*4,1*8,6*20,1*7,6*4,1*5,6*4,1*7,6*21,` +
-	`1*7,6*4,1*5,6*4,1*7,6*21,1*7,6*4,1*5,6*4,1*7,6*22,1*6,6*4,1*5,6*4,1*6,6*23,1*5,6*5,` +
-	`1*5,6*5,1*5,6*25,2*5,6*3,2*5,6*3,2*5,6*27,2*4,6*4,2*5,6*4,2*4,6*26,2*5,6*4,2*5,6*4,` +
-	`2*5,6*733`
+// Viewport edge/sample-center correction moves 58 of 1536 quantized pixels;
+// the paired shadow-on/off heading regression above preserves real shadows.
+const shadowGoldenHeading0 = `0*241,6*46,0,6*112,1,6*14,1,6*26,1*7,6*4,1*6,6*4,1*7,6*20,1*7,6*4,1*6,6*4,1*7,6*20,` +
+	`1*8,6*3,1*6,6*3,1*8,6*21,1*6,6*4,1*6,6*4,1*6,6*22,1*6,6*4,1*6,6*4,1*6,6*72,2*5,6*4,` +
+	`2*4,6*4,2*5,6*26,2*4,6*5,2*4,6*5,2*4,6*733`
