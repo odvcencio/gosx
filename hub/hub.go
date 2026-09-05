@@ -111,7 +111,8 @@ type Client struct {
 	binarySend chan []byte
 	syncStates *peerSyncState
 	mu         sync.Mutex
-	// closed is set under mu by removeClient before it closes send/binarySend.
+	// mu protects queue sends and terminal state, never socket writes.
+	// closed is set under mu before removal, disconnect, or failed CRDT enqueue.
 	// trySend/tryBinarySend check it under the same mu before writing, so a
 	// send can never race with the close of the same channel — see trySend.
 	closed bool
@@ -139,9 +140,11 @@ type Client struct {
 // is counted. These counters make it visible.
 //
 // Text counts messages queued by Broadcast, BroadcastWhere, Send, and latch
-// replay. Binary counts CRDT sync frames. A binary drop is not data loss for a
-// CRDT document, because the next sync round recomputes what the peer still
-// needs; a text drop is permanent loss for that client.
+// replay. Binary counts CRDT sync and application binary frames. A failed
+// CRDT enqueue terminates that connection: reconnecting starts fresh sync
+// state and recomputes what the peer needs, even without another edit. Queued
+// frames are not delivery acknowledgments; a socket-write failure also closes
+// the connection. Text and application binary drops remain best-effort loss.
 type DropStats struct {
 	Text   uint64
 	Binary uint64
@@ -237,7 +240,8 @@ func (c *Client) trySend(msg []byte) bool {
 	}
 }
 
-// tryBinarySend is trySend for the binary (CRDT sync) channel.
+// tryBinarySend is trySend for best-effort application binary messages.
+// CRDT sync uses queueSyncMessage's terminal-on-overflow transaction instead.
 func (c *Client) tryBinarySend(msg []byte) bool {
 	c.mu.Lock()
 	if c.closed {
@@ -492,10 +496,12 @@ func (h *Hub) Disconnect(clientID, reason string) bool {
 		client.mu.Unlock()
 		return false
 	}
-	_ = client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	client.closed = true
+	client.mu.Unlock()
+	// WriteControl and Close may run concurrently with the sole data writer.
+	// SetWriteDeadline may not: writePump owns that field and all data writes.
 	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason), time.Now().Add(writeWait))
 	_ = client.conn.Close()
-	client.mu.Unlock()
 	return true
 }
 
@@ -806,38 +812,30 @@ func (c *Client) writePump() {
 		select {
 		case msg, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			if !ok {
 				// The send channel was closed.
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
 
 			err := c.conn.WriteMessage(websocket.TextMessage, msg)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
 		case msg, ok := <-c.binarySend:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			if !ok {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
 
 			err := c.conn.WriteMessage(websocket.BinaryMessage, msg)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}

@@ -259,12 +259,38 @@ func (h *Hub) queueSyncMessage(client *Client, binding *syncedDoc) {
 		return
 	}
 	state := client.syncStates.docState(binding.prefix)
+	// Generating a sync message advances optimistic per-peer sent state. Keep
+	// generation, enqueue, and terminal-failure marking in one transaction so
+	// another producer cannot reuse that state after a failed enqueue. This
+	// mutex protects queue ownership only; writePump never holds it for I/O.
+	client.mu.Lock()
+	if client.closed {
+		client.mu.Unlock()
+		return
+	}
 	msg, ok := binding.doc.GenerateSyncMessage(state)
 	if !ok {
+		client.mu.Unlock()
 		return
 	}
 	payload := append([]byte{binding.prefix}, msg...)
-	client.tryBinarySend(payload)
+	select {
+	case client.binarySend <- payload:
+		client.mu.Unlock()
+		// Queued is not acknowledged or even written. writePump closes the
+		// connection on write failure; a reconnect starts fresh peer states.
+		return
+	default:
+		client.closed = true
+		client.mu.Unlock()
+	}
+	client.recordDrop(true)
+	// Do not attempt a close-frame write: the socket may already be blocked.
+	// Close interrupts it, and readPump owns normal removal/leave cleanup.
+	// No hub, document, or client lock is held while closing the socket.
+	if client.conn != nil {
+		_ = client.conn.Close()
+	}
 }
 
 func (h *Hub) broadcastSyncDoc(prefix byte) {
