@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -649,6 +650,8 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		"dist/platform/deployment.json",
 		"dist/platform/vercel.json",
 		"dist/server/app",
+		"dist/public/favicon.ico",
+		"dist/static/favicon.ico",
 		"dist/static/index.html",
 		"dist/static/stack/index.html",
 	} {
@@ -669,6 +672,16 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	if !strings.Contains(stackHTML, `href="../styles.css"`) {
 		t.Fatalf("expected export-safe nested asset url in %q", stackHTML)
 	}
+	if !strings.Contains(stackHTML, `rel="icon"`) || !strings.Contains(stackHTML, `href="../favicon.ico"`) {
+		t.Fatalf("expected export-safe nested favicon link in %q", stackHTML)
+	}
+	sourceIcon := readBytes(t, filepath.Join(dir, "public", "favicon.ico"))
+	distPublicIcon := readBytes(t, filepath.Join(dir, "dist", "public", "favicon.ico"))
+	distStaticIcon := readBytes(t, filepath.Join(dir, "dist", "static", "favicon.ico"))
+	if !bytes.Equal(sourceIcon, distPublicIcon) || !bytes.Equal(sourceIcon, distStaticIcon) {
+		t.Fatalf("starter favicon changed across prod/static propagation")
+	}
+	assertStarterFaviconICO(t, distStaticIcon)
 
 	edgeWorker := readFile(t, filepath.Join(dir, "dist", "edge", "worker.js"))
 	for _, snippet := range []string{

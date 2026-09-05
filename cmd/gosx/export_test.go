@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/index.html",
 		"dist/static/stack/index.html",
 		"dist/static/404.html",
+		"dist/static/favicon.ico",
 		"dist/static/styles.css",
 		"dist/export.json",
 	} {
@@ -41,6 +43,8 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	for _, snippet := range []string{
 		"<title>My GoSX App</title>",
 		"GoSX Starter",
+		`rel="icon"`,
+		`href="favicon.ico"`,
 		`href="styles.css"`,
 	} {
 		if !strings.Contains(indexHTML, snippet) {
@@ -51,11 +55,22 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	if !strings.Contains(stackHTML, `href="../styles.css"`) {
 		t.Fatalf("expected relative stylesheet url in nested export page, got %q", stackHTML)
 	}
+	if !strings.Contains(stackHTML, `rel="icon"`) || !strings.Contains(stackHTML, `href="../favicon.ico"`) {
+		t.Fatalf("expected relative favicon url in nested export page, got %q", stackHTML)
+	}
 
 	notFoundHTML := readFile(t, filepath.Join(dir, "dist", "static", "404.html"))
 	if !strings.Contains(notFoundHTML, "Page not found") {
 		t.Fatalf("expected exported 404 page, got %q", notFoundHTML)
 	}
+	if !strings.Contains(notFoundHTML, `rel="icon"`) || !strings.Contains(notFoundHTML, `href="../favicon.ico"`) {
+		t.Fatalf("expected favicon link in exported 404 page, got %q", notFoundHTML)
+	}
+	staticIcon := readBytes(t, filepath.Join(dir, "dist", "static", "favicon.ico"))
+	if sourceIcon := readBytes(t, filepath.Join(dir, "public", "favicon.ico")); !bytes.Equal(sourceIcon, staticIcon) {
+		t.Fatalf("exported favicon does not match scaffolded public asset")
+	}
+	assertStarterFaviconICO(t, staticIcon)
 
 	var manifest exportManifest
 	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, "dist", "export.json"))), &manifest); err != nil {

@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +35,7 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		"app/not-found.gsx",
 		"app/error.gsx",
 		"modules/modules.go",
+		"public/favicon.ico",
 		"public/styles.css",
 		"perf-budget.json",
 	} {
@@ -62,6 +66,9 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		`rootHandler, err := router.BuildChecked()`,
 		`app.Mount("/", rootHandler)`,
 		`ctx.SetLanguage("en")`,
+		`Icons: &server.Icons{`,
+		`URL:  "/favicon.ico",`,
+		`Type: "image/x-icon",`,
 		`server.HTMLDocument(ctx.Document(appName, body))`,
 	} {
 		if !strings.Contains(mainGo, snippet) {
@@ -98,11 +105,33 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		t.Fatalf("expected stack route to use strict component syntax, got:\n%s", stackGSX)
 	}
 
+	assertStarterFaviconICO(t, readBytes(t, filepath.Join(dir, "public", "favicon.ico")))
+
 	assertAllGSXCompile(t, dir)
 
 	perfBudget := readFile(t, filepath.Join(dir, "perf-budget.json"))
 	if !strings.Contains(perfBudget, `"js_total_kb <= 120"`) {
 		t.Fatalf("expected starter perf budget, got:\n%s", perfBudget)
+	}
+}
+
+func TestRunInitDoesNotOverwriteExistingFavicon(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "starter")
+	faviconPath := filepath.Join(dir, "public", "favicon.ico")
+	if err := os.MkdirAll(filepath.Dir(faviconPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("keep existing icon")
+	if err := os.WriteFile(faviconPath, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RunInit(dir, "example.com/starter", "")
+	if err == nil || !strings.Contains(err.Error(), "public/favicon.ico") || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("RunInit error = %v, want existing favicon refusal", err)
+	}
+	if got := readBytes(t, faviconPath); !bytes.Equal(got, original) {
+		t.Fatalf("existing favicon overwritten: got %x want %x", got, original)
 	}
 }
 
@@ -433,6 +462,74 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+func readBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return data
+}
+
+func assertStarterFaviconICO(t *testing.T, data []byte) {
+	t.Helper()
+	const expectedSHA256 = "a9bef67f2f133707710a890da15b0b9e087eaa1fed190b35f4f3d6e663deb735"
+	got := sha256.Sum256(data)
+	if hex.EncodeToString(got[:]) != expectedSHA256 {
+		t.Fatalf("starter favicon SHA-256 = %s, want %s", hex.EncodeToString(got[:]), expectedSHA256)
+	}
+	if len(data) != 4286 {
+		t.Fatalf("starter favicon length = %d, want 4286", len(data))
+	}
+	if len(data) < 62 {
+		t.Fatalf("starter favicon too short: %d", len(data))
+	}
+	if binary.LittleEndian.Uint16(data[0:2]) != 0 ||
+		binary.LittleEndian.Uint16(data[2:4]) != 1 ||
+		binary.LittleEndian.Uint16(data[4:6]) != 1 {
+		t.Fatalf("starter favicon has invalid ICO header: % x", data[:6])
+	}
+	if data[6] != 32 || data[7] != 32 || data[8] != 0 || data[9] != 0 {
+		t.Fatalf("starter favicon directory entry = % x, want one 32x32 truecolor image", data[6:10])
+	}
+	if binary.LittleEndian.Uint16(data[10:12]) != 1 || binary.LittleEndian.Uint16(data[12:14]) != 32 {
+		t.Fatalf("starter favicon planes/bitcount = % x, want 1/32", data[10:14])
+	}
+	payloadSize := int(binary.LittleEndian.Uint32(data[14:18]))
+	payloadOffset := int(binary.LittleEndian.Uint32(data[18:22]))
+	if payloadOffset != 22 || payloadSize != len(data)-payloadOffset {
+		t.Fatalf("starter favicon payload offset/size = %d/%d for total %d", payloadOffset, payloadSize, len(data))
+	}
+	payload := data[payloadOffset:]
+	if binary.LittleEndian.Uint32(payload[0:4]) != 40 ||
+		binary.LittleEndian.Uint32(payload[4:8]) != 32 ||
+		binary.LittleEndian.Uint32(payload[8:12]) != 64 ||
+		binary.LittleEndian.Uint16(payload[12:14]) != 1 ||
+		binary.LittleEndian.Uint16(payload[14:16]) != 32 {
+		t.Fatalf("starter favicon DIB header does not describe a 32x32 BGRA image with mask: % x", payload[:16])
+	}
+
+	pixels := payload[40 : 40+32*32*4]
+	var black, light, gold int
+	for i := 0; i < len(pixels); i += 4 {
+		b, g, r, a := pixels[i], pixels[i+1], pixels[i+2], pixels[i+3]
+		if a < 200 {
+			continue
+		}
+		switch {
+		case r < 16 && g < 16 && b < 16:
+			black++
+		case r > 220 && g > 220 && b > 220:
+			light++
+		case r > 180 && g > 140 && g < 210 && b < 100:
+			gold++
+		}
+	}
+	if black == 0 || light == 0 || gold == 0 {
+		t.Fatalf("starter favicon missing expected mark colors: black=%d light=%d gold=%d", black, light, gold)
+	}
 }
 
 func normalizeIntertagWhitespace(html string) string {

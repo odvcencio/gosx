@@ -318,6 +318,12 @@ func main() {
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
 		ctx.SetLanguage("en")
 		ctx.SetMetadata(server.Metadata{
+			Icons: &server.Icons{
+				Icon: []server.IconAsset{{
+					URL:  "/favicon.ico",
+					Type: "image/x-icon",
+				}},
+			},
 			Links: []server.LinkTag{
 				{Rel: "stylesheet", Href: "/styles.css"},
 			},
