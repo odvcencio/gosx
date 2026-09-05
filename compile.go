@@ -119,6 +119,15 @@ func Parse(source []byte) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 
 // Compile parses GoSX source and produces the component IR.
 func Compile(source []byte) (*ir.Program, error) {
+	return CompileWithOptions(source, CompileOptions{})
+}
+
+// CompileOptions supplies explicit immutable schema metadata. No files are read.
+type CompileOptions struct{ Schemas *ir.SchemaSet }
+
+// CompileWithOptions compiles source with caller-supplied type visibility.
+// Metadata does not certify the corresponding Go declaration; type-check it too.
+func CompileWithOptions(source []byte, opts CompileOptions) (*ir.Program, error) {
 	tree, lang, err := Parse(source)
 	if err != nil {
 		return nil, err
@@ -132,7 +141,7 @@ func Compile(source []byte) (*ir.Program, error) {
 		return nil, err
 	}
 
-	prog, err := ir.Lower(root, source, lang)
+	prog, err := ir.LowerWithOptions(root, source, lang, ir.LowerOptions{Schemas: opts.Schemas})
 	if err != nil {
 		return nil, err
 	}

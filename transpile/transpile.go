@@ -24,10 +24,14 @@ import (
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/internal/strictcomponent"
+	"m31labs.dev/gosx/ir"
 )
 
 // Options controls transpiler behavior.
 type Options struct {
+	// Schemas supplies explicit immutable ordinary-Go model visibility. It
+	// never injects declarations or resolves a filesystem package.
+	Schemas    *ir.SchemaSet
 	SourceFile string
 	Debug      bool
 
@@ -64,12 +68,13 @@ func Transpile(source []byte, opts Options) (string, error) {
 	// Transpilation must apply the same semantic gate as the IR renderer. In
 	// particular, strict components may not contain Go statements that would
 	// survive in generated Go but be ignored by file-routed IR rendering.
-	program, err := gosx.Compile(source)
+	program, err := gosx.CompileWithOptions(source, gosx.CompileOptions{Schemas: opts.Schemas})
 	if err != nil {
 		return "", err
 	}
 
 	t := &transpiler{
+		schemas:          opts.Schemas,
 		src:              source,
 		lang:             lang,
 		sourceFile:       opts.SourceFile,
@@ -102,12 +107,14 @@ func Transpile(source []byte, opts Options) (string, error) {
 }
 
 type transpiler struct {
-	src         []byte
-	lang        *gotreesitter.Language
-	sourceFile  string
-	imports     map[string]string // alias -> path
-	propsTypes  map[string]string
-	propsFields map[string]map[string]string
+	sourceStructs map[string]bool
+	schemas       *ir.SchemaSet
+	src           []byte
+	lang          *gotreesitter.Language
+	sourceFile    string
+	imports       map[string]string // alias -> path
+	propsTypes    map[string]string
+	propsFields   map[string]map[string]string
 	// structFieldTypes records, per same-file struct name, each field's raw
 	// declared type text — collectStructFields' companion map, populated
 	// alongside propsFields. emitStrictEach uses it to name a strict
@@ -210,6 +217,21 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 func (t *transpiler) emitSourceFile(n *gotreesitter.Node) string {
 	t.collectImports(n)
 	t.collectStructFields(n)
+	t.sourceStructs = make(map[string]bool, len(t.propsFields))
+	for name := range t.propsFields {
+		t.sourceStructs[name] = true
+	}
+	for _, decl := range t.schemas.Structs() {
+		t.propsFields[decl.Name] = ir.SchemaAliases(decl)
+		if t.structFieldTypes == nil {
+			t.structFieldTypes = make(map[string]map[string]string)
+		}
+		fields := make(map[string]string, len(decl.Fields))
+		for _, field := range decl.Fields {
+			fields[field.Name] = field.Type
+		}
+		t.structFieldTypes[decl.Name] = fields
+	}
 	t.collectComponentProps(n)
 	t.resolveGoSXQualifier()
 	if t.strictProjection {
@@ -881,8 +903,8 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 //
 // A typed legacy component is a legacy func whose props parameter names a
 // struct declared in this same file — the same rule ir.Lower applies when it
-// sets ir.Component.PropsTyped. propsFields carries every same-file struct, so
-// membership there is the same-file test.
+// sets ir.Component.PropsTyped. sourceStructs records only same-file structs;
+// explicit external schema visibility must not promote legacy declarations.
 //
 // The signature mirrors emitStrictComponent's exactly, variadic children
 // included, so a strict call site projects to one call shape whichever category
@@ -911,7 +933,7 @@ func (t *transpiler) emitTypedLegacyStub(funcDecl *gotreesitter.Node) string {
 	if propsType == "" {
 		return ""
 	}
-	if _, sameFile := t.propsFields[propsType]; !sameFile {
+	if !t.sourceStructs[propsType] {
 		return ""
 	}
 	node := t.gosxRef("Node")

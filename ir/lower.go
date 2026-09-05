@@ -42,7 +42,15 @@ import (
 
 // Lower converts a parsed GoSX CST into the component IR.
 func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) (*Program, error) {
+	return LowerWithOptions(root, source, lang, LowerOptions{})
+}
+
+// LowerOptions supplies immutable external type visibility, never declarations.
+type LowerOptions struct{ Schemas *SchemaSet }
+
+func LowerWithOptions(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language, opts LowerOptions) (*Program, error) {
 	l := &lowerer{
+		schemas:       opts.Schemas,
 		src:           source,
 		srcStr:        string(source),
 		lang:          lang,
@@ -59,6 +67,7 @@ func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) 
 }
 
 type lowerer struct {
+	schemas       *SchemaSet
 	src           []byte
 	srcStr        string
 	lang          *gotreesitter.Language
@@ -1163,6 +1172,9 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 			l.typedLegacyProps[componentName] = propsType
 		}
 	}
+	// External visibility is for strict components only: do not incidentally
+	// promote legacy functions that the source-only API classified as untyped.
+	l.mergeExplicitSchemas(root)
 	// Pass 2: each strict and each typed legacy component's prop reads, now
 	// that l.strictNames holds every same-file strict component regardless
 	// of where in the file it is declared.
