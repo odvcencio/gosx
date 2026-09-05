@@ -11,7 +11,7 @@ separate from hypotheses. Do not raise architecture or runtime budgets to pass.
 | Asset visibility | b14cbae9: animation and morph inventory | Account for real animated asset costs |
 | GPU submission | 6cc33121: rigid imported colour batching, WebGL and WebGPU | Batched shadows; animated crowd submission |
 | CPU scene updates | Older-runtime prototype only; see below | Port retained hydration and stable pose lookup with atomic invalidation tests |
-| Style and material caches | Older-runtime prototype only | Port numeric-depth CSS cache fix; profile material preparation |
+| Style and material caches | Numeric-depth CSS cache preservation | Profile material preparation and remaining invalidation costs |
 | Frame pacing and allocation | Initial stress observations | Repeated combat/FX soaks, allocation and worst-frame budgets |
 | Measurement | Rigid crowd fixture and recorded observations | Reproducible cross-device and equivalent-engine benchmarks |
 
@@ -72,3 +72,23 @@ remain labelled as such. Do not schedule background jobs for this workflow.
 Next priority: port the CPU scene-update prototype, then profile per-primitive
 transform/bounds/material preparation and shadow submission. Add representative
 combat load before enlarging arenas or declaring a frame-time budget met.
+
+## Cache batch: numeric render depth
+
+The CSS dependency signature now treats finite numeric depth as a stable input
+category. Camera/actor movement still updates the rendering signature and depth
+ordering, but does not repeat CSS resolution. Expressions such as var(--depth),
+CSS revision changes and transitions back to numeric depth still invalidate.
+No application API change is needed: rebuild the runtime from the updated source.
+
+Validation: `make test-js` passed all 1,794 JavaScript checks, strict ABI
+TypeScript checks, bootstrap builder tests, generated-artifact freshness and
+existing architecture/size budgets. The added test verifies 30 changing depths
+reuse the same CSS cache without additional computed-style reads, while draw
+signatures and resolved depth remain current. No separate FPS improvement is
+attributed to this patch; the prototype timings above combine three changes.
+
+Buckley commits use its default OpenRouter model through `-backend api`.
+The configured provider requires `BUCKLEY_MODEL_REASONING=off` for its forced
+tool-call commit request. This is a per-command override, not a saved config
+change. Normal branch pushes follow successful scoped commits.

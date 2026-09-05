@@ -470,6 +470,12 @@
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
       hash = scenePlannerHashString(hash, key);
+      // Numeric depth affects draw ordering, not CSS resolution. Keep CSS
+      // expressions in the signature so entering/leaving var() still invalidates.
+      if (key === "depthCenter" && typeof record[key] === "number" && Number.isFinite(record[key])) {
+        hash = scenePlannerHashString(hash, "numeric-depth");
+        continue;
+      }
       if (key === "specularIntensity" || key === "specularColor") {
         // Full-precision factor hashing: the shared *1000 number
         // quantization would collapse close specular factors, so these
