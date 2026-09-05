@@ -506,7 +506,7 @@ func collectPickHits(targets *pickTargets, b engine.RenderBundle, bases, objectB
 			if !raySphereIntersects(ray, model, instanceCullRadius(baseRadius, model)) {
 				continue
 			}
-			if hit, ok := raycastPrimitiveInstance(ray, geo, model); ok {
+			if hit, ok := raycastPrimitiveInstance(ray, geo, model, !isSkinnedMesh(*mesh)); ok {
 				addHit(span, span.base+uint32(instanceIndex), hit)
 			}
 		}
@@ -615,10 +615,17 @@ func matrixForInstance(transforms []float64, instanceIndex int) mat4 {
 	return m
 }
 
-func raycastPrimitiveInstance(ray pickRay, geo *primitiveGeometry, model mat4) (primitiveHit, bool) {
+func raycastPrimitiveInstance(ray pickRay, geo *primitiveGeometry, model mat4, litRigid bool) (primitiveHit, bool) {
 	var best primitiveHit
 	best.depth = float32(math.Inf(1))
 	found := false
+	// Rigid InstancedMeshes use bundle.lit's front-facing discard. Skinned
+	// enrichment retains its prior two-sided behavior; this is not deformation
+	// reconstruction and must not claim the rigid geometry is a skinned oracle.
+	orientation := float32(1)
+	if litRigid {
+		orientation = primitivePickOrientation(model)
+	}
 	for tri := 0; tri+2 < geo.vertexCount; tri += 3 {
 		lp0 := primitivePositionAt(geo, tri)
 		lp1 := primitivePositionAt(geo, tri+1)
@@ -626,6 +633,9 @@ func raycastPrimitiveInstance(ray pickRay, geo *primitiveGeometry, model mat4) (
 		wp0 := transformPoint(model, lp0)
 		wp1 := transformPoint(model, lp1)
 		wp2 := transformPoint(model, lp2)
+		if litRigid && dot3(cross3(sub3(wp1, wp0), sub3(wp2, wp0)), ray.dir)*orientation >= 0 {
+			continue
+		}
 		dist, u, v, ok := rayIntersectsTriangle(ray.origin, ray.dir, wp0, wp1, wp2)
 		if !ok || dist >= best.depth {
 			continue
@@ -645,6 +655,26 @@ func raycastPrimitiveInstance(ray pickRay, geo *primitiveGeometry, model mat4) (
 		found = true
 	}
 	return best, found
+}
+
+// Match affineNormal's determinant normalization and singular fallback in
+// litWGSL. Translation and uniform scale magnitude cannot change facing.
+func primitivePickOrientation(model mat4) float32 {
+	var scale float32
+	for _, index := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
+		scale = float32(math.Max(float64(scale), math.Abs(float64(model[index]))))
+	}
+	if scale == 0 {
+		return 1
+	}
+	c0 := [3]float32{model[0] / scale, model[1] / scale, model[2] / scale}
+	c1 := [3]float32{model[4] / scale, model[5] / scale, model[6] / scale}
+	c2 := [3]float32{model[8] / scale, model[9] / scale, model[10] / scale}
+	determinant := dot3(c0, cross3(c1, c2))
+	if determinant < -1e-12 {
+		return -1
+	}
+	return 1
 }
 
 func rayIntersectsTriangle(origin, dir, v0, v1, v2 [3]float32) (float32, float32, float32, bool) {

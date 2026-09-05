@@ -8,20 +8,15 @@ import (
 	"m31labs.dev/gosx/render/bundle"
 )
 
-// This file records one gap that changes how you should read every other test
-// here: the CPU rasterizer does no back-face culling.
+// This file records the legacy unlit pass contract: both triangle windings fill.
 //
 // rasterizeTriangle measures the signed area of the screen-space triangle and
 // keeps a pixel when all three edge functions share that sign. Both windings
-// therefore fill. So a wrongly wound geometry generator looks correct in every
-// headless frame, and "flip a winding" is not a usable sensitivity probe for a
-// golden test in this package.
+// therefore fill when no lit per-instance orientation is provided. The lit path
+// separately mirrors the native shader's determinant-aware face rejection;
+// scene/preview/affine_consumed_test.go exercises its color/depth/pick effects.
 //
-// The browser runtime does not cull back faces today either, which is why a
-// wrongly wound cap has never shown up as a visible defect. Both change on the
-// day culling arrives. Until then, winding correctness has to be checked in
-// package scene/geom against the signed area of the generated triangles, not
-// against a rendered image.
+// This unlit control is not evidence of lit or browser winding behavior.
 
 // windingTriangle returns a screen-filling triangle in one of the two windings.
 // The three corners are identical; only their order differs.

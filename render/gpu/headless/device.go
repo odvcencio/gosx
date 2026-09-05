@@ -898,12 +898,14 @@ func textureLayerRange(t *Texture, layer int) (int, int) {
 }
 
 type rasterTarget struct {
-	img          *image.RGBA
-	tex          *Texture
-	texLayer     int
-	id           *Texture
-	idLayer      int
-	pickID       uint32
+	img      *image.RGBA
+	tex      *Texture
+	texLayer int
+	id       *Texture
+	idLayer  int
+	pickID   uint32
+	// Nonzero only for bundle.lit's shader-owned face classification.
+	orientation  float32
 	blend        *gpu.BlendState
 	writeMask    gpu.ColorWriteMask
 	depth        *Texture
@@ -1307,6 +1309,10 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 		// with no GPU present. The field stayed zero before, so every headless
 		// pick reported background.
 		target.pickID = readInstancePickID(instanceBuf, inst, instanceStride)
+		var normalMatrix [9]float32
+		if label == "bundle.lit" {
+			normalMatrix, target.orientation = affineNormalMatrix(model)
+		}
 		for base := 0; base+2 < vertexCount; base += 3 {
 			valid := true
 			for i := 0; i < 3; i++ {
@@ -1331,9 +1337,7 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 					tri[i].color = material.solidColor(readColor(colorBuf, vertex))
 					tri[i].uv = readUV(uvBuf, vertex)
 					normal := readNormal(normalBuf, vertex)
-					if instanceBuf != nil {
-						normal = transformDirection(model, normal)
-					}
+					normal = transformAffineNormal(normalMatrix, normal)
 					tri[i].normal = normal
 				} else {
 					color := readColor(colorBuf, vertex)
@@ -1766,6 +1770,40 @@ func transformDirection(m [16]float32, p [3]float32) [3]float32 {
 		m[1]*x + m[5]*y + m[9]*z,
 		m[2]*x + m[6]*y + m[10]*z,
 	})
+}
+
+// affineNormalMatrix mirrors bundle.lit's scale-normalized cofactor contract.
+// Uniform magnitude cancels when the resulting direction is normalized. The
+// singular fallback deliberately matches WGSL rather than inventing an inverse.
+func affineNormalMatrix(model [16]float32) ([9]float32, float32) {
+	identity := [9]float32{1, 0, 0, 0, 1, 0, 0, 0, 1}
+	var scale float32
+	for _, index := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
+		scale = max(scale, float32(math.Abs(float64(model[index]))))
+	}
+	if scale == 0 {
+		return identity, 1
+	}
+	c0 := [3]float32{model[0] / scale, model[1] / scale, model[2] / scale}
+	c1 := [3]float32{model[4] / scale, model[5] / scale, model[6] / scale}
+	c2 := [3]float32{model[8] / scale, model[9] / scale, model[10] / scale}
+	cross := func(a, b [3]float32) [3]float32 {
+		return [3]float32{a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]}
+	}
+	co0, co1, co2 := cross(c1, c2), cross(c2, c0), cross(c0, c1)
+	determinant := c0[0]*co0[0] + c0[1]*co0[1] + c0[2]*co0[2]
+	if math.Abs(float64(determinant)) <= 1e-12 {
+		return identity, 1
+	}
+	orientation := float32(1)
+	if determinant < 0 {
+		orientation = -1
+	}
+	return [9]float32{co0[0] * orientation, co0[1] * orientation, co0[2] * orientation, co1[0] * orientation, co1[1] * orientation, co1[2] * orientation, co2[0] * orientation, co2[1] * orientation, co2[2] * orientation}, orientation
+}
+
+func transformAffineNormal(m [9]float32, n [3]float32) [3]float32 {
+	return normalize3([3]float32{m[0]*n[0] + m[3]*n[1] + m[6]*n[2], m[1]*n[0] + m[4]*n[1] + m[7]*n[2], m[2]*n[0] + m[5]*n[1] + m[8]*n[2]})
 }
 
 func transformToNDC(m [16]float32, p [3]float32) ([3]float32, bool) {
@@ -3044,6 +3082,12 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litP
 		{verts[2].x, verts[2].y},
 	}
 	area := edge(pts[0], pts[1], pts[2])
+	// projectClip flips Y, and edge uses the reverse signed-area convention:
+	// a native CCW front face therefore has positive area here. Apply the lit
+	// shader's per-instance determinant test after clipping, before any writes.
+	if target.orientation != 0 && area*target.orientation < 0 {
+		return
+	}
 	if math.Abs(float64(area)) < 1e-6 {
 		return
 	}
