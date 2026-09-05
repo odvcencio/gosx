@@ -425,8 +425,8 @@ component Page() {
 	if err == nil {
 		t.Fatal("CheckFile succeeded for duplicate shared component names")
 	}
-	if !strings.Contains(err.Error(), "Badge redeclared") && !strings.Contains(err.Error(), "cannot be projected") {
-		t.Fatalf("error = %v, want Go redeclaration or unresolved shared projection diagnostic", err)
+	if !strings.Contains(err.Error(), `duplicate shared component "Badge"`) {
+		t.Fatalf("error = %v, want precise duplicate shared component diagnostic", err)
 	}
 }
 
@@ -481,8 +481,8 @@ component Page() {
 			if err == nil {
 				t.Fatal("CheckFile succeeded for mixed pure/island duplicate shared component names")
 			}
-			if !strings.Contains(err.Error(), "Badge redeclared") && !strings.Contains(err.Error(), "cannot be projected") {
-				t.Fatalf("error = %v, want Go redeclaration or unresolved shared projection diagnostic", err)
+			if !strings.Contains(err.Error(), `duplicate shared component "Badge"`) {
+				t.Fatalf("error = %v, want precise duplicate shared component diagnostic", err)
 			}
 		})
 	}

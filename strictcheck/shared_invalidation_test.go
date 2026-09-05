@@ -81,7 +81,7 @@ component Page() {
 
 	duplicate := filepath.Join(root, "app", "ui", "duplicate.gsx")
 	mustWrite(t, duplicate, component)
-	checkSharedRefresh(t, page, "added duplicate", "cannot be projected")
+	checkSharedRefresh(t, page, "added duplicate", `duplicate shared component "Badge"`)
 
 	if err := os.Remove(duplicate); err != nil {
 		t.Fatal(err)

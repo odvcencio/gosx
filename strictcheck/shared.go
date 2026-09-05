@@ -67,6 +67,9 @@ func resolveSharedImports(ctx context.Context, files []transpile.PackageFile, op
 		if err != nil {
 			return nil, nil, fmt.Errorf("shared import %q in %s: %w", rawPath, dir, err)
 		}
+		if err := checkSharedComponentDuplicates(targetFiles); err != nil {
+			return nil, nil, fmt.Errorf("shared import %q in %s: %w", rawPath, dir, err)
+		}
 		targetImportNames, err := resolveImportNames(ctx, targetFiles, opts)
 		if err != nil {
 			return nil, nil, fmt.Errorf("shared import %q in %s: %w", rawPath, dir, err)
@@ -105,6 +108,41 @@ func resolveSharedImports(ctx context.Context, files []transpile.PackageFile, op
 	}
 
 	return sharedImports, overlay, nil
+}
+
+// checkSharedComponentDuplicates reports ambiguity before the map-only shared
+// catalog omits duplicate names. Count all strict declarations, including
+// islands and engines, so a pure view never wins over an excluded duplicate.
+func checkSharedComponentDuplicates(files []transpile.PackageFile) error {
+	declarations := make(map[string][]string)
+	for _, file := range files {
+		if file.Program == nil {
+			continue // LoadPackageDir supplies compiled programs.
+		}
+		for _, component := range file.Program.Components {
+			if component.Syntax == ir.ComponentSyntaxStrict {
+				declarations[component.Name] = append(declarations[component.Name], file.Path)
+			}
+		}
+	}
+	names := make([]string, 0)
+	for name, paths := range declarations {
+		if len(paths) > 1 {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return nil
+	}
+	name := names[0]
+	paths := declarations[name]
+	sort.Strings(paths)
+	quoted := make([]string, len(paths))
+	for i, path := range paths {
+		quoted[i] = fmt.Sprintf("%q", path)
+	}
+	return fmt.Errorf("duplicate shared component %q declared in %s; component names must be unique within a shared package", name, strings.Join(quoted, " and "))
 }
 
 // collectSharedImportPaths returns every distinct shared (./ or ../
