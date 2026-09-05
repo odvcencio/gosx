@@ -2693,19 +2693,19 @@ func summarizeCoverage(path string, entries []perf.CoverageEntry) CoverageSample
 
 func sampleMetrics(page *perf.PageReport, mem perf.MemoryStats) map[string]float64 {
 	m := map[string]float64{
-		"ttfbMs":              page.TTFBMs,
-		"dclMs":               page.DCLMs,
-		"fullyLoadedMs":       page.FullyLoadedMs,
-		"jsHeapUsedMb":        mem.JSHeapUsedMB,
-		"jsHeapTotalMb":       mem.JSHeapTotalMB,
-		"domNodeCount":        float64(mem.DOMNodeCount),
-		"requestCount":        float64(len(page.Resources)),
-		"transferBytes":       float64(page.TotalBytesTransferred),
-		"longTaskCount":       float64(page.LongTaskCount),
-		"longTaskTotalMs":     page.LongTaskTotalMs,
-		"totalBlockingTimeMs": page.TotalBlockingTimeMs,
-		"consoleErrorCount":   float64(len(page.ConsoleEntries)),
+		"ttfbMs":            page.TTFBMs,
+		"dclMs":             page.DCLMs,
+		"fullyLoadedMs":     page.FullyLoadedMs,
+		"jsHeapUsedMb":      mem.JSHeapUsedMB,
+		"jsHeapTotalMb":     mem.JSHeapTotalMB,
+		"domNodeCount":      float64(mem.DOMNodeCount),
+		"consoleErrorCount": float64(len(page.ConsoleEntries)),
 	}
+	addResolvedPageMetric(m, "requestCount", "requests", page, 1)
+	addResolvedPageMetric(m, "transferBytes", "network_kb", page, 1024)
+	addResolvedPageMetric(m, "longTaskCount", "long_tasks", page, 1)
+	addResolvedPageMetric(m, "longTaskTotalMs", "long_task_total", page, 1)
+	addResolvedPageMetric(m, "totalBlockingTimeMs", "tbt", page, 1)
 	if page.Scene != nil {
 		m["sceneFrameCount"] = float64(page.Scene.FrameCount)
 		m["sceneCpuP95Ms"] = page.Scene.FrameStats.P95
@@ -2717,6 +2717,12 @@ func sampleMetrics(page *perf.PageReport, mem perf.MemoryStats) map[string]float
 		}
 	}
 	return m
+}
+
+func addResolvedPageMetric(out map[string]float64, key, metric string, page *perf.PageReport, multiplier float64) {
+	if value, ok := perf.ResolvePageMetric(metric, page); ok {
+		out[key] = value * multiplier
+	}
 }
 
 func sampleArtifactPaths(root, routeID, lane, cacheMode string, idx int) SampleArtifacts {
@@ -2826,6 +2832,11 @@ func ValidateBrowserBaseline(plan SamplingPlan, samples []BrowserRawSample, sour
 		}
 		if sample.Page == nil {
 			errs = append(errs, prefix+": missing page report")
+		}
+		if plan.Canonical && sample.SampleLane == SampleLaneProduct && !sample.Discarded && sample.Page != nil {
+			if _, ok := perf.ResolvePageMetric("network_kb", sample.Page); !ok {
+				errs = append(errs, prefix+": missing browser transfer evidence")
+			}
 		}
 		if sample.Proofs.FailClosed {
 			errs = append(errs, prefix+": fail-closed proof")
@@ -3235,7 +3246,7 @@ func SummarizeBrowserSamples(samples []BrowserRawSample, runMode string, source 
 		if values[group]["metrics"] == nil {
 			values[group]["metrics"] = map[string][]float64{}
 		}
-		for k, v := range s.Metrics {
+		for k, v := range summarySampleMetrics(s) {
 			values[group]["metrics"][k] = append(values[group]["metrics"][k], v)
 		}
 	}
@@ -3268,6 +3279,26 @@ func SummarizeBrowserSamples(samples []BrowserRawSample, runMode string, source 
 		Discarded:     discarded,
 		NoiseFlags:    flags,
 	}
+}
+
+func summarySampleMetrics(sample BrowserRawSample) map[string]float64 {
+	out := map[string]float64{}
+	for k, v := range sample.Metrics {
+		switch k {
+		case "requestCount", "transferBytes", "longTaskCount", "longTaskTotalMs", "totalBlockingTimeMs":
+			continue
+		default:
+			out[k] = v
+		}
+	}
+	if sample.Page != nil {
+		addResolvedPageMetric(out, "requestCount", "requests", sample.Page, 1)
+		addResolvedPageMetric(out, "transferBytes", "network_kb", sample.Page, 1024)
+		addResolvedPageMetric(out, "longTaskCount", "long_tasks", sample.Page, 1)
+		addResolvedPageMetric(out, "longTaskTotalMs", "long_task_total", sample.Page, 1)
+		addResolvedPageMetric(out, "totalBlockingTimeMs", "tbt", sample.Page, 1)
+	}
+	return out
 }
 
 func ComputeStats(values []float64) Stats {

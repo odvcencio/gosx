@@ -24,6 +24,14 @@
     firstInputDelay: 0,
     signalWrites: 0,
     signalReads: 0,
+    measurementStatus: {
+      version: 1,
+      lcp: { supported: false, installed: false, observed: false, error: "" },
+      cls: { supported: false, installed: false, observed: false, error: "" },
+      fid: { supported: false, installed: false, observed: false, error: "" },
+      longTasks: { supported: false, installed: false, observed: false, error: "" },
+      runtimeCounters: { available: true }
+    },
 
     // Browser animation-frame cadence and Scene3D telemetry are sampled
     // independently from scene3d-render. The latter is CPU submission work,
@@ -35,6 +43,22 @@
     sceneAttributeSamples: [],   // {mount, name, value, numericValue, startTime, phase}
     sceneTelemetryEvents: []     // {type, detail, startTime, phase}
   };
+
+  function _supportsPerformanceEntry(type) {
+    try {
+      return typeof PerformanceObserver !== "undefined" &&
+        Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+        PerformanceObserver.supportedEntryTypes.indexOf(type) >= 0;
+    } catch (_e) {
+      return false;
+    }
+  }
+  function _markObserverSupport(key, type) {
+    perf.measurementStatus[key].supported = _supportsPerformanceEntry(type);
+  }
+  function _markObserverError(key, err) {
+    perf.measurementStatus[key].error = (err && (err.message || String(err))) || "observer setup failed";
+  }
 
   // --- 1. Bridge gosx:ready CustomEvent → performance mark ---
   document.addEventListener("gosx:ready", function() {
@@ -231,60 +255,84 @@
   // --- 3c. Long task observer (tasks > 50ms that block main thread) ---
   // This is the single most valuable signal for scroll jank diagnosis:
   // any main-thread task > 50ms will cause dropped frames during scroll.
+  _markObserverSupport("longTasks", "longtask");
   try {
-    var longTaskObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
-      for (var i = 0; i < entries.length; i++) {
-        var e = entries[i];
-        perf.longTasks.push({
-          name: e.name || "unknown",
-          duration: e.duration,
-          startTime: e.startTime
-        });
-      }
-    });
-    longTaskObserver.observe({ type: "longtask", buffered: true });
-  } catch (_e) {}
+    if (perf.measurementStatus.longTasks.supported) {
+      var longTaskObserver = new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        for (var i = 0; i < entries.length; i++) {
+          var e = entries[i];
+          perf.measurementStatus.longTasks.observed = true;
+          perf.longTasks.push({
+            name: e.name || "unknown",
+            duration: e.duration,
+            startTime: e.startTime
+          });
+        }
+      });
+      longTaskObserver.observe({ type: "longtask", buffered: true });
+      perf.measurementStatus.longTasks.installed = true;
+    }
+  } catch (_e) { _markObserverError("longTasks", _e); }
 
   // --- 3d. Core Web Vitals: Largest Contentful Paint ---
+  _markObserverSupport("lcp", "largest-contentful-paint");
   try {
-    var lcpObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
-      // LCP can update multiple times; use the latest entry.
-      var last = entries[entries.length - 1];
-      if (last && last.startTime > perf.largestContentfulPaint) {
-        perf.largestContentfulPaint = last.startTime;
-      }
-    });
-    lcpObserver.observe({ type: "largest-contentful-paint", buffered: true });
-  } catch (_e) {}
+    if (perf.measurementStatus.lcp.supported) {
+      var lcpObserver = new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        // LCP can update multiple times; use the latest entry.
+        var last = entries[entries.length - 1];
+        if (last) {
+          perf.measurementStatus.lcp.observed = true;
+          if (last.startTime >= perf.largestContentfulPaint) {
+            perf.largestContentfulPaint = last.startTime;
+          }
+        }
+      });
+      lcpObserver.observe({ type: "largest-contentful-paint", buffered: true });
+      perf.measurementStatus.lcp.installed = true;
+    }
+  } catch (_e) { _markObserverError("lcp", _e); }
 
   // --- 3e. Core Web Vitals: Cumulative Layout Shift ---
+  _markObserverSupport("cls", "layout-shift");
   try {
-    var clsObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
-      for (var i = 0; i < entries.length; i++) {
-        var e = entries[i];
-        // Ignore shifts triggered by user input
-        if (!e.hadRecentInput) {
-          perf.cumulativeLayoutShift += e.value;
+    if (perf.measurementStatus.cls.supported) {
+      var clsObserver = new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        for (var i = 0; i < entries.length; i++) {
+          var e = entries[i];
+          perf.measurementStatus.cls.observed = true;
+          // Ignore shifts triggered by user input
+          if (!e.hadRecentInput) {
+            perf.cumulativeLayoutShift += e.value;
+          }
         }
-      }
-    });
-    clsObserver.observe({ type: "layout-shift", buffered: true });
-  } catch (_e) {}
+      });
+      clsObserver.observe({ type: "layout-shift", buffered: true });
+      perf.measurementStatus.cls.installed = true;
+    }
+  } catch (_e) { _markObserverError("cls", _e); }
 
   // --- 3f. Core Web Vitals: First Input Delay ---
+  _markObserverSupport("fid", "first-input");
   try {
-    var fidObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
-      if (entries.length > 0 && perf.firstInputDelay === 0) {
-        var first = entries[0];
-        perf.firstInputDelay = first.processingStart - first.startTime;
-      }
-    });
-    fidObserver.observe({ type: "first-input", buffered: true });
-  } catch (_e) {}
+    if (perf.measurementStatus.fid.supported) {
+      var fidObserver = new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        if (entries.length > 0) {
+          perf.measurementStatus.fid.observed = true;
+        }
+        if (entries.length > 0 && perf.firstInputDelay === 0) {
+          var first = entries[0];
+          perf.firstInputDelay = first.processingStart - first.startTime;
+        }
+      });
+      fidObserver.observe({ type: "first-input", buffered: true });
+      perf.measurementStatus.fid.installed = true;
+    }
+  } catch (_e) { _markObserverError("fid", _e); }
 
   // --- 4. Trap __gosx_runtime_ready assignment ---
   // The bootstrap JS assigns this as a function. The WASM bridge later

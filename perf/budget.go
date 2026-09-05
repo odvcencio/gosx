@@ -55,6 +55,7 @@ type BudgetAssertionResult struct {
 	Found      bool    `json:"found"`
 	Optional   bool    `json:"optional,omitempty"`
 	Skipped    bool    `json:"skipped,omitempty"`
+	Reason     string  `json:"reason,omitempty"`
 }
 
 // LoadBudgetFile reads a JSON perf budget file.
@@ -126,10 +127,18 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 			}
 			if !assertion.Found {
 				if assertion.Skipped {
-					b.WriteString(fmt.Sprintf("    %-4s %-28s optional metric unavailable (skipped)\n", "skip", assertion.Expression))
+					reason := assertion.Reason
+					if reason == "" {
+						reason = "optional metric unavailable"
+					}
+					b.WriteString(fmt.Sprintf("    %-4s %-28s %s (skipped)\n", "skip", assertion.Expression, reason))
 					continue
 				}
-				b.WriteString(fmt.Sprintf("    %-4s %-28s metric not found\n", mark, assertion.Expression))
+				reason := assertion.Reason
+				if reason == "" {
+					reason = "metric not found"
+				}
+				b.WriteString(fmt.Sprintf("    %-4s %-28s %s\n", mark, assertion.Expression, reason))
 				continue
 			}
 			b.WriteString(fmt.Sprintf("    %-4s %-28s actual %.2f\n", mark, assertion.Expression, assertion.Actual))
@@ -271,9 +280,17 @@ func evalBudgetPage(page PageReport, profile string, expressions []string) Budge
 			Found:      ok,
 			Optional:   assertion.Optional,
 			Skipped:    skipped,
+			Reason:     budgetMetricReason(assertion.Metric, &page, ok),
 		})
 	}
 	return result
+}
+
+func budgetMetricReason(metric string, page *PageReport, found bool) string {
+	if found {
+		return ""
+	}
+	return metricUnavailableReason(metric, page)
 }
 
 func coverageUnusedKB(entries []CoverageEntry) float64 {

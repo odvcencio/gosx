@@ -430,15 +430,102 @@ func TestSampleMetricsPreservesRawTransferAndMemoryValues(t *testing.T) {
 		TTFBMs:                12,
 		DCLMs:                 34,
 		FullyLoadedMs:         56,
+		Resources:             []perf.ResourceEntry{{TransferSize: 789}},
 		TotalBytesTransferred: 789,
 		LongTaskCount:         2,
 		LongTaskTotalMs:       80,
 		TotalBlockingTimeMs:   30,
+		Measurements: &perf.MeasurementStatus{Version: 1, Groups: map[string]perf.CollectorStatus{
+			"resource-waterfall": {State: perf.MeasurementOK},
+			"long-tasks":         {State: perf.MeasurementOK},
+		}},
 	}
 	mem := perf.MemoryStats{JSHeapUsedMB: 1.5, DOMNodeCount: 42}
 	metrics := sampleMetrics(page, mem)
 	if metrics["transferBytes"] != 789 || metrics["jsHeapUsedMb"] != 1.5 || metrics["domNodeCount"] != 42 {
 		t.Fatalf("metrics = %#v", metrics)
+	}
+}
+
+func TestSampleMetricsOmitsUnavailableOptionalPageMetrics(t *testing.T) {
+	page := &perf.PageReport{
+		TTFBMs:                12,
+		DCLMs:                 34,
+		FullyLoadedMs:         56,
+		TotalBytesTransferred: 0,
+		LongTaskCount:         0,
+	}
+	metrics := sampleMetrics(page, perf.MemoryStats{JSHeapUsedMB: 1.5})
+	if _, ok := metrics["transferBytes"]; ok {
+		t.Fatalf("missing waterfall status must not emit transferBytes: %#v", metrics)
+	}
+	if _, ok := metrics["longTaskCount"]; ok {
+		t.Fatalf("missing long-task status must not emit longTaskCount: %#v", metrics)
+	}
+	if metrics["ttfbMs"] != 12 || metrics["jsHeapUsedMb"] != 1.5 {
+		t.Fatalf("required/non-optional metrics should remain: %#v", metrics)
+	}
+}
+
+func TestSummarizeBrowserSamplesDoesNotReviveLegacyOptionalZeros(t *testing.T) {
+	source := SourceIdentity{BaseRevision: "abc", OverlayHash: "sha256:clean"}
+	sample := BrowserRawSample{
+		RouteID:    "R00",
+		CacheMode:  "cold",
+		SampleLane: SampleLaneProduct,
+		Metrics: map[string]float64{
+			"transferBytes":       0,
+			"requestCount":        0,
+			"longTaskCount":       0,
+			"longTaskTotalMs":     0,
+			"totalBlockingTimeMs": 0,
+			"ttfbMs":              10,
+		},
+		Page: &perf.PageReport{URL: "legacy"},
+	}
+
+	summary := SummarizeBrowserSamples([]BrowserRawSample{sample}, "smoke", source)
+	metrics := summary.Groups["R00/cold"]["metrics"]
+	if _, ok := metrics["transferBytes"]; ok {
+		t.Fatalf("summary revived legacy transferBytes zero: %+v", metrics)
+	}
+	if _, ok := metrics["longTaskCount"]; ok {
+		t.Fatalf("summary revived legacy longTaskCount zero: %+v", metrics)
+	}
+	if _, ok := metrics["ttfbMs"]; !ok {
+		t.Fatalf("summary dropped non-optional metric: %+v", metrics)
+	}
+}
+
+func TestSummarizeBrowserSamplesRetainsMeasuredZerosAndFlagsMixedSamples(t *testing.T) {
+	source := SourceIdentity{BaseRevision: "abc", OverlayHash: "sha256:clean"}
+	measured := BrowserRawSample{
+		RouteID:    "R00",
+		CacheMode:  "cold",
+		SampleLane: SampleLaneProduct,
+		Metrics:    map[string]float64{"transferBytes": 12, "longTaskCount": 3, "ttfbMs": 10},
+		Page: &perf.PageReport{
+			URL: "measured",
+			Measurements: &perf.MeasurementStatus{Version: 1, Groups: map[string]perf.CollectorStatus{
+				"resource-waterfall": {State: perf.MeasurementOK},
+				"long-tasks":         {State: perf.MeasurementOK},
+			}},
+		},
+	}
+	legacy := measured
+	legacy.Page = &perf.PageReport{URL: "legacy"}
+	legacy.Metrics = map[string]float64{"transferBytes": 0, "longTaskCount": 0, "ttfbMs": 20}
+
+	summary := SummarizeBrowserSamples([]BrowserRawSample{measured, legacy}, "smoke", source)
+	metrics := summary.Groups["R00/cold"]["metrics"]
+	if got := metrics["transferBytes"]; got.N != 1 || got.Median != 0 {
+		t.Fatalf("measured zero transfer should be retained once without legacy revival: %+v", got)
+	}
+	if got := metrics["longTaskCount"]; got.N != 1 || got.Median != 0 {
+		t.Fatalf("measured zero long task should be retained once without legacy revival: %+v", got)
+	}
+	if got := metrics["ttfbMs"]; got.N != 2 {
+		t.Fatalf("non-optional metric should aggregate both samples: %+v", got)
 	}
 }
 
@@ -668,6 +755,22 @@ func TestValidateBrowserBaselineFailsCanonicalOnBadSample(t *testing.T) {
 	}
 	if len(validation.Errors) == 0 {
 		t.Fatal("expected canonical errors")
+	}
+}
+
+func TestValidateBrowserBaselineFailsCanonicalMissingBrowserTransferEvidence(t *testing.T) {
+	plan, err := samplingPlan("baseline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := testBrowserSourceIdentityWithAudit(testCompatibilityAuditIdentity("pass", true, nil))
+	sample := testValidBrowserSample(source)
+	sample.Page.Measurements = nil
+	validation := ValidateBrowserBaseline(plan, []BrowserRawSample{sample}, source, EnvironmentReport{HardwareClassification: "hardware-webgl"}, BrowserBaselineOptions{
+		Trace: true, Coverage: true, HeapSnapshots: true, PixelManifest: "pixel.json",
+	})
+	if validation.Status != "fail" || !strings.Contains(strings.Join(validation.Errors, "\n"), "missing browser transfer evidence") {
+		t.Fatalf("missing browser transfer evidence did not fail canonical validation: %+v", validation)
 	}
 }
 

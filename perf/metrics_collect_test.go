@@ -74,8 +74,8 @@ func TestCollectPageReportQueryOrderAndOptionalFailures(t *testing.T) {
 		{phase: "collect/dispatch-log", required: true},
 		{phase: "collect/vitals", required: false},
 		{phase: "collect/long-tasks", required: false},
-		{phase: "collect/webgl-info", required: false},
 		{phase: "collect/resource-waterfall", required: false},
+		{phase: "collect/webgl-info", required: false},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("query order/requiredness mismatch:\n got: %#v\nwant: %#v", got, want)

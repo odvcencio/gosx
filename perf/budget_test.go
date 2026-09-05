@@ -22,6 +22,9 @@ func TestEvaluateBudgetProfileForAllPages(t *testing.T) {
 			},
 		},
 	}
+	for i := range report.Pages {
+		markMeasurementGroupsOK(&report.Pages[i], "lcp", "long-tasks", "resource-waterfall")
+	}
 	budget := &BudgetFile{
 		Profiles: map[string]BudgetProfile{
 			"static": {
@@ -67,6 +70,8 @@ func TestEvaluateBudgetRouteProfiles(t *testing.T) {
 			},
 		},
 	}
+	markMeasurementGroupsOK(&report.Pages[0], "lcp")
+	markMeasurementGroupsOK(&report.Pages[1], "resource-waterfall")
 	budget := &BudgetFile{
 		Profiles: map[string]BudgetProfile{
 			"static": {
@@ -133,6 +138,7 @@ func TestEvaluateBudgetRouteFullURLKeepsHostBoundary(t *testing.T) {
 			LargestContentfulPaintMs: 1000,
 		},
 	}
+	markMeasurementGroupsOK(&report.PageReport, "lcp")
 	budget := &BudgetFile{
 		DefaultProfile: "fallback",
 		Profiles: map[string]BudgetProfile{
@@ -215,7 +221,7 @@ func TestEvaluateBudgetSkipsUnavailableOptionalMetric(t *testing.T) {
 	if !result.Passed || !assertion.Passed || assertion.Found || !assertion.Optional || !assertion.Skipped {
 		t.Fatalf("optional unavailable metric should be skipped/pass: %+v", result)
 	}
-	if out := FormatBudgetResult(result); !strings.Contains(out, "optional metric unavailable (skipped)") {
+	if out := FormatBudgetResult(result); !strings.Contains(out, "metric not found (skipped)") {
 		t.Fatalf("formatted result does not explain skip:\n%s", out)
 	}
 }

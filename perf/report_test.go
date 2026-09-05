@@ -2,6 +2,7 @@ package perf
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,10 +128,20 @@ func TestFormatJSON(t *testing.T) {
 	r := &Report{
 		URL:       "http://localhost:3000",
 		Timestamp: time.Date(2026, 4, 11, 12, 0, 0, 0, time.UTC),
+		Pages: []PageReport{{
+			URL: "http://localhost:3000/nested",
+			Measurements: &MeasurementStatus{Version: measurementStatusVersion, Groups: map[string]CollectorStatus{
+				"resource-waterfall": {State: MeasurementOK},
+			}},
+		}},
 		PageReport: PageReport{
 			URL:    "http://localhost:3000",
 			TTFBMs: 10.5,
 			DCLMs:  40.2,
+			Measurements: &MeasurementStatus{Version: measurementStatusVersion, Groups: map[string]CollectorStatus{
+				"resource-waterfall": {State: MeasurementOK},
+				"lcp":                {State: MeasurementUnobserved, Reason: "no paint"},
+			}},
 		},
 	}
 
@@ -148,6 +159,12 @@ func TestFormatJSON(t *testing.T) {
 	if got.URL != r.URL {
 		t.Errorf("URL: got %q, want %q", got.URL, r.URL)
 	}
+	if len(got.Pages) != 1 || got.Pages[0].URL != "http://localhost:3000/nested" {
+		t.Fatalf("nested pages did not round trip: %+v", got.Pages)
+	}
+	if status := got.Pages[0].measurementStatus("resource-waterfall"); status.State != MeasurementOK {
+		t.Fatalf("nested resource status = %+v", status)
+	}
 	if got.PageReport.TTFBMs != r.PageReport.TTFBMs {
 		t.Errorf("TTFBMs: got %f, want %f", got.PageReport.TTFBMs, r.PageReport.TTFBMs)
 	}
@@ -157,4 +174,137 @@ func TestFormatJSON(t *testing.T) {
 	if !got.Timestamp.Equal(r.Timestamp) {
 		t.Errorf("Timestamp: got %v, want %v", got.Timestamp, r.Timestamp)
 	}
+	if got.PageReport.Measurements == nil || got.PageReport.Measurements.Version != measurementStatusVersion {
+		t.Fatalf("measurement status did not round trip: %+v", got.PageReport.Measurements)
+	}
+	if status := got.PageReport.measurementStatus("lcp"); status.State != MeasurementUnobserved || status.Reason != "no paint" {
+		t.Fatalf("lcp status = %+v", status)
+	}
+}
+
+func TestLoadLegacyReportLeavesOptionalMeasurementsUnknown(t *testing.T) {
+	var got Report
+	if err := json.Unmarshal([]byte(`{
+		"url":"legacy",
+		"timestamp":"2026-04-11T12:00:00Z",
+		"pages":[{"url":"legacy","totalBytesTransferred":0,"lcpMs":0,"longTaskCount":0}]
+	}`), &got); err != nil {
+		t.Fatalf("Unmarshal legacy: %v", err)
+	}
+	if len(got.Pages) != 1 {
+		t.Fatalf("legacy pages not preserved: %+v", got.Pages)
+	}
+	for _, metric := range []string{"network_kb", "lcp", "long_tasks"} {
+		if value, ok := ResolvePageMetric(metric, &got.Pages[0]); ok {
+			t.Fatalf("legacy %s resolved to %.2f without measurement status", metric, value)
+		}
+	}
+}
+
+func TestLoadFlattenedReportFallbackKeepsTopLevelURL(t *testing.T) {
+	path := writeTempReportJSON(t, `{
+		"url":"https://example.test/",
+		"timestamp":"2026-04-11T12:00:00Z",
+		"ttfbMs":10
+	}`)
+	report, err := LoadReport(path)
+	if err != nil {
+		t.Fatalf("LoadReport: %v", err)
+	}
+	if len(report.Pages) != 1 || report.Pages[0].URL != "https://example.test/" {
+		t.Fatalf("flattened fallback lost top-level URL: %+v", report.Pages)
+	}
+}
+
+func TestFormatTableAndWaterfallSurfaceOptionalStatus(t *testing.T) {
+	r := &Report{
+		URL: "http://localhost:3000",
+		PageReport: PageReport{
+			URL: "http://localhost:3000",
+			Measurements: &MeasurementStatus{Version: measurementStatusVersion, Groups: map[string]CollectorStatus{
+				"resource-waterfall": {State: MeasurementFailed, Reason: "cdp timeout"},
+				"webgl-info":         {State: MeasurementUnsupported, Reason: "hook unavailable"},
+			}},
+		},
+	}
+	table := FormatTable(r)
+	for _, want := range []string{"Optional Measurements", "Resource waterfall", "failed: cdp timeout", "WebGL info", "unsupported: hook unavailable"} {
+		if !strings.Contains(table, want) {
+			t.Fatalf("FormatTable missing %q\n%s", want, table)
+		}
+	}
+	waterfall := FormatWaterfallTable(r)
+	if !strings.Contains(waterfall, "Resource waterfall unavailable: cdp timeout") {
+		t.Fatalf("FormatWaterfallTable did not surface unavailable status:\n%s", waterfall)
+	}
+}
+
+func TestFormatTableDoesNotGreenwashLegacyOptionalScalars(t *testing.T) {
+	r := &Report{URL: "legacy", PageReport: PageReport{
+		URL:                      "legacy",
+		LargestContentfulPaintMs: 1200,
+		LongTaskCount:            1,
+		LongTaskTotalMs:          60,
+		TotalBlockingTimeMs:      10,
+	}}
+	table := FormatTable(r)
+	if strings.Contains(table, "Core Web Vitals") || strings.Contains(table, "Main-Thread Blocking") || strings.Contains(table, "(good)") {
+		t.Fatalf("legacy optional scalars should not print as measured green values:\n%s", table)
+	}
+	if !strings.Contains(table, "LCP") || !strings.Contains(table, "unknown") || !strings.Contains(table, "Long tasks") {
+		t.Fatalf("legacy optional scalar availability should be visible:\n%s", table)
+	}
+}
+
+func TestFormatTableShowsMeasuredZeroOptionalMetrics(t *testing.T) {
+	r := &Report{URL: "measured", PageReport: PageReport{
+		URL: "measured",
+		Measurements: &MeasurementStatus{Version: measurementStatusVersion, Groups: map[string]CollectorStatus{
+			"lcp":              {State: MeasurementOK},
+			"cls":              {State: MeasurementOK},
+			"long-tasks":       {State: MeasurementOK},
+			"runtime-counters": {State: MeasurementOK},
+		}},
+	}}
+	table := FormatTable(r)
+	for _, want := range []string{"Core Web Vitals", "LCP", "0.0ms", "CLS", "0.000", "Main-Thread Blocking", "Long tasks", "0", "Runtime Throughput"} {
+		if !strings.Contains(table, want) {
+			t.Fatalf("measured zero optional metric missing %q\n%s", want, table)
+		}
+	}
+}
+
+func TestReportSchemaReferencesRootAndPageMeasurements(t *testing.T) {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Defs       map[string]struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"$defs"`
+	}
+	data, err := os.ReadFile("report.schema.json")
+	if err != nil {
+		t.Fatalf("Read schema: %v", err)
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("schema JSON: %v", err)
+	}
+	if !strings.Contains(string(schema.Properties["measurements"]), "#/$defs/measurements") {
+		t.Fatalf("root measurements property missing schema ref: %s", schema.Properties["measurements"])
+	}
+	page, ok := schema.Defs["page"]
+	if !ok {
+		t.Fatalf("page definition missing")
+	}
+	if !strings.Contains(string(page.Properties["measurements"]), "#/$defs/measurements") {
+		t.Fatalf("page measurements property missing schema ref: %s", page.Properties["measurements"])
+	}
+}
+
+func writeTempReportJSON(t *testing.T, data string) string {
+	t.Helper()
+	path := t.TempDir() + "/report.json"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

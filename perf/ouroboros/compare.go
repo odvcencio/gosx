@@ -25,6 +25,7 @@ import (
 
 	"m31labs.dev/gosx/buildmanifest"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/perf"
 	"m31labs.dev/gosx/visual"
 )
 
@@ -2049,6 +2050,10 @@ func runMetricChecks(report *CompareReport, baseline, candidate *compareLoadedAr
 				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "fail", 0, 0, rule, false, false, message, false)
 				continue
 			}
+			if !bucketMetricComplete(baseline, bucket, metricID) || !bucketMetricComplete(candidate, bucket, metricID) {
+				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "fail", 0, 0, rule, false, false, "required metric is incomplete for one or more kept product samples", false)
+				continue
+			}
 			if (bStat.Unstable || cStat.Unstable) && !hasNoiseRerunProof(baseline.summary) && !isDeterministicMetric(metricID) {
 				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "blocked", bStat.Median, cStat.Median, rule, bStat.Unstable, cStat.Unstable, "required noisy metric lacks rerun proof", false)
 				continue
@@ -2313,7 +2318,6 @@ func deriveSampleMetrics(sample BrowserRawSample) map[string]float64 {
 			}
 		}
 	}
-	copyMetric("browser.transferBytes", "transferBytes")
 	copyMetric("startup.ttfbMs", "ttfbMs")
 	copyMetric("startup.dclMs", "dclMs")
 	copyMetric("startup.fullyLoadedMs", "fullyLoadedMs")
@@ -2325,12 +2329,13 @@ func deriveSampleMetrics(sample BrowserRawSample) map[string]float64 {
 	copyMetric("scene.cpuSubmitP95Ms", "sceneCpuP95Ms")
 	copyMetric("scene.rafP95Ms", "rafP95Ms")
 	copyMetric("scene.missedVsyncEstimate", "missedVsyncEstimate")
-	copyMetric("longTaskTotalMs", "longTaskTotalMs")
-	copyMetric("totalBlockingTimeMs", "totalBlockingTimeMs")
 	if sample.Proofs.FirstUsable.OK || sample.Proofs.FirstUsable.AtMs != 0 {
 		out["startup.firstUsableMs"] = sample.Proofs.FirstUsable.AtMs
 	}
 	if sample.Page != nil {
+		addResolvedComparePageMetric(out, "browser.transferBytes", "network_kb", sample.Page, 1024)
+		addResolvedComparePageMetric(out, "longTaskTotalMs", "long_task_total", sample.Page, 1)
+		addResolvedComparePageMetric(out, "totalBlockingTimeMs", "tbt", sample.Page, 1)
 		out["hydration.totalMs"] = sample.Page.IslandHydrationMs
 		maxIsland := 0.0
 		for _, island := range sample.Page.Islands {
@@ -2374,6 +2379,12 @@ func deriveSampleMetrics(sample BrowserRawSample) map[string]float64 {
 	out["console.entryCount"] = float64(len(sample.Console))
 	out["runtime.transferBytes"] = sampleRuntimeTransfer(sample)
 	return out
+}
+
+func addResolvedComparePageMetric(out map[string]float64, id, metric string, page *perf.PageReport, multiplier float64) {
+	if value, ok := perf.ResolvePageMetric(metric, page); ok {
+		out[id] = value * multiplier
+	}
 }
 
 func baselineStat(artifact *compareLoadedArtifact, bucket metricBucket, metricID string) (Stats, bool) {
@@ -2788,6 +2799,23 @@ func bucketHasDerivedMetric(artifact *compareLoadedArtifact, bucket metricBucket
 		}
 	}
 	return false
+}
+
+func bucketMetricComplete(artifact *compareLoadedArtifact, bucket metricBucket, metricID string) bool {
+	if artifact == nil {
+		return false
+	}
+	seen := false
+	for _, sample := range artifact.raw {
+		if sample.SampleLane != SampleLaneProduct || sample.Discarded || sample.RouteID != bucket.RouteID || sample.CacheMode != bucket.CacheMode {
+			continue
+		}
+		seen = true
+		if _, ok := deriveSampleMetrics(sample)[metricID]; !ok {
+			return false
+		}
+	}
+	return seen
 }
 
 func routeSelectsWASM(artifact *compareLoadedArtifact, routeID string) bool {

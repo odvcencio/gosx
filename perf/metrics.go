@@ -34,6 +34,13 @@ type PageReport struct {
 	TotalBytesTransferred int64           `json:"totalBytesTransferred"`
 	BlockingResourceMs    float64         `json:"blockingResourceMs"`
 
+	// Measurements records whether optional collector groups actually ran
+	// and observed trustworthy data. Legacy reports without this metadata
+	// still unmarshal, but optional metrics in them are treated as unknown
+	// for assertions, budgets, and comparisons rather than inferred from
+	// zero-valued compatibility fields.
+	Measurements *MeasurementStatus `json:"measurements,omitempty"`
+
 	// Core Web Vitals
 	LargestContentfulPaintMs float64 `json:"lcpMs"`
 	CumulativeLayoutShift    float64 `json:"cls"`
@@ -404,21 +411,29 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		})
 	}
 
-	// Core Web Vitals + extended runtime counters
+	// Core Web Vitals + extended runtime counters. The numeric fields stay
+	// backward-compatible, but optional measurement state determines whether a
+	// zero is trustworthy for gates.
 	var vitals struct {
-		LCP             float64 `json:"lcp"`
-		CLS             float64 `json:"cls"`
-		FID             float64 `json:"fid"`
-		SignalWrites    int     `json:"signalWrites"`
-		SignalReads     int     `json:"signalReads"`
-		HubMessageCount int     `json:"hubMessageCount"`
-		HubMessageBytes int     `json:"hubMessageBytes"`
-		HubSendCount    int     `json:"hubSendCount"`
+		Available       bool                     `json:"available"`
+		LCP             float64                  `json:"lcp"`
+		CLS             float64                  `json:"cls"`
+		FID             float64                  `json:"fid"`
+		SignalWrites    int                      `json:"signalWrites"`
+		SignalReads     int                      `json:"signalReads"`
+		HubMessageCount int                      `json:"hubMessageCount"`
+		HubMessageBytes int                      `json:"hubMessageBytes"`
+		HubSendCount    int                      `json:"hubSendCount"`
+		Status          browserMeasurementStatus `json:"status"`
 	}
-	_ = runPageReportQuery(runner, "collect/vitals", false, func() error {
+	vitalsPhase := "collect/vitals"
+	vitalsErr := runPageReportQuery(runner, vitalsPhase, false, func() error {
 		return queries.evaluate(d, `(function() {
-		var p = window.__gosx_perf || {};
+		var p = window.__gosx_perf;
+		if (!p) return {available:false};
+		var s = p.measurementStatus || {};
 		return {
+			available: true,
 			lcp: p.largestContentfulPaint || 0,
 			cls: p.cumulativeLayoutShift || 0,
 			fid: p.firstInputDelay || 0,
@@ -426,10 +441,14 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 			signalReads: p.signalReads || 0,
 			hubMessageCount: p.hubMessageCount || 0,
 			hubMessageBytes: p.hubMessageBytes || 0,
-			hubSendCount: p.hubSendCount || 0
+			hubSendCount: p.hubSendCount || 0,
+			status: s
 		};
 	})()`, &vitals)
 	})
+	if err := optionalPhaseParentError(d, vitalsPhase); err != nil {
+		return nil, err
+	}
 	pr.LargestContentfulPaintMs = vitals.LCP
 	pr.CumulativeLayoutShift = vitals.CLS
 	pr.FirstInputDelayMs = vitals.FID
@@ -438,17 +457,53 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 	pr.HubMessageCount = vitals.HubMessageCount
 	pr.HubMessageBytes = vitals.HubMessageBytes
 	pr.HubSendCount = vitals.HubSendCount
+	if vitalsErr != nil {
+		pr.setMeasurementStatus("lcp", MeasurementFailed, vitalsErr.Error())
+		pr.setMeasurementStatus("cls", MeasurementFailed, vitalsErr.Error())
+		pr.setMeasurementStatus("fid", MeasurementFailed, vitalsErr.Error())
+		pr.setMeasurementStatus("runtime-counters", MeasurementFailed, vitalsErr.Error())
+	} else if !vitals.Available {
+		pr.setMeasurementStatus("lcp", MeasurementUnsupported, "window.__gosx_perf instrumentation hook is unavailable")
+		pr.setMeasurementStatus("cls", MeasurementUnsupported, "window.__gosx_perf instrumentation hook is unavailable")
+		pr.setMeasurementStatus("fid", MeasurementUnsupported, "window.__gosx_perf instrumentation hook is unavailable")
+		pr.setMeasurementStatus("runtime-counters", MeasurementUnsupported, "window.__gosx_perf instrumentation hook is unavailable")
+	} else {
+		pr.setMeasurementStatusValue("lcp", statusFromBrowserObserver("largest-contentful-paint", vitals.Status, vitals.Status.LCP, true))
+		pr.setMeasurementStatusValue("cls", statusFromBrowserObserver("layout-shift", vitals.Status, vitals.Status.CLS, false))
+		pr.setMeasurementStatusValue("fid", statusFromBrowserObserver("first-input", vitals.Status, vitals.Status.FID, true))
+		pr.setMeasurementStatusValue("runtime-counters", statusFromBrowserRuntimeCounters(vitals.Status))
+	}
 
 	// Long tasks
-	var longTasks []struct {
-		Name      string  `json:"name"`
-		StartTime float64 `json:"startTime"`
-		Duration  float64 `json:"duration"`
+	var longTasksPayload struct {
+		Available bool                     `json:"available"`
+		Status    browserMeasurementStatus `json:"status"`
+		Tasks     []struct {
+			Name      string  `json:"name"`
+			StartTime float64 `json:"startTime"`
+			Duration  float64 `json:"duration"`
+		} `json:"tasks"`
 	}
-	_ = runPageReportQuery(runner, "collect/long-tasks", false, func() error {
-		return queries.evaluate(d, `(window.__gosx_perf && window.__gosx_perf.longTasks) || []`, &longTasks)
+	longTasksPhase := "collect/long-tasks"
+	longTasksErr := runPageReportQuery(runner, longTasksPhase, false, func() error {
+		return queries.evaluate(d, `(function(){
+			var p = window.__gosx_perf;
+			if (!p) return {available:false, tasks:[]};
+			var s = p.measurementStatus || {};
+			return {available:true, status:s, tasks:p.longTasks || []};
+		})()`, &longTasksPayload)
 	})
-	for _, lt := range longTasks {
+	if err := optionalPhaseParentError(d, longTasksPhase); err != nil {
+		return nil, err
+	}
+	if longTasksErr != nil {
+		pr.setMeasurementStatus("long-tasks", MeasurementFailed, longTasksErr.Error())
+	} else if !longTasksPayload.Available {
+		pr.setMeasurementStatus("long-tasks", MeasurementUnsupported, "window.__gosx_perf instrumentation hook is unavailable")
+	} else {
+		pr.setMeasurementStatusValue("long-tasks", statusFromBrowserObserver("longtask", longTasksPayload.Status, longTasksPayload.Status.LongTasks, false))
+	}
+	for _, lt := range longTasksPayload.Tasks {
 		pr.LongTasks = append(pr.LongTasks, LongTaskMetric{
 			Name:       lt.Name,
 			StartTime:  lt.StartTime,
@@ -460,26 +515,22 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 			pr.TotalBlockingTimeMs += lt.Duration - 50
 		}
 	}
-	pr.LongTaskCount = len(longTasks)
+	pr.LongTaskCount = len(longTasksPayload.Tasks)
 
-	// GPU context info (tier + caps). Captured even when no canvas is
-	// present so the report can show browser capabilities.
-	var webgl WebGLInfo
-	webglErr := runPageReportQuery(runner, "collect/webgl-info", false, func() error {
-		return queries.evaluate(d, `(typeof window.__gosx_perf_webgl_info === "function") ? window.__gosx_perf_webgl_info() : null`, &webgl)
-	})
-	if webglErr == nil && webgl.Tier != "" {
-		pr.WebGL = &webgl
-	}
-
-	// Resource waterfall
+	// Resource waterfall is collected before GPU introspection. A successful
+	// empty list is a trustworthy zero; collector failure stays unavailable.
 	var resources []ResourceEntry
-	resourcesErr := runPageReportQuery(runner, "collect/resource-waterfall", false, func() error {
+	resourcesPhase := "collect/resource-waterfall"
+	resourcesErr := runPageReportQuery(runner, resourcesPhase, false, func() error {
 		var err error
 		resources, err = queries.resourceWaterfall(d)
 		return err
 	})
+	if err := optionalPhaseParentError(d, resourcesPhase); err != nil {
+		return nil, err
+	}
 	if resourcesErr == nil {
+		pr.setMeasurementStatus("resource-waterfall", MeasurementOK, "")
 		pr.Resources = resources
 		for _, r := range resources {
 			pr.TotalBytesTransferred += int64(r.TransferSize)
@@ -490,9 +541,50 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 				}
 			}
 		}
+	} else {
+		pr.setMeasurementStatus("resource-waterfall", MeasurementFailed, resourcesErr.Error())
+	}
+
+	// GPU context info (tier + caps). Captured even when no canvas is
+	// present so the report can show browser capabilities. The probe uses a
+	// short child operation context so a slow GPU/driver query cannot consume
+	// the whole route budget or hide already-collected network evidence. The
+	// cancel bounds the Go/CDP wait; it is not proof that a synchronous browser
+	// GPU driver call was interrupted.
+	var webgl WebGLInfo
+	webglPhase := "collect/webgl-info"
+	webglErr := runPageReportQuery(runner, webglPhase, false, func() error {
+		webglDriver := d
+		cancel := func() {}
+		if d != nil {
+			webglDriver, cancel = d.WithOperationContext(d.Context(), 2*time.Second)
+		}
+		defer cancel()
+		return queries.evaluate(webglDriver, `(typeof window.__gosx_perf_webgl_info === "function") ? window.__gosx_perf_webgl_info() : null`, &webgl)
+	})
+	if err := optionalPhaseParentError(d, webglPhase); err != nil {
+		return nil, err
+	}
+	if webglErr == nil && webgl.Tier != "" {
+		pr.WebGL = &webgl
+		pr.setMeasurementStatus("webgl-info", MeasurementOK, "")
+	} else if webglErr == nil {
+		pr.setMeasurementStatus("webgl-info", MeasurementUnsupported, "window.__gosx_perf_webgl_info hook is unavailable")
+	} else {
+		pr.setMeasurementStatus("webgl-info", MeasurementFailed, webglErr.Error())
 	}
 
 	return pr, nil
+}
+
+func optionalPhaseParentError(d *Driver, phase string) error {
+	if d == nil || d.Context() == nil {
+		return nil
+	}
+	if err := d.Context().Err(); err != nil {
+		return fmt.Errorf("%s: %w", phase, err)
+	}
+	return nil
 }
 
 // ComputeFrameStats sorts durations and computes percentile statistics.
