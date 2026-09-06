@@ -144,6 +144,12 @@ type Props struct {
 	// visibility via Mesh.GizmoRing are shown only while the signal matches
 	// "rotate"; everything else is untouched.
 	GizmoInputSignal string `json:"gizmoInputSignal,omitempty"`
+	// GizmoLocalScalePreview opts into local selected-axis scale preview.
+	// Absent/false preserves event-only scale gestures. The option and original
+	// resolved scales are captured at gesture start; cancellation rolls back
+	// only the exact locally owned record. End retains the preview, not server
+	// persistence or authorization. Output events remain untrusted requests.
+	GizmoLocalScalePreview *bool `json:"gizmoLocalScalePreview,omitempty"`
 	// GizmoOutputSignal: when set, the client gizmo drag controller publishes
 	// each drag phase ({target, mode, axis, phase, position, rotation, scale})
 	// into this shared signal, in addition to dispatching the
@@ -1835,6 +1841,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "cameraOutputSignal", p.CameraOutputSignal)
 	setString(out, "cursorOutputSignal", p.CursorOutputSignal)
 	setString(out, "gizmoInputSignal", p.GizmoInputSignal)
+	setBool(out, "gizmoLocalScalePreview", p.GizmoLocalScalePreview)
 	setString(out, "gizmoOutputSignal", p.GizmoOutputSignal)
 	setString(out, "capabilityTier", p.CapabilityTier)
 	if p.ControlTarget != (Vector3{}) {

@@ -2148,7 +2148,12 @@
 	      }, function(payload) {
 	        const target = payload && sceneState.objects.get(sceneObjectKey(payload.target));
 	        if (payload && payload.phase === "start" && target) {
-	          gizmoPreview = { expected: target, original: { x: target.x, y: target.y, z: target.z } };
+	          gizmoPreview = {
+	            expected: target,
+	            original: { x: target.x, y: target.y, z: target.z },
+	            scaleEnabled: sceneBool(props.gizmoLocalScalePreview, false),
+	            scale: { scaleX: target.scaleX, scaleY: target.scaleY, scaleZ: target.scaleZ },
+	          };
 	        }
 	        if (payload && payload.mode === "translate" && gizmoPreview && target === gizmoPreview.expected) {
 	          const position = payload.phase === "cancel" ? gizmoPreview.original : payload.position;
@@ -2156,6 +2161,21 @@
 	            applySceneObjectPatch(sceneState, payload.target, { x: position.x, y: position.y, z: position.z });
 	            gizmoPreview.expected = sceneState.objects.get(sceneObjectKey(payload.target));
 	            scheduleRender("gizmo-drag");
+	          }
+	        }
+	        if (payload && payload.mode === "scale" && gizmoPreview && gizmoPreview.scaleEnabled && target === gizmoPreview.expected) {
+	          let patch = null;
+	          if (payload.phase === "cancel") {
+	            patch = gizmoPreview.scale;
+	          } else if ((payload.phase === "move" || payload.phase === "end") && typeof payload.scaleFactor === "number" && Number.isFinite(payload.scaleFactor) && payload.scaleFactor > 0) {
+	            const key = payload.axis === "x" ? "scaleX" : payload.axis === "y" ? "scaleY" : payload.axis === "z" ? "scaleZ" : "";
+	            const value = key ? gizmoPreview.scale[key] * payload.scaleFactor : NaN;
+	            if (Number.isFinite(value)) patch = { [key]: value };
+	          }
+	          if (patch) {
+	            applySceneObjectPatch(sceneState, payload.target, patch);
+	            gizmoPreview.expected = sceneState.objects.get(sceneObjectKey(payload.target));
+	            scheduleRender("gizmo-scale");
 	          }
 	        }
 	        if (payload && (payload.phase === "end" || payload.phase === "cancel")) gizmoPreview = null;
