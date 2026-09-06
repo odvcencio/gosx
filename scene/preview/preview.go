@@ -110,6 +110,8 @@ func RenderJSON(data []byte, opts Options) (*Result, error) {
 		Scene      json.RawMessage `json:"scene"`
 		Background string          `json:"background"`
 		Camera     struct {
+			Kind                            string
+			Left, Right, Top, Bottom, Zoom  float64
 			X, Y, Z                         float64
 			RotationX, RotationY, RotationZ float64
 			FOV, Near, Far                  float64
@@ -119,10 +121,19 @@ func RenderJSON(data []byte, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("scene preview: decode JSON: %w", err)
 	}
 	payload := data
+	var orthographic *scene.OrthographicCamera
 	if len(envelope.Scene) > 0 && string(envelope.Scene) != "null" {
 		payload = envelope.Scene
 		if opts.Background == "" {
 			opts.Background = envelope.Background
+		}
+		if opts.Camera == nil && envelope.Camera.Kind == "orthographic" {
+			orthographic = &scene.OrthographicCamera{
+				Position: scene.Vec3(envelope.Camera.X, envelope.Camera.Y, envelope.Camera.Z),
+				Rotation: scene.Euler{X: envelope.Camera.RotationX, Y: envelope.Camera.RotationY, Z: envelope.Camera.RotationZ},
+				Left:     envelope.Camera.Left, Right: envelope.Camera.Right, Top: envelope.Camera.Top, Bottom: envelope.Camera.Bottom,
+				Zoom: envelope.Camera.Zoom, Near: envelope.Camera.Near, Far: envelope.Camera.Far,
+			}
 		}
 		if opts.Camera == nil && (envelope.Camera.X != 0 || envelope.Camera.Y != 0 || envelope.Camera.Z != 0 ||
 			envelope.Camera.RotationX != 0 || envelope.Camera.RotationY != 0 || envelope.Camera.RotationZ != 0 ||
@@ -148,6 +159,9 @@ func RenderJSON(data []byte, opts Options) (*Result, error) {
 		ShadowMaxPixels: doc.ShadowMaxPixels, ShaderLib: doc.ShaderLib,
 	}
 	frame := BundleIR(ir, opts)
+	if orthographic != nil {
+		frame.Camera = renderOrthographicCamera(*orthographic)
+	}
 	for _, raw := range doc.PostEffects {
 		if effect, ok := renderPostEffectJSON(raw); ok {
 			appendPreviewPostEffect(&frame, effect, opts)
