@@ -163,7 +163,12 @@ type Props struct {
 	// Only phase "end" requests persistence. "cancel" terminates an interrupted
 	// gesture without committing; translate previews roll back only while the
 	// mount still owns the last preview record. These client events are untrusted.
-	GizmoOutputSignal string       `json:"gizmoOutputSignal,omitempty"`
+	GizmoOutputSignal string `json:"gizmoOutputSignal,omitempty"`
+	// GizmoCommitAction optionally posts valid end events to a same-origin
+	// named action URL supplied by ActionPath. This background transport never
+	// navigates or reconciles scene state; authorization and persistence remain
+	// the action handler's responsibility. Client fields are untrusted.
+	GizmoCommitAction string       `json:"gizmoCommitAction,omitempty"`
 	CapabilityTier    string       `json:"capabilityTier,omitempty"`
 	Compression       *Compression `json:"compression,omitempty"`
 	ControlTarget     Vector3
@@ -1850,6 +1855,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "gizmoLocalScalePreview", p.GizmoLocalScalePreview)
 	setBool(out, "gizmoLocalRotatePreview", p.GizmoLocalRotatePreview)
 	setString(out, "gizmoOutputSignal", p.GizmoOutputSignal)
+	setString(out, "gizmoCommitAction", p.GizmoCommitAction)
 	setString(out, "capabilityTier", p.CapabilityTier)
 	if p.ControlTarget != (Vector3{}) {
 		out["controlTarget"] = map[string]any{

@@ -1344,6 +1344,38 @@
     }
   }
 
+  // Background mutations must never use submitForm's native navigation fallback.
+  async function submitBackgroundAction(action, fieldPairs, options) {
+    const fail = (error, status = 0) => ({ ok: false, status, result: null, error });
+    try {
+      if (typeof action !== "string" || !action || action !== action.trim() || /[?#]/.test(action)) return fail("invalid-action");
+      const target = new URL(action, windowLocationHref());
+      const current = new URL(windowLocationHref());
+      if (!/^https?:$/.test(target.protocol) || target.origin !== current.origin || target.username || target.password || target.search || target.hash || !/\/__actions\/[A-Za-z0-9_-]+$/.test(target.pathname)) return fail("invalid-action");
+      if (!Array.isArray(fieldPairs)) return fail("invalid-fields");
+      const body = new URLSearchParams();
+      const names = new Set();
+      for (const pair of fieldPairs) {
+        if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || typeof pair[1] !== "string" || !pair[0] || pair[0] === "csrf_token" || names.has(pair[0])) return fail("invalid-fields");
+        names.add(pair[0]);
+        body.append(pair[0], pair[1]);
+      }
+      const opts = options || {};
+      const token = resolveActionCSRFToken(opts.root, null);
+      if (token) body.append("csrf_token", token);
+      const response = await gosxRuntimeRequest(target.href, {
+        method: "POST", credentials: "same-origin", redirect: "error", signal: opts.signal,
+        headers: Object.assign({ Accept: "application/json", "X-Requested-With": "XMLHttpRequest" }, token ? { "X-CSRF-Token": token } : {}), body,
+      });
+      const status = response.status;
+      if (response.redirected || status < 200 || status >= 300) return fail("http-response", status);
+      let result;
+      try { result = await parseJSONResponse(response); } catch (_) { return fail("invalid-result", status); }
+      if (!result || typeof result !== "object" || Array.isArray(result) || typeof result.ok !== "boolean" || Object.prototype.hasOwnProperty.call(result, "redirect")) return fail("invalid-result", status);
+      return { ok: result.ok, status, result, error: result.ok ? null : "action-rejected" };
+    } catch (_) { return fail("request-failed"); }
+  }
+
   function submitAction(action, fields, options) {
     const opts = options || {};
     const host = actionFormHost(opts);
@@ -7107,6 +7139,7 @@
   const navigationAPI = {
     navigate: navigate,
     submitAction: submitAction,
+    submitBackgroundAction: submitBackgroundAction,
     getState: currentNavigationSnapshot,
     getFetchEpoch: currentNavigationFetchEpoch,
     refresh: refreshNavigationState,

@@ -2,6 +2,63 @@
 // @ts-check
 // Mount closure: canvas, render loop, live updates, teardown, and gateable authorities.
 
+function sceneGizmoCommitURL(value) {
+  if (typeof value !== "string" || !value || value !== value.trim() || /[?#]/.test(value)) return "";
+  try {
+    const url = new URL(value, window.location.href);
+    if (!/^https?:$/.test(url.protocol) || url.origin !== new URL(window.location.href).origin || url.username || url.password || url.search || url.hash || !/\/__actions\/[A-Za-z0-9_-]+$/.test(url.pathname)) return "";
+    return url.href;
+  } catch (_) { return ""; }
+}
+
+function sceneGizmoCommitFields(payload) {
+  if (!payload || payload.phase !== "end" || typeof payload.target !== "string" || !payload.target || !["x", "y", "z"].includes(payload.axis)) return null;
+  const pairs = [["target", payload.target], ["mode", payload.mode], ["axis", payload.axis], ["phase", "end"]];
+  const finite = value => typeof value === "number" && Number.isFinite(value);
+  if (payload.mode === "translate") {
+    if (!payload.position || !["x", "y", "z"].every(key => finite(payload.position[key]))) return null;
+    for (const key of ["x", "y", "z"]) pairs.push(["position_" + key, String(payload.position[key])]);
+  } else if (payload.mode === "scale") {
+    if (!finite(payload.scaleFactor) || payload.scaleFactor <= 0) return null;
+    pairs.push(["scale_factor", String(payload.scaleFactor)]);
+  } else if (payload.mode === "rotate") {
+    if (payload.axis !== "z" || !finite(payload.angleDelta)) return null;
+    pairs.push(["angle_delta", String(payload.angleDelta)]);
+  } else return null;
+  return pairs;
+}
+
+function sceneGizmoCommitTransport(mount, readAction, isCurrent) {
+  let gesture = null, closed = false;
+  const requests = new Set();
+  return {
+    handle(payload) {
+      if (closed || !isCurrent() || !payload) return;
+      if (payload.phase === "start") {
+        gesture = { action: sceneGizmoCommitURL(readAction()), target: payload.target, mode: payload.mode, axis: payload.axis };
+        return;
+      }
+      if (payload.phase !== "end" && payload.phase !== "cancel") return;
+      const started = gesture; gesture = null;
+      if (!started || !started.action || payload.phase !== "end" || started.target !== payload.target || started.mode !== payload.mode || started.axis !== payload.axis) return;
+      const fields = sceneGizmoCommitFields(payload);
+      const api = window.__gosx && window.__gosx.navigation;
+      if (!fields || !api || typeof api.submitBackgroundAction !== "function") return;
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      if (controller) requests.add(controller);
+      // Observe only transport outcome, never response data or authoritative state.
+      Promise.resolve().then(() => {
+        if (closed || !isCurrent()) return null;
+        return api.submitBackgroundAction(started.action, fields, { root: mount, signal: controller && controller.signal });
+      }).then(outcome => {
+        if (!outcome || closed || !isCurrent()) return;
+        mount.dispatchEvent(new CustomEvent("gosx:scene3d:gizmo-action-result", { bubbles: true, detail: { ok: outcome.ok === true, status: outcome.status || 0, target: started.target, mode: started.mode } }));
+      }).catch(() => {}).finally(() => { if (controller) requests.delete(controller); });
+    },
+    dispose() { closed = true; gesture = null; for (const request of requests) request.abort(); requests.clear(); },
+  };
+}
+
 /**
  * @typedef {object} GoSXSceneEngineMountContext
  * @property {HTMLElement} mount
@@ -16,6 +73,8 @@
     }
 
     const props = ctx.props || {};
+    // Factory isCurrent tracks pending acquisition, not the mounted lifetime.
+    const gizmoCommitTransport = sceneGizmoCommitTransport(mount, () => props.gizmoCommitAction, () => !disposed);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !(ctx.signal && ctx.signal.aborted) && (!ctx.isCurrent || ctx.isCurrent());
@@ -2146,6 +2205,7 @@
 	        mount.setAttribute("data-gosx-scene3d-gizmo-diagnostic", group.diagnostic);
 	        return { targetID: lastAppliedSelectionID, mode: lastAppliedGizmoMode, anchor: anchor, gizmoControlID: group.gizmoControlID, gizmoSize: group.gizmoSize, valid: group.valid && (!gizmoPreview || target === gizmoPreview.expected) };
 	      }, function(payload) {
+	        gizmoCommitTransport.handle(payload);
 	        const target = payload && sceneState.objects.get(sceneObjectKey(payload.target));
 	        if (payload && payload.phase === "start" && target) {
 	          const rotateRequested = sceneBool(props.gizmoLocalRotatePreview, false);
@@ -3461,6 +3521,7 @@
     };
 
     function disposeMountedScene() {
+      gizmoCommitTransport.dispose();
       if (initialModelSignal) initialModelSignal.removeEventListener("abort", cancelInitialModelOwnership);
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
       disposed = true;

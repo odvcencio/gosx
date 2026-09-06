@@ -21,6 +21,17 @@ for(const enabled of [false,true])test(`mounted local scale preview enabled=${en
  h.fire("pointerup",424);assert.deepEqual(h.phases.map(p=>p.phase),["start","move","end"]);
 });
 
+test("mounted scale action uses end only and failed response preserves preview",async()=>{
+ const h=await mountedScale(true),requests=[];
+ h.mount.__gosxScene3DHandle.updateSceneProps({gizmoCommitAction:"/edit/__actions/transform"});
+ h.env.context.__gosx.navigation={submitBackgroundAction:async(url,pairs)=>{requests.push({url,pairs});return {ok:false,status:422}}};
+ h.fire("pointerdown",372);h.fire("pointermove",424);await flushAsyncWork();assert.equal(requests.length,0);
+ h.fire("pointerup",424);await flushAsyncWork();assert.equal(requests.length,1);
+ const fields=Object.fromEntries(requests[0].pairs);assert.equal(fields.mode,"scale");assert.equal(fields.phase,"end");
+ assert.equal(h.cube().scaleX,2*Number(fields.scale_factor));assert.deepEqual(h.phases.map(p=>p.phase),["start","move","end"]);
+ h.fire("pointerdown",372);h.fire("pointercancel",999);await flushAsyncWork();assert.equal(requests.length,1);
+});
+
 for(const interruption of ["end","cancel","dispose","rebind","mode","selection","group","external","replacement","disable"])
 test(`owned scale preview ${interruption}`,async()=>{
  const h=await mountedScale(true);h.fire("pointerdown",372);h.fire("pointermove",424);
