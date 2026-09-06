@@ -24,7 +24,7 @@ type sharedComponentTarget struct {
 }
 
 // loadSharedDirComponents compiles every .gsx file in dir through the same
-// stat-keyed cache (loadCachedGSXProgram) a file-routed page renders
+// dependency-keyed cache (loadCachedGSXProgram) a file-routed page renders
 // through, and returns every STRICT component any of them declares, keyed
 // by name. Only files whose package clause matches the alphabetically
 // first .gsx file's package are included, mirroring
@@ -159,6 +159,12 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 		r.err = fmt.Errorf("render shared component %s: imported island/engine target %s in %s is not supported; shared composition currently admits strict pure-view components only", node.Tag, name, target.path)
 		return true
 	}
+	// Inspect the whole reachable source-owned closure before evaluating caller
+	// content or entering any component that could register a runtime owner.
+	if err := validateSharedPureClosure(target, make(map[sharedComponentIdentity]bool)); err != nil {
+		r.err = err
+		return true
+	}
 	// Fail closed instead of truncating silently, the same guarantee
 	// validateStrictCalleeChildren proves for a same-file call at compile
 	// time. ir.Lower cannot prove this for a shared call (no I/O — see
@@ -191,7 +197,25 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 	// entered. A slot child's NodeID indexes the caller's program, so the
 	// child renderer built below could not resolve it. See renderCallSlots.
 	slotNodes := r.renderCallSlots(node.Slots, env)
-	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile})
+	if r.err != nil {
+		return true
+	}
+	if r.sharedStack == nil {
+		r.sharedStack = make(map[sharedComponentIdentity]bool)
+	}
+	identity, err := sharedIdentity(target)
+	if err != nil {
+		r.err = err
+		return true
+	}
+	if r.sharedStack[identity] {
+		r.err = fmt.Errorf("shared component cycle at %s:%s", identity.path, identity.component)
+		return true
+	}
+	r.sharedStack[identity] = true
+	defer delete(r.sharedStack, identity)
+	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile, SourceDir: filepath.Dir(target.path)})
+	child.sharedStack = r.sharedStack
 	child.writeLocalComponentWithChildren(b, target.comp, node, env, childrenNode, slotNodes)
 	if child.err != nil {
 		r.err = child.err

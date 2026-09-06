@@ -29,6 +29,7 @@ import (
 )
 
 type fileProgramRenderer struct {
+	sharedStack    map[sharedComponentIdentity]bool
 	prog           *ir.Program
 	components     map[string]*ir.Component
 	componentIndex map[string]int
