@@ -22,6 +22,29 @@ func TestButtonRendersLinkVariant(t *testing.T) {
 	}
 }
 
+func TestButtonDisabledLinkFallback(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		direct := Button(ButtonProps{Href: `/docs?a=1&b="two"`, Disabled: disabled, Variant: "secondary", Size: "sm"}, gosx.Text("Docs & more"))
+		registered, ok := Registry().Render("Button", components.Props{"href": `/docs?a=1&b="two"`, "disabled": disabled, "variant": "secondary", "size": "sm"}, gosx.Text("Docs & more"))
+		if !ok {
+			t.Fatal("registry missing")
+		}
+		for _, node := range []gosx.Node{direct, registered} {
+			h := gosx.RenderHTML(node)
+			if !strings.Contains(h, `class="gosx-ui gosx-ui-button gosx-ui-button-secondary gosx-ui-button-sm"`) || !strings.Contains(h, "Docs &amp; more") {
+				t.Fatal(h)
+			}
+			if disabled {
+				if !strings.HasPrefix(h, "<span ") || !strings.Contains(h, `aria-disabled="true"`) || strings.Contains(h, "href=") || strings.Contains(h, "tabindex=") {
+					t.Fatalf("disabled live link: %s", h)
+				}
+			} else if !strings.HasPrefix(h, "<a ") || !strings.Contains(h, `href="/docs?a=1&amp;b=&#34;two&#34;"`) {
+				t.Fatal(h)
+			}
+		}
+	}
+}
+
 func TestFieldComposesLabelControlAndMessages(t *testing.T) {
 	node := Field(FieldProps{
 		ID:       "email",

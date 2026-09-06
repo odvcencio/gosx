@@ -181,10 +181,11 @@ func Heading(level int, props TextProps, children ...gosx.Node) gosx.Node {
 func Button(props ButtonProps, children ...gosx.Node) gosx.Node {
 	attrs := baseAttrs(props.BaseProps, "gosx-ui-button", variantClass("button", props.Variant), sizeClass("button", props.Size))
 	if props.Href != "" {
-		attrs = append(attrs, gosx.Attr("href", props.Href))
 		if props.Disabled {
-			attrs = append(attrs, gosx.Attr("aria-disabled", "true"), gosx.Attr("tabindex", "-1"))
+			attrs = append(attrs, gosx.Attr("aria-disabled", "true"))
+			return gosx.El("span", nodeArgs(attrs, children...)...)
 		}
+		attrs = append(attrs, gosx.Attr("href", props.Href))
 		return gosx.El("a", nodeArgs(attrs, children...)...)
 	}
 	typ := strings.TrimSpace(props.Type)
