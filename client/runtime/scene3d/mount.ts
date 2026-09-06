@@ -2364,18 +2364,28 @@ function sceneGizmoCommitTransport(mount, readAction, isCurrent) {
         const obj = objects[i];
         if (obj.gizmoHelper) {
           const visible = Boolean(target) && obj.gizmoFormMode === mode;
-          const patch = { visible: visible };
-          if (anchor) {
+          // Compare only normalized sync-owned values before allocating a patch.
+          const changed = sceneBool(obj.visible, true) !== visible || (anchor && (
+            sceneNumber(obj.x, 0) !== sceneNumber(anchor.x, 0) ||
+            sceneNumber(obj.y, 0) !== sceneNumber(anchor.y, 0) ||
+            sceneNumber(obj.z, 0) !== sceneNumber(anchor.z, 0) ||
+            sceneNumber(obj.rotationX, 0) !== sceneNumber(anchor.rotationX, 0) ||
+            sceneNumber(obj.rotationY, 0) !== sceneNumber(anchor.rotationY, 0) ||
+            sceneNumber(obj.rotationZ, 0) !== sceneNumber(anchor.rotationZ, 0)));
+          if (changed) {
+            const patch = { visible: visible };
+            if (anchor) {
             patch.x = anchor.x;
             patch.y = anchor.y;
             patch.z = anchor.z;
             patch.rotationX = anchor.rotationX;
             patch.rotationY = anchor.rotationY;
             patch.rotationZ = anchor.rotationZ;
+            }
+            applySceneObjectPatch(sceneState, obj.id, patch);
           }
-          applySceneObjectPatch(sceneState, obj.id, patch);
         } else if (obj.gizmoRing) {
-          applySceneObjectPatch(sceneState, obj.id, { visible: mode === "rotate" });
+          if (sceneBool(obj.visible, true) !== (mode === "rotate")) applySceneObjectPatch(sceneState, obj.id, { visible: mode === "rotate" });
         }
       }
     }
