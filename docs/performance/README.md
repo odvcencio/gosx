@@ -92,3 +92,23 @@ Buckley commits use its default OpenRouter model through `-backend api`.
 The configured provider requires `BUCKLEY_MODEL_REASONING=off` for its forced
 tool-call commit request. This is a per-command override, not a saved config
 change. Normal branch pushes follow successful scoped commits.
+
+## Material profile cache batch
+
+Profiles now reuse object-owned WeakMap entries across pose changes. All
+profile input fields are checked, nested edits are compared against snapshots,
+and registry changes invalidate cached output. Dynamic shader-data factories
+bypass caching. Weak ownership avoids retaining removed actors globally.
+
+Validation: all 1,796 JavaScript tests and the test-js type, builder, freshness
+and budget gates passed. Two new tests cover pose reuse, scalar/nested changes,
+CSS expression inputs, registry updates and dynamic factories.
+
+A Node 26 microbenchmark alternated cached and uncached preparation for 512
+standard materials over 180 samples after 30 warm-up iterations. Observed
+p50/p95 per batch: cached 0.643/1.081 ms; uncached 6.321/7.376 ms. These are
+material preparation timings only, not browser FPS or a complete game result.
+
+Remaining: instance storage with explicit prepared-frame ownership, shadow
+instancing in both backends, and early visibility work that preserves picking
+and offscreen shadow casters. These are not implemented by this batch.

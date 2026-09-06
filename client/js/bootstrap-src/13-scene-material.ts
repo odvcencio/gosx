@@ -626,7 +626,40 @@
     return Object.prototype.hasOwnProperty.call(item, "blend");
   }
 
+  const sceneObjectMaterialCache = new WeakMap();
+  const sceneObjectMaterialInputs = ["_blendModeDerived", "_renderPassDerived", "alphaCutoff", "anisotropy", "blendMode", "clearcoat", "color", "customFragment", "customFragmentWGSL", "customUniforms", "customVertex", "customVertexWGSL", "dashSize", "emissive", "emissiveMap", "gapSize", "ior", "iridescence", "lineDash", "materialKind", "metalness", "metalnessMap", "normalMap", "occlusionMap", "opacity", "renderPass", "roughness", "roughnessMap", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "sheen", "specularColor", "specularIntensity", "texture", "textureDescriptors", "transmission", "unlit", "wireframe"];
+
+  function sceneMaterialInputUnchanged(value, snapshot) {
+    if (value === snapshot) return true;
+    if (!value || !snapshot || typeof value !== "object" || typeof snapshot !== "object") return false;
+    const keys = Object.keys(value);
+    if (keys.length !== Object.keys(snapshot).length) return false;
+    return keys.every(function(key) {
+      return Object.prototype.hasOwnProperty.call(snapshot, key) &&
+        sceneMaterialInputUnchanged(value[key], snapshot[key]);
+    });
+  }
+
   function sceneObjectMaterialProfile(object) {
+    if (!object || typeof object !== "object") return sceneBuildObjectMaterialProfile(object);
+    const registered = sceneRegisteredMaterialProfile(object.materialKind);
+    // Factories may depend on external state and must run on every request.
+    if (registered && registered.shaderDataFactory) return sceneBuildObjectMaterialProfile(object);
+    const cached = sceneObjectMaterialCache.get(object);
+    if (cached && cached.version === sceneMaterialProfileRegistryVersion &&
+        sceneObjectMaterialInputs.every(function(key, index) {
+          return sceneMaterialInputUnchanged(object[key], cached.inputs[index]);
+        })) return cached.profile;
+    const profile = sceneBuildObjectMaterialProfile(object);
+    const inputs = sceneObjectMaterialInputs.map(function(key) {
+      const value = object[key];
+      return value && typeof value === "object" ? sceneCloneData(value) : value;
+    });
+    sceneObjectMaterialCache.set(object, { inputs, profile, version: sceneMaterialProfileRegistryVersion });
+    return profile;
+  }
+
+  function sceneBuildObjectMaterialProfile(object) {
     const kind = normalizeSceneMaterialKind(object && object.materialKind);
     const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
     // Routing must judge the same effective shader fields this profile
