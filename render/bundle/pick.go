@@ -470,6 +470,10 @@ type primitiveHit struct {
 // into its transform. That rejects most instances with 4 multiplies instead of
 // a full triangle walk.
 func collectPickHits(targets *pickTargets, b engine.RenderBundle, bases, objectBases, surfaceBases []uint32) {
+	collectPickHitsWithBuilder(targets, b, bases, objectBases, surfaceBases, primitiveForParams)
+}
+
+func collectPickHitsWithBuilder(targets *pickTargets, b engine.RenderBundle, bases, objectBases, surfaceBases []uint32, build func(primitiveParams) *primitiveGeometry) {
 	ray := targets.ray
 	addHit := func(span pickSpan, id uint32, hit primitiveHit) {
 		out := span.result(id)
@@ -492,10 +496,8 @@ func collectPickHits(targets *pickTargets, b engine.RenderBundle, bases, objectB
 			continue
 		}
 		params := normalizePrimitiveParams(primitiveParamsForInstancedMesh(*mesh))
-		geo := primitiveForParams(params)
-		if geo == nil || geo.vertexCount <= 0 {
-			continue
-		}
+		var geo *primitiveGeometry
+		built := false
 		baseRadius := primitiveCullRadius(params)
 		span := pickSpan{
 			base: bases[objectIndex], count: uint32(mesh.InstanceCount),
@@ -505,6 +507,13 @@ func collectPickHits(targets *pickTargets, b engine.RenderBundle, bases, objectB
 			model := matrixForInstance(mesh.Transforms, instanceIndex)
 			if !raySphereIntersects(ray, model, instanceCullRadius(baseRadius, model)) {
 				continue
+			}
+			if !built {
+				geo = build(params)
+				built = true
+			}
+			if geo == nil || geo.vertexCount <= 0 {
+				break
 			}
 			if hit, ok := raycastPrimitiveInstance(ray, geo, model, !isSkinnedMesh(*mesh)); ok {
 				addHit(span, span.base+uint32(instanceIndex), hit)

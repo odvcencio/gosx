@@ -8,6 +8,47 @@ import (
 	"m31labs.dev/gosx/engine"
 )
 
+func TestPickGeometryBuildAfterSphereCandidate(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		xs           []float64
+		nilGeometry  bool
+		builds, hits int
+	}{
+		{"misses", []float64{20, 30, 40}, false, 0, 0},
+		{"one", []float64{20, 0, 40}, false, 1, 1},
+		{"multiple", []float64{0, 0, 0}, false, 1, 3},
+		{"nil", []float64{0, 0, 0}, true, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var transforms []float64
+			for _, x := range tc.xs {
+				m := identityTransform()
+				m[12] = x
+				transforms = append(transforms, m...)
+			}
+			b := engine.RenderBundle{InstancedMeshes: []engine.RenderInstancedMesh{{ID: "mesh", Kind: "box", InstanceCount: len(tc.xs), Transforms: transforms}}}
+			target := &pickTargets{ray: pickRay{origin: [3]float32{0, 0, 6}, dir: [3]float32{0, 0, -1}}}
+			calls := 0
+			collectPickHitsWithBuilder(target, b, []uint32{1}, nil, nil, func(p primitiveParams) *primitiveGeometry {
+				calls++
+				if tc.nilGeometry {
+					return nil
+				}
+				return primitiveForParams(p)
+			})
+			if calls != tc.builds || len(target.hits) != tc.hits {
+				t.Fatalf("builds=%d hits=%d want %d/%d", calls, len(target.hits), tc.builds, tc.hits)
+			}
+			for id, h := range target.hits {
+				if h.ObjectID != "mesh" || h.InstanceIndex != int(id-1) || h.Depth != 5 || h.WorldPosition[2] != 1 || h.LocalPosition[2] != 1 || h.TriangleIndex < 0 {
+					t.Fatalf("metadata %+v", h)
+				}
+			}
+		})
+	}
+}
+
 func TestQueuePickDestroysUnsubmittedStaging(t *testing.T) {
 	old := &fakeBuffer{}
 	r := &Renderer{
