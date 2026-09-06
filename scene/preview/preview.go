@@ -160,7 +160,7 @@ func RenderJSON(data []byte, opts Options) (*Result, error) {
 	}
 	frame := BundleIR(ir, opts)
 	if orthographic != nil {
-		frame.Camera = renderOrthographicCamera(*orthographic)
+		setPreviewCamera(&frame, renderOrthographicCamera(*orthographic))
 	}
 	for _, raw := range doc.PostEffects {
 		if effect, ok := renderPostEffectJSON(raw); ok {
@@ -225,7 +225,7 @@ func Bundle(props scene.Props, opts Options) engine.RenderBundle {
 	if opts.Camera == nil {
 		if camera := props.OrthographicCamera; camera != nil && *camera != (scene.OrthographicCamera{}) {
 			frame := BundleIR(props.SceneIR(), opts)
-			frame.Camera = renderOrthographicCamera(*camera)
+			setPreviewCamera(&frame, renderOrthographicCamera(*camera))
 			return frame
 		}
 		camera := props.Camera
@@ -260,11 +260,11 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	opts = normalizeOptions(opts)
 	frame := engine.RenderBundle{
 		Background:      opts.Background,
-		Camera:          renderCamera(*opts.Camera),
 		Environment:     renderEnvironment(ir.Environment),
 		PostFXMaxPixels: ir.PostFXMaxPixels,
 		ShaderLib:       ir.ShaderLib,
 	}
+	setPreviewCamera(&frame, renderCamera(*opts.Camera))
 	if frame.Background == "" {
 		frame.Background = "#0b0b0d"
 	}
@@ -423,6 +423,23 @@ func normalizeSize(opts Options) Options {
 		opts.Height = defaultHeight
 	}
 	return opts
+}
+
+// Roll within 1e-9 radians of an exact full turn is treated as equivalent
+// to zero. Native camera view math consumes X/Y but does not implement Z.
+func setPreviewCamera(frame *engine.RenderBundle, camera engine.RenderCamera) {
+	frame.Camera = camera
+	kept := frame.Diagnostics[:0]
+	for _, d := range frame.Diagnostics {
+		if d.Code != "scene.preview.unsupported_camera_roll" {
+			kept = append(kept, d)
+		}
+	}
+	frame.Diagnostics = kept
+	roll := camera.RotationZ
+	if !math.IsNaN(roll) && !math.IsInf(roll, 0) && math.Abs(math.Remainder(roll, 2*math.Pi)) > 1e-9 {
+		frame.Diagnostics = append(frame.Diagnostics, unsupported("camera_roll", "camera", "native preview ignores camera RotationZ (roll); use zero/full-turn roll for a faithful preview or explicitly allow incomplete poster fidelity"))
+	}
 }
 
 func renderCamera(camera scene.PerspectiveCamera) engine.RenderCamera {
