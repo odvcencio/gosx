@@ -1680,7 +1680,7 @@
       var anchor = context.anchor;
       var mode = context.mode;
       var reserve = null;
-      if (mode === "translate" || mode === "scale") {
+      if (mode === "translate") {
         var bestAxis = "";
         var bestDistance = size * 0.18;
         for (var key in SCENE_GIZMO_AXES) {
@@ -1693,6 +1693,22 @@
             bestDistance = distance;
             bestAxis = key;
             reserve = { axis: key, t0: t };
+          }
+        }
+        if (!reserve) return;
+      } else if (mode === "scale") {
+        // Interaction neighborhood, not exact cube intersection: positive tip
+        // only, with size-relative axial and ray-to-tip tolerances of 0.20.
+        var bestTipDistance = size * 0.20;
+        for (var scaleKey in SCENE_GIZMO_AXES) {
+          var scaleAxis = SCENE_GIZMO_AXES[scaleKey];
+          var scaleT = sceneGizmoAxisParameter(ray, anchor, scaleAxis);
+          if (scaleT == null || scaleT < size * 0.80 || scaleT > size * 1.20) continue;
+          var tip = { x: anchor.x + scaleAxis.x * size, y: anchor.y + scaleAxis.y * size, z: anchor.z + scaleAxis.z * size };
+          var tipDistance = sceneGizmoRayPointDistance(ray, tip);
+          if (tipDistance <= bestTipDistance) {
+            bestTipDistance = tipDistance;
+            reserve = { axis: scaleKey, t0: scaleT };
           }
         }
         if (!reserve) return;

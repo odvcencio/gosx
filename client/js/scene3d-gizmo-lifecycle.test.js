@@ -5,13 +5,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function harness(onEmit) {
+function harness(onEmit, rayFor) {
   function target() {
     const listeners = new Map();
     return { listeners, captures: [], releases: [],
       addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); },
       removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
-      fire(type, values = {}) { const event = { type, button: 0, pointerId: 7, clientX: 0.5, clientY: 0, preventDefault() {}, stopImmediatePropagation() { this.stopped = true; }, ...values }; for (const fn of [...(listeners.get(type) || [])]) { fn(event); if (event.stopped) break; } return event; },
+      fire(type, values = {}) { const event = { type, button: 0, pointerId: 7, clientX: 0.5, clientY: 0, preventDefault() { this.prevented = true; }, stopImmediatePropagation() { this.stopped = true; }, ...values }; for (const fn of [...(listeners.get(type) || [])]) { fn(event); if (event.stopped) break; } return event; },
       setPointerCapture(id) { this.captures.push(id); },
       releasePointerCapture(id) { this.releases.push(id); this.fire("lostpointercapture", { pointerId: id }); },
       getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
@@ -21,13 +21,41 @@ function harness(onEmit) {
   let current = { targetID: "object", mode: "translate", anchor: { x: 0, y: 0, z: 0 } }, samples = 0;
   const context = { document, Math, sceneNumber: (v, fallback) => Number.isFinite(v) ? v : fallback,
     sceneDragViewportMetrics: () => ({ width: 100, height: 100 }),
-    sceneScreenToRay(x, y) { samples++; return { origin: { x, y, z: 5 }, dir: { x: 0, y: 0, z: -1 } }; },
+    sceneScreenToRay(x, y) { samples++; return rayFor ? rayFor(x,y) : { origin: { x, y, z: 5 }, dir: { x: 0, y: 0, z: -1 } }; },
   };
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src/17-scene-input.ts"), "utf8");
   vm.runInContext(source.slice(source.indexOf("  function sceneGizmoAxisParameter"), source.indexOf("  function setupSceneDragInteractions")), context);
   const handle = context.setupSceneGizmoDragInteractions(canvas, {}, () => ({}), () => ({ camera: {} }), () => current, p => { phases.push(JSON.parse(JSON.stringify(p))); if (onEmit) onEmit(p); });
   return { canvas, document, phases, handle, group: context.sceneGizmoControlGroup, samples: () => samples, change: value => { current = value; } };
+}
+
+// Near the origin the unchanged Y corridor also admits negative X samples.
+for (const [x,y,hit] of [[-.099,0,true],[-.101,0,true],[-.181,0,false],[0,0,true],[.5,0,true],[1.199,0,true],[1.201,0,false],[.5,.179,true],[.5,.181,false]]) test(`translate unchanged corridor ${x}/${y}`,()=>{
+  const h=harness(); h.change({targetID:"object",mode:"translate",anchor:{x:0,y:0,z:0},gizmoSize:1.25});
+  const e=h.canvas.fire("pointerdown",{clientX:x*1.25,clientY:y*1.25});
+  assert.equal(h.phases.length,hit?1:0); assert.equal(!!e.stopped,hit); h.handle.dispose();
+});
+
+for (const axial of [0,.5,-.05]) test(`scale rejects empty corridor ${axial}`,()=>{
+  const h=harness(); h.change({targetID:"object",mode:"scale",anchor:{x:0,y:0,z:0},gizmoSize:1.25});
+  const e=h.canvas.fire("pointerdown",{clientX:axial*1.25});
+  assert.equal(h.phases.length,0); assert.equal(!!e.stopped,false); assert.equal(!!e.prevented,false); assert.equal(h.canvas.captures.length,0);
+});
+
+for (const axis of ["x","y","z"]) for (const size of [.25,1.25,2]) {
+  test(`scale positive-tip neighborhood ${axis} size ${size}`, () => {
+    const rayFor=(t,d)=> axis === "z" ? {origin:{x:5,y:d,z:t},dir:{x:-1,y:0,z:0}} : {origin:{x:axis==="x"?t:d,y:axis==="y"?t:d,z:5},dir:{x:0,y:0,z:-1}};
+    for (const [axial,offset,hit] of [[1,0,true],[.801,0,true],[1.199,0,true],[1,.199,true],[.799,0,false],[1.201,0,false],[1,.201,false],[0,0,false],[.5,0,false],[-1,0,false]]) {
+      const h=harness(null,rayFor);
+      h.change({targetID:"object",mode:"scale",anchor:{x:0,y:0,z:0},gizmoSize:size,gizmoControlID:"control"});
+      const e=h.canvas.fire("pointerdown",{clientX:axial*size,clientY:offset*size});
+      assert.equal(h.phases.length,hit?1:0,`axial=${axial} offset=${offset}`);
+      assert.equal(!!e.stopped,hit); assert.equal(!!e.prevented,hit); assert.equal(h.canvas.captures.length,hit?1:0);
+      if(hit) { assert.equal(h.phases[0].axis,axis); h.document.fire("pointermove",{clientX:axial*size*1.5,clientY:offset*size}); assert.ok(Math.abs(h.phases.at(-1).scaleFactor-1.5)<1e-10); h.document.fire("pointermove",{clientX:axial*size*1.5,clientY:offset*size}); assert.ok(Math.abs(h.phases.at(-1).scaleFactor-1.5)<1e-10); }
+      h.handle.dispose();
+    }
+  });
 }
 
 test("gizmo missing and partial annotated groups reserve no gesture", () => {

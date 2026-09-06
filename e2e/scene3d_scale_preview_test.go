@@ -34,6 +34,7 @@ func TestScene3DOptInScalePreviewServedWebGL(t *testing.T) {
 			page.waitFor(t, `!!document.querySelector('[data-gosx-scene3d-ready="true"][data-gosx-scene3d-renderer="webgl"]')`, 10*time.Second, "scale preview ready")
 			page.eval(t, `__gosx_notify_shared_signal('$preview.selection',JSON.stringify('box'));__gosx_notify_shared_signal('$preview.mode',JSON.stringify('scale'));`, nil)
 			var rect struct{ X, Y float64 }
+			var tipPixel struct{ X, Y float64 }
 			page.eval(t, `(()=>{const r=document.querySelector('canvas').getBoundingClientRect();return {X:r.x,Y:r.y}})()`, &rect)
 			measure := func(label string, accept func([2]int) bool) [2]int {
 				t.Helper()
@@ -67,6 +68,29 @@ func TestScene3DOptInScalePreviewServedWebGL(t *testing.T) {
 					}
 					extent := [2]int{maxX - minX + 1, maxY - minY + 1}
 					if count > 100 && accept(extent) && extent == previous {
+						if label == "before" || label == "mid-axis-miss" {
+							r, g, b, _ := img.At(int(rect.X)+210, int(rect.Y)+120).RGBA()
+							if r > 1000 || g > 1000 || b > 1000 {
+								t.Fatalf("mid-axis sample not visibly empty: %d/%d/%d", r, g, b)
+							}
+							// Helpers are wire cubes: choose an actual red edge pixel,
+							// not the black interior at the projected tip center.
+							best := 999
+							for py := 114; py <= 126; py++ {
+								for px := 215; px <= 232; px++ {
+									r, g, b, _ = img.At(int(rect.X)+px, int(rect.Y)+py).RGBA()
+									d := (px-223)*(px-223) + (py-120)*(py-120)
+									if r > 30000 && r > g*2 && r > b*2 && d < best {
+										best = d
+										tipPixel.X = rect.X + float64(px)
+										tipPixel.Y = rect.Y + float64(py)
+									}
+								}
+							}
+							if best == 999 {
+								t.Fatal("positive X tip has no visible red edge")
+							}
+						}
 						if path := os.Getenv("GOSX_SCALE_PREVIEW_SCREENSHOT"); path != "" {
 							if err := os.WriteFile(fmt.Sprintf("%s.%t.%s.png", path, enabled, label), shot, 0600); err != nil {
 								t.Fatal(err)
@@ -83,7 +107,21 @@ func TestScene3DOptInScalePreviewServedWebGL(t *testing.T) {
 				return previous
 			}
 			before := measure("before", func(v [2]int) bool { return v[0] > 10 })
-			x, y := rect.X+205, rect.Y+120
+			// The +X tip is at world1.25 (about pixel223); pixel210 is in
+			// the visibly empty gap beyond the box, not the tip neighborhood.
+			page.eval(t, `window.__scaleReserved=null;document.querySelector('canvas').addEventListener('pointerdown',e=>{__scaleReserved={prevented:e.defaultPrevented,captured:e.currentTarget.hasPointerCapture(e.pointerId)}});`, nil)
+			if err := chromedp.Run(page.ctx, input.DispatchMouseEvent(input.MousePressed, rect.X+210, rect.Y+120).WithButton(input.Left).WithClickCount(1), input.DispatchMouseEvent(input.MouseReleased, rect.X+210, rect.Y+120).WithButton(input.Left)); err != nil {
+				t.Fatal(err)
+			}
+			var missed struct{ Prevented, Captured bool }
+			page.eval(t, `__scaleReserved`, &missed)
+			var missPhases int
+			page.eval(t, `__scalePhases.length`, &missPhases)
+			if missPhases != 0 || missed.Prevented || missed.Captured {
+				t.Fatalf("empty gap reserved: phases%d %+v", missPhases, missed)
+			}
+			measure("mid-axis-miss", func(v [2]int) bool { return v == before })
+			x, y := tipPixel.X, tipPixel.Y
 			begin := func() {
 				page.eval(t, `__scalePhases=[]`, nil)
 				if err := chromedp.Run(page.ctx, input.DispatchMouseEvent(input.MousePressed, x, y).WithButton(input.Left).WithClickCount(1), input.DispatchMouseEvent(input.MouseMoved, x+30, y).WithButton(input.Left).WithButtons(1)); err != nil {

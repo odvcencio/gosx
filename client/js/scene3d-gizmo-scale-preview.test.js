@@ -15,18 +15,18 @@ async function mountedScale(enabled){
  return {env,mount,canvas,phases,fire,cube:()=>env.context.__scaleState.objects.get("cube")};
 }
 for(const enabled of [false,true])test(`mounted local scale preview enabled=${enabled}`,async()=>{
- const h=await mountedScale(enabled);h.fire("pointerdown",340);h.fire("pointermove",360);
+ const h=await mountedScale(enabled);h.fire("pointerdown",372);h.fire("pointermove",424);
  assert.deepEqual(h.phases.map(p=>p.phase),["start","move"]);assert.equal(h.phases[1].axis,"x");
  const factor=h.phases[1].scaleFactor;assert.ok(factor>1.5);assert.ok(Math.abs(h.cube().scaleX-(enabled?2*factor:2))<1e-8);assert.equal(h.cube().scaleY,3);assert.equal(h.cube().scaleZ,4);
- h.fire("pointerup",360);assert.deepEqual(h.phases.map(p=>p.phase),["start","move","end"]);
+ h.fire("pointerup",424);assert.deepEqual(h.phases.map(p=>p.phase),["start","move","end"]);
 });
 
 for(const interruption of ["end","cancel","dispose","rebind","mode","selection","group","external","replacement","disable"])
 test(`owned scale preview ${interruption}`,async()=>{
- const h=await mountedScale(true);h.fire("pointerdown",340);h.fire("pointermove",360);
+ const h=await mountedScale(true);h.fire("pointerdown",372);h.fire("pointermove",424);
  const factor=h.phases.at(-1).scaleFactor;assert.ok(Math.abs(h.cube().scaleX-2*factor)<1e-8);
- h.fire("pointermove",360);assert.ok(Math.abs(h.cube().scaleX-2*factor)<1e-8,"same factor must not compound");
- h.fire("pointermove",350);assert.ok(Math.abs(h.cube().scaleX-2*h.phases.at(-1).scaleFactor)<1e-8,"new factor relative to original");
+ h.fire("pointermove",424);assert.ok(Math.abs(h.cube().scaleX-2*factor)<1e-8,"same factor must not compound");
+ h.fire("pointermove",398);assert.ok(Math.abs(h.cube().scaleX-2*h.phases.at(-1).scaleFactor)<1e-8,"new factor relative to original");
  assert.equal(h.cube().scaleY,3);assert.equal(h.cube().scaleZ,4);
  const command=commands=>h.mount.dispatchEvent(new h.env.context.CustomEvent("gosx:scene3d:commands",{detail:{revision:1,commands}}));
  if(interruption==="external")command([{kind:2,objectId:"cube",data:{scaleX:9,scaleY:8,scaleZ:7}}]);
@@ -37,11 +37,11 @@ test(`owned scale preview ${interruption}`,async()=>{
  else if(interruption==="dispose")h.env.context.__gosx_dispose_engine("scale-engine");
  else if(interruption==="rebind")h.env.context.__scaleRebind("test-rebind");
  else if(interruption==="disable")h.mount.__gosxScene3DHandle.updateSceneProps({gizmoLocalScalePreview:false});
- if(["end","external","replacement","group"].includes(interruption))h.fire("pointerup",350);
+ if(["end","external","replacement","group"].includes(interruption))h.fire("pointerup",398);
  else if(["cancel","disable"].includes(interruption))h.fire("pointercancel",999);
  await flushAsyncWork();
  const terminal=h.phases.filter(p=>p.phase==="end"||p.phase==="cancel");assert.equal(terminal.length,1);assert.equal(terminal[0].phase,interruption==="end"?"end":"cancel");
  const expected=interruption==="external"||interruption==="replacement"?[9,8,7]:interruption==="end"?[2*terminal[0].scaleFactor,3,4]:[2,3,4];
  assert.deepEqual([h.cube().scaleX,h.cube().scaleY,h.cube().scaleZ],expected);
- h.fire("pointerup",350);assert.equal(h.phases.filter(p=>p.phase==="end"||p.phase==="cancel").length,1);
+ h.fire("pointerup",398);assert.equal(h.phases.filter(p=>p.phase==="end"||p.phase==="cancel").length,1);
 });
