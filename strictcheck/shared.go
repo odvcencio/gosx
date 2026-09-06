@@ -105,8 +105,9 @@ func resolveSharedImports(ctx context.Context, files []transpile.PackageFile, op
 		}
 
 		sharedImports[rawPath] = transpile.SharedImport{
-			GoImportPath: goImportPath,
-			Components:   transpile.CollectSharedComponents(targetFiles),
+			GoImportPath:  goImportPath,
+			Components:    transpile.CollectSharedComponents(targetFiles),
+			RuntimeOwners: transpile.CollectSharedRuntimeOwners(targetFiles),
 		}
 	}
 

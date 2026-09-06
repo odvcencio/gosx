@@ -1066,6 +1066,9 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		return t.emitStrictManagedLink(openNode, children)
 	}
 
+	if t.rejectSharedRuntimeOwner(openNode, tag) {
+		return ""
+	}
 	if verbatim, ok := t.strictSpreadCallVerbatim(tag, openNode); ok {
 		return verbatim
 	}
@@ -1411,6 +1414,9 @@ func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 		}
 	}
 
+	if t.rejectSharedRuntimeOwner(n, tag) {
+		return ""
+	}
 	if verbatim, ok := t.strictSpreadCallVerbatim(tag, n); ok {
 		return verbatim
 	}
@@ -1805,6 +1811,27 @@ func (t *transpiler) isSlotRoutingAttribute(n *gotreesitter.Node) bool {
 	}
 	nameNode := t.childByField(n, "name")
 	return nameNode != nil && t.text(nameNode) == "slot"
+}
+
+// rejectSharedRuntimeOwner refuses resolved runtime owners before shared call
+// projection, including when conflicting metadata also lists a pure component.
+func (t *transpiler) rejectSharedRuntimeOwner(n *gotreesitter.Node, tag string) bool {
+	rawPath, shared := t.sharedImportPath(memberTagAlias(tag))
+	if !shared {
+		return false
+	}
+	if target, ok := t.sharedImports[rawPath]; ok && strings.TrimSpace(target.GoImportPath) != "" {
+		name := strings.TrimPrefix(tag, memberTagAlias(tag)+".")
+		if kind := target.RuntimeOwners[name]; kind == SharedIslandOwner || kind == SharedEngineOwner {
+			guidance := "islands must remain same-file with their callers"
+			if kind == SharedEngineOwner {
+				guidance = "engines cannot be projected as shared components; strict engine source declarations remain unsupported"
+			}
+			t.errorf(n, "imported %s component %s is unsupported in cross-package shared projection; %s", kind, tag, guidance)
+			return true
+		}
+	}
+	return false
 }
 
 // errUnresolvedSharedCall reports the one outcome the shared components

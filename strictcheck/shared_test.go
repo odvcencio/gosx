@@ -364,7 +364,7 @@ component Page() {
 }
 `)
 	err := CheckFile(context.Background(), page)
-	if err == nil || !strings.Contains(err.Error(), "cannot be projected") || !strings.Contains(err.Error(), "gosx check") {
+	if err == nil || !strings.Contains(err.Error(), "imported island component ui.Counter") || !strings.Contains(err.Error(), "same-file") || strings.Contains(err.Error(), "run gosx check") {
 		t.Fatalf("error = %v, want called island target excluded from shared pure-view projection", err)
 	}
 }

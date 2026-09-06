@@ -186,6 +186,51 @@ type SharedImport struct {
 	// strict component the target directory exports, keyed by component
 	// name.
 	Components map[string]SharedComponent
+	// RuntimeOwners identifies unsupported runtime exports for diagnostics only.
+	// It does not admit them to shared Go projection.
+	RuntimeOwners map[string]SharedRuntimeOwner
+}
+
+// SharedRuntimeOwner is an unsupported cross-package runtime ownership kind.
+type SharedRuntimeOwner string
+
+const (
+	SharedIslandOwner SharedRuntimeOwner = "island"
+	SharedEngineOwner SharedRuntimeOwner = "engine"
+)
+
+// CollectSharedRuntimeOwners collects uniquely declared strict runtime owners
+// from already loaded programs or source bytes, without filesystem access.
+// Any duplicate strict name is omitted, including pure/runtime collisions.
+func CollectSharedRuntimeOwners(files []PackageFile) map[string]SharedRuntimeOwner {
+	owners := make(map[string]SharedRuntimeOwner)
+	seen := make(map[string]bool)
+	for _, file := range files {
+		p := file.Program
+		if p == nil {
+			var err error
+			p, err = gosx.Compile(file.Source)
+			if err != nil {
+				continue
+			}
+		}
+		for _, c := range p.Components {
+			if c.Syntax != ir.ComponentSyntaxStrict {
+				continue
+			}
+			if seen[c.Name] {
+				delete(owners, c.Name)
+				continue
+			}
+			seen[c.Name] = true
+			if c.IsEngine {
+				owners[c.Name] = SharedEngineOwner
+			} else if c.IsIsland {
+				owners[c.Name] = SharedIslandOwner
+			}
+		}
+	}
+	return owners
 }
 
 // SharedComponent is one shared strict component's Go-facing call shape.
