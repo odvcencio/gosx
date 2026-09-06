@@ -79,7 +79,8 @@ func TestComputeParticlesNeedMoreThanOneFrameAndSayWhy(t *testing.T) {
 // TestEnvironmentFieldsThatChangeNothingAreReported covers the environment terms
 // the CPU path never reads, and the terms it reads and once did not.
 //
-// Fog is the only one left in the ignored list. No copy of the material carries
+// Active finite positive fog is an unsupported fidelity omission; inert fog
+// configuration remains informational. No copy of the material carries
 // a fog term on the native side at all, so it is a material gap and not a pass
 // gap. Exposure, tone mapping and the environment map all reach a pixel now, so
 // each has a case that proves it and states the direction of the change.
@@ -116,19 +117,19 @@ func TestEnvironmentFieldsThatChangeNothingAreReported(t *testing.T) {
 	// started running the present pass instead of copying it. Their cases moved
 	// below too.
 	//
-	// Fog is the one that remains, and it is not a post-pass problem. Neither
+	// Active fog remains an unsupported poster-gating omission, not a post-pass problem. Neither
 	// litWGSL in render/bundle nor the CPU rasterizer carries a fog term at all.
 	// The browser applies fog inside its material shader, so closing this needs
 	// a material change on both sides, not a pass.
 	for _, tc := range []struct{ name, environment, field string }{
-		{"fog", `{"fogColor":"#ffffff","fogDensity":0.6}`, "fogDensity"},
+		{"fog", `{"fogColor":"#ffffff","fogDensity":0.6}`, "active environment fog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := render(t, tc.environment)
 			if hashPixels(result.Image) != baseHash {
-				t.Fatalf("%s now changes the frame; move it out of the ignored list and pin the new pixels", tc.name)
+				t.Fatalf("%s now changes the frame; remove the unsupported warning and pin the new pixels", tc.name)
 			}
-			diagnostic, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.environment_fields_ignored")
+			diagnostic, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.unsupported_environment_fog")
 			if !reported || !strings.Contains(diagnostic.Message, tc.field) {
 				t.Fatalf("%s changed nothing and was not named: %+v", tc.name, result.Bundle.Diagnostics)
 			}

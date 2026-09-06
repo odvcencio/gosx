@@ -2,6 +2,7 @@ package preview
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -194,7 +195,8 @@ func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiag
 }
 
 // environmentDiagnostic names the environment fields the frame carries and the
-// CPU rasterizer never reads.
+// CPU rasterizer never reads. Finite positive fog is an unsupported fidelity
+// omission that gates posters; inert authored fog configuration is informational.
 //
 // The rasterizer reads the ambient, sky and ground terms, samples an environment
 // cubemap for image-based lighting, and now runs the present pass — so envMap,
@@ -203,7 +205,8 @@ func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiag
 // keeping one tells an author their authored value does nothing while it is
 // shading, which invites deleting work that functions.
 //
-// Fog alone remains, and it is not a post-effect gap. Neither native copy has a
+// Active fog remains unsupported, not merely informational, and is not a
+// post-effect gap. Neither native copy has a
 // fog term at all: litWGSL carries none, and the browser applies fog inside its
 // material shader rather than a pass. So closing fog is a change to the material
 // on both sides, not another pass on this device.
@@ -213,6 +216,9 @@ func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiag
 // cannot see: the poster now shades a term the WebGPU browser renderer ignores.
 // environmentMapBackendDiagnostic below reports that half.
 func environmentDiagnostic(env scene.EnvironmentIR) (engine.RenderDiagnostic, bool) {
+	if env.FogDensity > 0 && !math.IsInf(env.FogDensity, 0) && !math.IsNaN(env.FogDensity) {
+		return unsupported("environment_fog", "environment", "native preview omits active environment fog; use zero fog density for a faithful preview or explicitly allow incomplete poster fidelity"), true
+	}
 	var ignored []string
 	if strings.TrimSpace(env.FogColor) != "" || env.FogDensity != 0 {
 		ignored = append(ignored, "fogColor", "fogDensity")
