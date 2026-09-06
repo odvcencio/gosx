@@ -100,7 +100,9 @@ func (e *ResultError) ActionResult() Result {
 		return Result{OK: false}
 	}
 	res := e.Result
-	res.OK = false
+	// Server application code may construct successful redirect results;
+	// all other error-carried results remain failures.
+	res.OK = res.OK && e.StatusCode() == http.StatusSeeOther && res.Redirect != ""
 	return res
 }
 

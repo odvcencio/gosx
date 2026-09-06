@@ -3513,6 +3513,68 @@ func Page() Node {
 	}
 }
 
+func TestFileActionPackageRedirectSuccess(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "settings/page.gsx", `package docs
+func Page() Node {
+ return <main><form method="post" action={actionPath("save")}><input name="csrf_token" value={csrf.token}/></form><p class="ok">{actions.save.ok}</p></main>
+}`)
+	modules := NewFileModuleRegistry()
+	calls := 0
+	if err := modules.Register(FileModuleFor("settings/page.gsx", FileModuleOptions{Actions: FileActions{"save": func(ctx *action.Context) error { calls++; return action.Redirect("/settings") }}})); err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.MustNew("redirect-route-session-secret", session.Options{})
+	handler := sessions.Middleware(sessions.Protect(router.Build()))
+	for _, managed := range []bool{false, true} {
+		get := httptest.NewRecorder()
+		handler.ServeHTTP(get, httptest.NewRequest("GET", "/settings", nil))
+		if get.Code != 200 || !strings.Contains(get.Body.String(), `action="/settings/__actions/save"`) {
+			t.Fatalf("GET %d %s", get.Code, get.Body.String())
+		}
+		token := findInputValue(t, get.Body.String(), "csrf_token")
+		post := httptest.NewRequest("POST", "/settings/__actions/save", strings.NewReader("csrf_token="+token))
+		post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		post.AddCookie(get.Result().Cookies()[0])
+		if managed {
+			post.Header.Set("Accept", "application/json")
+			post.Header.Set("X-CSRF-Token", token)
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, post)
+		if res.Code != 303 {
+			t.Fatalf("POST %d %s", res.Code, res.Body.String())
+		}
+		if managed {
+			var result action.Result
+			if err := json.Unmarshal(res.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if !result.OK || result.Redirect != "/settings" {
+				t.Fatalf("managed %+v", result)
+			}
+		} else {
+			if res.Header().Get("Location") != "/settings" {
+				t.Fatal(res.Header())
+			}
+			req := httptest.NewRequest("GET", "/settings", nil)
+			req.AddCookie(res.Result().Cookies()[0])
+			out := httptest.NewRecorder()
+			handler.ServeHTTP(out, req)
+			if out.Code != 200 || !strings.Contains(out.Body.String(), `class="ok">true</p>`) {
+				t.Fatalf("PRG %d %s", out.Code, out.Body.String())
+			}
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("calls %d", calls)
+	}
+}
+
 func TestRouterFilePagesSupportRequestDataActionsAndCSRF(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "account/[slug]/page.gsx", `package docs

@@ -14,6 +14,78 @@ import (
 	"m31labs.dev/gosx/session"
 )
 
+func TestPackageRedirectCoherentSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		ok   bool
+	}{
+		{"redirect", Redirect("/settings"), true},
+		{"wrapped", fmt.Errorf("wrapped: %w", Redirect("/settings")), true},
+		{"error", Error(400, "bad"), false},
+		{"validation", Validation("bad", map[string]string{"name": "required"}, nil), false},
+		{"explicit-server-redirect", &ResultError{Status: 303, Result: Result{OK: true, Redirect: "/settings"}}, true},
+		{"wrong-status", &ResultError{Status: 400, Result: Result{OK: true, Redirect: "/settings"}}, false},
+		{"missing-target", &ResultError{Status: 303, Result: Result{OK: true}}, false},
+		{"failed-redirect", &ResultError{Status: 303, Result: Result{OK: false, Redirect: "/settings"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, status := resultFromError(tc.err)
+			if r.OK != tc.ok {
+				t.Fatalf("OK=%v want %v", r.OK, tc.ok)
+			}
+			if tc.ok && (status != 303 || r.Redirect != "/settings") {
+				t.Fatalf("%+v status%d", r, status)
+			}
+		})
+	}
+}
+
+func TestPackageRedirectMatchesContextResponse(t *testing.T) {
+	for _, target := range []string{"/settings", "https://elsewhere.example/settings"} {
+		var baseline Result
+		for _, returned := range []bool{false, true} {
+			req := httptest.NewRequest("POST", "/settings/__actions/save", strings.NewReader(""))
+			req.Header.Set("Accept", "application/json")
+			res := httptest.NewRecorder()
+			ServeHandler(res, req, func(ctx *Context) error {
+				if returned {
+					return fmt.Errorf("wrapped: %w", Redirect(target))
+				}
+				ctx.Redirect(target)
+				return nil
+			})
+			var got Result
+			if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			want := target
+			if strings.HasPrefix(target, "https:") {
+				want = "/"
+			}
+			if res.Code != 303 || !got.OK || got.Redirect != want {
+				t.Fatalf("returned=%v response%d %+v", returned, res.Code, got)
+			}
+			if returned && (got.OK != baseline.OK || got.Redirect != baseline.Redirect) {
+				t.Fatal("package/context disagreement")
+			}
+			baseline = got
+		}
+	}
+}
+
+func TestPackageRedirectValuesUnchanged(t *testing.T) {
+	e := Redirect("/settings")
+	e.Result.Values = map[string]string{"name": "Ada"}
+	r := e.ActionResult()
+	if !r.OK || len(r.Values) != 1 || r.Values["name"] != "Ada" {
+		t.Fatalf("output %+v", r)
+	}
+	if got := Redirect("/settings").ActionResult(); got.Values != nil {
+		t.Fatalf("unexpected values: %+v", got)
+	}
+}
+
 func TestRegistryRegisterAndInvoke(t *testing.T) {
 	r := NewRegistry()
 	called := false
