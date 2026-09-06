@@ -2765,11 +2765,9 @@ func (l *graphLowerer) lowerGizmoAxesHelper(id string, position Vector3, rotatio
 // lowerGizmoScaleHandles lowers three small wire-cube handles, one at the tip
 // of each axis, as the TransformControls scale-mode form — visually distinct
 // from the translate axes (thin lines) and the rotate ring. Tags each cube
-// GizmoHelper + GizmoFormMode "scale". The per-axis offset is applied in the
-// control's local (unrotated) frame, matching how the axes triad's own line
-// endpoints are defined — a deliberate simplification for non-identity
-// control.Rotation, consistent with this being an overlay helper rather than
-// a physically-accurate handle.
+// GizmoHelper + GizmoFormMode "scale". Each tip offset belongs to fresh local
+// geometry, like the translate axes, so dynamic helper synchronization can
+// replace the common object anchor without collapsing the handles.
 func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotation Euler, size, width float64, visible bool, parent worldTransform) {
 	handle := size * 0.16
 	if handle <= 0 {
@@ -2777,11 +2775,17 @@ func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotat
 	}
 	v := Bool(visible)
 	lowerHandle := func(suffix, color string, offset Vector3) {
+		geometry := boxHelperGeometry(handle, handle, handle, width)
+		for i := range geometry.Points {
+			geometry.Points[i].X += offset.X
+			geometry.Points[i].Y += offset.Y
+			geometry.Points[i].Z += offset.Z
+		}
 		l.lowerMesh(Mesh{
 			ID:             id + "-scale-" + suffix,
-			Geometry:       boxHelperGeometry(handle, handle, handle, width),
+			Geometry:       geometry,
 			Material:       LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
-			Position:       Vector3{X: position.X + offset.X, Y: position.Y + offset.Y, Z: position.Z + offset.Z},
+			Position:       position,
 			Rotation:       rotation,
 			Visible:        v,
 			GizmoHelper:    true,
