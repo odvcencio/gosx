@@ -54,6 +54,7 @@ struct Scene {
   cascadeSplits    : vec4<f32>, // xyz = view-space far distances for cascades 0/1/2
   envParams        : vec4<f32>, // x = cubemap intensity, y = Y rotation, z = has cubemap
   lightParams      : vec4<f32>, // x = light count, y = shadowed light index, zw reserved
+  fog              : vec4<f32>, // RGB, density
 };
 
 struct Material {
@@ -470,6 +471,10 @@ fn fs_main(in : VSOut, @builtin(front_facing) frontFacing : bool) -> FSOut {
   color = mix(color, color * (vec3<f32>(0.65) + iri * 0.7), iridescence * pow(1.0 - NdotV, 2.0));
   let transmission = clamp(material.physicalParams.z, 0.0, 1.0) * (1.0 - metalness);
   color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);
+  if (scene.fog.w > 0.0) {
+    let fogDistance = distance(in.worldPos, scene.cameraPos.xyz) * scene.fog.w;
+    color = mix(scene.fog.rgb, color, exp(-fogDistance * fogDistance));
+  }
   var out : FSOut;
   out.color  = vec4<f32>(color, clamp(material.baseColor.a, 0.0, 1.0));
   out.pickId = in.pickId;

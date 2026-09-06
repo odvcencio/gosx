@@ -205,11 +205,9 @@ func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiag
 // keeping one tells an author their authored value does nothing while it is
 // shading, which invites deleting work that functions.
 //
-// Active fog remains unsupported, not merely informational, and is not a
-// post-effect gap. Neither native copy has a
-// fog term at all: litWGSL carries none, and the browser applies fog inside its
-// material shader rather than a pass. So closing fog is a change to the material
-// on both sides, not another pass on this device.
+// Active fog is now shaded by native lit materials, but other record classes
+// omit it. The conservative poster gate remains until those classes are covered;
+// inert authored fog configuration remains informational.
 //
 // This function reports only what THIS device drops. It says nothing about the
 // browser, and dropping envMap from the list above created a second problem it
@@ -217,7 +215,7 @@ func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiag
 // environmentMapBackendDiagnostic below reports that half.
 func environmentDiagnostic(env scene.EnvironmentIR) (engine.RenderDiagnostic, bool) {
 	if env.FogDensity > 0 && !math.IsInf(env.FogDensity, 0) && !math.IsNaN(env.FogDensity) {
-		return unsupported("environment_fog", "environment", "native preview omits active environment fog; use zero fog density for a faithful preview or explicitly allow incomplete poster fidelity"), true
+		return unsupported("environment_fog", "environment", "native preview shades active environment fog only for lit materials; other record classes still omit fog, so use zero density for a fully covered preview or explicitly allow incomplete poster fidelity"), true
 	}
 	var ignored []string
 	if strings.TrimSpace(env.FogColor) != "" || env.FogDensity != 0 {

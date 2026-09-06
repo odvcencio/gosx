@@ -2192,6 +2192,7 @@ func (m materialState) resolve(vertex [3]float32, uv [2]float32) [4]float32 {
 type sceneLighting struct {
 	lightViewProjs [3][16]float32
 	cameraPos      [3]float32
+	fog            [4]float32
 	lightDir       [3]float32
 	lightColor     [4]float32
 	ambientColor   [4]float32
@@ -2252,9 +2253,9 @@ const (
 const lightRecordSize = 80
 
 // sceneUniformSize is the byte size of the Scene struct litWGSL reads: four mat4
-// and nine vec4. It mirrors sceneUniformSize in render/bundle/renderer.go, and
+// and ten vec4. It mirrors sceneUniformSize in render/bundle/renderer.go, and
 // activeLighting reads every lane of it.
-const sceneUniformSize = 400
+const sceneUniformSize = 416
 
 func defaultSceneLighting() sceneLighting {
 	state := sceneLighting{
@@ -2316,7 +2317,7 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 			// The guard covers every lane this switch reads. It used to stop at
 			// 368, which is the offset of envParams and not its end, so the
 			// envParams read below could run past a buffer of exactly 384 bytes.
-			// lightParams ends at 400.
+			// Appended fog ends at416; earlier uniform offsets are unchanged.
 			if offset < 0 || offset+sceneUniformSize > len(buf.data) {
 				continue
 			}
@@ -2333,6 +2334,7 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 			state.cascadeSplits = [3]float32{splits[0], splits[1], splits[2]}
 			state.envParams = readVec4At(buf.data, offset+368)
 			state.lightParams = readVec4At(buf.data, offset+384)
+			state.fog = readVec4At(buf.data, offset+400)
 		case 5:
 			buf, ok := entry.Buffer.(*Buffer)
 			if !ok || buf == nil {
@@ -2925,6 +2927,14 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 		weight := transmission * transmissionMixGain
 		for i := 0; i < 3; i++ {
 			color[i] = mix(color[i], ambient[i]+baseColor[i]*transmissionBaseGain, weight)
+		}
+	}
+	if l.fog[3] > 0 {
+		dx, dy, dz := float64(f.world[0])-float64(l.cameraPos[0]), float64(f.world[1])-float64(l.cameraPos[1]), float64(f.world[2])-float64(l.cameraPos[2])
+		d := float64(l.fog[3])
+		weight := float32(math.Exp(-d * d * (dx*dx + dy*dy + dz*dz)))
+		for i := 0; i < 3; i++ {
+			color[i] = mix(l.fog[i], color[i], weight)
 		}
 	}
 	return color

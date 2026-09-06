@@ -785,6 +785,15 @@ type divergentTerm struct {
 // stopped guarding.
 var litDivergentTerms = []divergentTerm{
 	{
+		// Like other one-sided carrier gaps, the browser line pins its current
+		// material baseline; it does not prove absence of fog elsewhere.
+		id:      "native-lit-environment-fog",
+		effect:  "Native lit RGB attenuates toward authored fog color with world-camera distance, while this browser WebGPU baseline has no matching fog carrier.",
+		verdict: "Keep the native lit implementation and record this open carrier/shading gap. This row does not establish browser absence globally or WebGL parity, and does not cover other native record classes. Closing it needs a separately reviewed browser WebGPU fog contract, not removal of native fog or relaxation of preview fidelity gating.",
+		goLine:  "color = mix(scene.fog.rgb, color, exp(-fogDistance * fogDistance));",
+		jsLine:  "var color = ambient + Lo + emission;",
+	},
+	{
 		// This row stayed open on purpose. The audit of 2026-07-26 moved the
 		// native copy to the browser form on seven numeric terms. In each of
 		// those the native copy broke a specification, or carried an arbitrary
