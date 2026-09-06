@@ -209,6 +209,11 @@ func Bundle(props scene.Props, opts Options) engine.RenderBundle {
 		opts.Background = props.Background
 	}
 	if opts.Camera == nil {
+		if camera := props.OrthographicCamera; camera != nil && *camera != (scene.OrthographicCamera{}) {
+			frame := BundleIR(props.SceneIR(), opts)
+			frame.Camera = renderOrthographicCamera(*camera)
+			return frame
+		}
 		camera := props.Camera
 		if camera.Rotation == (scene.Euler{}) && strings.EqualFold(props.Controls, scene.ControlOrbit) {
 			camera.Rotation = lookAtRotation(camera.Position, props.ControlTarget)
@@ -216,6 +221,15 @@ func Bundle(props scene.Props, opts Options) engine.RenderBundle {
 		opts.Camera = &camera
 	}
 	return BundleIR(props.SceneIR(), opts)
+}
+
+// Bounds/zoom remain authored so the native renderer owns their defaults.
+// Admission mirrors Props.cameraToIR: nil/entirely-zero ortho is absent.
+func renderOrthographicCamera(camera scene.OrthographicCamera) engine.RenderCamera {
+	resolved := renderCamera(scene.PerspectiveCamera{Position: camera.Position, Rotation: camera.Rotation, Near: camera.Near, Far: camera.Far})
+	resolved.Mode, resolved.FOV = "orthographic", 0
+	resolved.Left, resolved.Right, resolved.Top, resolved.Bottom, resolved.Zoom = camera.Left, camera.Right, camera.Top, camera.Bottom, camera.Zoom
+	return resolved
 }
 
 func lookAtRotation(eye, target scene.Vector3) scene.Euler {

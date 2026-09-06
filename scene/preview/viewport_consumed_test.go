@@ -15,19 +15,27 @@ import (
 )
 
 func TestViewportConsumedAttachmentPickSameRay(t *testing.T) {
-	for _, mode := range []string{"perspective", "orthographic", "orthographic-asymmetric", "orthographic-default", "orthographic-reversed", "orthographic-rotated"} {
+	for _, mode := range []string{"perspective", "orthographic", "orthographic-asymmetric", "orthographic-default", "orthographic-reversed", "orthographic-rotated", "orthographic-typed"} {
 		for _, size := range [][2]int{{1, 1}, {2, 2}, {8, 6}, {9, 7}} {
 			t.Run(fmt.Sprintf("%s/%dx%d", mode, size[0], size[1]), func(t *testing.T) {
 				props := affineProps(3, .7, false)
 				plane := affinePlane("viewport", 0, math.Pi/2)
 				plane.Geometry = scene.PlaneGeometry{Width: 20, Height: 20}
 				props.Graph = scene.NewGraph(scene.Group{Scale: scene.Vec3(3, 1, .5), Children: []scene.Node{scene.Group{Rotation: scene.Euler{Y: .7}, Children: []scene.Node{plane}}}})
+				if mode == "orthographic-typed" {
+					props.OrthographicCamera = &scene.OrthographicCamera{Position: scene.Vec3(.2, .3, 5), Rotation: scene.Euler{X: .12, Y: -.18}, Left: 0, Right: 4, Bottom: -1, Top: 3, Zoom: 2, Near: .1, Far: 100}
+				}
 				frame := preview.Bundle(props, preview.Options{Width: size[0], Height: size[1]})
 				expectedBounds := [4]float64{-2, 2, -2, 2}
-				if mode != "perspective" {
-					// Typed scene lowering is real; native orthographic camera is an explicit
-					// RenderBundle override because preview's native camera lowering
-					// currently accepts only PerspectiveCamera (typed Props also has ortho).
+				if mode == "orthographic-typed" {
+					expectedBounds = [4]float64{1, 3, 0, 2}
+					if frame.Camera.Mode != "orthographic" {
+						t.Fatal("typed ingress lost")
+					}
+				}
+				if mode != "perspective" && mode != "orthographic-typed" {
+					// These legacy controls isolate native projection through an explicit
+					// bundle camera; orthographic-typed above exercises Props ingress.
 					frame.Camera = engine.RenderCamera{Mode: "orthographic", Z: 5, Left: -2, Right: 2, Bottom: -2, Top: 2, Zoom: 1, Near: .1, Far: 100}
 					if mode == "orthographic-asymmetric" || mode == "orthographic-rotated" {
 						frame.Camera.Left, frame.Camera.Right = 0, 4
