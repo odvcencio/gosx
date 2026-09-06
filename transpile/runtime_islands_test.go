@@ -25,6 +25,15 @@ import (
 type Row struct{ Label string }
 
 func TestRuntimeIslandsGeneratedExecution(t *testing.T) {
+	runRuntimeIslandsGeneratedExecution(t, false)
+}
+
+func TestRuntimeIslandsSpreadGeneratedExecution(t *testing.T) {
+	runRuntimeIslandsGeneratedExecution(t, true)
+}
+
+func runRuntimeIslandsGeneratedExecution(t *testing.T, spread bool) {
+	t.Helper()
 	source := `package main
 import "m31labs.dev/gosx/signal"
 import authoredserver "m31labs.dev/gosx/server"
@@ -46,6 +55,12 @@ component Page(props: PageProps) {
  return <main><Each of={props.Rows} as="row"><Wrapper Label={row.Label} /></Each></main>
 }
 `
+	if spread {
+		source = strings.Replace(source, "type Row struct", "type PanelProps struct { Label string }\ntype Row struct", 1)
+		source = strings.Replace(source, "component Wrapper(props: PageProps)", "component Wrapper(props: PanelProps)", 1)
+		source = strings.Replace(source, "component Panels()", "component Panels(props: PanelProps)", 1)
+		source = strings.Replace(source, "<Panels>", "<Panels {...props}>", 1)
+	}
 	output, err := transpile.Transpile([]byte(source), transpile.Options{RuntimeIslands: true})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +94,30 @@ func main(){p,e:=gosx.Compile([]byte(` + strconv.Quote(source) + `));if e!=nil{p
 	if len(results) != 4 {
 		t.Fatal(results)
 	}
-	p, err := gosx.Compile([]byte(source))
+	if spread {
+		explicitSource := strings.Replace(source, "<Panels {...props}>", "<Panels Label={props.Label}>", 1)
+		explicitGo, err := transpile.Transpile([]byte(explicitSource), transpile.Options{RuntimeIslands: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "page.go"), []byte(explicitGo), 0600); err != nil {
+			t.Fatal(err)
+		}
+		control := exec.CommandContext(ctx, "go", "run", ".")
+		control.Dir = dir
+		controlOutput, err := control.CombinedOutput()
+		if err != nil || string(controlOutput) != string(actual) {
+			t.Fatalf("generated explicit/spread HTML and manifest parity: %v\nexplicit=%s\nspread=%s", err, controlOutput, actual)
+		}
+	}
+	// The file renderer materializes nested explicit props as maps, which
+	// cannot satisfy its strict spread boundary. Compare emitted spread Go
+	// against the equivalent admitted explicit-attribute file invocation.
+	oracleSource := source
+	if spread {
+		oracleSource = strings.Replace(source, "<Panels {...props}>", "<Panels Label={props.Label}>", 1)
+	}
+	p, err := gosx.Compile([]byte(oracleSource))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +156,14 @@ func main(){p,e:=gosx.Compile([]byte(` + strconv.Quote(source) + `));if e!=nil{p
 			t.Fatalf("HTML parity: %s != %s", html, results[i*2])
 		}
 		head := gosx.RenderHTML(gosx.Fragment(r.PreloadHints(), r.PageHead()))
-		if head != results[i*2+1] {
+		if spread {
+			// File projection carries lower-camel aliases in its props map;
+			// generated Go serializes the authored struct. Do not normalize
+			// this inherited transport difference into a false parity claim.
+			if !strings.Contains(head, `"label":`) || strings.Contains(results[i*2+1], `"label":`) {
+				t.Fatalf("expected explicit file/generated alias boundary: file=%s generated=%s", head, results[i*2+1])
+			}
+		} else if head != results[i*2+1] {
 			t.Fatalf("manifest/asset parity: %s != %s", head, results[i*2+1])
 		}
 	}

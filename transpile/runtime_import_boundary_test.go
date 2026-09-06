@@ -79,3 +79,54 @@ func TestSharedRuntimeOwnerCollection(t *testing.T) {
 		}
 	}
 }
+
+func TestStrictSpreadPayloadEmission(t *testing.T) {
+	src := `package app
+type Props struct { Label string }
+component Card(props: Props) {
+ return <section>{slotHeader}{children}<b>{props.Label}</b></section>
+}
+
+component Page(props: Props) {
+ return <Card {...props}><p>child</p><h1 slot="Header">heading</h1></Card>
+}
+`
+	for _, runtime := range []bool{false, true} {
+		out, err := Transpile([]byte(src), Options{RuntimeIslands: runtime})
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := `Card(props, gosx.El("h1", gosx.Text("heading")), gosx.El("p", gosx.Text("child")))`
+		if runtime {
+			call = strings.Replace(call, "Card(props", "__gosxRuntimeCard(__gosxRuntimectx, props", 1)
+		}
+		if !strings.Contains(out, call) {
+			t.Fatalf("missing ordered payload call %s: %s", call, out)
+		}
+	}
+}
+
+func TestStrictSpreadSelfClosingSlotEmission(t *testing.T) {
+	src := `package app
+type Props struct { Label string }
+component Card(props: Props) {
+ return <section>{slotHeader}<b>{props.Label}</b></section>
+}
+component Page(props: Props) {
+ return <Card {...props} />
+}
+`
+	for _, runtime := range []bool{false, true} {
+		out, err := Transpile([]byte(src), Options{RuntimeIslands: runtime})
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := "Card(props, gosx.Fragment())"
+		if runtime {
+			call = "__gosxRuntimeCard(__gosxRuntimectx, props, gosx.Fragment())"
+		}
+		if !strings.Contains(out, call) {
+			t.Fatalf("missing self-closing ordered slot call %s: %s", call, out)
+		}
+	}
+}

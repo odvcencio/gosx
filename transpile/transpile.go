@@ -1069,7 +1069,7 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 	if t.rejectSharedRuntimeOwner(openNode, tag) {
 		return ""
 	}
-	if verbatim, ok := t.strictSpreadCallVerbatim(tag, openNode); ok {
+	if verbatim, ok := t.strictSpreadCallVerbatim(tag, openNode, children, t.orderedSlotArgs(tag, slots)); ok {
 		return verbatim
 	}
 
@@ -1311,7 +1311,7 @@ func strictStructBaseName(typeText string) string {
 // for this proven shape; every other spread shape (a legacy caller's tier-2
 // spread, or any shape the lowerer did not prove) still reaches that
 // rejection with its own message.
-func (t *transpiler) strictSpreadCallVerbatim(tag string, n *gotreesitter.Node) (string, bool) {
+func (t *transpiler) strictSpreadCallVerbatim(tag string, n *gotreesitter.Node, children, slotArgs []string) (string, bool) {
 	if t.strict == 0 {
 		return "", false
 	}
@@ -1336,7 +1336,20 @@ func (t *transpiler) strictSpreadCallVerbatim(tag string, n *gotreesitter.Node) 
 	if spreadCount != 1 || otherCount != 0 {
 		return "", false
 	}
-	return tag + "(" + spreadExpr + ")", true
+	callName := tag
+	var args []string
+	if internal, ok := t.runtimeNames[tag]; ok {
+		callName = internal
+		args = append(args, t.runtimePrefix+"ctx")
+	}
+	args = append(args, spreadExpr)
+	args = append(args, slotArgs...)
+	for _, child := range children {
+		if child != "" {
+			args = append(args, child)
+		}
+	}
+	return callName + "(" + strings.Join(args, ", ") + ")", true
 }
 
 // emitRawTextElement emits <script>/<style>. Their bodies are script or
@@ -1417,7 +1430,7 @@ func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	if t.rejectSharedRuntimeOwner(n, tag) {
 		return ""
 	}
-	if verbatim, ok := t.strictSpreadCallVerbatim(tag, n); ok {
+	if verbatim, ok := t.strictSpreadCallVerbatim(tag, n, nil, t.orderedSlotArgs(tag, nil)); ok {
 		return verbatim
 	}
 
