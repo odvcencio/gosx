@@ -150,6 +150,12 @@ type Props struct {
 	// only the exact locally owned record. End retains the preview, not server
 	// persistence or authorization. Output events remain untrusted requests.
 	GizmoLocalScalePreview *bool `json:"gizmoLocalScalePreview,omitempty"`
+	// GizmoLocalRotatePreview opts into original-relative world-Z preview only
+	// for unparented, non-baked targets without X/Y tilt or spin and an
+	// unparented rotate helper. Absent/false and unsupported targets stay
+	// event-only. Cancellation restores only the locally owned record; end
+	// retains local preview, not persistence or authorization.
+	GizmoLocalRotatePreview *bool `json:"gizmoLocalRotatePreview,omitempty"`
 	// GizmoOutputSignal: when set, the client gizmo drag controller publishes
 	// each drag phase ({target, mode, axis, phase, position, rotation, scale})
 	// into this shared signal, in addition to dispatching the
@@ -1842,6 +1848,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "cursorOutputSignal", p.CursorOutputSignal)
 	setString(out, "gizmoInputSignal", p.GizmoInputSignal)
 	setBool(out, "gizmoLocalScalePreview", p.GizmoLocalScalePreview)
+	setBool(out, "gizmoLocalRotatePreview", p.GizmoLocalRotatePreview)
 	setString(out, "gizmoOutputSignal", p.GizmoOutputSignal)
 	setString(out, "capabilityTier", p.CapabilityTier)
 	if p.ControlTarget != (Vector3{}) {

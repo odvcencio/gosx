@@ -2148,11 +2148,16 @@
 	      }, function(payload) {
 	        const target = payload && sceneState.objects.get(sceneObjectKey(payload.target));
 	        if (payload && payload.phase === "start" && target) {
+	          const rotateRequested = sceneBool(props.gizmoLocalRotatePreview, false);
+	          const rotateCompatible = rotateRequested && payload.mode === "rotate" && !target.parentMatrix && !(target.vertices && target.vertices.positions) && target.rotationX === 0 && target.rotationY === 0 && target.spinX === 0 && target.spinY === 0 && !sceneStateObjects(sceneState).some(object => object.gizmoHelper && object.gizmoFormMode === "rotate" && object.parentMatrix);
+	          mount.setAttribute("data-gosx-scene3d-gizmo-preview-diagnostic", payload.mode === "rotate" && rotateRequested && !rotateCompatible ? "unsupported-world-z-transform" : "");
 	          gizmoPreview = {
 	            expected: target,
 	            original: { x: target.x, y: target.y, z: target.z },
 	            scaleEnabled: sceneBool(props.gizmoLocalScalePreview, false),
 	            scale: { scaleX: target.scaleX, scaleY: target.scaleY, scaleZ: target.scaleZ },
+	            rotateEnabled: rotateRequested && rotateCompatible,
+	            rotation: { rotationX: target.rotationX, rotationY: target.rotationY, rotationZ: target.rotationZ },
 	          };
 	        }
 	        if (payload && payload.mode === "translate" && gizmoPreview && target === gizmoPreview.expected) {
@@ -2176,6 +2181,19 @@
 	            applySceneObjectPatch(sceneState, payload.target, patch);
 	            gizmoPreview.expected = sceneState.objects.get(sceneObjectKey(payload.target));
 	            scheduleRender("gizmo-scale");
+	          }
+	        }
+	        if (payload && payload.mode === "rotate" && gizmoPreview && gizmoPreview.rotateEnabled && target === gizmoPreview.expected) {
+	          let patch = null;
+	          if (payload.phase === "cancel") patch = gizmoPreview.rotation;
+	          else if ((payload.phase === "move" || payload.phase === "end") && payload.axis === "z" && typeof payload.angleDelta === "number" && Number.isFinite(payload.angleDelta)) {
+	            const value = gizmoPreview.rotation.rotationZ + payload.angleDelta;
+	            if (Number.isFinite(value)) patch = { rotationZ: value };
+	          }
+	          if (patch) {
+	            applySceneObjectPatch(sceneState, payload.target, patch);
+	            gizmoPreview.expected = sceneState.objects.get(sceneObjectKey(payload.target));
+	            scheduleRender("gizmo-rotate");
 	          }
 	        }
 	        if (payload && (payload.phase === "end" || payload.phase === "cancel")) gizmoPreview = null;
