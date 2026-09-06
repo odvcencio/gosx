@@ -1895,6 +1895,54 @@ test("16a board sprite draws on the default PBR pipeline with its albedo texture
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0");
 });
 
+for (const fresh of [false, true]) test(`16a board thumbnail LOD refreshes reused bundle without replacing caller ownership (fresh=${fresh})`, async () => {
+  const harness = await createBoardWebGPUHarness({ fresh });
+  const bundle = JSON.parse(goBoardBundleMixedJSON);
+  // Materialize Go omitempty defaults before recording the immutable fixture.
+  for (const object of bundle.objects) {
+    object.vertexOffset ??= 0;
+    object.materialIndex ??= 0;
+  }
+  const original = bundle.objects;
+  const originalJSON = JSON.stringify(original);
+  const fullIDs = original.map(o => o.id);
+  const filteredIDs = original.filter(o => bundle.materials[o.materialIndex || 0].kind !== "sprite").map(o => o.id);
+  assert.ok(filteredIDs.length > 0 && filteredIDs.length < fullIDs.length);
+  let previousList, previousBand, worldAliases;
+  for (const zoom of [0.2, 0.3, 0.79, 0.8, 1, 0.3]) {
+    bundle.camera.z = zoom;
+    harness.renderer.render(bundle, {});
+    const band = zoom >= 0.3 && zoom < 0.8;
+    if (band === previousBand) assert.equal(bundle.meshObjects, previousList, "zoom changes within band do not allocate a list");
+    previousBand = band;
+    previousList = bundle.meshObjects;
+    const aliases = [bundle.worldMeshPositions, bundle.worldMeshNormals, bundle.worldMeshUVs];
+    if (worldAliases) aliases.forEach((value, i) => assert.equal(value, worldAliases[i], "band changes preserve world aliases"));
+    worldAliases = aliases;
+    const draws = mainRenderPasses(harness.fake).at(-1).draws;
+    assert.equal(draws.length, band ? 4 : 3, "only thumbnail draw membership changes");
+    assert.deepEqual(Array.from(bundle.meshObjects, o => o.id), zoom >= 0.3 && zoom < 0.8 ? fullIDs : filteredIDs, `membership at ${zoom}`);
+    assert.deepEqual(Array.from(bundle.meshObjects, o => o.kind), zoom >= 0.3 && zoom < 0.8 ? ["rect", "line", "line", "sprite"] : ["rect", "line", "line"], "rect/line painter order survives");
+    const derived = bundle.meshObjects;
+    const positions = bundle.worldMeshPositions;
+    harness.renderer.render(bundle, {});
+    assert.equal(bundle.meshObjects, derived, "unchanged band retains derived identity");
+    assert.equal(bundle.worldMeshPositions, positions, "LOD does not replace canonicalized world buffers");
+    assert.equal(bundle.objects, original);
+  }
+  // Existing renderer cache fields are attached to records; authored fields
+  // and the full list must remain unchanged by LOD derivation.
+  const authored = JSON.parse(originalJSON);
+  assert.deepEqual(bundle.objects.map((o, i) => Object.fromEntries(Object.keys(authored[i]).map(k => [k, o[k]]))), authored);
+  const preset = [{ id: "caller", vertexOffset: 0, vertexCount: 0 }];
+  bundle.meshObjects = preset;
+  for (const zoom of [0.2, 0.5, 1]) {
+    bundle.camera.z = zoom;
+    harness.renderer.render(bundle, {});
+    assert.equal(bundle.meshObjects, preset, "external replacement stays caller-owned");
+  }
+});
+
 test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D board bundles", async () => {
   const harness = await createBoardWebGPUHarness();
 

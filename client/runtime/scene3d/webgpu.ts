@@ -17187,7 +17187,7 @@
     // + `worldMesh*`) — native drawObjectMeshes and 16a drawPBRObjects are the
     // two consumers of one buffer layout, so the bridge is pure ZERO-COPY
     // aliasing: no records are copied or transformed. Idempotent by
-    // construction via the !bundle.meshObjects re-entry guard (hosts re-render
+    // construction via adapter ownership (hosts re-render
     // the same bundle object every frame, and 16a's attribute getter
     // canonicalizes worldMesh* fields to typed arrays in place — re-aliasing
     // would clobber that cache).
@@ -17218,21 +17218,28 @@
     //
     // `background` needs no bridging: the main-pass clear color already reads
     // bundle.background (same JSON name on Scene3D and board bundles).
+    var boardBundleAdapters = new WeakMap();
     function adaptOrtho2DBoardBundle(bundle) {
       if (
         !bundle ||
         !bundle.camera ||
         bundle.camera.mode !== "ortho2d" ||
         !Array.isArray(bundle.objects) ||
-        !bundle.objects.length ||
-        bundle.meshObjects
+        !bundle.objects.length
       ) {
         return bundle;
       }
-      for (var i = 0; i < bundle.objects.length; i++) {
-        var obj = bundle.objects[i];
-        if (obj && !Number.isFinite(obj.vertexOffset)) obj.vertexOffset = 0;
-        if (obj && !Number.isFinite(obj.materialIndex)) obj.materialIndex = 0;
+      var adapter = boardBundleAdapters.get(bundle);
+      if (adapter ? bundle.meshObjects !== adapter.meshObjects : bundle.meshObjects) {
+        // A preset or externally replaced list is not ours to derive again.
+        return bundle;
+      }
+      if (!adapter) {
+        for (var i = 0; i < bundle.objects.length; i++) {
+          var obj = bundle.objects[i];
+          if (obj && !Number.isFinite(obj.vertexOffset)) obj.vertexOffset = 0;
+          if (obj && !Number.isFinite(obj.materialIndex)) obj.materialIndex = 0;
+        }
       }
       // Thumbnail level-of-detail: the board's per-page thumbnail sprites are a
       // MEDIUM-zoom tier — they read as a faithful preview only while zoomed out
@@ -17246,6 +17253,7 @@
       var BOARD_LOD_SURFACE_ZOOM = 0.8;
       var lodZoom = (typeof bundle.camera.z === "number" && bundle.camera.z > 0) ? bundle.camera.z : 1;
       var showThumbs = lodZoom >= BOARD_LOD_THUMB_ZOOM && lodZoom < BOARD_LOD_SURFACE_ZOOM;
+      if (adapter && adapter.showThumbs === showThumbs) return bundle;
       var lodMats = Array.isArray(bundle.materials) ? bundle.materials : [];
       var isThumbSprite = function (o) {
         var m = o && lodMats[o.materialIndex || 0];
@@ -17259,9 +17267,15 @@
       } else {
         bundle.meshObjects = bundle.objects;
       }
-      bundle.worldMeshPositions = bundle.worldPositions;
-      bundle.worldMeshNormals = bundle.worldNormals;
-      bundle.worldMeshUVs = bundle.worldUVs;
+      if (!adapter) {
+        bundle.worldMeshPositions = bundle.worldPositions;
+        bundle.worldMeshNormals = bundle.worldNormals;
+        bundle.worldMeshUVs = bundle.worldUVs;
+        adapter = {};
+        boardBundleAdapters.set(bundle, adapter);
+      }
+      adapter.meshObjects = bundle.meshObjects;
+      adapter.showThumbs = showThumbs;
       return bundle;
     }
 
