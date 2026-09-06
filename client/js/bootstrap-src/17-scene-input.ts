@@ -786,6 +786,8 @@
       var modelMatrix = obj.directVertices && obj.modelMatrix && obj.modelMatrix.length >= 16
         ? obj.modelMatrix
         : null;
+      var modelInverse = modelMatrix ? new Float64Array(12) : null;
+      if (modelInverse && !sceneAffineDeterminant(modelMatrix, 0, modelInverse)) modelInverse = null;
 
       function meshPointAt(localIndex) {
         if (!directPositions || typeof directPositions.length !== "number") {
@@ -830,6 +832,15 @@
             hit,
           );
           var triangleIndex = Math.floor(tri / 3);
+          // Direct geometry is intersected in world space; invert the exact
+          // affine model for authored-local metadata. Absent/singular/invalid
+          // inverses retain world coordinates rather than emitting NaNs.
+          var localPoint = point;
+          if (modelInverse) {
+            var mapped = sceneMatrixTransformInto({}, modelInverse,
+              point.x - modelMatrix[12], point.y - modelMatrix[13], point.z - modelMatrix[14], 4, false);
+            if (Number.isFinite(mapped.x) && Number.isFinite(mapped.y) && Number.isFinite(mapped.z)) localPoint = mapped;
+          }
           closest = {
             index: safeIndexOffset + i,
             object: obj,
@@ -839,7 +850,7 @@
             area: Math.max(1, (boundsMax.x - boundsMin.x) * (boundsMax.y - boundsMin.y)),
             point: point,
             worldPosition: point,
-            localPosition: point,
+            localPosition: localPoint,
             uv: uv,
             instanceIndex: sceneTargetInt(obj, "instanceIndex"),
             primitiveIndex: triangleIndex,

@@ -29,6 +29,31 @@ const srcDir = path.join(__dirname, "bootstrap-src");
 // 17-scene-input.ts must equal this.
 const POINT_THRESHOLD = 0.1;
 
+for (const mode of ["absent", "identity", "translation", "affine", "shear", "mirrored", "singular", "nonfinite"]) {
+  test(`direct mesh local hit ${mode}`, () => {
+    const context = createContext();
+    const sx = mode === "mirrored" ? -2 : 2;
+    const matrix = mode === "absent" ? null : [sx,0,0,0, 0,3,0,0, 0,0,mode === "singular" ? 0 : 4,0, 1,-1,2,1];
+    if (mode === "identity" || mode === "translation") { matrix[0]=matrix[5]=matrix[10]=1; }
+    if (mode === "identity") matrix[12]=matrix[13]=matrix[14]=0;
+    if (mode === "shear") matrix[4]=.7;
+    if (mode === "nonfinite") matrix[3] = Infinity;
+    const world = matrix ? {x:matrix[12]+matrix[0]*.2+matrix[4]*.1,y:matrix[13]+matrix[5]*.1,z:matrix[14]} : {x:.2,y:.1,z:0};
+    context.__object = {id:"mesh",pickable:true,directVertices:true,modelMatrix:matrix,
+      vertexCount:3,vertices:{positions:[-1,-1,0, 1,-1,0, 0,1,0]},
+      bounds:{minX:-5,maxX:5,minY:-5,maxY:5,minZ:-5,maxZ:5}};
+    context.__ray = {origin:{x:world.x,y:world.y,z:world.z+5},dir:{x:0,y:0,z:-1}};
+    const hit = vm.runInContext("sceneRaycastPickGroup(__ray,[__object],null,0,null)",context);
+    assert.ok(hit);assert.equal(hit.triangleIndex,0);assert.equal(hit.distance,5);
+    const want = !["absent","singular","nonfinite"].includes(mode) ? {x:.2,y:.1,z:0} : world;
+    for (const key of ["x","y","z"]) {
+      assert.ok(Math.abs(hit.worldPosition[key]-world[key])<1e-12);
+      assert.ok(Number.isFinite(hit.localPosition[key]));
+      assert.ok(Math.abs(hit.localPosition[key]-want[key])<1e-12,`${key}: ${hit.localPosition[key]} != ${want[key]}`);
+    }
+  });
+}
+
 function createContext() {
   const sandbox = {
     console: { warn() {}, log() {}, error() {} },
