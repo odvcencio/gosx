@@ -52,7 +52,7 @@ var knownUnsupportedKinds = map[string]string{
 	"gltf-mesh": "engine.RenderInstancedMesh carries no vertex buffer field, so inline mesh vertices never reach any native backend; " +
 		"this covers every scene.BufferGeometry generator, which is CircleGeometry, RingGeometry, ShapeGeometry, ExtrudeGeometry, " +
 		"PolygonGeometry, PolyhedronGeometry and the four named solids built on it",
-	"lines": "the CPU rasterizer draws only the bundle.lit, bundle.unlit, bundle.shadow, and particle pipelines, and skips the bundle.worldLine line-list pipeline",
+	"lines": "bundle.worldLine line-list pipeline accepts explicit thin solid object segments; primitive-instanced lines carry no segment buffers",
 }
 
 // CanRasterizeKind reports whether the CPU preview builds geometry for a

@@ -291,6 +291,10 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 
 	materialIndexes := make(map[string]int)
 	for _, object := range ir.Objects {
+		if normalizeKind(object.Kind) == "lines" {
+			appendNativeLines(&frame, object)
+			continue
+		}
 		if diagnostic, ok := geometryDiagnostic(object.Kind, object.ID); ok {
 			frame.Diagnostics = append(frame.Diagnostics, diagnostic)
 		}

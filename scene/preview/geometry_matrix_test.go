@@ -220,9 +220,8 @@ func TestBufferGeometryGeneratorsAreHonestlyUnsupported(t *testing.T) {
 	}
 }
 
-// TestLineGeometryIsHonestlyUnsupported pins the other admitted geometry gap.
-// rasterizeDraw serves the lit, unlit, shadow and particle pipelines, and skips
-// bundle.worldLine, so every line list and every line-based helper draws nothing.
+// TestLineGeometryIsHonestlyUnsupported pins the remaining thick-line gap.
+// The native line-list subset is hairline only; this fixture authors width2.
 func TestLineGeometryIsHonestlyUnsupported(t *testing.T) {
 	props := scene.Props{
 		Background: "#000000",

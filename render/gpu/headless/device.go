@@ -1240,6 +1240,12 @@ func respawnParticle(i int, tSeconds float32, emitter [4]float32, lifetime, init
 }
 
 func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVertex, firstInstance int) {
+	if r.pipeline != nil && r.pipeline.desc.Label == "bundle.worldLine" {
+		if instanceCount > 0 {
+			r.rasterizeWorldLines(vertexCount, firstVertex)
+		}
+		return
+	}
 	if r.pipeline == nil || vertexCount < 3 || instanceCount <= 0 {
 		return
 	}
