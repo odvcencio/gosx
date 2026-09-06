@@ -37,6 +37,7 @@ type responseError struct {
 }
 
 type server struct {
+	schemas               map[string]savedSchema
 	docs                  map[string]string
 	projectDiagnosticURIs map[string]map[string]struct{}
 	reader                *bufio.Reader
@@ -181,12 +182,19 @@ func (s *server) handle(req request) error {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
+		if filepath.Ext(URIToPath(params.TextDocument.URI)) != ".gsx" {
+			return nil
+		}
 		s.docs[params.TextDocument.URI] = params.TextDocument.Text
+		s.refreshSavedSchema(params.TextDocument.URI)
 		return s.publishDiagnostics(params.TextDocument.URI)
 	case "textDocument/didChange":
 		var params didChangeParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
+		}
+		if filepath.Ext(URIToPath(params.TextDocument.URI)) != ".gsx" {
+			return nil
 		}
 		if len(params.ContentChanges) > 0 {
 			s.docs[params.TextDocument.URI] = params.ContentChanges[len(params.ContentChanges)-1].Text
@@ -197,6 +205,13 @@ func (s *server) handle(req request) error {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
+		if filepath.Ext(URIToPath(params.TextDocument.URI)) == ".go" {
+			return s.saveGoModels(params.TextDocument.URI)
+		}
+		if filepath.Ext(URIToPath(params.TextDocument.URI)) != ".gsx" {
+			return nil
+		}
+		s.refreshSavedSchema(params.TextDocument.URI)
 		return s.publishProjectDiagnostics(params.TextDocument.URI)
 	case "textDocument/didClose":
 		var params didCloseParams
@@ -204,6 +219,7 @@ func (s *server) handle(req request) error {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
 		delete(s.docs, params.TextDocument.URI)
+		delete(s.schemas, params.TextDocument.URI)
 		return s.notify("textDocument/publishDiagnostics", map[string]any{
 			"uri":         params.TextDocument.URI,
 			"diagnostics": []Diagnostic{},
@@ -237,7 +253,8 @@ func (s *server) handle(req request) error {
 		if !ok {
 			return s.respond(req.ID, []DocumentSymbol{})
 		}
-		return s.respond(req.ID, DocumentSymbols(URIToPath(params.TextDocument.URI), []byte(source)))
+		idx, _ := s.savedSourceIndex(params.TextDocument.URI, []byte(source))
+		return s.respond(req.ID, documentSymbolsFromIndex(idx))
 	case "textDocument/hover":
 		var params textDocumentPositionParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -247,7 +264,8 @@ func (s *server) handle(req request) error {
 		if !ok {
 			return s.respond(req.ID, nil)
 		}
-		return s.respond(req.ID, HoverAt(URIToPath(params.TextDocument.URI), []byte(source), params.Position))
+		idx, _ := s.savedSourceIndex(params.TextDocument.URI, []byte(source))
+		return s.respond(req.ID, hoverFromIndex(idx, params.Position))
 	case "textDocument/definition":
 		var params textDocumentPositionParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -257,7 +275,8 @@ func (s *server) handle(req request) error {
 		if !ok {
 			return s.respond(req.ID, nil)
 		}
-		return s.respond(req.ID, DefinitionAt(params.TextDocument.URI, URIToPath(params.TextDocument.URI), []byte(source), params.Position))
+		idx, _ := s.savedSourceIndex(params.TextDocument.URI, []byte(source))
+		return s.respond(req.ID, definitionFromIndex(params.TextDocument.URI, idx, params.Position))
 	default:
 		if len(req.ID) == 0 {
 			return nil
@@ -267,8 +286,7 @@ func (s *server) handle(req request) error {
 }
 
 func (s *server) publishDiagnostics(uri string) error {
-	source := s.docs[uri]
-	diags := Analyze(URIToPath(uri), []byte(source))
+	diags := s.fastDiagnostics(uri)
 	return s.notify("textDocument/publishDiagnostics", map[string]any{
 		"uri":         uri,
 		"diagnostics": diags,
@@ -285,10 +303,9 @@ func (s *server) publishDiagnostics(uri string) error {
 // project findings go stale until the next save, a deliberate trade
 // against re-running file I/O on every keystroke.
 func (s *server) publishProjectDiagnostics(uri string) error {
-	source := s.docs[uri]
 	path := URIToPath(uri)
 	scopeKey := projectDiagnosticScopeKey(path)
-	diags := Analyze(path, []byte(source))
+	diags := s.fastDiagnostics(uri)
 	owned := analyzeProjectOwned(path)
 	current := make(map[string]struct{}, len(owned))
 	ownedByURI := make(map[string][]Diagnostic, len(owned))
@@ -347,7 +364,8 @@ func (s *server) fastDiagnostics(uri string) []Diagnostic {
 	if !ok {
 		return nil
 	}
-	return Analyze(URIToPath(uri), []byte(source))
+	_, diags := s.savedSourceIndex(uri, []byte(source))
+	return diags
 }
 
 func (s *server) publishDiagnosticsList(uri string, diags []Diagnostic) error {

@@ -59,6 +59,10 @@ type componentRef struct {
 }
 
 func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
+	return indexSourceWithSchemas(path, source, nil)
+}
+
+func indexSourceWithSchemas(path string, source []byte, schemas *ir.SchemaSet) (sourceIndex, []Diagnostic) {
 	idx := sourceIndex{
 		source:     string(source),
 		components: make(map[string]componentSymbol),
@@ -74,7 +78,7 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 		return idx, diagnosticsForSourceError(source, gosx.DescribeParseError(root, source, lang))
 	}
 
-	prog, err := ir.Lower(root, source, lang)
+	prog, err := ir.LowerWithOptions(root, source, lang, ir.LowerOptions{Schemas: schemas})
 	if err != nil {
 		return idx, diagnosticsForSourceError(source, err)
 	}
@@ -154,6 +158,10 @@ func (idx *sourceIndex) indexComponentRefs() {
 // DocumentSymbols returns top-level GoSX component symbols for an editor.
 func DocumentSymbols(path string, source []byte) []DocumentSymbol {
 	idx, _ := indexSource(path, source)
+	return documentSymbolsFromIndex(idx)
+}
+
+func documentSymbolsFromIndex(idx sourceIndex) []DocumentSymbol {
 	if idx.program == nil {
 		return nil
 	}
@@ -177,6 +185,10 @@ func DocumentSymbols(path string, source []byte) []DocumentSymbol {
 // HoverAt returns component hover information for a source position.
 func HoverAt(path string, source []byte, pos Position) *Hover {
 	idx, _ := indexSource(path, source)
+	return hoverFromIndex(idx, pos)
+}
+
+func hoverFromIndex(idx sourceIndex, pos Position) *Hover {
 	if idx.program == nil {
 		return nil
 	}
@@ -206,6 +218,10 @@ func HoverAt(path string, source []byte, pos Position) *Hover {
 
 func DefinitionAt(uri, path string, source []byte, pos Position) *Location {
 	idx, _ := indexSource(path, source)
+	return definitionFromIndex(uri, idx, pos)
+}
+
+func definitionFromIndex(uri string, idx sourceIndex, pos Position) *Location {
 	if idx.program == nil {
 		return nil
 	}
