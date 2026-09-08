@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.55.3 (2026-09-08)
+
+### Fixed: WebGPU point sprites keep per-point attributes flat
+
+- WebGPU point-sprite expansion now marks per-point color, fog, alpha, and point size varyings with flat interpolation so large sprites do not drift across their generated triangles.
+- The shipped Scene3D WebGPU feature chunk and monolithic bootstrap bundle were regenerated with the same runtime fix, and regression coverage now checks the TypeScript source plus both generated bundle paths.
+
 ## v0.55.2 (2026-09-04)
 
 ### Fixed: comments inside GSX markup compile away
