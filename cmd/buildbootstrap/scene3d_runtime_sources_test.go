@@ -69,8 +69,9 @@ func TestWebGPUPointSpritePerPointVaryingsStayFlat(t *testing.T) {
 	clientJS := shippedClientJS(t)
 	sourcePath := filepath.Clean(filepath.Join(clientJS, "..", "runtime", "scene3d", "webgpu.ts"))
 	bundlePath := filepath.Join(clientJS, "bootstrap-feature-scene3d-webgpu.js")
+	monolithPath := filepath.Join(clientJS, "bootstrap.js")
 
-	for _, path := range []string{sourcePath, bundlePath} {
+	for _, path := range []string{sourcePath, bundlePath, monolithPath} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, err := os.ReadFile(path)
 			if err != nil {
