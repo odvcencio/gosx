@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"m31labs.dev/gosx"
 )
@@ -104,11 +105,21 @@ func interpretGoListModule(mod goListModule) (version string, localReplace bool,
 // decide whether to fail and with what message. Kept separate from
 // filesystem and process access so it is testable on its own.
 func versionSkewError(cliVersion, projectVersion string, hasLocalReplace bool) error {
-	if hasLocalReplace || projectVersion == "" || cliVersion == projectVersion {
+	if hasLocalReplace || projectVersion == "" || cliVersion == projectVersion || acceptsSameReleasePseudoVersion(cliVersion, projectVersion) {
 		return nil
 	}
 	return fmt.Errorf(
 		"gosx %s cannot operate on a project pinned to m31labs.dev/gosx %s. Run: go install m31labs.dev/gosx/cmd/gosx@%s, or set %s=1 to override",
 		cliVersion, projectVersion, projectVersion, skipVersionCheckEnv,
 	)
+}
+
+func acceptsSameReleasePseudoVersion(cliVersion, projectVersion string) bool {
+	// Go names commits after the latest v0.N.P tag as v0.N.(P+1)-0 pseudo-versions.
+	// Repository tag creation is restricted in GoSX, but downstream projects still
+	// need to consume reviewed branch commits before the governed release job cuts
+	// the public tag. Treat that pre-release pseudo-version as compatible only
+	// when its base release is exactly the CLI's own release.
+	prefix := cliVersion + "-0."
+	return strings.HasPrefix(projectVersion, prefix)
 }

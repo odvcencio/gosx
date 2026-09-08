@@ -21,6 +21,17 @@ func TestVersionSkewError(t *testing.T) {
 			projectVersion: "v0.41.0",
 		},
 		{
+			name:           "same release pseudo-version pass",
+			cliVersion:     "v0.55.3",
+			projectVersion: "v0.55.3-0.20260908182739-2b95ffe5f97f",
+		},
+		{
+			name:           "different release pseudo-version fails",
+			cliVersion:     "v0.55.2",
+			projectVersion: "v0.55.3-0.20260908182739-2b95ffe5f97f",
+			wantErr:        "gosx v0.55.2 cannot operate on a project pinned to m31labs.dev/gosx v0.55.3-0.20260908182739-2b95ffe5f97f. Run: go install m31labs.dev/gosx/cmd/gosx@v0.55.3-0.20260908182739-2b95ffe5f97f, or set GOSX_SKIP_VERSION_CHECK=1 to override",
+		},
+		{
 			name:           "no gosx dependency skips",
 			cliVersion:     "v0.41.0",
 			projectVersion: "",
