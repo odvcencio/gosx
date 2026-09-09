@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.56.1 (2026-09-09)
+
+### Fixed: edge scrolling for fixed-target transfers
+
+- Declarative transfer gestures now scroll the nearest scrollable ancestor or document viewport while a pointer or touch is held near an edge, re-testing live targets at the held coordinates after each scroll increment.
+- Edge scrolling uses deterministic instant increments even when smooth scroll CSS is active and cleans up on release, cancellation, lost pointer capture, Escape, and navigation; no optimistic DOM relocation occurs.
+
 ## v0.56.0 (2026-09-08)
 
 ### Added: fixed-target transfer gestures
