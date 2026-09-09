@@ -107,13 +107,19 @@
   const TRANSFER_TARGET_OVER_CLASS = "gosx-transfer-target--over";
   const TRANSFER_DEFAULT_SOURCE_FIELD = "player_id";
   const TRANSFER_DEFAULT_TARGET_FIELD = "slot";
-  // The auto-scroll edge zone, in CSS pixels measured inward from each end of
-  // the container's own border box, and the fastest scroll speed a pointer
-  // pinned at the very edge of that zone reaches (pixels per tick — see
-  // REORDER_AUTOSCROLL_TICK_MS below).
-  const REORDER_AUTOSCROLL_EDGE_PX = 48;
-  const REORDER_AUTOSCROLL_MAX_PX = 18;
-  const REORDER_AUTOSCROLL_TICK_MS = 16;
+  // Both pointer gesture primitives use the same edge-scroll geometry: the
+  // edge zone is measured inward from a scroll container's border box and the
+  // fastest speed is reached at that box's edge. Keep the reorder aliases for
+  // its public API/tests while transfer reuses the exact same constants.
+  const AUTOSCROLL_EDGE_PX = 48;
+  const AUTOSCROLL_MAX_PX = 18;
+  const AUTOSCROLL_TICK_MS = 16;
+  const REORDER_AUTOSCROLL_EDGE_PX = AUTOSCROLL_EDGE_PX;
+  const REORDER_AUTOSCROLL_MAX_PX = AUTOSCROLL_MAX_PX;
+  const REORDER_AUTOSCROLL_TICK_MS = AUTOSCROLL_TICK_MS;
+  const TRANSFER_AUTOSCROLL_EDGE_PX = AUTOSCROLL_EDGE_PX;
+  const TRANSFER_AUTOSCROLL_MAX_PX = AUTOSCROLL_MAX_PX;
+  const TRANSFER_AUTOSCROLL_TICK_MS = AUTOSCROLL_TICK_MS;
   // Live-bound text regions (data-gosx-live-*, gosx#217). See "Live-bound
   // regions" below for the full contract; these are the attribute
   // constants it reads.
@@ -5877,21 +5883,43 @@
 
   // --- pointer reorder -----------------------------------------------------
 
-  function reorderAutoScrollDelta(clientY, containerRect) {
-    if (!containerRect || containerRect.height <= 0) return 0;
-    if (clientY <= containerRect.top) return -REORDER_AUTOSCROLL_MAX_PX;
-    if (clientY >= containerRect.bottom) return REORDER_AUTOSCROLL_MAX_PX;
-    const topZoneEnd = containerRect.top + REORDER_AUTOSCROLL_EDGE_PX;
-    if (clientY < topZoneEnd) {
-      const depth = (topZoneEnd - clientY) / REORDER_AUTOSCROLL_EDGE_PX;
-      return -Math.max(1, Math.round(depth * REORDER_AUTOSCROLL_MAX_PX));
+  // autoScrollAxisDelta is shared by reorder and fixed-target transfer. The
+  // edge is capped at half a short container so its two zones never overlap.
+  function autoScrollAxisDelta(pointer, start, end, edgePx, maxPx) {
+    const coordinate = Number(pointer);
+    const from = Number(start);
+    const to = Number(end);
+    const max = Number(maxPx);
+    if (!Number.isFinite(coordinate) || !Number.isFinite(from)
+        || !Number.isFinite(to) || !(to > from) || !Number.isFinite(max) || !(max > 0)) {
+      return 0;
     }
-    const bottomZoneStart = containerRect.bottom - REORDER_AUTOSCROLL_EDGE_PX;
-    if (clientY > bottomZoneStart) {
-      const depth = (clientY - bottomZoneStart) / REORDER_AUTOSCROLL_EDGE_PX;
-      return Math.max(1, Math.round(depth * REORDER_AUTOSCROLL_MAX_PX));
+    const edge = Math.min(Math.max(0, Number(edgePx)), (to - from) / 2);
+    if (!(edge > 0)) return 0;
+    if (coordinate <= from) return -max;
+    if (coordinate >= to) return max;
+    const topZoneEnd = from + edge;
+    if (coordinate < topZoneEnd) {
+      const depth = (topZoneEnd - coordinate) / edge;
+      return -Math.min(max, Math.max(1, Math.round(depth * max)));
+    }
+    const bottomZoneStart = to - edge;
+    if (coordinate > bottomZoneStart) {
+      const depth = (coordinate - bottomZoneStart) / edge;
+      return Math.min(max, Math.max(1, Math.round(depth * max)));
     }
     return 0;
+  }
+
+  function reorderAutoScrollDelta(clientY, containerRect) {
+    if (!containerRect) return 0;
+    return autoScrollAxisDelta(
+      clientY,
+      containerRect.top,
+      containerRect.bottom,
+      REORDER_AUTOSCROLL_EDGE_PX,
+      REORDER_AUTOSCROLL_MAX_PX,
+    );
   }
 
   function reorderAutoScrollTick() {
@@ -6164,6 +6192,14 @@
   // handle preparation needs a rescan: it gives keyboard users a reachable
   // control before the first gesture and scopes touch-action:none to the
   // source handle instead of trapping native scrolling across the board.
+  //
+  // A touch/pointer transfer also keeps its last client coordinates while the
+  // pointer is held. A shared edge timer scrolls the nearest scrollable
+  // transfer ancestor (or the viewport when there is no such ancestor), then
+  // re-tests that held point against the live target rects. This is what lets
+  // a player reach a fixed destination below a phone-sized pool without a
+  // second pointermove or an optimistic DOM relocation. The timer is cleared
+  // on every terminal path before release, cancellation, or navigation.
   // ---------------------------------------------------------------------
 
   function transferTruthy(value) {
@@ -6390,6 +6426,144 @@
 
   let activeTransferPointer = null;
   let activeTransferKeyboard = null;
+  function transferViewportRect() {
+    const docElement = document && document.documentElement;
+    const body = document && document.body;
+    const width = Number(window.innerWidth) || Number(docElement && docElement.clientWidth)
+      || Number(body && body.clientWidth) || 0;
+    const height = Number(window.innerHeight) || Number(docElement && docElement.clientHeight)
+      || Number(body && body.clientHeight) || 0;
+    return { left: 0, top: 0, right: width, bottom: height, width: width, height: height };
+  }
+
+  function transferScrollableOverflow(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized === "" || normalized === "auto" || normalized === "scroll"
+      || normalized === "overlay";
+  }
+
+  function transferCanScrollAxis(node, axis) {
+    if (!node) return false;
+    const scrollSize = Number(axis === "x" ? node.scrollWidth : node.scrollHeight);
+    const clientSize = Number(axis === "x" ? node.clientWidth : node.clientHeight);
+    if (!Number.isFinite(scrollSize) || !Number.isFinite(clientSize) || !(scrollSize > clientSize)) {
+      return false;
+    }
+    if (typeof window.getComputedStyle !== "function") return true;
+    let style = null;
+    try {
+      style = window.getComputedStyle(node);
+    } catch (_error) {}
+    if (!style) return true;
+    const value = axis === "x" ? (style.overflowX || style.overflow) : (style.overflowY || style.overflow);
+    return transferScrollableOverflow(value);
+  }
+
+  function transferNearestScrollableContainer(root) {
+    let node = root;
+    while (node && node !== document) {
+      if (node.nodeType === 1 && (transferCanScrollAxis(node, "x") || transferCanScrollAxis(node, "y"))) {
+        return node;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function transferAutoScrollDeltas(clientX, clientY, rect) {
+    if (!rect) return { x: 0, y: 0 };
+    const left = Number(rect.left) || 0;
+    const top = Number(rect.top) || 0;
+    const right = Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + (Number(rect.width) || 0);
+    const bottom = Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + (Number(rect.height) || 0);
+    return {
+      x: autoScrollAxisDelta(clientX, left, right, TRANSFER_AUTOSCROLL_EDGE_PX, TRANSFER_AUTOSCROLL_MAX_PX),
+      y: autoScrollAxisDelta(clientY, top, bottom, TRANSFER_AUTOSCROLL_EDGE_PX, TRANSFER_AUTOSCROLL_MAX_PX),
+    };
+  }
+
+  function transferScrollElement(element, deltas, ignoreOverflow = false) {
+    const moved = { x: false, y: false };
+    if (!element || !deltas) return moved;
+    for (const axis of ["x", "y"]) {
+      const delta = Number(deltas[axis]) || 0;
+      const property = axis === "x" ? "scrollLeft" : "scrollTop";
+      if (delta === 0 || typeof element[property] !== "number" || (!ignoreOverflow && !transferCanScrollAxis(element, axis))) continue;
+      const before = Number(element[property]);
+      let next = before + delta;
+      const scrollSize = Number(axis === "x" ? element.scrollWidth : element.scrollHeight);
+      const clientSize = Number(axis === "x" ? element.clientWidth : element.clientHeight);
+      if (Number.isFinite(scrollSize) && Number.isFinite(clientSize) && scrollSize > clientSize) {
+        next = Math.max(0, Math.min(scrollSize - clientSize, next));
+      }
+      if (typeof element.scrollTo === "function") {
+        try {
+          element.scrollTo({
+            left: axis === "x" ? next : Number(element.scrollLeft) || 0,
+            top: axis === "y" ? next : Number(element.scrollTop) || 0,
+            behavior: "instant",
+          });
+        } catch (_error) {
+          element[property] = next;
+        }
+      } else {
+        element[property] = next;
+      }
+      moved[axis] = Number(element[property]) !== before;
+    }
+    return moved;
+  }
+
+  function transferScrollViewport(deltas) {
+    if (!deltas || (deltas.x === 0 && deltas.y === 0)) return { x: false, y: false };
+    if (typeof window.scrollBy === "function") {
+      const left = Number(deltas.x) || 0;
+      const top = Number(deltas.y) || 0;
+      try {
+        window.scrollBy({ left, top, behavior: "instant" });
+      } catch (_error) {
+        window.scrollBy(left, top);
+      }
+      return { x: deltas.x !== 0, y: deltas.y !== 0 };
+    }
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    return transferScrollElement(scrollingElement, deltas, true);
+  }
+
+  function transferAutoScrollTick() {
+    const state = activeTransferPointer;
+    if (!state) return;
+    const scrollContainer = state.scrollContainer;
+    const viewportScroller = scrollContainer === document.documentElement || scrollContainer === document.body;
+    const rect = scrollContainer && !viewportScroller && scrollContainer.getBoundingClientRect
+      ? scrollContainer.getBoundingClientRect()
+      : transferViewportRect();
+    const deltas = transferAutoScrollDeltas(state.lastClientX, state.lastClientY, rect);
+    const moved = !scrollContainer || viewportScroller
+      ? transferScrollViewport(deltas)
+      : transferScrollElement(scrollContainer, deltas);
+
+    // If an inner scroller is already at an edge, permit a viewport scroll
+    // when the held pointer is also at the viewport edge. This preserves the
+    // nearest-container policy without trapping the user in a nested pane.
+    if (scrollContainer && !viewportScroller && (!moved.x || !moved.y)) {
+      const viewportDeltas = transferAutoScrollDeltas(
+        state.lastClientX,
+        state.lastClientY,
+        transferViewportRect(),
+      );
+      transferScrollViewport({
+        x: moved.x ? 0 : viewportDeltas.x,
+        y: moved.y ? 0 : viewportDeltas.y,
+      });
+    }
+    transferSetTarget(
+      state,
+      transferTargetAtPoint(state.root, state.lastClientX, state.lastClientY, state.source),
+      true,
+    );
+  }
+
 
   function transferSetTarget(state, target, announce) {
     if (!state) return;
@@ -6404,6 +6578,10 @@
 
   function transferCleanupState(state) {
     if (!state) return;
+    if (state.scrollIntervalHandle != null) {
+      clearInterval(state.scrollIntervalHandle);
+      state.scrollIntervalHandle = null;
+    }
     removeManagedClass(state.root, TRANSFER_ACTIVE_CLASS);
     removeManagedClass(state.source, TRANSFER_SOURCE_ACTIVE_CLASS);
     if (state.target) removeManagedClass(state.target, TRANSFER_TARGET_OVER_CLASS);
@@ -6454,7 +6632,9 @@
     const state = activeTransferPointer;
     if (!state || !event || event.pointerId !== state.pointerId) return;
     if (typeof event.preventDefault === "function") event.preventDefault();
-    const target = transferTargetAtPoint(state.root, event.clientX, event.clientY, state.source);
+    if (Number.isFinite(Number(event.clientX))) state.lastClientX = Number(event.clientX);
+    if (Number.isFinite(Number(event.clientY))) state.lastClientY = Number(event.clientY);
+    const target = transferTargetAtPoint(state.root, state.lastClientX, state.lastClientY, state.source);
     transferSetTarget(state, target, true);
   }
 
@@ -6473,6 +6653,10 @@
       source: resolved.source,
       handle: handle,
       target: null,
+      lastClientX: Number(event.clientX),
+      lastClientY: Number(event.clientY),
+      scrollContainer: transferNearestScrollableContainer(resolved.handle || resolved.source || resolved.root),
+      scrollIntervalHandle: null,
       previousGrabbed: handle.getAttribute && handle.getAttribute("aria-grabbed"),
       releaseRevalidation: suspendRevalidation(),
       onMove: null,
@@ -6497,6 +6681,10 @@
       handle.addEventListener("pointercancel", onCancel);
       handle.addEventListener("lostpointercapture", onCancel);
     }
+    activeTransferPointer.scrollIntervalHandle = setInterval(
+      transferAutoScrollTick,
+      TRANSFER_AUTOSCROLL_TICK_MS,
+    );
     announceNavigation("Picked up " + transferSourceLabel(resolved.source)
       + ". Move over a destination and release. Escape to cancel.");
     return true;
