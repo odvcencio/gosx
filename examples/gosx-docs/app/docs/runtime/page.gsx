@@ -682,6 +682,99 @@ func Page() Node {
 				above) — periodic revalidation, the pause it pauses, and the managed-form error surface it reverts through all live there.
 			</p>
 		</section>
+		<section id="declarative-transfer">
+			<h2>Declarative fixed-target transfer</h2>
+			<p>
+				Use a transfer root when one item must be assigned to one fixed destination — for example, a player card moved to a QB, RB, or bench slot. Put
+				<span class="inline-code">data-gosx-transfer</span>
+				and a same-origin POST action on the root. Mark each source with
+				<span class="inline-code">data-gosx-transfer-source</span>
+				and each destination with
+				<span class="inline-code">data-gosx-transfer-target</span>
+				. A source's optional
+				<span class="inline-code">data-gosx-transfer-handle</span>
+				descendant is its only grip; when no handle is present, the source itself is keyboard and pointer reachable.
+			</p>
+			{CodeBlock("gosx", `<section data-gosx-transfer
+		    data-gosx-transfer-action="POST /team/actions/lineup-set"
+		    data-gosx-transfer-context="team_id=team-1&week=1">
+		    <article data-gosx-transfer-source="player-7" aria-label="Player 7">
+		        <button data-gosx-transfer-handle type="button">Player 7</button>
+		    </article>
+		    <button data-gosx-transfer-target="QB" type="button">Quarterback</button>
+		    <button data-gosx-transfer-target="RB" type="button">Running back</button>
+		</section>`)}
+			<p>
+				A successful transfer posts
+				<span class="inline-code">player_id=player-7</span>
+				and
+				<span class="inline-code">slot=QB</span>
+				by default, together with the context pairs. Override those two field names with
+				<span class="inline-code">data-gosx-transfer-source-field</span>
+				and
+				<span class="inline-code">data-gosx-transfer-target-field</span>
+				. Context is a URLSearchParams-style query string in
+				<span class="inline-code">data-gosx-transfer-context</span>
+				; keys equal to either identity field are ignored so the runtime's source and target values stay authoritative.
+			</p>
+			<p>
+				Eligibility can be source-specific: put a comma- or space-separated list of allowed source identities in
+				<span class="inline-code">data-gosx-transfer-eligible-for</span>
+				on a target (or
+				<span class="inline-code">*</span>
+				for every source). This lets the server render, for example, WR-only destinations without trusting a client-side position rule. The existing
+				<span class="inline-code">data-gosx-transfer-eligible="false"</span>
+				form remains the global opt-out.
+			</p>
+			<ul>
+				<li>
+					Pointer Events with pointer capture support mouse, touch, and pen. The runtime highlights the source and the eligible target under the pointer while leaving every source and target in its original DOM position, so the surrounding player-pool scroll remains native.
+				</li>
+				<li>
+					Space or Enter picks up a source for keyboard users. Arrow keys or Tab move across eligible destinations; Space or Enter assigns, and Escape cancels. Every transition is announced through the shared
+					<span class="inline-code">aria-live</span>
+					region.
+				</li>
+				<li>
+					A destination with
+					<span class="inline-code">disabled</span>
+					,
+					<span class="inline-code">aria-disabled="true"</span>
+					,
+					<span class="inline-code">data-gosx-transfer-locked</span>
+					, or
+					<span class="inline-code">data-gosx-transfer-eligible="false"</span>
+					is skipped for both pointer hit-testing and keyboard navigation. A source marked disabled cannot be picked up.
+				</li>
+				<li>
+					The root reuses
+					<span class="inline-code">data-gosx-pending</span>
+					and
+					<span class="inline-code">data-gosx-form-state</span>
+					as its in-flight/error surface. A second transfer while the action is pending is refused, and a failed action does not move or silently rewrite either node.
+				</li>
+				<li>
+					The action is sent through the managed same-origin transport with the page's CSRF token. Its redirect or region/document reconciliation is authoritative; the runtime only reports success or failure and never pretends a transfer succeeded by relocating DOM nodes optimistically. A soft navigation or region replacement cancels any active gesture and removes its temporary state.
+				</li>
+			</ul>
+			<p>
+				Style the transient hooks
+				<span class="inline-code">gosx-transfer--active</span>
+				(on the root),
+				<span class="inline-code">gosx-transfer-source--active</span>
+				(on the picked source), and
+				<span class="inline-code">gosx-transfer-target--over</span>
+				(on the current destination). The navigation runtime exposes
+				<span class="inline-code">
+					window.__gosx.transfer.targetForPointer(root, x, y)
+				</span>
+				and
+				<span class="inline-code">
+					window.__gosx.transfer.eligibleTargets(root)
+				</span>
+				for diagnostics or a custom visual layer; ordinary pages need no JavaScript of their own.
+			</p>
+		</section>
 		<section id="live-bound-regions">
 			<h2>Live-bound regions</h2>
 			<p>

@@ -8,14 +8,14 @@ import (
 func init() {
 	docsapp.RegisterStaticDocsPage(
 		"Runtime",
-		"Managed navigation, script roles, prefetch, telemetry, and page disposal.",
+		"Managed navigation, fixed-target transfers, script roles, prefetch, telemetry, and page disposal.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
 					"mode":        "light",
 					"title":       "Runtime",
-					"description": "Managed navigation, script roles, prefetch, telemetry, and page disposal.",
-					"tags":        []string{"navigation", "transitions", "lifecycle", "prefetch", "revalidation", "heartbeat", "presence", "countdown", "reorder", "drag and drop", "filter", "search", "live regions", "text binding", "fragment refresh", "telemetry", "observability"},
+					"description": "Managed navigation, fixed-target transfers, script roles, prefetch, telemetry, and page disposal.",
+					"tags":        []string{"navigation", "transitions", "lifecycle", "prefetch", "revalidation", "heartbeat", "presence", "countdown", "reorder", "fixed-target transfer", "drag and drop", "filter", "search", "live regions", "text binding", "fragment refresh", "telemetry", "observability"},
 					"toc": []map[string]string{
 						{"href": "#client-navigation", "label": "Client navigation"},
 						{"href": "#page-transitions", "label": "Transition ownership"},
@@ -23,6 +23,7 @@ func init() {
 						{"href": "#visibility-heartbeat", "label": "Visibility-aware heartbeat"},
 						{"href": "#declarative-countdown", "label": "Declarative countdown"},
 						{"href": "#declarative-reorder", "label": "Declarative reorder"},
+						{"href": "#declarative-transfer", "label": "Declarative fixed-target transfer"},
 						{"href": "#live-bound-regions", "label": "Live-bound regions"},
 						{"href": "#declarative-filter", "label": "Declarative list filter"},
 						{"href": "#lifecycle-scripts", "label": "Managed scripts"},

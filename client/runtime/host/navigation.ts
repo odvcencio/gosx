@@ -88,6 +88,25 @@
   const REORDER_LIFTED_CLASS = "gosx-reorder-item--lifted";
   const REORDER_PLACEHOLDER_CLASS = "gosx-reorder-item--placeholder";
   const REORDER_GRABBED_CLASS = "gosx-reorder-item--grabbed";
+  // Declarative fixed-target transfer (data-gosx-transfer). Unlike reorder,
+  // transfer never changes the DOM optimistically: a source is picked up and
+  // a fixed target is selected, then the managed action response owns the
+  // authoritative reconciliation (normally a redirect or region refresh).
+  const TRANSFER_ROOT_ATTR = "data-gosx-transfer";
+  const TRANSFER_ACTION_ATTR = "data-gosx-transfer-action";
+  const TRANSFER_SOURCE_ATTR = "data-gosx-transfer-source";
+  const TRANSFER_HANDLE_ATTR = "data-gosx-transfer-handle";
+  const TRANSFER_TARGET_ATTR = "data-gosx-transfer-target";
+  const TRANSFER_SOURCE_FIELD_ATTR = "data-gosx-transfer-source-field";
+  const TRANSFER_TARGET_FIELD_ATTR = "data-gosx-transfer-target-field";
+  const TRANSFER_CONTEXT_ATTR = "data-gosx-transfer-context";
+  const TRANSFER_ELIGIBLE_FOR_ATTR = "data-gosx-transfer-eligible-for";
+  const TRANSFER_HANDLE_READY_ATTR = "data-gosx-transfer-handle-ready";
+  const TRANSFER_ACTIVE_CLASS = "gosx-transfer--active";
+  const TRANSFER_SOURCE_ACTIVE_CLASS = "gosx-transfer-source--active";
+  const TRANSFER_TARGET_OVER_CLASS = "gosx-transfer-target--over";
+  const TRANSFER_DEFAULT_SOURCE_FIELD = "player_id";
+  const TRANSFER_DEFAULT_TARGET_FIELD = "slot";
   // The auto-scroll edge zone, in CSS pixels measured inward from each end of
   // the container's own border box, and the fastest scroll speed a pointer
   // pinned at the very edge of that zone reaches (pixels per tick — see
@@ -2833,6 +2852,7 @@
         return;
       }
       outcome = await submitManagedActionForm(url, method, formData);
+      return outcome;
     } catch (err) {
       console.error("[gosx] form action failed:", err);
       reportNavigationFailure("form action", err, {
@@ -6119,6 +6139,646 @@
   window.__gosx.reorder = Object.assign(window.__gosx.reorder || {}, reorderAPI);
 
   // ---------------------------------------------------------------------
+  // Declarative fixed-target transfer (data-gosx-transfer)
+  //
+  // A transfer root owns identity-bearing sources and fixed destinations:
+  //
+  //   <section data-gosx-transfer
+  //     data-gosx-transfer-action="POST /team/actions/lineup-set"
+  //     data-gosx-transfer-context="team_id=team-1&week=1">
+  //     <article data-gosx-transfer-source="player-7">
+  //       <button data-gosx-transfer-handle>Player 7</button>
+  //     </article>
+  //     <div data-gosx-transfer-target="QB">Quarterback</div>
+  //   </section>
+  //
+  // This is deliberately separate from REORDER_CONTAINER_ATTR. A reorder
+  // gesture describes a new index in one list and may optimistically move a
+  // node; a transfer describes one stable source and one stable destination.
+  // The source and target nodes never move here. The managed action response
+  // (a redirect or a region/document reconciliation) is the only authority
+  // that changes the rendered assignment.
+  //
+  // The listener is delegated at document level, so newly rendered sources
+  // and targets work after a soft navigation or a region replacement. Only
+  // handle preparation needs a rescan: it gives keyboard users a reachable
+  // control before the first gesture and scopes touch-action:none to the
+  // source handle instead of trapping native scrolling across the board.
+  // ---------------------------------------------------------------------
+
+  function transferTruthy(value) {
+    return managedFormShorthandTruthy(value);
+  }
+
+  function isTransferRoot(node) {
+    return !!(node
+      && node.hasAttribute
+      && node.hasAttribute(TRANSFER_ROOT_ATTR)
+      && transferTruthy(node.getAttribute(TRANSFER_ROOT_ATTR)));
+  }
+
+  function closestTransferAncestor(node, attrName) {
+    let current = node;
+    while (current) {
+      if (current.hasAttribute && current.hasAttribute(attrName)) {
+        return current;
+      }
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  function transferRootForNode(node) {
+    const root = closestTransferAncestor(node, TRANSFER_ROOT_ATTR);
+    return root && isTransferRoot(root) ? root : null;
+  }
+
+  function transferSourceID(source) {
+    return String((source && source.getAttribute && source.getAttribute(TRANSFER_SOURCE_ATTR)) || "").trim();
+  }
+
+  function transferTargetID(target) {
+    return String((target && target.getAttribute && target.getAttribute(TRANSFER_TARGET_ATTR)) || "").trim();
+  }
+
+  function transferNodeDisabled(node, target) {
+    if (!node) return true;
+    if (node.disabled === true || (node.hasAttribute && node.hasAttribute("disabled"))) return true;
+    if (node.getAttribute && String(node.getAttribute("aria-disabled") || "").trim().toLowerCase() === "true") {
+      return true;
+    }
+    if (node.hasAttribute && node.hasAttribute("data-gosx-transfer-disabled")
+        && transferTruthy(node.getAttribute("data-gosx-transfer-disabled"))) {
+      return true;
+    }
+    if (target && node.hasAttribute && node.hasAttribute("data-gosx-transfer-locked")
+        && transferTruthy(node.getAttribute("data-gosx-transfer-locked"))) {
+      return true;
+    }
+    if (target && node.hasAttribute && node.hasAttribute("data-gosx-transfer-eligible")
+        && !transferTruthy(node.getAttribute("data-gosx-transfer-eligible"))) {
+      return true;
+    }
+    return false;
+  }
+
+  function transferSources(root) {
+    return collectElements(root, function(node) {
+      return !!(node.hasAttribute
+        && node.hasAttribute(TRANSFER_SOURCE_ATTR)
+        && transferSourceID(node)
+        && transferRootForNode(node) === root);
+    });
+  }
+
+  function transferTargets(root) {
+    return collectElements(root, function(node) {
+      return !!(node.hasAttribute
+        && node.hasAttribute(TRANSFER_TARGET_ATTR)
+        && transferTargetID(node)
+        && transferRootForNode(node) === root);
+    });
+  }
+
+  function transferTargetEligibleForSource(target, source) {
+    const raw = String((target && target.getAttribute && target.getAttribute(TRANSFER_ELIGIBLE_FOR_ATTR)) || "").trim();
+    if (!raw) return true;
+    const sourceID = transferSourceID(source);
+    return raw.split(/[\s,]+/).filter(Boolean).some(function(candidate) {
+      return candidate === "*" || (!!sourceID && candidate === sourceID);
+    });
+  }
+
+  function transferAvailableTargets(root, source) {
+    return transferTargets(root).filter(function(target) {
+      return !transferNodeDisabled(target, true) && transferTargetEligibleForSource(target, source);
+    });
+  }
+
+  function transferHandleForSource(source) {
+    if (!source) return null;
+    if (source.hasAttribute && source.hasAttribute(TRANSFER_HANDLE_ATTR)) {
+      return source;
+    }
+    return source.querySelector ? source.querySelector("[" + TRANSFER_HANDLE_ATTR + "]") || source : source;
+  }
+
+  // A body click on a source with a dedicated handle is intentionally inert;
+  // the author has chosen the exact grip that starts a transfer. If no grip
+  // exists, the source itself is the handle, which keeps simple card markup
+  // declarative and keyboard reachable.
+  function transferResolvedSource(target) {
+    const explicitHandle = closestTransferAncestor(target, TRANSFER_HANDLE_ATTR);
+    if (explicitHandle) {
+      const source = closestTransferAncestor(explicitHandle, TRANSFER_SOURCE_ATTR);
+      const root = transferRootForNode(source);
+      if (!source || !root || transferRootForNode(explicitHandle) !== root) return null;
+      return { handle: explicitHandle, source: source, root: root };
+    }
+
+    const source = closestTransferAncestor(target, TRANSFER_SOURCE_ATTR);
+    if (!source) return null;
+    const root = transferRootForNode(source);
+    if (!root || transferNodeDisabled(source, false)) return null;
+    const dedicated = source.querySelector ? source.querySelector("[" + TRANSFER_HANDLE_ATTR + "]") : null;
+    if (dedicated) return null;
+    return { handle: source, source: source, root: root };
+  }
+
+  function prepareTransferHandle(handle) {
+    if (!handle || (handle.hasAttribute && handle.hasAttribute(TRANSFER_HANDLE_READY_ATTR))) {
+      return;
+    }
+    handle.setAttribute(TRANSFER_HANDLE_READY_ATTR, "true");
+    if (!handle.hasAttribute("tabindex")) handle.setAttribute("tabindex", "0");
+    if (!handle.hasAttribute("role")) handle.setAttribute("role", "button");
+    if (!handle.hasAttribute("aria-roledescription")) {
+      handle.setAttribute("aria-roledescription", "Transfer source");
+    }
+    if (!handle.hasAttribute("aria-grabbed")) handle.setAttribute("aria-grabbed", "false");
+    if (handle.style) handle.style.touchAction = "none";
+  }
+
+  function prepareAllTransferHandles() {
+    for (const root of collectElements(document.body, isTransferRoot)) {
+      for (const source of transferSources(root)) {
+        prepareTransferHandle(transferHandleForSource(source));
+      }
+    }
+  }
+
+  function transferSourceLabel(source) {
+    return normalizeTextValue(source && source.getAttribute && source.getAttribute("aria-label"))
+      || normalizeTextValue(source && source.textContent)
+      || transferSourceID(source)
+      || "source";
+  }
+
+  function transferTargetLabel(target) {
+    return normalizeTextValue(target && target.getAttribute && target.getAttribute("aria-label"))
+      || normalizeTextValue(target && target.textContent)
+      || transferTargetID(target)
+      || "destination";
+  }
+
+  function transferContainerPending(root) {
+    return !!(root && root.getAttribute && root.getAttribute(FORM_PENDING_ATTR) === "true");
+  }
+
+  function transferFieldName(root, attrName, fallback) {
+    const value = root && root.getAttribute && root.getAttribute(attrName);
+    const trimmed = String(value || "").trim();
+    return trimmed || fallback;
+  }
+
+  function parseTransferActionSpec(root) {
+    const raw = String((root && root.getAttribute && root.getAttribute(TRANSFER_ACTION_ATTR)) || "").trim();
+    if (window.__gosx && window.__gosx.actions && typeof window.__gosx.actions.parse === "function") {
+      return window.__gosx.actions.parse(raw, "POST");
+    }
+    const match = /^([A-Za-z]+)\s+(.+)$/.exec(raw);
+    if (match) {
+      return { method: match[1].toUpperCase(), url: match[2].trim() };
+    }
+    return { method: "POST", url: raw };
+  }
+
+  // Context is intentionally a small URLSearchParams grammar instead of
+  // arbitrary JSON. This keeps the generated form stable across browsers,
+  // lets a page use repeated keys, and makes it obvious which values are
+  // server-owned context versus the two identity fields the runtime adds.
+  function transferContextFieldPairs(root, reserved) {
+    const raw = String((root && root.getAttribute && root.getAttribute(TRANSFER_CONTEXT_ATTR)) || "").trim();
+    if (!raw) return [];
+    const blocked = reserved || new Set();
+    const pairs = [];
+    try {
+      const params = new URLSearchParams(raw.charAt(0) === "?" ? raw.slice(1) : raw);
+      params.forEach(function(value, key) {
+        if (!blocked.has(String(key))) pairs.push([String(key), String(value)]);
+      });
+      return pairs;
+    } catch (_error) {
+      for (const part of raw.replace(/^\?/, "").split("&")) {
+        if (!part) continue;
+        const pieces = part.split("=");
+        let key = pieces.shift() || "";
+        let value = pieces.join("=");
+        try { key = decodeURIComponent(key.replace(/\+/g, " ")); } catch (_decodeError) {}
+        try { value = decodeURIComponent(value.replace(/\+/g, " ")); } catch (_decodeError) {}
+        if (key && !blocked.has(key)) pairs.push([key, value]);
+      }
+      return pairs;
+    }
+  }
+
+  function transferTargetAtPoint(root, clientX, clientY, source) {
+    const x = Number(clientX);
+    const y = Number(clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    for (const target of transferAvailableTargets(root, source)) {
+      if (!target.getBoundingClientRect) continue;
+      const rect = target.getBoundingClientRect();
+      const left = Number(rect.left) || 0;
+      const top = Number(rect.top) || 0;
+      const right = Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + (Number(rect.width) || 0);
+      const bottom = Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + (Number(rect.height) || 0);
+      if (x >= left && x <= right && y >= top && y <= bottom) return target;
+    }
+    return null;
+  }
+
+  let activeTransferPointer = null;
+  let activeTransferKeyboard = null;
+
+  function transferSetTarget(state, target, announce) {
+    if (!state) return;
+    if (state.target === target) return;
+    if (state.target) removeManagedClass(state.target, TRANSFER_TARGET_OVER_CLASS);
+    state.target = target || null;
+    if (state.target) {
+      addManagedClass(state.target, TRANSFER_TARGET_OVER_CLASS);
+      if (announce) announceNavigation("Over " + transferTargetLabel(state.target) + ". Release to assign.");
+    }
+  }
+
+  function transferCleanupState(state) {
+    if (!state) return;
+    removeManagedClass(state.root, TRANSFER_ACTIVE_CLASS);
+    removeManagedClass(state.source, TRANSFER_SOURCE_ACTIVE_CLASS);
+    if (state.target) removeManagedClass(state.target, TRANSFER_TARGET_OVER_CLASS);
+    if (state.handle) {
+      if (state.previousGrabbed == null) {
+        if (state.handle.removeAttribute) state.handle.removeAttribute("aria-grabbed");
+      } else {
+        state.handle.setAttribute("aria-grabbed", state.previousGrabbed);
+      }
+    }
+    if (state.releaseRevalidation) state.releaseRevalidation();
+  }
+
+  function transferFocusSource(state) {
+    if (state && state.handle) focusElement(state.handle, true);
+  }
+
+  function endTransferPointer(event, commit, options) {
+    const state = activeTransferPointer;
+    if (!state) return;
+    if (event && event.pointerId !== state.pointerId) return;
+    activeTransferPointer = null;
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    if (state.handle && state.handle.removeEventListener) {
+      state.handle.removeEventListener("pointermove", state.onMove);
+      state.handle.removeEventListener("pointerup", state.onUp);
+      state.handle.removeEventListener("pointercancel", state.onCancel);
+      state.handle.removeEventListener("lostpointercapture", state.onCancel);
+    }
+    try {
+      if (state.handle && typeof state.handle.releasePointerCapture === "function") {
+        state.handle.releasePointerCapture(state.pointerId);
+      }
+    } catch (_error) {}
+
+    const target = state.target;
+    transferCleanupState(state);
+    if (!commit || !target) {
+      if (!options || options.announce !== false) announceNavigation("Transfer cancelled.");
+      if (!options || options.focus !== false) transferFocusSource(state);
+      return;
+    }
+    transferFocusSource(state);
+    submitTransferAction(state.root, state.source, target);
+  }
+
+  function updateTransferPointer(event) {
+    const state = activeTransferPointer;
+    if (!state || !event || event.pointerId !== state.pointerId) return;
+    if (typeof event.preventDefault === "function") event.preventDefault();
+    const target = transferTargetAtPoint(state.root, event.clientX, event.clientY, state.source);
+    transferSetTarget(state, target, true);
+  }
+
+  function beginTransferPointer(event, resolved) {
+    if (!resolved || activeTransferPointer || activeTransferKeyboard
+        || activeReorderDrag || activeReorderKeyboard || transferContainerPending(resolved.root)
+        || transferNodeDisabled(resolved.source, false) || transferNodeDisabled(resolved.handle, false)) {
+      return false;
+    }
+    if (typeof event.pointerId !== "number" && typeof event.pointerId !== "string") return false;
+    const handle = resolved.handle;
+    prepareTransferHandle(handle);
+    activeTransferPointer = {
+      pointerId: event.pointerId,
+      root: resolved.root,
+      source: resolved.source,
+      handle: handle,
+      target: null,
+      previousGrabbed: handle.getAttribute && handle.getAttribute("aria-grabbed"),
+      releaseRevalidation: suspendRevalidation(),
+      onMove: null,
+      onUp: null,
+      onCancel: null,
+    };
+    addManagedClass(resolved.root, TRANSFER_ACTIVE_CLASS);
+    addManagedClass(resolved.source, TRANSFER_SOURCE_ACTIVE_CLASS);
+    handle.setAttribute("aria-grabbed", "true");
+    try {
+      if (typeof handle.setPointerCapture === "function") handle.setPointerCapture(event.pointerId);
+    } catch (_error) {}
+    const onMove = function(moveEvent) { updateTransferPointer(moveEvent); };
+    const onUp = function(upEvent) { endTransferPointer(upEvent, true); };
+    const onCancel = function(cancelEvent) { endTransferPointer(cancelEvent || event, false); };
+    activeTransferPointer.onMove = onMove;
+    activeTransferPointer.onUp = onUp;
+    activeTransferPointer.onCancel = onCancel;
+    if (handle.addEventListener) {
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onCancel);
+      handle.addEventListener("lostpointercapture", onCancel);
+    }
+    announceNavigation("Picked up " + transferSourceLabel(resolved.source)
+      + ". Move over a destination and release. Escape to cancel.");
+    return true;
+  }
+
+  function transferKeyboardTargets(state) {
+    return transferAvailableTargets(state.root, state.source);
+  }
+
+  function beginTransferKeyboard(handle, source, root) {
+    if (!handle || !source || !root || activeTransferPointer || activeTransferKeyboard
+        || activeReorderDrag || activeReorderKeyboard || transferContainerPending(root)
+        || transferNodeDisabled(source, false) || transferNodeDisabled(handle, false)) {
+      return false;
+    }
+    const targets = transferAvailableTargets(root, source);
+    activeTransferKeyboard = {
+      root: root,
+      source: source,
+      handle: handle,
+      target: null,
+      previousGrabbed: handle.getAttribute && handle.getAttribute("aria-grabbed"),
+      releaseRevalidation: suspendRevalidation(),
+    };
+    addManagedClass(root, TRANSFER_ACTIVE_CLASS);
+    addManagedClass(source, TRANSFER_SOURCE_ACTIVE_CLASS);
+    handle.setAttribute("aria-grabbed", "true");
+    const state = activeTransferKeyboard;
+    if (targets.length > 0) {
+      transferSetTarget(state, targets[0], false);
+      focusElement(targets[0], true);
+      announceNavigation("Picked up " + transferSourceLabel(source) + ". Over "
+        + transferTargetLabel(targets[0]) + ". Press Space or Enter to assign. Escape to cancel.");
+    } else {
+      announceNavigation("Picked up " + transferSourceLabel(source) + ". No eligible destination. Escape to cancel.");
+    }
+    return true;
+  }
+
+  function moveTransferKeyboard(step) {
+    const state = activeTransferKeyboard;
+    if (!state) return;
+    const targets = transferKeyboardTargets(state);
+    if (targets.length === 0) {
+      transferSetTarget(state, null, false);
+      announceNavigation("No eligible destination.");
+      return;
+    }
+    let index = targets.indexOf(state.target);
+    if (index < 0) index = step > 0 ? -1 : 0;
+    index = (index + step + targets.length) % targets.length;
+    transferSetTarget(state, targets[index], false);
+    focusElement(targets[index], true);
+    announceNavigation("Over " + transferTargetLabel(targets[index]) + ". Press Space or Enter to assign.");
+  }
+
+  function commitTransferKeyboard() {
+    const state = activeTransferKeyboard;
+    if (!state) return;
+    activeTransferKeyboard = null;
+    const target = state.target;
+    transferCleanupState(state);
+    if (!target) {
+      transferFocusSource(state);
+      announceNavigation("No eligible destination.");
+      return;
+    }
+    transferFocusSource(state);
+    submitTransferAction(state.root, state.source, target);
+  }
+
+  function cancelTransferKeyboard(options) {
+    const state = activeTransferKeyboard;
+    if (!state) return;
+    activeTransferKeyboard = null;
+    transferCleanupState(state);
+    if (!options || options.announce !== false) announceNavigation("Transfer cancelled.");
+    if (!options || options.focus !== false) transferFocusSource(state);
+  }
+
+  function transferResultMessage(result, fallback) {
+    return normalizeTextValue(result && result.message) || fallback;
+  }
+
+  function transferFailure(root, source, target, spec, previousState, error, response, result) {
+    restoreManagedFormState(root, previousState);
+    root.setAttribute(FORM_STATE_ATTR, "error");
+    const knownActionResult = !!(result && (typeof result.ok === "boolean"
+      || (result.fieldErrors && typeof result.fieldErrors === "object")));
+    const message = transferResultMessage(
+      result,
+      knownActionResult
+        ? "Transfer failed. Nothing changed."
+        : "Could not confirm transfer; refresh and check the current assignment.",
+    );
+    announceNavigation(message);
+    dispatchManagedEvent("gosx:transfer:error", {
+      detail: {
+        root: root,
+        source: source,
+        target: target,
+        sourceId: transferSourceID(source),
+        targetId: transferTargetID(target),
+        response: response || null,
+        error: error || null,
+      },
+    });
+    reportNavigationFailure("transfer action", error || new Error("transfer action failed"), {
+      source: spec && spec.url ? spec.url : windowLocationHref(),
+      telemetry: {
+        method: spec && spec.method ? spec.method : "POST",
+        url: spec && spec.url ? spec.url : "",
+        sourceId: transferSourceID(source),
+        targetId: transferTargetID(target),
+      },
+    });
+  }
+
+  function submitTransferAction(root, source, target) {
+    const spec = parseTransferActionSpec(root);
+    const actionURL = navigationURLParts(spec && spec.url);
+    if (!spec || String(spec.method || "POST").toUpperCase() !== "POST"
+        || !actionURL || !isSameOriginNavigation(actionURL.href, windowLocationHref())) {
+      transferFailure(
+        root,
+        source,
+        target,
+        spec || { method: "POST", url: "" },
+        captureManagedFormState(root),
+        new Error(TRANSFER_ACTION_ATTR + " must be a same-origin POST URL"),
+        null,
+        null,
+      );
+      return Promise.resolve(null);
+    }
+
+    const sourceField = transferFieldName(root, TRANSFER_SOURCE_FIELD_ATTR, TRANSFER_DEFAULT_SOURCE_FIELD);
+    const targetField = transferFieldName(root, TRANSFER_TARGET_FIELD_ATTR, TRANSFER_DEFAULT_TARGET_FIELD);
+    const reserved = new Set([sourceField, targetField]);
+    const fields = new URLSearchParams();
+    for (const pair of transferContextFieldPairs(root, reserved)) {
+      fields.append(pair[0], pair[1]);
+    }
+    fields.append(sourceField, transferSourceID(source));
+    fields.append(targetField, transferTargetID(target));
+    const previousState = captureManagedFormState(root);
+    setManagedFormPending(root);
+    dispatchManagedEvent("gosx:transfer:submit", {
+      detail: {
+        root: root,
+        source: source,
+        target: target,
+        sourceId: transferSourceID(source),
+        targetId: transferTargetID(target),
+        sourceField: sourceField,
+        targetField: targetField,
+        fields: fields,
+      },
+    });
+
+    let form;
+    try {
+      form = submitAction(actionURL.href, fields, { method: "POST", root: root });
+    } catch (error) {
+      transferFailure(root, source, target, spec, previousState, error, null, null);
+      return Promise.resolve(null);
+    }
+    const submitPromise = form && form.__gosxSubmitPromise;
+    if (!submitPromise) {
+      const error = new Error("transfer action did not start");
+      transferFailure(root, source, target, spec, previousState, error, null, null);
+      return Promise.resolve(null);
+    }
+    return Promise.resolve(submitPromise).then(function(outcome) {
+      const failed = !outcome || managedActionFailed(outcome.response, outcome.result);
+      if (failed) {
+        transferFailure(
+          root,
+          source,
+          target,
+          spec,
+          previousState,
+          new Error(transferResultMessage(outcome && outcome.result, "transfer action failed")),
+          outcome && outcome.response,
+          outcome && outcome.result,
+        );
+        return outcome;
+      }
+      restoreManagedFormState(root, previousState);
+      root.setAttribute(FORM_STATE_ATTR, "success");
+      announceNavigation(transferResultMessage(outcome.result, "Transfer completed."));
+      dispatchManagedEvent("gosx:transfer:result", {
+        detail: {
+          root: root,
+          source: source,
+          target: target,
+          sourceId: transferSourceID(source),
+          targetId: transferTargetID(target),
+          result: outcome.result || null,
+          response: outcome.response || null,
+        },
+      });
+      return outcome;
+    }).catch(function(error) {
+      transferFailure(root, source, target, spec, previousState, error, null, null);
+      return null;
+    });
+  }
+
+  document.addEventListener("pointerdown", function(event) {
+    if (event.isPrimary === false) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const resolved = transferResolvedSource(event.target);
+    if (!resolved) return;
+    prepareTransferHandle(resolved.handle);
+    if (beginTransferPointer(event, resolved) && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+  });
+
+  document.addEventListener("keydown", function(event) {
+    const key = event.key;
+    if (activeTransferPointer) {
+      if (key === "Escape") {
+        event.preventDefault();
+        endTransferPointer(null, false);
+      }
+      return;
+    }
+    if (activeTransferKeyboard) {
+      if (key === "Escape") {
+        event.preventDefault();
+        cancelTransferKeyboard();
+        return;
+      }
+      if (key === " " || key === "Spacebar" || key === "Enter") {
+        event.preventDefault();
+        commitTransferKeyboard();
+        return;
+      }
+      if (key === "ArrowUp" || key === "ArrowLeft" || key === "Tab") {
+        event.preventDefault();
+        moveTransferKeyboard(key === "Tab" && !event.shiftKey ? 1 : -1);
+        return;
+      }
+      if (key === "ArrowDown" || key === "ArrowRight") {
+        event.preventDefault();
+        moveTransferKeyboard(1);
+      }
+      return;
+    }
+    if (event.defaultPrevented || (key !== " " && key !== "Spacebar" && key !== "Enter")) return;
+    const resolved = transferResolvedSource(event.target);
+    if (!resolved || transferNodeDisabled(resolved.source, false)) return;
+    prepareTransferHandle(resolved.handle);
+    if (beginTransferKeyboard(resolved.handle, resolved.source, resolved.root)) {
+      event.preventDefault();
+    }
+  });
+
+  function cancelActiveTransferGestures(options) {
+    if (activeTransferPointer) endTransferPointer(null, false, options || { announce: false, focus: false });
+    if (activeTransferKeyboard) cancelTransferKeyboard(options || { announce: false, focus: false });
+  }
+
+  document.addEventListener("gosx:navigate", function() {
+    cancelActiveTransferGestures({ announce: false, focus: false });
+    prepareAllTransferHandles();
+  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", prepareAllTransferHandles, { once: true });
+  }
+  prepareAllTransferHandles();
+
+  const transferAPI = {
+    targetForPointer: transferTargetAtPoint,
+    eligibleTargets: transferAvailableTargets,
+  };
+  gosxHost.transfer = transferAPI;
+  window.__gosx.transfer = Object.assign(window.__gosx.transfer || {}, transferAPI);
+
+  // ---------------------------------------------------------------------
   // Live-bound regions (data-gosx-live-*, gosx#217)
   //
   // A live region declares LIVE_SRC_ATTR (a same-origin JSON object) and
@@ -7085,6 +7745,8 @@
   // passes { announce: false } here — see its own doc comment — so a
   // rescan never re-announces an unchanged filter result on every swap.
   document.addEventListener("gosx:region:after", function() {
+    cancelActiveTransferGestures({ announce: false, focus: false });
+    prepareAllTransferHandles();
     setupPageCountdowns();
     syncCueToggles();
     setupPageWatchers();
@@ -7112,6 +7774,7 @@
     refresh: refreshNavigationState,
     refreshState: refreshNavigationState,
     revalidate: revalidateNavigation,
+    transfer: transferAPI,
     // debugCueLog is a small, honest test/debug hook (gosx#213): a copy of
     // every {cue, at} entry recorded the moment a named tone actually
     // played (see recordAudioCueDebug above), not merely requested.

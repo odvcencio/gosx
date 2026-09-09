@@ -2042,8 +2042,13 @@ function fileSize(relativePath) {
 // and the region-key/-cursor validation. Measured: 88_076. Cap set with
 // narrow rounding headroom.
 // v0.55.0 keyed body reconciliation and automatic same-origin link/form
-// routing. Measured: 94_820; the raw-only cap retains 180 bytes of headroom.
-const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 95_000 };
+// routing. Measured: 94_820; the raw-only cap retained 180 bytes of headroom.
+// gosx#250 adds the fixed-target transfer primitive (pointer/touch capture,
+// keyboard destination navigation, source-specific eligibility, managed
+// action state, and lifecycle cleanup). Measured after generation: 105_784;
+// the reviewed target is 106_000, retaining the existing 5% governed
+// regression ceiling without hiding unrelated bundle growth.
+const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 106_000 };
 
 function assertGovernedSize(t, actual, target, metric, label) {
   const result = evaluateSizeBudget(actual, target, metric);
