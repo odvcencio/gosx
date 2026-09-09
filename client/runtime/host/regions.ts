@@ -201,15 +201,50 @@
     return !root.contains || root.contains(node);
   }
 
+  function regionElementIsEditable(node) {
+    if (!node) return false;
+    if (node.isContentEditable === true) return true;
+    if (!node.getAttribute) return false;
+    var contenteditable = node.getAttribute("contenteditable");
+    return contenteditable != null && String(contenteditable).trim().toLowerCase() !== "false";
+  }
+
+  function regionElementIsNativeFormControl(node) {
+    if (!node) return false;
+    switch (String(node.tagName || "").toUpperCase()) {
+      case "BUTTON":
+      case "INPUT":
+      case "SELECT":
+      case "TEXTAREA":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  function regionHasManagedFocusRoot(el, active) {
+    return el === active
+      && !!el
+      && typeof el.hasAttribute === "function"
+      && el.hasAttribute("data-gosx-focus-managed")
+      && !regionElementIsEditable(active)
+      && !regionElementIsNativeFormControl(active);
+  }
+
   // regionPollBlocked is the interval trigger's own interaction guard,
   // scoped to the one region: the document's focused element (ignoring the
   // default "nothing focused" state, where document.activeElement reads as
   // <body> and would otherwise match every region), or the element under an
-  // active pointer, anywhere inside el.
+  // active pointer, anywhere inside el. A framework-managed, non-editable
+  // region root may retain focus after hash navigation, so it is the one
+  // focused element exempted from the background-poll guard. Focused
+  // descendants remain protected because a replacement would detach them;
+  // the marker alone never exempts an editable root.
   function regionPollBlocked(el) {
     if (regionDocumentHidden() || regionNavigationInFlight()) return true;
     var active = typeof document !== "undefined" ? document.activeElement : null;
-    if (active && active !== document.body && regionElementContains(el, active)) return true;
+    if (active && active !== document.body && regionElementContains(el, active)
+        && !regionHasManagedFocusRoot(el, active)) return true;
     return regionElementContains(el, activeRegionPointerTarget);
   }
 
