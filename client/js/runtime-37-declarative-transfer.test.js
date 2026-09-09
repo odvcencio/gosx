@@ -15,6 +15,7 @@ const {
   createContext,
   runScript,
   flushAsyncWork,
+  installManualTimers,
 } = require("./runtime-test-harness.js");
 
 function response(message, ok = true, status = 200) {
@@ -289,6 +290,132 @@ test("failure clears transient state and distinguishes an unknown server outcome
   await flushAsyncWork();
   assert.equal(unknown.root.getAttribute("data-gosx-form-state"), "error");
   assert.equal(lastAnnouncement(env2), "Could not confirm transfer; refresh and check the current assignment.");
+});
+
+test("touch transfer edge-scrolls the nearest scrollable container on both axes and re-hits the held point", async () => {
+  const built = buildTransfer({
+    targets: [{ id: "QB", label: "Quarterback", rect: { left: 10, top: 250, width: 180, height: 50 } }],
+  });
+  const frame = new FakeElement("div", null);
+  frame.width = 320;
+  frame.height = 200;
+  frame.clientWidth = 320;
+  frame.clientHeight = 200;
+  frame.scrollWidth = 800;
+  frame.scrollHeight = 800;
+  frame.scrollLeft = 0;
+  frame.scrollTop = 0;
+  frame.computedStyle = { overflowX: "auto", overflowY: "auto" };
+  frame.appendChild(built.root);
+  built.targets[0].getBoundingClientRect = () => {
+    const left = 400 - frame.scrollLeft;
+    const top = 250 - frame.scrollTop;
+    return { left, top, width: 180, height: 50, right: left + 180, bottom: top + 50 };
+  };
+  const env = createContext({
+    elements: [frame],
+    maxTouchPoints: 5,
+    fetchRoutes: {
+      "http://localhost:3000/team/actions/lineup-set": response({ message: "Assigned" }),
+    },
+  });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const handle = built.sources[0].__handle;
+  pointer(env, "pointerdown", handle, { clientX: 100, clientY: 20 });
+  pointer(env, "pointermove", handle, { clientX: 310, clientY: 190 });
+  assert.equal(frame.scrollLeft, 0, "touch movement alone does not fake horizontal scroll");
+  assert.equal(frame.scrollTop, 0, "touch movement alone does not fake a scroll");
+  let ticks = 0;
+  while (built.targets[0].getAttribute("class") !== "gosx-transfer-target--over" && ticks < 10) {
+    assert.equal(timers.runInterval(16), 1, "the transfer edge timer stays active while held");
+    ticks += 1;
+  }
+  assert.ok(frame.scrollLeft > 0, "the nearest horizontal scrollable pool advances at the held edge");
+  assert.ok(frame.scrollTop > 0, "the nearest vertical scrollable pool advances at the held edge");
+  assert.equal(built.targets[0].getAttribute("class"), "gosx-transfer-target--over", "held coordinates are re-hit after scrolling");
+  assert.deepEqual(built.root.children, [built.sources[0], built.targets[0]], "auto-scroll never relocates transfer nodes");
+  pointer(env, "pointerup", handle, { clientX: 310, clientY: 190 });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(bodyFields(env.fetchCalls[0]).get("slot"), "QB");
+  assert.equal(timers.runInterval(16), 0, "pointerup clears the edge timer");
+});
+
+test("touch transfer edge-scrolls the viewport fallback without another pointermove", async () => {
+  const built = buildTransfer({
+    targets: [{ id: "RB", label: "Running back", rect: { left: 10, top: 250, width: 180, height: 50 } }],
+  });
+  let pageOffset = 0;
+  const scrollCalls = [];
+  built.targets[0].getBoundingClientRect = () => {
+    const top = 250 - pageOffset;
+    return { left: 10, top, width: 180, height: 50, right: 190, bottom: top + 50 };
+  };
+  const env = createContext({
+    elements: [built.root],
+    maxTouchPoints: 5,
+    fetchRoutes: {
+      "http://localhost:3000/team/actions/lineup-set": response({ message: "Assigned" }),
+    },
+  });
+  env.context.innerWidth = 320;
+  env.context.innerHeight = 200;
+  env.context.scrollBy = (requestOrX, maybeY) => {
+    const options = typeof requestOrX === "object"
+      ? requestOrX
+      : { left: requestOrX, top: maybeY };
+    scrollCalls.push(options);
+    pageOffset += Number(options.top) || 0;
+  };
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const handle = built.sources[0].__handle;
+  pointer(env, "pointerdown", handle, { clientX: 50, clientY: 20 });
+  pointer(env, "pointermove", handle, { clientX: 50, clientY: 190 });
+  let ticks = 0;
+  while (built.targets[0].getAttribute("class") !== "gosx-transfer-target--over" && ticks < 10) {
+    assert.equal(timers.runInterval(16), 1);
+    ticks += 1;
+  }
+  assert.ok(pageOffset > 0, "the viewport fallback scrolls at the held edge");
+  assert.ok(scrollCalls.length > 0, "viewport scrolling uses the browser scroll API");
+  assert.ok(scrollCalls.every((call) => call.behavior === "instant"), "viewport ticks request instant scrolling");
+  assert.equal(built.targets[0].getAttribute("class"), "gosx-transfer-target--over");
+  pointer(env, "pointerup", handle, { clientX: 50, clientY: 190 });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(bodyFields(env.fetchCalls[0]).get("slot"), "RB");
+  assert.equal(timers.runInterval(16), 0);
+});
+
+test("touch transfer clears edge scrolling on every cancel path and never submits an invalid drop", async () => {
+  for (const terminal of ["up", "pointercancel", "lostpointercapture", "escape", "navigate"]) {
+    const built = buildTransfer({
+      targets: [{ id: "OFFSCREEN", label: "Offscreen", rect: { left: 400, top: 400, width: 100, height: 50 } }],
+    });
+    const env = createContext({ elements: [built.root], maxTouchPoints: 5, fetchRoutes: {} });
+    env.context.innerWidth = 320;
+    env.context.innerHeight = 200;
+    const timers = installManualTimers(env.context);
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    const handle = built.sources[0].__handle;
+    pointer(env, "pointerdown", handle, { clientX: 50, clientY: 20 });
+    pointer(env, "pointermove", handle, { clientX: 50, clientY: 190 });
+    assert.equal(timers.runInterval(16), 1, "edge timer starts for " + terminal);
+    if (terminal === "up") {
+      pointer(env, "pointerup", handle, { clientX: 50, clientY: 190 });
+    } else if (terminal === "escape") {
+      await keydown(env, handle, "Escape");
+    } else if (terminal === "navigate") {
+      env.document.dispatchEvent({ type: "gosx:navigate", detail: {} });
+    } else {
+      pointer(env, terminal, handle, { clientX: 50, clientY: 190 });
+    }
+    assert.equal(built.root.getAttribute("class"), "", terminal + " clears transfer classes");
+    assert.equal(timers.runInterval(16), 0, terminal + " clears the edge timer");
+    assert.equal(env.fetchCalls.length, 0, terminal + " never submits without a valid target");
+  }
 });
 
 test("pending transfer blocks a second source and soft navigation/cancel cleans up", async () => {
