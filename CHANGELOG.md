@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.56.0 (2026-09-08)
+
+### Added: fixed-target transfer gestures
+
+- `data-gosx-transfer` roots declare stable source and destination identities, optional source-specific eligibility, context fields, and a same-origin managed POST action for fixed-slot assignments.
+- Pointer, touch, and keyboard pickup/commit are supported with Space/Enter, arrow keys, Tab/Shift+Tab, and Escape. Touch handling is scoped to the source handle so surrounding board and list surfaces retain native scrolling.
+- Transfer submissions carry CSRF and context fields without optimistic DOM relocation. Authoritative action results, server rejection, unknown transport failures, and region replacement all clear pending gesture state and leave the rendered assignment under server control.
 
 ### Added: consumer-backed image art direction
 
