@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"m31labs.dev/gosx/session"
 )
@@ -509,15 +510,23 @@ func hasEncodedBackslash(value string) bool {
 }
 
 func safeTargetComponent(value string) bool {
-	if hasForbiddenTargetByte(value) || hasEncodedBackslash(value) {
+	if !utf8.ValidString(value) || hasForbiddenTargetByte(value) || hasEncodedBackslash(value) {
 		return false
 	}
 	decoded, err := url.QueryUnescape(value)
-	return err == nil && !hasForbiddenTargetByte(decoded) && !hasEncodedBackslash(decoded)
+	return err == nil && utf8.ValidString(decoded) && !hasForbiddenTargetByte(decoded) && !hasEncodedBackslash(decoded)
+}
+
+func hasEffectiveLeadingDoubleSlash(path string) bool {
+	if strings.HasPrefix(path, "//") {
+		return true
+	}
+	decoded, err := url.PathUnescape(path)
+	return err == nil && strings.HasPrefix(decoded, "//")
 }
 
 func rootRelativeTarget(raw string, includeFragment bool) (string, bool) {
-	if raw == "" || hasForbiddenTargetByte(raw) || hasEncodedBackslash(raw) {
+	if raw == "" || !utf8.ValidString(raw) || hasForbiddenTargetByte(raw) || hasEncodedBackslash(raw) {
 		return "", false
 	}
 	target := strings.TrimSpace(raw)
@@ -529,6 +538,9 @@ func rootRelativeTarget(raw string, includeFragment bool) (string, bool) {
 		return "", false
 	}
 	if parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return "", false
+	}
+	if hasEffectiveLeadingDoubleSlash(parsed.Path) {
 		return "", false
 	}
 	if !safeTargetComponent(parsed.Path) || !safeTargetComponent(parsed.RawQuery) || !safeTargetComponent(parsed.Fragment) {
@@ -548,8 +560,17 @@ func rootRelativeTarget(raw string, includeFragment bool) (string, bool) {
 	return result, true
 }
 
+// NormalizeReturnTarget validates and normalizes a root-relative return
+// target. It preserves the target's query encoding, force-query marker,
+// fragment, dot segments, and embedded escaped path separators while
+// rejecting malformed, ambiguous, or cross-origin URL forms. The result is
+// pure: it applies no application-route policy, fallback, or length limit.
+func NormalizeReturnTarget(raw string) (string, bool) {
+	return rootRelativeTarget(raw, true)
+}
+
 func normalizedReturnTarget(raw string) string {
-	target, ok := rootRelativeTarget(raw, true)
+	target, ok := NormalizeReturnTarget(raw)
 	if !ok {
 		return ""
 	}
