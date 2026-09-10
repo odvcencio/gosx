@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.56.2 (2026-09-09)
+
+### Changed: managed region polling and regenerated bundles
+
+- Periodic regions continue refreshing when their retained, non-editable root holds GoSX-managed hash-navigation focus; this fixes indefinitely paused updates after section redirects.
+- Focused descendants, editable/native-control roots, active pointers, hidden documents, and in-flight navigation still defer polling.
+- Checked-in runtime bundles and their generated compressed/map siblings were regenerated from the current source so published assets match the release.
+
 ## v0.56.1 (2026-09-09)
 
 ### Fixed: edge scrolling for fixed-target transfers
