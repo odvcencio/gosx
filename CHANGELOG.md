@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.56.3 (2026-09-10)
+
+### Fixed: ambiguous action return targets fail closed
+
+- Managed action redirects now reject malformed, cross-origin, encoded leading double-slash, and invalid UTF-8 return targets before navigation.
+- Valid same-origin root-relative paths retain their query and fragment components, so post-action flows remain precise without opening an external redirect path.
+
 ## v0.56.2 (2026-09-09)
 
 ### Changed: managed region polling and regenerated bundles
