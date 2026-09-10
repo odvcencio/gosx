@@ -31,6 +31,8 @@ test("Scene3D animation loop supports foreground frame caps", () => {
   assert.match(mount, /props && props\.frameIntervalMS/);
   assert.match(mount, /props && props\.maxFrameRate/);
   assert.match(mount, /props && props\.maxFPS/);
+  assert.match(mount, /props && props\.scrollFrameRate/);
+  assert.match(mount, /activeInputUntil >= sceneNowMilliseconds\(\)/);
   assert.match(mount, /scheduleNextAnimationFrame\(\);\n\s+return;\n\s+\}/);
   assert.match(mount, /lastAnimationFrameAt = typeof now === "number" \? now : 0;/);
 });

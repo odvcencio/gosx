@@ -169,7 +169,13 @@ type Props struct {
 	// ScrollCameraOffset applies a camera-position delta per CSS pixel scrolled.
 	// It complements ScrollCameraStart/End, which preserve the legacy z-range
 	// interpolation contract.
-	ScrollCameraOffset  Vector3 `json:"scrollCameraOffset,omitempty"`
+	ScrollCameraOffset Vector3 `json:"scrollCameraOffset,omitempty"`
+	// ScrollFrameRate temporarily raises the animation cadence while a
+	// scroll-camera scene is receiving input. A scene can keep a conservative
+	// idle MaxFrameRate while matching the display during active wheel or
+	// trackpad movement, then automatically returns to the idle cap after the
+	// input quiets. Zero preserves the authored idle cadence for back-compat.
+	ScrollFrameRate     float64 `json:"scrollFrameRate,omitempty"`
 	MaxFrameRate        float64 `json:"maxFrameRate,omitempty"`
 	MaxFPS              float64 `json:"maxFPS,omitempty"`
 	FrameIntervalMS     float64 `json:"frameIntervalMS,omitempty"`
@@ -1850,6 +1856,7 @@ func (p Props) legacyBaseProps() map[string]any {
 			"z": p.ScrollCameraOffset.Z,
 		}
 	}
+	setNumeric(out, "scrollFrameRate", p.ScrollFrameRate)
 	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)

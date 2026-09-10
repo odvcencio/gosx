@@ -1319,6 +1319,22 @@
           interval = 1000 / Math.min(240, Math.max(1, fps));
         }
       }
+      // Scroll-driven camera scenes need to track the display while input is
+      // active even when their idle animation is intentionally capped (for
+      // example, the galaxy runs at 30fps between interactions). The scroll
+      // cadence is opt-in so existing scenes retain their authored budget;
+      // after the runtime's short active-input window expires, the normal
+      // interval is restored automatically. This keeps the GPU quiet at rest
+      // without letting a wheel/trackpad outrun the camera between frames.
+      var scrollCamera = sceneState && sceneState._scrollCamera;
+      var scrollFrameRate = sceneNumber(props && props.scrollFrameRate, 0);
+      var activeInputUntil = sceneNumber(scrollCamera && scrollCamera._activeInputUntil, 0);
+      if (scrollFrameRate > 0 && activeInputUntil >= sceneNowMilliseconds()) {
+        var scrollInterval = 1000 / Math.min(240, Math.max(1, scrollFrameRate));
+        if (!(interval > 0) || scrollInterval < interval) {
+          interval = scrollInterval;
+        }
+      }
       return interval > 0 ? Math.max(1, interval) : 0;
     }
 

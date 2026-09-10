@@ -145,6 +145,22 @@ func TestPropsLegacyPropsLowerNestedGraph(t *testing.T) {
 	}
 }
 
+func TestPropsLegacyPropsLowerScrollFrameRate(t *testing.T) {
+	props := Props{
+		ScrollCameraStart: 500,
+		ScrollCameraEnd:   -200,
+		ScrollFrameRate:   60,
+		MaxFrameRate:      30,
+	}
+	legacy := props.LegacyProps()
+	if got := legacy["scrollFrameRate"]; got != float64(60) {
+		t.Fatalf("scrollFrameRate = %#v, want 60", got)
+	}
+	if got := legacy["maxFrameRate"]; got != float64(30) {
+		t.Fatalf("maxFrameRate = %#v, want 30", got)
+	}
+}
+
 func TestPropsSceneIRLowerNestedGraph(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
