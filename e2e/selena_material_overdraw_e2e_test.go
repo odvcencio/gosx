@@ -39,6 +39,7 @@ import (
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/internal/chrometest"
 )
 
 const selenaOverdrawPageTemplate = `<!doctype html>
@@ -183,21 +184,13 @@ func TestSelenaMaterialOwnsItsPixelsBesideALinesMesh(t *testing.T) {
 	// SwiftShader gives headless Chrome a real WebGL implementation. Without it
 	// the runtime downgrades to Canvas2D, runs no shaders, and every pixel
 	// assertion below would be meaningless -- the backend check guards that.
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chrome),
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Headless,
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("use-angle", "swiftshader"),
-		chromedp.Flag("enable-unsafe-swiftshader", true),
-		chromedp.WindowSize(640, 480),
-	)
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	defer allocCancel()
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	defer browserCancel()
-	ctx, cancel := context.WithTimeout(browserCtx, 120*time.Second)
+	browser, err := chrometest.Start(t.Context(), chrome,
+		"--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--window-size=640,480")
+	if err != nil {
+		t.Fatalf("start Chrome for material overdraw: %v", err)
+	}
+	defer browser.Close()
+	ctx, cancel := context.WithTimeout(browser.Context, 120*time.Second)
 	defer cancel()
 
 	if err := chromedp.Run(ctx,
