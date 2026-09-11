@@ -1407,6 +1407,15 @@ test("Scene3D static GLB models can receive live motion patches", () => {
   );
 });
 
+test("Scene3D publishes smoothed camera proximity on both render paths", () => {
+  const source = readSceneMountSrc();
+
+  assert.match(source, /function sceneCameraProximityValue\(scrollCamera\)/);
+  assert.match(source, /sceneNumber\(scrollCamera\._smoothProgress,\s*sceneNumber\(scrollCamera\._progress, 0\)\)/);
+  assert.match(source, /effectiveBundle\.cameraProximity = sceneCameraProximityValue\(sceneState\._scrollCamera\);/);
+  assert.match(source, /latestBundle\.cameraProximity = sceneCameraProximityValue\(sceneState\._scrollCamera\);/);
+});
+
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.ts"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
@@ -1583,21 +1592,44 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   // WebGL keeps the per-frame clock in its renderer closure. WebGPU keeps the
   // same value on selenaFrame, the object it hands to the module-scope uniform
   // packer in 16a1-scene-webgpu-selena-uniforms.ts.
-  assert.match(webgl, /var sceneSelenaFrameTime = 0;/);
-  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0 \};/);
+  assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
+  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0 \};/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.
-  assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,900}hasOwnProperty\.call\(values, name\)/);
-  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,240}sceneSelenaMaterialValue\(material, name\)/);
+  assert.match(webgl, /function sceneSelenaAutoUniformValue\(name, time, proximity\)/);
+  assert.match(webgl, /var autoUniform = sceneSelenaAutoUniformValue\(name, sceneSelenaFrameTime, sceneSelenaFrameProximity\);[\s\S]{0,900}hasOwnProperty\.call\(values, name\)/);
+  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,500}sceneSelenaMaterialValue\(material, name\)/);
 
   // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
   // before any render-pass encoder draw commands.
-  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*selenaFrame\.time = frameTimeSeconds;/);
+  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*selenaFrame\.time = frameTimeSeconds; selenaFrame\.cameraProximity =/);
 
   // WebGL: clock is set right after scratchSelenaViewProjection is populated
   // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
-  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000;/);
+  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000; sceneSelenaFrameProximity =/);
+});
+
+test("Scene3D selena camera proximity auto-uniform is renderer-owned on both backends", () => {
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+
+  assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
+  assert.match(webgpu, /cameraProximity: 0/);
+  assert.match(webgl, /sceneSelenaFrameProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
+  assert.match(webgpu, /selenaFrame\.cameraProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
+
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,2400}/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1600}/)[0];
+  const webglCustomIdx = webglResolver.indexOf('return values[name]');
+  const webgpuProximityIdx = webgpuResolver.indexOf('if (name === "cameraProximity")');
+  const webgpuCustomIdx = webgpuResolver.indexOf('sceneSelenaMaterialValue(material, name)');
+  const webglAutoIdx = webglResolver.indexOf('var autoUniform = sceneSelenaAutoUniformValue');
+  assert.ok(webglAutoIdx >= 0 && webglAutoIdx < webglCustomIdx,
+    "WebGL camera proximity must be resolved before customUniforms");
+  assert.match(webgl, /function sceneSelenaAutoUniformValue\(name, time, proximity\)\s*\{[\s\S]{0,180}if \(name === "time"\) return time;[\s\S]{0,120}if \(name === "cameraProximity"\) return proximity;/);
+  assert.ok(webgpuProximityIdx >= 0 && webgpuProximityIdx < webgpuCustomIdx,
+    "WebGPU camera proximity must be forced before material values");
 });
 
 test("Scene3D selena time auto-uniform: time is forced before customUniforms (reserved name)", () => {
@@ -1611,8 +1643,8 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
   const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1400}/)[0];
 
   const webglCustomIdx = webglResolver.indexOf('return values[name]');
-  const webglTimeIdx = webglResolver.indexOf('if (name === "time")');
-  assert.ok(webglTimeIdx !== -1, 'WebGL resolver must have time branch');
+  const webglTimeIdx = webglResolver.indexOf('sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity)');
+  assert.ok(webglTimeIdx !== -1, 'WebGL resolver must have reserved auto-uniform lookup');
   assert.ok(webglCustomIdx !== -1, 'WebGL resolver must have customUniforms return');
   assert.ok(webglTimeIdx < webglCustomIdx, 'WebGL time must be forced before customUniforms');
 

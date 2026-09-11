@@ -7142,7 +7142,7 @@
 	    var scratchSelenaViewProjection = new Float32Array(16);
 	    // Per-frame clock (seconds) fed to selena materials that declare `param time : float`.
 	    // Set once per frame before any selena draw; explicit customUniforms.time still overrides.
-	    var sceneSelenaFrameTime = 0;
+	    var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;
 
 	    // Live per-frame values for Selena `context { ... }` uniform fields
 	    // (bindings.Layout marks them Class "context"). Reserved names the
@@ -7506,7 +7506,7 @@
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
       const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
       sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
-      sceneSelenaFrameTime = performance.now() / 1000; // feed auto time uniform before any selena mesh draw
+      sceneSelenaFrameTime = performance.now() / 1000; sceneSelenaFrameProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before any Selena mesh draw
 
       // --- Shadow Pass ---
       // Identify shadow-casting directional lights (max 2) and render per-
@@ -7885,7 +7885,7 @@
       // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
-      if (name === "time") return sceneSelenaFrameTime;
+      var autoUniform = sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity); if (autoUniform !== undefined) return autoUniform;
       // Context-class fields with reserved names resolve to live per-frame
       // scene state (see sceneSelenaFrameContextUpdate); unknown context
       // names fall through to the material's own values/defaults below.
@@ -9633,4 +9633,10 @@
   // gate flag, not the dispatch table.
   if (typeof window !== "undefined" && window.__gosx_scene3d_ktx2_texture_loader == null) {
     window.__gosx_scene3d_ktx2_texture_loader = scenePBRUploadKTX2Texture;
+  }
+
+  function sceneSelenaAutoUniformValue(name, time, proximity) {
+    if (name === "time") return time;
+    if (name === "cameraProximity") return proximity;
+    return undefined;
   }

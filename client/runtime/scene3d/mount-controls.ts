@@ -451,6 +451,22 @@
     scrollCamera._smoothProgress = current;
   }
 
+  // A normalized, renderer-owned signal for materials that need to react to
+  // the scroll camera entering the scene. This intentionally follows the
+  // smoothed progress rather than raw scrollTop, so every backend receives the
+  // same calm value and material activity cannot jump ahead of the camera.
+  // A camera without a declared scroll range has no proximity signal.
+  function sceneCameraProximityValue(scrollCamera) {
+    if (!scrollCamera || scrollCamera.start === scrollCamera.end) {
+      return 0;
+    }
+    const progress = sceneNumber(
+      scrollCamera._smoothProgress,
+      sceneNumber(scrollCamera._progress, 0),
+    );
+    return Math.max(0, Math.min(1, progress));
+  }
+
   function sceneCurrentControlCamera(controls, sourceCamera, scrollCamera) {
     var cam;
     if (controls && controls.mode === "orbit") {

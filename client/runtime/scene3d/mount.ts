@@ -2903,7 +2903,7 @@
             runtimeBundle,
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
-          effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources;
+          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
@@ -2995,7 +2995,7 @@
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
         { retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true) },
       );
-      latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
+      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups

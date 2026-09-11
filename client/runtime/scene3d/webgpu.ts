@@ -7175,7 +7175,7 @@
     // clock (seconds) fed to selena materials that declare `param time : float`;
     // it is set once per frame before any selena draw, and an explicit
     // customUniforms.time still overrides it.
-    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0 };
+    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0 };
 
     // Hoisted uniform staging buffers — reused every frame to eliminate per-frame allocations.
     // Each scratch is consumed synchronously (filled → writeBuffer → done) before any reuse.
@@ -17854,7 +17854,7 @@
             : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
-      selenaFrame.time = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
+      selenaFrame.time = frameTimeSeconds; selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before every Selena draw this frame
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
