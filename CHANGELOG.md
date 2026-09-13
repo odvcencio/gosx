@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.56.4 (2026-09-13)
+
+### Fixed: bounded concurrent cold file-route compilation
+
+- Allocation-heavy cold GSX compiles share one process-wide slot; concurrent requests for identical content reuse the first completed program instead of independently parsing and compiling it.
+- Content-cache hits bypass the cold-compile lock. Waiting requests recheck the content cache before compiling, reducing transient memory pressure during cold starts and simultaneous page loads.
+- Added an eight-caller cold-compilation regression proving that every caller receives the same completed program.
+
 ## v0.56.3 (2026-09-10)
 
 ### Fixed: ambiguous action return targets fail closed
