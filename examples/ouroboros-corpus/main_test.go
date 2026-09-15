@@ -22,6 +22,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/internal/chrometest"
 	"m31labs.dev/gosx/island/program"
 	ouroboros "m31labs.dev/gosx/perf/ouroboros"
 )
@@ -244,19 +245,13 @@ func TestFixtureMP4BrowserLoadsMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chrome),
-		chromedp.Headless,
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-	)
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	defer allocCancel()
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	defer browserCancel()
-	ctx, cancel := context.WithTimeout(browserCtx, 30*time.Second)
+	browser, err := chrometest.Start(t.Context(), chrome,
+		"--no-sandbox", "--autoplay-policy=no-user-gesture-required")
+	if err != nil {
+		t.Fatalf("start Chrome for media metadata: %v", err)
+	}
+	defer browser.Close()
+	ctx, cancel := context.WithTimeout(browser.Context, 30*time.Second)
 	defer cancel()
 
 	mediaURL := server.URL + "/media/ouroboros-placeholder.mp4"
@@ -1022,17 +1017,12 @@ func newChromeContext(t *testing.T, chrome string, timeout time.Duration) (conte
 func newAuditedChromeContext(t *testing.T, chrome string, timeout time.Duration) (context.Context, context.CancelFunc, *chromeAudit) {
 	t.Helper()
 	audit := &chromeAudit{}
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chrome),
-		chromedp.Headless,
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-	)
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	chromedp.ListenTarget(browserCtx, func(ev any) {
+	browser, err := chrometest.Start(t.Context(), chrome,
+		"--no-sandbox", "--autoplay-policy=no-user-gesture-required")
+	if err != nil {
+		t.Fatalf("start Chrome for fixture: %v", err)
+	}
+	chromedp.ListenTarget(browser.Context, func(ev any) {
 		switch ev := ev.(type) {
 		case *cdpRuntime.EventConsoleAPICalled:
 			var parts []string
@@ -1051,11 +1041,10 @@ func newAuditedChromeContext(t *testing.T, chrome string, timeout time.Duration)
 			audit.Add("exception: " + message)
 		}
 	})
-	ctx, cancel := context.WithTimeout(browserCtx, timeout)
+	ctx, cancel := context.WithTimeout(browser.Context, timeout)
 	return ctx, func() {
 		cancel()
-		browserCancel()
-		allocCancel()
+		browser.Close()
 	}, audit
 }
 
