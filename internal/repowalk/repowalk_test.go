@@ -1,9 +1,11 @@
 package repowalk_test
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -19,6 +21,37 @@ func writeFile(t *testing.T, path string) {
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// walkRel walks root with repowalk.Walk and returns the sorted, slash
+// separated paths of every regular file it visits, relative to root.
+func walkRel(t *testing.T, root string) []string {
+	t.Helper()
+	var got []string
+	err := repowalk.Walk(root, func(path string, entry fs.DirEntry) error {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		got = append(got, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	return got
+}
+
+// dirEntry returns the fs.DirEntry for parent/name, mirroring what
+// filepath.WalkDir would report for that entry.
+func dirEntry(t *testing.T, parent, name string) fs.DirEntry {
+	t.Helper()
+	info, err := os.Lstat(filepath.Join(parent, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fs.FileInfoToDirEntry(info)
 }
 
 func TestWalkSkipsGeneratedAndNestedTrees(t *testing.T) {
@@ -38,21 +71,9 @@ func TestWalkSkipsGeneratedAndNestedTrees(t *testing.T) {
 	} {
 		writeFile(t, filepath.Join(root, filepath.FromSlash(rel)))
 	}
-	var got []string
-	err := repowalk.Walk(root, func(path string, entry os.DirEntry) error {
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		got = append(got, filepath.ToSlash(rel))
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sort.Strings(got)
+	got := walkRel(t, root)
 	want := []string{"pkg/ok.go", "sub/data/keep.txt", "sub/tmp/keep.go"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
+	if !slices.Equal(got, want) {
 		t.Fatalf("visited %v, want %v", got, want)
 	}
 }
@@ -64,22 +85,79 @@ func TestWalkSkipsEverySkipAnywhereName(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "keep", "ok.go"))
 
-	var got []string
-	err := repowalk.Walk(root, func(path string, entry os.DirEntry) error {
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		got = append(got, filepath.ToSlash(rel))
-		return nil
-	})
+	got := walkRel(t, root)
+	want := []string{"keep/ok.go"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("visited %v, want %v", got, want)
+	}
+}
+
+func TestSkipNeverSkipsRootEvenWithGitMarker(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".git"))
+
+	entry := dirEntry(t, filepath.Dir(root), filepath.Base(root))
+	skip, err := repowalk.Skip(root, root, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(got)
-	want := []string{"keep/ok.go"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
+	if skip {
+		t.Fatal("root must never be skipped, even when it contains a .git marker")
+	}
+}
+
+func TestWalkVisitsRootNamedLikeASkippedDirectory(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "build")
+	writeFile(t, filepath.Join(root, "f.go"))
+
+	got := walkRel(t, root)
+	want := []string{"f.go"}
+	if !slices.Equal(got, want) {
 		t.Fatalf("visited %v, want %v", got, want)
+	}
+}
+
+func TestWalkReportsUnreadableGitProbe(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	if err := os.MkdirAll(filepath.Join(locked, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(locked, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	err := repowalk.Walk(root, func(path string, entry fs.DirEntry) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected Walk to report an error for an unreadable .git probe")
+	}
+	if !strings.Contains(err.Error(), "locked") {
+		t.Fatalf("error %q does not mention the locked directory", err)
+	}
+}
+
+func TestSkipListsArePinned(t *testing.T) {
+	wantAnywhere := []string{
+		".git", ".worktrees", ".graft", ".canopy", ".gts", ".tiller", ".buckley",
+		".claude", "build", "dist", "node_modules",
+	}
+	if !slices.Equal(repowalk.SkipAnywhere, wantAnywhere) {
+		t.Fatalf("SkipAnywhere = %v, want %v", repowalk.SkipAnywhere, wantAnywhere)
+	}
+	wantAtRoot := []string{"tmp", "data"}
+	if !slices.Equal(repowalk.SkipAtRoot, wantAtRoot) {
+		t.Fatalf("SkipAtRoot = %v, want %v", repowalk.SkipAtRoot, wantAtRoot)
 	}
 }
 
@@ -97,46 +175,62 @@ func TestRootFindsModuleRoot(t *testing.T) {
 	}
 }
 
+func TestRootFromFindsModuleRootAboveNestedDir(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module m31labs.dev/gosx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(tmp, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repowalk.RootFrom(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != tmp {
+		t.Fatalf("RootFrom(%s) = %s, want %s", nested, got, tmp)
+	}
+}
+
+func TestRootFromReturnsErrorNamingStartWhenNoModule(t *testing.T) {
+	start := t.TempDir()
+	_, err := repowalk.RootFrom(start)
+	if err == nil {
+		t.Fatal("expected an error when no ancestor has the gosx go.mod")
+	}
+	if !strings.Contains(err.Error(), start) {
+		t.Fatalf("error %q does not name the starting directory %s", err, start)
+	}
+}
+
 func TestSkipRootOnlyNames(t *testing.T) {
 	root := t.TempDir()
-	for _, rel := range []string{"tmp", "sub/tmp"} {
+	for _, rel := range []string{"tmp", "data", "sub/tmp", "sub/data"} {
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(full, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rootTmp os.DirEntry
-	for _, entry := range entries {
-		if entry.Name() == "tmp" {
-			rootTmp = entry
+	for _, name := range []string{"tmp", "data"} {
+		entry := dirEntry(t, root, name)
+		skip, err := repowalk.Skip(root, filepath.Join(root, name), entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !skip {
+			t.Fatalf("%s directly under root must be skipped", name)
 		}
 	}
-	if rootTmp == nil {
-		t.Fatal("tmp entry not found under root")
-	}
-	if !repowalk.Skip(root, filepath.Join(root, "tmp"), rootTmp) {
-		t.Fatal("tmp directly under root must be skipped")
-	}
-
-	subEntries, err := os.ReadDir(filepath.Join(root, "sub"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var subTmp os.DirEntry
-	for _, entry := range subEntries {
-		if entry.Name() == "tmp" {
-			subTmp = entry
+	for _, name := range []string{"tmp", "data"} {
+		entry := dirEntry(t, filepath.Join(root, "sub"), name)
+		skip, err := repowalk.Skip(root, filepath.Join(root, "sub", name), entry)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if subTmp == nil {
-		t.Fatal("tmp entry not found under sub")
-	}
-	if repowalk.Skip(root, filepath.Join(root, "sub", "tmp"), subTmp) {
-		t.Fatal("sub/tmp must not be skipped by the root-only rule")
+		if skip {
+			t.Fatalf("sub/%s must not be skipped by the root-only rule", name)
+		}
 	}
 }
 
@@ -148,36 +242,62 @@ func TestSkipNestedGitDirectory(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(nested, ".git"))
 
-	entries, err := os.ReadDir(root)
+	entry := dirEntry(t, root, "nested")
+	skip, err := repowalk.Skip(root, nested, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var nestedEntry os.DirEntry
-	for _, entry := range entries {
-		if entry.Name() == "nested" {
-			nestedEntry = entry
-		}
-	}
-	if nestedEntry == nil {
-		t.Fatal("nested entry not found under root")
-	}
-	if !repowalk.Skip(root, nested, nestedEntry) {
+	if !skip {
 		t.Fatal("a directory containing .git must be skipped")
-	}
-
-	rootEntry := &rootDirEntry{name: filepath.Base(root)}
-	if repowalk.Skip(root, root, rootEntry) {
-		t.Fatal("root itself must never be skipped")
 	}
 }
 
-// rootDirEntry is a minimal os.DirEntry used to exercise Skip against the
-// root path itself, since filepath.WalkDir never calls fn for the root's own
-// parent listing. No test calls Info, so it reports fs.ErrInvalid rather
-// than resolving r.name (a base name) against the process working directory.
-type rootDirEntry struct{ name string }
+func TestWalkRejectsSymlinkedRoot(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
 
-func (r *rootDirEntry) Name() string               { return r.name }
-func (r *rootDirEntry) IsDir() bool                { return true }
-func (r *rootDirEntry) Type() os.FileMode          { return os.ModeDir }
-func (r *rootDirEntry) Info() (os.FileInfo, error) { return nil, fs.ErrInvalid }
+	err := repowalk.Walk(link, func(path string, entry fs.DirEntry) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected Walk to reject a symlinked root")
+	}
+}
+
+func TestWalkSkipsSymlinksAndPropagatesFnError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "real.go"))
+	realDir := filepath.Join(root, "realdir")
+	writeFile(t, filepath.Join(realDir, "inside.go"))
+
+	if err := os.Symlink(filepath.Join(root, "real.go"), filepath.Join(root, "link.go")); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+	if err := os.Symlink(realDir, filepath.Join(root, "linkdir")); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	got := walkRel(t, root)
+	want := []string{"real.go", "realdir/inside.go"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("visited %v, want %v", got, want)
+	}
+
+	wantErr := errors.New("boom")
+	err := repowalk.Walk(root, func(path string, entry fs.DirEntry) error {
+		if filepath.Base(path) == "real.go" {
+			return wantErr
+		}
+		return nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Walk returned %v, want %v", err, wantErr)
+	}
+}
