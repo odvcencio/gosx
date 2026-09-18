@@ -22,7 +22,7 @@ func shouldSkipProjectWalkDir(projectRoot, path string, info os.FileInfo) bool {
 
 func shouldSkipProjectDir(name string) bool {
 	switch name {
-	case ".git", ".tiller", "build", "dist", "node_modules":
+	case ".git", ".tiller", ".worktrees", "build", "dist", "node_modules":
 		return true
 	default:
 		return strings.HasPrefix(name, ".tmp")
