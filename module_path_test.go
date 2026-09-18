@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/repowalk"
 )
 
 // The repository is published from github.com/odvcencio/gosx but the module
@@ -26,16 +28,9 @@ var (
 	repositoryURL   = regexp.MustCompile(`https?://github\.com/odvcencio/gosx`)
 )
 
-// skippedDirs are generated, vendored, or version-control trees. dist/ holds
-// rendered output of the docs site and is excluded from the repository; editing
-// it would not fix the source anyway.
-var skippedDirs = map[string]bool{
-	".git":         true,
-	".gts":         true,
-	".claude":      true,
-	"node_modules": true,
-	"dist":         true,
-}
+// The skip list for generated, vendored, and version-control trees lives in
+// internal/repowalk. dist/ holds rendered output of the docs site and is
+// excluded from the repository; editing it would not fix the source anyway.
 
 // allowedWrongPath lists occurrences that are deliberate. Keep it short, and
 // give every entry a reason.
@@ -60,16 +55,7 @@ var allowedWrongPath = map[string]string{
 // workflow that checks the vanity redirect resolves to exactly that URL.
 func TestNoDocumentationUsesTheRepositoryPathAsAnImportPath(t *testing.T) {
 	checked := 0
-	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if skippedDirs[entry.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := repowalk.Walk(".", func(path string, entry os.DirEntry) error {
 		switch filepath.Ext(path) {
 		case ".go", ".gsx", ".md", ".mod", ".yml", ".yaml", ".html":
 		default:

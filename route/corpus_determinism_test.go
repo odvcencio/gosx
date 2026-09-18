@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/repowalk"
 )
 
 // TestRepositoryCorpusRendersDeterministically is the corpus-level proof for
@@ -24,21 +25,13 @@ import (
 // rather than failed: this test is about output determinism, not full
 // pipeline coverage.
 func TestRepositoryCorpusRendersDeterministically(t *testing.T) {
-	wd, err := os.Getwd()
+	root, err := repowalk.Root()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Dir(wd) // route/ -> repository root
-
 	var files []string
-	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && info.Name() == "node_modules" {
-			return filepath.SkipDir
-		}
-		if !info.IsDir() && filepath.Ext(path) == ".gsx" {
+	err = repowalk.Walk(root, func(path string, entry os.DirEntry) error {
+		if filepath.Ext(path) == ".gsx" {
 			files = append(files, path)
 		}
 		return nil
@@ -47,7 +40,7 @@ func TestRepositoryCorpusRendersDeterministically(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(files) == 0 {
-		t.Skip("no .gsx files found under repository root; skipping corpus determinism check")
+		t.Fatal("no .gsx files found under repository root")
 	}
 
 	rendered := 0

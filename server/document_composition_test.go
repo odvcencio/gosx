@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/repowalk"
 )
 
 func TestHTMLDocumentEscapesDocumentFieldsAndComposesBodyAttrs(t *testing.T) {
@@ -180,18 +180,14 @@ func TestHTMLDocumentNilAndZeroContextsAreValid(t *testing.T) {
 }
 
 func TestDocumentRendererCleanBreakRemovesRetiredSymbols(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	root, err := repowalk.Root()
+	if err != nil {
+		t.Fatal(err)
 	}
-	root := filepath.Dir(filepath.Dir(file))
 	var checked int
 	retired := []string{"HTMLDocumentWith" + "Language", "HTMLDocumentWith" + "Nonce", "HTMLDocumentWith" + "BodyAttrs", "renderDocumentWith" + "Context"}
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || strings.HasSuffix(path, "_test.go") {
+	err = repowalk.Walk(root, func(path string, entry os.DirEntry) error {
+		if strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		ext := filepath.Ext(path)
