@@ -2,6 +2,7 @@ package route
 
 import (
 	"crypto/sha256"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,17 +28,17 @@ import (
 func TestRepositoryCorpusRendersDeterministically(t *testing.T) {
 	root, err := repowalk.Root()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("repo root: %v", err)
 	}
 	var files []string
-	err = repowalk.Walk(root, func(path string, entry os.DirEntry) error {
+	err = repowalk.Walk(root, func(path string, _ fs.DirEntry) error {
 		if filepath.Ext(path) == ".gsx" {
 			files = append(files, path)
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("walk: %v", err)
 	}
 	if len(files) == 0 {
 		t.Fatal("no .gsx files found under repository root")
@@ -68,8 +69,8 @@ func TestRepositoryCorpusRendersDeterministically(t *testing.T) {
 			}
 		}
 	}
-	if rendered == 0 {
-		t.Skip("no component in the corpus rendered with a bare env; skipping corpus determinism check")
+	if rendered < 50 {
+		t.Fatalf("rendered only %d components; the corpus proof needs a real corpus", rendered)
 	}
 	t.Logf("rendered %d components from %d .gsx files with matching bytes across two renders", rendered, len(files))
 }

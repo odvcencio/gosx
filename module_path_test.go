@@ -1,6 +1,7 @@
 package gosx
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,10 +29,6 @@ var (
 	repositoryURL   = regexp.MustCompile(`https?://github\.com/odvcencio/gosx`)
 )
 
-// The skip list for generated, vendored, and version-control trees lives in
-// internal/repowalk. dist/ holds rendered output of the docs site and is
-// excluded from the repository; editing it would not fix the source anyway.
-
 // allowedWrongPath lists occurrences that are deliberate. Keep it short, and
 // give every entry a reason.
 var allowedWrongPath = map[string]string{
@@ -53,9 +50,15 @@ var allowedWrongPath = map[string]string{
 // It deliberately ignores https:// occurrences. Those are links to the
 // repository and there are dozens of them, including the one in the release
 // workflow that checks the vanity redirect resolves to exactly that URL.
+//
+// The skip list for generated, vendored, and version-control trees lives in
+// internal/repowalk. dist/ holds rendered output of the docs site and is
+// excluded from the repository; editing it would not fix the source anyway.
+// Agent-note directories — .buckley/, .tiller/, .claude/, and the other
+// repowalk.SkipAnywhere names — are out of scope for this guard by design.
 func TestNoDocumentationUsesTheRepositoryPathAsAnImportPath(t *testing.T) {
 	checked := 0
-	err := repowalk.Walk(".", func(path string, entry os.DirEntry) error {
+	err := repowalk.Walk(".", func(path string, _ fs.DirEntry) error {
 		switch filepath.Ext(path) {
 		case ".go", ".gsx", ".md", ".mod", ".yml", ".yaml", ".html":
 		default:

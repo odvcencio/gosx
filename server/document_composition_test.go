@@ -1,6 +1,7 @@
 package server
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -182,11 +183,11 @@ func TestHTMLDocumentNilAndZeroContextsAreValid(t *testing.T) {
 func TestDocumentRendererCleanBreakRemovesRetiredSymbols(t *testing.T) {
 	root, err := repowalk.Root()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("repo root: %v", err)
 	}
 	var checked int
 	retired := []string{"HTMLDocumentWith" + "Language", "HTMLDocumentWith" + "Nonce", "HTMLDocumentWith" + "BodyAttrs", "renderDocumentWith" + "Context"}
-	err = repowalk.Walk(root, func(path string, entry os.DirEntry) error {
+	err = repowalk.Walk(root, func(path string, _ fs.DirEntry) error {
 		if strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
@@ -207,7 +208,7 @@ func TestDocumentRendererCleanBreakRemovesRetiredSymbols(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("walk: %v", err)
 	}
 	if checked == 0 {
 		t.Fatal("did not inspect any server implementation files")
