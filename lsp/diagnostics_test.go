@@ -13,6 +13,13 @@ func TestAnalyzeParseDiagnostic(t *testing.T) {
 func Broken() Node {
 	return <div>{</div>
 }
+
+func TestAnalyzeRequiresPackageClause(t *testing.T) {
+	diags := Analyze("page.gsx", []byte("not a valid gsx file\n"))
+	if len(diags) == 0 || !strings.Contains(diags[0].Message, "package clause") {
+		t.Fatalf("editor must enforce the compiler's package-clause rule: %+v", diags)
+	}
+}
 `))
 	if len(diags) == 0 {
 		t.Fatal("expected diagnostics")

@@ -77,6 +77,8 @@ func main() {
 		cmdInit()
 	case "compile":
 		cmdCompile()
+	case "inspect":
+		cmdInspect()
 	case "check":
 		cmdCheck()
 	case "render":
@@ -175,6 +177,15 @@ Usage:
   gosx compile <file.gsx>
 
 `)
+	case "inspect":
+		fmt.Fprintf(w, `gosx inspect - Inspect compiler phases, diagnostics, and component metadata as JSON
+
+Usage:
+  gosx inspect [--ir] <file.gsx>
+
+Source-file analysis only; use gosx check for package and island checks.
+
+`)
 	case "check":
 		fmt.Fprintf(w, `gosx check - Parse and validate .gsx source
 
@@ -255,6 +266,7 @@ Commands:
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
   compile <file>       Compile .gsx file to Go
+  inspect [--ir] <file> Inspect compiler artifacts as JSON
   check <file>         Parse and validate
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files

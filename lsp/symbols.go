@@ -64,45 +64,19 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 		components: make(map[string]componentSymbol),
 	}
 
-	tree, lang, err := gosx.Parse(source)
-	if err != nil {
+	analysis, err := gosx.Analyze(source, gosx.AnalysisOptions{IncludeWarnings: true})
+	if analysis.Program == nil {
 		return idx, diagnosticsForError(err)
 	}
-
-	root := tree.RootNode()
-	if root.HasError() {
-		return idx, diagnosticsForError(gosx.DescribeParseError(root, source, lang))
-	}
-
-	prog, err := ir.Lower(root, source, lang)
-	if err != nil {
-		return idx, diagnosticsForError(err)
-	}
-	idx.program = prog
+	idx.program = analysis.Program
 	idx.indexComponents()
 	idx.indexComponentRefs()
 
-	// ir.Validate and ir.ValidateWarnings are siblings (see the latter's doc
-	// comment): the LSP is the one caller that always wants both, since an
-	// author benefits from seeing a warning-severity finding (for example a
-	// near-miss data-gosx-* attribute name, gosx#249) as they type just as
-	// much as an error -- neither pass performs file I/O, so running both on
-	// every keystroke keeps the same "no I/O in ir.Lower's synchronous path"
-	// constraint the fast path already holds. A whole-project check that
-	// does need I/O (the stylesheet, the action registry, the route tree)
-	// is out of scope here; see AnalyzeProject for where those land instead.
-	errs := ir.Validate(prog)
-	warnings := ir.ValidateWarnings(prog)
-	diags := make([]Diagnostic, 0, len(errs)+len(warnings))
-	for _, diag := range errs {
-		diags = append(diags, Diagnostic{
-			Range:    rangeFromSpan(diag.Span),
-			Severity: severityFromIR(diag.Severity),
-			Source:   diagnosticSource(path),
-			Message:  diagnosticMessage(diag),
-		})
-	}
-	for _, diag := range warnings {
+	// Inspection retains the lowered program on validation failure so symbols
+	// remain available while the editor shows all errors and advisory findings.
+	// Project checks involving I/O remain separate in AnalyzeProject.
+	diags := make([]Diagnostic, 0, len(analysis.Diagnostics))
+	for _, diag := range analysis.Diagnostics {
 		diags = append(diags, Diagnostic{
 			Range:    rangeFromSpan(diag.Span),
 			Severity: severityFromIR(diag.Severity),

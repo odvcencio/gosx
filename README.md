@@ -279,6 +279,13 @@ if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 
 ## Compilation Pipeline
 
+Tooling can inspect the shared compiler pipeline with `gosx inspect app/page.gsx`
+(JSON diagnostics, component metadata, source hash, and stage timings), or
+`gosx inspect --ir app/page.gsx` for current-release IR. The host-side
+`gosx.Analyze` API exposes the same artifacts and per-stage observation hooks.
+See [compiler inspection](docs/toolchain-inspection.md) for the contract and
+its source-file-only scope.
+
 GSX syntax is parsed by [gotreesitter](https://github.com/odvcencio/gotreesitter), a pure-Go reimplementation of the tree-sitter runtime with grammar composition. GoSX extends Go's grammar with native markup support at the CST level — no templates, no code generation, no separate build step.
 
 ```

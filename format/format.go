@@ -18,6 +18,9 @@ func Source(source []byte) ([]byte, error) {
 		return nil, err
 	}
 	root := tree.RootNode()
+	if root.HasError() {
+		return nil, gosx.DescribeParseError(root, source, lang)
+	}
 	f := &formatter{
 		src:    source,
 		lang:   lang,
@@ -65,7 +68,7 @@ func (f *formatter) format(n *gotreesitter.Node, depth int) string {
 	case "jsx_fragment":
 		return f.formatFragment(n, depth)
 	case "jsx_expression_container":
-		return f.formatExprContainer(n)
+		return f.formatExprContainer(n, depth)
 	case "jsx_text":
 		return f.formatText(n)
 	case "raw_string_literal", "interpreted_string_literal":
@@ -183,7 +186,26 @@ func (f *formatter) formatFragment(n *gotreesitter.Node, depth int) string {
 	return b.String()
 }
 
-func (f *formatter) formatExprContainer(n *gotreesitter.Node) string {
+func (f *formatter) formatExprContainer(n *gotreesitter.Node, depth int) string {
+	// Comments are CST extras, not part of the expression field. Preserve
+	// the whole container when it carries review notes, including the newline
+	// that terminates a line comment before the closing brace.
+	for i := 0; i < n.NamedChildCount(); i++ {
+		if f.nodeType(n.NamedChild(i)) == "comment" {
+			lines := strings.Split(f.text(n), "\n")
+			prefix := f.lineLeadingWhitespace(n.StartByte())
+			for j := 1; j < len(lines); j++ {
+				// Remove only existing indentation, up to the old container's
+				// column, then align continuations with its new nesting depth.
+				trim := 0
+				for trim < len(prefix) && trim < len(lines[j]) && (lines[j][trim] == ' ' || lines[j][trim] == '\t') {
+					trim++
+				}
+				lines[j] = strings.Repeat(f.indent, depth) + lines[j][trim:]
+			}
+			return strings.Join(lines, "\n")
+		}
+	}
 	exprNode := f.childByField(n, "expression")
 	if exprNode == nil {
 		return "{}"

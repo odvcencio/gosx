@@ -119,29 +119,9 @@ func Parse(source []byte) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 
 // Compile parses GoSX source and produces the component IR.
 func Compile(source []byte) (*ir.Program, error) {
-	tree, lang, err := Parse(source)
+	analysis, err := Analyze(source, AnalysisOptions{})
 	if err != nil {
 		return nil, err
 	}
-
-	root := tree.RootNode()
-	if root.HasError() {
-		return nil, DescribeParseError(root, source, lang)
-	}
-	if err := requirePackageClause(root, lang); err != nil {
-		return nil, err
-	}
-
-	prog, err := ir.Lower(root, source, lang)
-	if err != nil {
-		return nil, err
-	}
-
-	// Run validation
-	diags := ir.Validate(prog)
-	if len(diags) > 0 {
-		return nil, ir.NewDiagnosticsError("validation", diags)
-	}
-
-	return prog, nil
+	return analysis.Program, nil
 }
