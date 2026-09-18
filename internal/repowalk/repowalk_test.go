@@ -1,6 +1,7 @@
 package repowalk_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,6 +52,32 @@ func TestWalkSkipsGeneratedAndNestedTrees(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{"pkg/ok.go", "sub/data/keep.txt", "sub/tmp/keep.go"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("visited %v, want %v", got, want)
+	}
+}
+
+func TestWalkSkipsEverySkipAnywhereName(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range repowalk.SkipAnywhere {
+		writeFile(t, filepath.Join(root, name, "f.go"))
+	}
+	writeFile(t, filepath.Join(root, "keep", "ok.go"))
+
+	var got []string
+	err := repowalk.Walk(root, func(path string, entry os.DirEntry) error {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		got = append(got, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	want := []string{"keep/ok.go"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("visited %v, want %v", got, want)
 	}
@@ -146,10 +173,11 @@ func TestSkipNestedGitDirectory(t *testing.T) {
 
 // rootDirEntry is a minimal os.DirEntry used to exercise Skip against the
 // root path itself, since filepath.WalkDir never calls fn for the root's own
-// parent listing.
+// parent listing. No test calls Info, so it reports fs.ErrInvalid rather
+// than resolving r.name (a base name) against the process working directory.
 type rootDirEntry struct{ name string }
 
 func (r *rootDirEntry) Name() string               { return r.name }
 func (r *rootDirEntry) IsDir() bool                { return true }
 func (r *rootDirEntry) Type() os.FileMode          { return os.ModeDir }
-func (r *rootDirEntry) Info() (os.FileInfo, error) { return os.Lstat(r.name) }
+func (r *rootDirEntry) Info() (os.FileInfo, error) { return nil, fs.ErrInvalid }

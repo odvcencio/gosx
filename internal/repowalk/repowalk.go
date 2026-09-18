@@ -25,6 +25,8 @@ var SkipAtRoot = []string{"tmp", "data"}
 // SkipAnywhere names at any depth, SkipAtRoot names directly under root, and
 // any non-root directory that contains a .git entry (a nested repository or a
 // worktree). Skip is only meaningful for directories and never skips root.
+// The .git check fails closed: an Lstat error other than "not exist" is
+// treated as a marker it cannot rule out, so the directory is skipped.
 func Skip(root, path string, entry fs.DirEntry) bool {
 	if !entry.IsDir() {
 		return false
@@ -40,7 +42,10 @@ func Skip(root, path string, entry fs.DirEntry) bool {
 		return true
 	}
 	_, err := os.Lstat(filepath.Join(path, ".git"))
-	return err == nil
+	if err == nil {
+		return true
+	}
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // Walk walks root and calls fn for every regular file that is not under a
