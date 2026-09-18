@@ -69,7 +69,7 @@ func Skip(root, path string, entry fs.DirEntry) (bool, error) {
 func Walk(root string, fn func(path string, entry fs.DirEntry) error) error {
 	info, err := os.Lstat(root)
 	if err != nil {
-		return err
+		return fmt.Errorf("repowalk: %w", err)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("repowalk: root %s is not a directory", root)
@@ -99,11 +99,16 @@ func Walk(root string, fn func(path string, entry fs.DirEntry) error) error {
 var moduleLine = []byte("module m31labs.dev/gosx\n")
 
 // Root returns the nearest ancestor of the working directory whose go.mod
-// declares module m31labs.dev/gosx.
+// declares module m31labs.dev/gosx. os.Getwd prefers $PWD, which a shell
+// sets to a logical path that may cross a symlink; Root resolves that
+// symlink first so the result is a real directory Walk can accept.
 func Root() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
 	}
 	return RootFrom(dir)
 }
@@ -112,6 +117,11 @@ func Root() (string, error) {
 // declares module m31labs.dev/gosx.
 func RootFrom(dir string) (string, error) {
 	start := dir
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	dir = abs
 	for {
 		data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err == nil && bytes.HasPrefix(data, moduleLine) {

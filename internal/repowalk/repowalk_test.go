@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -39,7 +38,7 @@ func walkRel(t *testing.T, root string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(got)
+	slices.Sort(got)
 	return got
 }
 
@@ -124,15 +123,20 @@ func TestWalkReportsUnreadableGitProbe(t *testing.T) {
 	}
 	root := t.TempDir()
 	locked := filepath.Join(root, "locked")
-	if err := os.MkdirAll(filepath.Join(locked, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(locked, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(locked, 0o000); err != nil {
+	writeFile(t, filepath.Join(locked, ".git"))
+	// 0o444 is readable but not traversable: filepath.WalkDir can still list
+	// locked's own entries, so only Skip's Lstat of locked/.git is denied.
+	// That isolates the error to Skip's probe instead of a directory-open
+	// failure that would satisfy a weaker assertion for the wrong reason.
+	if err := os.Chmod(locked, 0o444); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if err := os.Chmod(locked, 0o755); err != nil {
-			t.Fatal(err)
+			t.Errorf("restore mode on %s: %v", locked, err)
 		}
 	})
 
@@ -142,8 +146,8 @@ func TestWalkReportsUnreadableGitProbe(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Walk to report an error for an unreadable .git probe")
 	}
-	if !strings.Contains(err.Error(), "locked") {
-		t.Fatalf("error %q does not mention the locked directory", err)
+	if !strings.Contains(err.Error(), "repowalk: inspect") {
+		t.Fatalf("error %q does not come from Skip's .git probe", err)
 	}
 }
 
@@ -193,6 +197,26 @@ func TestRootFromFindsModuleRootAboveNestedDir(t *testing.T) {
 	}
 }
 
+func TestRootFromAcceptsRelativeInput(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module m31labs.dev/gosx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(tmp, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+
+	got, err := repowalk.RootFrom(filepath.FromSlash("../.."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != tmp {
+		t.Fatalf("RootFrom(%q) = %s, want %s", "../..", got, tmp)
+	}
+}
+
 func TestRootFromReturnsErrorNamingStartWhenNoModule(t *testing.T) {
 	start := t.TempDir()
 	_, err := repowalk.RootFrom(start)
@@ -201,6 +225,41 @@ func TestRootFromReturnsErrorNamingStartWhenNoModule(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), start) {
 		t.Fatalf("error %q does not name the starting directory %s", err, start)
+	}
+}
+
+func TestRootResolvesSymlinkedWorkingDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	real := filepath.Join(tmp, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "go.mod"), []byte("module m31labs.dev/gosx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(tmp, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+	wantReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(link)
+	t.Setenv("PWD", link)
+
+	got, err := repowalk.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != wantReal {
+		t.Fatalf("Root() = %s, want %s", got, wantReal)
+	}
+	if err := repowalk.Walk(got, func(path string, entry fs.DirEntry) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk(Root()) failed: %v", err)
 	}
 }
 
@@ -271,7 +330,7 @@ func TestWalkRejectsSymlinkedRoot(t *testing.T) {
 	}
 }
 
-func TestWalkSkipsSymlinksAndPropagatesFnError(t *testing.T) {
+func TestWalkSkipsSymlinkedFilesAndDirectories(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "real.go"))
 	realDir := filepath.Join(root, "realdir")
@@ -289,6 +348,11 @@ func TestWalkSkipsSymlinksAndPropagatesFnError(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("visited %v, want %v", got, want)
 	}
+}
+
+func TestWalkPropagatesFnError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "real.go"))
 
 	wantErr := errors.New("boom")
 	err := repowalk.Walk(root, func(path string, entry fs.DirEntry) error {
