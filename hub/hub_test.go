@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,59 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+type writeGateConn struct {
+	net.Conn
+	blocked sync.Once
+	release sync.Once
+	active  chan struct{}
+	entered chan struct{}
+	unblock chan struct{}
+}
+
+func newWriteGateConn(conn net.Conn) *writeGateConn {
+	return &writeGateConn{
+		Conn:    conn,
+		active:  make(chan struct{}),
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+}
+
+func (c *writeGateConn) blockWrites()   { c.blocked.Do(func() { close(c.active) }) }
+func (c *writeGateConn) releaseWrites() { c.release.Do(func() { close(c.unblock) }) }
+
+func (c *writeGateConn) Write(payload []byte) (int, error) {
+	select {
+	case <-c.active:
+		select {
+		case <-c.entered:
+		default:
+			close(c.entered)
+		}
+		<-c.unblock
+	default:
+	}
+	return c.Conn.Write(payload)
+}
+
+type writeGateListener struct {
+	net.Listener
+	accepted chan *writeGateConn
+}
+
+func (l *writeGateListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	gated := newWriteGateConn(conn)
+	select {
+	case l.accepted <- gated:
+	default:
+	}
+	return gated, nil
+}
 
 func readUntilEvent(t *testing.T, conn *websocket.Conn, event string) Message {
 	t.Helper()
@@ -76,6 +130,131 @@ func TestHubDisconnectRunsNormalLifecycle(t *testing.T) {
 	}
 	if h.Disconnect(identity.ClientID, "again") {
 		t.Fatal("second disconnect should report missing client")
+	}
+}
+
+func TestHubDisconnectConcurrentWithBroadcast(t *testing.T) {
+	h := New("disconnect-broadcast")
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	const peers = 8
+	connections := make([]*websocket.Conn, peers)
+	identities := make([]string, peers)
+	for i := range connections {
+		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		connections[i] = conn
+		defer conn.Close()
+		welcome := readUntilEvent(t, conn, "__welcome")
+		var identity struct {
+			ClientID string `json:"clientId"`
+		}
+		if err := json.Unmarshal(welcome.Data, &identity); err != nil {
+			t.Fatalf("decode welcome %d: %v", i, err)
+		}
+		identities[i] = identity.ClientID
+	}
+
+	// Prove every write pump is active before the concurrent stress begins.
+	h.Broadcast("state", map[string]int{"sequence": -1})
+	for _, conn := range connections {
+		readUntilEvent(t, conn, "state")
+	}
+
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		close(started)
+		for sequence := 0; sequence < 20_000; sequence++ {
+			h.Broadcast("state", map[string]int{"sequence": sequence})
+		}
+	}()
+	<-started
+	var disconnects sync.WaitGroup
+	for _, clientID := range identities {
+		disconnects.Add(1)
+		go func(clientID string) {
+			defer disconnects.Done()
+			if !h.Disconnect(clientID, "replaced") {
+				t.Errorf("expected client %s to be disconnected", clientID)
+			}
+		}(clientID)
+	}
+	disconnects.Wait()
+	<-done
+
+	deadline := time.Now().Add(2 * time.Second)
+	for h.ClientCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if h.ClientCount() != 0 {
+		t.Fatal("forced disconnect did not complete during broadcast")
+	}
+}
+
+func TestHubSlowWriterDoesNotBlockBroadcastDuringDisconnect(t *testing.T) {
+	h := New("slow-writer")
+	listener := &writeGateListener{accepted: make(chan *writeGateConn, 1)}
+	server := httptest.NewUnstartedServer(h)
+	listener.Listener = server.Listener
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	serverConn := <-listener.accepted
+	defer serverConn.releaseWrites()
+	welcome := readUntilEvent(t, conn, "__welcome")
+	var identity struct {
+		ClientID string `json:"clientId"`
+	}
+	if err := json.Unmarshal(welcome.Data, &identity); err != nil {
+		t.Fatal(err)
+	}
+
+	serverConn.blockWrites()
+	h.Send(identity.ClientID, "blocked", strings.Repeat("x", 1024))
+	select {
+	case <-serverConn.entered:
+	case <-time.After(time.Second):
+		t.Fatal("write pump did not enter the deterministic transport gate")
+	}
+
+	disconnected := make(chan bool, 1)
+	go func() { disconnected <- h.Disconnect(identity.ClientID, "replaced") }()
+	select {
+	case <-disconnected:
+		t.Fatal("Disconnect returned while its close control was gated behind the normal writer")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	broadcast := make(chan struct{})
+	go func() {
+		h.Broadcast("state", map[string]int{"sequence": 1})
+		close(broadcast)
+	}()
+	select {
+	case <-broadcast:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("slow writer or pending Disconnect blocked hub broadcast")
+	}
+
+	serverConn.releaseWrites()
+	select {
+	case ok := <-disconnected:
+		if !ok {
+			t.Fatal("connected client was not disconnected")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Disconnect did not finish after releasing the transport")
 	}
 }
 

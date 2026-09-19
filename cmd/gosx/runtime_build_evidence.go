@@ -164,6 +164,9 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 	if canonical && (shim.Source.SHA256 == "" || shim.Source.Bytes <= 0) {
 		return fmt.Errorf("canonical runtime evidence requires TinyGo wasm_exec.js shim provenance")
 	}
+	if err := stageStandardGoWASMExec(buildOutDir); err != nil {
+		return err
+	}
 
 	targets := runtimeBuildTargets()
 	for targetIndex, target := range targets {
@@ -452,6 +455,26 @@ func tinyGoWASMExecSourcePath(tinygoPath string) (string, error) {
 	return resolvedShim, nil
 }
 
+// Standard-Go surface engines coexist with the TinyGo shared runtime. Stage
+// the same isolated constructor wrapper that build and dev already publish,
+// so build-runtime produces a complete engine host without a stale shim copy.
+func stageStandardGoWASMExec(buildOutDir string) error {
+	data, err := readStandardGoWASMExec()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(buildOutDir, "standard-go-wasm_exec.js")
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("staged standard-Go wasm_exec.js must not be a symlink")
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("inspect staged standard-Go wasm_exec.js: %w", err)
+	}
+	if err := os.WriteFile(path, wrapStandardGoWASMExec(data), 0o644); err != nil {
+		return fmt.Errorf("stage standard-Go wasm_exec.js: %w", err)
+	}
+	return nil
+}
+
 func stageTinyGoWASMExec(tinygoPath, buildOutDir string) (runtimeShimPublication, error) {
 	shimPath, err := tinyGoWASMExecSourcePath(tinygoPath)
 	if err != nil {
@@ -542,7 +565,7 @@ func publishRuntimeEvidenceBundle(runtimeDir, evidenceRoot string) error {
 			_ = os.RemoveAll(tempDir)
 		}
 	}()
-	files := []string{"wasm_exec.js"}
+	files := []string{"wasm_exec.js", "standard-go-wasm_exec.js"}
 	for _, target := range runtimeBuildTargets() {
 		files = append(files, target.file)
 	}

@@ -1744,13 +1744,23 @@
     return "";
   }
 
+  // One embedded image can feed several material slots and channel roles.
+  // Keep its byte copy and URL shared within this extraction. A fresh scene
+  // extraction resets the map, so re-parsing mutable input cannot retain old
+  // image bytes. Weak document ownership does not retain parsed GLBs.
+  var gltfEmbeddedImageURLs = new WeakMap();
+
   function gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer) {
+    var urls = gltfEmbeddedImageURLs.get(gltf);
+    if (urls && urls.has(image)) return urls.get(image);
     var view = gltfResolveBufferView(gltf, binaryBuffer, image.bufferView, "image");
     var mimeType = image.mimeType || "application/octet-stream";
     var start = view.bytes.byteOffset + view.offset;
     var slice = view.bytes.buffer.slice(start, start + view.byteLength);
     var blob = new Blob([slice], { type: mimeType });
-    return URL.createObjectURL(blob);
+    var uri = URL.createObjectURL(blob);
+    if (urls) urls.set(image, uri);
+    return uri;
   }
 
   // ---------------------------------------------------------------------------
@@ -2220,6 +2230,11 @@
       var object = {
         id: objectID,
         kind: "gltf-mesh",
+        // glTF triangle primitives are solid even without a base-color map.
+        // The generic Scene3D object fallback is historically wireframe;
+        // letting it decide here changes untextured PBR assets into cages.
+        // Authored GoSX extras below can still explicitly opt into wireframe.
+        wireframe: false,
         vertices: vertices,
         material: material,
         transform: worldTransform,
@@ -2494,6 +2509,7 @@
   }
 
   function gltfExtractScene(gltf, binaryBuffer) {
+    gltfEmbeddedImageURLs.set(gltf, new Map());
     gltfReportUnsupportedRequiredExtensions(gltf);
     var result = {
       objects: [],

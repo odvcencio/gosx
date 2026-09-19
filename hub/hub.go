@@ -492,10 +492,16 @@ func (h *Hub) Disconnect(clientID, reason string) bool {
 		client.mu.Unlock()
 		return false
 	}
-	_ = client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	client.mu.Unlock()
+
+	// writePump is the sole normal writer and the sole owner of the
+	// connection write deadline. Gorilla permits WriteControl and Close to
+	// run concurrently with every other connection method. In particular,
+	// do not hold client.mu here: WriteControl can wait for an in-flight
+	// normal write until its deadline, while client.mu must remain available
+	// to the non-blocking trySend and channel-close lifecycle.
 	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason), time.Now().Add(writeWait))
 	_ = client.conn.Close()
-	client.mu.Unlock()
 	return true
 }
 
@@ -806,38 +812,30 @@ func (c *Client) writePump() {
 		select {
 		case msg, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			if !ok {
 				// The send channel was closed.
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
 
 			err := c.conn.WriteMessage(websocket.TextMessage, msg)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
 		case msg, ok := <-c.binarySend:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			if !ok {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
 
 			err := c.conn.WriteMessage(websocket.BinaryMessage, msg)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}

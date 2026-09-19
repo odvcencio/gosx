@@ -606,13 +606,20 @@
 
   function renderSceneHTMLElement(element, htmlEntry, box, hidden, occluded) {
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(htmlEntry.priority, 0) * 10) - Math.round(sceneNumber(htmlEntry.depth, 0) * 10));
-    element.setAttribute("data-gosx-scene-html", htmlEntry.id || "");
+    setAttrValue(element, "data-gosx-scene-html", htmlEntry.id || "");
     setAttrValue(element, "class", htmlEntry.className ? ("gosx-scene-html " + htmlEntry.className) : "gosx-scene-html");
     setAttrValue(element, "data-gosx-scene-html-target", htmlEntry.target || "");
     setAttrValue(element, "data-gosx-scene-html-mode", htmlEntry.mode || "dom");
     setAttrValue(element, "data-gosx-scene-html-fallback", htmlEntry.fallback || "");
     setAttrValue(element, "data-gosx-scene-html-fallback-reason", htmlEntry.fallbackReason || "");
-    setAttrValue(element, "data-gosx-scene-html-texture-key", htmlEntry.textureKey || "");
+    // Raster keys may contain a complete data URL. This is renderer-owned
+    // telemetry: avoid pulling the megabyte attribute back through the DOM
+    // and comparing its contents on every camera frame.
+    const textureKey = htmlEntry.textureKey || "";
+    if (element.__gosxHTMLTextureKeyAttribute !== textureKey) {
+      setAttrValue(element, "data-gosx-scene-html-texture-key", textureKey);
+      element.__gosxHTMLTextureKeyAttribute = textureKey;
+    }
     setAttrValue(element, "data-gosx-scene-html-texture-width", sceneNumber(htmlEntry.textureWidth, 0) > 0 ? sceneNumber(htmlEntry.textureWidth, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-texture-height", sceneNumber(htmlEntry.textureHeight, 0) > 0 ? sceneNumber(htmlEntry.textureHeight, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-texture-bytes", sceneNumber(htmlEntry.textureBytes, 0) > 0 ? sceneNumber(htmlEntry.textureBytes, 0) : "");
@@ -1299,6 +1306,11 @@
       try {
         const clone = element.cloneNode(true);
         if (typeof clone.removeAttribute === "function") {
+          // The accessibility mirror carries the previously generated SVG
+          // URL for diagnostics. Serializing it into the next SVG recursively
+          // embeds every earlier raster and eventually dominates planning,
+          // hashing and texture uploads in a long-running scene.
+          clone.removeAttribute("data-gosx-scene-html-texture-key");
           clone.removeAttribute("data-gosx-scene-html-visibility");
           clone.removeAttribute("data-gosx-scene-html-texture-mirror");
           clone.removeAttribute("aria-hidden");

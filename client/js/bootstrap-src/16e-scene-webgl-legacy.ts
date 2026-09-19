@@ -462,6 +462,11 @@
       if (!textureRecord || !textureRecord.texture) {
         continue;
       }
+      // Raster availability precedes image decode and the GPU upload. HTML
+      // surfaces must not flash the opaque white placeholder in that gap.
+      if (entry.sourceKind === "html" && !textureRecord.loaded) {
+        continue;
+      }
       uploadSceneWebGLSurfaceBuffers(gl, resources, entry);
       bindSceneWebGLSurfaceTexture(gl, resources, textureRecord);
       applySceneWebGLSurfaceMaterial(gl, resources, material);

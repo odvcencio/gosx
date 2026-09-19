@@ -875,6 +875,18 @@
     "}",
   ].join("\n");
 
+  // Shared deformation source: color and depth consume identical sampled rows.
+  const SCENE_CROWD_SKIN_GLSL = [
+    "in vec4 a_joints; in vec4 a_weights; in vec3 a_pose;",
+    "uniform highp sampler2D u_crowdAtlas;",
+    "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
+    "mat4 gosxCrowdSkin(){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(a_pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(a_pose.y));m+=(a*(1.0-a_pose.z)+b*a_pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
+  ].join("\n");
+  const SCENE_PBR_CROWD_VERTEX_SOURCE = SCENE_PBR_INSTANCED_VERTEX_SOURCE
+    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=a_instanceMatrix*gosxCrowdSkin();")
+    .replace("a_instanceMatrix * vec4(a_position", "crowdModel * vec4(a_position")
+    .replace("mat3(a_instanceMatrix)", "mat3(crowdModel)");
+
   // --- Skinned PBR Vertex Shader ---
   //
   // Variant of the PBR vertex shader with skeletal animation (vertex skinning).
@@ -1342,7 +1354,7 @@
   // caller-supplied bind hook.
   var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindDirectCaster) {
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindDirectCaster, drawInstancedCaster) {
     var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
     var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
       cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
@@ -1397,6 +1409,7 @@
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (!obj.castShadow) continue;
+      if (typeof drawInstancedCaster === "function" && drawInstancedCaster(obj, lightMatrix)) continue;
 
       if (obj.directVertices) {
         // Retained geometry casts from its cached model-space position buffer.
@@ -1452,8 +1465,13 @@
   }
 
   // Compile the shadow depth shader program.
-  function createSceneShadowProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_SHADOW_VERTEX_SOURCE);
+  function createSceneShadowProgram(gl, instanced, crowd) {
+    let source = instanced ? SCENE_SHADOW_VERTEX_SOURCE
+      .replace("uniform mat4 u_modelMatrix;", "in mat4 a_instanceMatrix;")
+      .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
+    if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
+      .replace("a_instanceMatrix *", "a_instanceMatrix * gosxCrowdSkin() *");
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
     if (!vertexShader) return null;
     var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
     if (!fragmentShader) {
@@ -1470,8 +1488,13 @@
       fragmentShader: fragmentShader,
       attributes: {
         position: gl.getAttribLocation(program, "a_position"),
+        instanceMatrix: instanced ? gl.getAttribLocation(program, "a_instanceMatrix") : -1,
+        joints: crowd ? gl.getAttribLocation(program, "a_joints") : -1,
+        weights: crowd ? gl.getAttribLocation(program, "a_weights") : -1,
+        pose: crowd ? gl.getAttribLocation(program, "a_pose") : -1,
       },
       uniforms: {
+        crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
         lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
       },
@@ -5502,6 +5525,11 @@
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
   function createScenePBRProgram(gl) {
+    const warmed = scenePBRTakeInitialProgram(gl, "base");
+    if (warmed === false) return null;
+    if (warmed) {
+      return scenePBRFinalizeBaseProgram(gl, warmed);
+    }
     const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
     if (!vertexShader) {
       return null;
@@ -5515,23 +5543,35 @@
     const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "PBR shader");
     if (!program) return null;
 
-    // Cache attribute locations.
-    const attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      normal: gl.getAttribLocation(program, "a_normal"),
-      uv: gl.getAttribLocation(program, "a_uv"),
-      tangent: gl.getAttribLocation(program, "a_tangent"),
-    };
-
-    // Cache uniform locations.
-    const uniforms = scenePBRCacheBaseUniforms(gl, program);
-
-    return {
+    return scenePBRFinalizeBaseProgram(gl, {
       program: program,
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
+    });
+  }
+
+  function scenePBRFinalizeBaseProgram(gl, linked) {
+    // Cache locations only after KHR_parallel_shader_compile reports the
+    // program complete. Location queries are allowed to synchronize an
+    // unfinished link just like LINK_STATUS, so moving only the status check
+    // would merely move the cold-frame stall.
+    const attributes = {
+      position: gl.getAttribLocation(linked.program, "a_position"),
+      normal: gl.getAttribLocation(linked.program, "a_normal"),
+      uv: gl.getAttribLocation(linked.program, "a_uv"),
+      tangent: gl.getAttribLocation(linked.program, "a_tangent"),
+    };
+
+    // Cache uniform locations.
+    const uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+
+    return {
+      program: linked.program,
+      vertexShader: linked.vertexShader,
+      fragmentShader: linked.fragmentShader,
       attributes: attributes,
       uniforms: uniforms,
+      initialProgramOwner: linked.initialProgramOwner || null,
     };
   }
 
@@ -5921,8 +5961,13 @@
 
   // Compile the instanced PBR vertex shader with the shared PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations, or null.
-  function createScenePBRInstancedProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_INSTANCED_VERTEX_SOURCE);
+  function createScenePBRInstancedProgram(gl, crowd) {
+    var warmed = crowd ? scenePBRTakeInitialProgram(gl, "crowd") : null;
+    if (warmed === false) return null;
+    if (warmed) {
+      return scenePBRFinalizeInstancedProgram(gl, warmed, true);
+    }
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE);
     if (!vertexShader) return null;
     var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
@@ -5933,25 +5978,301 @@
     var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced PBR shader");
     if (!program) return null;
 
-    var attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      normal: gl.getAttribLocation(program, "a_normal"),
-      uv: gl.getAttribLocation(program, "a_uv"),
-      tangent: gl.getAttribLocation(program, "a_tangent"),
-      instanceMatrix: gl.getAttribLocation(program, "a_instanceMatrix"),
-      instanceColor: gl.getAttribLocation(program, "a_instanceColor"),
-    };
-
-    var uniforms = scenePBRCacheBaseUniforms(gl, program);
-    uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
-
-    return {
+    return scenePBRFinalizeInstancedProgram(gl, {
       program: program,
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
+    }, crowd);
+  }
+
+  function scenePBRFinalizeInstancedProgram(gl, linked, crowd) {
+    var attributes = {
+      position: gl.getAttribLocation(linked.program, "a_position"),
+      normal: gl.getAttribLocation(linked.program, "a_normal"),
+      uv: gl.getAttribLocation(linked.program, "a_uv"),
+      tangent: gl.getAttribLocation(linked.program, "a_tangent"),
+      instanceMatrix: gl.getAttribLocation(linked.program, "a_instanceMatrix"),
+      joints: crowd ? gl.getAttribLocation(linked.program, "a_joints") : -1,
+      weights: crowd ? gl.getAttribLocation(linked.program, "a_weights") : -1,
+      pose: crowd ? gl.getAttribLocation(linked.program, "a_pose") : -1,
+      instanceColor: gl.getAttribLocation(linked.program, "a_instanceColor"),
+    };
+
+    var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+    uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
+    uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
+
+    return {
+      program: linked.program,
+      vertexShader: linked.vertexShader,
+      fragmentShader: linked.fragmentShader,
       attributes: attributes,
       uniforms: uniforms,
     };
+  }
+
+  // Initial WebGL2 programs are submitted together while model assets are
+  // already hydrating. KHR_parallel_shader_compile lets the driver work
+  // without a synchronous LINK_STATUS fence on the main thread. The existing
+  // synchronous factories consume these records after completion, preserving
+  // their renderer and disposal contracts. Other contexts and browsers keep
+  // the established synchronous path.
+  const scenePBRInitialPrograms = new WeakMap();
+
+  function scenePBRSubmitInitialProgram(gl, vertexSource, fragmentSource, label) {
+    let vertexShader = null;
+    let fragmentShader = null;
+    let program = null;
+    try {
+      vertexShader = gl.createShader(gl.VERTEX_SHADER);
+      fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+      if (!vertexShader || !fragmentShader) throw new Error("shader allocation failed");
+      gl.shaderSource(vertexShader, vertexSource);
+      gl.shaderSource(fragmentShader, fragmentSource);
+      gl.compileShader(vertexShader);
+      gl.compileShader(fragmentShader);
+      program = gl.createProgram();
+      if (!program) throw new Error("program allocation failed");
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      return { program, vertexShader, fragmentShader, label, disposed: false };
+    } catch (_error) {
+      if (program) gl.deleteProgram(program);
+      if (vertexShader) gl.deleteShader(vertexShader);
+      if (fragmentShader) gl.deleteShader(fragmentShader);
+      return null;
+    }
+  }
+
+  function scenePBRDisposeInitialProgram(gl, record) {
+    if (!record || record.disposed) return;
+    record.disposed = true;
+    try { gl.deleteProgram(record.program); } catch (_error) {}
+    try { gl.deleteShader(record.vertexShader); } catch (_error) {}
+    try { gl.deleteShader(record.fragmentShader); } catch (_error) {}
+  }
+
+  function scenePBRValidateInitialProgram(gl, record) {
+    if (!record || record.disposed) return false;
+    try {
+      if (gl.getProgramParameter(record.program, gl.LINK_STATUS)) return true;
+      const vertexOK = gl.getShaderParameter(record.vertexShader, gl.COMPILE_STATUS);
+      const fragmentOK = gl.getShaderParameter(record.fragmentShader, gl.COMPILE_STATUS);
+      console.warn("[gosx] " + record.label + " program link failed:", gl.getProgramInfoLog(record.program));
+      if (!vertexOK) console.warn("[gosx] PBR vertex shader compile failed:", gl.getShaderInfoLog(record.vertexShader));
+      if (!fragmentOK) console.warn("[gosx] PBR fragment shader compile failed:", gl.getShaderInfoLog(record.fragmentShader));
+    } catch (_error) {
+      // Context loss and driver exceptions are handled like a failed link. The
+      // established synchronous factory will retry on a current context.
+    }
+    scenePBRDisposeInitialProgram(gl, record);
+    return false;
+  }
+
+  function scenePBRTakeInitialProgram(gl, key) {
+    const state = scenePBRInitialPrograms.get(gl);
+    if (!state || state.status !== "ready" || !state[key]) return null;
+    let current = false;
+    let contextLost = false;
+    try {
+      current = state.isCurrent();
+      contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
+    } catch (_error) {
+      current = false;
+    }
+    if (!current || contextLost) {
+      discardScenePBRInitialPrograms(gl, state);
+      return false;
+    }
+    const record = state[key];
+    state[key] = null;
+    if (!state.base && !state.crowd) scenePBRInitialPrograms.delete(gl);
+    return record;
+  }
+
+  function scenePBRInitialProgramOwner(gl) {
+    const state = scenePBRInitialPrograms.get(gl);
+    return state && state.status === "ready" ? state : null;
+  }
+
+  function scenePBRClearInitialPoll(state) {
+    if (!state) return;
+    if (state.frame != null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.frame);
+    }
+    if (state.timer != null && typeof clearTimeout === "function") {
+      clearTimeout(state.timer);
+    }
+    state.frame = null;
+    state.timer = null;
+  }
+
+  function scenePBRFinishInitialPrograms(gl, state, value) {
+    if (!state || state.settled) return;
+    state.settled = true;
+    scenePBRClearInitialPoll(state);
+    if (!value) {
+      if (scenePBRInitialPrograms.get(gl) === state) scenePBRInitialPrograms.delete(gl);
+      scenePBRDisposeInitialProgram(gl, state.base);
+      scenePBRDisposeInitialProgram(gl, state.crowd);
+      state.base = null;
+      state.crowd = null;
+    }
+    state.resolve(value ? state : null);
+  }
+
+  function discardScenePBRInitialPrograms(gl, expectedOwner) {
+    const state = scenePBRInitialPrograms.get(gl);
+    // Omitted owner is the one intentional unconditional operation used when a
+    // new preparation supersedes the current generation. A supplied null or
+    // stale owner must never erase another renderer's newer preparation.
+    if (!state || arguments.length > 1 && (!expectedOwner || state !== expectedOwner)) return;
+    scenePBRInitialPrograms.delete(gl);
+    if (state.status === "pending") {
+      scenePBRFinishInitialPrograms(gl, state, false);
+      return;
+    }
+    scenePBRClearInitialPoll(state);
+    scenePBRDisposeInitialProgram(gl, state.base);
+    scenePBRDisposeInitialProgram(gl, state.crowd);
+    state.base = null;
+    state.crowd = null;
+  }
+
+  function scenePBRDisposeInitialOwner(gl, owner) {
+    if (!owner) return;
+    discardScenePBRInitialPrograms(gl, owner);
+    const records = Array.isArray(owner.records) ? owner.records : [];
+    for (const record of records) scenePBRDisposeInitialProgram(gl, record);
+    owner.records = [];
+  }
+
+  function prepareScenePBRInitialPrograms(gl, options) {
+    let extension = null;
+    try {
+      extension = gl && typeof gl.getExtension === "function"
+        ? gl.getExtension("KHR_parallel_shader_compile")
+        : null;
+    } catch (_error) {
+      extension = null;
+    }
+    if (!extension || typeof extension.COMPLETION_STATUS_KHR !== "number") {
+      return Promise.resolve(false);
+    }
+    const opts = options || {};
+    const isCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : function() { return true; };
+    // One preparation owns one context generation. Superseding it immediately
+    // settles and releases both pending and completed-but-unconsumed records.
+    discardScenePBRInitialPrograms(gl);
+    let fragmentSource = "";
+    try {
+      fragmentSource = scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE);
+    } catch (_error) {
+      return Promise.resolve(false);
+    }
+    const base = scenePBRSubmitInitialProgram(
+      gl,
+      SCENE_PBR_VERTEX_SOURCE,
+      fragmentSource,
+      "PBR shader",
+    );
+    const crowd = opts.crowd === true
+      ? scenePBRSubmitInitialProgram(
+          gl,
+          SCENE_PBR_CROWD_VERTEX_SOURCE,
+          fragmentSource,
+          "Crowd PBR shader",
+        )
+      : null;
+    const records = [base, crowd].filter(Boolean);
+    if (!base || opts.crowd === true && !crowd) {
+      for (const record of records) scenePBRDisposeInitialProgram(gl, record);
+      return Promise.resolve(false);
+    }
+    const startedAt = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    return new Promise(function(resolve) {
+      const state = {
+        status: "pending",
+        base,
+        crowd,
+        isCurrent,
+        frame: null,
+        timer: null,
+        settled: false,
+        resolve,
+      };
+      state.records = records;
+      base.initialProgramOwner = state;
+      if (crowd) crowd.initialProgramOwner = state;
+      scenePBRInitialPrograms.set(gl, state);
+      function cancel() {
+        scenePBRFinishInitialPrograms(gl, state, false);
+      }
+      function schedulePoll() {
+        // Hidden documents may stop delivering animation frames. Keep a short
+        // timeout sibling so owner cancellation and the bounded deadline still
+        // release GL objects even when rendering is throttled.
+        let fired = false;
+        function run() {
+          if (fired || state.settled) return;
+          fired = true;
+          scenePBRClearInitialPoll(state);
+          poll();
+        }
+        if (typeof requestAnimationFrame === "function") state.frame = requestAnimationFrame(run);
+        if (typeof setTimeout === "function") state.timer = setTimeout(run, 50);
+        if (state.frame == null && state.timer == null) cancel();
+      }
+      function poll() {
+        if (state.settled || scenePBRInitialPrograms.get(gl) !== state) return;
+        let current = false;
+        let contextLost = false;
+        try {
+          current = isCurrent();
+          contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
+        } catch (_error) {
+          cancel();
+          return;
+        }
+        if (!current || contextLost) {
+          cancel();
+          return;
+        }
+        const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        if (now - startedAt > 8000) {
+          cancel();
+          return;
+        }
+        try {
+          for (const record of records) {
+            if (!gl.getProgramParameter(record.program, extension.COMPLETION_STATUS_KHR)) {
+              schedulePoll();
+              return;
+            }
+          }
+        } catch (_error) {
+          cancel();
+          return;
+        }
+        const validBase = scenePBRValidateInitialProgram(gl, base);
+        const validCrowd = crowd ? scenePBRValidateInitialProgram(gl, crowd) : false;
+        try {
+          current = isCurrent();
+          contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
+        } catch (_error) {
+          current = false;
+        }
+        if (!current || contextLost || !validBase || scenePBRInitialPrograms.get(gl) !== state) {
+          cancel();
+          return;
+        }
+        if (crowd && !validCrowd) state.crowd = null;
+        state.status = "ready";
+        scenePBRFinishInitialPrograms(gl, state, true);
+      }
+      poll();
+    });
   }
 
   function scenePBRCompileShader(gl, type, source) {
@@ -6742,6 +7063,99 @@
     // scene unmount without needing a per-subsystem bookkeeping pass.
     const staticMeshArrayVBOs = new WeakMap();
     const pointsEntryBuffers = new Set();
+    const instancedStreamRecords = new Map();
+    var instancedStreamEpoch = 0;
+    const crowdAtlasTextures = new Map();
+    let crowdProgram = null, crowdShadowProgram = null, crowdFrame = 0;
+    let crowdPaletteUploads = 0, crowdPaletteBytes = 0;
+    let crowdCapabilities = null, crowdCapabilityError = null;
+    function prepareCrowdAtlas(atlas) {
+      let record = crowdAtlasTextures.get(atlas);
+      if (record) { record.lastUsed = crowdFrame; return record; }
+      if (crowdPaletteBytes + atlas.data.byteLength > 32 * 1024 * 1024) throw new Error("crowd palette residency budget exceeded");
+      if (crowdCapabilityError) throw crowdCapabilityError;
+      if (!crowdCapabilities) {
+        const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        const unit = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) - 1;
+        if (gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) < 1 || unit < gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)) {
+          crowdCapabilityError = new Error("crowd palette capability unavailable"); throw crowdCapabilityError;
+        }
+        crowdCapabilities = { maxSize, unit };
+      }
+      const { maxSize, unit } = crowdCapabilities;
+      if (atlas.width > maxSize || atlas.height > maxSize) throw new Error("crowd palette capability unavailable: texture dimensions");
+      try {
+        if (!crowdProgram) crowdProgram = createScenePBRInstancedProgram(gl, true);
+        if (!crowdShadowProgram) crowdShadowProgram = createSceneShadowProgram(gl, true, true);
+        if (!crowdProgram || !crowdShadowProgram) throw new Error("crowd palette shader unavailable");
+      } catch (error) {
+        crowdCapabilityError = error; throw error;
+      }
+      const previousActive = gl.getParameter(gl.ACTIVE_TEXTURE);
+      const previousFlip = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      const previousBinding = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      let texture = null;
+      try {
+        texture = gl.createTexture();
+        if (!texture) throw new Error("crowd palette texture allocation failed");
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, atlas.width, atlas.height, 0, gl.RGBA, gl.FLOAT, atlas.data);
+        if (gl.getError() !== gl.NO_ERROR) throw new Error("crowd palette upload failed");
+        record = { texture, unit, lastUsed: crowdFrame };
+        crowdAtlasTextures.set(atlas, record); crowdPaletteUploads++; crowdPaletteBytes += atlas.data.byteLength;
+      } catch (error) {
+        if (texture) gl.deleteTexture(texture);
+        crowdCapabilityError = error;
+        throw error;
+      } finally {
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, previousBinding);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, Boolean(previousFlip));
+        gl.activeTexture(previousActive);
+      }
+      record.lastUsed = crowdFrame;
+      return record;
+    }
+    function disposeCrowdResources() {
+      for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
+      crowdAtlasTextures.clear();
+      crowdPaletteBytes = 0;
+      for (const cp of [crowdProgram, crowdShadowProgram]) if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+      crowdProgram = crowdShadowProgram = null;
+      crowdCapabilities = crowdCapabilityError = null;
+    }
+    function bindCrowdBatch(batch, ip, allowed) {
+      if (!batch.atlas) return;
+      const record = prepareCrowdAtlas(batch.atlas);
+      gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
+      gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
+      const obj = batch.objects[0];
+      for (const name of ["joints", "weights"]) {
+        const location = ip.attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
+      const location = ip.attributes.pose; allowed[location] = true;
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "poses", batch.poses));
+      gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
+    }
+    function finishCrowdBatch(batch, ip) {
+      if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
+    }
+    const rigidBatchRecords = new Map();
+    const rigidObjectBatches = new Map();
+    const meshColorVisibility = new Map();
+    var rigidBatchSequence = 0;
+    var rigidShadowProgram = null;
+    var rigidShadowProgramFailed = false;
+    var rigidFrameDraws = 0;
+    var rigidFrameInstances = 0;
+    var rigidFrameShadowDraws = 0;
     // Direct mesh buffers are renderer-owned. GPU handles must never live on
     // shared vertex objects: simultaneous renderers may use different
     // contexts, and context recovery may reuse the same JS `gl` identity
@@ -6904,6 +7318,9 @@
       setTelemetryAttribute("data-gosx-scene3d-retained-rebuilds", String(retainedStats.rebuilds));
       setTelemetryAttribute("data-gosx-scene3d-retained-retirements", String(retainedStats.retirements));
       setTelemetryAttribute("data-gosx-scene3d-retained-live-bytes", String(retainedStats.liveBytes));
+      setTelemetryAttribute("data-gosx-scene3d-rigid-instanced-draws", String(rigidFrameDraws));
+      setTelemetryAttribute("data-gosx-scene3d-rigid-instanced-meshes", String(rigidFrameInstances));
+      setTelemetryAttribute("data-gosx-scene3d-rigid-instanced-shadow-draws", String(rigidFrameShadowDraws));
       setTelemetryAttribute("data-gosx-scene3d-bundle-build-cpu-ms", String(sceneNumber(bundle && bundle.bundleBuildCPUms, 0)));
       setTelemetryAttribute("data-gosx-scene3d-planner-cpu-ms", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.lastPlannerCPUms, 0)));
       setTelemetryAttribute("data-gosx-scene3d-planner-full-vertex-hash-scans", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.fullVertexHashScans, 0)));
@@ -6973,6 +7390,46 @@
         return 0;
       }
       return Math.floor(data.length / components);
+    }
+
+    function uploadInstancedStream(mesh, index, slot, data) {
+      // Commands replace JS arrays frequently. Their identity is not a GPU
+      // lifetime: own mutable streams by batch ID, with frame retirement.
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      let record = instancedStreamRecords.get(key);
+      if (!record) {
+        record = {};
+        instancedStreamRecords.set(key, record);
+      }
+      let stream = record[slot];
+      if (!stream) {
+        stream = { buffer: gl.createBuffer(), bytes: 0, epoch: 0 };
+        record[slot] = stream;
+        pointsEntryBuffers.add(stream.buffer);
+      }
+      stream.epoch = instancedStreamEpoch;
+      gl.bindBuffer(gl.ARRAY_BUFFER, stream.buffer);
+      if (stream.bytes !== data.byteLength) {
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        stream.bytes = data.byteLength;
+      } else {
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+      }
+      return stream.buffer;
+    }
+
+    function retireInstancedStreams() {
+      for (const [key, record] of instancedStreamRecords) {
+        for (const slot of Object.keys(record)) {
+          const stream = record[slot];
+          if (stream.epoch !== instancedStreamEpoch) {
+            gl.deleteBuffer(stream.buffer);
+            pointsEntryBuffers.delete(stream.buffer);
+            delete record[slot];
+          }
+        }
+        if (!Object.keys(record).length) instancedStreamRecords.delete(key);
+      }
     }
 
     function bindInstancedVertexAttribute(location, data, components, fallback) {
@@ -7531,6 +7988,7 @@
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
       const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
       sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
+      prepareRigidMeshBatches(bundle);
       sceneSelenaFrameTime = performance.now() / 1000; // feed auto time uniform before any selena mesh draw
 
       // --- Shadow Pass ---
@@ -7610,7 +8068,7 @@
           // never drawn.
           for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
             var cascade = shadowSlots[candIdx].cascades[ci2];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster);
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, drawRigidShadowBatch);
           }
         }
 
@@ -7684,6 +8142,9 @@
       // meshes are ALL Selena-dressed still get live context.
       sceneSelenaFrameContextUpdate(cam, bundle.lights, bundle.environment);
 
+      const drawList = hasPBRData ? (preparedScene && preparedScene.pbrPasses
+        ? preparedScene.pbrPasses : buildPBRDrawList(bundle)) : null;
+      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       // Only activate PBR mesh program if there are mesh objects to draw.
       if (hasPBRData) {
       gl.useProgram(program);
@@ -7701,34 +8162,30 @@
       // Upload shadow map uniforms through the shared Scene3D texture-unit allocator.
       scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
-      // Build draw list grouped by render pass.
-      const drawList = preparedScene && preparedScene.pbrPasses
-        ? preparedScene.pbrPasses
-        : buildPBRDrawList(bundle);
-      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
-
       // Draw opaque pass.
       applyBlendMode(gl, "opaque");
       applyDepthMode(gl, "opaque");
       drawPBRObjectList(gl, drawList.opaque, bundle, materials);
+      } // end if (hasPBRData)
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
 
       // Draw alpha pass.
-      if (drawList.alpha.length > 0) {
+      if (drawList && drawList.alpha.length > 0) {
         applyBlendMode(gl, "alpha");
         applyDepthMode(gl, "alpha");
         drawPBRObjectList(gl, drawList.alpha, bundle, materials);
       }
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "alpha");
 
       // Draw additive pass.
-      if (drawList.additive.length > 0) {
+      if (drawList && drawList.additive.length > 0) {
         applyBlendMode(gl, "additive");
         applyDepthMode(gl, "additive");
         drawPBRObjectList(gl, drawList.additive, bundle, materials);
       }
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "additive");
 
-      } // end if (hasPBRData)
-
-      if (lineResources && bundle.worldVertexCount > 0) {
+      if (lineResources && hasLineData) {
         // meshObjects:false — drawPBRObjectList above already drew every mesh
         // with its OWN program (PBR, CustomMaterial or Selena). The legacy
         // world path is used here only for line segments and HTML surfaces.
@@ -7737,9 +8194,6 @@
         // authored Selena surface with its companion material's base color.
         renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
       }
-
-      // Draw instanced meshes (after regular meshes, before points).
-      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
       // Draw points entries (after meshes, before post-processing).
       var frameTimeSeconds = performance.now() / 1000;
@@ -7804,7 +8258,10 @@
       if (!scenePBRHasCustomHooks(material)) {
         return null;
       }
-      const key = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      // Programs depend on authored code and uniform declarations, not values.
+      // Dynamic uniforms are uploaded for each draw without recompilation.
+      const key = JSON.stringify([material.customVertex || "", material.customFragment || "",
+        scenePBRCustomUniformDeclarations(material.customUniforms)]);
       const cached = customProgramCache.get(key);
       if (cached) {
         return cached.failed ? null : cached.program;
@@ -7823,7 +8280,10 @@
       if (!sceneSelenaIsMaterial(material)) {
         return null;
       }
-      const baseKey = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      // Match the WebGPU path: uniform values belong to per-draw bindings.
+      // The material key includes values and would leak a program per frame.
+      const baseKey = JSON.stringify([material.customVertex || "", material.customFragment || "",
+        sceneSelenaMaterialLayout(material)]);
       // Skinned draws compile a distinct program variant (augmented vertex
       // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
       // its own key: the same material can back both static and skinned
@@ -8165,6 +8625,7 @@
 
     function beginWebGLDirectMeshBufferFrame(bundle) {
       directMeshAttributeEpoch += 1;
+      instancedStreamEpoch += 1;
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
@@ -8175,11 +8636,25 @@
     }
 
     function sweepWebGLDirectMeshBuffers() {
-      for (const pair of Array.from(directMeshAttributeCache.entries())) {
-        if (pair[1].lastSeenEpoch !== directMeshAttributeEpoch) {
-          retireWebGLDirectMeshEntry(pair[0], pair[1]);
+      let idleBytes = 0, idleEntries = 0;
+      // Only explicitly shared rigid GLB streams enter this pool. Ordinary
+      // meshes and dynamic buffers retain immediate retirement semantics.
+      // Keep at most 32 MiB / 64 primitives for 120 rendered frames; dispose
+      // still destroys every handle immediately on unmount/context loss.
+      for (const [vertices, entry] of directMeshAttributeCache) {
+        if (entry.lastSeenEpoch === directMeshAttributeEpoch) continue;
+        let bytes = 0;
+        for (const attribute of Object.values(entry.attributes || {})) bytes += attribute.byteLength || 0;
+        if (!entry.retained || vertices._rigidPool !== true ||
+            directMeshAttributeEpoch - entry.lastSeenEpoch > 120 ||
+            idleEntries >= 64 || idleBytes + bytes > 32 * 1024 * 1024) {
+          retireWebGLDirectMeshEntry(vertices, entry);
+        } else {
+          idleBytes += bytes; idleEntries++;
         }
       }
+      retainedMeshBufferStats.idleBytes = idleBytes;
+      retainedMeshBufferStats.idleEntries = idleEntries;
     }
 
     function webGLRetainedMeshBufferStats() {
@@ -8262,6 +8737,188 @@
       return true;
     }
 
+    function prepareRigidMeshBatches(bundle) {
+      crowdFrame++;
+      // Small prewarmed palettes stay resident under the hard aggregate cap.
+      // Expiring by render-frame age would reintroduce later-wave upload hitches.
+      rigidObjectBatches.clear();
+      meshColorVisibility.clear();
+      rigidFrameDraws = rigidFrameInstances = rigidFrameShadowDraws = 0;
+      const materials = bundle.materials || [];
+      const planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
+      for (const groups of rigidBatchRecords.values()) {
+        for (const batch of groups.values()) batch.objects.length = 0;
+      }
+      for (const obj of bundle.meshObjects || []) {
+        const mat = materials[obj && obj.materialIndex] || null;
+        let visible = true;
+        const bounds = obj && obj.bounds;
+        if (bounds && !objectIsSkinned(obj) && !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+          // Cull the color pass against the four side planes using the
+          // positive AABB vertex. Keep off-camera casters in shadow batches:
+          // their shadows can still fall onto visible ground.
+          for (let i = 0; i < 4; i++) {
+            const p = planes[i];
+            if (p[0] * (p[0] >= 0 ? bounds.maxX : bounds.minX) +
+                p[1] * (p[1] >= 0 ? bounds.maxY : bounds.minY) +
+                p[2] * (p[2] >= 0 ? bounds.maxZ : bounds.minZ) + p[3] < -.0001) { visible = false; break; }
+          }
+        }
+        meshColorVisibility.set(obj, visible);
+        // Only immutable, direct, opaque PBR geometry can share this shader.
+        // Keep animation, custom vertex behavior and sorted alpha draws intact.
+        if (!obj || obj.viewCulled || !obj.directVertices || !obj.retainedGeometry ||
+            !obj.vertices || !(obj.vertexCount > 0) ||
+            !(obj.vertices.positions instanceof Float32Array) || obj.vertices.positions.length < obj.vertexCount * 3 ||
+            objectIsSkinned(obj) ||
+            !obj.modelMatrix || !(sceneAffineDeterminant(obj.modelMatrix, 0) > 0.000001) ||
+            scenePBRObjectRenderPass(obj, mat) !== "opaque" ||
+            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat)) continue;
+        let groups = rigidBatchRecords.get(obj.vertices);
+        if (!groups) {
+          groups = new Map();
+          rigidBatchRecords.set(obj.vertices, groups);
+        }
+        const key = [obj.materialIndex, obj.vertexCount, obj.geometryRevision,
+          obj.receiveShadow === true, obj.castShadow === true, obj.depthWrite,
+          obj.doubleSided, visible, obj._crowdSkin ? "crowd:" + obj._crowdSkin.atlas.id : "rigid"].join(":");
+        let batch = groups.get(key);
+        if (!batch) {
+          batch = { id: "rigid-geometry-" + (++rigidBatchSequence), objects: [], transforms: null, count: 0, atlas: obj._crowdSkin ? obj._crowdSkin.atlas : null };
+          groups.set(key, batch);
+        }
+        batch.objects.push(obj);
+        rigidObjectBatches.set(obj, batch);
+      }
+      for (const [vertices, groups] of rigidBatchRecords) {
+        for (const [key, batch] of groups) {
+          batch.count = batch.objects.length;
+          if (!batch.count) {
+            groups.delete(key);
+            continue;
+          }
+          if (batch.count < 2 && !batch.atlas) {
+            batch.transforms = null;
+            continue;
+          }
+          const needed = batch.count * 16;
+          // Geometric growth avoids reallocating when a swarm gains one actor.
+          // Shrink after a large decline so a small surviving group cannot
+          // retain the entire high-water mark of a long expedition.
+          if (!batch.transforms || batch.transforms.length < needed || batch.transforms.length > Math.max(64, needed * 4)) {
+            let capacity = 32;
+            while (capacity < needed) capacity *= 2;
+            batch.transforms = new Float32Array(capacity);
+          }
+          for (let i = 0; i < batch.count; i++) batch.transforms.set(batch.objects[i].modelMatrix, i * 16);
+          if (batch.atlas) {
+            prepareCrowdAtlas(batch.atlas);
+            if (!batch.poses || batch.poses.length < batch.count * 3 || batch.poses.length > Math.max(12, batch.count * 12)) batch.poses = new Float32Array(batch.transforms.length / 16 * 3);
+            for (let i = 0; i < batch.count; i++) batch.poses.set(batch.objects[i]._crowdSkin.rows, i * 3);
+          }
+        }
+        if (!groups.size) rigidBatchRecords.delete(vertices);
+      }
+    }
+
+    function bindRigidBatchMatrices(batch, attributes) {
+      const base = attributes.instanceMatrix;
+      if (!(base >= 0)) return false;
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "transforms", batch.transforms));
+      for (let col = 0; col < 4; col++) {
+        gl.enableVertexAttribArray(base + col);
+        gl.vertexAttribPointer(base + col, 4, gl.FLOAT, false, 64, col * 16);
+        gl.vertexAttribDivisor(base + col, 1);
+      }
+      return true;
+    }
+
+    function finishRigidBatchMatrices(attributes) {
+      for (let col = 0; col < 4; col++) {
+        gl.vertexAttribDivisor(attributes.instanceMatrix + col, 0);
+        gl.disableVertexAttribArray(attributes.instanceMatrix + col);
+      }
+    }
+
+    function drawRigidBatchGeometry(batch) {
+      const obj = batch.objects[0];
+      const indices = bindScenePBRDirectIndexBuffer(obj);
+      if (indices > 0) gl.drawElementsInstanced(gl.TRIANGLES, indices, gl.UNSIGNED_INT, 0, batch.count);
+      else gl.drawArraysInstanced(gl.TRIANGLES, 0, obj.vertexCount, batch.count);
+    }
+
+    function drawRigidShadowBatch(obj, lightMatrix) {
+      const batch = rigidObjectBatches.get(obj);
+      if (!batch || batch.count < 2 && !batch.atlas || rigidShadowProgramFailed && !batch.atlas) return false;
+      if (!batch.atlas && !rigidShadowProgram) {
+        rigidShadowProgram = createSceneShadowProgram(gl, true);
+        if (!rigidShadowProgram || rigidShadowProgram.attributes.instanceMatrix < 0) {
+          rigidShadowProgramFailed = true;
+          return false;
+        }
+      }
+      if (obj !== batch.objects[0]) return true;
+      const ip = batch.atlas ? crowdShadowProgram : rigidShadowProgram;
+      gl.useProgram(ip.program);
+      gl.uniformMatrix4fv(ip.uniforms.lightViewProjection, false, lightMatrix);
+      const allowed = {};
+      allowed[ip.attributes.position] = true;
+      for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
+      bindCrowdBatch(batch, ip, allowed);
+      sceneDisableUnownedVertexAttribArrays(allowed);
+      bindScenePBRDirectAttribute(obj, "positions", ip.attributes.position, 3,
+        scenePBRDirectAttribute(obj.vertices, "positions", obj.vertexCount, 3));
+      bindRigidBatchMatrices(batch, ip.attributes);
+      drawRigidBatchGeometry(batch);
+      rigidFrameShadowDraws++;
+      finishRigidBatchMatrices(ip.attributes);
+      finishCrowdBatch(batch, ip);
+      gl.useProgram(shadowProgram.program);
+      return true;
+    }
+
+    function drawRigidPBRBatch(batch, bundle, mat, uploadFrameUniforms) {
+      const ip = batch.atlas ? crowdProgram : ensureInstancedProgram();
+      if (!ip || ip.attributes.instanceMatrix < 0) return false;
+      const obj = batch.objects[0];
+      gl.useProgram(ip.program);
+      uploadFrameUniforms(ip.uniforms);
+      uploadMaterial(gl, ip.uniforms, mat, textureCache);
+      gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
+      gl.depthMask(obj.depthWrite !== false);
+      const allowed = {};
+      for (const [name, size, fallback] of [
+        ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
+        ["uv", 2, [0, 0]], ["tangent", 4, [1, 0, 0, 1]],
+      ]) {
+        const location = ip.attributes[name];
+        if (!(location >= 0)) continue;
+        allowed[location] = true;
+        const key = { position: "positions", normal: "normals", uv: "uvs", tangent: "tangents" }[name];
+        if (!bindScenePBRDirectAttribute(obj, key, location, size,
+          scenePBRDirectAttribute(obj.vertices, key, obj.vertexCount, size))) {
+          gl.disableVertexAttribArray(location);
+          if (size === 2) gl.vertexAttrib2f(location, fallback[0], fallback[1]);
+          if (size === 3) gl.vertexAttrib3f(location, fallback[0], fallback[1], fallback[2]);
+          if (size === 4) gl.vertexAttrib4f(location, fallback[0], fallback[1], fallback[2], fallback[3]);
+        }
+      }
+      for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
+      bindCrowdBatch(batch, ip, allowed);
+      sceneDisableUnownedVertexAttribArrays(allowed);
+      bindRigidBatchMatrices(batch, ip.attributes);
+      drawRigidBatchGeometry(batch);
+      rigidFrameDraws++;
+      rigidFrameInstances += batch.count;
+      webglRenderTruthStats.meshDrawn += batch.count;
+      finishRigidBatchMatrices(ip.attributes);
+      finishCrowdBatch(batch, ip);
+      gl.depthMask(true);
+      gl.useProgram(program);
+      return true;
+    }
+
     function drawPBRObjectList(gl, objectList, bundle, materials) {
       var lastMaterialIndex = -1;
       // Track which program is currently bound so we can switch between
@@ -8285,8 +8942,24 @@
 
       for (var i = 0; i < objectList.length; i++) {
         const obj = objectList[i];
+        if (meshColorVisibility.get(obj) === false) {
+          webglRenderTruthStats.meshViewCulled++;
+          continue;
+        }
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
+        const rigidBatch = rigidObjectBatches.get(obj);
+        const rigidProgram = rigidBatch ? (rigidBatch.atlas ? crowdProgram : rigidBatch.count > 1 ? ensureInstancedProgram() : null) : null;
+        if (rigidProgram && rigidProgram.attributes.instanceMatrix >= 0) {
+          if (obj !== rigidBatch.objects[0]) continue;
+          if (drawRigidPBRBatch(rigidBatch, bundle, mat, uploadFrameUniformsForProgram)) {
+            currentProgram = program;
+            currentAttribs = attribs;
+            currentUniforms = uniforms;
+            lastMaterialIndex = -1;
+            continue;
+          }
+        }
         var isSkinned = objectIsSkinned(obj);
         // Selena is now reachable on skinned draws too (ensureSelenaProgram
         // compiles+caches the joint-skinning variant of the material's
@@ -9144,20 +9817,23 @@
       return null;
     }
 
-    function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix) {
+    function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, renderPass) {
       var meshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
-      if (meshes.length === 0) return;
+      if (meshes.length === 0) {
+        if (renderPass === "additive") retireInstancedStreams();
+        return;
+      }
 
       var ip = ensureInstancedProgram();
       if (!ip) return;
 
       gl.useProgram(ip.program);
 
-      // Ensure opaque render state (prior passes may leave blend/depth dirty).
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthMask(true);
-      gl.depthFunc(gl.LEQUAL);
-      gl.disable(gl.BLEND);
+      // Instanced effects obey the same blend/depth passes as ordinary meshes.
+      // Previously every batch forced opaque state, hiding actors behind
+      // translucent shields and stamping solid disks for contact shadows.
+      applyBlendMode(gl, renderPass);
+      applyDepthMode(gl, renderPass);
 
       // Upload per-frame uniforms (camera, lights, fog, shadows).
       gl.uniformMatrix4fv(ip.uniforms.viewMatrix, false, viewMatrix);
@@ -9199,6 +9875,7 @@
             metalness: sceneNumber(mesh.metalness, 0),
           };
         }
+        if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
         uploadMaterial(gl, ip.uniforms, mat, textureCache);
 
         // Per-object shadow receive control.
@@ -9247,8 +9924,6 @@
         var hasCullConfig = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
         // Fetch full color buffer (indexed by original instance) before compaction.
         var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
-        // Whether the draw will use the culled VBOs or the cached static VBOs.
-        var useCullVBOs = false;
         if (hasCullConfig) {
           var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
           var planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
@@ -9287,27 +9962,9 @@
           // If nothing survives, skip the draw entirely.
           if (instanceCount <= 0) continue;
 
-          // Upload compacted data to per-mesh dynamic VBOs. We do NOT use the
-          // static WeakMap cache (ensureStaticArrayVBO) because scratchT/scratchC
-          // are the same object references across frames; the cache would skip
-          // the re-upload. Instead we own dedicated dynamic VBOs here.
-          if (!mesh._cpuCullTransformVBO) {
-            mesh._cpuCullTransformVBO = gl.createBuffer();
-            pointsEntryBuffers.add(mesh._cpuCullTransformVBO);
-          }
-          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
-          gl.bufferData(gl.ARRAY_BUFFER, scratchT.subarray(0, instanceCount * 16), gl.DYNAMIC_DRAW);
-
-          if (scratchC) {
-            if (!mesh._cpuCullColorVBO) {
-              mesh._cpuCullColorVBO = gl.createBuffer();
-              pointsEntryBuffers.add(mesh._cpuCullColorVBO);
-            }
-            gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullColorVBO);
-            gl.bufferData(gl.ARRAY_BUFFER, scratchC.subarray(0, instanceCount * 4), gl.DYNAMIC_DRAW);
-          }
-          instanceColorData = scratchC;
-          useCullVBOs = true;
+          // The same batch-owned streams serve culled and unculled draws.
+          transformData = scratchT.subarray(0, instanceCount * 16);
+          instanceColorData = scratchC ? scratchC.subarray(0, instanceCount * 4) : null;
         }
 
         var hasInstanceColor = !!(instanceColorData && ip.attributes.instanceColor >= 0);
@@ -9330,12 +9987,7 @@
         }
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
 
-        // Bind transforms VBO: dynamic cull VBO or static cached VBO.
-        if (useCullVBOs) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
-        } else {
-          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
-        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
         // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
@@ -9347,11 +9999,7 @@
         }
 
         if (hasInstanceColor) {
-          if (useCullVBOs && mesh._cpuCullColorVBO) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullColorVBO);
-          } else {
-            gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, instanceColorData));
-          }
+          gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "colors", instanceColorData));
           gl.enableVertexAttribArray(ip.attributes.instanceColor);
           gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
           gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
@@ -9375,9 +10023,16 @@
 
       // Switch back to regular PBR program.
       gl.useProgram(program);
+      if (renderPass === "additive") retireInstancedStreams();
     }
 
     function dispose() {
+      // The base warm record is consumed during construction. A crowd record
+      // can remain unused when the requested rig is ineligible; keep that GL
+      // ownership renderer-local and release it with the renderer.
+      if (pbrProgram.initialProgramOwner) {
+        discardScenePBRInitialPrograms(gl, pbrProgram.initialProgramOwner);
+      }
       for (const pair of Array.from(directMeshAttributeCache.entries())) {
         retireWebGLDirectMeshEntry(pair[0], pair[1]);
       }
@@ -9398,6 +10053,16 @@
         gl.deleteBuffer(buf);
       }
       pointsEntryBuffers.clear();
+      instancedStreamRecords.clear();
+      rigidBatchRecords.clear();
+      disposeCrowdResources();
+      meshColorVisibility.clear();
+      rigidObjectBatches.clear();
+      if (rigidShadowProgram) {
+        gl.deleteProgram(rigidShadowProgram.program);
+        gl.deleteShader(rigidShadowProgram.vertexShader);
+        gl.deleteShader(rigidShadowProgram.fragmentShader);
+      }
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
       staticPointKeyedVBOs.clear();
@@ -9533,6 +10198,7 @@
       }
       return {
         renderer: "webgl",
+        crowdPaletteUploads, crowdPaletteBytes, crowdPaletteTextures: crowdAtlasTextures.size,
         fragmentTextureUnits: typeof gl.getParameter === "function"
           ? sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0)
           : 0,
@@ -9567,6 +10233,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
+      prepareCrowdAtlas,
       render: render,
       dispose: dispose,
       diagnostics: diagnostics,
@@ -9587,6 +10254,55 @@
 
   // --- Integration ---
 
+  function scenePBRCanvasAntialias(props, capability) {
+    const caps = capability || {};
+    const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    if (requestedSamples > 1) return true;
+    if (requestedSamples === 1) return false;
+    const tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    return sceneBool(props && props.antialias, tierDefault);
+  }
+
+  function createScenePBRContext(canvas, props, capability) {
+    if (!canvas || typeof canvas.getContext !== "function") return null;
+    const caps = capability || {};
+    try {
+      const useCanvasAlpha = sceneCanvasAlpha(props);
+      return canvas.getContext("webgl2", {
+        alpha: useCanvasAlpha,
+        premultipliedAlpha: useCanvasAlpha,
+        antialias: scenePBRCanvasAntialias(props, caps),
+        depth: true,
+        powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
+      });
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function scenePBRInitialRequestsCrowd(props, state) {
+    const rawScene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    const batches = state && Array.isArray(state.instancedGLBMeshes)
+      ? state.instancedGLBMeshes
+      : (rawScene && Array.isArray(rawScene.instancedGLBMeshes) ? rawScene.instancedGLBMeshes : []);
+    return batches.some(function(batch) {
+      return batch && typeof batch.src === "string" && batch.src.trim() &&
+        Array.isArray(batch.instances) && batch.instances.some(function(instance) {
+          return instance && typeof instance.animation === "string" && instance.animation.trim();
+        });
+    });
+  }
+
+  async function prepareScenePBRInitialRenderer(canvas, props, capability, options) {
+    const gl = createScenePBRContext(canvas, props, capability);
+    if (!gl) return { gl: null, prepared: false };
+    const opts = options || {};
+    const owner = await prepareScenePBRInitialPrograms(gl, Object.assign({}, opts, {
+      crowd: scenePBRInitialRequestsCrowd(props, opts.state),
+    }));
+    return { gl, prepared: Boolean(owner), owner };
+  }
+
   // Try to create a PBR renderer. If PBR shader compilation fails,
   // returns null so the caller can use the legacy renderer.
   function createScenePBRRendererOrFallback(gl, canvas, options) {
@@ -9598,12 +10314,15 @@
       return null;
     }
     var renderer = null;
+    const initialProgramOwner = scenePBRInitialProgramOwner(gl);
     try {
       renderer = createScenePBRRenderer(gl, canvas);
     } catch (e) {
+      scenePBRDisposeInitialOwner(gl, initialProgramOwner);
       console.warn("[gosx] PBR renderer creation failed:", e);
       return null;
     }
+    if (!renderer) scenePBRDisposeInitialOwner(gl, initialProgramOwner);
     return renderer;
   }
 
@@ -9622,13 +10341,7 @@
       create: function(canvas, props, capability) {
         const caps = capability || {};
         if (typeof createScenePBRRendererOrFallback === "function") {
-          const useCanvasAlpha = sceneCanvasAlpha(props);
-          const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-            alpha: useCanvasAlpha,
-            premultipliedAlpha: useCanvasAlpha,
-            antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
-            powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
-          }) : null;
+          const gl = createScenePBRContext(canvas, props, caps);
           if (gl) {
             const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
             if (pbrRenderer) {

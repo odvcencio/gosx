@@ -66,6 +66,24 @@ func TestRuntimeBuildTargetsAreFourProfilesPlusIslandsCompatibility(t *testing.T
 	}
 }
 
+func TestRuntimeBuildStagesIsolatedStandardGoEngineShim(t *testing.T) {
+	dir := t.TempDir()
+	if err := stageStandardGoWASMExec(dir); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(filepath.Join(dir, "standard-go-wasm_exec.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := readStandardGoWASMExec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(actual) != string(wrapStandardGoWASMExec(source)) {
+		t.Fatal("build-runtime shim differs from the isolated standard-Go engine wrapper")
+	}
+}
+
 func TestRuntimeBuildFailureRowsAllocateEmptyRouteReceipts(t *testing.T) {
 	evidence := newRuntimeBuildEvidence("/host/output", true)
 	targets := runtimeBuildTargets()

@@ -602,10 +602,13 @@ type InstancedGLBMesh struct {
 // MeshInstance describes the transform for a single instance within an
 // InstancedGLBMesh batch.
 type MeshInstance struct {
-	ID       string
-	Position Vector3
-	Scale    Vector3
-	Rotation Euler
+	Animation     string
+	AnimationTime float64
+	AnimationLoop bool
+	ID            string
+	Position      Vector3
+	Scale         Vector3
+	Rotation      Euler
 }
 
 // ComputeParticles declares a GPU-computed particle system.
@@ -3469,11 +3472,11 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		l.nextInstancedGLBID += 1
 		id = "scene-instanced-glb-" + intString(l.nextInstancedGLBID)
 	}
-	mat := legacyMaterial(igm.Material)
 	instances := make([]MeshInstanceIR, 0, len(igm.Instances))
 	for _, inst := range igm.Instances {
 		world := combineTransforms(parent, localTransform(inst.Position, inst.Rotation))
 		record := MeshInstanceIR{
+			Animation: inst.Animation, AnimationTime: inst.AnimationTime, AnimationLoop: inst.AnimationLoop,
 			ID:     strings.TrimSpace(inst.ID),
 			ScaleX: inst.Scale.X,
 			ScaleY: inst.Scale.Y,
@@ -3498,49 +3501,37 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		Static:    igm.Static,
 		Instances: instances,
 	}
-	if mat != nil {
-		if s, ok := mapStringValue(mat["materialKind"]); ok {
-			record.MaterialKind = s
-		}
-		if s, ok := mapStringValue(mat["color"]); ok {
-			record.Color = s
-		}
-		if s, ok := mapStringValue(mat["texture"]); ok {
-			record.Texture = s
-		}
-		if s, ok := mapStringValue(mat["blendMode"]); ok {
-			record.BlendMode = s
-		}
-		record.Roughness = mapFloat64(mat["roughness"])
-		record.Metalness = mapFloat64(mat["metalness"])
-		if v, ok := mat["ior"]; ok {
-			if f, ok2 := toFloat64(v); ok2 {
-				record.IOR = &f
-			}
-		}
-		if v, ok := mat["specularIntensity"]; ok {
-			if f, ok2 := toFloat64(v); ok2 {
-				record.SpecularIntensity = &f
-			}
-		}
-		if c, ok := specularColorFromAny(mat["specularColor"]); ok {
-			record.SpecularColor = &c
-		}
-		if v, ok := mat["opacity"]; ok {
-			if f, ok2 := toFloat64(v); ok2 {
-				record.Opacity = &f
-			}
-		}
-		if v, ok := mat["emissive"]; ok {
-			if f, ok2 := toFloat64(v); ok2 {
-				record.Emissive = &f
-			}
-		}
-		if v, ok := mat["alphaCutoff"]; ok {
-			record.AlphaCutoff = alphaCutoffFromAny(v, true)
-		}
-	}
+	applyMaterialToInstancedGLBIR(&record, igm.Material)
 	l.instancedGLBMeshes = append(l.instancedGLBMeshes, record)
+}
+
+func applyMaterialToInstancedGLBIR(record *InstancedGLBMeshIR, material Material) {
+	if record == nil || material == nil {
+		return
+	}
+	var object ObjectIR
+	applyMaterialToObjectIR(&object, material)
+	record.MaterialKind = object.MaterialKind
+	record.Color = object.Color
+	record.Texture = object.Texture
+	record.Opacity = object.Opacity
+	record.Emissive = object.Emissive
+	record.AlphaCutoff = object.AlphaCutoff
+	record.BlendMode = object.BlendMode
+	record.Roughness = object.Roughness
+	record.Metalness = object.Metalness
+	record.SpecularIntensity = object.SpecularIntensity
+	record.SpecularColor = object.SpecularColor
+	record.IOR = object.IOR
+	record.CustomVertex = object.CustomVertex
+	record.CustomFragment = object.CustomFragment
+	record.CustomVertexWGSL = object.CustomVertexWGSL
+	record.CustomFragmentWGSL = object.CustomFragmentWGSL
+	record.CustomUniforms = object.CustomUniforms
+	record.ShaderBackend = object.ShaderBackend
+	record.ShaderLayout = object.ShaderLayout
+	record.ShaderSource = object.ShaderSource
+	record.ShaderSourceFiles = object.ShaderSourceFiles
 }
 
 func toFloat64(v any) (float64, bool) {

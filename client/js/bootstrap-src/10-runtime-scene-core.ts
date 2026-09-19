@@ -1440,7 +1440,7 @@
     const current = item && typeof item === "object" ? item : {};
     const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
     const rawID = typeof current.id === "string" && current.id.trim() ? current.id.trim() : "";
-    return {
+    const instance = {
       id: rawID || ("instance-" + index),
       x: sceneNumber(current.x, 0),
       y: sceneNumber(current.y, 0),
@@ -1453,6 +1453,14 @@
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
       parentMatrix: sceneNormalizeParentMatrix(current.parentMatrix),
     };
+    // Preserve absence for legacy rigid declarations. Explicit empty clip is
+    // still meaningful (bind pose), so check property presence, not truthiness.
+    if (["animation", "animationTime", "animationLoop"].some(key => Object.prototype.hasOwnProperty.call(current, key))) {
+      instance.animation = typeof current.animation === "string" ? current.animation.trim() : "";
+      instance.animationTime = Math.max(0, sceneNumber(current.animationTime, 0));
+      instance.animationLoop = sceneBool(current.animationLoop, false);
+    }
+    return instance;
   }
 
   function normalizeSceneInstancedGLBMeshEntry(item, index, fallback) {
@@ -1507,6 +1515,13 @@
       _outState: lifecycle.outState,
       _live: lifecycle.live,
     };
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
+      if (sceneObjectMaterialHasValue(raw, key)) {
+        batch[key] = sceneCloneData(sceneObjectMaterialValue(raw, key));
+      } else if (Object.prototype.hasOwnProperty.call(current, key)) {
+        batch[key] = sceneCloneData(current[key]);
+      }
+    }
     // A genuinely omitted ior (no authored raw value and no inherited field)
     // stays absent so the override plumbing cannot erase an authored glTF
     // ior with a defaulted value; explicit/inherited fields are normalized.
@@ -1558,41 +1573,54 @@
       });
   }
 
+  // Only freshly expanded internal batch declarations enter this weak cache.
+  // Their shared non-pose settings are re-normalized on every command; no
+  // mutable authored Model declaration is trusted by identity.
+  const sceneInstancedGLBHydrationTemplates = new WeakMap();
+
+  function sceneCloneHydrationModel(model) {
+    const copy = sceneCloneData(model);
+    const template = sceneInstancedGLBHydrationTemplates.get(model);
+    if (template) sceneInstancedGLBHydrationTemplates.set(copy, template);
+    return copy;
+  }
+
   function sceneInstancedGLBMeshToModels(batch, batchIndex) {
     if (!batch || !batch.src || !Array.isArray(batch.instances)) {
       return [];
     }
+    // Normalize the shared declaration once per submitted batch. Instance
+    // records have already passed normalizeSceneInstancedGLBInstance; only
+    // identity and pose vary here. Do not share these across command batches:
+    // material/lifecycle changes must still participate in hydration.
+    const raw = { src: batch.src };
+    for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "pickable", "visible", "static"]) {
+      if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") raw[key] = batch[key];
+    }
+    // Preserve an explicit null, which disables masking, as well as a numeric
+    // cutoff. The shared field loop intentionally filters null values.
+    if (batch.alphaCutoff !== undefined) raw.alphaCutoff = batch.alphaCutoff;
+    const template = normalizeSceneModel(raw, batchIndex);
+    template._instancedGLB = true;
+    const declaration = Object.assign({}, template);
+    for (const key of ["id", "x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
+    const hydrationTemplate = JSON.stringify(declaration);
     const models = [];
     for (let index = 0; index < batch.instances.length; index += 1) {
       const instance = batch.instances[index];
-      if (!instance) {
-        continue;
-      }
-      const raw = {
+      if (!instance) continue;
+      const model = { ...template,
         id: batch.id + "/" + (instance.id || ("instance-" + index)),
-        src: batch.src,
-        x: instance.x,
-        y: instance.y,
-        z: instance.z,
-        rotationX: instance.rotationX,
-        rotationY: instance.rotationY,
-        rotationZ: instance.rotationZ,
-        scaleX: instance.scaleX,
-        scaleY: instance.scaleY,
-        scaleZ: instance.scaleZ,
-        parentMatrix: instance.parentMatrix,
+        x: sceneNumber(instance.x, 0), y: sceneNumber(instance.y, 0), z: sceneNumber(instance.z, 0),
+        rotationX: sceneNumber(instance.rotationX, 0), rotationY: sceneNumber(instance.rotationY, 0), rotationZ: sceneNumber(instance.rotationZ, 0),
+        scaleX: sceneNumber(instance.scaleX, 1), scaleY: sceneNumber(instance.scaleY, 1), scaleZ: sceneNumber(instance.scaleZ, 1),
+        parentMatrix: sceneNormalizeParentMatrix(instance.parentMatrix),
       };
-      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "pickable", "visible", "static"]) {
-        if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
-          raw[key] = batch[key];
-        }
+      if (["animation", "animationTime", "animationLoop"].some(key => Object.prototype.hasOwnProperty.call(instance, key))) {
+        model._crowdPose = { animation: instance.animation || "", animationTime: instance.animationTime || 0, animationLoop: instance.animationLoop === true };
       }
-      // Alpha cutoff is copied separately so an explicit null (masking
-      // disabled) survives: the legacy loop above deliberately excludes null.
-      if (batch.alphaCutoff !== undefined) {
-        raw.alphaCutoff = batch.alphaCutoff;
-      }
-      models.push(normalizeSceneModel(raw, batchIndex + "-" + index));
+      sceneInstancedGLBHydrationTemplates.set(model, hydrationTemplate);
+      models.push(model);
     }
     return models;
   }
@@ -4081,6 +4109,7 @@
     }).filter(function(model) {
       return Boolean(model && model.src);
     });
+    if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state)) return null;
     return sceneRehydrateModelsAfterCommand(state);
   }
 
@@ -4095,6 +4124,12 @@
     }).filter(function(entry) {
       return Boolean(entry && entry.src && Array.isArray(entry.instances) && entry.instances.length > 0);
     });
+    // Rigid actors retain their local vertex buffers. A pose update changes
+    // only their model matrices; asset loading and geometry staging are for
+    // membership/material changes, not every animation frame.
+    if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state)) {
+      return null;
+    }
     return sceneRehydrateModelsAfterCommand(state);
   }
 
@@ -4566,101 +4601,34 @@
   //
   // The inverse rotation math matches sceneInverseRotatePoint's rotation
   // order. The final sign matches the renderer's positive forward depth.
+  const sceneDepthCameraCache = new WeakMap();
+
   function sceneBoundsDepthMetrics(bounds, camera, cacheOwner) {
     if (!bounds) {
       const depth = sceneWorldPointDepth(0, camera);
       return { near: depth, far: depth, center: depth };
     }
-    const cam = sceneRenderCamera(camera, _sceneBoundsDepthCameraScratch);
-
-    // Optional per-object cache. appendSceneObjectToBundle calls this
-    // function twice per frame per object (once for depth, once via
-    // sceneBoundsViewCulled), and across frames the inputs rarely
-    // change on a static scene — so the second call and all subsequent
-    // frames can reuse a stored result.
-    //
-    // Change detection uses the sum of bounds extents + camera position
-    // and rotation. Any real edit moves at least one term; numerical
-    // coincidences that sum to the same value without actually matching
-    // are possible in theory but statistically irrelevant for real
-    // world coordinates (and invisible to the viewer if they do hit).
-    //
-    // Worst case on a miss: same cost as before. Best case (static
-    // scene): saves the 30 Math.sin/cos + 8 iterations of matrix math
-    // per object per frame. For a 100-object scene that's ~0.3-0.5 ms
-    // per frame reclaimed, plus a second-call hit on every frame.
-    let cacheHash = 0;
-    if (cacheOwner) {
-      cacheHash = sceneNumber(bounds.minX, 0) + sceneNumber(bounds.minY, 0) + sceneNumber(bounds.minZ, 0)
-        + sceneNumber(bounds.maxX, 0) + sceneNumber(bounds.maxY, 0) + sceneNumber(bounds.maxZ, 0)
-        + cam.x + cam.y + cam.z
-        + cam.rotationX + cam.rotationY + cam.rotationZ
-        + (cam.kind === "orthographic" ? 17 : 0)
-        + cam.left + cam.right + cam.top + cam.bottom + cam.zoom;
-      if (cacheOwner._depthCacheHash === cacheHash && cacheOwner._depthCacheResult) {
-        return cacheOwner._depthCacheResult;
-      }
+    // The support function of an AABB gives exact near/far depth without
+    // transforming eight corners. Cache the view's depth row once per camera
+    // pose; never use a sum of coordinates as a cache identity.
+    const fields = ["x", "y", "z", "rotationX", "rotationY", "rotationZ"];
+    const owner = camera && typeof camera === "object" ? camera : null;
+    let view = owner && sceneDepthCameraCache.get(owner);
+    if (view && fields.some(function(key, i) { return owner[key] !== view.inputs[i]; })) view = null;
+    if (!view) {
+      const cam = sceneRenderCamera(camera, _sceneBoundsDepthCameraScratch);
+      const sx = Math.sin(-cam.rotationX), cx = Math.cos(-cam.rotationX);
+      const sy = Math.sin(-cam.rotationY), cy = Math.cos(-cam.rotationY);
+      const sz = Math.sin(-cam.rotationZ), cz = Math.cos(-cam.rotationZ);
+      view = { x: cam.x, y: cam.y, z: cam.z,
+        a: sx*sz-cx*sy*cz, b: sx*cz+cx*sy*sz, c: cx*cy,
+        inputs: fields.map(function(key) { return owner && owner[key]; }) };
+      if (owner) sceneDepthCameraCache.set(owner, view);
     }
-
-    const sinX = Math.sin(-cam.rotationX);
-    const cosX = Math.cos(-cam.rotationX);
-    const sinY = Math.sin(-cam.rotationY);
-    const cosY = Math.cos(-cam.rotationY);
-    const sinZ = Math.sin(-cam.rotationZ);
-    const cosZ = Math.cos(-cam.rotationZ);
-
-    const minX = sceneNumber(bounds.minX, 0);
-    const minY = sceneNumber(bounds.minY, 0);
-    const minZ = sceneNumber(bounds.minZ, 0);
-    const maxX = sceneNumber(bounds.maxX, 0);
-    const maxY = sceneNumber(bounds.maxY, 0);
-    const maxZ = sceneNumber(bounds.maxZ, 0);
-
-    let near = Infinity;
-    let far = -Infinity;
-
-    // Iterate the 8 bounding-box corners by bit-coding (i & 1, i & 2, i & 4).
-    for (let i = 0; i < 8; i += 1) {
-      const worldX = (i & 4) ? maxX : minX;
-      const worldY = (i & 2) ? maxY : minY;
-      const worldZ = (i & 1) ? maxZ : minZ;
-
-      // Translate into view space before inverse rotation. This matches
-      // scenePBRViewMatrix's translation(-cam.x, -cam.y, -cam.z).
-      let lx = worldX - cam.x;
-      let ly = worldY - cam.y;
-      let lz = worldZ - cam.z;
-
-      // Inverse rotate: apply -rotZ, then -rotY, then -rotX in that order.
-      let nX = lx * cosZ - ly * sinZ;
-      let nY = lx * sinZ + ly * cosZ;
-      lx = nX;
-      ly = nY;
-
-      nX = lx * cosY + lz * sinY;
-      let nZ = -lx * sinY + lz * cosY;
-      lx = nX;
-      lz = nZ;
-
-      // Only lz matters for depth metrics — ly/lx discarded.
-      nZ = ly * sinX + lz * cosX;
-      lz = nZ;
-
-      const depth = -lz;
-      if (depth < near) near = depth;
-      if (depth > far) far = depth;
-    }
-
-    const result = {
-      near: near,
-      far: far,
-      center: (near + far) / 2,
-    };
-    if (cacheOwner) {
-      cacheOwner._depthCacheHash = cacheHash;
-      cacheOwner._depthCacheResult = result;
-    }
-    return result;
+    const x = (bounds.minX + bounds.maxX) * .5, y = (bounds.minY + bounds.maxY) * .5, z = (bounds.minZ + bounds.maxZ) * .5;
+    const center = -(view.a*(x-view.x) + view.b*(y-view.y) + view.c*(z-view.z));
+    const radius = Math.abs(view.a)*(bounds.maxX-bounds.minX)*.5 + Math.abs(view.b)*(bounds.maxY-bounds.minY)*.5 + Math.abs(view.c)*(bounds.maxZ-bounds.minZ)*.5;
+    return { near: center-radius, far: center+radius, center };
   }
 
   function sceneBoundsViewCulled(bounds, camera, cacheOwner) {
@@ -4810,6 +4778,9 @@
       // Fail closed: callers which do not identify a retained-capable
       // renderer receive a backend-neutral, fully baked bundle.
       retainedGeometryEnabled: Boolean(rendererCapabilities && rendererCapabilities.retainedGeometry === true),
+      // Canvas2D's final fallback draws projected edges, not PBR triangles.
+      // Preserve recognizable imported assets when no GPU backend is usable.
+      meshWireframeFallback: Boolean(rendererCapabilities && rendererCapabilities.meshWireframeFallback === true),
       retainedGeometryTelemetry: {
         eligible: 0,
         retained: 0,
@@ -4968,6 +4939,36 @@
 	  const _sceneMeshLocalBoundsCache = new WeakMap();
 
 	  function sceneObjectModelMatrix(object, timeSeconds) {
+	    const parent = object && object.parentMatrix;
+	    if (parent instanceof Float32Array && parent.length === 16 &&
+	        parent[3] === 0 && parent[7] === 0 && parent[11] === 0 && parent[15] === 1 &&
+	        object.x === 0 && object.y === 0 && object.z === 0 &&
+	        object.rotationX === 0 && object.rotationY === 0 && object.rotationZ === 0 &&
+	        !object.spinX && !object.spinY && !object.spinZ &&
+	        !object.shiftX && !object.shiftY && !object.shiftZ &&
+	        sceneNumber(object.scaleX, 1) === 1 && sceneNumber(object.scaleY, 1) === 1 && sceneNumber(object.scaleZ, 1) === 1) {
+	      // Rigid imported parts already share their actor's complete affine
+	      // matrix. Do not reconstruct it from four transformed basis points.
+	      return parent;
+	    }
+	    if (!parent) {
+	      let out = _sceneObjectModelMatrixCache.get(object);
+	      if (!out) { out = new Float32Array(16); _sceneObjectModelMatrixCache.set(object, out); }
+	      // Compose Rz * Ry * Rx once. Transforming four basis points repeated
+	      // all six trig evaluations (and drift) four times for every actor.
+	      const rx = object.rotationX + (object.spinX || 0) * timeSeconds;
+	      const ry = object.rotationY + (object.spinY || 0) * timeSeconds;
+	      const rz = object.rotationZ + (object.spinZ || 0) * timeSeconds;
+	      const sx = Math.sin(rx), cx = Math.cos(rx), sy = Math.sin(ry), cy = Math.cos(ry), sz = Math.sin(rz), cz = Math.cos(rz);
+	      const x = sceneNumber(object.scaleX, 1), y = sceneNumber(object.scaleY, 1), z = sceneNumber(object.scaleZ, 1);
+	      out[0] = cy * cz * x; out[1] = cy * sz * x; out[2] = -sy * x; out[3] = 0;
+	      out[4] = (sx * sy * cz - cx * sz) * y; out[5] = (sx * sy * sz + cx * cz) * y; out[6] = sx * cy * y; out[7] = 0;
+	      out[8] = (cx * sy * cz + sx * sz) * z; out[9] = (cx * sy * sz - sx * cz) * z; out[10] = cx * cy * z; out[11] = 0;
+	      const origin = _objectMatrixOriginScratch;
+	      translateScenePointInto(origin, 0, 0, 0, object, timeSeconds);
+	      out[12] = origin.x; out[13] = origin.y; out[14] = origin.z; out[15] = 1;
+	      return out;
+	    }
 	    const origin = _objectMatrixOriginScratch;
 	    const axisX = _objectMatrixXScratch;
 	    const axisY = _objectMatrixYScratch;
@@ -5088,6 +5089,16 @@
 	  function sceneTransformMeshBounds(localBounds, modelMatrix) {
 	    if (!localBounds || !modelMatrix || modelMatrix.length < 16) {
 	      return null;
+	    }
+	    if (modelMatrix[3] === 0 && modelMatrix[7] === 0 && modelMatrix[11] === 0 && modelMatrix[15] === 1) {
+	      const b = localBounds, m = modelMatrix;
+	      const x=(b.minX+b.maxX)*.5, y=(b.minY+b.maxY)*.5, z=(b.minZ+b.maxZ)*.5;
+	      const ex=(b.maxX-b.minX)*.5, ey=(b.maxY-b.minY)*.5, ez=(b.maxZ-b.minZ)*.5;
+	      const wx=m[0]*x+m[4]*y+m[8]*z+m[12], wy=m[1]*x+m[5]*y+m[9]*z+m[13], wz=m[2]*x+m[6]*y+m[10]*z+m[14];
+	      const rx=Math.abs(m[0])*ex+Math.abs(m[4])*ey+Math.abs(m[8])*ez;
+	      const ry=Math.abs(m[1])*ex+Math.abs(m[5])*ey+Math.abs(m[9])*ez;
+	      const rz=Math.abs(m[2])*ex+Math.abs(m[6])*ey+Math.abs(m[10])*ez;
+	      return { minX:wx-rx, maxX:wx+rx, minY:wy-ry, maxY:wy+ry, minZ:wz-rz, maxZ:wz+rz };
 	    }
 	    let bounds = null;
 	    const world = { x: 0, y: 0, z: 0 };
@@ -5516,7 +5527,7 @@
     const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
-    const emitWireSegments = !sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0);
+    const emitWireSegments = !sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0 || bundle.meshWireframeFallback);
     const geometryRevision = sceneMeshGeometryRevision(object, vertices);
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.eligible += 1;
@@ -5553,6 +5564,21 @@
     // not per vertex corner -- which keeps the rare legacy fallback's output
     // plausible without paying per-vertex lighting cost nothing displays.
     const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
+    if (object._crowdSkin) {
+      const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
+      const bounds = sceneTransformMeshBounds(object._crowdSkin.bounds, modelMatrix);
+      const depth = sceneBoundsDepthMetrics(bounds, camera, object);
+      bundle.meshObjects.push({ id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
+        static: false, castShadow: Boolean(object.castShadow), receiveShadow: Boolean(object.receiveShadow),
+        depthWrite: object.depthWrite, bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
+        viewCulled: false, doubleSided: Boolean(object.doubleSided), skin: null, _crowdSkin: object._crowdSkin,
+        vertices, directVertices: true, retainedGeometry: true, resourceOwner: object, geometryRevision: 0,
+        modelMatrix, vertexOffset: 0, vertexCount: vertices.count });
+      bundle.retainedMeshObjectCount += 1;
+      bundle.retainedMeshVertexCount += vertices.count;
+      bundle.retainedGeometryTelemetry.retained += 1;
+      return;
+    }
     if (object.skin && vertices.joints && vertices.weights) {
       const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
       bundle.meshObjects.push({
@@ -6050,6 +6076,15 @@
     };
   }
 
+  function sceneHTMLTextureMaterialKey(entry, texture, opacity) {
+    // Texture identities can include a full serialized HTML/SVG document.
+    // Intern that immutable content before composing a per-frame lookup key;
+    // retain the original texture key on the material for upload/invalidation.
+    return ["html-texture", sceneMaterialIdentityAtom(String(entry.id || "")),
+      sceneMaterialIdentityAtom(texture.key), texture.width + "x" + texture.height,
+      opacity.toFixed(3)].join("|");
+  }
+
   function appendSceneHTMLTextureSurfaceToBundle(bundle, materialLookup, camera, entry, point, texture, timeSeconds) {
     if (!texture || !texture.ready || texture.overBudget) {
       return;
@@ -6071,7 +6106,7 @@
       emissive: 1,
       unlit: true,
     };
-    material.key = "html-texture|" + String(entry.id || "") + "|" + texture.key + "|" + texture.width + "x" + texture.height + "|" + material.opacity.toFixed(3);
+    material.key = sceneHTMLTextureMaterialKey(entry, texture, material.opacity);
     material.shaderData = sceneMaterialShaderData(material);
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
     const depth = sceneBoundsDepthMetrics(bounds, camera, surfaceObject);
