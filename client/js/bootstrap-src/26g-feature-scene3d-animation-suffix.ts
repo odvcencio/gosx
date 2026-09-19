@@ -6,6 +6,9 @@
   // through this object with a single dereference.
   window.__gosx_scene3d_animation_api = {
     createMixer: createSceneAnimationMixer,
+    buildCrowdAtlas: sceneBuildCrowdAtlas,
+    sampleExplicitAnimation: sceneSampleExplicitAnimation,
+    crowdPoseRows: sceneCrowdPoseRows,
     buildNodeTransforms: sceneAnimBuildNodeTransforms,
     computeJointMatrices: sceneAnimComputeJointMatrices,
     wasmClipJSON: sceneAnimWasmClipJSON,

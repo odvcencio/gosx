@@ -626,7 +626,51 @@
     return Object.prototype.hasOwnProperty.call(item, "blend");
   }
 
+  // A moving object usually changes its pose, not its material. Keep the
+  // normalized profile with its owner instead of rebuilding keys and shader
+  // data for every mesh part on every frame. Weak ownership drops the entry
+  // when that object leaves the scene. Snapshot nested inputs too: callers may
+  // edit a descriptor or tint in place without replacing the containing object.
+  const sceneObjectMaterialProfiles = new WeakMap();
+  const sceneSharedMaterialProfiles = new Map();
+  const sceneObjectMaterialInputKeys = [
+    "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
+    "emissive", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
+    "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineDash",
+    "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
+    "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout",
+    "shaderSource", "shaderSourceFiles", "normalMap", "roughnessMap", "metalnessMap",
+    "occlusionMap", "emissiveMap", "textureDescriptors", "renderPass",
+    "_blendModeDerived", "_renderPassDerived",
+  ];
+
+  function sceneMaterialInputEqual(value, snapshot) {
+    if (Object.is(value, snapshot)) return true;
+    if (!value || !snapshot || typeof value !== "object" || typeof snapshot !== "object") return false;
+    if (Array.isArray(value) !== Array.isArray(snapshot)) return false;
+    const keys = Object.keys(value);
+    if (keys.length !== Object.keys(snapshot).length) return false;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(snapshot, key) || !sceneMaterialInputEqual(value[key], snapshot[key])) return false;
+    }
+    return true;
+  }
+
   function sceneObjectMaterialProfile(object) {
+    const cacheable = object && typeof object === "object";
+    const cached = cacheable && sceneObjectMaterialProfiles.get(object);
+    if (cached && cached.registryVersion === sceneMaterialProfileRegistryVersion) {
+      let same = true;
+      for (let i = 0; i < sceneObjectMaterialInputKeys.length; i++) {
+        const value = object[sceneObjectMaterialInputKeys[i]], prior = cached.inputs[i];
+        // Most fields are absent, scalar or immutable strings. Keep those on
+        // the direct comparison path instead of calling the recursive walker
+        // for every field of every primitive in a swarm.
+        if (value === prior || value !== value && prior !== prior) continue;
+        if (!value || typeof value !== "object" || !sceneMaterialInputEqual(value, prior)) { same = false; break; }
+      }
+      if (same) return cached.profile;
+    }
     const kind = normalizeSceneMaterialKind(object && object.materialKind);
     const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
     // Routing must judge the same effective shader fields this profile
@@ -649,7 +693,7 @@
     const passDerived = passMarker === true ||
       (passMarker !== false &&
         sceneMaterialProfileRenderPass(object && object.renderPass) === "");
-    const profile = {
+    let profile = {
       kind,
       color: object && typeof object.color === "string" && object.color ? object.color : "#8de1ff",
       texture: object && typeof object.texture === "string" ? object.texture.trim() : "",
@@ -709,6 +753,30 @@
     profile._renderPassDerived = passDerived;
     profile.key = sceneMaterialProfileKey(profile);
     profile.shaderData = sceneMaterialShaderData(profile);
+    const registered = sceneRegisteredMaterialProfile(kind);
+    // A registered factory may deliberately read state outside the material.
+    // Keep its per-frame evaluation contract rather than memoizing that result.
+    if (cacheable && !(registered && registered.shaderDataFactory)) {
+      // Equal profiles can also share identity across actors. The draw bundle
+      // then resolves each material key once, rather than comparing the same
+      // string for every repeated primitive. Weak refs retain no dead atlases.
+      if (typeof WeakRef === "function") {
+        const sharedRef = sceneSharedMaterialProfiles.get(profile.key);
+        const shared = sharedRef && sharedRef.deref();
+        if (shared) profile = shared;
+        else {
+          if (sceneSharedMaterialProfiles.size >= 128) sceneSharedMaterialProfiles.delete(sceneSharedMaterialProfiles.keys().next().value);
+          sceneSharedMaterialProfiles.set(profile.key, new WeakRef(profile));
+        }
+      }
+      sceneObjectMaterialProfiles.set(object, {
+        registryVersion: sceneMaterialProfileRegistryVersion,
+        inputs: sceneObjectMaterialInputKeys.map(function(key) { return sceneCloneData(object[key]); }),
+        profile,
+      });
+    } else if (cacheable) {
+      sceneObjectMaterialProfiles.delete(object);
+    }
     return profile;
   }
 
@@ -774,21 +842,64 @@
     if (registryProfile) {
       parts.push("profile:" + registryProfile.version + ":" + String(registryProfile.key || ""));
     }
-    return parts.join("|");
+    return parts.map(sceneMaterialIdentityAtom).join("|");
   }
+
+  // Material lookup keys must not concatenate an embedded atlas for every
+  // actor, then make Map hash that megabyte string again. Intern long immutable
+  // atoms by exact string equality. Monotonic tokens never alias another value
+  // after eviction; unlike a short digest, a collision cannot merge materials.
+  const sceneMaterialIdentityAtoms = new Map();
+  let sceneMaterialIdentityUnits = 0;
+  let sceneMaterialIdentitySequence = 0;
+  const sceneMaterialIdentityMaxUnits = 16 * 1024 * 1024;
+
+  function sceneMaterialIdentityAtom(value) {
+    const text = String(value);
+    if (text.length < 256 || text.length > sceneMaterialIdentityMaxUnits) return text.length + ":" + text;
+    let token = sceneMaterialIdentityAtoms.get(text);
+    if (token === undefined) {
+      while (sceneMaterialIdentityAtoms.size >= 64 || sceneMaterialIdentityUnits + text.length > sceneMaterialIdentityMaxUnits) {
+        const oldest = sceneMaterialIdentityAtoms.keys().next().value;
+        sceneMaterialIdentityUnits -= oldest.length;
+        sceneMaterialIdentityAtoms.delete(oldest);
+      }
+      token = "@" + (++sceneMaterialIdentitySequence);
+      sceneMaterialIdentityAtoms.set(text, token);
+      sceneMaterialIdentityUnits += text.length;
+    }
+    return token;
+  }
+
+  let sceneMaterialBundleSequence = 0;
 
   function sceneBundleMaterialIndex(bundle, materialLookup, profile) {
     if (!bundle || !Array.isArray(bundle.materials)) {
       return 0;
     }
+    // A small numeric cursor on normalized profiles avoids a mixed object /
+    // string Map probe for every repeated mesh. It retains no bundle, scene,
+    // geometry or texture owner. Frozen caller profiles use the normal lookup.
+    const token = materialLookup && (materialLookup._sceneMaterialToken ||
+      (materialLookup._sceneMaterialToken = ++sceneMaterialBundleSequence));
+    if (token && profile && profile._sceneBundleToken === token) return profile._sceneBundleIndex;
     const key = profile && profile.key ? profile.key : sceneMaterialProfileKey(profile);
-    if (materialLookup && materialLookup.has(key)) {
-      return materialLookup.get(key);
+    const keyed = materialLookup && materialLookup.get(key);
+    const index = keyed !== undefined && keyed !== null ? keyed : bundle.materials.length;
+    if (keyed === undefined || keyed === null) {
+      bundle.materials.push(profile);
+      if (materialLookup) materialLookup.set(key, index);
     }
-    const index = bundle.materials.length;
-    bundle.materials.push(profile);
-    if (materialLookup) {
-      materialLookup.set(key, index);
+    if (token && profile && typeof profile === "object" && Object.isExtensible(profile)) {
+      if (!Object.prototype.hasOwnProperty.call(profile, "_sceneBundleToken")) {
+        Object.defineProperties(profile, {
+          _sceneBundleToken: { value: token, writable: true },
+          _sceneBundleIndex: { value: index, writable: true },
+        });
+      } else {
+        profile._sceneBundleToken = token;
+        profile._sceneBundleIndex = index;
+      }
     }
     return index;
   }
@@ -902,3 +1013,50 @@
   }
 
   // clamp01 is defined in 11-scene-math.js (shared across all modules).
+
+  // Embedded glTF textures also appear in material identity strings. Scanning
+  // those megabytes once per pass, per frame, can dominate the render thread.
+  // Strings are immutable: retain a content digest, not a material object, so
+  // CSS-resolved appearance and replacement textures still invalidate plans.
+  // Both entry count and retained UTF-16 code units are bounded across mounts.
+  var sceneLongStringHashes = new Map();
+  var sceneLongStringHashUnits = 0;
+  var sceneLongStringHashScannedUnits = 0;
+  var sceneLongStringHashMaxUnits = 16 * 1024 * 1024;
+  var sceneLongStringHashMaxEntries = 256;
+
+  function sceneContentHashString(hash, value) {
+    const text = String(value || "");
+    if (text.length < 256) {
+      for (let i = 0; i < text.length; i += 1) {
+        hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
+      }
+      return hash;
+    }
+    let digest = sceneLongStringHashes.get(text);
+    if (digest !== undefined) {
+      // Animated uniform identities must not evict still-used embedded
+      // texture hashes. Refresh recency within the same 16 MiB byte cap.
+      sceneLongStringHashes.delete(text);
+      sceneLongStringHashes.set(text, digest);
+    }
+    if (digest === undefined) {
+      digest = 2166136261 >>> 0;
+      for (let i = 0; i < text.length; i += 1) {
+        digest = Math.imul(digest ^ text.charCodeAt(i), 16777619) >>> 0;
+      }
+      sceneLongStringHashScannedUnits += text.length;
+      if (text.length <= sceneLongStringHashMaxUnits) {
+        while (sceneLongStringHashes.size >= sceneLongStringHashMaxEntries ||
+            sceneLongStringHashUnits + text.length > sceneLongStringHashMaxUnits) {
+          const oldest = sceneLongStringHashes.keys().next().value;
+          sceneLongStringHashUnits -= oldest.length;
+          sceneLongStringHashes.delete(oldest);
+        }
+        sceneLongStringHashes.set(text, digest);
+        sceneLongStringHashUnits += text.length;
+      }
+    }
+    hash = Math.imul(hash ^ text.length, 16777619) >>> 0;
+    return Math.imul(hash ^ digest, 16777619) >>> 0;
+  }

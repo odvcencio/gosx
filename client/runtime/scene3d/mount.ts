@@ -62,6 +62,7 @@
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
+    sceneState._crowdWebGLRequested = sceneForcesWebGL(props) || sceneRequiresWebGL(props);
     // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
@@ -348,6 +349,33 @@
     }
 
     let canvas = createSceneMountCanvas();
+    // Submit the two measured cold-start programs on the final canvas/context
+    // while the initial GLB hydration above continues. Do this before attaching
+    // mount layers so a superseded factory has only private state to release.
+    const initialShaderPreparation = await prepareSceneInitialWebGLRenderer(
+      canvas,
+      props,
+      capability,
+      sceneState,
+      scene3DFactoryOwned,
+    );
+    if (!scene3DFactoryOwned()) {
+      discardSceneInitialWebGLRenderer(initialShaderPreparation);
+      invalidateSceneModelHydration(sceneState);
+      settleSceneModelTextureVariantScope(
+        sceneState._modelTextureVariantScope,
+        sceneModelTextureVariantContextForRenderer(null),
+      );
+      if (sceneAnimationToggle && sceneAnimationToggleBound &&
+          typeof sceneAnimationToggle.removeEventListener === "function") {
+        sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
+      }
+      if (sceneAnimationToggle && sceneAnimationToggle.__gosxScene3DOwner === sceneMountOwner) {
+        delete sceneAnimationToggle.__gosxScene3DOwner;
+      }
+      if (mount.__gosxScene3DOwner === sceneMountOwner) delete mount.__gosxScene3DOwner;
+      return {};
+    }
     mount.appendChild(canvas);
     scenePublishWaterShaderSourcesToMount(mount, canvas, mountedWaterShaderSources);
     setAttrValue(mount, "data-gosx-scene3d-water-frame-seq",
@@ -383,7 +411,16 @@
     let viewport = applySceneViewport(mount, canvas, labelLayer, sceneViewportFromMount(mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
     scenePrimeAdaptiveQuality(adaptiveQuality, viewport, mount, sceneState);
 
-    const initialRenderer = createSceneRenderer(canvas, props, capability);
+    let initialRenderer = null;
+    try {
+      initialRenderer = createSceneRenderer(canvas, props, capability);
+    } catch (error) {
+      discardSceneInitialWebGLRenderer(initialShaderPreparation);
+      console.warn("[gosx] Scene3D initial renderer creation failed:", error && error.message ? error.message : error);
+    }
+    if (!initialRenderer || !initialRenderer.renderer || initialRenderer.renderer.type !== "webgl-pbr") {
+      discardSceneInitialWebGLRenderer(initialShaderPreparation);
+    }
     if (!initialRenderer || !initialRenderer.renderer) {
       // Fence model hydration before returning the unsupported handle so a late
       // asset can only finish as stale and release its staged resources.
@@ -434,6 +471,7 @@
       canvas.appendChild(sentinelLayer);
     }
     let renderer = initialRenderer.renderer;
+    sceneState._crowdRenderer = renderer;
     settleSceneModelTextureVariantScope(
       sceneState._modelTextureVariantScope,
       sceneModelTextureVariantContextForRenderer(renderer)
@@ -1361,6 +1399,7 @@
 	      }
       const previous = renderer;
       renderer = nextRenderer;
+      sceneState._crowdRenderer = renderer;
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
       publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
       applySceneRendererState(mount, renderer, renderer.kind === "webgpu" ? "" : fallbackReason);
@@ -1757,6 +1796,7 @@
         /* dispose errors on a lost context are expected */
       }
       renderer = sceneRendererLostStub;
+      sceneState._crowdRenderer = renderer;
       applySceneRendererState(mount, renderer, "webgl-context-lost");
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
@@ -2977,7 +3017,10 @@
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
-        { retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true) },
+        {
+          retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
+          meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
+        },
       );
       latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);

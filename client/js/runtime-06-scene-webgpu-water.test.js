@@ -1597,7 +1597,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
 
   // WebGL: clock is set right after scratchSelenaViewProjection is populated
   // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
-  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000;/);
+  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*prepareRigidMeshBatches\(bundle\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000;/);
 });
 
 test("Scene3D selena time auto-uniform: time is forced before customUniforms (reserved name)", () => {

@@ -124,39 +124,56 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
-	ID                string           `json:"id"`
-	Src               string           `json:"src"`
-	MaterialKind      string           `json:"materialKind,omitempty"`
-	Color             string           `json:"color,omitempty"`
-	Texture           string           `json:"texture,omitempty"`
-	Opacity           *float64         `json:"opacity,omitempty"`
-	Emissive          *float64         `json:"emissive,omitempty"`
-	AlphaCutoff       AlphaCutoff      `json:"alphaCutoff,omitzero"`
-	BlendMode         string           `json:"blendMode,omitempty"`
-	Roughness         float64          `json:"roughness,omitempty"`
-	Metalness         float64          `json:"metalness,omitempty"`
-	SpecularIntensity *float64         `json:"specularIntensity,omitempty"`
-	SpecularColor     *[3]float64      `json:"specularColor,omitempty"`
-	IOR               *float64         `json:"ior,omitempty"`
-	Instances         []MeshInstanceIR `json:"instances"`
-	Pickable          *bool            `json:"pickable,omitempty"`
-	Visible           *bool            `json:"visible,omitempty"`
-	Static            *bool            `json:"static,omitempty"`
+	ID                 string      `json:"id"`
+	Src                string      `json:"src"`
+	MaterialKind       string      `json:"materialKind,omitempty"`
+	Color              string      `json:"color,omitempty"`
+	Texture            string      `json:"texture,omitempty"`
+	Opacity            *float64    `json:"opacity,omitempty"`
+	Emissive           *float64    `json:"emissive,omitempty"`
+	AlphaCutoff        AlphaCutoff `json:"alphaCutoff,omitzero"`
+	BlendMode          string      `json:"blendMode,omitempty"`
+	Roughness          float64     `json:"roughness,omitempty"`
+	Metalness          float64     `json:"metalness,omitempty"`
+	SpecularIntensity  *float64    `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64 `json:"specularColor,omitempty"`
+	IOR                *float64    `json:"ior,omitempty"`
+	CustomVertex       string      `json:"customVertex,omitempty"`
+	CustomFragment     string      `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string      `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string      `json:"customFragmentWGSL,omitempty"`
+	// *Ref fields replace their inline source when SceneIR hoists repeated shaders.
+	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
+	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
+	CustomVertexWGSLRef   string            `json:"customVertexWGSLRef,omitempty"`
+	CustomFragmentWGSLRef string            `json:"customFragmentWGSLRef,omitempty"`
+	CustomUniforms        map[string]any    `json:"customUniforms,omitempty"`
+	ShaderBackend         string            `json:"shaderBackend,omitempty"`
+	ShaderLayout          map[string]any    `json:"shaderLayout,omitempty"`
+	ShaderSource          string            `json:"shaderSource,omitempty"`
+	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
+	Instances             []MeshInstanceIR  `json:"instances"`
+	Pickable              *bool             `json:"pickable,omitempty"`
+	Visible               *bool             `json:"visible,omitempty"`
+	Static                *bool             `json:"static,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
 type MeshInstanceIR struct {
-	ID           string    `json:"id,omitempty"`
-	X            float64   `json:"x,omitempty"`
-	Y            float64   `json:"y,omitempty"`
-	Z            float64   `json:"z,omitempty"`
-	ScaleX       float64   `json:"scaleX,omitempty"`
-	ScaleY       float64   `json:"scaleY,omitempty"`
-	ScaleZ       float64   `json:"scaleZ,omitempty"`
-	RotationX    float64   `json:"rotationX,omitempty"`
-	RotationY    float64   `json:"rotationY,omitempty"`
-	RotationZ    float64   `json:"rotationZ,omitempty"`
-	ParentMatrix []float64 `json:"parentMatrix,omitempty"`
+	Animation     string    `json:"animation,omitempty"`
+	AnimationTime float64   `json:"animationTime,omitempty"`
+	AnimationLoop bool      `json:"animationLoop,omitempty"`
+	ID            string    `json:"id,omitempty"`
+	X             float64   `json:"x,omitempty"`
+	Y             float64   `json:"y,omitempty"`
+	Z             float64   `json:"z,omitempty"`
+	ScaleX        float64   `json:"scaleX,omitempty"`
+	ScaleY        float64   `json:"scaleY,omitempty"`
+	ScaleZ        float64   `json:"scaleZ,omitempty"`
+	RotationX     float64   `json:"rotationX,omitempty"`
+	RotationY     float64   `json:"rotationY,omitempty"`
+	RotationZ     float64   `json:"rotationZ,omitempty"`
+	ParentMatrix  []float64 `json:"parentMatrix,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -1531,6 +1548,9 @@ func cloneShaderLibCollections(ir *SceneIR) {
 	if len(ir.InstancedMeshes) > 0 {
 		ir.InstancedMeshes = append([]InstancedMeshIR(nil), ir.InstancedMeshes...)
 	}
+	if len(ir.InstancedGLBMeshes) > 0 {
+		ir.InstancedGLBMeshes = append([]InstancedGLBMeshIR(nil), ir.InstancedGLBMeshes...)
+	}
 	if len(ir.ComputeParticles) > 0 {
 		ir.ComputeParticles = append([]ComputeParticlesIR(nil), ir.ComputeParticles...)
 	}
@@ -1595,7 +1615,8 @@ type shaderLibPair struct {
 // collectShaderLibPairs walks every SceneIR collection whose IR struct
 // declares a *Ref sibling field for a shader-source field. It returns one
 // shaderLibPair per field. This covers objects, models (via the embedded
-// ObjectIR), points, instancedMeshes, computeParticles, and waterSystems.
+// ObjectIR), points, instancedMeshes, instancedGLBMeshes, computeParticles,
+// and waterSystems.
 //
 // PostEffects shader fields, such as CustomPostIR.FragmentWGSL, are not
 // covered. CustomPostIR declares no *Ref sibling field, so a duplicated
@@ -1606,7 +1627,7 @@ func collectShaderLibPairs(ir *SceneIR) []shaderLibPair {
 	// case — a scene with no shader-lib candidates at all — pays for one
 	// slice allocation instead of the ~9 grow-and-copy steps a nil-start
 	// append chain would trigger once a few hundred pairs accumulate.
-	capacity := 4*(len(ir.Objects)+len(ir.Models)+len(ir.Points)) +
+	capacity := 4*(len(ir.Objects)+len(ir.Models)+len(ir.Points)+len(ir.InstancedGLBMeshes)) +
 		len(ir.InstancedMeshes) + 5*len(ir.ComputeParticles) + 14*len(ir.WaterSystems)
 	pairs := make([]shaderLibPair, 0, capacity)
 	eachShaderLibPair(ir, func(p shaderLibPair) bool {
@@ -1653,6 +1674,13 @@ func eachShaderLibPair(ir *SceneIR, visit func(shaderLibPair) bool) {
 			}
 		}
 	}
+	for i := range ir.InstancedGLBMeshes {
+		for _, p := range instancedGLBMeshShaderLibPairs(&ir.InstancedGLBMeshes[i]) {
+			if !visit(p) {
+				return
+			}
+		}
+	}
 	for i := range ir.ComputeParticles {
 		for _, p := range computeParticlesShaderLibPairs(&ir.ComputeParticles[i]) {
 			if !visit(p) {
@@ -1690,6 +1718,15 @@ func pointsShaderLibPairs(pt *PointsIR) []shaderLibPair {
 func instancedMeshShaderLibPairs(m *InstancedMeshIR) []shaderLibPair {
 	return []shaderLibPair{
 		{&m.CullKernelWGSL, &m.CullKernelWGSLRef},
+	}
+}
+
+func instancedGLBMeshShaderLibPairs(m *InstancedGLBMeshIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&m.CustomVertex, &m.CustomVertexRef},
+		{&m.CustomFragment, &m.CustomFragmentRef},
+		{&m.CustomVertexWGSL, &m.CustomVertexWGSLRef},
+		{&m.CustomFragmentWGSL, &m.CustomFragmentWGSLRef},
 	}
 }
 
@@ -2412,6 +2449,25 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
 	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setAlphaCutoff(record, "alphaCutoff", item.AlphaCutoff)
+	setString(record, "customVertex", item.CustomVertex)
+	setString(record, "customFragment", item.CustomFragment)
+	setString(record, "customVertexWGSL", item.CustomVertexWGSL)
+	setString(record, "customFragmentWGSL", item.CustomFragmentWGSL)
+	setString(record, "customVertexRef", item.CustomVertexRef)
+	setString(record, "customFragmentRef", item.CustomFragmentRef)
+	setString(record, "customVertexWGSLRef", item.CustomVertexWGSLRef)
+	setString(record, "customFragmentWGSLRef", item.CustomFragmentWGSLRef)
+	if len(item.CustomUniforms) > 0 {
+		record["customUniforms"] = cloneSceneAnyMap(item.CustomUniforms)
+	}
+	setString(record, "shaderBackend", item.ShaderBackend)
+	if len(item.ShaderLayout) > 0 {
+		record["shaderLayout"] = cloneSceneAnyMap(item.ShaderLayout)
+	}
+	setString(record, "shaderSource", item.ShaderSource)
+	if len(item.ShaderSourceFiles) > 0 {
+		record["shaderSourceFiles"] = cloneSceneStringMap(item.ShaderSourceFiles)
+	}
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
@@ -2425,6 +2481,11 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 		instances := make([]map[string]any, 0, len(item.Instances))
 		for _, inst := range item.Instances {
 			instRecord := map[string]any{}
+			setString(instRecord, "animation", inst.Animation)
+			setNumeric(instRecord, "animationTime", inst.AnimationTime)
+			if inst.AnimationLoop {
+				instRecord["animationLoop"] = true
+			}
 			if inst.ID != "" {
 				instRecord["id"] = inst.ID
 			}

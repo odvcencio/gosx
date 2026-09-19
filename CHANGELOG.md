@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.56.5 (2026-09-19)
+
+### Added: efficient animated crowds and instanced Selena materials
+
+- Instanced GLB batches retain one immutable geometry set while actors carry independent IDs, transforms, animation clips, clocks, material overrides, bounds, and shadow state. Compact instance-only updates reuse hydrated assets and renderer resources with bounded residency.
+- The WebGL renderer shares skinned pose atlases across color and depth draws, keeps per-renderer GPU caches isolated, and conservatively bounds animated actors under affine transforms.
+- Compiled Selena material payloads now survive typed lowering, shader-library hoisting, browser inflation, normalization, and hydration for `InstancedGLBMesh` batches, including skinned variants. Generic custom-material skinning behavior is unchanged.
+
+### Fixed: Scene3D startup, cache, texture, and hub lifecycle safety
+
+- Initial WebGL shader programs can compile in parallel with GLB hydration without crossing context or mount ownership boundaries; cancellation, replacement, link failure, and renderer fallback release every owned resource once.
+- Material profiles, authored-program keys, texture digests, embedded GLB image URLs, and HTML surface textures reuse stable identities while still invalidating on relevant source, uniform declaration, alpha-mask, unlit, and appearance changes.
+- Hub disconnect and slow-writer paths no longer let a stalled client block shared broadcast progress.
+
 ## v0.56.4 (2026-09-13)
 
 ### Fixed: bounded concurrent cold file-route compilation

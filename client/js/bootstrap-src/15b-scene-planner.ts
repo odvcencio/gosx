@@ -65,6 +65,10 @@
     if (lastPrepared && lastPrepared.signature === signature) {
       scenePlannerTelemetryState.cacheHits += 1;
       lastPrepared.ir = source;
+      // Equal render content can arrive in fresh per-frame mesh objects. The
+      // renderer keys crowd/rigid batches by those identities, so cached pass
+      // buckets must follow this bundle even when their ordering is unchanged.
+      lastPrepared.pbrPasses = prepareScenePBRPasses(source, lastPrepared.pbrPasses);
       lastPrepared.camera = resolvedCamera;
       lastPrepared.viewport = viewport;
       lastPrepared.resolvedEnv = source.environment || {};
@@ -327,6 +331,7 @@
       mount,
       sentinels,
       styles: typeof Map === "function" ? new Map() : null,
+      properties: typeof Map === "function" ? new Map() : null,
       hasComputedStyle: Boolean(win && typeof win.getComputedStyle === "function"),
       revision,
       transitionFrame: animationUntil > now ? Math.floor(now / 16) : 0,
@@ -462,6 +467,13 @@
     }
     return String(value);
   }
+  // Numeric poses and draw ranges are consumed by the render planner, not
+  // CSS resolution. Keep authored var(...) strings in this signature so a
+  // binding being added, replaced or removed still invalidates its patches.
+  const sceneCSSPoseInputKeys = new Set([
+    "x", "y", "z", "rotationX", "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
+    "depthCenter", "vertexOffset", "vertexCount",
+  ]);
 
   function sceneCSSHashRecordKeys(hash, record, keys) {
     if (!record || typeof record !== "object") {
@@ -469,6 +481,10 @@
     }
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
+      // Absent properties have no CSS input to invalidate. Most retained
+      // mesh records only supply a few fields in this shared schema.
+      if (record[key] === undefined) continue;
+      if (typeof record[key] === "number" && sceneCSSPoseInputKeys.has(key)) continue;
       hash = scenePlannerHashString(hash, key);
       if (key === "specularIntensity" || key === "specularColor") {
         // Full-precision factor hashing: the shared *1000 number
@@ -1068,6 +1084,8 @@
   }
 
   function sceneCSSReadPropertyOnElement(css, element, name) {
+    let properties = css && css.properties && css.properties.get(element);
+    if (properties && properties.has(name)) return properties.get(name);
     const style = sceneCSSComputedStyle(css, element);
     if (!style) {
       return null;
@@ -1079,7 +1097,15 @@
       value = style[name];
     }
     const text = String(value == null ? "" : value).trim();
-    return text === "" ? null : text;
+    const result = text === "" ? null : text;
+    // Computed style is stable for this synchronous resolution pass. Cache
+    // reads as well as the style object; a thousand objects can inherit the
+    // same defaults without a thousand DOM calls for each property.
+    if (css && css.properties) {
+      if (!properties) { properties = new Map(); css.properties.set(element, properties); }
+      properties.set(name, result);
+    }
+    return result;
   }
 
   function sceneCSSComputedStyle(css, element) {
@@ -1318,12 +1344,14 @@
     }
   }
 
-  function prepareScenePBRPasses(bundle) {
+  function prepareScenePBRPasses(bundle, reuse) {
     const objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
     const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials : [];
-    const opaque = [];
-    const alpha = [];
-    const additive = [];
+    const passes = reuse || { opaque: [], alpha: [], additive: [] };
+    const opaque = passes.opaque;
+    const alpha = passes.alpha;
+    const additive = passes.additive;
+    opaque.length = alpha.length = additive.length = 0;
 
     for (let index = 0; index < objects.length; index += 1) {
       const object = objects[index];
@@ -1351,7 +1379,7 @@
       additive.sort(scenePlannerDepthSort);
     }
 
-    return { opaque, alpha, additive };
+    return passes;
   }
 
   function scenePreparedPassList(worldDrawPlan, pbrPasses) {
@@ -1912,12 +1940,7 @@
   }
 
   function scenePlannerHashString(hash, value) {
-    const text = String(value || "");
-    for (let i = 0; i < text.length; i += 1) {
-      hash ^= text.charCodeAt(i);
-      hash = Math.imul(hash, 16777619) >>> 0;
-    }
-    return hash;
+    return sceneContentHashString(hash, value);
   }
 
   // Exact serialization for specular factor fields: numbers serialize

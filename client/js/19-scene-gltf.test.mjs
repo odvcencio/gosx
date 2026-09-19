@@ -1622,12 +1622,14 @@ test("EXT_mesh_gpu_instancing draws one object per instance", () => {
     ({
       objects: scene.objects.length,
       ids: scene.objects.map(function(o) { return o.id; }),
+      wireframe: scene.objects.map(function(o) { return o.wireframe; }),
       firstCorners: scene.objects.map(function(o) {
         return [o.vertices.positions[0], o.vertices.positions[1], o.vertices.positions[2]];
       })
     });
   `));
   assert.equal(result.objects, 3, "three instance translations must draw three objects");
+  assert.deepEqual(result.wireframe, [false, false, false], "untextured imported triangles stay solid");
   assert.deepEqual(result.ids, ["tri-prim-0-inst-0", "tri-prim-0-inst-1", "tri-prim-0-inst-2"]);
   assert.deepEqual(result.firstCorners, [[0, 0, 0], [10, 0, 0], [0, 0, 10]]);
 });

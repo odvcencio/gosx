@@ -96,6 +96,21 @@ function gosxConfigureSceneScript(script, role, src) {
       : null;
   }
 
+  function sceneWebGLInitialProgramAPI() {
+    const api = sceneWebGLChunkAPI();
+    return {
+      createContext: typeof createScenePBRContext === "function"
+        ? createScenePBRContext
+        : (api && typeof api.createScenePBRContext === "function" ? api.createScenePBRContext : null),
+      prepare: typeof prepareScenePBRInitialRenderer === "function"
+        ? prepareScenePBRInitialRenderer
+        : (api && typeof api.prepareScenePBRInitialRenderer === "function" ? api.prepareScenePBRInitialRenderer : null),
+      discard: typeof discardScenePBRInitialPrograms === "function"
+        ? discardScenePBRInitialPrograms
+        : (api && typeof api.discardScenePBRInitialPrograms === "function" ? api.discardScenePBRInitialPrograms : null),
+    };
+  }
+
   function createSceneWebGLResult(canvas, props, capability, fallbackReason) {
     // Water scenes that land on WebGL (e.g. after a WebGPU device loss /
     // watchdog fallback, or any inline webgl selection) must render via the
@@ -117,13 +132,16 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     const pbrFactory = sceneWebGLRendererFactory();
     if (pbrFactory) {
-      const useCanvasAlpha = sceneCanvasAlpha(props);
-      const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-        alpha: useCanvasAlpha,
-        premultipliedAlpha: useCanvasAlpha,
-        antialias: sceneWebGLAntialias(props, capability),
-        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
-      }) : null;
+      const initialAPI = sceneWebGLInitialProgramAPI();
+      const gl = initialAPI.createContext
+        ? initialAPI.createContext(canvas, props, capability)
+        : (typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+            alpha: sceneCanvasAlpha(props),
+            premultipliedAlpha: sceneCanvasAlpha(props),
+            antialias: sceneWebGLAntialias(props, capability),
+            depth: true,
+            powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+          }) : null);
       if (gl) {
         const pbrRenderer = pbrFactory(gl, canvas, {});
         if (pbrRenderer) { return { renderer: pbrRenderer, fallbackReason: fallbackReason, degraded: [] }; }
@@ -145,6 +163,27 @@ function gosxConfigureSceneScript(script, role, src) {
     var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : null;
     if (!systems || !systems.length) return null;
     return systems[0] || null;
+  }
+
+  async function prepareSceneInitialWebGLRenderer(canvas, props, capability, state, isCurrent) {
+    if (sceneFirstWaterEntry(props) || !sceneMountWantsWebGLFirst(props, capability)) return null;
+    const api = sceneWebGLInitialProgramAPI();
+    if (!api.prepare) return null;
+    try {
+      return await api.prepare(canvas, props, capability, {
+        state,
+        isCurrent,
+      });
+    } catch (error) {
+      console.warn("[gosx] failed to prepare initial Scene3D shaders:", error && error.message ? error.message : error);
+      return null;
+    }
+  }
+
+  function discardSceneInitialWebGLRenderer(preparation) {
+    if (!preparation || !preparation.gl || !preparation.owner) return;
+    const api = sceneWebGLInitialProgramAPI();
+    if (api.discard) api.discard(preparation.gl, preparation.owner);
   }
 
   function sceneWebGLAntialias(props, capability) {
@@ -1047,9 +1086,21 @@ function gosxConfigureSceneScript(script, role, src) {
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
-    const normalized = normalizeSceneObject(source, index);
+    const sharedGeometry = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
+      !(source && source.skin) && rawObject && rawObject.vertices
+      ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
+    // The shared primitive was already normalized and validated on first
+    // hydration. Normalize only instance metadata; cloning its normal/UV/
+    // tangent arrays again is proportional to the whole incoming swarm.
+    const normalized = sharedGeometry
+      ? normalizeSceneObject(Object.assign({}, source, {vertices: null}), index, {vertices: sharedGeometry})
+      : normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
-      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource);
+      // Normalization creates a new vertices wrapper. The cache belongs to
+      // the decoded asset's original primitive, not that temporary wrapper.
+      // Looking up the latter rebakes every new actor before throwing its
+      // geometry away in favor of the shared stream during staging.
+      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
     }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
@@ -1091,8 +1142,9 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneModelTransformTangents(values, normals, model, orientation) {
+    const modelMatrix = sceneModelTransformMatrix(model);
     const out = sceneModelTransformMeshFloats(values, 4, function(x, y, z, w) {
-      const tangent = sceneModelTransform({ x: x, y: y, z: z }, model, 1);
+      const tangent = sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, false);
       return { x: tangent.x, y: tangent.y, z: tangent.z, w: sceneNumber(w, 1) * orientation };
     });
     for (let i = 0; i + 3 < out.length; i += 4) {
@@ -1104,7 +1156,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return out;
   }
 
-  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource) {
+  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry) {
     const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
     if (!vertices || !vertices.positions || !vertices.count) {
       return null;
@@ -1129,8 +1181,17 @@ function gosxConfigureSceneScript(script, role, src) {
     });
     const hasSkin = instanced.skin && typeof instanced.skin === "object";
     const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
-    const modelOrientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
-    if (hasSkin) {
+    // Model TRS and its inverse-transpose are constant across this snapshot.
+    // Rebuilding them inside the attribute mapper paid trigonometry and a
+    // matrix inversion for every corner of every imported triangle.
+    const modelMatrix = sceneModelTransformMatrix(model);
+    const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
+    const modelOrientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
+    const sharedRigidGeometry = !hasSkin && !morphMeta && !nodeAnimSource && model && model._shareRigidGeometry
+      ? sharedGeometry || sceneRigidPrimitiveGeometry.get(vertices) : null;
+    if (sharedRigidGeometry) {
+      instanced.vertices = sharedRigidGeometry;
+    } else if (hasSkin) {
       instanced.vertices = {
         count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
@@ -1143,12 +1204,12 @@ function gosxConfigureSceneScript(script, role, src) {
       };
     } else {
       const transformedNormals = sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
-        return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
+        return sceneNormalizeDirection(sceneMatrixTransformInto({}, normalMatrix, x, y, z, 3, false));
       });
       instanced.vertices = {
         count: vertexCount,
         positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
-          return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
+          return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
         }),
         normals: transformedNormals,
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
@@ -1184,9 +1245,22 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneApplyModelMaterialName(instanced, model);
     sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
-    const normalized = normalizeSceneObject(instanced, prefix);
+    const normalized = sharedRigidGeometry
+      ? normalizeSceneObject(Object.assign({}, instanced, {vertices: null}), prefix, {vertices: sharedRigidGeometry})
+      : normalizeSceneObject(instanced, prefix);
     sceneApplyModelMaterialName(normalized, model);
-    if (!hasSkin && normalized && normalized.vertices) {
+    if (!hasSkin && !morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
+      // A rigid imported mesh owns a complete, immutable geometry snapshot.
+      // Mark it explicitly so the renderer can retain its attribute buffers
+      // instead of rebuilding every triangle and hashing all vertices each
+      // frame. Live model transforms advance the revision when rebaked.
+      normalized.vertices.immutable = true;
+      normalized.vertices.revision = 0;
+    }
+    if (sharedRigidGeometry && normalized) {
+      normalized.vertices = sharedRigidGeometry;
+      normalized._modelLocalVertices = sharedRigidGeometry;
+    } else if (!hasSkin && normalized && normalized.vertices) {
       normalized._modelLocalVertices = {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
@@ -2518,6 +2592,19 @@ function gosxConfigureSceneScript(script, role, src) {
               await gltfApi.sceneLoadGLTFModel(key, variantContext),
               key
             ), key);
+            // Explicit WebGL scene prewarms include palette/bounds work before
+            // the decoded asset is marked ready; all actor waiters share this promise.
+            if (hydrationMeta && hydrationMeta.crowd && hydrationMeta.state && hydrationMeta.state._crowdWebGLRequested &&
+                asset.objects.length && asset.objects.every(o => o.skin && !o._morphAnim && !o._nodeAnim)) {
+              try {
+                const animationAPI = await ensureAnimationFeatureLoaded();
+                const skins = new Set(asset.objects.map(o => o.skinIndex));
+                for (const skin of skins) animationAPI.buildCrowdAtlas(asset, skin);
+              } catch (error) {
+                // Unsupported ordinary Model assets retain their existing playback.
+                asset._crowdUnsupported = String(error && error.message || error);
+              }
+            }
             sceneModelAssetReady.add(cacheKey);
             return { asset, error: null };
           }
@@ -2706,7 +2793,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (animatedTransforms && typeof animatedTransforms.clear === "function") {
       animatedTransforms.clear();
     }
-    if (sceneModelWasmMixerActive(record)) {
+    if (record.explicitClips) {
+      record.animationApi.sampleExplicitAnimation(record.explicitClips, record.model._crowdPose, animatedTransforms);
+    } else if (sceneModelWasmMixerActive(record)) {
       sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
     } else if (record.mixer) {
       record.mixer.update(deltaTime, function(targetNode, property, value) {
@@ -2956,6 +3045,11 @@ function gosxConfigureSceneScript(script, role, src) {
     }
 
     const clips = sceneCloneModelAnimations(asset.animations);
+    if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
+      record.explicitClips = clips;
+      sceneApplyModelSkinPose(record, 0, false);
+      return;
+    }
     const wantWasmMixer = clips.length > 0
       && typeof window !== "undefined"
       && window.__gosx_motion_wasm
@@ -3143,19 +3237,21 @@ function gosxConfigureSceneScript(script, role, src) {
       return false;
     }
     let changed = false;
+    const modelMatrix = sceneModelTransformMatrix(record.model);
+    const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
+    const orientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
     for (let index = 0; index < record.objectIDs.length; index += 1) {
       const object = state.objects && state.objects.get ? state.objects.get(record.objectIDs[index]) : null;
       const local = object && object._modelLocalVertices;
       if (!object || !object.vertices || !local || !local.positions) {
         continue;
       }
-      const orientation = sceneAffineDeterminant(sceneModelTransformMatrix(record.model), 0) < 0 ? -1 : 1;
       object.vertices.positions = sceneModelTransformMeshFloats(local.positions, 3, function(x, y, z) {
-        return sceneModelTransform({ x: x, y: y, z: z }, record.model, 0);
+        return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
       });
       if (local.normals && local.normals.length) {
         object.vertices.normals = sceneModelTransformMeshFloats(local.normals, 3, function(x, y, z) {
-          return sceneNormalizeDirection(sceneObjectTransformNormal(record.model, { x: x, y: y, z: z }, 0));
+          return sceneNormalizeDirection(sceneMatrixTransformInto({}, normalMatrix, x, y, z, 3, false));
         });
       }
       if (local.tangents && local.tangents.length) {
@@ -3164,6 +3260,9 @@ function gosxConfigureSceneScript(script, role, src) {
       object.vertices.uvs = local.uvs;
       object.vertices.indices = sceneCloneModelMeshIndices(local.indices, orientation < 0, local.count);
       object.vertices.count = local.count;
+      if (object.vertices.immutable === true) {
+        object.vertices.revision = Math.max(0, sceneNumber(object.vertices.revision, 0)) + 1;
+      }
       object.static = false;
       sceneApplyModelObjectHiddenState(object, record.model);
       changed = true;
@@ -3620,6 +3719,31 @@ function gosxConfigureSceneScript(script, role, src) {
     });
   }
 
+  // Identity-root rigid stages share immutable primitive streams from the same
+  // decoded asset. The asset's vertex identity also scopes texture variants and
+  // node transforms; animated/morph/live stages never enter this cache.
+  const sceneRigidPrimitiveGeometry = new WeakMap();
+
+  function sceneCrowdPrimitiveMaterialEligible(raw, model) {
+    const source = sceneApplyMaterialOverride(raw, model);
+    // Read through the same nested/top-level precedence as normalization.
+    // A primitive-authored custom shader must not lose its skin before the
+    // renderer discovers that it cannot use the crowd PBR program.
+    if (normalizeSceneMaterialKind(sceneObjectMaterialKindValue(source)) !== "standard") return false;
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "shaderBackend", "shaderSource"]) {
+      const value = sceneObjectMaterialValue(source, key);
+      if (typeof value === "string" && value.trim()) return false;
+    }
+    const uniforms = sceneObjectMaterialValue(source, "customUniforms");
+    if (uniforms && typeof uniforms === "object" && Object.keys(uniforms).length) return false;
+    const opacity = sceneObjectMaterialValue(source, "opacity");
+    if (opacity != null && (!Number.isFinite(Number(opacity)) || Number(opacity) < 1)) return false;
+    const blend = sceneObjectMaterialValue(source, "blendMode");
+    if (blend && blend !== "opaque" && blend !== "normal") return false;
+    const pass = sceneObjectMaterialValue(source, "renderPass");
+    return (!pass || pass === "opaque") && source.wireframe !== true;
+  }
+
   async function sceneStageModelHydration(state, model, modelIndex, generation) {
     const staged = {
       model,
@@ -3642,6 +3766,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const asset = await loadSceneModelAsset(model.src, state && state._modelStatusMount, {
         state,
         generation,
+        crowd: model._instancedGLB === true,
         modelID: model.id || "",
         modelIndex,
         stage: "load",
@@ -3656,14 +3781,93 @@ function gosxConfigureSceneScript(script, role, src) {
       stage = "fit";
       const instanceModel = sceneModelWithAssetFit(model, asset);
       const prefix = model.id || ("scene-model-" + modelIndex);
+      let crowdCandidate = !asset._crowdUnsupported && model._instancedGLB === true && model._crowdPose && model._crowdPose.animation &&
+        state._crowdWebGLRequested && state._crowdRenderer && state._crowdRenderer.prepareCrowdAtlas &&
+        Boolean(sceneRigidInstanceHydrationKey(state, model)) && !sceneModelHasWeightAnimations(asset) &&
+        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+        (!model.materialKind || model.materialKind === "standard") &&
+        asset.objects.length > 0 && asset.objects.every(function(object) {
+          return object.skin && object.vertices && object.vertices.joints && object.vertices.weights &&
+            !object._morphAnim && !object._nodeAnim && object.renderPass !== "alpha" &&
+            sceneCrowdPrimitiveMaterialEligible(object, model);
+        });
+      let crowdAPI = null;
+      if (crowdCandidate) {
+        try {
+          crowdAPI = await ensureAnimationFeatureLoaded();
+          for (const skin of new Set(asset.objects.map(o => o.skinIndex))) {
+            state._crowdRenderer.prepareCrowdAtlas(crowdAPI.buildCrowdAtlas(asset, skin));
+          }
+        } catch (error) {
+          // Preserve the explicit clock through ordinary skin/morph playback.
+          // Never silently submit bind geometry to a missing palette shader.
+          crowdCandidate = false;
+          if (!state._crowdFallbackReason) console.warn("[gosx] crowd skin fallback:", error && error.message || error);
+          state._crowdFallbackReason = String(error && error.message || error);
+        }
+      }
+      if (crowdCandidate) {
+        stage = "crowd-palette";
+        const api = crowdAPI;
+        const geometryModel = Object.assign({}, instanceModel, { x: 0, y: 0, z: 0,
+          rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1,
+          parentMatrix: null, _shareRigidGeometry: true });
+        for (let i = 0; i < asset.objects.length; i++) {
+          const raw = asset.objects[i];
+          const atlas = api.buildCrowdAtlas(asset, raw.skinIndex);
+          const primitive = atlas.primitives.get(raw.vertices);
+          sceneRigidPrimitiveGeometry.set(primitive.vertices, primitive.vertices);
+          const source = Object.assign({}, raw, { skin: null, skinIndex: null, vertices: primitive.vertices });
+          const object = sceneInstantiateModelObject(source, geometryModel, prefix, i, null);
+          object.vertices = primitive.vertices;
+          object._modelLocalVertices = primitive.vertices;
+          object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows };
+          object.static = false;
+          staged.objects.push(object);
+        }
+        staged.rigidInstanceModel = instanceModel;
+        return { ok: true, staged };
+      }
+      const rigidInstance = (model.static !== true || model._instancedGLB === true) &&
+        !sceneModelHasSkins(asset.skins) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) &&
+        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+        asset.objects.length > 0 && asset.objects.every(function(object) {
+          return object.vertices && object.vertices.count > 0 && !object._morphAnim && !object._nodeAnim;
+        }) && Boolean(sceneRigidInstanceHydrationKey(state, model));
+      // glTF node transforms are already folded into the asset vertices. Keep
+      // those vertices in model-local space and apply the instance TRS once
+      // in the GPU (or through the existing canvas fallback transform).
+      const geometryModel = rigidInstance ? Object.assign({}, instanceModel, {
+        x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+        scaleX: 1, scaleY: 1, scaleZ: 1, parentMatrix: null,
+        _shareRigidGeometry: true,
+      }) : instanceModel;
+      if (rigidInstance) staged.rigidInstanceModel = instanceModel;
       stage = "skin-clone";
       const skinInstances = sceneCloneModelSkins(asset.skins);
       const objectIDs = [];
       stage = "object";
       for (let i = 0; i < asset.objects.length; i += 1) {
-        const object = sceneInstantiateModelObject(asset.objects[i], instanceModel, prefix, i, skinInstances);
+        const object = sceneInstantiateModelObject(asset.objects[i], geometryModel, prefix, i, skinInstances);
         if (!object) {
           continue;
+        }
+        if (rigidInstance) {
+          const sourceVertices = asset.objects[i].vertices;
+          let shared = sceneRigidPrimitiveGeometry.get(sourceVertices);
+          if (!shared) {
+            shared = object.vertices;
+            // The decoded asset owns immutable streams shared by its entire
+            // swarm. A short bounded GPU residency window can reuse them
+            // across an empty wave without retaining any actor identities.
+            shared._rigidPool = true;
+            sceneRigidPrimitiveGeometry.set(sourceVertices, shared);
+          }
+          object.vertices = shared;
+          object._modelLocalVertices = shared;
+          object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
+          object.static = false;
         }
         staged.objects.push(object);
         objectIDs.push(object.id);
@@ -3728,6 +3932,89 @@ function gosxConfigureSceneScript(script, role, src) {
     }
   }
 
+  function sceneStaticModelHydrationKey(state, model, modelIndex) {
+    if (!model || model.static !== true || model.animation || model.animationSeq ||
+        model._inState || model._outState ||
+        Array.isArray(model._live) && model._live.length > 0) {
+      return "";
+    }
+    if (model._transition && ["in", "out", "update"].some(function(kind) {
+      return model._transition[kind] && model._transition[kind].duration > 0;
+    })) return "";
+    // Normalized declarations include the asset, transform, fit and material
+    // overrides. Texture variants are a separate asset-cache identity.
+    const scope = state && state._modelTextureVariantScope;
+    return JSON.stringify([modelIndex, model, scope && scope.key || ""]);
+  }
+
+  function sceneReusableStaticModelHydration(staged, state) {
+    // Reuse only rigid mesh stages with no playback or auxiliary lifecycle
+    // owners. Animated, live-bound and non-mesh models keep full staging.
+    if (!staged || !staged.objects.length || staged.modelSkins.length ||
+        staged.modelAnimations.length || staged.points.length || staged.labels.length ||
+        staged.sprites.length || staged.html.length || staged.lights.length) return false;
+    return staged.objects.every(function(object) {
+      const vertices = object && object.vertices;
+      return vertices && vertices.immutable === true && vertices.revision === 0 &&
+        (!state || state.objects.get(object.id) === object);
+    });
+  }
+
+  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+    if (!model || model.static === true && model._instancedGLB !== true || model.animation || model.animationSeq ||
+        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return "";
+    if (model._transition && ["in", "out", "update"].some(function(kind) {
+      return model._transition[kind] && model._transition[kind].duration > 0;
+    })) return "";
+    // A singular or mirrored transform takes the established winding/bake
+    // path. This fast path never silently changes reflection semantics.
+    if (!(sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001)) return "";
+    const template = sceneInstancedGLBHydrationTemplates.get(model);
+    if (template) return '["instanced-glb",' + template + ',' + JSON.stringify([model.id,
+      state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]) + ']';
+    const declaration = Object.assign({}, model);
+    for (const key of ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
+    return JSON.stringify([declaration, state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]);
+  }
+
+  function sceneReusableRigidInstance(staged, state) {
+    return Boolean(staged && staged.rigidInstanceModel && sceneReusableStaticModelHydration(staged, state));
+  }
+
+  function sceneUpdateRigidInstancePoses(state) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    const models = sceneHydrationModels(state, null);
+    if (models.length !== records.modelCount) return false;
+    const patches = [];
+    const keys = new Set();
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index];
+      const matrix = sceneModelTransformMatrix(model);
+      const key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      if (!key) {
+        const staticKey = sceneStaticModelHydrationKey(state, model, index);
+        if (!staticKey || !sceneReusableStaticModelHydration(records.staticModels.get(staticKey), state)) return false;
+        continue;
+      }
+      const staged = key && cache.get(key);
+      if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
+      keys.add(key);
+      patches.push({ staged, model, matrix: new Float32Array(matrix) });
+    }
+    // Validate the complete collection before changing the committed scene.
+    for (const patch of patches) {
+      for (const object of patch.staged.objects) {
+        object.parentMatrix = patch.matrix;
+        if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
+      }
+      patch.staged.model = patch.model;
+      patch.staged.rigidInstanceModel = patch.model;
+    }
+    return true;
+  }
+
   async function hydrateSceneStateModels(state, props) {
     if (!state) {
       return sceneModelHydrationOutcome(sceneModelHydrationCounts(0), 0, "failed", false, false, "state");
@@ -3739,7 +4026,7 @@ function gosxConfigureSceneScript(script, role, src) {
       // Commands can replace the declaration arrays while their assets are in
       // flight. Clone the fully-expanded list once so this generation has an
       // immutable, deterministic declaration order.
-      models = sceneHydrationModels(state, props).map(sceneCloneData);
+      models = sceneHydrationModels(state, props).map(sceneCloneHydrationModel);
     } catch (error) {
       const counts = sceneModelHydrationCounts(0);
       publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
@@ -3780,7 +4067,29 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
     }
 
+    const previousStaticModels = state._hydratedModelRecords && state._hydratedModelRecords.staticModels;
+    const previousRigidInstances = state._hydratedModelRecords && state._hydratedModelRecords.rigidInstances;
+    const rigidKeys = models.map(function(model) { return sceneRigidInstanceHydrationKey(state, model); });
+    const staticKeys = models.map(function(model, modelIndex) {
+      return sceneStaticModelHydrationKey(state, model, modelIndex);
+    });
     const results = await Promise.all(models.map(function(model, modelIndex) {
+      const key = staticKeys[modelIndex];
+      const cached = key && previousStaticModels && previousStaticModels.get(key);
+      if (cached && sceneReusableStaticModelHydration(cached, state)) {
+        return { ok: true, staged: cached };
+      }
+      const rigid = rigidKeys[modelIndex] && previousRigidInstances && previousRigidInstances.get(rigidKeys[modelIndex]);
+      if (sceneReusableRigidInstance(rigid, state)) {
+        const matrix = new Float32Array(sceneModelTransformMatrix(model));
+        // Keep the live wrappers and their material/cache identities when
+        // another actor spawns or dies. Defer pose mutation until the entire
+        // generation is ready and current, preserving transaction isolation.
+        return { ok: true, staged: Object.assign({}, rigid, { model, modelIndex,
+          rigidInstanceModel: model,
+          _pendingRigidMatrix: matrix,
+        }) };
+      }
       return sceneStageModelHydration(state, model, modelIndex, generation);
     }));
 
@@ -3833,9 +4142,24 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneClearHydratedModelRecords(state);
     state._modelAnimations = [];
     state._modelSkins = [];
-    const hydrated = { objects: [], points: [], labels: [], sprites: [], html: [], lights: [] };
+    // Keep only this committed generation. Moving transforms and removed
+    // models cannot accumulate a history of cached geometry.
+    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map() };
     for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
       const staged = results[modelIndex].staged;
+      if (staged._pendingRigidMatrix) {
+        for (const object of staged.objects) {
+          object.parentMatrix = staged._pendingRigidMatrix;
+          if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows);
+        }
+        delete staged._pendingRigidMatrix;
+      }
+      if (staticKeys[modelIndex] && sceneReusableStaticModelHydration(staged, null)) {
+        hydrated.staticModels.set(staticKeys[modelIndex], staged);
+      }
+      if (rigidKeys[modelIndex] && sceneReusableRigidInstance(staged, null)) {
+        hydrated.rigidInstances.set(rigidKeys[modelIndex], staged);
+      }
       for (let index = 0; index < staged.objects.length; index += 1) {
         const object = staged.objects[index];
         state.objects.set(object.id, object);

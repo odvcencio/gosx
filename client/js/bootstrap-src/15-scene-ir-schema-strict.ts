@@ -259,6 +259,7 @@
       }
       instances.forEach(function(instance, index) {
         var instancePath = path + ".instances[" + index + "]";
+        validateSceneStrictNonNegativeScalars(diagnostics, instance || {}, instancePath, ["animationTime"], "scene.animation.invalid_time", "Animation time must be finite and non-negative");
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, instance && instance.id, instancePath + ".id", false);
         validateSceneStrictFiniteScalars(diagnostics, instance || {}, instancePath, ["x", "y", "z", "scaleX", "scaleY", "scaleZ", "rotationX", "rotationY", "rotationZ"], "scene.instances.non_finite", "Instance transform scalar must be finite", mesh.id);
         validateSceneStrictParentMatrix(diagnostics, instance && instance.parentMatrix, instancePath + ".parentMatrix", mesh.id);

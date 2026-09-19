@@ -428,3 +428,64 @@ test("bootstrap Scene3D planner invalidates cached spot-light attenuation and co
     assert.equal(api.prepareScene(bundle, bundle.camera, viewport, updated), updated);
   }
 });
+
+
+test("bootstrap Scene3D cached planner keeps current mesh identities for crowd and rigid draws", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  const vertices = {
+    count: 3, immutable: true, revision: 0,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+  };
+  function mesh(id, renderPass, row) {
+    return {
+      id, kind: "mesh", materialIndex: 0, renderPass, vertexOffset: 0,
+      vertexCount: 3, depthCenter: 4, directVertices: true,
+      retainedGeometry: true, vertices, skin: null,
+      _crowdSkin: { rows: new Float32Array([row, row + 1, 0.5]) },
+    };
+  }
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {}, materials: [{ kind: "standard" }],
+    meshObjects: [mesh("hero", "opaque", 43), mesh("glass", "alpha", 43), mesh("glow", "additive", 43)],
+    objects: [], points: [],
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0), worldMeshNormals: new Float32Array(0),
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const first = api.prepareScene(bundle, bundle.camera, viewport, null);
+  const passes = first.pbrPasses;
+  const opaque = passes.opaque, alpha = passes.alpha, additive = passes.additive;
+  const nextObjects = bundle.meshObjects.map(object => ({
+    ...object, _crowdSkin: { rows: new Float32Array([100, 101, 0.8]) },
+  }));
+  const nextBundle = { ...bundle, meshObjects: nextObjects };
+  const cached = api.prepareScene(nextBundle, nextBundle.camera, viewport, first);
+  assert.equal(cached, first, "pose-only updates keep the prepared-plan cache hit");
+  assert.equal(cached.ir, nextBundle);
+  assert.equal(cached.pbrPasses, passes, "reuse the pass container");
+  assert.equal(passes.opaque, opaque, "reuse opaque bucket storage");
+  assert.equal(passes.alpha, alpha, "reuse alpha bucket storage");
+  assert.equal(passes.additive, additive, "reuse additive bucket storage");
+  const currentBatches = new Map(nextObjects.map(object => [object, { atlas: object._crowdSkin }]));
+  for (const [index, pass] of ["opaque", "alpha", "additive"].entries()) {
+    assert.equal(passes[pass][0], nextObjects[index], pass + " must reference the current mesh");
+    assert.ok(currentBatches.has(passes[pass][0]), pass + " must resolve the renderer's identity-keyed batch");
+    assert.equal(passes[pass][0]._crowdSkin.rows[0], 100);
+  }
+  const replacement = { ...nextObjects[0], _crowdSkin: { rows: new Float32Array([114, 115, 0.25]) } };
+  nextObjects[0] = replacement;
+  const sameBundle = api.prepareScene(nextBundle, nextBundle.camera, viewport, cached);
+  assert.equal(sameBundle, cached, "replacing a mesh in the same array also keeps the cache hit");
+  assert.equal(sameBundle.pbrPasses.opaque[0], replacement, "same-array replacement must refresh the draw identity");
+  assert.equal(api.prepareScene(nextBundle, nextBundle.camera, viewport, sameBundle), sameBundle);
+  assert.equal(sameBundle.pbrPasses.opaque, opaque, "unchanged identities do not accumulate or replace buckets");
+  assert.equal(opaque.length, 1);
+  assert.equal(alpha.length, 1);
+  assert.equal(additive.length, 1);
+});

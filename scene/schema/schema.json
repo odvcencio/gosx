@@ -554,7 +554,10 @@
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "id": { "type": "string" }
+            "id": { "type": "string" },
+            "animation": { "type": "string" },
+            "animationTime": { "type": "number", "minimum": 0 },
+            "animationLoop": { "type": "boolean" }
           }
         }
       ]

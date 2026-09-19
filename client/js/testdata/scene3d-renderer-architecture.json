@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "measuredAtCommit": "05778d2f5f2b496ab88e978b7d2e87615e487395",
+  "measuredAtCommit": "68264a41a97c477d0fa16089b4bc79786265988f",
   "canopyVersion": "v0.18.0-19-g01a5f95-dirty",
   "audit": {
     "architectureReportConsumerFiles": 26,
@@ -16,7 +16,7 @@
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2700,
-    "actualGovernanceLinesAtReview": 2659,
+    "actualGovernanceLinesAtReview": 2695,
     "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
   },
   "rendererSourceNamingContract": [
@@ -107,6 +107,16 @@
       "count": 5
     },
     {
+      "file": "client/js/scene3d-crowd-animation.test.mjs",
+      "source": "mount-webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/scene3d-crowd-animation.test.mjs",
+      "source": "webgl.ts",
+      "count": 4
+    },
+    {
       "file": "client/js/scene3d-material-ior.test.js",
       "source": "mount-webgl.ts",
       "count": 2
@@ -129,6 +139,11 @@
     {
       "file": "client/js/scene3d-shadow-budget.test.js",
       "source": "webgl.ts",
+      "count": 1
+    },
+    {
+      "file": "client/js/scene3d-texture-hash.test.js",
+      "source": "mount-webgl.ts",
       "count": 1
     },
     {
@@ -199,8 +214,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 9661,
-      "maxFileLines": 9661
+      "maxLines": 10374,
+      "maxFileLines": 10374
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -227,12 +242,12 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 9661,
+    "../runtime/scene3d/webgl.ts": 10374,
     "../runtime/scene3d/webgpu.ts": 18827,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
     "../runtime/scene3d/hydrate-input.ts": 89,
-    "../runtime/scene3d/mount-webgl.ts": 4879,
-    "../runtime/scene3d/mount.ts": 3561
+    "../runtime/scene3d/mount-webgl.ts": 5138,
+    "../runtime/scene3d/mount.ts": 3568
   },
   "functionDefaults": {
     "lines": 200,
@@ -244,7 +259,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2137:3",
+      "name": "createSceneWaterSimWebGL@2160:3",
       "lines": 255,
       "cyclomatic": 78,
       "cognitive": 84,
@@ -253,7 +268,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@2911:3",
+      "name": "createSceneWaterRendererWebGL@2934:3",
       "lines": 1287,
       "cyclomatic": 354,
       "cognitive": 437,
@@ -262,7 +277,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3097:5",
+      "name": "waterShadowSignature@3120:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,
@@ -271,7 +286,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3538:5",
+      "name": "applyWaterQualityProfile@3561:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -280,7 +295,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3696:5",
+      "name": "renderMeshTextureTarget@3719:5",
       "lines": 28,
       "cyclomatic": 6,
       "cognitive": 5,
@@ -289,7 +304,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3725:5",
+      "name": "drawFrame@3748:5",
       "lines": 398,
       "cyclomatic": 103,
       "cognitive": 126,
@@ -298,7 +313,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4264:3",
+      "name": "createScenePostProcessor@4287:3",
       "lines": 550,
       "cyclomatic": 140,
       "cognitive": 200,
@@ -307,7 +322,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4666:14",
+      "name": "anonymous@4689:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -316,7 +331,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6035:3",
+      "name": "prepareScenePBRInitialPrograms@6151:3",
+      "lines": 126,
+      "cyclomatic": 49,
+      "cognitive": 58,
+      "maxNesting": 3,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "scenePBRUploadLights@6356:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -325,7 +349,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@6508:3",
+      "name": "scenePBRUploadEnvironmentMap@6829:3",
       "lines": 110,
       "cyclomatic": 49,
       "cognitive": 95,
@@ -334,16 +358,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@6652:3",
-      "lines": 2716,
-      "cyclomatic": 765,
-      "cognitive": 1173,
+      "name": "createScenePBRRenderer@6973:3",
+      "lines": 3058,
+      "cyclomatic": 895,
+      "cognitive": 1378,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@7284:5",
+      "name": "uploadCustomUniforms@7741:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -352,25 +376,34 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7470:5",
+      "name": "render@7927:5",
       "lines": 283,
-      "cyclomatic": 73,
+      "cyclomatic": 76,
       "cognitive": 105,
       "maxNesting": 3,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@8265:5",
-      "lines": 256,
-      "cyclomatic": 71,
-      "cognitive": 167,
+      "name": "prepareRigidMeshBatches@8740:5",
+      "lines": 83,
+      "cyclomatic": 52,
+      "cognitive": 97,
+      "maxNesting": 5,
+      "parameters": 1
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "drawPBRObjectList@8922:5",
+      "lines": 272,
+      "cyclomatic": 79,
+      "cognitive": 187,
       "maxNesting": 6,
       "parameters": 4
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@8670:5",
+      "name": "applyPointsAuthoredCustomUniforms@9343:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -379,7 +412,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@8846:5",
+      "name": "drawPointsEntries@9519:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -388,12 +421,12 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@9147:5",
-      "lines": 206,
-      "cyclomatic": 55,
-      "cognitive": 117,
+      "name": "drawInstancedMeshes@9820:5",
+      "lines": 183,
+      "cyclomatic": 53,
+      "cognitive": 109,
       "maxNesting": 5,
-      "parameters": 4
+      "parameters": 5
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
@@ -679,9 +712,9 @@
     {
       "source": "../runtime/scene3d/mount.ts",
       "name": "renderFrame",
-      "lines": 202,
-      "cyclomatic": 60,
-      "cognitive": 70,
+      "lines": 205,
+      "cyclomatic": 61,
+      "cognitive": 71,
       "maxNesting": 3,
       "parameters": 2
     },
@@ -724,18 +757,18 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 2716,
-      "cyclomatic": 765,
-      "cognitive": 1173,
+      "lines": 3058,
+      "cyclomatic": 895,
+      "cognitive": 1378,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawPBRObjectList",
-      "lines": 256,
-      "cyclomatic": 71,
-      "cognitive": 167,
+      "lines": 272,
+      "cyclomatic": 79,
+      "cognitive": 187,
       "maxNesting": 6,
       "parameters": 4
     },
@@ -809,20 +842,20 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "raw": 767915,
-      "gzip": 212127,
-      "brotli": 177100,
-      "ledger": "Solid selected-mesh highlighting replaces implicit topology edges with a material-profile lift; measured 177010 Brotli, with 90 bytes of reviewed headroom."
+      "raw": 803000,
+      "gzip": 223500,
+      "brotli": 186700,
+      "ledger": "v0.56.5 instanced animation, Selena material transport, bounded cache identity, and texture lifecycle integration measures 802965 raw / 223476 gzip / 186681 Brotli, with narrow rounding headroom."
     },
     "base+webgpu": {
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "raw": 940631,
-      "gzip": 246602,
-      "brotli": 205400,
-      "ledger": "Group.Scale measured 205182 Brotli. Solid selected-mesh highlighting now measures 205349, so this overlapping ceiling moves to 205400 with 51 bytes of reviewed headroom."
+      "raw": 960400,
+      "gzip": 253400,
+      "brotli": 210800,
+      "ledger": "v0.56.5 shared scene and Selena integration measures 960344 raw / 253348 gzip / 210761 Brotli on the WebGPU route, with narrow rounding headroom."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -831,9 +864,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 821410,
-      "gzip": 231891,
-      "brotli": 194586
+      "raw": 861700,
+      "gzip": 245000,
+      "brotli": 205900,
+      "ledger": "v0.56.5 WebGL plus glTF and animation measures 861687 raw / 244989 gzip / 205878 Brotli, with narrow rounding headroom."
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -842,10 +876,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 994126,
-      "gzip": 266366,
-      "brotli": 222800,
-      "ledger": "Solid selected-mesh highlighting measures 222766 Brotli for the WebGPU plus glTF/animation route, with 34 bytes of reviewed headroom."
+      "raw": 1019100,
+      "gzip": 274900,
+      "brotli": 230000,
+      "ledger": "v0.56.5 WebGPU plus glTF and animation measures 1019066 raw / 274861 gzip / 229958 Brotli, with narrow rounding headroom."
     }
   },
   "rendererABI": {
@@ -856,6 +890,7 @@
     ],
     "optional": [
       "supportsRetainedGeometry",
+      "prepareCrowdAtlas",
       "supportsBundle",
       "setLifecycle",
       "diagnostics",
@@ -877,6 +912,7 @@
         "diagnostics",
         "dispose",
         "kind",
+        "prepareCrowdAtlas",
         "render",
         "supportsRetainedGeometry",
         "textureVariantContext",

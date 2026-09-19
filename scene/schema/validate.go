@@ -486,6 +486,7 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 }
 
 func validateMeshInstance(report *Report, instance scene.MeshInstanceIR, path, parentID string) {
+	validateNonNegativeFloat(report, parentID, path+".animationTime", instance.AnimationTime)
 	validateNumericFields(report, parentID, path, map[string]float64{
 		"x":         instance.X,
 		"y":         instance.Y,

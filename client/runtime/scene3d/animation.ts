@@ -823,3 +823,173 @@
     };
     window.__gosx_scene3d_animation_loaded = true;
   }
+
+  // Immutable CPU palettes are owned by decoded assets, never actor identities.
+  const sceneCrowdAtlasCache = new WeakMap();
+  let sceneCrowdAtlasSequence = 0;
+  function sceneCrowdPoseRows(atlas, pose, out) {
+    out = out || new Float32Array(3);
+    const clip = atlas.clips.get(pose && pose.animation || "");
+    if (!clip) {
+      const name = pose && pose.animation;
+      if (name && !atlas.missingClips.has(name)) { atlas.missingClips.add(name); console.warn("[gosx] crowd animation clip not found:", name); }
+      out[0] = out[1] = out[2] = 0; return out;
+    }
+    let t = Number(pose.animationTime);
+    if (!Number.isFinite(t) || t < 0) t = 0;
+    t = clip.duration > 0 ? (pose.animationLoop ? t % clip.duration : Math.min(t, clip.duration)) : 0;
+    const frame = clip.duration > 0 ? t / clip.duration * clip.segments : 0;
+    const a = Math.min(clip.segments, Math.floor(frame));
+    out[0] = clip.start + a;
+    out[1] = clip.start + Math.min(clip.segments, a + 1);
+    out[2] = frame - a;
+    return out;
+  }
+
+  function sceneCrowdIncludeBoundPoint(bounds, x, y, z) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) throw new Error("nonfinite crowd bound");
+    bounds.minX = Math.min(bounds.minX, x); bounds.maxX = Math.max(bounds.maxX, x);
+    bounds.minY = Math.min(bounds.minY, y); bounds.maxY = Math.max(bounds.maxY, y);
+    bounds.minZ = Math.min(bounds.minZ, z); bounds.maxZ = Math.max(bounds.maxZ, z);
+  }
+
+  function sceneCrowdPrimitiveBounds(vertices, jointCount, data, width, height, weights) {
+    const bounds = { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity };
+    const jointBounds = new Array(jointCount);
+    let maxWeightSumError = 0;
+    let maxTransformTerms = 0;
+    for (let i = 0; i < vertices.count; i++) {
+      const x = vertices.positions[i * 3], y = vertices.positions[i * 3 + 1], z = vertices.positions[i * 3 + 2];
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) throw new Error("nonfinite crowd vertex");
+      let total = 0;
+      for (let k = 0; k < 4; k++) total += weights[i * 4 + k];
+      if (!total) {
+        sceneCrowdIncludeBoundPoint(bounds, x, y, z);
+        maxTransformTerms = Math.max(maxTransformTerms, Math.abs(x), Math.abs(y), Math.abs(z));
+        continue;
+      }
+      maxWeightSumError = Math.max(maxWeightSumError, Math.abs(total - 1));
+      for (let k = 0; k < 4; k++) {
+        if (!weights[i * 4 + k]) continue;
+        const joint = vertices.joints[i * 4 + k];
+        let influenced = jointBounds[joint];
+        if (!influenced) influenced = jointBounds[joint] = { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity };
+        sceneCrowdIncludeBoundPoint(influenced, x, y, z);
+      }
+    }
+    for (let row = 0; row < height; row++) for (let joint = 0; joint < jointCount; joint++) {
+      const influenced = jointBounds[joint]; if (!influenced) continue;
+      const o = row * width * 4 + joint * 16;
+      for (let corner = 0; corner < 8; corner++) {
+        const x = corner & 1 ? influenced.maxX : influenced.minX;
+        const y = corner & 2 ? influenced.maxY : influenced.minY;
+        const z = corner & 4 ? influenced.maxZ : influenced.minZ;
+        const px = data[o] * x + data[o + 4] * y + data[o + 8] * z + data[o + 12];
+        const py = data[o + 1] * x + data[o + 5] * y + data[o + 9] * z + data[o + 13];
+        const pz = data[o + 2] * x + data[o + 6] * y + data[o + 10] * z + data[o + 14];
+        const termsX = Math.abs(data[o] * x) + Math.abs(data[o + 4] * y) + Math.abs(data[o + 8] * z) + Math.abs(data[o + 12]);
+        const termsY = Math.abs(data[o + 1] * x) + Math.abs(data[o + 5] * y) + Math.abs(data[o + 9] * z) + Math.abs(data[o + 13]);
+        const termsZ = Math.abs(data[o + 2] * x) + Math.abs(data[o + 6] * y) + Math.abs(data[o + 10] * z) + Math.abs(data[o + 14]);
+        if (!Number.isFinite(termsX) || !Number.isFinite(termsY) || !Number.isFinite(termsZ)) throw new Error("nonfinite crowd bound");
+        maxTransformTerms = Math.max(maxTransformTerms, termsX, termsY, termsZ);
+        sceneCrowdIncludeBoundPoint(bounds, px, py, pz);
+      }
+    }
+    if (Number.isFinite(bounds.minX)) {
+      // Stored Float32 weights may sum just above or below one. Include that
+      // drift and conservative float32 transform/interpolation error relative
+      // to absolute coordinates, including translated meshes with tiny extent.
+      const magnitude = Math.max(1, Math.abs(bounds.minX), Math.abs(bounds.minY), Math.abs(bounds.minZ), Math.abs(bounds.maxX), Math.abs(bounds.maxY), Math.abs(bounds.maxZ));
+      const margin = magnitude * maxWeightSumError + Math.max(magnitude, maxTransformTerms) * 32 * 1.1920928955078125e-7;
+      if (!Number.isFinite(margin)) throw new Error("nonfinite crowd bound");
+      bounds.minX -= margin; bounds.minY -= margin; bounds.minZ -= margin;
+      bounds.maxX += margin; bounds.maxY += margin; bounds.maxZ += margin;
+      if (![bounds.minX, bounds.minY, bounds.minZ, bounds.maxX, bounds.maxY, bounds.maxZ].every(Number.isFinite)) throw new Error("nonfinite crowd bound");
+    }
+    return bounds;
+  }
+
+  function sceneBuildCrowdAtlas(asset, skinIndex) {
+    let cache = sceneCrowdAtlasCache.get(asset);
+    if (!cache) { cache = new Map(); sceneCrowdAtlasCache.set(asset, cache); }
+    if (cache.has(skinIndex)) return cache.get(skinIndex);
+    const source = asset.skins && asset.skins[skinIndex];
+    const joints = source && source.joints;
+    if (!joints || !joints.length || joints.length > 64 || !Array.isArray(asset.nodes)) throw new Error("unsupported crowd skeleton");
+    const skin = { joints: joints.slice(), inverseBindMatrices: source.inverseBindMatrices };
+    const width = joints.length * 4;
+    const clips = new Map();
+    let height = 1;
+    for (const clip of asset.animations || []) {
+      if (!clip.name || clips.has(clip.name) || !Number.isFinite(clip.duration) || clip.duration < 0) throw new Error("invalid crowd clip");
+      if ((clip.channels || []).some(ch => !["rotation", "translation", "scale"].includes(ch.property))) throw new Error("unsupported crowd animation channel");
+      const segments = clip.duration > 0 ? Math.max(1, Math.ceil(clip.duration * 30)) : 0;
+      clips.set(clip.name, { start: height, segments, duration: clip.duration });
+      height += segments + 1;
+    }
+    if (height > 4096 || height * asset.nodes.length > 500000 || width * height * 16 > 16 * 1024 * 1024) throw new Error("crowd palette budget exceeded");
+    const data = new Float32Array(width * height * 4);
+    function sample(channels, time, row) {
+      const pose = new Map();
+      for (const channel of channels) {
+        const node = channel.targetNode != null ? channel.targetNode : channel.targetID;
+        if (!Number.isInteger(node) || !asset.nodes[node]) throw new Error("invalid crowd animation node");
+        let entry = pose.get(node);
+        if (!entry) { entry = {}; pose.set(node, entry); }
+        // The interpolation helper uses reusable scratch arrays. Copy now.
+        entry[channel.property] = Array.from(sceneAnimInterpolateChannel(channel, time));
+      }
+      const matrices = sceneAnimComputeJointMatrices(skin, sceneAnimBuildNodeTransforms(asset.nodes, pose, null));
+      for (const value of matrices) if (!Number.isFinite(value)) throw new Error("nonfinite crowd matrix");
+      data.set(matrices, row * width * 4);
+    }
+    sample([], 0, 0);
+    for (const sourceClip of asset.animations || []) {
+      const clip = clips.get(sourceClip.name);
+      // Channel keyframe cursors are private to palette construction.
+      const channels = sourceClip.channels.map(ch => Object.assign({}, ch, { _lastIndex: 0 }));
+      for (let i = 0; i <= clip.segments; i++) sample(channels, clip.segments ? clip.duration * i / clip.segments : 0, clip.start + i);
+    }
+    const primitives = new Map();
+    let work = 0;
+    for (const object of asset.objects || []) {
+      if (object.skinIndex !== skinIndex) continue;
+      const v = object.vertices;
+      if (!v || !v.positions || !v.joints || !v.weights || v.positions.length < v.count * 3 || v.joints.length < v.count * 4 || v.weights.length < v.count * 4) throw new Error("invalid crowd bind streams");
+      work += v.count * height;
+      if (work > 32 * 1024 * 1024) throw new Error("crowd bounds preprocessing budget exceeded");
+      const weights = new Float32Array(v.weights);
+      for (let i = 0; i < v.count; i++) {
+        let sum = 0;
+        for (let k = 0; k < 4; k++) {
+          const w = weights[i * 4 + k], joint = v.joints[i * 4 + k];
+          if (!Number.isFinite(w) || w < 0 || w > 0 && (!Number.isInteger(joint) || joint < 0 || joint >= joints.length)) throw new Error("invalid crowd skin influence");
+          sum += w;
+        }
+        if (sum > 0) for (let k = 0; k < 4; k++) weights[i * 4 + k] /= sum;
+      }
+      const bounds = sceneCrowdPrimitiveBounds(v, joints.length, data, width, height, weights);
+      // Original streams remain immutable; only normalized weights are copied.
+      primitives.set(v, { vertices: Object.assign({}, v, { weights, immutable: true, revision: 0, _rigidPool: true }), bounds });
+    }
+    const atlas = { id: ++sceneCrowdAtlasSequence, width, height, data, clips, primitives, skinIndex, missingClips: new Set() };
+    cache.set(skinIndex, atlas);
+    return atlas;
+  }
+
+  // Explicit-clock compatibility path for unsupported crowd assets/backends.
+  // It deliberately uses the existing channel sampler (including morph weights).
+  function sceneSampleExplicitAnimation(clips, pose, output) {
+    output.clear();
+    const clip = clips.find(c => c.name === (pose && pose.animation));
+    if (!clip) return output;
+    let t = Number(pose.animationTime);
+    if (!Number.isFinite(t) || t < 0) t = 0;
+    t = clip.duration > 0 ? (pose.animationLoop ? t % clip.duration : Math.min(t, clip.duration)) : 0;
+    for (const channel of clip.channels) {
+      const node = channel.targetNode != null ? channel.targetNode : channel.targetID;
+      let entry = output.get(node); if (!entry) { entry = {}; output.set(node, entry); }
+      entry[channel.property] = Array.from(sceneAnimInterpolateChannel(channel, t));
+    }
+    return output;
+  }

@@ -951,7 +951,11 @@ const budgets = [
   // raised with narrow rounding headroom; brotli cap unchanged.
   // Final rebuild removed dead activeShadowCount; measured 51554 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_750, gzip: 60_800, brotli: 51_600 },
+  // Instanced animated crowds add renderer-local pose textures, shared rigid
+  // geometry, conservative animated bounds, and a skinned shadow path. The
+  // v0.56.5 release build measures 235_455 / 65_712 / 55_866; retain narrow
+  // rounding headroom so later growth remains visible.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 235_600, gzip: 65_800, brotli: 56_000 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1270,7 +1274,10 @@ const budgets = [
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
   // next 100-byte boundary while compressed caps remain unchanged.
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_600, gzip: 4_000, brotli: 4_000 },
+  // v0.56.5 adds explicit animation name/time/loop commands and the shared
+  // crowd-pose runtime. Measured 13_925 / 5_491 / 4_911, with narrow rounding
+  // headroom.
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 14_000, gzip: 5_550, brotli: 5_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
