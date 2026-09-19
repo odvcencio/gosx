@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 
-const source = fs.readFileSync(new URL("../runtime/scene3d/webgl.ts", import.meta.url), "utf8");
+const require = createRequire(import.meta.url);
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+const source = readSceneRendererBackendSrc("webgl");
 function extract(name) {
   const start = source.indexOf("    function " + name + "(");
   assert.ok(start >= 0, name);
