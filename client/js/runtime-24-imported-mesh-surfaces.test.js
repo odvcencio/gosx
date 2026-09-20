@@ -13,45 +13,10 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; }, registerPackedPose: sceneRegisterPackedInstancedGLBDeclaration, applyPackedPose: sceneApplyPackedInstancedGLBPoseFrame, invalidatePackedPose: sceneInvalidatePackedInstancedGLBDeclaration }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
-}
-
-function packedPoseLayoutHash(batches) {
-  let hash = 2166136261;
-  const byte = value => { hash = Math.imul((hash ^ (value & 255)) >>> 0, 16777619) >>> 0; };
-  const u32 = value => { value >>>= 0; byte(value); byte(value >>> 8); byte(value >>> 16); byte(value >>> 24); };
-  const text = value => {
-    const encoded = Buffer.from(String(value || ""), "utf8");
-    u32(encoded.length);
-    for (const value of encoded) byte(value);
-  };
-  u32(batches.length);
-  for (const batch of batches) {
-    text(batch.id);
-    u32(batch.instances.length);
-    for (const instance of batch.instances) text(instance.id);
-  }
-  return hash >>> 0;
-}
-
-function packedPoseFrame(env, baseRevision, batches, rows) {
-  const raw = Buffer.alloc(24 + rows.length * 40);
-  raw.writeUInt32LE(0x31504947, 0);
-  raw.writeUInt16LE(1, 4);
-  raw.writeUInt16LE(10, 6);
-  raw.writeUInt32LE(packedPoseLayoutHash(batches), 8);
-  raw.writeUInt32LE(rows.length, 12);
-  raw.writeUInt32LE(baseRevision >>> 0, 16);
-  raw.writeUInt32LE(Math.floor(baseRevision / 4294967296), 20);
-  rows.forEach((row, rowIndex) => row.forEach((value, valueIndex) => {
-    raw.writeFloatLE(value, 24 + rowIndex * 40 + valueIndex * 4);
-  }));
-  const frame = vm.runInContext(`new Uint8Array(${raw.length})`, env.context);
-  frame.set(raw);
-  return frame;
 }
 
 for (const fresh of [true, false]) {
@@ -764,127 +729,6 @@ test("incremental additions retain the normalized nested batch snapshot across a
   const added = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
   assert.equal(added.customUniforms.pulse[0], 0.25,
     "async staging must observe the once-normalized command snapshot, not later authored mutation");
-});
-
-test("packed stable GLB poses validate atomically and update canonical instances", async () => {
-  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
-  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
-  const api = env.context.__gosx_scene3d_api;
-  const batches = [{ id: "effects", src: "/actor.glb", instances: [
-    { id: "one", x: 1, animation: "Walk", animationTime: 0, animationLoop: true },
-    { id: "two", x: 2 },
-  ] }];
-  const state = api.createSceneState({ scene: { instancedGLBMeshes: batches } });
-  await env.context.__meshTest.hydrate(state, null);
-  const normalized = state.instancedGLBMeshes;
-  const oneMembership = state._hydratedModelRecords.rigidInstancesByID.get("effects/one");
-  const twoMembership = state._hydratedModelRecords.rigidInstancesByID.get("effects/two");
-  const one = oneMembership.staged.objects[0];
-  const two = twoMembership.staged.objects[0];
-  one._crowdSkin = {
-    atlas: {}, rows: vm.runInContext("new Float32Array(3)", env.context),
-    poseRows(_atlas, pose, out) { out[0] = pose.animationTime; out[1] = pose.animationTime + 1; out[2] = 0.25; return out; },
-  };
-  assert.equal(env.context.__meshTest.registerPackedPose(state, 7), true);
-  const accepted = packedPoseFrame(env, 7, normalized, [
-    [3, 4, 5, 0.1, 0.2, 0.3, 1, 2, 3, 0.75],
-    [8, 9, 10, 0, 0.4, 0, 2, 2, 2, 0],
-  ]);
-  assert.equal(env.context.__meshTest.applyPackedPose(state, accepted, 7), true);
-  assert.ok(Math.abs(one.parentMatrix[12] - 3) < 1e-6);
-  assert.ok(Math.abs(two.parentMatrix[12] - 8) < 1e-6);
-  assert.equal(normalized[0].instances[0].x, 3);
-  assert.equal(normalized[0].instances[0].animationTime, 0.75);
-  assert.equal(Object.prototype.hasOwnProperty.call(normalized[0].instances[1], "animationTime"), false,
-    "a packed row must not opt a legacy rigid instance into crowd pose mode");
-  assert.deepEqual(Array.from(one._crowdSkin.rows), [0.75, 1.75, 0.25]);
-
-  const priorOneMatrix = Array.from(one.parentMatrix);
-  const priorOneX = normalized[0].instances[0].x;
-  const rejected = packedPoseFrame(env, 7, normalized, [
-    [30, 4, 5, 0, 0, 0, 1, 1, 1, 1],
-    [8, 9, 10, 0, 0, 0, Number.NaN, 2, 2, 0],
-  ]);
-  assert.equal(env.context.__meshTest.applyPackedPose(state, rejected, 7), false);
-  assert.deepEqual(Array.from(one.parentMatrix), priorOneMatrix,
-    "a later invalid row cannot partially commit an earlier valid matrix");
-  assert.equal(normalized[0].instances[0].x, priorOneX);
-  assert.equal(env.context.__meshTest.applyPackedPose(state, accepted, 8), false, "base revision is exact authority");
-  state._modelHydrationPromise = Promise.resolve();
-  assert.equal(env.context.__meshTest.applyPackedPose(state, accepted, 7), false, "pending hydration rejects synchronously");
-  state._modelHydrationPromise = null;
-  await api.applySceneCommands(state, [{ kind: 3, objectId: one.id, data: { color: "#123456" } }]);
-  assert.equal(env.context.__meshTest.applyPackedPose(state, accepted, 7), false,
-    "an intervening child material patch invalidates the staged wrapper identity");
-  state.objects.set(one.id, one);
-  assert.equal(env.context.__meshTest.registerPackedPose(state, 7), true);
-  await api.applySceneCommands(state, [{ kind: 1, objectId: two.id }]);
-  assert.equal(env.context.__meshTest.applyPackedPose(state, accepted, 7), false,
-    "an intervening child removal cannot acknowledge a stale packed pose");
-  state._modelOwner = () => false;
-  assert.equal(env.context.__meshTest.applyPackedPose(state, accepted, 7), false, "stale ownership rejects synchronously");
-});
-
-test("packed pose registration fails closed for divergent primitive matrices", async () => {
-  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
-  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
-  const api = env.context.__gosx_scene3d_api;
-  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
-    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }] },
-  ] } });
-  await env.context.__meshTest.hydrate(state, null);
-  const membership = state._hydratedModelRecords.rigidInstancesByID.get("effects/one");
-  const first = membership.staged.objects[0];
-  const secondMatrix = vm.runInContext("new Float32Array(16)", env.context);
-  secondMatrix.set(first.parentMatrix);
-  const second = { ...first, id: first.id + "/second", parentMatrix: secondMatrix };
-  membership.staged.objects.push(second);
-  state.objects.set(second.id, second);
-  assert.equal(env.context.__meshTest.registerPackedPose(state, 9), false,
-    "distinct primitive matrices retain the established JSON fallback");
-  second.parentMatrix = first.parentMatrix;
-  assert.equal(env.context.__meshTest.registerPackedPose(state, 9), true,
-    "a later full pose that unifies the actor matrix can register the packed layout");
-});
-
-test("packed pose registration reuses survivor staging across full membership declarations", async () => {
-  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
-  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
-  const api = env.context.__gosx_scene3d_api;
-  const batches = [{ id: "effects", src: "/actor.glb", instances: [
-    { id: "one", animation: "Walk", animationTime: 0 },
-    { id: "two", x: 2 },
-  ] }];
-  const state = api.createSceneState({ scene: { instancedGLBMeshes: batches } });
-  await env.context.__meshTest.hydrate(state, null);
-  const firstMembership = state._hydratedModelRecords.rigidInstancesByID.get("effects/one");
-  firstMembership.staged.objects[0]._crowdSkin = {
-    atlas: {}, rows: vm.runInContext("new Float32Array(2)", env.context),
-    poseRows(_atlas, pose, out) { out[0] = pose.animationTime; out[1] = 1; return out; },
-  };
-  assert.equal(env.context.__meshTest.registerPackedPose(state, 20), true);
-  const firstRow = state._packedInstancedGLBPoseLayout.rows[0];
-  const firstMatrix = firstRow.matrix;
-  const pendingMatrix = firstRow.pendingMatrix;
-  const pendingRows = firstRow.crowd[0].pendingRows;
-  env.context.__meshTest.invalidatePackedPose(state);
-
-  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [{
-    id: "effects", src: "/actor.glb", instances: [
-      { id: "one", x: 3, animation: "Walk", animationTime: 1 },
-      { id: "two", x: 4 },
-      { id: "three", x: 5 },
-    ],
-  }] } }]);
-  assert.equal(env.context.__meshTest.registerPackedPose(state, 21), true);
-  const nextRow = state._packedInstancedGLBPoseLayout.rows[0];
-  assert.notEqual(nextRow.matrix, firstMatrix, "a full membership declaration installs its current committed matrix");
-  assert.equal(nextRow.pendingMatrix, pendingMatrix, "surviving wrappers reuse packed matrix scratch");
-  assert.equal(nextRow.crowd[0].pendingRows, pendingRows, "surviving crowd wrappers reuse packed row scratch");
-
-  env.context.__meshTest.invalidatePackedPose(state);
-  assert.equal(state._packedInstancedGLBPoseLayout, null);
-  assert.equal(state._packedInstancedGLBPoseRows.length, 0, "invalidation releases live staged-row references");
 });
 
 test("mixed ordinary and instanced membership snapshots do not alias later matrix caches", async () => {

@@ -2216,9 +2216,6 @@
 	    // to apply typed Scene3D diffs. A monotonic revision rejects late async
 	    // search results and replayed batches without exposing renderer internals.
 	    let lastMountCommandRevision = 0;
-	    let pendingMountCommandCount = 0;
-	    let latestMountGLBDeclarationRevision = 0;
-	    let registeredMountGLBDeclarationRevision = 0;
 	    function emitMountCommandsApplied(revision, commandCount) {
 	      if (!mount || typeof mount.dispatchEvent !== "function") return;
 	      const detail = { revision, commandCount };
@@ -2233,29 +2230,10 @@
 	      const commands = Array.isArray(detail.commands) ? detail.commands : null;
 	      if (!Number.isSafeInteger(revision) || revision <= 0 || revision <= lastMountCommandRevision || !commands) return;
 	      lastMountCommandRevision = revision;
-	      const replacesInstancedGLB = sceneCommandsSetInstancedGLBMeshes(commands);
-	      if (replacesInstancedGLB) {
-	        latestMountGLBDeclarationRevision = revision;
-	        registeredMountGLBDeclarationRevision = 0;
-	        sceneInvalidatePackedInstancedGLBDeclaration(sceneState);
-	      }
-	      pendingMountCommandCount += 1;
 	      // applyMountedSceneCommands always returns a Promise, so the async
 	      // dispatch below always applies; there is no synchronous fallback.
-	      applyMountedSceneCommands(commands, "mount-commands").then(function(result) {
-	        pendingMountCommandCount = Math.max(0, pendingMountCommandCount - 1);
-	        const outcomes = result && Array.isArray(result.outcomes) ? result.outcomes : null;
-	        const committed = !outcomes || outcomes.every(function(outcome) {
-	          return !outcome || outcome.committed !== false && outcome.stale !== true;
-	        });
-	        if (replacesInstancedGLB && committed && latestMountGLBDeclarationRevision === revision &&
-	            sceneRegisterPackedInstancedGLBDeclaration(sceneState, revision)) {
-	          registeredMountGLBDeclarationRevision = revision;
-	        }
+	      applyMountedSceneCommands(commands, "mount-commands").then(function() {
 	        emitMountCommandsApplied(revision, commands.length);
-	      }, function(error) {
-	        pendingMountCommandCount = Math.max(0, pendingMountCommandCount - 1);
-	        if (typeof console !== "undefined" && console.error) console.error("[gosx] Scene3D mount command failed:", error);
 	      });
 	    }
 	    if (mount && typeof mount.addEventListener === "function") {
@@ -3321,15 +3299,6 @@
       return false;
     }
 
-    function sceneCommandsSetInstancedGLBMeshes(commands) {
-      if (!Array.isArray(commands)) return false;
-      for (let index = 0; index < commands.length; index += 1) {
-        const command = commands[index];
-        if (command && typeof command === "object" && command.kind === 11) return true;
-      }
-      return false;
-    }
-
     function scheduleMountedProgressiveModelLifecycle(initialHydration) {
       return scheduleSceneProgressiveModelLifecycle(sceneState, mount, initialHydration, applyProgressiveSceneModels, {
         canRender: sceneCanRender,
@@ -3357,12 +3326,12 @@
       notifySceneRendererLifecycle(reason || "commands", false, false);
       if (result && typeof result.then === "function") {
         scheduleRender(reason || "commands");
-        return result.then(function(outcomes) {
-	          scheduleRender((reason || "commands") + "-async");
+        return result.then(function() {
+          scheduleRender((reason || "commands") + "-async");
           if (setModelsCommands) {
             scheduleMountedProgressiveModelLifecycle(result);
           }
-          return { applied: true, outcomes };
+          return { applied: true };
         });
       }
       scheduleRender(reason || "commands");
@@ -3378,29 +3347,7 @@
 
     handle = {
       applyCommands(commands) {
-        const replacesInstancedGLB = sceneCommandsSetInstancedGLBMeshes(commands);
-        if (replacesInstancedGLB) {
-          latestMountGLBDeclarationRevision = 0;
-          registeredMountGLBDeclarationRevision = 0;
-          sceneInvalidatePackedInstancedGLBDeclaration(sceneState);
-        }
-        pendingMountCommandCount += 1;
-        return applyMountedSceneCommands(commands, "commands").then(function(result) {
-          pendingMountCommandCount = Math.max(0, pendingMountCommandCount - 1);
-          return result;
-        }, function(error) {
-          pendingMountCommandCount = Math.max(0, pendingMountCommandCount - 1);
-          throw error;
-        });
-      },
-      applyInstancedGLBPoseFrame(revision, bytes) {
-        if (disposed || pendingMountCommandCount !== 0 ||
-            !Number.isSafeInteger(revision) || revision <= 0 || revision <= lastMountCommandRevision ||
-            registeredMountGLBDeclarationRevision <= 0 || !(bytes instanceof Uint8Array)) return false;
-        if (!sceneApplyPackedInstancedGLBPoseFrame(sceneState, bytes, registeredMountGLBDeclarationRevision)) return false;
-        lastMountCommandRevision = revision;
-        scheduleRender("instanced-glb-pose-frame");
-        return true;
+        return applyMountedSceneCommands(commands, "commands");
       },
       getCamera() {
         return currentMountedSceneCamera();
@@ -3594,7 +3541,6 @@
           mount.removeAttribute(sceneAttr("command-ready"));
           mount.removeAttribute(sceneAttr("command-revision"));
           mount.removeAttribute(sceneAttr("command-applied-revision"));
-          mount.removeAttribute(sceneAttr("instanced-glb-pose-ready"));
         }
       }
     }
@@ -3613,11 +3559,9 @@
     }
     mount.__gosxScene3DState = sceneState;
     handle.__gosxScene3DCommandReady = true;
-    handle.__gosxScene3DInstancedGLBPoseReady = true;
     mount.__gosxScene3DHandle = handle;
     if (typeof mount.setAttribute === "function") {
       mount.setAttribute(sceneAttr("command-ready"), "true");
-      mount.setAttribute(sceneAttr("instanced-glb-pose-ready"), "true");
     }
     scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
     sceneState._modelOwner = null;
