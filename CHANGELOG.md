@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.56.7 (2026-09-20)
+
+### Improved: lower fallback mesh allocation pressure
+
+- World-baked fallback meshes reuse invocation-local normal, UV, tangent, and normalization scratch values instead of allocating equivalent objects for every vertex.
+- Existing allocating helper APIs retain their fresh-object behavior, while independent output tests cover indexed geometry, mirrored and nonuniform transforms, degenerate or incomplete attributes, and cross-mesh isolation.
+
 ## v0.56.6 (2026-09-20)
 
 ### Fixed: bounded rigid InstancedGLB membership updates
