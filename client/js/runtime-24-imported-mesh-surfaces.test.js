@@ -13,7 +13,7 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel; let expansions=0, clones=0; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; return function(){return {expansions:expansions,clones:clones};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel; let expansions=0, clones=0; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; return function(){return {expansions:expansions,clones:clones};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
@@ -118,6 +118,172 @@ function rigidBatchFixture(fresh, count = 100) {
   const render = () => h.renderer.render(bundle, { cssWidth:320, cssHeight:180, width:320, height:180 });
   return { ...h, bundle, gl, render };
 }
+
+function earlyRigidFixture(fresh, xs, overrides = {}, rendererOptions = {}) {
+  const h = createWebGLRendererForPost(Object.assign({ fresh }, rendererOptions));
+  const api = h.env.context.__gosx_scene3d_api;
+  const F32 = vm.runInContext("Float32Array", h.env.context);
+  const U32 = vm.runInContext("Uint32Array", h.env.context);
+  const vertices = { count:3, immutable:true, revision:0, _rigidPool:true,
+    positions:new F32([-.1,0,0, .1,0,0, 0,.2,0]),
+    normals:new F32([0,0,1, 0,0,1, 0,0,1]),
+    uvs:new F32([0,0,1,0,.5,1]), tangents:new F32([1,0,0,1, 1,0,0,1, 1,0,0,1]),
+    indices:new U32([0,1,2]) };
+  const objects = xs.map((x, index) => Object.assign({
+    id:"effect-"+index, kind:"mesh", vertices, _rigidMaterialProfileStable:true,
+    pickable:false, visible:true, castShadow:false, receiveShadow:false,
+    materialKind:"standard", color:"#669966", opacity:1, roughness:.5, metalness:0,
+    wireframe:false, blendMode:"opaque", renderPass:"opaque", depthWrite:true,
+    scaleX:1, scaleY:1, scaleZ:1, x:0, y:0, z:0,
+    rotationX:0, rotationY:0, rotationZ:0,
+    parentMatrix:new F32([1,0,0,0, 0,1,0,0, 0,0,1,0, x,0,0,1]),
+  }, overrides[index] || {}));
+  const build = (source = objects, capabilities = { retainedGeometry:true, rigidImportedBatches:true }) =>
+    api.createSceneRenderBundle(320,180,"#000000",{x:0,y:0,z:6,fov:72,near:.05,far:128},
+      source,[],[],[],[],{},0,[],[],[],[],[],0,false,capabilities);
+  return { ...h, api, F32, vertices, objects, build };
+}
+
+for (const fresh of [true, false]) {
+  test(`WebGL ${fresh ? "source" : "generated"} builds early rigid imported cohorts across 0/1/2 membership`, () => {
+    const h = earlyRigidFixture(fresh, [1,2]);
+    assert.equal(h.build([]).meshObjects.length, 0);
+    const one = h.build([h.objects[0]]);
+    assert.equal(one.meshObjects.length, 1);
+    assert.equal(one.meshObjects[0]._rigidImportedBatch, true);
+    assert.equal(one.meshObjects[0].instanceCount, 1);
+    assert.equal(one.meshObjects[0].modelMatrix[12], 1);
+    const stableID = one.meshObjects[0].id;
+    assert.equal(h.build([]).meshObjects.length,0);
+    assert.equal(h.build([h.objects[0]]).meshObjects[0].id,stableID,
+      "an empty wave must not discard the recent cohort identity");
+    const two = h.build();
+    assert.equal(two.meshObjects.length, 1);
+    assert.equal(two.meshObjects[0].id, stableID);
+    assert.equal(two.meshObjects[0].instanceCount, 2);
+    assert.deepEqual(Array.from(two.meshObjects[0].instanceMatrices,matrix=>matrix[12]),[1,2]);
+    h.objects[0].parentMatrix[12] = 4;
+    const moved = h.build([h.objects[0]]);
+    assert.equal(moved.meshObjects[0].id, stableID);
+    assert.equal(moved.meshObjects[0].modelMatrix[12], 4,
+      "a 1-member cohort must carry the current pose for the ordinary draw fallback");
+    const firstPlan=h.api.prepareScene(one,one.camera,{width:320,height:180},null,{});
+    const movedPlan=h.api.prepareScene(moved,moved.camera,{width:320,height:180},firstPlan,{});
+    assert.equal(movedPlan,firstPlan,"pose-only cohort changes keep the prepared pass identity");
+    assert.equal(movedPlan.pbrPasses.opaque[0],moved.meshObjects[0],
+      "the cache-hit planner must still route the current cohort transform record");
+    h.renderer.dispose();
+  });
+}
+
+test("early rigid imported cohorts fail closed for unsafe and backend-fallback records", () => {
+  const h = earlyRigidFixture(true, [0,1,2,3], {
+    1:{pickable:true}, 2:{castShadow:true}, 3:{opacity:"var(--mesh-opacity)"},
+  });
+  const bundle = h.build();
+  assert.equal(bundle.meshObjects.length, 4, "one safe cohort plus three ordinary unsafe records");
+  assert.equal(bundle.meshObjects.filter(object=>object._rigidImportedBatch===true).length, 1);
+  assert.equal(bundle.meshObjects.filter(object=>object._rigidImportedBatch!==true).length, 3);
+  const fallback = h.build([h.objects[0],h.objects[1]], {retainedGeometry:true});
+  assert.equal(fallback.meshObjects.length, 2);
+  assert.equal(fallback.meshObjects.some(object=>object._rigidImportedBatch===true), false,
+    "renderers without the explicit capability retain the per-object contract");
+  h.renderer.dispose();
+});
+
+test("failed instanced shader preflight preserves ordinary imported records", () => {
+  const h=earlyRigidFixture(true,[0,1],{}, {rejectShaderSources:["in mat4 a_instanceMatrix;"]});
+  assert.equal(h.renderer.supportsRigidImportedBatches,false);
+  const bundle=h.build(h.objects,{retainedGeometry:true,
+    rigidImportedBatches:h.renderer.supportsRigidImportedBatches});
+  assert.equal(bundle.meshObjects.length,2,"shader failure must not collapse records that the fallback cannot draw");
+  assert.equal(bundle.meshObjects.some(object=>object._rigidImportedBatch===true),false);
+  h.renderer.dispose();
+});
+
+test("dynamic registered materials and explicit geometry revisions bypass stale cohort descriptors", () => {
+  const h=earlyRigidFixture(true,[0]);
+  let pulse=0;
+  h.api.registerSceneMaterialProfile("pulse-shell",{shaderData:()=>[1,++pulse,1]});
+  const dynamic=Object.assign({},h.objects[0],{materialKind:"pulse-shell"});
+  const firstDynamic=h.build([dynamic]);
+  const secondDynamic=h.build([dynamic]);
+  assert.equal(firstDynamic.meshObjects[0]._rigidImportedBatch,undefined);
+  assert.equal(secondDynamic.meshObjects[0]._rigidImportedBatch,undefined);
+  assert.ok(secondDynamic.materials[0].shaderData[1]>firstDynamic.materials[0].shaderData[1],
+    "a registered shader-data factory keeps its per-frame external-state contract");
+  h.api.unregisterSceneMaterialProfile("pulse-shell");
+  const first=h.build();
+  const firstID=first.meshObjects[0].id;
+  h.vertices.revision=1;
+  h.vertices.positions[0]=-2;
+  const revised=h.build();
+  assert.equal(revised.meshObjects[0].geometryRevision,1);
+  assert.notEqual(revised.meshObjects[0].id,firstID);
+  assert.ok(revised.meshObjects[0].bounds.minX<-1,
+    "revision changes must recompute local bounds instead of reusing a cached descriptor");
+  h.renderer.dispose();
+});
+
+test("early rigid imported cohorts preserve per-instance side-frustum culling and stream cleanup", () => {
+  const h = earlyRigidFixture(true, [0,100]);
+  let bundle = h.build();
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  const firstDraws = h.canvas.getContext("webgl2").ops.filter(op=>op[0]==="drawElements");
+  assert.equal(firstDraws.length,1,"one surviving member uses the ordinary retained draw with its current matrix");
+  assert.equal(bundle.meshObjects[0].modelMatrix[12],0);
+  const stableID = bundle.meshObjects[0].id;
+  h.objects[1].parentMatrix[12] = .5;
+  bundle = h.build();
+  assert.equal(bundle.meshObjects[0].id,stableID);
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.equal(h.canvas.getContext("webgl2").ops.filter(op=>op[0]==="drawElementsInstanced").at(-1)[5],2);
+  const removedAt = h.canvas.getContext("webgl2").ops.length;
+  bundle = h.build([]);
+  bundle.points=[{id:"keep",count:1,positions:new h.F32([0,0,0]),color:"#fff"}];
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.ok(h.canvas.getContext("webgl2").ops.slice(removedAt).some(op=>op[0]==="deleteBuffer"),
+    "zero membership retires the cohort transform stream while retained geometry follows its pool policy");
+  const repopulatedAt=h.canvas.getContext("webgl2").ops.length;
+  bundle=h.build([h.objects[0],h.objects[1]]);
+  assert.equal(bundle.meshObjects[0].id,stableID);
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.equal(h.canvas.getContext("webgl2").ops.slice(repopulatedAt)
+    .filter(op=>op[0]==="bufferData" && op[3]===h.canvas.getContext("webgl2").STATIC_DRAW).length,0,
+    "repopulation reuses retained geometry while creating only a fresh transform stream");
+  const resizedAt=h.canvas.getContext("webgl2").ops.length;
+  h.renderer.render(h.build([h.objects[0]]),{cssWidth:320,cssHeight:180,width:320,height:180});
+  h.renderer.render(h.build([h.objects[0],h.objects[1]]),{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.equal(h.canvas.getContext("webgl2").ops.slice(resizedAt)
+    .filter(op=>op[0]==="bufferData" && op[4]===h.canvas.getContext("webgl2").DYNAMIC_DRAW).length,0,
+    "1-to-many membership must reuse geometric CPU and GPU transform capacity");
+  h.renderer.dispose();
+});
+
+test("early rigid cohort identity cache is bounded across immutable appearance replacement", () => {
+  const h=earlyRigidFixture(true,[0]);
+  const first=h.build().meshObjects[0].id;
+  for(let index=1;index<=40;index++) {
+    const object=Object.assign({},h.objects[0],{id:"variant-"+index,color:"#"+index.toString(16).padStart(6,"0")});
+    assert.equal(h.build([object]).meshObjects.length,1);
+  }
+  const restored=Object.assign({},h.objects[0],{id:"restored"});
+  assert.notEqual(h.build([restored]).meshObjects[0].id,first,
+    "the per-geometry cache must evict old appearance keys instead of growing without bound");
+  h.renderer.dispose();
+});
+
+test("early rigid imported cohorts reduce an 832-member bundle to one planner record", () => {
+  const h=earlyRigidFixture(true,Array.from({length:832},(_,i)=>(i%32)*.05-1));
+  const batched=h.build();
+  const fallback=h.build(h.objects,{retainedGeometry:true});
+  assert.equal(batched.meshObjects.length,1);
+  assert.equal(batched.meshObjects[0].instanceCount,832);
+  assert.equal(fallback.meshObjects.length,832);
+  assert.equal(batched.retainedMeshObjectCount,fallback.retainedMeshObjectCount);
+  assert.equal(batched.retainedMeshVertexCount,fallback.retainedMeshVertexCount);
+  h.renderer.dispose();
+});
 
 for (const fresh of [true, false]) {
   test(`WebGL ${fresh ? "source" : "generated"} batches shared indexed geometry and retires its streams`, () => {

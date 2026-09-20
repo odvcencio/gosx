@@ -1681,6 +1681,13 @@
     if (object && object.retainedGeometry) {
       scenePlannerTelemetryState.retainedHashFastPaths += 1;
       hash = scenePlannerHashString(hash, String(object.geometryRevision == null ? 0 : object.geometryRevision));
+      // Early rigid cohorts keep opaque pass membership stable while their
+      // current transform stream changes. The cache-hit path refreshes PBR
+      // buckets with records from the current bundle, so hashing every row
+      // would only recreate the per-instance planner work batching removes.
+      if (object._rigidImportedBatch === true) {
+        return scenePlannerHashNumber(hash, sceneNumber(object.instanceCount, 0));
+      }
       // Retained geometry is immutable between explicit revisions, so hashing
       // every position/normal/UV on every animated frame would recreate the
       // exact O(vertices) cost the retained path removes. The compact model

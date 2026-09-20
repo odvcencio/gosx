@@ -7149,6 +7149,8 @@
     }
     const rigidBatchRecords = new Map();
     const rigidObjectBatches = new Map();
+    const prebuiltRigidBatchRecords = new Map();
+    let prebuiltRigidBatchEpoch = 0;
     const meshColorVisibility = new Map();
     var rigidBatchSequence = 0;
     var rigidShadowProgram = null;
@@ -7392,7 +7394,7 @@
       return Math.floor(data.length / components);
     }
 
-    function uploadInstancedStream(mesh, index, slot, data) {
+    function uploadInstancedStream(mesh, index, slot, data, activeLength) {
       // Commands replace JS arrays frequently. Their identity is not a GPU
       // lifetime: own mutable streams by batch ID, with frame retirement.
       const key = mesh.id ? "id:" + mesh.id : "index:" + index;
@@ -7413,9 +7415,18 @@
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
         stream.bytes = data.byteLength;
       } else {
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+        const length = Number.isFinite(activeLength)
+          ? Math.max(0, Math.min(data.length, Math.floor(activeLength)))
+          : data.length;
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, length === data.length ? data : data.subarray(0, length));
       }
       return stream.buffer;
+    }
+
+    function touchInstancedStream(mesh, index, slot) {
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      const record = instancedStreamRecords.get(key);
+      if (record && record[slot]) record[slot].epoch = instancedStreamEpoch;
     }
 
     function retireInstancedStreams() {
@@ -8739,6 +8750,7 @@
 
     function prepareRigidMeshBatches(bundle) {
       crowdFrame++;
+      prebuiltRigidBatchEpoch++;
       // Small prewarmed palettes stay resident under the hard aggregate cap.
       // Expiring by render-frame age would reintroduce later-wave upload hitches.
       rigidObjectBatches.clear();
@@ -8751,6 +8763,57 @@
       }
       for (const obj of bundle.meshObjects || []) {
         const mat = materials[obj && obj.materialIndex] || null;
+        if (obj && obj._rigidImportedBatch === true) {
+          const authoredCount = Math.max(0, Math.min(Math.floor(sceneNumber(obj.instanceCount, 0)),
+            Array.isArray(obj.instanceMatrices) ? obj.instanceMatrices.length : 0));
+          let batch = prebuiltRigidBatchRecords.get(obj.id);
+          if (!batch) {
+            batch = { id: obj.id, objects: [obj], transforms: null, count: 0, atlas: null,
+              prebuilt: true, epoch: 0 };
+            prebuiltRigidBatchRecords.set(obj.id, batch);
+          }
+          batch.epoch = prebuiltRigidBatchEpoch;
+          batch.objects[0] = obj;
+          const required = authoredCount * 16;
+          if (!batch.transforms || batch.transforms.length < required ||
+              batch.transforms.length > Math.max(64, required * 4)) {
+            let capacity = 32;
+            while (capacity < required) capacity *= 2;
+            batch.transforms = new Float32Array(capacity);
+          }
+          let count = 0;
+          const boundsRows = obj.instanceBounds;
+          for (let index = 0; index < authoredCount; index++) {
+            const bounds = Array.isArray(boundsRows) ? boundsRows[index] : null;
+            let visible = Boolean(bounds);
+            if (visible) {
+              for (let planeIndex = 0; planeIndex < 4; planeIndex++) {
+                const p = planes[planeIndex];
+                if (p[0] * (p[0] >= 0 ? bounds.maxX : bounds.minX) +
+                    p[1] * (p[1] >= 0 ? bounds.maxY : bounds.minY) +
+                    p[2] * (p[2] >= 0 ? bounds.maxZ : bounds.minZ) + p[3] < -.0001) {
+                  visible = false;
+                  break;
+                }
+              }
+            }
+            if (!visible) continue;
+            const matrix = obj.instanceMatrices[index];
+            if (!matrix || matrix.length < 16) continue;
+            batch.transforms.set(matrix, count * 16);
+            count++;
+          }
+          batch.count = count;
+          if (count === 1) touchInstancedStream(batch, 0, "transforms");
+          meshColorVisibility.set(obj, count > 0);
+          if (count > 0 && obj.directVertices && obj.retainedGeometry && obj.vertices &&
+              obj.vertexCount > 0 && scenePBRObjectRenderPass(obj, mat) === "opaque" &&
+              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+            if (count === 1) obj.modelMatrix = batch.transforms.subarray(0, 16);
+            rigidObjectBatches.set(obj, batch);
+          }
+          continue;
+        }
         let visible = true;
         const bounds = obj && obj.bounds;
         if (bounds && !objectIsSkinned(obj) && !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
@@ -8819,12 +8882,15 @@
         }
         if (!groups.size) rigidBatchRecords.delete(vertices);
       }
+      for (const [id, batch] of prebuiltRigidBatchRecords) {
+        if (batch.epoch !== prebuiltRigidBatchEpoch) prebuiltRigidBatchRecords.delete(id);
+      }
     }
 
     function bindRigidBatchMatrices(batch, attributes) {
       const base = attributes.instanceMatrix;
       if (!(base >= 0)) return false;
-      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "transforms", batch.transforms));
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "transforms", batch.transforms, batch.count * 16));
       for (let col = 0; col < 4; col++) {
         gl.enableVertexAttribArray(base + col);
         gl.vertexAttribPointer(base + col, 4, gl.FLOAT, false, 64, col * 16);
@@ -10230,9 +10296,14 @@
       };
     }
 
+    const rigidImportedBatchProgram = ensureInstancedProgram();
+    const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
+      rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
+
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
+      supportsRigidImportedBatches,
       prepareCrowdAtlas,
       render: render,
       dispose: dispose,

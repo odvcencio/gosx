@@ -2096,12 +2096,12 @@ function createContext(options) {
   if (typeof options.createWebGLContext === "function") {
     document.createWebGLContext = options.createWebGLContext;
   } else if (options.enableWebGL) {
-    document.createWebGLContext = () => new FakeWebGLContext();
+    document.createWebGLContext = () => new FakeWebGLContext(options);
   }
   if (typeof options.createWebGL2Context === "function") {
     document.createWebGL2Context = options.createWebGL2Context;
   } else if (options.enableWebGL2) {
-    document.createWebGL2Context = () => new FakeWebGLContext();
+    document.createWebGL2Context = () => new FakeWebGLContext(options);
   }
   if (typeof options.createWebGPUContext === "function") {
     document.createWebGPUContext = options.createWebGPUContext;
@@ -5368,7 +5368,8 @@ function makeBundleWithCustomPost(options) {
 // pattern as other WebGL2 renderer tests in this file).
 function createWebGLRendererForPost(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true,
+    rejectShaderSources: opts.rejectShaderSources });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
   if (opts.fresh) {
     runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");

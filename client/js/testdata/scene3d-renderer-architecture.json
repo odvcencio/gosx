@@ -890,6 +890,7 @@
     ],
     "optional": [
       "supportsRetainedGeometry",
+      "supportsRigidImportedBatches",
       "prepareCrowdAtlas",
       "supportsBundle",
       "setLifecycle",
@@ -915,6 +916,7 @@
         "prepareCrowdAtlas",
         "render",
         "supportsRetainedGeometry",
+        "supportsRigidImportedBatches",
         "textureVariantContext",
         "type"
       ],
