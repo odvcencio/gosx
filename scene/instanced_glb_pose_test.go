@@ -204,6 +204,28 @@ func TestPackInstancedGLBPoseFrameRejectsInvalidRevisionOrEmptyLayout(t *testing
 	}
 }
 
+func TestPackInstancedGLBPoseFrameRejectsNonfiniteAnimationTimeBeforeClamp(t *testing.T) {
+	for _, animationTime := range []float64{math.Inf(-1), math.Inf(1), math.NaN()} {
+		previous := poseFrameFixture()
+		next := poseFrameFixture()
+		next[0].Instances[1].AnimationTime = animationTime
+		if frame, ok := PackInstancedGLBPoseFrame(nil, 1, previous, next); ok || len(frame) != 0 {
+			t.Fatalf("nonfinite animation time %v accepted", animationTime)
+		}
+	}
+	previous := poseFrameFixture()
+	next := poseFrameFixture()
+	next[0].Instances[1].AnimationTime = -3
+	frame, ok := PackInstancedGLBPoseFrame(nil, 1, previous, next)
+	if !ok {
+		t.Fatal("finite negative animation time was refused")
+	}
+	offset := InstancedGLBPoseFrameHeaderBytes + InstancedGLBPoseFrameRowFloats*4 + 9*4
+	if got := math.Float32frombits(binary.LittleEndian.Uint32(frame[offset:])); got != 0 {
+		t.Fatalf("clamped animation time = %v, want 0", got)
+	}
+}
+
 func TestPackInstancedGLBPoseFrameChecksEveryBatchDeclarationField(t *testing.T) {
 	typeOfBatch := reflect.TypeOf(InstancedGLBMeshIR{})
 	for fieldIndex := range typeOfBatch.NumField() {

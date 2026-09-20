@@ -210,6 +210,10 @@ func normalizedInstancedGLBInstanceID(id string, index int) string {
 }
 
 func instancedGLBPoseValues(instance MeshInstanceIR) ([InstancedGLBPoseFrameRowFloats]float32, bool) {
+	var packed [InstancedGLBPoseFrameRowFloats]float32
+	if math.IsNaN(instance.AnimationTime) || math.IsInf(instance.AnimationTime, 0) {
+		return packed, false
+	}
 	values := [InstancedGLBPoseFrameRowFloats]float64{
 		instance.X, instance.Y, instance.Z,
 		instance.RotationX, instance.RotationY, instance.RotationZ,
@@ -218,7 +222,6 @@ func instancedGLBPoseValues(instance MeshInstanceIR) ([InstancedGLBPoseFrameRowF
 		resolvedInstancedGLBScale(instance.ScaleZ),
 		math.Max(0, instance.AnimationTime),
 	}
-	var packed [InstancedGLBPoseFrameRowFloats]float32
 	for index, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return packed, false
