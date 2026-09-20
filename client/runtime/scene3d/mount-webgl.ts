@@ -4003,11 +4003,11 @@ function gosxConfigureSceneScript(script, role, src) {
     patch.staged.rigidInstanceModel = patch.model;
   }
 
-  function sceneUpdateRigidInstancePoses(state) {
+  function sceneUpdateRigidInstancePoses(state, hydrationModels) {
     const records = state && state._hydratedModelRecords;
     const cache = records && records.rigidInstances;
     if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
-    const models = sceneHydrationModels(state, null);
+    const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
     if (models.length !== records.modelCount) return false;
     const patches = [];
     const keys = new Set();
@@ -4041,7 +4041,20 @@ function gosxConfigureSceneScript(script, role, src) {
     return model && model._instancedGLB === true ? String(model.id || "") : "";
   }
 
-  function scenePlanRigidInstanceMembership(state) {
+  function sceneRigidMembershipSnapshotModel(model) {
+    // InstancedGLB models are freshly expanded from a command-owned normalized
+    // batch. normalizeSceneInstancedGLBMeshEntry already deep-snapshots every
+    // nested authored shader/material field once per batch, and expansion
+    // creates a new pose record per instance. Later commands replace the
+    // batch array, so this record is already an immutable async snapshot.
+    // Ordinary Model declarations retain the established deep clone because
+    // their broader mutable/lifecycle contract is unchanged.
+    return sceneInstancedGLBHydrationTemplates.has(model)
+      ? model
+      : sceneCloneHydrationModel(model);
+  }
+
+  function scenePlanRigidInstanceMembership(state, hydrationModels) {
     const records = state && state._hydratedModelRecords;
     const cache = records && records.rigidInstances;
     const statics = records && records.staticModels;
@@ -4051,7 +4064,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (records.modelCount !== cache.size + statics.size) return null;
     let models;
     try {
-      models = sceneHydrationModels(state, null).map(sceneCloneHydrationModel);
+      const expanded = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
+      models = expanded.map(sceneRigidMembershipSnapshotModel);
     } catch (_error) {
       return null;
     }
@@ -4168,7 +4182,12 @@ function gosxConfigureSceneScript(script, role, src) {
     const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map() };
     for (const entry of plan.entries) {
       if (entry.kind === "static") hydrated.staticModels.set(entry.key, entry.staged);
-      else hydrated.rigidInstances.set(entry.key, entry.staged);
+      else {
+        for (const object of entry.staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
+        hydrated.rigidInstances.set(entry.key, entry.staged);
+      }
       for (const object of entry.staged.objects) hydrated.objects.push(object.id);
     }
     // Commit in one synchronous turn after complete validation. Removed model
@@ -4198,8 +4217,8 @@ function gosxConfigureSceneScript(script, role, src) {
     return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
   }
 
-  function sceneReconcileRigidInstanceMembership(state) {
-    const plan = scenePlanRigidInstanceMembership(state);
+  function sceneReconcileRigidInstanceMembership(state, hydrationModels) {
+    const plan = scenePlanRigidInstanceMembership(state, hydrationModels);
     return plan ? sceneCommitRigidInstanceMembership(plan) : null;
   }
 
@@ -4346,6 +4365,9 @@ function gosxConfigureSceneScript(script, role, src) {
         hydrated.staticModels.set(staticKeys[modelIndex], staged);
       }
       if (rigidKeys[modelIndex] && sceneReusableRigidInstance(staged, null)) {
+        for (const object of staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
         hydrated.rigidInstances.set(rigidKeys[modelIndex], staged);
       }
       for (let index = 0; index < staged.objects.length; index += 1) {

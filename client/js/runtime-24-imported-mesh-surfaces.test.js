@@ -13,7 +13,7 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel; let expansions=0, clones=0; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; return function(){return {expansions:expansions,clones:clones};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
@@ -418,6 +418,7 @@ test("rigid actor pose and membership commands preserve survivors without full h
   assert.equal(matrices(),120,"two actors build one matrix each per submitted pose");
   assert.ok(Math.abs(first.parentMatrix[12] - 5.9) < .00001);
   const second = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
+  const membershipWork = env.context.__meshTest.countMembershipWork();
   await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
     { id: "swarm", src: "/actor.glb", instances: [{ id: "one", x: 7 }, { id: "three", x: 3 }] },
   ] } }]);
@@ -428,6 +429,10 @@ test("rigid actor pose and membership commands preserve survivors without full h
   assert.equal(state.objects.has(second.id), false, "removed membership must leave the committed object map");
   assert.ok(third);
   assert.equal(third.vertices, first.vertices, "new membership reuses the warmed immutable geometry");
+  const work = membershipWork();
+  assert.equal(work.expansions, 1,
+    "one normalized InstancedGLB snapshot must serve count detection and the async transaction");
+  assert.equal(work.clones, 0, "owned InstancedGLB snapshots must not deep-clone every survivor");
   assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
   const before = first.parentMatrix;
   await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
@@ -436,6 +441,85 @@ test("rigid actor pose and membership commands preserve survivors without full h
   assert.ok(state._modelHydrationGeneration > generation, "material changes still use full atomic hydration");
   assert.equal(state._hydratedModelRecords.rigidInstances.size, 1);
   assert.equal(first.parentMatrix, before, "replacing a collection must not mutate an old committed wrapper");
+});
+
+test("rigid imported material profiles skip deep comparison until a supported mutable route is used", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    { id: "swarm", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances: [{ id: "one" }] },
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const object = Array.from(state.objects.values())[0];
+  assert.equal(object._rigidMaterialProfileStable, true);
+  const comparisons = env.context.__meshTest.countMaterialInputComparisons();
+  const initial = env.context.__meshTest.materialProfile(object);
+  assert.equal(env.context.__meshTest.materialProfile(object), initial);
+  assert.equal(comparisons(), 0, "engine-owned rigid wrappers must not rescan nested material inputs");
+
+  const uniforms = env.context.__meshTest.resolveUniforms(state, object.id);
+  uniforms.pulse[0] = 0.9;
+  assert.equal(object._rigidMaterialProfileStable, false, "live inline uniforms permanently invalidate trust");
+  const animated = env.context.__meshTest.materialProfile(object);
+  assert.notEqual(animated, initial);
+  assert.equal(animated.customUniforms.pulse[0], 0.9);
+  assert.ok(comparisons() > 0, "mutable wrappers retain the recursive invalidation contract");
+
+  await api.applySceneCommands(state, [{ kind: 3, objectId: object.id, data: { color: "#123456" } }]);
+  const patched = state.objects.get(object.id);
+  assert.notEqual(patched, object);
+  assert.equal(patched._rigidMaterialProfileStable, false);
+  assert.equal(env.context.__meshTest.materialProfile(patched).color, "#123456");
+});
+
+test("incremental additions retain the normalized nested batch snapshot across await", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const initial = { id: "swarm", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances: [{ id: "one" }] };
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [initial] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const next = { id: "swarm", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances: [{ id: "one" }, { id: "two" }] };
+  const pending = api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [next] } }]);
+  next.customUniforms.pulse[0] = 9;
+  await pending;
+  const added = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
+  assert.equal(added.customUniforms.pulse[0], 0.25,
+    "async staging must observe the once-normalized command snapshot, not later authored mutation");
+});
+
+test("832 moving rigid wrappers retain constant-time material profile cache hits", async (t) => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const instances = Array.from({ length: 832 }, (_, index) => ({ id: "slot-" + index, x: index / 100 }));
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances },
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const objects = Array.from(state.objects.values());
+  assert.equal(objects.length, 832);
+  for (const object of objects) env.context.__meshTest.materialProfile(object);
+  const comparisons = env.context.__meshTest.countMaterialInputComparisons();
+  let started = process.hrtime.bigint();
+  for (let frame = 0; frame < 60; frame++) {
+    for (const object of objects) {
+      object.parentMatrix[12] += 0.000001;
+      env.context.__meshTest.materialProfile(object);
+    }
+  }
+  const stableMS = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(comparisons(), 0, "pose-only frames must perform no nested material comparisons");
+
+  for (const object of objects) object._rigidMaterialProfileStable = false;
+  started = process.hrtime.bigint();
+  for (let frame = 0; frame < 60; frame++) {
+    for (const object of objects) env.context.__meshTest.materialProfile(object);
+  }
+  const mutableMS = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(comparisons() >= 832 * 60, "mutable wrappers must retain recursive comparison coverage");
+  t.diagnostic(`49,920 material lookups: rigid=${stableMS.toFixed(2)}ms mutable=${mutableMS.toFixed(2)}ms`);
 });
 
 test("rigid membership failures and stale additions preserve the complete committed generation", async () => {

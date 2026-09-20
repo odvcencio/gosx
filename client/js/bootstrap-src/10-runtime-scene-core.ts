@@ -3155,6 +3155,10 @@
     if (!sceneIsPlainObject(target.customUniforms)) {
       target.customUniforms = {};
     }
+    // Inline custom uniforms are intentionally handed to the motion runtime
+    // as a live mutable bag. Once that escape hatch is used this wrapper no
+    // longer satisfies the engine-owned immutable material contract.
+    if (target === record) record._rigidMaterialProfileStable = false;
     return target.customUniforms;
   }
 
@@ -4127,14 +4131,21 @@
     }).filter(function(entry) {
       return Boolean(entry && entry.src && Array.isArray(entry.instances) && entry.instances.length > 0);
     });
+    // Expand the freshly normalized, command-owned batch snapshot once. The
+    // stable-pose check and a possible membership transaction must inspect
+    // the same declaration set; expanding both independently doubled all
+    // per-instance template/model work on every count change.
+    const hydrationModels = typeof sceneHydrationModels === "function"
+      ? sceneHydrationModels(state, null)
+      : null;
     // Rigid actors retain their local vertex buffers. A pose update changes
     // only their model matrices; asset loading and geometry staging are for
     // membership/material changes, not every animation frame.
-    if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state)) {
+    if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state, hydrationModels)) {
       return null;
     }
     if (typeof sceneReconcileRigidInstanceMembership === "function") {
-      const promise = sceneReconcileRigidInstanceMembership(state);
+      const promise = sceneReconcileRigidInstanceMembership(state, hydrationModels);
       if (promise && typeof promise.then === "function") {
         return sceneTrackModelHydrationPromise(state, promise);
       }
@@ -4383,6 +4394,10 @@
         props: patch || {},
       }, current);
       if (next) {
+        // A direct object/material command replaces an imported wrapper with
+        // a public mutable record. Never carry the internal rigid snapshot
+        // trust marker across that supported update route.
+        next._rigidMaterialProfileStable = false;
         state.objects.set(key, next);
       }
       return;

@@ -660,6 +660,12 @@
     const cacheable = object && typeof object === "object";
     const cached = cacheable && sceneObjectMaterialProfiles.get(object);
     if (cached && cached.registryVersion === sceneMaterialProfileRegistryVersion) {
+      // Rigid imported wrappers are engine-owned immutable material snapshots.
+      // Their membership key forces a replacement for every appearance,
+      // template or texture-scope change, while pose commits only update the
+      // parent matrix/crowd rows. Avoid recursively comparing nested imported
+      // texture descriptors for every primitive on every rendered frame.
+      if (object._rigidMaterialProfileStable === true) return cached.profile;
       let same = true;
       for (let i = 0; i < sceneObjectMaterialInputKeys.length; i++) {
         const value = object[sceneObjectMaterialInputKeys[i]], prior = cached.inputs[i];
