@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "measuredAtCommit": "68264a41a97c477d0fa16089b4bc79786265988f",
+  "measuredAtCommit": "e7f913690efd271d6f49e35c0cc3b96eadaaab88",
   "canopyVersion": "v0.18.0-19-g01a5f95-dirty",
   "audit": {
     "architectureReportConsumerFiles": 26,
@@ -246,7 +246,7 @@
     "../runtime/scene3d/webgpu.ts": 18827,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
     "../runtime/scene3d/hydrate-input.ts": 89,
-    "../runtime/scene3d/mount-webgl.ts": 5138,
+    "../runtime/scene3d/mount-webgl.ts": 5326,
     "../runtime/scene3d/mount.ts": 3568
   },
   "functionDefaults": {
