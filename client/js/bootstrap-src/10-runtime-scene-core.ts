@@ -5528,64 +5528,85 @@
   }
 
   function sceneMeshVertexNormal(vertices, index) {
+    return sceneMeshVertexNormalInto({}, vertices, index);
+  }
+
+  function sceneMeshVertexNormalInto(out, vertices, index) {
     const offset = index * 3;
     if (!vertices || !vertices.normals || vertices.normals.length < offset + 3) {
-      return { x: 0, y: 1, z: 0 };
+      out.x = 0;
+      out.y = 1;
+      out.z = 0;
+      return out;
     }
-    return {
-      x: sceneNumber(vertices.normals[offset], 0),
-      y: sceneNumber(vertices.normals[offset + 1], 1),
-      z: sceneNumber(vertices.normals[offset + 2], 0),
-    };
+    out.x = sceneNumber(vertices.normals[offset], 0);
+    out.y = sceneNumber(vertices.normals[offset + 1], 1);
+    out.z = sceneNumber(vertices.normals[offset + 2], 0);
+    return out;
   }
 
   function sceneMeshVertexUV(vertices, index) {
+    return sceneMeshVertexUVInto({}, vertices, index);
+  }
+
+  function sceneMeshVertexUVInto(out, vertices, index) {
     const offset = index * 2;
     if (!vertices || !vertices.uvs || vertices.uvs.length < offset + 2) {
-      return { x: 0, y: 0 };
+      out.x = 0;
+      out.y = 0;
+      return out;
     }
-    return {
-      x: sceneNumber(vertices.uvs[offset], 0),
-      y: sceneNumber(vertices.uvs[offset + 1], 0),
-    };
+    out.x = sceneNumber(vertices.uvs[offset], 0);
+    out.y = sceneNumber(vertices.uvs[offset + 1], 0);
+    return out;
   }
 
   function sceneMeshVertexTangent(vertices, index) {
+    return sceneMeshVertexTangentInto({}, vertices, index);
+  }
+
+  function sceneMeshVertexTangentInto(out, vertices, index) {
     const offset = index * 4;
     if (!vertices || !vertices.tangents || vertices.tangents.length < offset + 4) {
-      return { x: 1, y: 0, z: 0, w: 1 };
+      out.x = 1;
+      out.y = 0;
+      out.z = 0;
+      out.w = 1;
+      return out;
     }
-    return {
-      x: sceneNumber(vertices.tangents[offset], 1),
-      y: sceneNumber(vertices.tangents[offset + 1], 0),
-      z: sceneNumber(vertices.tangents[offset + 2], 0),
-      w: sceneNumber(vertices.tangents[offset + 3], 1),
-    };
+    out.x = sceneNumber(vertices.tangents[offset], 1);
+    out.y = sceneNumber(vertices.tangents[offset + 1], 0);
+    out.z = sceneNumber(vertices.tangents[offset + 2], 0);
+    out.w = sceneNumber(vertices.tangents[offset + 3], 1);
+    return out;
   }
 
   function sceneMeshWorldNormal(vertices, index, normalTransform) {
-    const normal = sceneMeshVertexNormal(vertices, index);
-    return sceneNormalizeDirection(sceneMatrixTransformInto(
-      normal, normalTransform, normal.x, normal.y, normal.z, 3, false,
-    ));
+    return sceneMeshWorldNormalInto({}, vertices, index, normalTransform);
+  }
+
+  function sceneMeshWorldNormalInto(out, vertices, index, normalTransform) {
+    sceneMeshVertexNormalInto(out, vertices, index);
+    sceneMatrixTransformInto(out, normalTransform, out.x, out.y, out.z, 3, false);
+    return sceneNormalizeDirectionInto(out, out);
   }
 
   function sceneMeshWorldTangent(vertices, index, modelMatrix, normal, orientation) {
-    const tangent = sceneMeshVertexTangent(vertices, index);
-    sceneMatrixTransformInto(tangent, modelMatrix, tangent.x, tangent.y, tangent.z, 4, false);
-    let x = tangent.x, y = tangent.y, z = tangent.z;
+    return sceneMeshWorldTangentInto({}, vertices, index, modelMatrix, normal, orientation);
+  }
 
-    // A tangent is a surface direction, so it follows the ordinary linear
-    // transform rather than the normal matrix. Remove any accumulated
-    // non-orthogonality before the shader reconstructs B = cross(N, T) * w.
+  function sceneMeshWorldTangentInto(out, vertices, index, modelMatrix, normal, orientation) {
+    sceneMeshVertexTangentInto(out, vertices, index);
+    const handedness = out.w;
+    sceneMatrixTransformInto(out, modelMatrix, out.x, out.y, out.z, 4, false);
+    let x = out.x, y = out.y, z = out.z;
+
     const normalDot = x * normal.x + y * normal.y + z * normal.z;
     x -= normal.x * normalDot;
     y -= normal.y * normalDot;
     z -= normal.z * normalDot;
     let length = Math.sqrt(x * x + y * y + z * z);
     if (length <= 0.000001) {
-      // Degenerate authored tangents or singular scales still need a finite
-      // direction. Pick the least-aligned cardinal axis and cross it with N.
       if (Math.abs(normal.x) <= Math.abs(normal.y) && Math.abs(normal.x) <= Math.abs(normal.z)) {
         x = 0;
         y = -normal.z;
@@ -5601,28 +5622,32 @@
       }
       length = Math.max(0.000001, Math.sqrt(x * x + y * y + z * z));
     }
-    return {
-      x: x / length,
-      y: y / length,
-      z: z / length,
-      w: tangent.w * orientation,
-    };
+    out.x = x / length;
+    out.y = y / length;
+    out.z = z / length;
+    out.w = handedness * orientation;
+    return out;
   }
 
   function sceneNormalizeDirection(point) {
-    const length = Math.sqrt(
-      sceneNumber(point && point.x, 0) * sceneNumber(point && point.x, 0) +
-      sceneNumber(point && point.y, 0) * sceneNumber(point && point.y, 0) +
-      sceneNumber(point && point.z, 0) * sceneNumber(point && point.z, 0)
-    );
+    return sceneNormalizeDirectionInto({}, point);
+  }
+
+  function sceneNormalizeDirectionInto(out, point) {
+    const x = sceneNumber(point && point.x, 0);
+    const y = sceneNumber(point && point.y, 0);
+    const z = sceneNumber(point && point.z, 0);
+    const length = Math.sqrt(x * x + y * y + z * z);
     if (length <= 0.000001) {
-      return { x: 0, y: 1, z: 0 };
+      out.x = 0;
+      out.y = 1;
+      out.z = 0;
+      return out;
     }
-    return {
-      x: sceneNumber(point && point.x, 0) / length,
-      y: sceneNumber(point && point.y, 0) / length,
-      z: sceneNumber(point && point.z, 0) / length,
-    };
+    out.x = x / length;
+    out.y = y / length;
+    out.z = z / length;
+    return out;
   }
 
   function appendSceneMeshWireSegment(bundle, camera, width, height, fromWorld, toWorld, fromLighting, toLighting, lineWidth, passIndex) {
@@ -5917,6 +5942,17 @@
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.fallback += 1;
     }
+    // World-baked fallback attributes are consumed as scalars within this
+    // invocation. Keep the scratch lifetime local to the mesh: twelve fixed
+    // objects/arrays replace eighteen transient objects per triangle without
+    // sharing mutable state between independent meshes or bundle builds.
+    const normals = [{ x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }];
+    const uvs = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+    const tangents = [
+      { x: 1, y: 0, z: 0, w: 1 },
+      { x: 1, y: 0, z: 0, w: 1 },
+      { x: 1, y: 0, z: 0, w: 1 },
+    ];
     const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
@@ -5964,11 +6000,9 @@
       sceneMatrixTransformInto(points[0], modelMatrix, positions[tri0], positions[tri0 + 1], positions[tri0 + 2], 4, true);
       sceneMatrixTransformInto(points[1], modelMatrix, positions[tri1], positions[tri1 + 1], positions[tri1 + 2], 4, true);
       sceneMatrixTransformInto(points[2], modelMatrix, positions[tri2], positions[tri2 + 1], positions[tri2 + 2], 4, true);
-      const normals = [
-        sceneMeshWorldNormal(vertices, source0, bakeLinearState),
-        sceneMeshWorldNormal(vertices, source1, bakeLinearState),
-        sceneMeshWorldNormal(vertices, source2, bakeLinearState),
-      ];
+      sceneMeshWorldNormalInto(normals[0], vertices, source0, bakeLinearState);
+      sceneMeshWorldNormalInto(normals[1], vertices, source1, bakeLinearState);
+      sceneMeshWorldNormalInto(normals[2], vertices, source2, bakeLinearState);
       // Full per-vertex analytic lighting is only computed when its result
       // is actually visible (wire segments) -- see flatMeshColor's comment
       // above. Otherwise reuse the one flat base color computed once for
@@ -5981,16 +6015,12 @@
           sceneLitColorRGBA(material, points[2], normals[2], lights, environment),
         ]
         : null;
-      const uvs = [
-        sceneMeshVertexUV(vertices, source0),
-        sceneMeshVertexUV(vertices, source1),
-        sceneMeshVertexUV(vertices, source2),
-      ];
-      const tangents = [
-        sceneMeshWorldTangent(vertices, source0, modelMatrix, normals[0], bakeLinearState[9]),
-        sceneMeshWorldTangent(vertices, source1, modelMatrix, normals[1], bakeLinearState[9]),
-        sceneMeshWorldTangent(vertices, source2, modelMatrix, normals[2], bakeLinearState[9]),
-      ];
+      sceneMeshVertexUVInto(uvs[0], vertices, source0);
+      sceneMeshVertexUVInto(uvs[1], vertices, source1);
+      sceneMeshVertexUVInto(uvs[2], vertices, source2);
+      sceneMeshWorldTangentInto(tangents[0], vertices, source0, modelMatrix, normals[0], bakeLinearState[9]);
+      sceneMeshWorldTangentInto(tangents[1], vertices, source1, modelMatrix, normals[1], bakeLinearState[9]);
+      sceneMeshWorldTangentInto(tangents[2], vertices, source2, modelMatrix, normals[2], bakeLinearState[9]);
 
       for (let index = 0; index < 3; index += 1) {
         const point = points[index];

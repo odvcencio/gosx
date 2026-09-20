@@ -13,11 +13,122 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; }, fallbackReference: function(object,time) { const vertices=object.vertices, matrix=sceneObjectModelMatrix(object,time||0), linear=sceneObjectMeshBakeLinearState(object,matrix), indices=vertices.indices instanceof Uint32Array && vertices.indices.length>=3 && vertices.indices.length%3===0?vertices.indices:null, count=indices?indices.length:vertices.count, normals=[],uvs=[],tangents=[]; for(let tri=0;tri+2<count;tri+=3){const a=indices?indices[tri]:tri,b=indices?indices[tri+1]:tri+1,c=indices?indices[tri+2]:tri+2,order=linear[9]<0?[a,c,b]:[a,b,c]; for(const source of order){const normal=sceneMeshWorldNormal(vertices,source,linear),uv=sceneMeshVertexUV(vertices,source),tangent=sceneMeshWorldTangent(vertices,source,matrix,normal,linear[9]); normals.push(normal.x,normal.y,normal.z);uvs.push(uv.x,uv.y);tangents.push(tangent.x,tangent.y,tangent.z,tangent.w);}} return {normals,uvs,tangents}; }, countFallbackAttributeHelpers: function() { const counts={allocating:0,normalInto:0,worldNormalInto:0,uvInto:0,tangentInto:0,worldTangentInto:0,normalizeInto:0}; for (const name of ['sceneMeshVertexNormal','sceneMeshWorldNormal','sceneMeshVertexUV','sceneMeshVertexTangent','sceneMeshWorldTangent']) { const original=eval(name); eval(name+'=function(...args){counts.allocating++;return original(...args);}'); } for (const pair of [['sceneMeshVertexNormalInto','normalInto'],['sceneMeshWorldNormalInto','worldNormalInto'],['sceneMeshVertexUVInto','uvInto'],['sceneMeshVertexTangentInto','tangentInto'],['sceneMeshWorldTangentInto','worldTangentInto'],['sceneNormalizeDirectionInto','normalizeInto']]) { const original=eval(pair[0]); eval(pair[0]+'=function(...args){counts[pair[1]]++;return original(...args);}'); } return function(){return Object.assign({},counts);}; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
 }
+
+function buildWorldBakedBundle(env, objects) {
+  return env.context.__gosx_scene3d_api.createSceneRenderBundle(640, 360, "#000000",
+    { x: 0, y: 1, z: 8, fov: 72, near: .05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+    { retainedGeometry: true, rigidImportedBatches: true });
+}
+
+test("world-baked mesh attribute scratches preserve exact legacy output without aliasing", () => {
+  const env = importedMeshRuntime();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const U32 = vm.runInContext("Uint32Array", env.context);
+  const vertices = {
+    count: 6,
+    positions: new F32([0,0,0, 1,0,0, 0,1,0, 1,0,0, 1,1,0, 0,1,0]),
+    normals: new F32([0,0,1, 0,1,1, NaN,0,1, 1,0,0]),
+    uvs: new F32([0,0, 1,0, .25,1, .5,.25, NaN,.75]),
+    tangents: new F32([1,0,0,1, 0,0,0,-1, NaN,1,0,1, 0,1,0,-1]),
+    indices: new U32([0,1,2, 3,4,5]),
+    dynamic: true,
+  };
+  const object = {
+    id: "baked-reference", kind: "mesh", vertices,
+    x: 1.25, y: -.5, z: .75,
+    rotationX: .31, rotationY: -.47, rotationZ: .22,
+    scaleX: -1.7, scaleY: .65, scaleZ: 1.25,
+    materialKind: "standard", color: "#62869a", roughness: .6, metalness: .1,
+    selected: true, outlineColor: "#ffd34d", outlineWidth: 2,
+    visible: true, pickable: true,
+  };
+  const reference = env.context.__meshTest.fallbackReference(object, 0);
+  const countHelpers = env.context.__meshTest.countFallbackAttributeHelpers();
+  const first = buildWorldBakedBundle(env, [object]);
+  assert.deepEqual(Array.from(first.worldMeshNormals), Array.from(new F32(reference.normals)));
+  assert.deepEqual(Array.from(first.worldMeshUVs), Array.from(new F32(reference.uvs)));
+  assert.deepEqual(Array.from(first.worldMeshTangents), Array.from(new F32(reference.tangents)));
+  assert.ok(first.worldPositions.length > 0, "wire selection still emits its independent line geometry");
+  assert.deepEqual({ ...countHelpers() }, {
+    allocating: 0,
+    normalInto: 6,
+    worldNormalInto: 6,
+    uvInto: 6,
+    tangentInto: 6,
+    worldTangentInto: 6,
+    normalizeInto: 6,
+  });
+
+  const snapshot = {
+    positions: Array.from(first.worldMeshPositions),
+    normals: Array.from(first.worldMeshNormals),
+    uvs: Array.from(first.worldMeshUVs),
+    tangents: Array.from(first.worldMeshTangents),
+  };
+  const missing = {
+    id: "missing-attributes", kind: "mesh", visible: true,
+    x: -2, y: 1, z: 0, rotationX: 0, rotationY: .2, rotationZ: 0,
+    scaleX: 1, scaleY: 2, scaleZ: .5,
+    materialKind: "standard", color: "#ffffff",
+    vertices: { count: 3, positions: new F32([0,0,0, 0,1,0, 1,0,0]), dynamic: true },
+  };
+  const missingReference = env.context.__meshTest.fallbackReference(missing, 0);
+  const second = buildWorldBakedBundle(env, [missing, object]);
+  assert.deepEqual(Array.from(second.worldMeshNormals.slice(0, 9)), Array.from(new F32(missingReference.normals)));
+  assert.deepEqual(Array.from(second.worldMeshUVs.slice(0, 6)), Array.from(new F32(missingReference.uvs)));
+  assert.deepEqual(Array.from(second.worldMeshTangents.slice(0, 12)), Array.from(new F32(missingReference.tangents)));
+  assert.deepEqual(Array.from(first.worldMeshPositions), snapshot.positions, "later meshes cannot alias prior frame positions");
+  assert.deepEqual(Array.from(first.worldMeshNormals), snapshot.normals, "later valid/default mixes cannot overwrite prior normals");
+  assert.deepEqual(Array.from(first.worldMeshUVs), snapshot.uvs, "later valid/default mixes cannot overwrite prior UVs");
+  assert.deepEqual(Array.from(first.worldMeshTangents), snapshot.tangents, "later valid/default mixes cannot overwrite prior tangents");
+});
+
+test("representative 8,184-vertex fallback uses only fixed attribute scratches", () => {
+  const env = importedMeshRuntime();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const vertexCount = 8184;
+  const positions = new F32(vertexCount * 3);
+  const normals = new F32(vertexCount * 3);
+  const uvs = new F32(vertexCount * 2);
+  const tangents = new F32(vertexCount * 4);
+  for (let index = 0; index < vertexCount; index += 1) {
+    const corner = index % 3;
+    positions[index * 3] = corner === 1 ? 1 : 0;
+    positions[index * 3 + 1] = corner === 2 ? 1 : 0;
+    normals[index * 3 + 2] = 1;
+    uvs[index * 2] = corner === 1 ? 1 : 0;
+    uvs[index * 2 + 1] = corner === 2 ? 1 : 0;
+    tangents[index * 4] = 1;
+    tangents[index * 4 + 3] = 1;
+  }
+  const object = { id: "representative-baked-deck", kind: "mesh", visible: true,
+    x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+    scaleX: 1, scaleY: 1, scaleZ: 1,
+    materialKind: "standard", color: "#888888",
+    vertices: { count: vertexCount, positions, normals, uvs, tangents, dynamic: true } };
+  const countHelpers = env.context.__meshTest.countFallbackAttributeHelpers();
+  const bundle = buildWorldBakedBundle(env, [object]);
+  assert.equal(bundle.worldMeshPositions.length, vertexCount * 3);
+  assert.deepEqual({ ...countHelpers() }, {
+    allocating: 0,
+    normalInto: vertexCount,
+    worldNormalInto: vertexCount,
+    uvInto: vertexCount,
+    tangentInto: vertexCount,
+    worldTangentInto: vertexCount,
+    normalizeInto: vertexCount,
+  });
+  // Five former helper-result objects per vertex plus three former attribute
+  // arrays per triangle cost 6*N allocations. The fallback now owns twelve
+  // bounded scratch objects/arrays per mesh: for this fixture the net removal
+  // is 6*8,184 - 12 = 49,092 allocations per invocation.
+});
 
 for (const fresh of [true, false]) {
   test(`WebGL ${fresh ? "source" : "generated"} instanced meshes obey blend and depth passes`, () => {
