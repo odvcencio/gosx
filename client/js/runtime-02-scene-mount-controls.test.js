@@ -571,7 +571,10 @@ test("Scene3D mount accepts packed GLB poses between ordinary revisioned command
   mount.id = "scene-mount-packed-pose";
   const env = createContext({
     elements: [mount], enableWebGL: true, disableCanvas2D: true,
-    fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } },
+    fetchRoutes: {
+      "/first.glb": { bytes: buildMinimalGLBBytes() },
+      "/second.glb": { bytes: buildMinimalGLBBytes() },
+    },
     manifest: { engines: [{
       id: "gosx-engine-packed-pose", component: "GoSXScene3D", kind: "surface", mountId: mount.id,
       props: { width: 320, height: 180, scene: { objects: [] } },
@@ -582,7 +585,13 @@ test("Scene3D mount accepts packed GLB poses between ordinary revisioned command
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
-  const batches = [{ id: "actors", src: "/actor.glb", instances: [{ id: "one", x: 1 }] }];
+  const batches = [
+    { id: "empty-before", src: "/empty-before.glb", instances: [] },
+    { src: "/first.glb", instances: [{}] },
+    { id: "empty-between", src: "/empty-between.glb", instances: [] },
+    { id: "missing-src", instances: [{ id: "ignored" }] },
+    { id: "active", src: "/second.glb", instances: [{ id: "two", x: 2 }] },
+  ];
   mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
     detail: { revision: 1, commands: [{ kind: 11, data: { instancedGLBMeshes: batches } }] },
   }));
@@ -591,9 +600,18 @@ test("Scene3D mount accepts packed GLB poses between ordinary revisioned command
   assert.equal(applied[0].revision, 1);
 
   const handle = mount.__gosxScene3DHandle;
-  const packed = mountPackedPoseFrame(env, 1, batches, [[4, 5, 6, 0, 0, 0, 1, 1, 1, 0]]);
+  const retained = mount.__gosxScene3DState.instancedGLBMeshes;
+  assert.deepEqual(retained.map(batch => batch.id), ["scene-instanced-glb-1", "active"],
+    "full command filtering preserves original-index fallback IDs");
+  const packed = mountPackedPoseFrame(env, 1, retained, [
+    [4, 5, 6, 0, 0, 0, 1, 1, 1, 0],
+    [8, 9, 10, 0, 0, 0, 1, 1, 1, 0],
+  ]);
+  const packedHash = packed[8] | (packed[9] << 8) | (packed[10] << 16) | (packed[11] << 24);
+  assert.equal(packedHash >>> 0, 0x7bbc3f25, "browser layout hash matches the Go encoder golden");
   assert.equal(handle.applyInstancedGLBPoseFrame(2, packed), true);
   assert.equal(mount.__gosxScene3DState.instancedGLBMeshes[0].instances[0].x, 4);
+  assert.equal(mount.__gosxScene3DState.instancedGLBMeshes[1].instances[0].x, 8);
   assert.equal(applied.length, 1, "packed poses do not emit the ordinary command completion event");
   assert.equal(handle.applyInstancedGLBPoseFrame(2, packed), false, "a packed revision cannot replay");
 

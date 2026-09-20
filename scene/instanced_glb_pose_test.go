@@ -98,6 +98,71 @@ func TestPackInstancedGLBPoseFrameUsesNormalizedLayoutIDs(t *testing.T) {
 	}
 }
 
+func TestPackInstancedGLBPoseFrameFiltersEmptyBatchesUsingOriginalIndexes(t *testing.T) {
+	previous := []InstancedGLBMeshIR{
+		{ID: "empty-before", Src: "/empty-before.glb"},
+		{Src: "/first.glb", Instances: []MeshInstanceIR{{}}},
+		{ID: "empty-between", Src: "/empty-between.glb"},
+		{ID: "missing-src", Instances: []MeshInstanceIR{{ID: "ignored"}}},
+		{ID: "active", Src: "/second.glb", Instances: []MeshInstanceIR{{ID: "two"}}},
+	}
+	next := []InstancedGLBMeshIR{
+		{ID: "empty-before", Src: "/empty-before.glb"},
+		{ID: " ", Src: " /first.glb ", Instances: []MeshInstanceIR{{ID: " ", X: 11}}},
+		{ID: "empty-between", Src: "/empty-between.glb"},
+		{ID: "missing-src", Src: " ", Instances: []MeshInstanceIR{{ID: "ignored", X: 99}}},
+		{ID: "active", Src: "/second.glb", Instances: []MeshInstanceIR{{ID: "two", X: 22}}},
+	}
+	frame, ok := PackInstancedGLBPoseFrame(nil, 9, previous, next)
+	if !ok {
+		t.Fatal("stable retained batches were refused")
+	}
+	if got := binary.LittleEndian.Uint32(frame[12:16]); got != 2 {
+		t.Fatalf("retained row count = %d, want 2", got)
+	}
+	if got, want := len(frame), InstancedGLBPoseFrameHeaderBytes+2*InstancedGLBPoseFrameRowFloats*4; got != want {
+		t.Fatalf("frame length = %d, want %d", got, want)
+	}
+	firstX := math.Float32frombits(binary.LittleEndian.Uint32(frame[24:28]))
+	secondXOffset := InstancedGLBPoseFrameHeaderBytes + InstancedGLBPoseFrameRowFloats*4
+	secondX := math.Float32frombits(binary.LittleEndian.Uint32(frame[secondXOffset : secondXOffset+4]))
+	if firstX != 11 || secondX != 22 {
+		t.Fatalf("retained rows = [%v %v], want [11 22]", firstX, secondX)
+	}
+	const browserFixtureLayoutHash = 0x7bbc3f25
+	if got := binary.LittleEndian.Uint32(frame[8:12]); got != browserFixtureLayoutHash {
+		t.Fatalf("layout hash = %#x, want browser golden %#x", got, uint32(browserFixtureLayoutHash))
+	}
+}
+
+func TestPackInstancedGLBPoseFrameRejectsRetainedBatchTransitions(t *testing.T) {
+	tests := []struct {
+		name   string
+		before InstancedGLBMeshIR
+		after  InstancedGLBMeshIR
+	}{
+		{
+			name:   "empty batch gains membership",
+			before: InstancedGLBMeshIR{ID: "effects", Src: "/effects.glb"},
+			after:  InstancedGLBMeshIR{ID: "effects", Src: "/effects.glb", Instances: []MeshInstanceIR{{ID: "one"}}},
+		},
+		{
+			name:   "batch gains source",
+			before: InstancedGLBMeshIR{ID: "effects", Instances: []MeshInstanceIR{{ID: "one"}}},
+			after:  InstancedGLBMeshIR{ID: "effects", Src: "/effects.glb", Instances: []MeshInstanceIR{{ID: "one"}}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			previous := []InstancedGLBMeshIR{test.before, poseFrameFixture()[0]}
+			next := []InstancedGLBMeshIR{test.after, poseFrameFixture()[0]}
+			if _, ok := PackInstancedGLBPoseFrame(nil, 1, previous, next); ok {
+				t.Fatal("retained layout transition did not force a full command")
+			}
+		})
+	}
+}
+
 func TestPackInstancedGLBPoseFrameRejectsUnsafeChanges(t *testing.T) {
 	tests := []struct {
 		name   string

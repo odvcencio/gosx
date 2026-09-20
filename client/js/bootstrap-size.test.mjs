@@ -597,7 +597,11 @@ const budgets = [
   // Measured: 1_584_206 / 431_882 / 347_007. This sub-0.1% drift stays inside
   // the governed tolerance, so the reviewed baseline intentionally does not
   // ratchet to the latest artifact byte count.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 431_500, brotli: 346_700 },
+  // v0.56.6 adds the validated packed InstancedGLB pose bridge and its
+  // synchronous fallback contract. Measured 1_649_130 / 451_498 / 362_747;
+  // raw and Brotli retain existing hard headroom. Gzip baseline 435_200 plus
+  // the governed 16_384-byte cap gives an exact 451_584 hard limit.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 435_200, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1047,7 +1051,10 @@ const budgets = [
   // 547_457 / 151_409 / 125_421 raw/gzip/brotli after restoring the
   // pause-control guards. Raw remains within the existing ceiling; gzip
   // 151_200 -> 151_450. Brotli remains within the allocated 125_600 cap.
-  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_450, brotli: 125_600 },
+  // v0.56.6 packed stable-membership pose validation, atomic staging and
+  // mount revision handshake measure 585_642 / 163_224 / 135_083. The narrow
+  // baselines below yield hard limits 585_690 / 163_275 / 135_135.
+  { file: "bootstrap-feature-scene3d.js", raw: 557_800, gzip: 155_500, brotli: 128_700 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1755,9 +1762,11 @@ const routeBudgets = [
     // 1_073_972 / 298_512 / 253_298. The reviewed baseline remains stable;
     // the shared warning/error policy absorbs this sub-0.2% implementation
     // drift without weakening the route-level gate.
-    raw: 1_073_500,
-    gzip: 298_200,
-    brotli: 253_100,
+    // v0.56.6 packed pose bridge: measured 1_131_602 / 315_835 / 267_452;
+    // hard limits are 1_131_638 / 315_840 / 267_488.
+    raw: 1_077_750,
+    gzip: 300_800,
+    brotli: 254_750,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1887,7 +1896,9 @@ const routeBudgets = [
     // v0.55.0 navigation reconciliation is shared by the dual-backend route.
     // Measured: 1_465_069 / 393_405 / 332_750.
     raw: 1_465_500,
-    gzip: 393_600,
+    // v0.56.6 packed pose bridge measured 411_419 gzip; the 395_100 baseline
+    // plus the governed 16_384-byte cap yields a 411_484 hard limit.
+    gzip: 395_100,
     brotli: 332_900,
   },
   {

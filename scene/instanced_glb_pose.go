@@ -21,7 +21,9 @@ const (
 // It returns ok=false unless previous and next have the same normalized batch
 // and instance layout, identical non-pose declarations, identical animation
 // clip/loop modes, and no parent matrices. Callers must use the full Scene3D
-// command path when packing is refused.
+// command path when packing is refused. As on the full command path, batches
+// with an empty normalized source or no instances are omitted from the packed
+// layout; fallback batch IDs still use their original declaration indexes.
 //
 // Both declarations are immutable snapshots for the duration of the call.
 // In particular, callers must not reuse and mutate maps, pointers, or instance
@@ -43,6 +45,9 @@ func PackInstancedGLBPoseFrame(dst []byte, baseRevision uint64, previous, next [
 		left, right := previous[batchIndex], next[batchIndex]
 		if !instancedGLBPoseBatchCompatible(left, right, batchIndex) {
 			return dst[:0], false
+		}
+		if !instancedGLBPoseBatchIncluded(right) {
+			continue
 		}
 		if uint64(rowCount)+uint64(len(left.Instances)) > uint64(^uint32(0)) {
 			return dst[:0], false
@@ -76,6 +81,9 @@ func PackInstancedGLBPoseFrame(dst []byte, baseRevision uint64, previous, next [
 
 	offset := InstancedGLBPoseFrameHeaderBytes
 	for batchIndex := range next {
+		if !instancedGLBPoseBatchIncluded(next[batchIndex]) {
+			continue
+		}
 		for instanceIndex := range next[batchIndex].Instances {
 			values, ok := instancedGLBPoseValues(next[batchIndex].Instances[instanceIndex])
 			if !ok {
@@ -88,6 +96,10 @@ func PackInstancedGLBPoseFrame(dst []byte, baseRevision uint64, previous, next [
 		}
 	}
 	return dst, true
+}
+
+func instancedGLBPoseBatchIncluded(batch InstancedGLBMeshIR) bool {
+	return strings.TrimSpace(batch.Src) != "" && len(batch.Instances) > 0
 }
 
 func instancedGLBPoseBatchCompatible(left, right InstancedGLBMeshIR, index int) bool {
@@ -242,9 +254,18 @@ func instancedGLBPoseLayoutHash(batches []InstancedGLBMeshIR) uint32 {
 			hash *= 16777619
 		}
 	}
-	appendUint32(uint32(len(batches)))
+	included := uint32(0)
+	for batchIndex := range batches {
+		if instancedGLBPoseBatchIncluded(batches[batchIndex]) {
+			included++
+		}
+	}
+	appendUint32(included)
 	for batchIndex := range batches {
 		batch := batches[batchIndex]
+		if !instancedGLBPoseBatchIncluded(batch) {
+			continue
+		}
 		appendString(normalizedInstancedGLBBatchID(batch.ID, batchIndex))
 		appendUint32(uint32(len(batch.Instances)))
 		for instanceIndex := range batch.Instances {
