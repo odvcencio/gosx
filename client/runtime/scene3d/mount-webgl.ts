@@ -3866,6 +3866,7 @@ function gosxConfigureSceneScript(script, role, src) {
           }
           object.vertices = shared;
           object._modelLocalVertices = shared;
+          object._rigidSharedAppearance = model._instancedGLBSharedAppearance === true;
           object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
           object.static = false;
         }
@@ -3960,15 +3961,19 @@ function gosxConfigureSceneScript(script, role, src) {
     });
   }
 
-  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+  function sceneRigidInstanceHydrationEligible(model, matrix) {
     if (!model || model.static === true && model._instancedGLB !== true || model.animation || model.animationSeq ||
-        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return "";
+        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return false;
     if (model._transition && ["in", "out", "update"].some(function(kind) {
       return model._transition[kind] && model._transition[kind].duration > 0;
-    })) return "";
+    })) return false;
     // A singular or mirrored transform takes the established winding/bake
     // path. This fast path never silently changes reflection semantics.
-    if (!(sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001)) return "";
+    return sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001;
+  }
+
+  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+    if (!sceneRigidInstanceHydrationEligible(model, matrix)) return "";
     const template = sceneInstancedGLBHydrationTemplates.get(model);
     if (template) return '["instanced-glb",' + template + ',' + JSON.stringify([model.id,
       state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]) + ']';
@@ -3981,18 +3986,60 @@ function gosxConfigureSceneScript(script, role, src) {
     return Boolean(staged && staged.rigidInstanceModel && sceneReusableStaticModelHydration(staged, state));
   }
 
-  function sceneUpdateRigidInstancePoses(state) {
+  function scenePrepareRigidInstancePatch(state, staged, model, matrix) {
+    if (!sceneReusableRigidInstance(staged, state)) return null;
+    let crowdRows = null;
+    for (const object of staged.objects) {
+      if (!object._crowdSkin) continue;
+      const rows = object._crowdSkin.poseRows(object._crowdSkin.atlas, model._crowdPose, new Float32Array(3));
+      if (!rows || rows.length !== object._crowdSkin.rows.length) return null;
+      if (!crowdRows) crowdRows = [];
+      crowdRows.push({ object, rows });
+    }
+    // InstancedGLB expansion creates an immutable command-owned model, so its
+    // cached matrix is already a transaction snapshot. Ordinary Model entries
+    // persist across commands and reuse their mutable matrix cache; retain the
+    // defensive copy for those broader declarations.
+    const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
+    return { staged, model, matrix: snapshotMatrix, crowdRows };
+  }
+
+  function sceneCommitRigidInstancePatch(patch) {
+    for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+    if (patch.crowdRows) {
+      for (const update of patch.crowdRows) update.object._crowdSkin.rows.set(update.rows);
+    }
+    patch.staged.model = patch.model;
+    patch.staged.rigidInstanceModel = patch.model;
+  }
+
+  function sceneUpdateRigidInstancePoses(state, hydrationModels) {
     const records = state && state._hydratedModelRecords;
     const cache = records && records.rigidInstances;
     if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
-    const models = sceneHydrationModels(state, null);
+    const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
     if (models.length !== records.modelCount) return false;
+    const memberships = records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const scope = sceneRigidMembershipScopeKey(state);
     const patches = [];
     const keys = new Set();
     for (let index = 0; index < models.length; index++) {
       const model = models[index];
       const matrix = sceneModelTransformMatrix(model);
-      const key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const membership = id && memberships && memberships.get(id);
+      let key = "";
+      if (membership) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            membership.template !== template || membership.scope !== scope ||
+            membership.staged !== cache.get(membership.key)) return false;
+        key = membership.key;
+      } else if (id) {
+        return false;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
       if (!key) {
         const staticKey = sceneStaticModelHydrationKey(state, model, index);
         if (!staticKey || !sceneReusableStaticModelHydration(records.staticModels.get(staticKey), state)) return false;
@@ -4001,7 +4048,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const staged = key && cache.get(key);
       if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
       keys.add(key);
-      patches.push({ staged, model, matrix: new Float32Array(matrix) });
+      patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
     }
     // Validate the complete collection before changing the committed scene.
     for (const patch of patches) {
@@ -4013,6 +4060,215 @@ function gosxConfigureSceneScript(script, role, src) {
       patch.staged.rigidInstanceModel = patch.model;
     }
     return true;
+  }
+
+  function sceneRigidMembershipModelID(model) {
+    return model && model._instancedGLB === true ? String(model.id || "") : "";
+  }
+
+  function sceneRigidMembershipScopeKey(state) {
+    return state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || "";
+  }
+
+  function sceneRigidMembershipDescriptor(state, key, staged) {
+    const model = staged && staged.model;
+    const id = sceneRigidMembershipModelID(model);
+    const template = model && sceneInstancedGLBHydrationTemplates.get(model);
+    return id && template ? { id, key, staged, template, scope: sceneRigidMembershipScopeKey(state) } : null;
+  }
+
+  function sceneRigidMembershipSnapshotModel(model) {
+    // InstancedGLB models are freshly expanded from a command-owned normalized
+    // batch. normalizeSceneInstancedGLBMeshEntry already deep-snapshots every
+    // nested authored shader/material field once per batch, and expansion
+    // creates a new pose record per instance. Later commands replace the
+    // batch array, so this record is already an immutable async snapshot.
+    // Ordinary Model declarations retain the established deep clone because
+    // their broader mutable/lifecycle contract is unchanged.
+    return sceneInstancedGLBHydrationTemplates.has(model)
+      ? model
+      : sceneCloneHydrationModel(model);
+  }
+
+  function scenePlanRigidInstanceMembership(state, hydrationModels) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const statics = records && records.staticModels;
+    if (!cache || !statics || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return null;
+    // Only reusable rigid/static collections enter this path. Animated,
+    // auxiliary, lifecycle-bound and specialized records keep full hydration.
+    if (records.modelCount !== cache.size + statics.size) return null;
+    let models;
+    try {
+      const expanded = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
+      models = expanded.map(sceneRigidMembershipSnapshotModel);
+    } catch (_error) {
+      return null;
+    }
+    const previousByID = records.rigidInstancesByID;
+    if (!(previousByID instanceof Map)) return null;
+    const scope = sceneRigidMembershipScopeKey(state);
+    const keys = new Set();
+    const staticKeys = new Set();
+    const nextIDs = new Set();
+    const entries = [];
+    let changed = models.length !== records.modelCount;
+    for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+      const model = models[modelIndex];
+      const matrix = sceneModelTransformMatrix(model);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const previous = id && previousByID.get(id);
+      let key = "";
+      if (previous) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            previous.template !== template || previous.scope !== scope ||
+            previous.staged !== cache.get(previous.key)) return null;
+        key = previous.key;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
+      if (!key) {
+        const staticKey = sceneStaticModelHydrationKey(state, model, modelIndex);
+        const staged = staticKey && statics.get(staticKey);
+        if (!staticKey || staticKeys.has(staticKey) || !sceneReusableStaticModelHydration(staged, state)) return null;
+        staticKeys.add(staticKey);
+        entries.push({ kind: "static", key: staticKey, staged, model, modelIndex });
+        continue;
+      }
+      if (keys.has(key)) return null;
+      keys.add(key);
+      const staged = cache.get(key);
+      if (staged) {
+        if (previous && previous.staged !== staged) return null;
+        const patch = scenePrepareRigidInstancePatch(state, staged, model, matrix);
+        if (!patch) return null;
+        entries.push({ kind: "rigid", key, staged, model, modelIndex, patch, membership: previous || null });
+        continue;
+      }
+      // A changed key for the same actor means its template, appearance or
+      // texture scope changed and retains full-hydration semantics.
+      if (!id || nextIDs.has(id) || previous) return null;
+      nextIDs.add(id);
+      changed = true;
+      entries.push({ kind: "add", key, staged: null, model, modelIndex, patch: null });
+    }
+    for (const [key, staged] of cache) {
+      if (keys.has(key)) continue;
+      if (!sceneRigidMembershipModelID(staged && staged.model)) return null;
+      changed = true;
+    }
+    // Static membership/order changes take full hydration to prevent orphaned derived objects.
+    if (staticKeys.size !== statics.size) return null;
+    for (const key of statics.keys()) if (!staticKeys.has(key)) return null;
+    return changed ? { state, records, models, entries, keys, scope } : null;
+  }
+
+  async function sceneCommitRigidInstanceMembership(plan) {
+    const state = plan.state;
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+    const additions = plan.entries.filter(function(entry) { return entry.kind === "add"; });
+    const results = await Promise.all(additions.map(function(entry) {
+      return sceneStageModelHydration(state, entry.model, entry.modelIndex, generation);
+    }));
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+    }
+    const failure = results.find(function(result) { return !result || result.ok !== true; });
+    if (failure) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "failed", false, false,
+        failure && failure.stage || "unknown");
+    }
+    for (let index = 0; index < additions.length; index += 1) {
+      const entry = additions[index];
+      const staged = results[index].staged;
+      const key = sceneRigidInstanceHydrationKey(state, entry.model);
+      if (key !== entry.key || !sceneReusableRigidInstance(staged, null)) {
+        sceneDestroyStagedModelHydrations(results);
+        return hydrateSceneStateModels(state, null);
+      }
+      const patch = scenePrepareRigidInstancePatch(null, staged, entry.model, sceneModelTransformMatrix(entry.model));
+      if (!patch) {
+        sceneDestroyStagedModelHydrations(results);
+        return hydrateSceneStateModels(state, null);
+      }
+      entry.staged = staged;
+      entry.patch = patch;
+    }
+    // Revalidate every retained wrapper and all object IDs after asynchronous
+    // staging. No committed matrix or membership changes before this point.
+    const nextObjectIDs = new Set();
+    const oldObjectIDs = new Set(Array.isArray(plan.records.objects) ? plan.records.objects : []);
+    for (const entry of plan.entries) {
+      if (entry.kind === "static") {
+        if (!sceneReusableStaticModelHydration(entry.staged, state)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+      } else if (entry.kind === "rigid" && !sceneReusableRigidInstance(entry.staged, state)) {
+        sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+      }
+      for (const object of entry.staged.objects) {
+        if (nextObjectIDs.has(object.id)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        if (entry.kind === "add" && state.objects.has(object.id) && !oldObjectIDs.has(object.id)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        nextObjectIDs.add(object.id);
+      }
+    }
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+    }
+
+    const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+    for (const entry of plan.entries) {
+      if (entry.kind === "static") hydrated.staticModels.set(entry.key, entry.staged);
+      else {
+        for (const object of entry.staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
+        hydrated.rigidInstances.set(entry.key, entry.staged);
+        const membership = entry.membership || sceneRigidMembershipDescriptor(state, entry.key, entry.staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
+      }
+      for (const object of entry.staged.objects) hydrated.objects.push(object.id);
+    }
+    // Commit in one synchronous turn after complete validation. Removed model
+    // wrappers are dropped only when they are still the committed object.
+    for (const [key, staged] of plan.records.rigidInstances) {
+      if (hydrated.rigidInstances.has(key)) continue;
+      for (const object of staged.objects) {
+        if (state.objects.get(object.id) === object) state.objects.delete(object.id);
+      }
+    }
+    for (const entry of plan.entries) {
+      if (entry.patch) sceneCommitRigidInstancePatch(entry.patch);
+      if (entry.kind === "add") {
+        for (const object of entry.staged.objects) state.objects.set(object.id, object);
+      }
+    }
+    state._hydratedModelRecords = hydrated;
+    const counts = sceneModelHydrationCounts(plan.entries.length);
+    counts.objects = hydrated.objects.length;
+    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+      generation,
+      currentGeneration: generation,
+      committed: true,
+      counts,
+    });
+    gosxSceneEmit("info", "model-membership-committed", Object.assign({ generation, committed: true, stale: false }, counts));
+    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+  }
+
+  function sceneReconcileRigidInstanceMembership(state, hydrationModels) {
+    const plan = scenePlanRigidInstanceMembership(state, hydrationModels);
+    return plan ? sceneCommitRigidInstanceMembership(plan) : null;
   }
 
   async function hydrateSceneStateModels(state, props) {
@@ -4144,7 +4400,7 @@ function gosxConfigureSceneScript(script, role, src) {
     state._modelSkins = [];
     // Keep only this committed generation. Moving transforms and removed
     // models cannot accumulate a history of cached geometry.
-    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map() };
+    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
     for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
       const staged = results[modelIndex].staged;
       if (staged._pendingRigidMatrix) {
@@ -4158,7 +4414,12 @@ function gosxConfigureSceneScript(script, role, src) {
         hydrated.staticModels.set(staticKeys[modelIndex], staged);
       }
       if (rigidKeys[modelIndex] && sceneReusableRigidInstance(staged, null)) {
+        for (const object of staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
         hydrated.rigidInstances.set(rigidKeys[modelIndex], staged);
+        const membership = sceneRigidMembershipDescriptor(state, rigidKeys[modelIndex], staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
       }
       for (let index = 0; index < staged.objects.length; index += 1) {
         const object = staged.objects[index];

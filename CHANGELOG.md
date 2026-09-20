@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.56.6 (2026-09-20)
+
+### Fixed: bounded rigid InstancedGLB membership updates
+
+- Variable-membership rigid InstancedGLB batches stage only new members while preserving the wrappers, immutable geometry, materials, and poses of surviving instances.
+- Additions, removals, and survivor transforms commit only after full validation. Changed materials, texture scopes, static declarations, animation or lifecycle ownership, and unsupported geometry retain the established full-hydration path.
+- Explicit shared-appearance batches avoid repeated per-instance appearance planning, while immutable rigid vertex streams keep a bounded 48 MiB idle residency window for wave-style churn.
+
 ## v0.56.5 (2026-09-19)
 
 ### Added: efficient animated crowds and instanced Selena materials

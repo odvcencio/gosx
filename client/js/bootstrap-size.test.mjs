@@ -597,7 +597,11 @@ const budgets = [
   // Measured: 1_584_206 / 431_882 / 347_007. This sub-0.1% drift stays inside
   // the governed tolerance, so the reviewed baseline intentionally does not
   // ratchet to the latest artifact byte count.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 431_500, brotli: 346_700 },
+  // v0.56.6: transactional rigid GLB membership, shared-appearance cohorts,
+  // bounded 48 MiB rigid residency, and the private retained-CSS record stamp
+  // measure 1_641_331 / 449_265 / 361_298. Only gzip exceeded its governed
+  // envelope; 432_916 keeps the exact reviewed hard limit at 449_300.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 432_916, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1047,7 +1051,11 @@ const budgets = [
   // 547_457 / 151_409 / 125_421 raw/gzip/brotli after restoring the
   // pause-control guards. Raw remains within the existing ceiling; gzip
   // 151_200 -> 151_450. Brotli remains within the allocated 125_600 cap.
-  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_450, brotli: 125_600 },
+  // v0.56.6's transactional rigid membership, shared-appearance cohort path,
+  // 48 MiB bounded residency and private retained-CSS record stamp measure
+  // 577_910 / 160_859 / 133_219. Exact governed hard limits are
+  // 577_951 / 160_900 / 133_245.
+  { file: "bootstrap-feature-scene3d.js", raw: 550_429, gzip: 153_238, brotli: 126_900 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1755,8 +1763,11 @@ const routeBudgets = [
     // 1_073_972 / 298_512 / 253_298. The reviewed baseline remains stable;
     // the shared warning/error policy absorbs this sub-0.2% implementation
     // drift without weakening the route-level gate.
+    // v0.56.6's bounded rigid-membership/cohort path plus private retained-CSS
+    // record stamp measures 1_123_870 / 313_470 / 265_588 on this route. Only
+    // gzip exceeded its governed envelope; the exact hard limit is 313_500.
     raw: 1_073_500,
-    gzip: 298_200,
+    gzip: 298_590,
     brotli: 253_100,
   },
   {

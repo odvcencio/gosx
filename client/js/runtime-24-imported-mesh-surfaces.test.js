@@ -13,7 +13,7 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
@@ -119,6 +119,187 @@ function rigidBatchFixture(fresh, count = 100) {
   return { ...h, bundle, gl, render };
 }
 
+function earlyRigidFixture(fresh, xs, overrides = {}, rendererOptions = {}) {
+  const h = createWebGLRendererForPost(Object.assign({ fresh }, rendererOptions));
+  const api = h.env.context.__gosx_scene3d_api;
+  const F32 = vm.runInContext("Float32Array", h.env.context);
+  const U32 = vm.runInContext("Uint32Array", h.env.context);
+  const vertices = { count:3, immutable:true, revision:0, _rigidPool:true,
+    positions:new F32([-.1,0,0, .1,0,0, 0,.2,0]),
+    normals:new F32([0,0,1, 0,0,1, 0,0,1]),
+    uvs:new F32([0,0,1,0,.5,1]), tangents:new F32([1,0,0,1, 1,0,0,1, 1,0,0,1]),
+    indices:new U32([0,1,2]) };
+  const objects = xs.map((x, index) => Object.assign({
+    id:"effect-"+index, kind:"mesh", vertices, _rigidMaterialProfileStable:true,
+    _rigidSharedAppearance:true,
+    pickable:false, visible:true, castShadow:false, receiveShadow:false,
+    materialKind:"standard", color:"#669966", opacity:1, roughness:.5, metalness:0,
+    wireframe:false, blendMode:"opaque", renderPass:"opaque", depthWrite:true,
+    scaleX:1, scaleY:1, scaleZ:1, x:0, y:0, z:0,
+    rotationX:0, rotationY:0, rotationZ:0,
+    parentMatrix:new F32([1,0,0,0, 0,1,0,0, 0,0,1,0, x,0,0,1]),
+  }, overrides[index] || {}));
+  const build = (source = objects, capabilities = { retainedGeometry:true, rigidImportedBatches:true }) =>
+    api.createSceneRenderBundle(320,180,"#000000",{x:0,y:0,z:6,fov:72,near:.05,far:128},
+      source,[],[],[],[],{},0,[],[],[],[],[],0,false,capabilities);
+  return { ...h, api, F32, vertices, objects, build };
+}
+
+for (const fresh of [true, false]) {
+  test(`WebGL ${fresh ? "source" : "generated"} builds early rigid imported cohorts across 0/1/2 membership`, () => {
+    const h = earlyRigidFixture(fresh, [1,2]);
+    assert.equal(h.build([]).meshObjects.length, 0);
+    const one = h.build([h.objects[0]]);
+    assert.equal(one.meshObjects.length, 1);
+    assert.equal(one.meshObjects[0]._rigidImportedBatch, true);
+    assert.equal(one.meshObjects[0].instanceCount, 1);
+    assert.equal(one.meshObjects[0].modelMatrix[12], 1);
+    const stableID = one.meshObjects[0].id;
+    assert.equal(h.build([]).meshObjects.length,0);
+    assert.equal(h.build([h.objects[0]]).meshObjects[0].id,stableID,
+      "an empty wave must not discard the recent cohort identity");
+    const two = h.build();
+    assert.equal(two.meshObjects.length, 1);
+    assert.equal(two.meshObjects[0].id, stableID);
+    assert.equal(two.meshObjects[0].instanceCount, 2);
+    assert.deepEqual(Array.from(two.meshObjects[0].instanceMatrices,matrix=>matrix[12]),[1,2]);
+    h.objects[0].parentMatrix[12] = 4;
+    const moved = h.build([h.objects[0]]);
+    assert.equal(moved.meshObjects[0].id, stableID);
+    assert.equal(moved.meshObjects[0].modelMatrix[12], 4,
+      "a 1-member cohort must carry the current pose for the ordinary draw fallback");
+    const firstPlan=h.api.prepareScene(one,one.camera,{width:320,height:180},null,{});
+    const movedPlan=h.api.prepareScene(moved,moved.camera,{width:320,height:180},firstPlan,{});
+    assert.equal(movedPlan,firstPlan,"pose-only cohort changes keep the prepared pass identity");
+    assert.equal(movedPlan.pbrPasses.opaque[0],moved.meshObjects[0],
+      "the cache-hit planner must still route the current cohort transform record");
+    h.renderer.dispose();
+  });
+}
+
+test("early rigid imported cohorts fail closed for unsafe and backend-fallback records", () => {
+  const h = earlyRigidFixture(true, [0,1,2,3], {
+    1:{pickable:true}, 2:{castShadow:true}, 3:{opacity:"var(--mesh-opacity)"},
+  });
+  const bundle = h.build();
+  assert.equal(bundle.meshObjects.length, 4, "one safe cohort plus three ordinary unsafe records");
+  assert.equal(bundle.meshObjects.filter(object=>object._rigidImportedBatch===true).length, 1);
+  assert.equal(bundle.meshObjects.filter(object=>object._rigidImportedBatch!==true).length, 3);
+  const fallback = h.build([h.objects[0],h.objects[1]], {retainedGeometry:true});
+  assert.equal(fallback.meshObjects.length, 2);
+  assert.equal(fallback.meshObjects.some(object=>object._rigidImportedBatch===true), false,
+    "renderers without the explicit capability retain the per-object contract");
+  h.renderer.dispose();
+});
+
+test("early rigid imported cohorts require an explicit shared-appearance contract", () => {
+  const h=earlyRigidFixture(true,[0,1],{0:{_rigidSharedAppearance:false},1:{_rigidSharedAppearance:false}});
+  const ordinary=h.build();
+  assert.equal(ordinary.meshObjects.length,2);
+  assert.equal(ordinary.meshObjects.some(object=>object._rigidImportedBatch===true),false,
+    "the default path keeps individual record IDs available to scene-node CSS");
+  h.objects[0]._rigidSharedAppearance=true;
+  h.objects[1]._rigidSharedAppearance=true;
+  const shared=h.build();
+  assert.equal(shared.meshObjects.length,1);
+  assert.equal(shared.meshObjects[0]._rigidImportedBatch,true);
+  h.renderer.dispose();
+});
+
+test("failed instanced shader preflight preserves ordinary imported records", () => {
+  const h=earlyRigidFixture(true,[0,1],{}, {rejectShaderSources:["in mat4 a_instanceMatrix;"]});
+  assert.equal(h.renderer.supportsRigidImportedBatches,false);
+  const bundle=h.build(h.objects,{retainedGeometry:true,
+    rigidImportedBatches:h.renderer.supportsRigidImportedBatches});
+  assert.equal(bundle.meshObjects.length,2,"shader failure must not collapse records that the fallback cannot draw");
+  assert.equal(bundle.meshObjects.some(object=>object._rigidImportedBatch===true),false);
+  h.renderer.dispose();
+});
+
+test("dynamic registered materials and explicit geometry revisions bypass stale cohort descriptors", () => {
+  const h=earlyRigidFixture(true,[0]);
+  let pulse=0;
+  h.api.registerSceneMaterialProfile("pulse-shell",{shaderData:()=>[1,++pulse,1]});
+  const dynamic=Object.assign({},h.objects[0],{materialKind:"pulse-shell"});
+  const firstDynamic=h.build([dynamic]);
+  const secondDynamic=h.build([dynamic]);
+  assert.equal(firstDynamic.meshObjects[0]._rigidImportedBatch,undefined);
+  assert.equal(secondDynamic.meshObjects[0]._rigidImportedBatch,undefined);
+  assert.ok(secondDynamic.materials[0].shaderData[1]>firstDynamic.materials[0].shaderData[1],
+    "a registered shader-data factory keeps its per-frame external-state contract");
+  h.api.unregisterSceneMaterialProfile("pulse-shell");
+  const first=h.build();
+  const firstID=first.meshObjects[0].id;
+  h.vertices.revision=1;
+  h.vertices.positions[0]=-2;
+  const revised=h.build();
+  assert.equal(revised.meshObjects[0].geometryRevision,1);
+  assert.notEqual(revised.meshObjects[0].id,firstID);
+  assert.ok(revised.meshObjects[0].bounds.minX<-1,
+    "revision changes must recompute local bounds instead of reusing a cached descriptor");
+  h.renderer.dispose();
+});
+
+test("early rigid imported cohorts preserve per-instance side-frustum culling and stream cleanup", () => {
+  const h = earlyRigidFixture(true, [0,100]);
+  let bundle = h.build();
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  const firstDraws = h.canvas.getContext("webgl2").ops.filter(op=>op[0]==="drawElements");
+  assert.equal(firstDraws.length,1,"one surviving member uses the ordinary retained draw with its current matrix");
+  assert.equal(bundle.meshObjects[0].modelMatrix[12],0);
+  const stableID = bundle.meshObjects[0].id;
+  h.objects[1].parentMatrix[12] = .5;
+  bundle = h.build();
+  assert.equal(bundle.meshObjects[0].id,stableID);
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.equal(h.canvas.getContext("webgl2").ops.filter(op=>op[0]==="drawElementsInstanced").at(-1)[5],2);
+  const removedAt = h.canvas.getContext("webgl2").ops.length;
+  bundle = h.build([]);
+  bundle.points=[{id:"keep",count:1,positions:new h.F32([0,0,0]),color:"#fff"}];
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.ok(h.canvas.getContext("webgl2").ops.slice(removedAt).some(op=>op[0]==="deleteBuffer"),
+    "zero membership retires the cohort transform stream while retained geometry follows its pool policy");
+  const repopulatedAt=h.canvas.getContext("webgl2").ops.length;
+  bundle=h.build([h.objects[0],h.objects[1]]);
+  assert.equal(bundle.meshObjects[0].id,stableID);
+  h.renderer.render(bundle,{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.equal(h.canvas.getContext("webgl2").ops.slice(repopulatedAt)
+    .filter(op=>op[0]==="bufferData" && op[3]===h.canvas.getContext("webgl2").STATIC_DRAW).length,0,
+    "repopulation reuses retained geometry while creating only a fresh transform stream");
+  const resizedAt=h.canvas.getContext("webgl2").ops.length;
+  h.renderer.render(h.build([h.objects[0]]),{cssWidth:320,cssHeight:180,width:320,height:180});
+  h.renderer.render(h.build([h.objects[0],h.objects[1]]),{cssWidth:320,cssHeight:180,width:320,height:180});
+  assert.equal(h.canvas.getContext("webgl2").ops.slice(resizedAt)
+    .filter(op=>op[0]==="bufferData" && op[4]===h.canvas.getContext("webgl2").DYNAMIC_DRAW).length,0,
+    "1-to-many membership must reuse geometric CPU and GPU transform capacity");
+  h.renderer.dispose();
+});
+
+test("early rigid cohort identity cache is bounded across immutable appearance replacement", () => {
+  const h=earlyRigidFixture(true,[0]);
+  const first=h.build().meshObjects[0].id;
+  for(let index=1;index<=40;index++) {
+    const object=Object.assign({},h.objects[0],{id:"variant-"+index,color:"#"+index.toString(16).padStart(6,"0")});
+    assert.equal(h.build([object]).meshObjects.length,1);
+  }
+  const restored=Object.assign({},h.objects[0],{id:"restored"});
+  assert.notEqual(h.build([restored]).meshObjects[0].id,first,
+    "the per-geometry cache must evict old appearance keys instead of growing without bound");
+  h.renderer.dispose();
+});
+
+test("early rigid imported cohorts reduce an 832-member bundle to one planner record", () => {
+  const h=earlyRigidFixture(true,Array.from({length:832},(_,i)=>(i%32)*.05-1));
+  const batched=h.build();
+  const fallback=h.build(h.objects,{retainedGeometry:true});
+  assert.equal(batched.meshObjects.length,1);
+  assert.equal(batched.meshObjects[0].instanceCount,832);
+  assert.equal(fallback.meshObjects.length,832);
+  assert.equal(batched.retainedMeshObjectCount,fallback.retainedMeshObjectCount);
+  assert.equal(batched.retainedMeshVertexCount,fallback.retainedMeshVertexCount);
+  h.renderer.dispose();
+});
+
 for (const fresh of [true, false]) {
   test(`WebGL ${fresh ? "source" : "generated"} batches shared indexed geometry and retires its streams`, () => {
     const h = rigidBatchFixture(fresh);
@@ -159,6 +340,64 @@ test("pooled swarm geometry survives an empty wave and expires within its reside
   for(let i=0;i<122;i++) h.render();
   assert.ok(h.gl.ops.slice(removed).filter(op=>op[0]==="deleteBuffer").length>=4,"idle pool must release its GPU handles");
   h.renderer.dispose();
+});
+
+test("pooled swarm geometry retains a returning wave between 32 and 48 MiB", () => {
+  const h=rigidBatchFixture(true,1), F32=vm.runInContext("Float32Array",h.env.context);
+  const padded=new F32(3*400000);
+  padded.set([-.1,0,0,.1,0,0,0,.2,0]);
+  const base=h.bundle.meshObjects[0];
+  const actors=Array.from({length:4},(_,index)=>Object.assign({},base,{
+    id:"heavy-pool-"+index,
+    vertices:Object.assign({},base.vertices,{count:400000,positions:padded,normals:padded,_rigidPool:true}),
+    vertexCount:400000,
+    modelMatrix:new F32(base.modelMatrix),
+  }));
+  h.bundle.meshObjects=actors;
+  h.render();
+  const warm=h.renderer.diagnostics().retainedGeometry;
+  h.bundle.meshObjects=[];
+  h.bundle.points=[{id:"keep",count:1,positions:new F32([0,0,0]),color:"#fff"}];
+  h.render();
+  const idle=h.renderer.diagnostics().retainedGeometry;
+  assert.ok(idle.idleBytes>32*1024*1024,
+    `the measured returning wave must exceed the former 32 MiB limit (got ${idle.idleBytes})`);
+  assert.ok(idle.idleBytes<=48*1024*1024,"idle residency remains within its bounded 48 MiB limit");
+  assert.equal(idle.retirements,warm.retirements,"the complete sub-48 MiB wave must remain resident");
+  const start=h.gl.ops.length;
+  h.bundle.meshObjects=actors;
+  h.render();
+  assert.equal(h.gl.ops.slice(start).filter(op=>op[0]==="bufferData" && op[3]===h.gl.STATIC_DRAW).length,0,
+    "the returning wave must reuse every retained static vertex stream");
+  const beforeRevision=h.renderer.diagnostics().retainedGeometry;
+  actors[0].vertices.revision=1;
+  actors[0].geometryRevision=1;
+  h.render();
+  assert.equal(h.renderer.diagnostics().retainedGeometry.revisionInvalidations,beforeRevision.revisionInvalidations+1,
+    "an explicit revision must still invalidate pooled geometry");
+  h.renderer.dispose();
+});
+
+test("instanced GLB sharedAppearance reaches only opted-in rigid wrappers", async () => {
+  const env=importedMeshRuntime({fetchRoutes:{"/actor.glb":{bytes:buildMinimalGLBBytes()}}});
+  runScript(freshFeatureBundleSource("scene3d-gltf"),env.context,"bootstrap-feature-scene3d-gltf.js");
+  const api=env.context.__gosx_scene3d_api;
+  const state=api.createSceneState({scene:{instancedGLBMeshes:[
+    {id:"shared",src:"/actor.glb",sharedAppearance:true,instances:[{id:"one"}]},
+    {id:"styled",src:"/actor.glb",instances:[{id:"two"}]},
+  ]}});
+  await env.context.__meshTest.hydrate(state,null);
+  const objects=Array.from(state.objects.values());
+  const shared=objects.find(object=>object.id.startsWith("shared/one/"));
+  assert.equal(shared._rigidSharedAppearance,true);
+  assert.equal(objects.find(object=>object.id.startsWith("styled/two/"))._rigidSharedAppearance,false);
+  await api.applySceneCommands(state,[{kind:11,data:{instancedGLBMeshes:[
+    {id:"shared",src:"/actor.glb",instances:[{id:"one"}]},
+    {id:"styled",src:"/actor.glb",instances:[{id:"two"}]},
+  ]}}]);
+  const cleared=Array.from(state.objects.values()).find(object=>object.id.startsWith("shared/one/"));
+  assert.notEqual(cleared,shared,"clearing the contract must invalidate the trusted hydration template");
+  assert.equal(cleared._rigidSharedAppearance,false,"an omitted replacement field restores exact per-node CSS semantics");
 });
 
 test("rigid batches separate materials, preserve alpha draws and omit view-culled actors", () => {
@@ -395,7 +634,7 @@ test("spawning and clearing waves preserve survivor wrappers and isolate failed 
   assert.equal(survivor.parentMatrix,pose,"superseded spawn must not mutate the live generation");
 });
 
-test("rigid actor pose commands keep the committed objects and vertex buffers without hydration", async () => {
+test("rigid actor pose and membership commands preserve survivors without full hydration", async () => {
   const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
   runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
   const api = env.context.__gosx_scene3d_api;
@@ -417,13 +656,295 @@ test("rigid actor pose commands keep the committed objects and vertex buffers wi
   }
   assert.equal(matrices(),120,"two actors build one matrix each per submitted pose");
   assert.ok(Math.abs(first.parentMatrix[12] - 5.9) < .00001);
+  const second = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
+  const membershipWork = env.context.__meshTest.countMembershipWork();
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "swarm", src: "/actor.glb", instances: [{ id: "one", x: 7 }, { id: "three", x: 3 }] },
+  ] } }]);
+  const third = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/three/"));
+  assert.equal(state._modelHydrationGeneration, generation, "rigid membership uses its incremental transaction");
+  assert.equal(state.objects.get(first.id), first, "survivor wrapper identity must remain stable");
+  assert.equal(first.parentMatrix[12], 7);
+  assert.equal(state.objects.has(second.id), false, "removed membership must leave the committed object map");
+  assert.ok(third);
+  assert.equal(third.vertices, first.vertices, "new membership reuses the warmed immutable geometry");
+  const work = membershipWork();
+  assert.equal(work.expansions, 1,
+    "one normalized InstancedGLB snapshot must serve count detection and the async transaction");
+  assert.equal(work.clones, 0, "owned InstancedGLB snapshots must not deep-clone every survivor");
+  assert.ok(work.keys > 0, "the new member still receives a validated hydration identity");
+  assert.equal(work.keyIDs.includes("swarm/one"), false,
+    "the indexed survivor should not regenerate its full JSON hydration key");
+  assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
   const before = first.parentMatrix;
   await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
     { id: "swarm", src: "/actor.glb", color: "#ff0000", instances: [{ id: "one", x: 8 }] },
   ] } }]);
-  assert.ok(state._modelHydrationGeneration > generation, "membership/material changes still stage atomically");
+  assert.ok(state._modelHydrationGeneration > generation, "material changes still use full atomic hydration");
   assert.equal(state._hydratedModelRecords.rigidInstances.size, 1);
   assert.equal(first.parentMatrix, before, "replacing a collection must not mutate an old committed wrapper");
+});
+
+test("rigid imported material profiles skip deep comparison until a supported mutable route is used", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    { id: "swarm", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances: [{ id: "one" }] },
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const object = Array.from(state.objects.values())[0];
+  assert.equal(object._rigidMaterialProfileStable, true);
+  const comparisons = env.context.__meshTest.countMaterialInputComparisons();
+  const initial = env.context.__meshTest.materialProfile(object);
+  assert.equal(env.context.__meshTest.materialProfile(object), initial);
+  assert.equal(comparisons(), 0, "engine-owned rigid wrappers must not rescan nested material inputs");
+
+  const uniforms = env.context.__meshTest.resolveUniforms(state, object.id);
+  uniforms.pulse[0] = 0.9;
+  assert.equal(object._rigidMaterialProfileStable, false, "live inline uniforms permanently invalidate trust");
+  const animated = env.context.__meshTest.materialProfile(object);
+  assert.notEqual(animated, initial);
+  assert.equal(animated.customUniforms.pulse[0], 0.9);
+  assert.ok(comparisons() > 0, "mutable wrappers retain the recursive invalidation contract");
+
+  await api.applySceneCommands(state, [{ kind: 3, objectId: object.id, data: { color: "#123456" } }]);
+  const patched = state.objects.get(object.id);
+  assert.notEqual(patched, object);
+  assert.equal(patched._rigidMaterialProfileStable, false);
+  assert.equal(env.context.__meshTest.materialProfile(patched).color, "#123456");
+});
+
+test("incremental additions retain the normalized nested batch snapshot across await", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const initial = { id: "swarm", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances: [{ id: "one" }] };
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [initial] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const next = { id: "swarm", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances: [{ id: "one" }, { id: "two" }] };
+  const pending = api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [next] } }]);
+  next.customUniforms.pulse[0] = 9;
+  await pending;
+  const added = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
+  assert.equal(added.customUniforms.pulse[0], 0.25,
+    "async staging must observe the once-normalized command snapshot, not later authored mutation");
+});
+
+test("mixed ordinary and instanced membership snapshots do not alias later matrix caches", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: {
+    models: [{ id: "ordinary", src: "/actor.glb", x: 1 }],
+    instancedGLBMeshes: [{ id: "effects", src: "/actor.glb", instances: [{ id: "one" }] }],
+  } });
+  await env.context.__meshTest.hydrate(state, null);
+  const ordinary = Array.from(state.objects.values()).find(object => object.id.startsWith("ordinary/"));
+  state.models[0].x = 3;
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }, { id: "two" }] },
+  ] } }]);
+  const committedMatrix = ordinary.parentMatrix;
+  assert.equal(committedMatrix[12], 3);
+  state.models[0].x = 9;
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }, { id: "three" }] },
+  ] } }]);
+  assert.equal(committedMatrix[12], 3,
+    "a persistent ordinary Model matrix cache must not mutate the prior committed snapshot");
+  assert.equal(ordinary.parentMatrix[12], 9);
+});
+
+test("indexed rigid survivors fall back when a pose becomes mirrored", async () => {
+  const makeState = async () => {
+    const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+    runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+    const api = env.context.__gosx_scene3d_api;
+    const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+      { id: "effects", src: "/actor.glb", instances: [{ id: "one", scaleX: 1 }] },
+    ] } });
+    await env.context.__meshTest.hydrate(state, null);
+    return { env, api, state };
+  };
+  for (const countChanges of [false, true]) {
+    const { api, state } = await makeState();
+    const generation = state._modelHydrationGeneration;
+    const prior = Array.from(state.objects.values())[0];
+    const instances = [{ id: "one", scaleX: -1 }];
+    if (countChanges) instances.push({ id: "two" });
+    await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+      { id: "effects", src: "/actor.glb", instances },
+    ] } }]);
+    assert.ok(state._modelHydrationGeneration > generation,
+      `${countChanges ? "count-changing" : "pose-only"} reflection must use full hydration`);
+    assert.notEqual(Array.from(state.objects.values())[0], prior,
+      "the prior positive-determinant wrapper cannot be reused with mirrored winding");
+  }
+});
+
+test("832 moving rigid wrappers retain constant-time material profile cache hits", async (t) => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const instances = Array.from({ length: 832 }, (_, index) => ({ id: "slot-" + index, x: index / 100 }));
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", customUniforms: { pulse: [0.25, 0.75] }, instances },
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const objects = Array.from(state.objects.values());
+  assert.equal(objects.length, 832);
+  for (const object of objects) env.context.__meshTest.materialProfile(object);
+  const comparisons = env.context.__meshTest.countMaterialInputComparisons();
+  let started = process.hrtime.bigint();
+  for (let frame = 0; frame < 60; frame++) {
+    for (const object of objects) {
+      object.parentMatrix[12] += 0.000001;
+      env.context.__meshTest.materialProfile(object);
+    }
+  }
+  const stableMS = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(comparisons(), 0, "pose-only frames must perform no nested material comparisons");
+
+  for (const object of objects) object._rigidMaterialProfileStable = false;
+  started = process.hrtime.bigint();
+  for (let frame = 0; frame < 60; frame++) {
+    for (const object of objects) env.context.__meshTest.materialProfile(object);
+  }
+  const mutableMS = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(comparisons() >= 832 * 60, "mutable wrappers must retain recursive comparison coverage");
+  t.diagnostic(`49,920 material lookups: rigid=${stableMS.toFixed(2)}ms mutable=${mutableMS.toFixed(2)}ms`);
+});
+
+test("rigid membership failures and stale additions preserve the complete committed generation", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: {
+    "/actor.glb": { bytes: buildMinimalGLBBytes() },
+    "/missing.glb": { status: 500, body: "unavailable" },
+  } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const batch = instances => ({ id: "swarm", src: "/actor.glb", instances });
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [batch([{ id: "one", x: 1 }])] } });
+  await env.context.__meshTest.hydrate(state, null);
+  env.context.__meshTest.failLoad("/missing.glb");
+  const one = Array.from(state.objects.values())[0];
+  const matrix = one.parentMatrix;
+  const committed = state._hydratedModelRecords;
+  const failed = await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 9 }]),
+    { id: "bad-family", src: "/missing.glb", instances: [{ id: "bad" }] },
+  ] } }]);
+  assert.equal(failed[0].committed, false);
+  assert.equal(state._hydratedModelRecords, committed);
+  assert.equal(state.objects.get(one.id), one);
+  assert.equal(one.parentMatrix, matrix, "failed staging must not apply a survivor pose early");
+
+  state._modelOwner = () => true;
+  const pending = api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 11 }, { id: "two", x: 2 }]),
+  ] } }]);
+  state._modelOwner = () => false;
+  const stale = await pending;
+  assert.equal(stale[0].stale, true);
+  assert.equal(state._hydratedModelRecords, committed);
+  assert.equal(state.objects.get(one.id), one);
+  assert.equal(one.parentMatrix, matrix, "superseded staging must not apply a survivor pose early");
+
+  state._modelOwner = () => true;
+  const accepted = await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 13 }, { id: "two", x: 2 }]),
+  ] } }]);
+  assert.equal(accepted[0].committed, true);
+  const committedMatrix = one.parentMatrix;
+  assert.notEqual(committedMatrix, matrix, "a successful transaction owns a fresh matrix snapshot");
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 17 }, { id: "two", x: 3 }]),
+  ] } }]);
+  assert.equal(committedMatrix[12], 13, "a later command must not mutate a previously committed matrix snapshot");
+  assert.equal(one.parentMatrix[12], 17);
+});
+
+test("rigid membership churn retains one survivor and only live records", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const command = instances => [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances },
+  ] } }];
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "anchor" }, { id: "slot-0" }] },
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const stages = env.context.__meshTest.countStages();
+  const membershipWork = env.context.__meshTest.countMembershipWork();
+  const generation = state._modelHydrationGeneration;
+  const anchor = Array.from(state.objects.values()).find(o => o.id.startsWith("effects/anchor/"));
+  const vertices = anchor.vertices;
+  for (let wave = 1; wave <= 100; wave += 1) {
+    await api.applySceneCommands(state, command([{ id: "anchor", x: wave / 10 }, { id: "slot-" + wave, x: wave }]));
+    assert.equal(state.objects.get(anchor.id), anchor);
+    assert.equal(state.objects.size, 2);
+    assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
+    assert.equal(state._hydratedModelRecords.rigidInstancesByID.size, 2,
+      "the logical-ID index contains only the current live membership");
+    assert.equal(state._hydratedModelRecords.objects.length, 2);
+  }
+  assert.equal(state._modelHydrationGeneration, generation, "bounded churn must not create full hydration generations");
+  assert.equal(stages(), 100, "each churn step stages only its one new member, never every survivor");
+  const work = membershipWork();
+  assert.ok(work.keys > 0);
+  assert.equal(work.keyIDs.some(id => id === "effects/anchor"), false,
+    "bounded churn generates hydration identity only for admitted members, not the survivor");
+  assert.equal(anchor.vertices, vertices);
+  assert.equal(anchor.parentMatrix[12], 10);
+});
+
+test("static membership changes fall back instead of leaving derived objects orphaned", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: {
+    models: [{ id: "deck", src: "/actor.glb", static: true }],
+    instancedGLBMeshes: [{ id: "effects", src: "/actor.glb", instances: [{ id: "one" }] }],
+  } });
+  await env.context.__meshTest.hydrate(state, null);
+  const generation = state._modelHydrationGeneration;
+  const deck = Array.from(state.objects.values()).find(o => o.id.startsWith("deck/"));
+  state.models = [];
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }, { id: "two" }] },
+  ] } }]);
+  assert.ok(state._modelHydrationGeneration > generation, "changed static membership must use full hydration");
+  assert.equal(state.objects.has(deck.id), false);
+  assert.equal(state._hydratedModelRecords.staticModels.size, 0);
+  assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
+});
+
+test("a logical pool slot can transfer families while an unrelated sibling keeps identity", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const family = (id, instances) => ({ id, src: "/actor.glb", instances });
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    family("shell", [{ id: "sibling" }, { id: "death-slot-7", x: 1 }]),
+    family("metal", [{ id: "steady", x: 2 }]),
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const generation = state._modelHydrationGeneration;
+  const sibling = Array.from(state.objects.values()).find(o => o.id.startsWith("shell/sibling/"));
+  const oldSlot = Array.from(state.objects.values()).find(o => o.id.startsWith("shell/death-slot-7/"));
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    family("shell", [{ id: "sibling", x: 4 }]),
+    family("metal", [{ id: "steady", x: 2 }, { id: "death-slot-7", x: 8 }]),
+  ] } }]);
+  const newSlot = Array.from(state.objects.values()).find(o => o.id.startsWith("metal/death-slot-7/"));
+  assert.equal(state._modelHydrationGeneration, generation);
+  assert.equal(state.objects.get(sibling.id), sibling);
+  assert.equal(sibling.parentMatrix[12], 4);
+  assert.equal(state.objects.has(oldSlot.id), false);
+  assert.ok(newSlot);
+  assert.equal(newSlot.vertices, sibling.vertices);
+  assert.equal(state._hydratedModelRecords.rigidInstances.size, 3);
 });
 
 test("shared hydration templates keep per-actor IDs and observe nested overrides and texture scopes", async () => {

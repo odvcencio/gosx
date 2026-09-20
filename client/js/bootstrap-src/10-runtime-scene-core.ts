@@ -1507,6 +1507,9 @@
         ? sceneBool(raw.visible, true)
         : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
       static: Object.prototype.hasOwnProperty.call(raw, "static") ? sceneBool(raw.static, false) : current.static,
+      sharedAppearance: Object.prototype.hasOwnProperty.call(raw, "sharedAppearance")
+        ? sceneBool(raw.sharedAppearance, false)
+        : sceneBool(current.sharedAppearance, false),
       instances: rawInstances.map(function(instance, instanceIndex) {
         return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
       }),
@@ -1602,6 +1605,7 @@
     if (batch.alphaCutoff !== undefined) raw.alphaCutoff = batch.alphaCutoff;
     const template = normalizeSceneModel(raw, batchIndex);
     template._instancedGLB = true;
+    template._instancedGLBSharedAppearance = batch.sharedAppearance === true;
     const declaration = Object.assign({}, template);
     for (const key of ["id", "x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
     const hydrationTemplate = JSON.stringify(declaration);
@@ -3155,11 +3159,18 @@
     if (!sceneIsPlainObject(target.customUniforms)) {
       target.customUniforms = {};
     }
+    // Inline custom uniforms are intentionally handed to the motion runtime
+    // as a live mutable bag. Once that escape hatch is used this wrapper no
+    // longer satisfies the engine-owned immutable material contract.
+    if (target === record) record._rigidMaterialProfileStable = false;
     return target.customUniforms;
   }
 
   function sceneApplyNamedMaterialToObject(object, material) {
     return Object.assign({}, object, {
+      // Named materials are public live state. A derived wrapper cannot keep
+      // the engine-owned immutable material promise used by rigid batching.
+      _rigidMaterialProfileStable: false,
       materialKind: material.kind || object.materialKind,
       color: material.color || object.color,
       texture: material.texture || object.texture,
@@ -4078,11 +4089,7 @@
     });
   }
 
-  function sceneRehydrateModelsAfterCommand(state) {
-    if (!state || typeof hydrateSceneStateModels !== "function") {
-      return null;
-    }
-    const promise = hydrateSceneStateModels(state, null);
+  function sceneTrackModelHydrationPromise(state, promise) {
     if (promise && typeof promise.then === "function") {
       state._modelHydrationPromise = promise;
       const clearCurrentPromise = function() {
@@ -4096,6 +4103,13 @@
       promise.then(clearCurrentPromise, clearCurrentPromise);
     }
     return promise;
+  }
+
+  function sceneRehydrateModelsAfterCommand(state) {
+    if (!state || typeof hydrateSceneStateModels !== "function") {
+      return null;
+    }
+    return sceneTrackModelHydrationPromise(state, hydrateSceneStateModels(state, null));
   }
 
   function applySceneModelsCommand(state, data) {
@@ -4124,11 +4138,24 @@
     }).filter(function(entry) {
       return Boolean(entry && entry.src && Array.isArray(entry.instances) && entry.instances.length > 0);
     });
+    // Expand the freshly normalized, command-owned batch snapshot once. The
+    // stable-pose check and a possible membership transaction must inspect
+    // the same declaration set; expanding both independently doubled all
+    // per-instance template/model work on every count change.
+    const hydrationModels = typeof sceneHydrationModels === "function"
+      ? sceneHydrationModels(state, null)
+      : null;
     // Rigid actors retain their local vertex buffers. A pose update changes
     // only their model matrices; asset loading and geometry staging are for
     // membership/material changes, not every animation frame.
-    if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state)) {
+    if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state, hydrationModels)) {
       return null;
+    }
+    if (typeof sceneReconcileRigidInstanceMembership === "function") {
+      const promise = sceneReconcileRigidInstanceMembership(state, hydrationModels);
+      if (promise && typeof promise.then === "function") {
+        return sceneTrackModelHydrationPromise(state, promise);
+      }
     }
     return sceneRehydrateModelsAfterCommand(state);
   }
@@ -4374,6 +4401,10 @@
         props: patch || {},
       }, current);
       if (next) {
+        // A direct object/material command replaces an imported wrapper with
+        // a public mutable record. Never carry the internal rigid snapshot
+        // trust marker across that supported update route.
+        next._rigidMaterialProfileStable = false;
         state.objects.set(key, next);
       }
       return;
@@ -4778,6 +4809,11 @@
       // Fail closed: callers which do not identify a retained-capable
       // renderer receive a backend-neutral, fully baked bundle.
       retainedGeometryEnabled: Boolean(rendererCapabilities && rendererCapabilities.retainedGeometry === true),
+      // WebGL can consume immutable imported rigid primitives as one retained
+      // geometry/material record plus a transform stream. Keep this internal
+      // capability opt-in: WebGPU and Canvas continue receiving the ordinary
+      // per-object records until they implement the same draw contract.
+      rigidImportedBatchesEnabled: Boolean(rendererCapabilities && rendererCapabilities.rigidImportedBatches === true),
       // Canvas2D's final fallback draws projected edges, not PBR triangles.
       // Preserve recognizable imported assets when no GPU backend is usable.
       meshWireframeFallback: Boolean(rendererCapabilities && rendererCapabilities.meshWireframeFallback === true),
@@ -4795,9 +4831,8 @@
     if (sceneBool(showDebugGrid, false)) {
       appendSceneGridToBundle(bundle, width, height);
     }
-    for (const object of sceneSelectLODObjects(objects, renderCamera)) {
-      appendSceneObjectToBundle(bundle, materialLookup, renderCamera, width, height, object, bundle.lights, resolvedEnvironment, timeSeconds);
-    }
+    appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
+      sceneSelectLODObjects(objects, renderCamera), bundle.lights, resolvedEnvironment, timeSeconds);
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
     }
@@ -4846,6 +4881,233 @@
         _renderPassDerived: (mesh && mesh._renderPassDerived) === true,
       });
       bundle.instancedMeshes.push(entry);
+    }
+  }
+
+  let sceneRigidImportedBatchSequence = 0;
+  let sceneRigidImportedBatchEpoch = 0;
+  const sceneRigidImportedBatchIDs = new WeakMap();
+  const sceneRigidImportedBatchDescriptors = new WeakMap();
+  let sceneRetainedMeshCSSFingerprintSequence = 0;
+  const sceneRetainedMeshCSSOwnerFingerprints = new WeakMap();
+  const sceneRetainedMeshCSSRecordFingerprint = Symbol("gosx-retained-mesh-css-fingerprint");
+  const sceneRetainedMeshCSSExtraKeys = [
+    "material", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
+    "specularIntensity", "specularColor", "blendMode", "_blendModeDerived",
+  ];
+  const sceneRetainedMeshCSSNumericKeys = ["depthCenter", "vertexOffset", "vertexCount"];
+
+  function sceneRetainedMeshCSSFingerprintEligible(record) {
+    if (!record || record.retainedGeometry !== true || typeof record.id !== "string" ||
+        typeof record.kind !== "string" || !Number.isFinite(record.materialIndex) ||
+        typeof record.renderPass !== "string" ||
+        record._renderPassDerived !== undefined && typeof record._renderPassDerived !== "boolean") return false;
+    for (const key of sceneRetainedMeshCSSExtraKeys) if (record[key] !== undefined) return false;
+    for (const key of sceneRetainedMeshCSSNumericKeys) {
+      if (record[key] !== undefined && typeof record[key] !== "number") return false;
+    }
+    return true;
+  }
+
+  function sceneStampRetainedMeshCSSInput(record, owner) {
+    if (!sceneRetainedMeshCSSFingerprintEligible(record) || !owner || typeof owner !== "object") return;
+    let cached = sceneRetainedMeshCSSOwnerFingerprints.get(owner);
+    if (!cached || cached.id !== record.id || cached.kind !== record.kind ||
+        cached.materialIndex !== record.materialIndex || cached.renderPass !== record.renderPass ||
+        cached.renderPassDerived !== record._renderPassDerived) {
+      cached = { id: record.id, kind: record.kind, materialIndex: record.materialIndex,
+        renderPass: record.renderPass, renderPassDerived: record._renderPassDerived,
+        fingerprint: ++sceneRetainedMeshCSSFingerprintSequence };
+      sceneRetainedMeshCSSOwnerFingerprints.set(owner, cached);
+    }
+    // Bundle records are rebuilt every frame. Keeping them as WeakMap keys
+    // creates hundreds of short-lived ephemerons in dense retained scenes;
+    // a private symbol stays non-enumerable to Object.keys/JSON while letting
+    // the record die without separate weak-key bookkeeping.
+    record[sceneRetainedMeshCSSRecordFingerprint] = cached;
+  }
+
+  function sceneRetainedMeshCSSInputFingerprint(record) {
+    const cached = record && record[sceneRetainedMeshCSSRecordFingerprint];
+    return cached && sceneRetainedMeshCSSFingerprintEligible(record) &&
+      cached.id === record.id && cached.kind === record.kind &&
+      cached.materialIndex === record.materialIndex && cached.renderPass === record.renderPass &&
+      cached.renderPassDerived === record._renderPassDerived ? cached.fingerprint : 0;
+  }
+
+  function sceneRigidImportedBatchRecord(vertices, key) {
+    let records = sceneRigidImportedBatchIDs.get(vertices);
+    if (!records) {
+      records = new Map();
+      sceneRigidImportedBatchIDs.set(vertices, records);
+    }
+    let record = records.get(key);
+    if (!record) {
+      record = { id: "rigid-imported-batch-" + (++sceneRigidImportedBatchSequence), epoch: 0 };
+      records.set(key, record);
+    }
+    record.epoch = sceneRigidImportedBatchEpoch;
+    // Appearance replacement can create new immutable material keys for one
+    // shared primitive. Bound the stable-ID cache while preserving ordinary
+    // wave disappearance/repopulation identity for the recent working set.
+    if (records.size > 32) {
+      let oldestKey = null;
+      let oldestEpoch = Number.POSITIVE_INFINITY;
+      for (const [candidateKey, candidate] of records) {
+        if (candidateKey !== key && candidate.epoch < oldestEpoch) {
+          oldestKey = candidateKey;
+          oldestEpoch = candidate.epoch;
+        }
+      }
+      if (oldestKey !== null) records.delete(oldestKey);
+    }
+    return record;
+  }
+
+  function sceneRigidImportedBatchID(vertices, key) {
+    return sceneRigidImportedBatchRecord(vertices, key).id;
+  }
+
+  function sceneRigidImportedBatchCandidate(bundle, camera, object, timeSeconds) {
+    const vertices = object && object.vertices;
+    if (!bundle || bundle.rigidImportedBatchesEnabled !== true || !object ||
+        object._rigidMaterialProfileStable !== true || object._rigidSharedAppearance !== true ||
+        object.pickable !== false ||
+        object.castShadow === true || object.visible === false || object.selected === true ||
+        object.skin || object._crowdSkin || !vertices) return null;
+    const registered = sceneRegisteredMaterialProfile(
+      normalizeSceneMaterialKind(sceneObjectMaterialKindValue(object)));
+    // Registered factories may read external state on every profile request.
+    // They cannot enter an immutable descriptor even when the wrapper is
+    // otherwise engine-owned.
+    if (registered && typeof registered.shaderDataFactory === "function") return null;
+    const currentRevision = sceneMeshGeometryRevision(object, vertices);
+    let descriptor = sceneRigidImportedBatchDescriptors.get(object);
+    if (!descriptor || descriptor.registryVersion !== sceneMaterialProfileRegistryVersion ||
+        descriptor.vertices !== vertices || descriptor.revision !== currentRevision) {
+      // CSS material inputs are resolved after bundle construction. Keep them
+      // on the ordinary per-object path so a variable cannot change opacity or
+      // pass routing after this early opaque-cohort decision. Engine-owned
+      // wrappers are immutable, so this complete audit is cached per wrapper.
+      for (const key of sceneObjectMaterialInputKeys) {
+        if (sceneCSSVarReference(object[key])) return null;
+      }
+      const sourceMaterial = sceneObjectMaterialProfile(object);
+      if (sceneMeshObjectEffectivelyInvisible(object, sourceMaterial) ||
+          sceneMaterialUsesAuthoredMeshShader(sourceMaterial) ||
+          sceneWorldObjectRenderPass(object, sourceMaterial) !== "opaque" ||
+          (!sceneMaterialSuppressesGeneratedWireSegments(sourceMaterial) && sourceMaterial.wireframe)) return null;
+      const revision = currentRevision;
+      const key = [sourceMaterial.key || sceneMaterialProfileKey(sourceMaterial), revision,
+        object.receiveShadow === true, object.depthWrite,
+        object.doubleSided === true].join(":");
+      descriptor = { vertices, sourceMaterial, revision, key,
+        registryVersion: sceneMaterialProfileRegistryVersion };
+      sceneRigidImportedBatchDescriptors.set(object, descriptor);
+    }
+    const sourceMaterial = descriptor.sourceMaterial;
+    const revision = descriptor.revision;
+    if (!sceneMeshCanRetainLocalGeometry(bundle, object, sourceMaterial, vertices, false)) return null;
+    const matrix = sceneObjectModelMatrix(object, timeSeconds);
+    if (!(sceneAffineDeterminant(matrix, 0) > 0.000001)) return null;
+    const localBounds = sceneMeshLocalBounds(vertices, revision);
+    const bounds = sceneTransformMeshBounds(localBounds, matrix);
+    if (!bounds) return null;
+    return { vertices, sourceMaterial, revision, matrix, bounds, key: descriptor.key,
+      culled: object.viewCulled === true || sceneBoundsViewCulled(bounds, camera, object) };
+  }
+
+  function sceneRigidImportedBatchExpandBounds(target, source) {
+    if (!target) return Object.assign({}, source);
+    if (source.minX < target.minX) target.minX = source.minX;
+    if (source.minY < target.minY) target.minY = source.minY;
+    if (source.minZ < target.minZ) target.minZ = source.minZ;
+    if (source.maxX > target.maxX) target.maxX = source.maxX;
+    if (source.maxY > target.maxY) target.maxY = source.maxY;
+    if (source.maxZ > target.maxZ) target.maxZ = source.maxZ;
+    return target;
+  }
+
+  function appendSceneObjectsToBundle(bundle, materialLookup, camera, width, height, objects, lights, environment, timeSeconds) {
+    if (!bundle || bundle.rigidImportedBatchesEnabled !== true) {
+      for (const object of objects || []) {
+        appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds);
+      }
+      return;
+    }
+    sceneRigidImportedBatchEpoch += 1;
+    const groupsByVertices = new Map();
+    for (const object of objects || []) {
+      const candidate = sceneObjectHasTriangleMesh(object)
+        ? sceneRigidImportedBatchCandidate(bundle, camera, object, timeSeconds)
+        : null;
+      if (!candidate) {
+        appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds);
+        continue;
+      }
+      if (bundle && bundle.retainedGeometryTelemetry) bundle.retainedGeometryTelemetry.eligible += 1;
+      bundle.retainedMeshObjectCount += 1;
+      bundle.retainedMeshVertexCount += Math.max(0, Math.floor(sceneNumber(candidate.vertices.count, 0)));
+      if (bundle && bundle.retainedGeometryTelemetry) bundle.retainedGeometryTelemetry.retained += 1;
+      if (candidate.culled) continue;
+      let groups = groupsByVertices.get(candidate.vertices);
+      if (!groups) {
+        groups = new Map();
+        groupsByVertices.set(candidate.vertices, groups);
+      }
+      let group = groups.get(candidate.key);
+      if (!group) {
+        group = { candidate, object, matrices: [], instanceBounds: [], bounds: null };
+        groups.set(candidate.key, group);
+      }
+      group.matrices.push(candidate.matrix);
+      group.instanceBounds.push(candidate.bounds);
+      group.bounds = sceneRigidImportedBatchExpandBounds(group.bounds, candidate.bounds);
+    }
+    for (const groups of groupsByVertices.values()) {
+      for (const group of groups.values()) {
+        const candidate = group.candidate;
+        const object = group.object;
+        const count = group.matrices.length;
+        if (!count) continue;
+        const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, candidate.sourceMaterial);
+        const depth = sceneBoundsDepthMetrics(group.bounds, camera, object);
+        const batchRecord = sceneRigidImportedBatchRecord(candidate.vertices, candidate.key);
+        const meshRecord = {
+          id: batchRecord.id,
+          kind: object.kind,
+          pickable: false,
+          materialIndex,
+          renderPass: "opaque",
+          _renderPassDerived: object._renderPassDerived === true,
+          texture: candidate.sourceMaterial && typeof candidate.sourceMaterial.texture === "string" ? candidate.sourceMaterial.texture : "",
+          static: false,
+          castShadow: false,
+          receiveShadow: object.receiveShadow === true,
+          depthWrite: object.depthWrite,
+          bounds: group.bounds,
+          depthNear: depth.near,
+          depthFar: depth.far,
+          depthCenter: depth.center,
+          viewCulled: false,
+          doubleSided: object.doubleSided === true,
+          skin: null,
+          vertices: candidate.vertices,
+          directVertices: true,
+          retainedGeometry: true,
+          resourceOwner: object,
+          geometryRevision: candidate.revision,
+          modelMatrix: group.matrices[0],
+          instanceMatrices: group.matrices,
+          instanceBounds: group.instanceBounds,
+          instanceCount: count,
+          _rigidImportedBatch: true,
+          vertexOffset: 0,
+          vertexCount: Math.max(0, Math.floor(sceneNumber(candidate.vertices.count, 0))),
+        };
+        sceneStampRetainedMeshCSSInput(meshRecord, batchRecord);
+        bundle.meshObjects.push(meshRecord);
+      }
     }
   }
 
@@ -5563,17 +5825,18 @@
     // material's flat base color instead -- computed ONCE per object here,
     // not per vertex corner -- which keeps the rare legacy fallback's output
     // plausible without paying per-vertex lighting cost nothing displays.
-    const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     if (object._crowdSkin) {
       const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
       const bounds = sceneTransformMeshBounds(object._crowdSkin.bounds, modelMatrix);
       const depth = sceneBoundsDepthMetrics(bounds, camera, object);
-      bundle.meshObjects.push({ id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
+      const meshRecord = { id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
         static: false, castShadow: Boolean(object.castShadow), receiveShadow: Boolean(object.receiveShadow),
         depthWrite: object.depthWrite, bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
         viewCulled: false, doubleSided: Boolean(object.doubleSided), skin: null, _crowdSkin: object._crowdSkin,
         vertices, directVertices: true, retainedGeometry: true, resourceOwner: object, geometryRevision: 0,
-        modelMatrix, vertexOffset: 0, vertexCount: vertices.count });
+        modelMatrix, vertexOffset: 0, vertexCount: vertices.count };
+      sceneStampRetainedMeshCSSInput(meshRecord, object);
+      bundle.meshObjects.push(meshRecord);
       bundle.retainedMeshObjectCount += 1;
       bundle.retainedMeshVertexCount += vertices.count;
       bundle.retainedGeometryTelemetry.retained += 1;
@@ -5615,7 +5878,7 @@
       if (bounds) {
         const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
         const depth = sceneBoundsDepthMetrics(bounds, camera, object);
-        bundle.meshObjects.push({
+        const meshRecord = {
           id: object.id,
           kind: object.kind,
           pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
@@ -5642,7 +5905,9 @@
           modelMatrix,
           vertexOffset: 0,
           vertexCount,
-        });
+        };
+        sceneStampRetainedMeshCSSInput(meshRecord, object);
+        bundle.meshObjects.push(meshRecord);
         bundle.retainedMeshObjectCount += 1;
         bundle.retainedMeshVertexCount += vertexCount;
         bundle.retainedGeometryTelemetry.retained += 1;
@@ -5652,6 +5917,7 @@
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.fallback += 1;
     }
+    const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
     let wireVertexCount = 0;

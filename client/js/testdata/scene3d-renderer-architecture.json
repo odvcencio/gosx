@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "measuredAtCommit": "68264a41a97c477d0fa16089b4bc79786265988f",
+  "measuredAtCommit": "899fabecafca0dcc2171443ce22d7f7c5f455458",
   "canopyVersion": "v0.18.0-19-g01a5f95-dirty",
   "audit": {
     "architectureReportConsumerFiles": 26,
@@ -16,7 +16,7 @@
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2700,
-    "actualGovernanceLinesAtReview": 2695,
+    "actualGovernanceLinesAtReview": 2697,
     "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
   },
   "rendererSourceNamingContract": [
@@ -214,8 +214,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 10374,
-      "maxFileLines": 10374
+      "maxLines": 10445,
+      "maxFileLines": 10445
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -242,12 +242,12 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 10374,
+    "../runtime/scene3d/webgl.ts": 10445,
     "../runtime/scene3d/webgpu.ts": 18827,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
     "../runtime/scene3d/hydrate-input.ts": 89,
-    "../runtime/scene3d/mount-webgl.ts": 5138,
-    "../runtime/scene3d/mount.ts": 3568
+    "../runtime/scene3d/mount-webgl.ts": 5399,
+    "../runtime/scene3d/mount.ts": 3569
   },
   "functionDefaults": {
     "lines": 200,
@@ -359,15 +359,15 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@6973:3",
-      "lines": 3058,
-      "cyclomatic": 895,
-      "cognitive": 1378,
+      "lines": 3127,
+      "cyclomatic": 933,
+      "cognitive": 1477,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@7741:5",
+      "name": "uploadCustomUniforms@7752:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -376,7 +376,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7927:5",
+      "name": "render@7938:5",
       "lines": 283,
       "cyclomatic": 76,
       "cognitive": 105,
@@ -385,16 +385,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@8740:5",
-      "lines": 83,
-      "cyclomatic": 52,
-      "cognitive": 97,
-      "maxNesting": 5,
+      "name": "prepareRigidMeshBatches@8751:5",
+      "lines": 138,
+      "cyclomatic": 83,
+      "cognitive": 187,
+      "maxNesting": 7,
       "parameters": 1
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@8922:5",
+      "name": "drawPBRObjectList@8988:5",
       "lines": 272,
       "cyclomatic": 79,
       "cognitive": 187,
@@ -403,7 +403,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@9343:5",
+      "name": "applyPointsAuthoredCustomUniforms@9409:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -412,7 +412,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@9519:5",
+      "name": "drawPointsEntries@9585:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -421,7 +421,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@9820:5",
+      "name": "drawInstancedMeshes@9886:5",
       "lines": 183,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -712,9 +712,9 @@
     {
       "source": "../runtime/scene3d/mount.ts",
       "name": "renderFrame",
-      "lines": 205,
-      "cyclomatic": 61,
-      "cognitive": 71,
+      "lines": 206,
+      "cyclomatic": 62,
+      "cognitive": 72,
       "maxNesting": 3,
       "parameters": 2
     },
@@ -757,9 +757,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3058,
-      "cyclomatic": 895,
-      "cognitive": 1378,
+      "lines": 3127,
+      "cyclomatic": 933,
+      "cognitive": 1477,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -890,6 +890,7 @@
     ],
     "optional": [
       "supportsRetainedGeometry",
+      "supportsRigidImportedBatches",
       "prepareCrowdAtlas",
       "supportsBundle",
       "setLifecycle",
@@ -915,6 +916,7 @@
         "prepareCrowdAtlas",
         "render",
         "supportsRetainedGeometry",
+        "supportsRigidImportedBatches",
         "textureVariantContext",
         "type"
       ],

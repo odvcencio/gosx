@@ -542,7 +542,11 @@
               "items": { "$ref": "#/$defs/meshInstance" }
             },
             "pickable": { "type": "boolean" },
-            "static": { "type": "boolean" }
+            "static": { "type": "boolean" },
+            "sharedAppearance": {
+              "type": "boolean",
+              "description": "Allow corresponding rigid GLB primitives to share one renderer appearance across instances; per-instance scene-node CSS appearance overrides are disabled for this batch."
+            }
           }
         }
       ]

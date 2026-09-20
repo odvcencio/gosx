@@ -597,6 +597,11 @@ type InstancedGLBMesh struct {
 	Pickable  *bool
 	Visible   *bool
 	Static    *bool
+	// SharedAppearance allows compatible rigid primitives to share one renderer
+	// record across instances. Corresponding primitives keep their authored GLB
+	// materials, but per-instance scene-node CSS appearance overrides are not
+	// supported for an opted-in batch.
+	SharedAppearance bool
 }
 
 // MeshInstance describes the transform for a single instance within an
@@ -3494,12 +3499,13 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		instances = append(instances, record)
 	}
 	record := InstancedGLBMeshIR{
-		ID:        id,
-		Src:       src,
-		Pickable:  igm.Pickable,
-		Visible:   igm.Visible,
-		Static:    igm.Static,
-		Instances: instances,
+		ID:               id,
+		Src:              src,
+		Pickable:         igm.Pickable,
+		Visible:          igm.Visible,
+		Static:           igm.Static,
+		SharedAppearance: igm.SharedAppearance,
+		Instances:        instances,
 	}
 	applyMaterialToInstancedGLBIR(&record, igm.Material)
 	l.instancedGLBMeshes = append(l.instancedGLBMeshes, record)

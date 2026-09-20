@@ -3999,8 +3999,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 					{ID: "robot-1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)},
 					{ID: "robot-2", Position: Vec3(3, 0, 4), Scale: Vec3(1.2, 1.2, 1.2)},
 				},
-				Pickable: Bool(true),
-				Static:   Bool(false),
+				Pickable:         Bool(true),
+				Static:           Bool(false),
+				SharedAppearance: true,
 			},
 		),
 	}
@@ -4031,6 +4032,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	if batch.Color != "#ff6600" {
 		t.Fatalf("expected color #ff6600, got %q", batch.Color)
 	}
+	if !batch.SharedAppearance {
+		t.Fatal("expected shared appearance opt-in to survive lowering")
+	}
 
 	// Verify legacyProps wire shape.
 	legacy := ir.legacyProps()
@@ -4044,6 +4048,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	}
 	if got := batchMap["src"]; got != "/models/robot-scout.glb" {
 		t.Fatalf("expected batch src, got %#v", got)
+	}
+	if got := batchMap["sharedAppearance"]; got != true {
+		t.Fatalf("expected sharedAppearance=true, got %#v", got)
 	}
 	instances, ok := batchMap["instances"].([]map[string]any)
 	if !ok || len(instances) != 2 {
