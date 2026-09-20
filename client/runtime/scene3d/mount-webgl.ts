@@ -3866,6 +3866,7 @@ function gosxConfigureSceneScript(script, role, src) {
           }
           object.vertices = shared;
           object._modelLocalVertices = shared;
+          object._rigidSharedAppearance = model._instancedGLBSharedAppearance === true;
           object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
           object.static = false;
         }

@@ -1507,6 +1507,9 @@
         ? sceneBool(raw.visible, true)
         : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
       static: Object.prototype.hasOwnProperty.call(raw, "static") ? sceneBool(raw.static, false) : current.static,
+      sharedAppearance: Object.prototype.hasOwnProperty.call(raw, "sharedAppearance")
+        ? sceneBool(raw.sharedAppearance, false)
+        : sceneBool(current.sharedAppearance, false),
       instances: rawInstances.map(function(instance, instanceIndex) {
         return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
       }),
@@ -1602,6 +1605,7 @@
     if (batch.alphaCutoff !== undefined) raw.alphaCutoff = batch.alphaCutoff;
     const template = normalizeSceneModel(raw, batchIndex);
     template._instancedGLB = true;
+    template._instancedGLBSharedAppearance = batch.sharedAppearance === true;
     const declaration = Object.assign({}, template);
     for (const key of ["id", "x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
     const hydrationTemplate = JSON.stringify(declaration);
@@ -4963,7 +4967,8 @@
   function sceneRigidImportedBatchCandidate(bundle, camera, object, timeSeconds) {
     const vertices = object && object.vertices;
     if (!bundle || bundle.rigidImportedBatchesEnabled !== true || !object ||
-        object._rigidMaterialProfileStable !== true || object.pickable !== false ||
+        object._rigidMaterialProfileStable !== true || object._rigidSharedAppearance !== true ||
+        object.pickable !== false ||
         object.castShadow === true || object.visible === false || object.selected === true ||
         object.skin || object._crowdSkin || !vertices) return null;
     const registered = sceneRegisteredMaterialProfile(

@@ -131,6 +131,7 @@ function earlyRigidFixture(fresh, xs, overrides = {}, rendererOptions = {}) {
     indices:new U32([0,1,2]) };
   const objects = xs.map((x, index) => Object.assign({
     id:"effect-"+index, kind:"mesh", vertices, _rigidMaterialProfileStable:true,
+    _rigidSharedAppearance:true,
     pickable:false, visible:true, castShadow:false, receiveShadow:false,
     materialKind:"standard", color:"#669966", opacity:1, roughness:.5, metalness:0,
     wireframe:false, blendMode:"opaque", renderPass:"opaque", depthWrite:true,
@@ -188,6 +189,20 @@ test("early rigid imported cohorts fail closed for unsafe and backend-fallback r
   assert.equal(fallback.meshObjects.length, 2);
   assert.equal(fallback.meshObjects.some(object=>object._rigidImportedBatch===true), false,
     "renderers without the explicit capability retain the per-object contract");
+  h.renderer.dispose();
+});
+
+test("early rigid imported cohorts require an explicit shared-appearance contract", () => {
+  const h=earlyRigidFixture(true,[0,1],{0:{_rigidSharedAppearance:false},1:{_rigidSharedAppearance:false}});
+  const ordinary=h.build();
+  assert.equal(ordinary.meshObjects.length,2);
+  assert.equal(ordinary.meshObjects.some(object=>object._rigidImportedBatch===true),false,
+    "the default path keeps individual record IDs available to scene-node CSS");
+  h.objects[0]._rigidSharedAppearance=true;
+  h.objects[1]._rigidSharedAppearance=true;
+  const shared=h.build();
+  assert.equal(shared.meshObjects.length,1);
+  assert.equal(shared.meshObjects[0]._rigidImportedBatch,true);
   h.renderer.dispose();
 });
 
@@ -325,6 +340,64 @@ test("pooled swarm geometry survives an empty wave and expires within its reside
   for(let i=0;i<122;i++) h.render();
   assert.ok(h.gl.ops.slice(removed).filter(op=>op[0]==="deleteBuffer").length>=4,"idle pool must release its GPU handles");
   h.renderer.dispose();
+});
+
+test("pooled swarm geometry retains a returning wave between 32 and 48 MiB", () => {
+  const h=rigidBatchFixture(true,1), F32=vm.runInContext("Float32Array",h.env.context);
+  const padded=new F32(3*400000);
+  padded.set([-.1,0,0,.1,0,0,0,.2,0]);
+  const base=h.bundle.meshObjects[0];
+  const actors=Array.from({length:4},(_,index)=>Object.assign({},base,{
+    id:"heavy-pool-"+index,
+    vertices:Object.assign({},base.vertices,{count:400000,positions:padded,normals:padded,_rigidPool:true}),
+    vertexCount:400000,
+    modelMatrix:new F32(base.modelMatrix),
+  }));
+  h.bundle.meshObjects=actors;
+  h.render();
+  const warm=h.renderer.diagnostics().retainedGeometry;
+  h.bundle.meshObjects=[];
+  h.bundle.points=[{id:"keep",count:1,positions:new F32([0,0,0]),color:"#fff"}];
+  h.render();
+  const idle=h.renderer.diagnostics().retainedGeometry;
+  assert.ok(idle.idleBytes>32*1024*1024,
+    `the measured returning wave must exceed the former 32 MiB limit (got ${idle.idleBytes})`);
+  assert.ok(idle.idleBytes<=48*1024*1024,"idle residency remains within its bounded 48 MiB limit");
+  assert.equal(idle.retirements,warm.retirements,"the complete sub-48 MiB wave must remain resident");
+  const start=h.gl.ops.length;
+  h.bundle.meshObjects=actors;
+  h.render();
+  assert.equal(h.gl.ops.slice(start).filter(op=>op[0]==="bufferData" && op[3]===h.gl.STATIC_DRAW).length,0,
+    "the returning wave must reuse every retained static vertex stream");
+  const beforeRevision=h.renderer.diagnostics().retainedGeometry;
+  actors[0].vertices.revision=1;
+  actors[0].geometryRevision=1;
+  h.render();
+  assert.equal(h.renderer.diagnostics().retainedGeometry.revisionInvalidations,beforeRevision.revisionInvalidations+1,
+    "an explicit revision must still invalidate pooled geometry");
+  h.renderer.dispose();
+});
+
+test("instanced GLB sharedAppearance reaches only opted-in rigid wrappers", async () => {
+  const env=importedMeshRuntime({fetchRoutes:{"/actor.glb":{bytes:buildMinimalGLBBytes()}}});
+  runScript(freshFeatureBundleSource("scene3d-gltf"),env.context,"bootstrap-feature-scene3d-gltf.js");
+  const api=env.context.__gosx_scene3d_api;
+  const state=api.createSceneState({scene:{instancedGLBMeshes:[
+    {id:"shared",src:"/actor.glb",sharedAppearance:true,instances:[{id:"one"}]},
+    {id:"styled",src:"/actor.glb",instances:[{id:"two"}]},
+  ]}});
+  await env.context.__meshTest.hydrate(state,null);
+  const objects=Array.from(state.objects.values());
+  const shared=objects.find(object=>object.id.startsWith("shared/one/"));
+  assert.equal(shared._rigidSharedAppearance,true);
+  assert.equal(objects.find(object=>object.id.startsWith("styled/two/"))._rigidSharedAppearance,false);
+  await api.applySceneCommands(state,[{kind:11,data:{instancedGLBMeshes:[
+    {id:"shared",src:"/actor.glb",instances:[{id:"one"}]},
+    {id:"styled",src:"/actor.glb",instances:[{id:"two"}]},
+  ]}}]);
+  const cleared=Array.from(state.objects.values()).find(object=>object.id.startsWith("shared/one/"));
+  assert.notEqual(cleared,shared,"clearing the contract must invalidate the trusted hydration template");
+  assert.equal(cleared._rigidSharedAppearance,false,"an omitted replacement field restores exact per-node CSS semantics");
 });
 
 test("rigid batches separate materials, preserve alpha draws and omit view-culled actors", () => {

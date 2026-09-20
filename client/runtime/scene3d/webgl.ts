@@ -8650,7 +8650,7 @@
       let idleBytes = 0, idleEntries = 0;
       // Only explicitly shared rigid GLB streams enter this pool. Ordinary
       // meshes and dynamic buffers retain immediate retirement semantics.
-      // Keep at most 32 MiB / 64 primitives for 120 rendered frames; dispose
+      // Keep at most 48 MiB / 64 primitives for 120 rendered frames; dispose
       // still destroys every handle immediately on unmount/context loss.
       for (const [vertices, entry] of directMeshAttributeCache) {
         if (entry.lastSeenEpoch === directMeshAttributeEpoch) continue;
@@ -8658,7 +8658,7 @@
         for (const attribute of Object.values(entry.attributes || {})) bytes += attribute.byteLength || 0;
         if (!entry.retained || vertices._rigidPool !== true ||
             directMeshAttributeEpoch - entry.lastSeenEpoch > 120 ||
-            idleEntries >= 64 || idleBytes + bytes > 32 * 1024 * 1024) {
+            idleEntries >= 64 || idleBytes + bytes > 48 * 1024 * 1024) {
           retireWebGLDirectMeshEntry(vertices, entry);
         } else {
           idleBytes += bytes; idleEntries++;

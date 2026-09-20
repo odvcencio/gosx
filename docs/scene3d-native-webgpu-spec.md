@@ -297,6 +297,8 @@ Native generated mesh primitives use four buffers:
 
 Instanced transforms use matrix columns through the existing instance-rate buffer. Future per-instance material/color overrides must use a dedicated instance attribute buffer or storage buffer, not mutate shared geometry buffers.
 
+`InstancedGLBMesh.SharedAppearance` is an explicit optimization contract for rigid batches. When enabled, corresponding primitives across the batch may share one renderer appearance record; distinct primitives in a multi-material GLB keep their own authored materials. Per-instance scene-node CSS appearance overrides are unavailable for that opted-in batch. The default is false, preserving individual derived node IDs and CSS styling.
+
 ### 6.4 Native primitive catalog
 
 This patch upgrades the WebGPU mesh primitive catalog from a partial set to the current built-in mesh primitive set plus compatibility aliases:

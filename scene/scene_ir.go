@@ -156,6 +156,9 @@ type InstancedGLBMeshIR struct {
 	Pickable              *bool             `json:"pickable,omitempty"`
 	Visible               *bool             `json:"visible,omitempty"`
 	Static                *bool             `json:"static,omitempty"`
+	// SharedAppearance opts corresponding primitives into one shared renderer
+	// appearance across instances. It does not merge different GLB primitives.
+	SharedAppearance bool `json:"sharedAppearance,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -2476,6 +2479,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	}
 	if item.Static != nil {
 		record["static"] = *item.Static
+	}
+	if item.SharedAppearance {
+		record["sharedAppearance"] = true
 	}
 	if len(item.Instances) > 0 {
 		instances := make([]map[string]any, 0, len(item.Instances))
