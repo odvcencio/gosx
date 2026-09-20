@@ -405,7 +405,7 @@ test("instanced model templates preserve normalization and re-read batch appeara
     const instance=batch.instances[index];
     const raw={...instance,id:batch.id+"/"+(instance.id||"instance-"+index),src:batch.src};
     for(const key of ['color','roughness','visible','static','specularColor']) raw[key]=batch[key];
-    const expected=api.normalizeSceneModel(raw,"0-"+index);expected._instancedGLB=true;
+    const expected=api.normalizeSceneModel(raw,"0-"+index);expected._instancedGLB=true;expected._instancedGLBSharedAppearance=false;
     assert.equal(JSON.stringify(models[slot]),JSON.stringify(expected));
   }
   assert.notEqual(models[0],models[1]);
