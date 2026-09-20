@@ -4023,12 +4023,16 @@ function gosxConfigureSceneScript(script, role, src) {
       const staged = key && cache.get(key);
       if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
       keys.add(key);
-      const patch = scenePrepareRigidInstancePatch(state, staged, model, matrix);
-      if (!patch) return false;
-      patches.push(patch);
+      patches.push({ staged, model, matrix: new Float32Array(matrix) });
     }
     // Validate the complete collection before changing the committed scene.
-    for (const patch of patches) sceneCommitRigidInstancePatch(patch);
+    for (const patch of patches) {
+      for (const object of patch.staged.objects) {
+        object.parentMatrix = patch.matrix;
+        if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
+      }
+      Object.assign(patch.staged, { model: patch.model, rigidInstanceModel: patch.model });
+    }
     return true;
   }
 
@@ -4041,9 +4045,8 @@ function gosxConfigureSceneScript(script, role, src) {
     const cache = records && records.rigidInstances;
     const statics = records && records.staticModels;
     if (!cache || !statics || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return null;
-    // Incremental membership is deliberately limited to collections already
-    // composed entirely of reusable rigid/static stages. Animated, auxiliary,
-    // lifecycle-bound and other specialized records keep full hydration.
+    // Only reusable rigid/static collections enter this path. Animated,
+    // auxiliary, lifecycle-bound and specialized records keep full hydration.
     if (records.modelCount !== cache.size + statics.size) return null;
     let models;
     try {
@@ -4083,9 +4086,8 @@ function gosxConfigureSceneScript(script, role, src) {
         continue;
       }
       const id = sceneRigidMembershipModelID(model);
-      // The same actor with a different key means its template, material,
-      // texture scope or other declaration changed. Preserve the established
-      // full-hydration semantics for that case.
+      // A changed key for the same actor means its template, appearance or
+      // texture scope changed and retains full-hydration semantics.
       if (!id || nextIDs.has(id) || previousByID.has(id)) return null;
       nextIDs.add(id);
       changed = true;
@@ -4096,9 +4098,7 @@ function gosxConfigureSceneScript(script, role, src) {
       if (!sceneRigidMembershipModelID(staged && staged.model)) return null;
       changed = true;
     }
-    // Static model membership and declaration order are outside this narrow
-    // transaction. Any static addition/removal/change takes full hydration so
-    // no old derived object can become an untracked orphan.
+    // Static membership/order changes take full hydration to prevent orphaned derived objects.
     if (staticKeys.size !== statics.size) return null;
     for (const key of statics.keys()) if (!staticKeys.has(key)) return null;
     return changed ? { state, records, models, entries, keys } : null;
