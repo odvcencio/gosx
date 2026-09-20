@@ -4031,7 +4031,8 @@ function gosxConfigureSceneScript(script, role, src) {
         object.parentMatrix = patch.matrix;
         if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
       }
-      Object.assign(patch.staged, { model: patch.model, rigidInstanceModel: patch.model });
+      patch.staged.model = patch.model;
+      patch.staged.rigidInstanceModel = patch.model;
     }
     return true;
   }
@@ -4137,7 +4138,6 @@ function gosxConfigureSceneScript(script, role, src) {
       entry.staged = staged;
       entry.patch = patch;
     }
-
     // Revalidate every retained wrapper and all object IDs after asynchronous
     // staging. No committed matrix or membership changes before this point.
     const nextObjectIDs = new Set();
