@@ -290,6 +290,93 @@ test("numeric camera depths and poses reuse CSS resolution while the draw plan s
   assert.notEqual(api.sceneCSSInputSignature(source),numeric);
 });
 
+test("producer-stamped retained meshes avoid repeated CSS string hashing without masking mutations", (t) => {
+  const api = runtime();
+  const makeRecord = index => ({
+    id: `actor-${index}`, kind: "mesh", materialIndex: index % 7,
+    renderPass: "opaque", _renderPassDerived: false,
+    depthCenter: index / 10, vertexOffset: 0, vertexCount: 36,
+    retainedGeometry: true,
+  });
+  const owners = Array.from({ length: 832 }, () => ({}));
+  const stamped = owners.map((owner, index) => {
+    const record = makeRecord(index);
+    api.sceneStampRetainedMeshCSSInput(record, owner);
+    return record;
+  });
+  const generic = stamped.map((_, index) => makeRecord(index));
+  const countStringHashes = records => {
+    let calls = 0;
+    const original = api.scenePlannerHashString;
+    api.scenePlannerHashString = function(...args) { calls++; return original(...args); };
+    const started = process.hrtime.bigint();
+    for (let iteration = 0; iteration < 80; iteration++) {
+      api.sceneCSSInputSignature({ meshObjects: records });
+    }
+    const elapsedMS = Number(process.hrtime.bigint() - started) / 1e6;
+    api.scenePlannerHashString = original;
+    return { calls, elapsedMS };
+  };
+  const fast = countStringHashes(stamped);
+  const slow = countStringHashes(generic);
+  assert.ok(fast.calls < slow.calls / 8,
+    `guarded fingerprints should remove per-record string hashes (${fast.calls} vs ${slow.calls})`);
+  t.diagnostic(`66,560 retained records: stamped=${fast.elapsedMS.toFixed(2)}ms/${fast.calls} string hashes generic=${slow.elapsedMS.toFixed(2)}ms/${slow.calls}`);
+  const measureFreshFrames = stamp => {
+    const started = process.hrtime.bigint();
+    for (let frame = 0; frame < 80; frame++) {
+      const records = owners.map((owner, index) => {
+        const record = makeRecord(index);
+        if (stamp) api.sceneStampRetainedMeshCSSInput(record, owner);
+        return record;
+      });
+      api.sceneCSSInputSignature({ meshObjects: records });
+    }
+    return Number(process.hrtime.bigint() - started) / 1e6;
+  };
+  const stampedFreshMS = measureFreshFrames(true);
+  const genericFreshMS = measureFreshFrames(false);
+  t.diagnostic(`80 fresh 832-record frames incl stamping: stamped=${stampedFreshMS.toFixed(2)}ms generic=${genericFreshMS.toFixed(2)}ms`);
+  const sameOwner = {};
+  const firstFrame = makeRecord(5);
+  api.sceneStampRetainedMeshCSSInput(firstFrame, sameOwner);
+  const firstFrameSignature = api.sceneCSSInputSignature({ meshObjects: [firstFrame] });
+  const secondFrame = makeRecord(5);
+  api.sceneStampRetainedMeshCSSInput(secondFrame, sameOwner);
+  assert.equal(api.sceneCSSInputSignature({ meshObjects: [secondFrame] }), firstFrameSignature,
+    "fresh producer records with the same owner and tuple retain their CSS signature");
+  secondFrame.materialIndex++;
+  api.sceneStampRetainedMeshCSSInput(secondFrame, sameOwner);
+  const changedMaterial = api.sceneCSSInputSignature({ meshObjects: [secondFrame] });
+  assert.notEqual(changedMaterial, firstFrameSignature, "material-index changes invalidate the owner tuple");
+  secondFrame.renderPass = "alpha";
+  api.sceneStampRetainedMeshCSSInput(secondFrame, sameOwner);
+  assert.notEqual(api.sceneCSSInputSignature({ meshObjects: [secondFrame] }), changedMaterial,
+    "render-pass changes invalidate the owner tuple");
+
+  const bundle = { meshObjects: [stamped[0]] };
+  const initial = api.sceneCSSInputSignature(bundle);
+  stamped[0].id = "replacement";
+  assert.notEqual(api.sceneCSSInputSignature(bundle), initial, "identity mutation invalidates the producer stamp");
+  stamped[0].id = "actor-0";
+  api.sceneStampRetainedMeshCSSInput(stamped[0], owners[0]);
+  const restored = api.sceneCSSInputSignature(bundle);
+  stamped[0]._renderPassDerived = null;
+  assert.notEqual(api.sceneCSSInputSignature(bundle), restored,
+    "undefined/boolean/null render-pass provenance remains distinct");
+  stamped[0]._renderPassDerived = false;
+  api.sceneStampRetainedMeshCSSInput(stamped[0], owners[0]);
+  const opaque = api.sceneCSSInputSignature(bundle);
+  stamped[0].opacity = "var(--mesh-opacity)";
+  assert.notEqual(api.sceneCSSInputSignature(bundle), opaque,
+    "an added CSS material input falls back to the general record hash");
+  const objectCollection = { objects: [stamped[1]] };
+  const objectSignature = api.sceneCSSInputSignature(objectCollection);
+  stamped[1].color = "var(--actor-color)";
+  assert.notEqual(api.sceneCSSInputSignature(objectCollection), objectSignature,
+    "a stamp is trusted only under the meshObjects collection schema");
+});
+
 
 test("HTML surface material keys stay compact without aliasing content changes", () => {
   const api=runtime(), entry={id:"relay"};

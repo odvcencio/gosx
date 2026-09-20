@@ -4884,8 +4884,50 @@
   let sceneRigidImportedBatchEpoch = 0;
   const sceneRigidImportedBatchIDs = new WeakMap();
   const sceneRigidImportedBatchDescriptors = new WeakMap();
+  let sceneRetainedMeshCSSFingerprintSequence = 0;
+  const sceneRetainedMeshCSSOwnerFingerprints = new WeakMap();
+  const sceneRetainedMeshCSSRecordFingerprints = new WeakMap();
+  const sceneRetainedMeshCSSExtraKeys = [
+    "material", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
+    "specularIntensity", "specularColor", "blendMode", "_blendModeDerived",
+  ];
+  const sceneRetainedMeshCSSNumericKeys = ["depthCenter", "vertexOffset", "vertexCount"];
 
-  function sceneRigidImportedBatchID(vertices, key) {
+  function sceneRetainedMeshCSSFingerprintEligible(record) {
+    if (!record || record.retainedGeometry !== true || typeof record.id !== "string" ||
+        typeof record.kind !== "string" || !Number.isFinite(record.materialIndex) ||
+        typeof record.renderPass !== "string" ||
+        record._renderPassDerived !== undefined && typeof record._renderPassDerived !== "boolean") return false;
+    for (const key of sceneRetainedMeshCSSExtraKeys) if (record[key] !== undefined) return false;
+    for (const key of sceneRetainedMeshCSSNumericKeys) {
+      if (record[key] !== undefined && typeof record[key] !== "number") return false;
+    }
+    return true;
+  }
+
+  function sceneStampRetainedMeshCSSInput(record, owner) {
+    if (!sceneRetainedMeshCSSFingerprintEligible(record) || !owner || typeof owner !== "object") return;
+    let cached = sceneRetainedMeshCSSOwnerFingerprints.get(owner);
+    if (!cached || cached.id !== record.id || cached.kind !== record.kind ||
+        cached.materialIndex !== record.materialIndex || cached.renderPass !== record.renderPass ||
+        cached.renderPassDerived !== record._renderPassDerived) {
+      cached = { id: record.id, kind: record.kind, materialIndex: record.materialIndex,
+        renderPass: record.renderPass, renderPassDerived: record._renderPassDerived,
+        fingerprint: ++sceneRetainedMeshCSSFingerprintSequence };
+      sceneRetainedMeshCSSOwnerFingerprints.set(owner, cached);
+    }
+    sceneRetainedMeshCSSRecordFingerprints.set(record, cached);
+  }
+
+  function sceneRetainedMeshCSSInputFingerprint(record) {
+    const cached = record && sceneRetainedMeshCSSRecordFingerprints.get(record);
+    return cached && sceneRetainedMeshCSSFingerprintEligible(record) &&
+      cached.id === record.id && cached.kind === record.kind &&
+      cached.materialIndex === record.materialIndex && cached.renderPass === record.renderPass &&
+      cached.renderPassDerived === record._renderPassDerived ? cached.fingerprint : 0;
+  }
+
+  function sceneRigidImportedBatchRecord(vertices, key) {
     let records = sceneRigidImportedBatchIDs.get(vertices);
     if (!records) {
       records = new Map();
@@ -4911,7 +4953,11 @@
       }
       if (oldestKey !== null) records.delete(oldestKey);
     }
-    return record.id;
+    return record;
+  }
+
+  function sceneRigidImportedBatchID(vertices, key) {
+    return sceneRigidImportedBatchRecord(vertices, key).id;
   }
 
   function sceneRigidImportedBatchCandidate(bundle, camera, object, timeSeconds) {
@@ -5017,8 +5063,9 @@
         if (!count) continue;
         const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, candidate.sourceMaterial);
         const depth = sceneBoundsDepthMetrics(group.bounds, camera, object);
-        bundle.meshObjects.push({
-          id: sceneRigidImportedBatchID(candidate.vertices, candidate.key),
+        const batchRecord = sceneRigidImportedBatchRecord(candidate.vertices, candidate.key);
+        const meshRecord = {
+          id: batchRecord.id,
           kind: object.kind,
           pickable: false,
           materialIndex,
@@ -5048,7 +5095,9 @@
           _rigidImportedBatch: true,
           vertexOffset: 0,
           vertexCount: Math.max(0, Math.floor(sceneNumber(candidate.vertices.count, 0))),
-        });
+        };
+        sceneStampRetainedMeshCSSInput(meshRecord, batchRecord);
+        bundle.meshObjects.push(meshRecord);
       }
     }
   }
@@ -5771,12 +5820,14 @@
       const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
       const bounds = sceneTransformMeshBounds(object._crowdSkin.bounds, modelMatrix);
       const depth = sceneBoundsDepthMetrics(bounds, camera, object);
-      bundle.meshObjects.push({ id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
+      const meshRecord = { id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
         static: false, castShadow: Boolean(object.castShadow), receiveShadow: Boolean(object.receiveShadow),
         depthWrite: object.depthWrite, bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
         viewCulled: false, doubleSided: Boolean(object.doubleSided), skin: null, _crowdSkin: object._crowdSkin,
         vertices, directVertices: true, retainedGeometry: true, resourceOwner: object, geometryRevision: 0,
-        modelMatrix, vertexOffset: 0, vertexCount: vertices.count });
+        modelMatrix, vertexOffset: 0, vertexCount: vertices.count };
+      sceneStampRetainedMeshCSSInput(meshRecord, object);
+      bundle.meshObjects.push(meshRecord);
       bundle.retainedMeshObjectCount += 1;
       bundle.retainedMeshVertexCount += vertices.count;
       bundle.retainedGeometryTelemetry.retained += 1;
@@ -5818,7 +5869,7 @@
       if (bounds) {
         const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
         const depth = sceneBoundsDepthMetrics(bounds, camera, object);
-        bundle.meshObjects.push({
+        const meshRecord = {
           id: object.id,
           kind: object.kind,
           pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
@@ -5845,7 +5896,9 @@
           modelMatrix,
           vertexOffset: 0,
           vertexCount,
-        });
+        };
+        sceneStampRetainedMeshCSSInput(meshRecord, object);
+        bundle.meshObjects.push(meshRecord);
         bundle.retainedMeshObjectCount += 1;
         bundle.retainedMeshVertexCount += vertexCount;
         bundle.retainedGeometryTelemetry.retained += 1;

@@ -358,6 +358,12 @@
     return Number.isFinite(until) ? until : 0;
   }
 
+  const sceneCSSMeshInputKeys = [
+    "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
+    "vertexCount", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
+    "specularIntensity", "specularColor", "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
+  ];
+
   function sceneCSSInputSignature(bundle) {
     let hash = 2166136261 >>> 0;
     hash = scenePlannerHashString(hash, "css");
@@ -381,12 +387,7 @@
       "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
       "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
     ]);
-    hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
-      "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
-      "vertexCount", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
-      "specularIntensity", "specularColor",
-      "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
-    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, sceneCSSMeshInputKeys);
     hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
       "id", "material", "materialIndex", "count", "color", "size", "opacity",
       "blendMode", "depthWrite", "x", "y", "z", "rotationX", "rotationY",
@@ -478,6 +479,10 @@
   function sceneCSSHashRecordKeys(hash, record, keys) {
     if (!record || typeof record !== "object") {
       return scenePlannerHashString(hash, "null");
+    }
+    if (keys === sceneCSSMeshInputKeys) {
+      const fingerprint = sceneRetainedMeshCSSInputFingerprint(record);
+      if (fingerprint > 0) return scenePlannerHashNumber(hash, fingerprint);
     }
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
