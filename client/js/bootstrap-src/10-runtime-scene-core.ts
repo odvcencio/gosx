@@ -4890,7 +4890,7 @@
   const sceneRigidImportedBatchDescriptors = new WeakMap();
   let sceneRetainedMeshCSSFingerprintSequence = 0;
   const sceneRetainedMeshCSSOwnerFingerprints = new WeakMap();
-  const sceneRetainedMeshCSSRecordFingerprints = new WeakMap();
+  const sceneRetainedMeshCSSRecordFingerprint = Symbol("gosx-retained-mesh-css-fingerprint");
   const sceneRetainedMeshCSSExtraKeys = [
     "material", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
     "specularIntensity", "specularColor", "blendMode", "_blendModeDerived",
@@ -4920,11 +4920,15 @@
         fingerprint: ++sceneRetainedMeshCSSFingerprintSequence };
       sceneRetainedMeshCSSOwnerFingerprints.set(owner, cached);
     }
-    sceneRetainedMeshCSSRecordFingerprints.set(record, cached);
+    // Bundle records are rebuilt every frame. Keeping them as WeakMap keys
+    // creates hundreds of short-lived ephemerons in dense retained scenes;
+    // a private symbol stays non-enumerable to Object.keys/JSON while letting
+    // the record die without separate weak-key bookkeeping.
+    record[sceneRetainedMeshCSSRecordFingerprint] = cached;
   }
 
   function sceneRetainedMeshCSSInputFingerprint(record) {
-    const cached = record && sceneRetainedMeshCSSRecordFingerprints.get(record);
+    const cached = record && record[sceneRetainedMeshCSSRecordFingerprint];
     return cached && sceneRetainedMeshCSSFingerprintEligible(record) &&
       cached.id === record.id && cached.kind === record.kind &&
       cached.materialIndex === record.materialIndex && cached.renderPass === record.renderPass &&

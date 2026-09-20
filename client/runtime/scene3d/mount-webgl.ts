@@ -4271,6 +4271,303 @@ function gosxConfigureSceneScript(script, role, src) {
     return plan ? sceneCommitRigidInstanceMembership(plan) : null;
   }
 
+  const scenePackedInstancedGLBPoseMagic = 0x31504947; // "GIP1" little-endian.
+  const scenePackedInstancedGLBPoseVersion = 1;
+  const scenePackedInstancedGLBPoseHeaderBytes = 24;
+  const scenePackedInstancedGLBPoseRowFloats = 10;
+  const scenePackedInstancedGLBPoseRowBytes = scenePackedInstancedGLBPoseRowFloats * 4;
+
+  function scenePackedInstancedGLBPoseHashByte(hash, value) {
+    return Math.imul((hash ^ (value & 255)) >>> 0, 16777619) >>> 0;
+  }
+
+  function scenePackedInstancedGLBPoseHashU32(hash, value) {
+    value = value >>> 0;
+    hash = scenePackedInstancedGLBPoseHashByte(hash, value);
+    hash = scenePackedInstancedGLBPoseHashByte(hash, value >>> 8);
+    hash = scenePackedInstancedGLBPoseHashByte(hash, value >>> 16);
+    return scenePackedInstancedGLBPoseHashByte(hash, value >>> 24);
+  }
+
+  function scenePackedInstancedGLBPoseUTF8Length(value) {
+    const text = String(value || "");
+    let length = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      let code = text.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) {
+        const low = text.charCodeAt(index + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          index += 1;
+        } else {
+          code = 0xfffd;
+        }
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        code = 0xfffd;
+      }
+      length += code <= 0x7f ? 1 : (code <= 0x7ff ? 2 : (code <= 0xffff ? 3 : 4));
+    }
+    return length;
+  }
+
+  function scenePackedInstancedGLBPoseHashString(hash, value) {
+    const text = String(value || "");
+    hash = scenePackedInstancedGLBPoseHashU32(hash, scenePackedInstancedGLBPoseUTF8Length(text));
+    for (let index = 0; index < text.length; index += 1) {
+      let code = text.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) {
+        const low = text.charCodeAt(index + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          index += 1;
+        } else {
+          code = 0xfffd;
+        }
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        code = 0xfffd;
+      }
+      if (code <= 0x7f) {
+        hash = scenePackedInstancedGLBPoseHashByte(hash, code);
+      } else if (code <= 0x7ff) {
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0xc0 | (code >>> 6));
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0x80 | (code & 0x3f));
+      } else if (code <= 0xffff) {
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0xe0 | (code >>> 12));
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0x80 | ((code >>> 6) & 0x3f));
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0x80 | (code & 0x3f));
+      } else {
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0xf0 | (code >>> 18));
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0x80 | ((code >>> 12) & 0x3f));
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0x80 | ((code >>> 6) & 0x3f));
+        hash = scenePackedInstancedGLBPoseHashByte(hash, 0x80 | (code & 0x3f));
+      }
+    }
+    return hash >>> 0;
+  }
+
+  function sceneInvalidatePackedInstancedGLBDeclaration(state) {
+    if (!state) return;
+    state._packedInstancedGLBPoseLayout = null;
+    if (Array.isArray(state._packedInstancedGLBPoseRows)) {
+      for (const row of state._packedInstancedGLBPoseRows) {
+        row.instance = null;
+        row.staged = null;
+        row.matrix = null;
+        for (const entry of row.crowd) entry.skin = null;
+      }
+      state._packedInstancedGLBPoseRows.length = 0;
+    }
+  }
+
+  function scenePackedInstancedGLBPoseRow(scratch, membershipID, staged, instance, matrix) {
+    let row = scratch.get(membershipID);
+    let crowdCount = 0;
+    for (const object of staged.objects) if (object._crowdSkin) crowdCount += 1;
+    let crowdCompatible = Boolean(row && row.crowd.length === crowdCount);
+    if (crowdCompatible) {
+      let crowdIndex = 0;
+      for (const object of staged.objects) {
+        if (!object._crowdSkin) continue;
+        if (row.crowd[crowdIndex].pendingRows.length !== object._crowdSkin.rows.length) {
+          crowdCompatible = false;
+          break;
+        }
+        crowdIndex += 1;
+      }
+    }
+    if (!row || !crowdCompatible) {
+      const crowd = [];
+      for (const object of staged.objects) {
+        if (!object._crowdSkin) continue;
+        const skin = object._crowdSkin;
+        crowd.push({ skin, pendingRows: new Float32Array(skin.rows.length) });
+      }
+      row = { instance, staged, matrix, pendingMatrix: new Float32Array(16), crowd, hasPose: false,
+        pendingPose: { animation: "", animationLoop: false, animationTime: 0 } };
+    } else {
+      let crowdIndex = 0;
+      for (const object of staged.objects) {
+        if (!object._crowdSkin) continue;
+        row.crowd[crowdIndex].skin = object._crowdSkin;
+        crowdIndex += 1;
+      }
+    }
+    row.instance = instance;
+    row.staged = staged;
+    row.matrix = matrix;
+    row.hasPose = Object.prototype.hasOwnProperty.call(instance, "animation") ||
+      Object.prototype.hasOwnProperty.call(instance, "animationTime") ||
+      Object.prototype.hasOwnProperty.call(instance, "animationLoop");
+    row.pendingPose.animation = instance.animation || "";
+    row.pendingPose.animationLoop = instance.animationLoop === true;
+    return row;
+  }
+
+  function sceneRegisterPackedInstancedGLBDeclaration(state, declarationRevision) {
+    sceneInvalidatePackedInstancedGLBDeclaration(state);
+    if (!state || !Number.isSafeInteger(declarationRevision) || declarationRevision <= 0 ||
+        state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    const records = state._hydratedModelRecords;
+    const memberships = records && records.rigidInstancesByID;
+    const cache = records && records.rigidInstances;
+    const batches = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
+    if (!(memberships instanceof Map) || !(cache instanceof Map)) return false;
+    const rows = Array.isArray(state._packedInstancedGLBPoseRows)
+      ? state._packedInstancedGLBPoseRows
+      : [];
+    const scratch = state._packedInstancedGLBPoseScratch instanceof Map
+      ? state._packedInstancedGLBPoseScratch
+      : new Map();
+    const nextScratch = new Map();
+    rows.length = 0;
+    let hash = 2166136261;
+    let rowCount = 0;
+    hash = scenePackedInstancedGLBPoseHashU32(hash, batches.length);
+    for (const batch of batches) {
+      if (!batch || typeof batch.id !== "string" || !Array.isArray(batch.instances)) return false;
+      hash = scenePackedInstancedGLBPoseHashString(hash, batch.id);
+      hash = scenePackedInstancedGLBPoseHashU32(hash, batch.instances.length);
+      for (const instance of batch.instances) {
+        if (!instance || typeof instance.id !== "string" || instance.parentMatrix) return false;
+        hash = scenePackedInstancedGLBPoseHashString(hash, instance.id);
+        const membership = memberships.get(batch.id + "/" + instance.id);
+        const staged = membership && membership.staged;
+        if (!membership || staged !== cache.get(membership.key) ||
+            !sceneReusableRigidInstance(staged, state) || !staged.objects.length) return false;
+        const matrix = staged.objects[0].parentMatrix;
+        if (!(matrix instanceof Float32Array) || matrix.length !== 16) return false;
+        for (const object of staged.objects) {
+          if (object.parentMatrix !== matrix) return false;
+          if (object._crowdSkin) {
+            const skin = object._crowdSkin;
+            if (!(skin.rows instanceof Float32Array) || typeof skin.poseRows !== "function") return false;
+          }
+        }
+        const row = scenePackedInstancedGLBPoseRow(scratch, membership.id, staged, instance, matrix);
+        if (row.crowd.length && !row.hasPose) return false;
+        rows.push(row);
+        nextScratch.set(membership.id, row);
+        rowCount += 1;
+      }
+    }
+    if (rowCount !== memberships.size) return false;
+    state._packedInstancedGLBPoseRows = rows;
+    state._packedInstancedGLBPoseScratch = nextScratch;
+    state._packedInstancedGLBPoseLayout = {
+      declarationRevision,
+      generation: Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))),
+      records,
+      owner: state._modelOwner || null,
+      hash: hash >>> 0,
+      rowCount,
+      rows,
+      viewBuffer: null,
+      viewOffset: 0,
+      viewLength: 0,
+      view: null,
+    };
+    return true;
+  }
+
+  function scenePackedInstancedGLBPoseMatrixInto(out, view, offset) {
+    const x = view.getFloat32(offset, true);
+    const y = view.getFloat32(offset + 4, true);
+    const z = view.getFloat32(offset + 8, true);
+    const rx = view.getFloat32(offset + 12, true);
+    const ry = view.getFloat32(offset + 16, true);
+    const rz = view.getFloat32(offset + 20, true);
+    const scaleX = view.getFloat32(offset + 24, true);
+    const scaleY = view.getFloat32(offset + 28, true);
+    const scaleZ = view.getFloat32(offset + 32, true);
+    const animationTime = view.getFloat32(offset + 36, true);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) ||
+        !Number.isFinite(rx) || !Number.isFinite(ry) || !Number.isFinite(rz) ||
+        !Number.isFinite(scaleX) || !Number.isFinite(scaleY) || !Number.isFinite(scaleZ) ||
+        !Number.isFinite(animationTime) || animationTime < 0) return false;
+    const sx = Math.sin(rx), cx = Math.cos(rx), sy = Math.sin(ry), cy = Math.cos(ry), sz = Math.sin(rz), cz = Math.cos(rz);
+    out[0] = cy * cz * scaleX; out[1] = cy * sz * scaleX; out[2] = -sy * scaleX; out[3] = 0;
+    out[4] = (sx * sy * cz - cx * sz) * scaleY; out[5] = (sx * sy * sz + cx * cz) * scaleY; out[6] = sx * cy * scaleY; out[7] = 0;
+    out[8] = (cx * sy * cz + sx * sz) * scaleZ; out[9] = (cx * sy * sz - sx * cz) * scaleZ; out[10] = cx * cy * scaleZ; out[11] = 0;
+    out[12] = x; out[13] = y; out[14] = z; out[15] = 1;
+    return sceneAffineDeterminant(out, 0) > 0.000001;
+  }
+
+  function sceneApplyPackedInstancedGLBPoseFrame(state, bytes, expectedDeclarationRevision) {
+    if (!state || !(bytes instanceof Uint8Array) || !(bytes.buffer instanceof ArrayBuffer) ||
+        !Number.isSafeInteger(expectedDeclarationRevision) || expectedDeclarationRevision <= 0 ||
+        state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    const layout = state._packedInstancedGLBPoseLayout;
+    if (!layout || layout.declarationRevision !== expectedDeclarationRevision ||
+        layout.generation !== Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) ||
+        layout.records !== state._hydratedModelRecords || layout.owner !== (state._modelOwner || null)) return false;
+    if (bytes.byteLength < scenePackedInstancedGLBPoseHeaderBytes) return false;
+    let view = layout.view;
+    if (!view || layout.viewBuffer !== bytes.buffer || layout.viewOffset !== bytes.byteOffset || layout.viewLength !== bytes.byteLength) {
+      view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      layout.viewBuffer = bytes.buffer;
+      layout.viewOffset = bytes.byteOffset;
+      layout.viewLength = bytes.byteLength;
+      layout.view = view;
+    }
+    if (view.getUint32(0, true) !== scenePackedInstancedGLBPoseMagic ||
+        view.getUint16(4, true) !== scenePackedInstancedGLBPoseVersion ||
+        view.getUint16(6, true) !== scenePackedInstancedGLBPoseRowFloats ||
+        view.getUint32(8, true) !== layout.hash || view.getUint32(12, true) !== layout.rowCount) return false;
+    const revisionLow = view.getUint32(16, true);
+    const revisionHigh = view.getUint32(20, true);
+    if (revisionHigh > 0x1fffff || revisionHigh * 4294967296 + revisionLow !== expectedDeclarationRevision ||
+        bytes.byteLength !== scenePackedInstancedGLBPoseHeaderBytes + layout.rowCount * scenePackedInstancedGLBPoseRowBytes) return false;
+
+    // Validate and stage every row before mutating canonical declarations or
+    // committed wrappers. The caller owns and may reuse `bytes` immediately
+    // after this synchronous method returns.
+    for (let index = 0; index < layout.rows.length; index += 1) {
+      const row = layout.rows[index];
+      const offset = scenePackedInstancedGLBPoseHeaderBytes + index * scenePackedInstancedGLBPoseRowBytes;
+      if (!sceneReusableRigidInstance(row.staged, state)) return false;
+      if (!scenePackedInstancedGLBPoseMatrixInto(row.pendingMatrix, view, offset)) return false;
+      row.pendingPose.animationTime = view.getFloat32(offset + 36, true);
+      for (const entry of row.crowd) {
+        const pending = entry.skin.poseRows(entry.skin.atlas, row.pendingPose, entry.pendingRows);
+        if (pending !== entry.pendingRows || pending.length !== entry.skin.rows.length) return false;
+        for (let rowIndex = 0; rowIndex < pending.length; rowIndex += 1) {
+          if (!Number.isFinite(pending[rowIndex])) return false;
+        }
+      }
+    }
+
+    for (let index = 0; index < layout.rows.length; index += 1) {
+      const row = layout.rows[index];
+      const offset = scenePackedInstancedGLBPoseHeaderBytes + index * scenePackedInstancedGLBPoseRowBytes;
+      const x = view.getFloat32(offset, true), y = view.getFloat32(offset + 4, true), z = view.getFloat32(offset + 8, true);
+      const rotationX = view.getFloat32(offset + 12, true), rotationY = view.getFloat32(offset + 16, true), rotationZ = view.getFloat32(offset + 20, true);
+      const scaleX = view.getFloat32(offset + 24, true), scaleY = view.getFloat32(offset + 28, true), scaleZ = view.getFloat32(offset + 32, true);
+      const animationTime = view.getFloat32(offset + 36, true);
+      row.matrix.set(row.pendingMatrix);
+      const instance = row.instance;
+      instance.x = x; instance.y = y; instance.z = z;
+      instance.rotationX = rotationX; instance.rotationY = rotationY; instance.rotationZ = rotationZ;
+      instance.scaleX = scaleX; instance.scaleY = scaleY; instance.scaleZ = scaleZ;
+      if (row.hasPose) instance.animationTime = animationTime;
+      for (const entry of row.crowd) entry.skin.rows.set(entry.pendingRows);
+      const model = row.staged.model;
+      const rigidModel = row.staged.rigidInstanceModel;
+      if (model) {
+        model.x = x; model.y = y; model.z = z;
+        model.rotationX = rotationX; model.rotationY = rotationY; model.rotationZ = rotationZ;
+        model.scaleX = scaleX; model.scaleY = scaleY; model.scaleZ = scaleZ;
+        if (model._crowdPose) model._crowdPose.animationTime = animationTime;
+      }
+      if (rigidModel && rigidModel !== model) {
+        rigidModel.x = x; rigidModel.y = y; rigidModel.z = z;
+        rigidModel.rotationX = rotationX; rigidModel.rotationY = rotationY; rigidModel.rotationZ = rotationZ;
+        rigidModel.scaleX = scaleX; rigidModel.scaleY = scaleY; rigidModel.scaleZ = scaleZ;
+        if (rigidModel._crowdPose) rigidModel._crowdPose.animationTime = animationTime;
+      }
+    }
+    return true;
+  }
+
   async function hydrateSceneStateModels(state, props) {
     if (!state) {
       return sceneModelHydrationOutcome(sceneModelHydrationCounts(0), 0, "failed", false, false, "state");

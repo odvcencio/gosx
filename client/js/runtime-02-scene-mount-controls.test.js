@@ -9,6 +9,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const {
   bootstrapSource,
@@ -23,7 +24,42 @@ const {
   mountMotionSeamScene,
   motionMeshExtents,
   mountMaterialMotionScene,
+  buildMinimalGLBBytes,
 } = require("./runtime-test-harness.js");
+
+function mountPackedPoseFrame(env, baseRevision, batches, rows) {
+  let hash = 2166136261;
+  const hashByte = value => { hash = Math.imul((hash ^ (value & 255)) >>> 0, 16777619) >>> 0; };
+  const hashU32 = value => {
+    value >>>= 0;
+    hashByte(value); hashByte(value >>> 8); hashByte(value >>> 16); hashByte(value >>> 24);
+  };
+  const hashText = value => {
+    const encoded = Buffer.from(String(value || ""), "utf8");
+    hashU32(encoded.length);
+    for (const byte of encoded) hashByte(byte);
+  };
+  hashU32(batches.length);
+  for (const batch of batches) {
+    hashText(batch.id);
+    hashU32(batch.instances.length);
+    for (const instance of batch.instances) hashText(instance.id);
+  }
+  const raw = Buffer.alloc(24 + rows.length * 40);
+  raw.writeUInt32LE(0x31504947, 0);
+  raw.writeUInt16LE(1, 4);
+  raw.writeUInt16LE(10, 6);
+  raw.writeUInt32LE(hash >>> 0, 8);
+  raw.writeUInt32LE(rows.length, 12);
+  raw.writeUInt32LE(baseRevision >>> 0, 16);
+  raw.writeUInt32LE(Math.floor(baseRevision / 4294967296), 20);
+  rows.forEach((row, rowIndex) => row.forEach((value, valueIndex) => {
+    raw.writeFloatLE(value, 24 + rowIndex * 40 + valueIndex * 4);
+  }));
+  const frame = vm.runInContext(`new Uint8Array(${raw.length})`, env.context);
+  frame.set(raw);
+  return frame;
+}
 
 test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   const mount = new FakeElement("div", null);
@@ -512,11 +548,72 @@ test("Scene3D mount command bridge applies only increasing revisions and reports
   assert.equal(mount.children[1].children.length, 1);
   assert.equal(mount.children[1].children[0].textContent, "accepted");
 
+  assert.equal(mount.__gosxScene3DHandle.__gosxScene3DInstancedGLBPoseReady, true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-instanced-glb-pose-ready"), "true");
+  assert.equal(mount.__gosxScene3DHandle.applyInstancedGLBPoseFrame(3, vm.runInContext("new Uint8Array(24)", env.context)), false,
+    "a rejected packed frame must not consume the shared mount revision");
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 3, commands: [createLabel("fallback")] },
+  }));
+  await flushAsyncWork();
+  assert.equal(applied.length, 2, "packed rejection emits no commands-applied event");
+  assert.equal(applied[1].revision, 3);
+
   env.context.__gosx_dispose_engine("gosx-engine-command-bridge");
   mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
-    detail: { revision: 3, commands: [createLabel("disposed")] },
+    detail: { revision: 4, commands: [createLabel("disposed")] },
   }));
-  assert.equal(applied.length, 1, "dispose must remove the mount listener");
+  assert.equal(applied.length, 2, "dispose must remove the mount listener");
+});
+
+test("Scene3D mount accepts packed GLB poses between ordinary revisioned commands", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-mount-packed-pose";
+  const env = createContext({
+    elements: [mount], enableWebGL: true, disableCanvas2D: true,
+    fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } },
+    manifest: { engines: [{
+      id: "gosx-engine-packed-pose", component: "GoSXScene3D", kind: "surface", mountId: mount.id,
+      props: { width: 320, height: 180, scene: { objects: [] } },
+    }] },
+  });
+  const applied = [];
+  mount.addEventListener("gosx:scene3d:commands-applied", event => applied.push(event.detail));
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const batches = [{ id: "actors", src: "/actor.glb", instances: [{ id: "one", x: 1 }] }];
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 1, commands: [{ kind: 11, data: { instancedGLBMeshes: batches } }] },
+  }));
+  await flushAsyncWork();
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].revision, 1);
+
+  const handle = mount.__gosxScene3DHandle;
+  const packed = mountPackedPoseFrame(env, 1, batches, [[4, 5, 6, 0, 0, 0, 1, 1, 1, 0]]);
+  assert.equal(handle.applyInstancedGLBPoseFrame(2, packed), true);
+  assert.equal(mount.__gosxScene3DState.instancedGLBMeshes[0].instances[0].x, 4);
+  assert.equal(applied.length, 1, "packed poses do not emit the ordinary command completion event");
+  assert.equal(handle.applyInstancedGLBPoseFrame(2, packed), false, "a packed revision cannot replay");
+
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 3, commands: [{ kind: 0, objectId: "after-packed", data: { kind: "label", props: { text: "after" } } }] },
+  }));
+  await flushAsyncWork();
+  assert.equal(applied.length, 2);
+  assert.equal(applied[1].revision, 3, "one ordinary completion event remains after a packed pose");
+
+  const invalid = vm.runInContext("new Uint8Array(24)", env.context);
+  assert.equal(handle.applyInstancedGLBPoseFrame(4, invalid), false);
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 4, commands: [{ kind: 0, objectId: "fallback", data: { kind: "label", props: { text: "fallback" } } }] },
+  }));
+  await flushAsyncWork();
+  assert.equal(applied.length, 3);
+  assert.equal(applied[2].revision, 4, "an invalid packed packet permits same-revision JSON fallback");
+
+  env.context.__gosx_dispose_engine("gosx-engine-packed-pose");
 });
 
 // Forces the JS-sceneState fall-through path via onRenderEngine: () => "" (so
