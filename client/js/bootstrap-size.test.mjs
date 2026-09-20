@@ -601,7 +601,10 @@ const budgets = [
   // bounded 48 MiB rigid residency, and the private retained-CSS record stamp
   // measure 1_641_331 / 449_265 / 361_298. Only gzip exceeded its governed
   // envelope; 432_916 keeps the exact reviewed hard limit at 449_300.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 432_916, brotli: 346_700 },
+  // Allocation-free fallback mesh attribute transforms measure
+  // 1_641_760 / 449_493 / 361_563. Only gzip exceeds the v0.56.6 envelope;
+  // 433_109 sets the minimum exact hard limit at 449_493.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 433_109, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1055,7 +1058,10 @@ const budgets = [
   // 48 MiB bounded residency and private retained-CSS record stamp measure
   // 577_910 / 160_859 / 133_219. Exact governed hard limits are
   // 577_951 / 160_900 / 133_245.
-  { file: "bootstrap-feature-scene3d.js", raw: 550_429, gzip: 153_238, brotli: 126_900 },
+  // Allocation-free fallback mesh attribute transforms measure
+  // 578_318 / 160_967 / 133_423. Baselines below set exact minimum hard
+  // limits equal to those reviewed artifacts.
+  { file: "bootstrap-feature-scene3d.js", raw: 550_779, gzip: 153_301, brotli: 127_069 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1766,9 +1772,12 @@ const routeBudgets = [
     // v0.56.6's bounded rigid-membership/cohort path plus private retained-CSS
     // record stamp measures 1_123_870 / 313_470 / 265_588 on this route. Only
     // gzip exceeded its governed envelope; the exact hard limit is 313_500.
+    // Allocation-free fallback mesh attribute transforms measure
+    // 1_124_278 / 313_578 / 265_792. The compressed baselines below set the
+    // minimum exact hard limits to those reviewed artifacts; raw still fits.
     raw: 1_073_500,
-    gzip: 298_590,
-    brotli: 253_100,
+    gzip: 298_645,
+    brotli: 253_135,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
