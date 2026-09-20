@@ -13,7 +13,7 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel; let expansions=0, clones=0; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; return function(){return {expansions:expansions,clones:clones};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
@@ -599,6 +599,9 @@ test("rigid actor pose and membership commands preserve survivors without full h
   assert.equal(work.expansions, 1,
     "one normalized InstancedGLB snapshot must serve count detection and the async transaction");
   assert.equal(work.clones, 0, "owned InstancedGLB snapshots must not deep-clone every survivor");
+  assert.ok(work.keys > 0, "the new member still receives a validated hydration identity");
+  assert.equal(work.keyIDs.includes("swarm/one"), false,
+    "the indexed survivor should not regenerate its full JSON hydration key");
   assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
   const before = first.parentMatrix;
   await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
@@ -653,6 +656,58 @@ test("incremental additions retain the normalized nested batch snapshot across a
   const added = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
   assert.equal(added.customUniforms.pulse[0], 0.25,
     "async staging must observe the once-normalized command snapshot, not later authored mutation");
+});
+
+test("mixed ordinary and instanced membership snapshots do not alias later matrix caches", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: {
+    models: [{ id: "ordinary", src: "/actor.glb", x: 1 }],
+    instancedGLBMeshes: [{ id: "effects", src: "/actor.glb", instances: [{ id: "one" }] }],
+  } });
+  await env.context.__meshTest.hydrate(state, null);
+  const ordinary = Array.from(state.objects.values()).find(object => object.id.startsWith("ordinary/"));
+  state.models[0].x = 3;
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }, { id: "two" }] },
+  ] } }]);
+  const committedMatrix = ordinary.parentMatrix;
+  assert.equal(committedMatrix[12], 3);
+  state.models[0].x = 9;
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }, { id: "three" }] },
+  ] } }]);
+  assert.equal(committedMatrix[12], 3,
+    "a persistent ordinary Model matrix cache must not mutate the prior committed snapshot");
+  assert.equal(ordinary.parentMatrix[12], 9);
+});
+
+test("indexed rigid survivors fall back when a pose becomes mirrored", async () => {
+  const makeState = async () => {
+    const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+    runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+    const api = env.context.__gosx_scene3d_api;
+    const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+      { id: "effects", src: "/actor.glb", instances: [{ id: "one", scaleX: 1 }] },
+    ] } });
+    await env.context.__meshTest.hydrate(state, null);
+    return { env, api, state };
+  };
+  for (const countChanges of [false, true]) {
+    const { api, state } = await makeState();
+    const generation = state._modelHydrationGeneration;
+    const prior = Array.from(state.objects.values())[0];
+    const instances = [{ id: "one", scaleX: -1 }];
+    if (countChanges) instances.push({ id: "two" });
+    await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+      { id: "effects", src: "/actor.glb", instances },
+    ] } }]);
+    assert.ok(state._modelHydrationGeneration > generation,
+      `${countChanges ? "count-changing" : "pose-only"} reflection must use full hydration`);
+    assert.notEqual(Array.from(state.objects.values())[0], prior,
+      "the prior positive-determinant wrapper cannot be reused with mirrored winding");
+  }
 });
 
 test("832 moving rigid wrappers retain constant-time material profile cache hits", async (t) => {
@@ -721,6 +776,19 @@ test("rigid membership failures and stale additions preserve the complete commit
   assert.equal(state._hydratedModelRecords, committed);
   assert.equal(state.objects.get(one.id), one);
   assert.equal(one.parentMatrix, matrix, "superseded staging must not apply a survivor pose early");
+
+  state._modelOwner = () => true;
+  const accepted = await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 13 }, { id: "two", x: 2 }]),
+  ] } }]);
+  assert.equal(accepted[0].committed, true);
+  const committedMatrix = one.parentMatrix;
+  assert.notEqual(committedMatrix, matrix, "a successful transaction owns a fresh matrix snapshot");
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 17 }, { id: "two", x: 3 }]),
+  ] } }]);
+  assert.equal(committedMatrix[12], 13, "a later command must not mutate a previously committed matrix snapshot");
+  assert.equal(one.parentMatrix[12], 17);
 });
 
 test("rigid membership churn retains one survivor and only live records", async () => {
@@ -735,6 +803,7 @@ test("rigid membership churn retains one survivor and only live records", async 
   ] } });
   await env.context.__meshTest.hydrate(state, null);
   const stages = env.context.__meshTest.countStages();
+  const membershipWork = env.context.__meshTest.countMembershipWork();
   const generation = state._modelHydrationGeneration;
   const anchor = Array.from(state.objects.values()).find(o => o.id.startsWith("effects/anchor/"));
   const vertices = anchor.vertices;
@@ -743,10 +812,16 @@ test("rigid membership churn retains one survivor and only live records", async 
     assert.equal(state.objects.get(anchor.id), anchor);
     assert.equal(state.objects.size, 2);
     assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
+    assert.equal(state._hydratedModelRecords.rigidInstancesByID.size, 2,
+      "the logical-ID index contains only the current live membership");
     assert.equal(state._hydratedModelRecords.objects.length, 2);
   }
   assert.equal(state._modelHydrationGeneration, generation, "bounded churn must not create full hydration generations");
   assert.equal(stages(), 100, "each churn step stages only its one new member, never every survivor");
+  const work = membershipWork();
+  assert.ok(work.keys > 0);
+  assert.equal(work.keyIDs.some(id => id === "effects/anchor"), false,
+    "bounded churn generates hydration identity only for admitted members, not the survivor");
   assert.equal(anchor.vertices, vertices);
   assert.equal(anchor.parentMatrix[12], 10);
 });

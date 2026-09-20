@@ -5767,7 +5767,6 @@
     // material's flat base color instead -- computed ONCE per object here,
     // not per vertex corner -- which keeps the rare legacy fallback's output
     // plausible without paying per-vertex lighting cost nothing displays.
-    const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     if (object._crowdSkin) {
       const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
       const bounds = sceneTransformMeshBounds(object._crowdSkin.bounds, modelMatrix);
@@ -5856,6 +5855,7 @@
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.fallback += 1;
     }
+    const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
     let wireVertexCount = 0;

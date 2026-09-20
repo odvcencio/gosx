@@ -3960,15 +3960,19 @@ function gosxConfigureSceneScript(script, role, src) {
     });
   }
 
-  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+  function sceneRigidInstanceHydrationEligible(model, matrix) {
     if (!model || model.static === true && model._instancedGLB !== true || model.animation || model.animationSeq ||
-        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return "";
+        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return false;
     if (model._transition && ["in", "out", "update"].some(function(kind) {
       return model._transition[kind] && model._transition[kind].duration > 0;
-    })) return "";
+    })) return false;
     // A singular or mirrored transform takes the established winding/bake
     // path. This fast path never silently changes reflection semantics.
-    if (!(sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001)) return "";
+    return sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001;
+  }
+
+  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+    if (!sceneRigidInstanceHydrationEligible(model, matrix)) return "";
     const template = sceneInstancedGLBHydrationTemplates.get(model);
     if (template) return '["instanced-glb",' + template + ',' + JSON.stringify([model.id,
       state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]) + ']';
@@ -3991,7 +3995,12 @@ function gosxConfigureSceneScript(script, role, src) {
       if (!crowdRows) crowdRows = [];
       crowdRows.push({ object, rows });
     }
-    return { staged, model, matrix: new Float32Array(matrix), crowdRows };
+    // InstancedGLB expansion creates an immutable command-owned model, so its
+    // cached matrix is already a transaction snapshot. Ordinary Model entries
+    // persist across commands and reuse their mutable matrix cache; retain the
+    // defensive copy for those broader declarations.
+    const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
+    return { staged, model, matrix: snapshotMatrix, crowdRows };
   }
 
   function sceneCommitRigidInstancePatch(patch) {
@@ -4009,12 +4018,27 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
     const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
     if (models.length !== records.modelCount) return false;
+    const memberships = records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const scope = sceneRigidMembershipScopeKey(state);
     const patches = [];
     const keys = new Set();
     for (let index = 0; index < models.length; index++) {
       const model = models[index];
       const matrix = sceneModelTransformMatrix(model);
-      const key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const membership = id && memberships && memberships.get(id);
+      let key = "";
+      if (membership) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            membership.template !== template || membership.scope !== scope ||
+            membership.staged !== cache.get(membership.key)) return false;
+        key = membership.key;
+      } else if (id) {
+        return false;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
       if (!key) {
         const staticKey = sceneStaticModelHydrationKey(state, model, index);
         if (!staticKey || !sceneReusableStaticModelHydration(records.staticModels.get(staticKey), state)) return false;
@@ -4023,7 +4047,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const staged = key && cache.get(key);
       if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
       keys.add(key);
-      patches.push({ staged, model, matrix: new Float32Array(matrix) });
+      patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
     }
     // Validate the complete collection before changing the committed scene.
     for (const patch of patches) {
@@ -4039,6 +4063,17 @@ function gosxConfigureSceneScript(script, role, src) {
 
   function sceneRigidMembershipModelID(model) {
     return model && model._instancedGLB === true ? String(model.id || "") : "";
+  }
+
+  function sceneRigidMembershipScopeKey(state) {
+    return state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || "";
+  }
+
+  function sceneRigidMembershipDescriptor(state, key, staged) {
+    const model = staged && staged.model;
+    const id = sceneRigidMembershipModelID(model);
+    const template = model && sceneInstancedGLBHydrationTemplates.get(model);
+    return id && template ? { id, key, staged, template, scope: sceneRigidMembershipScopeKey(state) } : null;
   }
 
   function sceneRigidMembershipSnapshotModel(model) {
@@ -4069,11 +4104,9 @@ function gosxConfigureSceneScript(script, role, src) {
     } catch (_error) {
       return null;
     }
-    const previousByID = new Map();
-    for (const [key, staged] of cache) {
-      const id = sceneRigidMembershipModelID(staged && staged.model);
-      if (id) previousByID.set(id, key);
-    }
+    const previousByID = records.rigidInstancesByID;
+    if (!(previousByID instanceof Map)) return null;
+    const scope = sceneRigidMembershipScopeKey(state);
     const keys = new Set();
     const staticKeys = new Set();
     const nextIDs = new Set();
@@ -4082,7 +4115,18 @@ function gosxConfigureSceneScript(script, role, src) {
     for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
       const model = models[modelIndex];
       const matrix = sceneModelTransformMatrix(model);
-      const key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const previous = id && previousByID.get(id);
+      let key = "";
+      if (previous) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            previous.template !== template || previous.scope !== scope ||
+            previous.staged !== cache.get(previous.key)) return null;
+        key = previous.key;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
       if (!key) {
         const staticKey = sceneStaticModelHydrationKey(state, model, modelIndex);
         const staged = staticKey && statics.get(staticKey);
@@ -4095,15 +4139,15 @@ function gosxConfigureSceneScript(script, role, src) {
       keys.add(key);
       const staged = cache.get(key);
       if (staged) {
+        if (previous && previous.staged !== staged) return null;
         const patch = scenePrepareRigidInstancePatch(state, staged, model, matrix);
         if (!patch) return null;
-        entries.push({ kind: "rigid", key, staged, model, modelIndex, patch });
+        entries.push({ kind: "rigid", key, staged, model, modelIndex, patch, membership: previous || null });
         continue;
       }
-      const id = sceneRigidMembershipModelID(model);
       // A changed key for the same actor means its template, appearance or
       // texture scope changed and retains full-hydration semantics.
-      if (!id || nextIDs.has(id) || previousByID.has(id)) return null;
+      if (!id || nextIDs.has(id) || previous) return null;
       nextIDs.add(id);
       changed = true;
       entries.push({ kind: "add", key, staged: null, model, modelIndex, patch: null });
@@ -4116,7 +4160,7 @@ function gosxConfigureSceneScript(script, role, src) {
     // Static membership/order changes take full hydration to prevent orphaned derived objects.
     if (staticKeys.size !== statics.size) return null;
     for (const key of statics.keys()) if (!staticKeys.has(key)) return null;
-    return changed ? { state, records, models, entries, keys } : null;
+    return changed ? { state, records, models, entries, keys, scope } : null;
   }
 
   async function sceneCommitRigidInstanceMembership(plan) {
@@ -4126,7 +4170,8 @@ function gosxConfigureSceneScript(script, role, src) {
     const results = await Promise.all(additions.map(function(entry) {
       return sceneStageModelHydration(state, entry.model, entry.modelIndex, generation);
     }));
-    if (!sceneModelHydrationIsCurrent({ state, generation })) {
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
       sceneDestroyStagedModelHydrations(results);
       return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
     }
@@ -4174,12 +4219,13 @@ function gosxConfigureSceneScript(script, role, src) {
         nextObjectIDs.add(object.id);
       }
     }
-    if (!sceneModelHydrationIsCurrent({ state, generation })) {
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
       sceneDestroyStagedModelHydrations(results);
       return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
     }
 
-    const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map() };
+    const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
     for (const entry of plan.entries) {
       if (entry.kind === "static") hydrated.staticModels.set(entry.key, entry.staged);
       else {
@@ -4187,6 +4233,8 @@ function gosxConfigureSceneScript(script, role, src) {
           if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
         }
         hydrated.rigidInstances.set(entry.key, entry.staged);
+        const membership = entry.membership || sceneRigidMembershipDescriptor(state, entry.key, entry.staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
       }
       for (const object of entry.staged.objects) hydrated.objects.push(object.id);
     }
@@ -4351,7 +4399,7 @@ function gosxConfigureSceneScript(script, role, src) {
     state._modelSkins = [];
     // Keep only this committed generation. Moving transforms and removed
     // models cannot accumulate a history of cached geometry.
-    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map() };
+    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
     for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
       const staged = results[modelIndex].staged;
       if (staged._pendingRigidMatrix) {
@@ -4369,6 +4417,8 @@ function gosxConfigureSceneScript(script, role, src) {
           if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
         }
         hydrated.rigidInstances.set(rigidKeys[modelIndex], staged);
+        const membership = sceneRigidMembershipDescriptor(state, rigidKeys[modelIndex], staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
       }
       for (let index = 0; index < staged.objects.length; index += 1) {
         const object = staged.objects[index];
