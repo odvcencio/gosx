@@ -13,7 +13,7 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, hydrate: hydrateSceneStateModels, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; } }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
@@ -395,7 +395,7 @@ test("spawning and clearing waves preserve survivor wrappers and isolate failed 
   assert.equal(survivor.parentMatrix,pose,"superseded spawn must not mutate the live generation");
 });
 
-test("rigid actor pose commands keep the committed objects and vertex buffers without hydration", async () => {
+test("rigid actor pose and membership commands preserve survivors without full hydration", async () => {
   const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
   runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
   const api = env.context.__gosx_scene3d_api;
@@ -417,13 +417,136 @@ test("rigid actor pose commands keep the committed objects and vertex buffers wi
   }
   assert.equal(matrices(),120,"two actors build one matrix each per submitted pose");
   assert.ok(Math.abs(first.parentMatrix[12] - 5.9) < .00001);
+  const second = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/two/"));
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "swarm", src: "/actor.glb", instances: [{ id: "one", x: 7 }, { id: "three", x: 3 }] },
+  ] } }]);
+  const third = Array.from(state.objects.values()).find(o => o.id.startsWith("swarm/three/"));
+  assert.equal(state._modelHydrationGeneration, generation, "rigid membership uses its incremental transaction");
+  assert.equal(state.objects.get(first.id), first, "survivor wrapper identity must remain stable");
+  assert.equal(first.parentMatrix[12], 7);
+  assert.equal(state.objects.has(second.id), false, "removed membership must leave the committed object map");
+  assert.ok(third);
+  assert.equal(third.vertices, first.vertices, "new membership reuses the warmed immutable geometry");
+  assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
   const before = first.parentMatrix;
   await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
     { id: "swarm", src: "/actor.glb", color: "#ff0000", instances: [{ id: "one", x: 8 }] },
   ] } }]);
-  assert.ok(state._modelHydrationGeneration > generation, "membership/material changes still stage atomically");
+  assert.ok(state._modelHydrationGeneration > generation, "material changes still use full atomic hydration");
   assert.equal(state._hydratedModelRecords.rigidInstances.size, 1);
   assert.equal(first.parentMatrix, before, "replacing a collection must not mutate an old committed wrapper");
+});
+
+test("rigid membership failures and stale additions preserve the complete committed generation", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: {
+    "/actor.glb": { bytes: buildMinimalGLBBytes() },
+    "/missing.glb": { status: 500, body: "unavailable" },
+  } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const batch = instances => ({ id: "swarm", src: "/actor.glb", instances });
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [batch([{ id: "one", x: 1 }])] } });
+  await env.context.__meshTest.hydrate(state, null);
+  env.context.__meshTest.failLoad("/missing.glb");
+  const one = Array.from(state.objects.values())[0];
+  const matrix = one.parentMatrix;
+  const committed = state._hydratedModelRecords;
+  const failed = await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 9 }]),
+    { id: "bad-family", src: "/missing.glb", instances: [{ id: "bad" }] },
+  ] } }]);
+  assert.equal(failed[0].committed, false);
+  assert.equal(state._hydratedModelRecords, committed);
+  assert.equal(state.objects.get(one.id), one);
+  assert.equal(one.parentMatrix, matrix, "failed staging must not apply a survivor pose early");
+
+  state._modelOwner = () => true;
+  const pending = api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    batch([{ id: "one", x: 11 }, { id: "two", x: 2 }]),
+  ] } }]);
+  state._modelOwner = () => false;
+  const stale = await pending;
+  assert.equal(stale[0].stale, true);
+  assert.equal(state._hydratedModelRecords, committed);
+  assert.equal(state.objects.get(one.id), one);
+  assert.equal(one.parentMatrix, matrix, "superseded staging must not apply a survivor pose early");
+});
+
+test("rigid membership churn retains one survivor and only live records", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const command = instances => [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances },
+  ] } }];
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "anchor" }, { id: "slot-0" }] },
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const stages = env.context.__meshTest.countStages();
+  const generation = state._modelHydrationGeneration;
+  const anchor = Array.from(state.objects.values()).find(o => o.id.startsWith("effects/anchor/"));
+  const vertices = anchor.vertices;
+  for (let wave = 1; wave <= 100; wave += 1) {
+    await api.applySceneCommands(state, command([{ id: "anchor", x: wave / 10 }, { id: "slot-" + wave, x: wave }]));
+    assert.equal(state.objects.get(anchor.id), anchor);
+    assert.equal(state.objects.size, 2);
+    assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
+    assert.equal(state._hydratedModelRecords.objects.length, 2);
+  }
+  assert.equal(state._modelHydrationGeneration, generation, "bounded churn must not create full hydration generations");
+  assert.equal(stages(), 100, "each churn step stages only its one new member, never every survivor");
+  assert.equal(anchor.vertices, vertices);
+  assert.equal(anchor.parentMatrix[12], 10);
+});
+
+test("static membership changes fall back instead of leaving derived objects orphaned", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: {
+    models: [{ id: "deck", src: "/actor.glb", static: true }],
+    instancedGLBMeshes: [{ id: "effects", src: "/actor.glb", instances: [{ id: "one" }] }],
+  } });
+  await env.context.__meshTest.hydrate(state, null);
+  const generation = state._modelHydrationGeneration;
+  const deck = Array.from(state.objects.values()).find(o => o.id.startsWith("deck/"));
+  state.models = [];
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    { id: "effects", src: "/actor.glb", instances: [{ id: "one" }, { id: "two" }] },
+  ] } }]);
+  assert.ok(state._modelHydrationGeneration > generation, "changed static membership must use full hydration");
+  assert.equal(state.objects.has(deck.id), false);
+  assert.equal(state._hydratedModelRecords.staticModels.size, 0);
+  assert.equal(state._hydratedModelRecords.rigidInstances.size, 2);
+});
+
+test("a logical pool slot can transfer families while an unrelated sibling keeps identity", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/actor.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
+  const api = env.context.__gosx_scene3d_api;
+  const family = (id, instances) => ({ id, src: "/actor.glb", instances });
+  const state = api.createSceneState({ scene: { instancedGLBMeshes: [
+    family("shell", [{ id: "sibling" }, { id: "death-slot-7", x: 1 }]),
+    family("metal", [{ id: "steady", x: 2 }]),
+  ] } });
+  await env.context.__meshTest.hydrate(state, null);
+  const generation = state._modelHydrationGeneration;
+  const sibling = Array.from(state.objects.values()).find(o => o.id.startsWith("shell/sibling/"));
+  const oldSlot = Array.from(state.objects.values()).find(o => o.id.startsWith("shell/death-slot-7/"));
+  await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [
+    family("shell", [{ id: "sibling", x: 4 }]),
+    family("metal", [{ id: "steady", x: 2 }, { id: "death-slot-7", x: 8 }]),
+  ] } }]);
+  const newSlot = Array.from(state.objects.values()).find(o => o.id.startsWith("metal/death-slot-7/"));
+  assert.equal(state._modelHydrationGeneration, generation);
+  assert.equal(state.objects.get(sibling.id), sibling);
+  assert.equal(sibling.parentMatrix[12], 4);
+  assert.equal(state.objects.has(oldSlot.id), false);
+  assert.ok(newSlot);
+  assert.equal(newSlot.vertices, sibling.vertices);
+  assert.equal(state._hydratedModelRecords.rigidInstances.size, 3);
 });
 
 test("shared hydration templates keep per-actor IDs and observe nested overrides and texture scopes", async () => {

@@ -4078,11 +4078,7 @@
     });
   }
 
-  function sceneRehydrateModelsAfterCommand(state) {
-    if (!state || typeof hydrateSceneStateModels !== "function") {
-      return null;
-    }
-    const promise = hydrateSceneStateModels(state, null);
+  function sceneTrackModelHydrationPromise(state, promise) {
     if (promise && typeof promise.then === "function") {
       state._modelHydrationPromise = promise;
       const clearCurrentPromise = function() {
@@ -4096,6 +4092,13 @@
       promise.then(clearCurrentPromise, clearCurrentPromise);
     }
     return promise;
+  }
+
+  function sceneRehydrateModelsAfterCommand(state) {
+    if (!state || typeof hydrateSceneStateModels !== "function") {
+      return null;
+    }
+    return sceneTrackModelHydrationPromise(state, hydrateSceneStateModels(state, null));
   }
 
   function applySceneModelsCommand(state, data) {
@@ -4129,6 +4132,12 @@
     // membership/material changes, not every animation frame.
     if (typeof sceneUpdateRigidInstancePoses === "function" && sceneUpdateRigidInstancePoses(state)) {
       return null;
+    }
+    if (typeof sceneReconcileRigidInstanceMembership === "function") {
+      const promise = sceneReconcileRigidInstanceMembership(state);
+      if (promise && typeof promise.then === "function") {
+        return sceneTrackModelHydrationPromise(state, promise);
+      }
     }
     return sceneRehydrateModelsAfterCommand(state);
   }
