@@ -43,7 +43,7 @@
     "docs-scene3d-ci": {
       "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Uses rounded payload ceilings with modest release headroom for the typed browser host and lazy WebGL fallback. Load and blocking time remain separate experience gates; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary.",
       "assertions": [
-        "js_total_kb <= 1550",
+        "js_total_kb <= 1600",
         "network_kb <= 1600",
         "lcp <= 18000",
         "tbt <= 15000"

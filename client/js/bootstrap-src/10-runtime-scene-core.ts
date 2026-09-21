@@ -4747,6 +4747,71 @@
     return selected;
   }
 
+  function sceneCreateFloat32Builder() {
+    // World-baked attributes can be large. Write them directly into typed
+    // bundle-owned storage instead of staging boxed numbers in JS arrays.
+    return { buffer: null, length: 0 };
+  }
+
+  function sceneReserveFloat32Builder(builder, additionalLength) {
+    const additional = Math.max(0, Math.floor(sceneNumber(additionalLength, 0)));
+    const required = builder.length + additional;
+    const current = builder.buffer;
+    if (current && current.length >= required) return;
+    const currentCapacity = current ? current.length : 0;
+    const nextCapacity = currentCapacity > 0
+      ? Math.max(required, builder.length * 2)
+      : required;
+    if (nextCapacity <= 0) return;
+    const next = new Float32Array(nextCapacity);
+    if (current && builder.length > 0) {
+      next.set(current.subarray(0, builder.length));
+    }
+    builder.buffer = next;
+  }
+
+  function sceneAppendFloat32Pair(builder, first, second) {
+    const offset = builder.length;
+    builder.buffer[offset] = first;
+    builder.buffer[offset + 1] = second;
+    builder.length = offset + 2;
+  }
+
+  function sceneAppendFloat32Triple(builder, first, second, third) {
+    const offset = builder.length;
+    builder.buffer[offset] = first;
+    builder.buffer[offset + 1] = second;
+    builder.buffer[offset + 2] = third;
+    builder.length = offset + 3;
+  }
+
+  function sceneAppendFloat32Quad(builder, first, second, third, fourth) {
+    const offset = builder.length;
+    builder.buffer[offset] = first;
+    builder.buffer[offset + 1] = second;
+    builder.buffer[offset + 2] = third;
+    builder.buffer[offset + 3] = fourth;
+    builder.length = offset + 4;
+  }
+
+  function sceneFinishFloat32Builder(builder) {
+    if (!builder || builder.length <= 0 || !builder.buffer) return new Float32Array(0);
+    // Consumers may retain a completed bundle, so expose only its exact owned
+    // payload rather than a view backed by spare builder capacity.
+    if (builder.length === builder.buffer.length) return builder.buffer;
+    return builder.buffer.slice(0, builder.length);
+  }
+
+  function sceneReserveWorldMeshAttributes(bundle, vertexCount) {
+    const count = Math.max(0, Math.floor(sceneNumber(vertexCount, 0)));
+    if (count <= 0) return;
+    sceneReserveFloat32Builder(bundle.worldMeshPositions, count * 3);
+    sceneReserveFloat32Builder(bundle.worldMeshColors, count * 4);
+    sceneReserveFloat32Builder(bundle.worldMeshNormals, count * 3);
+    sceneReserveFloat32Builder(bundle.worldMeshUVs, count * 2);
+    sceneReserveFloat32Builder(bundle.worldMeshTangents, count * 4);
+  }
+
   function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
@@ -4794,11 +4859,11 @@
       // already happens in the draw plan.
       worldLinePasses: [],
       meshObjects: [],
-      worldMeshPositions: [],
-      worldMeshColors: [],
-      worldMeshNormals: [],
-      worldMeshUVs: [],
-      worldMeshTangents: [],
+      worldMeshPositions: sceneCreateFloat32Builder(),
+      worldMeshColors: sceneCreateFloat32Builder(),
+      worldMeshNormals: sceneCreateFloat32Builder(),
+      worldMeshUVs: sceneCreateFloat32Builder(),
+      worldMeshTangents: sceneCreateFloat32Builder(),
       vertexCount: 0,
       worldVertexCount: 0,
       worldMeshVertexCount: 0,
@@ -4852,11 +4917,11 @@
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
     bundle.worldLineWidths = new Float32Array(bundle.worldLineWidths);
     bundle.worldLinePasses = new Uint8Array(bundle.worldLinePasses);
-    bundle.worldMeshPositions = new Float32Array(bundle.worldMeshPositions);
-    bundle.worldMeshColors = new Float32Array(bundle.worldMeshColors);
-    bundle.worldMeshNormals = new Float32Array(bundle.worldMeshNormals);
-    bundle.worldMeshUVs = new Float32Array(bundle.worldMeshUVs);
-    bundle.worldMeshTangents = new Float32Array(bundle.worldMeshTangents);
+    bundle.worldMeshPositions = sceneFinishFloat32Builder(bundle.worldMeshPositions);
+    bundle.worldMeshColors = sceneFinishFloat32Builder(bundle.worldMeshColors);
+    bundle.worldMeshNormals = sceneFinishFloat32Builder(bundle.worldMeshNormals);
+    bundle.worldMeshUVs = sceneFinishFloat32Builder(bundle.worldMeshUVs);
+    bundle.worldMeshTangents = sceneFinishFloat32Builder(bundle.worldMeshTangents);
     bundle.worldMeshVertexCount = bundle.worldMeshPositions.length / 3;
     bundle.objectCount = bundle.objects.length;
     bundle.bundleBuildCPUms = Math.max(0, (
@@ -6112,6 +6177,7 @@
       : null;
     const drawnTriangleCount = authoredIndices ? authoredIndices.length : vertices.count;
     const bakedVertexCount = Math.floor(drawnTriangleCount / 3) * 3;
+    sceneReserveWorldMeshAttributes(bundle, bakedVertexCount);
     const cacheEligible = sceneMeshCanCacheWorldBakedGeometry(
       bundle, object, material, vertices, emitWireSegments);
     const cachedGeometry = cacheEligible
@@ -6123,17 +6189,17 @@
         const positionOffset = index * 3;
         const uvOffset = index * 2;
         const tangentOffset = index * 4;
-        bundle.worldMeshPositions.push(
+        sceneAppendFloat32Triple(bundle.worldMeshPositions,
           cachedGeometry.positions[positionOffset],
           cachedGeometry.positions[positionOffset + 1],
           cachedGeometry.positions[positionOffset + 2]);
-        bundle.worldMeshColors.push(flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
-        bundle.worldMeshNormals.push(
+        sceneAppendFloat32Quad(bundle.worldMeshColors, flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
+        sceneAppendFloat32Triple(bundle.worldMeshNormals,
           cachedGeometry.normals[positionOffset],
           cachedGeometry.normals[positionOffset + 1],
           cachedGeometry.normals[positionOffset + 2]);
-        bundle.worldMeshUVs.push(cachedGeometry.uvs[uvOffset], cachedGeometry.uvs[uvOffset + 1]);
-        bundle.worldMeshTangents.push(
+        sceneAppendFloat32Pair(bundle.worldMeshUVs, cachedGeometry.uvs[uvOffset], cachedGeometry.uvs[uvOffset + 1]);
+        sceneAppendFloat32Quad(bundle.worldMeshTangents,
           cachedGeometry.tangents[tangentOffset],
           cachedGeometry.tangents[tangentOffset + 1],
           cachedGeometry.tangents[tangentOffset + 2],
@@ -6208,11 +6274,11 @@
           const uv = uvs[index];
           const tangent = tangents[index];
           const color = lighting ? lighting[index] : flatMeshColor;
-          bundle.worldMeshPositions.push(point.x, point.y, point.z);
-          bundle.worldMeshColors.push(color[0], color[1], color[2], color[3]);
-          bundle.worldMeshNormals.push(normal.x, normal.y, normal.z);
-          bundle.worldMeshUVs.push(uv.x, uv.y);
-          bundle.worldMeshTangents.push(tangent.x, tangent.y, tangent.z, tangent.w);
+          sceneAppendFloat32Triple(bundle.worldMeshPositions, point.x, point.y, point.z);
+          sceneAppendFloat32Quad(bundle.worldMeshColors, color[0], color[1], color[2], color[3]);
+          sceneAppendFloat32Triple(bundle.worldMeshNormals, normal.x, normal.y, normal.z);
+          sceneAppendFloat32Pair(bundle.worldMeshUVs, uv.x, uv.y);
+          sceneAppendFloat32Quad(bundle.worldMeshTangents, tangent.x, tangent.y, tangent.z, tangent.w);
           if (capture) {
             const positionOffset = meshVertexCount * 3;
             const uvOffset = meshVertexCount * 2;
