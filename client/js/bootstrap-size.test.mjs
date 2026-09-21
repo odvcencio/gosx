@@ -607,7 +607,10 @@ const budgets = [
   // Immutable authored-shader world-bake reuse measures
   // 1_644_810 / 450_272 / 362_067. Only gzip exceeds that envelope;
   // 433_888 keeps the exact governed hard limit at 450_272.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 433_888, brotli: 346_700 },
+  // Typed world-mesh attribute builders measure 1_645_660 / 450_589 /
+  // 362_277. Only gzip exceeds that envelope; 434_205 keeps the exact
+  // governed hard limit at 450_589.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_205, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1067,7 +1070,9 @@ const budgets = [
   // Immutable authored-shader world-bake reuse measures
   // 581_374 / 161_972 / 134_213. Baselines below set exact minimum hard
   // limits equal to those reviewed artifacts.
-  { file: "bootstrap-feature-scene3d.js", raw: 553_689, gzip: 154_259, brotli: 127_821 },
+  // Typed world-mesh attribute builders measure 582_224 / 162_304 / 134_535.
+  // Baselines below set exact minimum hard limits equal to those artifacts.
+  { file: "bootstrap-feature-scene3d.js", raw: 554_499, gzip: 154_575, brotli: 128_128 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1783,9 +1788,12 @@ const routeBudgets = [
     // minimum exact hard limits to those reviewed artifacts; raw still fits.
     // Immutable authored-shader world-bake reuse measures
     // 1_127_334 / 314_583 / 266_582. The exact governed hard limits follow.
-    raw: 1_073_659,
-    gzip: 299_602,
-    brotli: 253_887,
+    // Typed world-mesh attribute builders measure 1_128_184 / 314_915 /
+    // 266_904. The baselines below set the minimum hard limits for those
+    // reviewed route totals.
+    raw: 1_074_461,
+    gzip: 299_919,
+    brotli: 254_194,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1917,8 +1925,11 @@ const routeBudgets = [
     // Immutable authored-shader world-bake reuse measures
     // 1_520_168 / 410_167 / 346_528. Only gzip exceeds the existing governed
     // envelope; 393_783 keeps its exact hard limit at 410_167.
+    // Typed world-mesh attribute builders measure 1_521_018 / 410_499 /
+    // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
+    // limit at 410_499.
     raw: 1_465_500,
-    gzip: 393_783,
+    gzip: 394_115,
     brotli: 332_900,
   },
   {
