@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.56.8 (2026-09-20)
+
+### Improved: reuse stable authored-shader fallback geometry
+
+- Stable, immutable authored-shader fallback meshes reuse their world-baked geometry instead of transforming the same positions, normals, UVs, and tangents every frame.
+- Geometry, transform, parent-transform, shader, material, animation, and time-dependent changes invalidate or bypass the cache, while bounded weak ownership avoids retaining removed scene objects.
+
 ## v0.56.7 (2026-09-20)
 
 ### Improved: lower fallback mesh allocation pressure
