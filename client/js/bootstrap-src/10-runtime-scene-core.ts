@@ -4751,6 +4751,7 @@
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
+    sceneBeginWorldBakedGeometryCacheBundle();
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const renderCamera = sceneRenderCamera(camera);
     const bundle = {
@@ -5199,6 +5200,134 @@
 	  const _sceneObjectModelMatrixCache = new WeakMap();
 	  const _sceneObjectMeshBakeLinearStateCache = new WeakMap();
 	  const _sceneMeshLocalBoundsCache = new WeakMap();
+	  const _sceneWorldBakedGeometryCache = new WeakMap();
+	  const _sceneWorldBakedGeometryResidency = new Set();
+	  // A baked attribute soup costs 48 bytes per vertex. Two MiB covers dense
+	  // groups of modest immutable effects while preventing a scene with many
+	  // live owners from multiplying CPU-side geometry without a hard ceiling.
+	  const sceneWorldBakedGeometryCacheMaxBytes = 2 * 1024 * 1024;
+	  // Keep recently interleaved mounts warm, then clear records not observed
+	  // for eight complete bundle builds. Admission never evicts a hot record,
+	  // so an over-budget working set cannot turn into sequential LRU thrash.
+	  const sceneWorldBakedGeometryCacheStaleBundles = 8;
+	  let sceneWorldBakedGeometryCacheBytes = 0;
+	  let sceneWorldBakedGeometryCacheEpoch = 0;
+
+	  function sceneReleaseWorldBakedGeometryCacheRecord(record) {
+	    if (!record || record.resident !== true) return;
+	    record.resident = false;
+	    _sceneWorldBakedGeometryResidency.delete(record);
+	    sceneWorldBakedGeometryCacheBytes = Math.max(0,
+	      sceneWorldBakedGeometryCacheBytes - Math.max(0, sceneNumber(record.byteLength, 0)));
+	    // Residency records intentionally carry no owner reference. Clear both
+	    // cached output and source identities so an owner collected between
+	    // bundle builds cannot leave its vertex buffers alive until page exit.
+	    record.vertices = null;
+	    record.positionsSource = null;
+	    record.normalsSource = null;
+	    record.uvsSource = null;
+	    record.tangentsSource = null;
+	    record.indicesSource = null;
+	    record.matrix = null;
+	    record.positions = null;
+	    record.normals = null;
+	    record.uvs = null;
+	    record.tangents = null;
+	    record.bounds = null;
+	    record.byteLength = 0;
+	  }
+
+	  function sceneBeginWorldBakedGeometryCacheBundle() {
+	    sceneWorldBakedGeometryCacheEpoch += 1;
+	    const oldestLiveEpoch = sceneWorldBakedGeometryCacheEpoch - sceneWorldBakedGeometryCacheStaleBundles;
+	    for (const record of _sceneWorldBakedGeometryResidency) {
+	      if (record.lastUsedEpoch < oldestLiveEpoch) {
+	        sceneReleaseWorldBakedGeometryCacheRecord(record);
+	      }
+	    }
+	  }
+
+	  function sceneWorldBakedGeometryCacheMatrixMatches(cached, current) {
+	    if (!cached || !current || cached.length !== 16 || current.length !== 16) return false;
+	    for (let index = 0; index < 16; index += 1) {
+	      if (!Object.is(cached[index], current[index])) return false;
+	    }
+	    return true;
+	  }
+
+	  function sceneWorldBakedGeometryCacheLookup(object, vertices, revision, modelMatrix) {
+	    const record = object && typeof object === "object"
+	      ? _sceneWorldBakedGeometryCache.get(object)
+	      : null;
+	    if (record && record.resident === true &&
+	        record.vertices === vertices && record.count === vertices.count && record.revision === revision &&
+	        record.positionsSource === vertices.positions && record.normalsSource === vertices.normals &&
+	        record.uvsSource === vertices.uvs && record.tangentsSource === vertices.tangents &&
+	        record.indicesSource === vertices.indices &&
+	        sceneWorldBakedGeometryCacheMatrixMatches(record.matrix, modelMatrix)) {
+	      record.lastUsedEpoch = sceneWorldBakedGeometryCacheEpoch;
+	      return record;
+	    }
+	    sceneReleaseWorldBakedGeometryCacheRecord(record);
+	    return null;
+	  }
+
+	  function sceneDropWorldBakedGeometryCache(object) {
+	    const record = object && typeof object === "object"
+	      ? _sceneWorldBakedGeometryCache.get(object)
+	      : null;
+	    sceneReleaseWorldBakedGeometryCacheRecord(record);
+	  }
+
+	  function sceneCanCaptureWorldBakedGeometry(vertexCount) {
+	    const byteLength = Math.max(0, Math.floor(sceneNumber(vertexCount, 0))) * 12 * Float32Array.BYTES_PER_ELEMENT;
+	    return byteLength > 0 && byteLength <= sceneWorldBakedGeometryCacheMaxBytes &&
+	      sceneWorldBakedGeometryCacheBytes + byteLength <= sceneWorldBakedGeometryCacheMaxBytes;
+	  }
+
+	  function sceneStoreWorldBakedGeometryCache(object, vertices, revision, modelMatrix, payload, bounds) {
+	    if (!object || typeof object !== "object" || !payload || !bounds) return null;
+	    const byteLength = payload.positions.byteLength + payload.normals.byteLength +
+	      payload.uvs.byteLength + payload.tangents.byteLength;
+	    if (byteLength <= 0 || byteLength > sceneWorldBakedGeometryCacheMaxBytes ||
+	        sceneWorldBakedGeometryCacheBytes + byteLength > sceneWorldBakedGeometryCacheMaxBytes) return null;
+	    const record = {
+	      resident: true,
+	      byteLength,
+	      lastUsedEpoch: sceneWorldBakedGeometryCacheEpoch,
+	      vertices,
+	      count: vertices.count,
+	      revision,
+	      positionsSource: vertices.positions,
+	      normalsSource: vertices.normals,
+	      uvsSource: vertices.uvs,
+	      tangentsSource: vertices.tangents,
+	      indicesSource: vertices.indices,
+	      matrix: new Float32Array(modelMatrix),
+	      positions: payload.positions,
+	      normals: payload.normals,
+	      uvs: payload.uvs,
+	      tangents: payload.tangents,
+	      vertexCount: payload.positions.length / 3,
+	      bounds: {
+	        minX: bounds.minX, minY: bounds.minY, minZ: bounds.minZ,
+	        maxX: bounds.maxX, maxY: bounds.maxY, maxZ: bounds.maxZ,
+	      },
+	    };
+	    _sceneWorldBakedGeometryCache.set(object, record);
+	    _sceneWorldBakedGeometryResidency.add(record);
+	    sceneWorldBakedGeometryCacheBytes += byteLength;
+	    return record;
+	  }
+
+	  function sceneWorldBakedGeometryCacheDiagnostics() {
+	    return {
+	      entries: _sceneWorldBakedGeometryResidency.size,
+	      bytes: sceneWorldBakedGeometryCacheBytes,
+	      maxBytes: sceneWorldBakedGeometryCacheMaxBytes,
+	      epoch: sceneWorldBakedGeometryCacheEpoch,
+	    };
+	  }
 
 	  function sceneObjectModelMatrix(object, timeSeconds) {
 	    const parent = object && object.parentMatrix;
@@ -5750,7 +5879,7 @@
     return selected;
   }
 
-  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
+  function sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) {
     const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
@@ -5776,12 +5905,21 @@
       !(object && object.computedMorph) &&
       !(object && (object.dynamicGeometry || object.geometryDynamic || object.geometryDirty)) &&
       !(vertices && (vertices.dynamic || vertices.dirty || vertices.needsUpdate)) &&
-      !sceneMaterialUsesAuthoredMeshShader(material) &&
       hasAttribute("positions", 3) &&
       hasAttribute("normals", 3) &&
       hasAttribute("uvs", 2) &&
       hasAttribute("tangents", 4)
     );
+  }
+
+  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
+    return sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
+      !sceneMaterialUsesAuthoredMeshShader(material);
+  }
+
+  function sceneMeshCanCacheWorldBakedGeometry(bundle, object, material, vertices, emitWireSegments) {
+    return sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
+      sceneMaterialUsesAuthoredMeshShader(material);
   }
 
   function appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
@@ -5963,8 +6101,6 @@
     const points = _meshTrianglePoints;
     const positions = vertices.positions;
     const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
-    const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
-    const reverseWinding = bakeLinearState[9] < 0;
     // Indexed geometry keeps its authored triangle order: dereference the index
     // list while baking so the world soup, wire segments, and picking all see
     // exactly the triangles the author wrote. Unindexed geometry iterates the
@@ -5975,75 +6111,141 @@
       ? vertices.indices
       : null;
     const drawnTriangleCount = authoredIndices ? authoredIndices.length : vertices.count;
-    for (let tri = 0; tri + 2 < drawnTriangleCount; tri += 3) {
-      // Translate the three triangle vertices directly from the raw
-      // positions Float32Array into hoisted scratch points, skipping the
-      // intermediate sceneMeshVertexPoint object allocation (was 3 extra
-      // allocs per triangle). points[] itself is the shared
-      // _meshTrianglePoints module scratch — all downstream consumers
-      // (lighting computation, mesh buffer push loop, three wire segment
-      // calls) read fields inline before the next iteration clobbers
-      // them, so the scratch is stable within each triangle.
-      // A negative determinant reverses the rasterizer's front-face sense.
-      // Swap vertices 1 and 2 while baking so every backend can keep its fixed
-      // CCW front-face contract. UVs, normals, and tangents use the same source
-      // order below, preserving picking interpolation and triangle identity.
-      const base0 = authoredIndices ? authoredIndices[tri] : tri;
-      const base1 = authoredIndices ? authoredIndices[tri + 1] : tri + 1;
-      const base2 = authoredIndices ? authoredIndices[tri + 2] : tri + 2;
-      const source0 = base0;
-      const source1 = reverseWinding ? base2 : base1;
-      const source2 = reverseWinding ? base1 : base2;
-      const tri0 = source0 * 3;
-      const tri1 = source1 * 3;
-      const tri2 = source2 * 3;
-      sceneMatrixTransformInto(points[0], modelMatrix, positions[tri0], positions[tri0 + 1], positions[tri0 + 2], 4, true);
-      sceneMatrixTransformInto(points[1], modelMatrix, positions[tri1], positions[tri1 + 1], positions[tri1 + 2], 4, true);
-      sceneMatrixTransformInto(points[2], modelMatrix, positions[tri2], positions[tri2 + 1], positions[tri2 + 2], 4, true);
-      sceneMeshWorldNormalInto(normals[0], vertices, source0, bakeLinearState);
-      sceneMeshWorldNormalInto(normals[1], vertices, source1, bakeLinearState);
-      sceneMeshWorldNormalInto(normals[2], vertices, source2, bakeLinearState);
-      // Full per-vertex analytic lighting is only computed when its result
-      // is actually visible (wire segments) -- see flatMeshColor's comment
-      // above. Otherwise reuse the one flat base color computed once for
-      // the whole object; worldMeshColors' only consumer (the legacy
-      // untextured-WebGL fallback) doesn't need per-vertex fidelity.
-      const lighting = emitWireSegments
-        ? [
-          sceneLitColorRGBA(material, points[0], normals[0], lights, environment),
-          sceneLitColorRGBA(material, points[1], normals[1], lights, environment),
-          sceneLitColorRGBA(material, points[2], normals[2], lights, environment),
-        ]
-        : null;
-      sceneMeshVertexUVInto(uvs[0], vertices, source0);
-      sceneMeshVertexUVInto(uvs[1], vertices, source1);
-      sceneMeshVertexUVInto(uvs[2], vertices, source2);
-      sceneMeshWorldTangentInto(tangents[0], vertices, source0, modelMatrix, normals[0], bakeLinearState[9]);
-      sceneMeshWorldTangentInto(tangents[1], vertices, source1, modelMatrix, normals[1], bakeLinearState[9]);
-      sceneMeshWorldTangentInto(tangents[2], vertices, source2, modelMatrix, normals[2], bakeLinearState[9]);
-
-      for (let index = 0; index < 3; index += 1) {
-        const point = points[index];
-        const normal = normals[index];
-        const uv = uvs[index];
-        const tangent = tangents[index];
-        const color = lighting ? lighting[index] : flatMeshColor;
-        bundle.worldMeshPositions.push(point.x, point.y, point.z);
-        bundle.worldMeshColors.push(color[0], color[1], color[2], color[3]);
-        bundle.worldMeshNormals.push(normal.x, normal.y, normal.z);
-        bundle.worldMeshUVs.push(uv.x, uv.y);
-        bundle.worldMeshTangents.push(tangent.x, tangent.y, tangent.z, tangent.w);
-        bounds = sceneExpandWorldBounds(bounds, point);
-        meshVertexCount += 1;
+    const bakedVertexCount = Math.floor(drawnTriangleCount / 3) * 3;
+    const cacheEligible = sceneMeshCanCacheWorldBakedGeometry(
+      bundle, object, material, vertices, emitWireSegments);
+    const cachedGeometry = cacheEligible
+      ? sceneWorldBakedGeometryCacheLookup(object, vertices, geometryRevision, modelMatrix)
+      : null;
+    if (!cacheEligible) sceneDropWorldBakedGeometryCache(object);
+    if (cachedGeometry) {
+      for (let index = 0; index < cachedGeometry.vertexCount; index += 1) {
+        const positionOffset = index * 3;
+        const uvOffset = index * 2;
+        const tangentOffset = index * 4;
+        bundle.worldMeshPositions.push(
+          cachedGeometry.positions[positionOffset],
+          cachedGeometry.positions[positionOffset + 1],
+          cachedGeometry.positions[positionOffset + 2]);
+        bundle.worldMeshColors.push(flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
+        bundle.worldMeshNormals.push(
+          cachedGeometry.normals[positionOffset],
+          cachedGeometry.normals[positionOffset + 1],
+          cachedGeometry.normals[positionOffset + 2]);
+        bundle.worldMeshUVs.push(cachedGeometry.uvs[uvOffset], cachedGeometry.uvs[uvOffset + 1]);
+        bundle.worldMeshTangents.push(
+          cachedGeometry.tangents[tangentOffset],
+          cachedGeometry.tangents[tangentOffset + 1],
+          cachedGeometry.tangents[tangentOffset + 2],
+          cachedGeometry.tangents[tangentOffset + 3]);
       }
+      meshVertexCount = cachedGeometry.vertexCount;
+      bounds = {
+        minX: cachedGeometry.bounds.minX, minY: cachedGeometry.bounds.minY, minZ: cachedGeometry.bounds.minZ,
+        maxX: cachedGeometry.bounds.maxX, maxY: cachedGeometry.bounds.maxY, maxZ: cachedGeometry.bounds.maxZ,
+      };
+    } else {
+      const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
+      const reverseWinding = bakeLinearState[9] < 0;
+      const capture = cacheEligible && sceneCanCaptureWorldBakedGeometry(bakedVertexCount)
+        ? {
+          positions: new Float32Array(bakedVertexCount * 3),
+          normals: new Float32Array(bakedVertexCount * 3),
+          uvs: new Float32Array(bakedVertexCount * 2),
+          tangents: new Float32Array(bakedVertexCount * 4),
+        }
+        : null;
+      for (let tri = 0; tri + 2 < drawnTriangleCount; tri += 3) {
+        // Translate the three triangle vertices directly from the raw
+        // positions Float32Array into hoisted scratch points, skipping the
+        // intermediate sceneMeshVertexPoint object allocation (was 3 extra
+        // allocs per triangle). points[] itself is the shared
+        // _meshTrianglePoints module scratch — all downstream consumers
+        // (lighting computation, mesh buffer push loop, three wire segment
+        // calls) read fields inline before the next iteration clobbers
+        // them, so the scratch is stable within each triangle.
+        // A negative determinant reverses the rasterizer's front-face sense.
+        // Swap vertices 1 and 2 while baking so every backend can keep its fixed
+        // CCW front-face contract. UVs, normals, and tangents use the same source
+        // order below, preserving picking interpolation and triangle identity.
+        const base0 = authoredIndices ? authoredIndices[tri] : tri;
+        const base1 = authoredIndices ? authoredIndices[tri + 1] : tri + 1;
+        const base2 = authoredIndices ? authoredIndices[tri + 2] : tri + 2;
+        const source0 = base0;
+        const source1 = reverseWinding ? base2 : base1;
+        const source2 = reverseWinding ? base1 : base2;
+        const tri0 = source0 * 3;
+        const tri1 = source1 * 3;
+        const tri2 = source2 * 3;
+        sceneMatrixTransformInto(points[0], modelMatrix, positions[tri0], positions[tri0 + 1], positions[tri0 + 2], 4, true);
+        sceneMatrixTransformInto(points[1], modelMatrix, positions[tri1], positions[tri1 + 1], positions[tri1 + 2], 4, true);
+        sceneMatrixTransformInto(points[2], modelMatrix, positions[tri2], positions[tri2 + 1], positions[tri2 + 2], 4, true);
+        sceneMeshWorldNormalInto(normals[0], vertices, source0, bakeLinearState);
+        sceneMeshWorldNormalInto(normals[1], vertices, source1, bakeLinearState);
+        sceneMeshWorldNormalInto(normals[2], vertices, source2, bakeLinearState);
+        // Full per-vertex analytic lighting is only computed when its result
+        // is actually visible (wire segments) -- see flatMeshColor's comment
+        // above. Otherwise reuse the one flat base color computed once for
+        // the whole object; worldMeshColors' only consumer (the legacy
+        // untextured-WebGL fallback) doesn't need per-vertex fidelity.
+        const lighting = emitWireSegments
+          ? [
+            sceneLitColorRGBA(material, points[0], normals[0], lights, environment),
+            sceneLitColorRGBA(material, points[1], normals[1], lights, environment),
+            sceneLitColorRGBA(material, points[2], normals[2], lights, environment),
+          ]
+          : null;
+        sceneMeshVertexUVInto(uvs[0], vertices, source0);
+        sceneMeshVertexUVInto(uvs[1], vertices, source1);
+        sceneMeshVertexUVInto(uvs[2], vertices, source2);
+        sceneMeshWorldTangentInto(tangents[0], vertices, source0, modelMatrix, normals[0], bakeLinearState[9]);
+        sceneMeshWorldTangentInto(tangents[1], vertices, source1, modelMatrix, normals[1], bakeLinearState[9]);
+        sceneMeshWorldTangentInto(tangents[2], vertices, source2, modelMatrix, normals[2], bakeLinearState[9]);
 
-      if (emitWireSegments) {
-        const line0 = outlineLighting || lighting[0];
-        const line1 = outlineLighting || lighting[1];
-        const line2 = outlineLighting || lighting[2];
-        wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], line0, line1, outlineWidth, objectPassIndex);
-        wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], line1, line2, outlineWidth, objectPassIndex);
-        wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], line2, line0, outlineWidth, objectPassIndex);
+        for (let index = 0; index < 3; index += 1) {
+          const point = points[index];
+          const normal = normals[index];
+          const uv = uvs[index];
+          const tangent = tangents[index];
+          const color = lighting ? lighting[index] : flatMeshColor;
+          bundle.worldMeshPositions.push(point.x, point.y, point.z);
+          bundle.worldMeshColors.push(color[0], color[1], color[2], color[3]);
+          bundle.worldMeshNormals.push(normal.x, normal.y, normal.z);
+          bundle.worldMeshUVs.push(uv.x, uv.y);
+          bundle.worldMeshTangents.push(tangent.x, tangent.y, tangent.z, tangent.w);
+          if (capture) {
+            const positionOffset = meshVertexCount * 3;
+            const uvOffset = meshVertexCount * 2;
+            const tangentOffset = meshVertexCount * 4;
+            capture.positions[positionOffset] = point.x;
+            capture.positions[positionOffset + 1] = point.y;
+            capture.positions[positionOffset + 2] = point.z;
+            capture.normals[positionOffset] = normal.x;
+            capture.normals[positionOffset + 1] = normal.y;
+            capture.normals[positionOffset + 2] = normal.z;
+            capture.uvs[uvOffset] = uv.x;
+            capture.uvs[uvOffset + 1] = uv.y;
+            capture.tangents[tangentOffset] = tangent.x;
+            capture.tangents[tangentOffset + 1] = tangent.y;
+            capture.tangents[tangentOffset + 2] = tangent.z;
+            capture.tangents[tangentOffset + 3] = tangent.w;
+          }
+          bounds = sceneExpandWorldBounds(bounds, point);
+          meshVertexCount += 1;
+        }
+
+        if (emitWireSegments) {
+          const line0 = outlineLighting || lighting[0];
+          const line1 = outlineLighting || lighting[1];
+          const line2 = outlineLighting || lighting[2];
+          wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], line0, line1, outlineWidth, objectPassIndex);
+          wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], line1, line2, outlineWidth, objectPassIndex);
+          wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], line2, line0, outlineWidth, objectPassIndex);
+        }
+      }
+      if (capture && bounds && meshVertexCount === bakedVertexCount) {
+        sceneStoreWorldBakedGeometryCache(
+          object, vertices, geometryRevision, modelMatrix, capture, bounds);
       }
     }
 
