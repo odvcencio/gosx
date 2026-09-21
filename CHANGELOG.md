@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.56.9 (2026-09-21)
+
+### Improved: build world-mesh attributes in typed storage
+
+- World-baked positions, colors, normals, UVs, and tangents are written directly into capacity-managed `Float32Array` builders instead of boxed JavaScript arrays.
+- Completed render bundles retain exact-length owned attribute arrays, with indexed geometry, cache reuse, wire rendering, and picking behavior unchanged.
+
 ## v0.56.8 (2026-09-20)
 
 ### Improved: reuse stable authored-shader fallback geometry
