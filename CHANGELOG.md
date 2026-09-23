@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.57.0 (2026-09-23)
+
+### Breaking: turboquant v0.2.1 changes stored vector output; pre-upgrade values fail closed
+
+- Upgrade `m31labs.dev/turboquant` from v0.2.0 to v0.2.1 and move its import
+  path from `github.com/odvcencio/turboquant` to `m31labs.dev/turboquant`.
+  Version 0.2.1 changes `NewWithSeed`'s default rotation from one
+  Walsh-Hadamard round to three, fixing a codebook defect at dimension 1024
+  and above. The same seed now produces different quantizer output.
+- `crdt.VectorValue` now tags every packed payload with the
+  `vectorQuantFormatV1` format marker. `Value.Vector()` checks that tag and
+  the tagged payload's exact expected length before it decodes, and fails
+  closed to `nil` for a payload that predates the tag, or otherwise does not
+  match, instead of returning a silently wrong vector.
+- A vector value persisted in a `crdt.Doc` snapshot or a
+  `workspace.Workspace.Save` output before this upgrade has no in-place
+  migration. After upgrading past this release, re-embed and re-write each
+  such value (`WriteVector`) from its original source; do not resume it from
+  the stored snapshot.
+
+### Added: opt-in scroll camera cadence and a renderer-owned camera-proximity signal
+
+- Add `ScrollFrameRate` to `scene.Props`. A scene keeps a low idle
+  `MaxFrameRate` and raises the cadence only while scroll input is active.
+  A zero value keeps the authored idle cadence, so existing scenes do not
+  change.
+- Add a renderer-owned `cameraProximity` reserved auto-uniform: the clamped,
+  smoothed scroll progress in `[0,1]`, or `0` with no scroll range. Both the
+  WebGL and WebGPU paths resolve it before material values and custom
+  uniforms, so an authored `param cameraProximity` cannot shadow it.
+
+### Documentation: retroactively record a prior breaking change
+
+- Record in this changelog, next to where it belongs by version, that
+  `server.NavigationScript` and `server.NavigationScriptWithNonce` were
+  removed in favor of `app.EnableNavigation`, and that
+  `ManagedScriptOptions.Load` and its fetch/eval loading mode were removed.
+  The code change shipped in an earlier release; this entry closes the gap
+  in its documentation. Compose the document shell through
+  `server.HTMLDocument(*server.DocumentContext)`, which threads the CSP
+  nonce through navigation, inline helpers, and managed scripts.
+
 ## v0.56.10 (2026-09-22)
 
 ### Added: retained Scene3D pose frames
