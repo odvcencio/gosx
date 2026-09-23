@@ -11,6 +11,7 @@
 package hub
 
 import (
+	"compress/flate"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -34,6 +35,20 @@ const (
 	// that may push CRDT sync. A full document bootstrap can be large, so the
 	// allowance is much larger than maxMessageSize.
 	defaultSyncMessageSize = 16 * 1024 * 1024
+
+	// defaultCompressionLevel is the flate level a hub uses when
+	// EnableCompression is true and CompressionLevel is left at zero. Level 6
+	// trades a moderate CPU cost for good ratio on repetitive JSON, well above
+	// gorilla/websocket's own default of 1 (fastest, weakest).
+	defaultCompressionLevel = 6
+
+	// minCompressionLevel and maxCompressionLevel bound CompressionLevel.
+	// They match compress/flate's accepted range: HuffmanOnly (-2) through
+	// BestCompression (9). gorilla/websocket validates the same range
+	// internally; a hub checks it up front so a bad config fails at Serve
+	// time with a clear log line instead of a silent per-connection error.
+	minCompressionLevel = flate.HuffmanOnly
+	maxCompressionLevel = flate.BestCompression
 )
 
 // Hub is a long-lived server-side coordinator for realtime state.
@@ -94,6 +109,32 @@ type Hub struct {
 	// defaultSyncMessageSize, which is 16 MiB. Set it before the first
 	// connection; a change does not reach an accepted connection.
 	MaxSyncMessageSize int
+
+	// EnableCompression opts a hub into negotiating permessage-deflate
+	// (RFC 7692) on WebSocket upgrade. Off by default: compression buys back
+	// bandwidth at a CPU cost on every send, so it is a per-hub choice, not a
+	// package default. A client that does not offer the extension connects
+	// uncompressed regardless of this setting.
+	//
+	// gorilla/websocket's server only implements the no-context-takeover mode
+	// of permessage-deflate: every message resets the deflate window instead
+	// of carrying a dictionary forward from the previous message. That still
+	// compresses well for a single JSON message with repeated keys and
+	// structure — the dominant shape for a broadcast snapshot — but it does
+	// not get the cross-message reuse that context takeover would add.
+	//
+	// Configure before the first connection; a later change does not reach
+	// already-accepted clients.
+	EnableCompression bool
+
+	// CompressionLevel selects the flate level used when EnableCompression is
+	// true, from -2 (flate.HuffmanOnly, cheapest) to 9 (flate.BestCompression,
+	// smallest output, most CPU). Zero selects defaultCompressionLevel (6),
+	// tuned for repetitive JSON. Ignored when EnableCompression is false. A
+	// value outside the valid range is rejected at Serve time and falls back
+	// to the default, with a log line — it never panics or drops a
+	// connection.
+	CompressionLevel int
 }
 
 // ConnectionMetadata contains server-supplied values associated with one
@@ -339,6 +380,22 @@ func sameOrigin(r *http.Request, require bool) bool {
 // SetCheckOrigin overrides the default origin check for WebSocket upgrades.
 func SetCheckOrigin(fn func(*http.Request) bool) {
 	upgrader.CheckOrigin = fn
+}
+
+// resolvedCompressionLevel returns the flate level a hub applies to a
+// compressed connection: h.CompressionLevel when it is set and in range,
+// otherwise defaultCompressionLevel. It never returns a level rejected by
+// gorilla/websocket's own validation.
+func (h *Hub) resolvedCompressionLevel() int {
+	level := h.CompressionLevel
+	if level == 0 {
+		return defaultCompressionLevel
+	}
+	if level < minCompressionLevel || level > maxCompressionLevel {
+		log.Printf("[hub/%s] CompressionLevel %d out of range [%d, %d]; using default %d", h.name, level, minCompressionLevel, maxCompressionLevel, defaultCompressionLevel)
+		return defaultCompressionLevel
+	}
+	return level
 }
 
 // generateClientID produces a cryptographically random client ID.
@@ -655,10 +712,20 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	if h.RequireOrigin {
 		connectionUpgrader.CheckOrigin = func(r *http.Request) bool { return sameOrigin(r, true) }
 	}
+	connectionUpgrader.EnableCompression = h.EnableCompression
 	conn, err := connectionUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
+	}
+	if h.EnableCompression {
+		if err := conn.SetCompressionLevel(h.resolvedCompressionLevel()); err != nil {
+			// SetCompressionLevel only rejects an out-of-range level, which
+			// resolvedCompressionLevel already guards against. Treat a
+			// rejection as non-fatal: the connection still works, just
+			// uncompressed or at gorilla's own default.
+			log.Printf("[hub/%s] compression level error: %v", h.name, err)
+		}
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
 		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
