@@ -633,7 +633,13 @@ const budgets = [
   // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
   // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
   // Gzip stays at 436_000: its hard limit already clears the new measurement.
-  { file: "bootstrap.js", raw: 1_584_500, gzip: 436_000, brotli: 346_800 },
+  // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
+  // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
+  // slots, the __proto__-safe normalized attribute map) measured 1_653_205 /
+  // 452_977 / 363_959. All three exceeded the prior hard limit; bumped raw
+  // 1_584_500 -> 1_592_000, gzip 436_000 -> 440_000, and brotli 346_800 ->
+  // 351_000 for headroom.
+  { file: "bootstrap.js", raw: 1_592_000, gzip: 440_000, brotli: 351_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1103,7 +1109,11 @@ const budgets = [
   // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds its
   // loader IIFE here, in this base chunk, so the actual chunk it lazy-loads
   // stays outside it. Measured: 584_696 / 162_859 / 134_858.
-  { file: "bootstrap-feature-scene3d.js", raw: 559_000, gzip: 156_000, brotli: 129_500 },
+  // Custom per-vertex float BufferAttributes (Selena retained-geometry
+  // eligibility, WebGL2/WebGPU custom attribute binding). Measured:
+  // 587_284 / 163_846 / unchanged brotli. Raw and gzip exceeded the prior
+  // hard limit; bumped raw 559_000 -> 564_000 and gzip 156_000 -> 159_500.
+  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 129_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1841,9 +1851,14 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
     // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
     // restores real headroom.
-    raw: 1_079_000,
-    gzip: 301_500,
-    brotli: 255_500,
+    // Custom per-vertex float BufferAttributes add WebGL2 Selena attribute
+    // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
+    // Measured: 1_134_193 / 316_839 / 268_369. All three exceeded the prior
+    // hard limit; bumped raw 1_079_000 -> 1_085_000, gzip 301_500 ->
+    // 305_000, and brotli 255_500 -> 259_000 for headroom.
+    raw: 1_085_000,
+    gzip: 305_000,
+    brotli: 259_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1994,7 +2009,10 @@ const routeBudgets = [
     raw: 1_465_500,
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
-    gzip: 396_000,
+    // Custom per-vertex float BufferAttributes carry both backends' custom
+    // attribute binding on this route. Measured: 412_968 gzip. Bumped
+    // 396_000 -> 400_500. Raw and brotli headroom is unchanged.
+    gzip: 400_500,
     brotli: 332_900,
   },
   {
