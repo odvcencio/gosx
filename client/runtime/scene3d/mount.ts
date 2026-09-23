@@ -3349,6 +3349,13 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
+      // applyInstanceStream: opt-in fast path; see instance-stream.ts.
+      applyInstanceStream(bytes) {
+        const apply = window.__gosx_scene3d_instance_stream_apply;
+        return typeof apply === "function"
+          ? apply(sceneState, bytes, scheduleRender, mount)
+          : { applied: false, reason: "instance-stream chunk not loaded" };
+      },
       getCamera() {
         return currentMountedSceneCamera();
       },

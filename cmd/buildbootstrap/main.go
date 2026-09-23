@@ -472,6 +472,17 @@ var outputs = []output{
 		},
 	},
 	{
+		// Opt-in binary instance-transform fast path. A page fetches this only
+		// when it calls window.__gosx_scene3d_instance_stream_bridge or a
+		// scene.InstanceStreamFrame-emitting engine explicitly loads it; every
+		// other Scene3D page's base bundle stays byte-identical. See
+		// client/runtime/scene3d/instance-stream.ts and scene/instance_stream.go.
+		name: "bootstrap-feature-scene3d-instance-stream.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/instance-stream.ts"),
+		},
+	},
+	{
 		// Strict initial-hydrate decoding is fetched only by a shared-runtime
 		// Scene3D mount with a program reference. Static scenes never pay for it.
 		name: "bootstrap-feature-scene3d-hydrate.js",

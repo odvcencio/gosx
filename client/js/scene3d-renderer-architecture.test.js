@@ -261,7 +261,10 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    assert.equal(generated.length, 68);
+    // 68 + 4 (bootstrap-feature-scene3d-instance-stream.js and its
+    // .map/.gz/.br siblings) since the opt-in instance-stream fast path
+    // chunk joined the manifest.
+    assert.equal(generated.length, 72);
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));

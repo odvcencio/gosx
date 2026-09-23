@@ -610,7 +610,12 @@ const budgets = [
   // Typed world-mesh attribute builders measure 1_645_660 / 450_589 /
   // 362_277. Only gzip exceeds that envelope; 434_205 keeps the exact
   // governed hard limit at 450_589.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_205, brotli: 346_700 },
+  // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+  // adds a tiny forwarding method to mount.ts's handle; the fast path itself
+  // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
+  // outside this monolith. Measured: 1_645_831 / 450_643 / 362_249. Only gzip
+  // exceeds that envelope; 434_400 keeps narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_400, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1072,7 +1077,12 @@ const budgets = [
   // limits equal to those reviewed artifacts.
   // Typed world-mesh attribute builders measure 582_224 / 162_304 / 134_535.
   // Baselines below set exact minimum hard limits equal to those artifacts.
-  { file: "bootstrap-feature-scene3d.js", raw: 554_499, gzip: 154_575, brotli: 128_128 },
+  // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+  // adds a tiny forwarding method to mount.ts's handle; the fast path itself
+  // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
+  // outside this base chunk. Measured: 582_395 / 162_360 / 134_528, with
+  // narrow rounding headroom on raw and gzip; brotli fits the prior envelope.
+  { file: "bootstrap-feature-scene3d.js", raw: 554_800, gzip: 154_800, brotli: 128_128 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1791,9 +1801,15 @@ const routeBudgets = [
     // Typed world-mesh attribute builders measure 1_128_184 / 314_915 /
     // 266_904. The baselines below set the minimum hard limits for those
     // reviewed route totals.
-    raw: 1_074_461,
-    gzip: 299_919,
-    brotli: 254_194,
+    //
+    // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+    // adds a tiny forwarding method to mount.ts's handle -- carried by
+    // bootstrap-feature-scene3d.js on this route -- so every page pays a few
+    // bytes even though the fast path itself ships in its own lazy chunk.
+    // Measured: 1_128_355 / 314_971 / 266_897, with narrow rounding headroom.
+    raw: 1_074_700,
+    gzip: 300_100,
+    brotli: 254_300,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1928,8 +1944,13 @@ const routeBudgets = [
     // Typed world-mesh attribute builders measure 1_521_018 / 410_499 /
     // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
     // limit at 410_499.
+    // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+    // adds a tiny forwarding method to mount.ts's handle, carried by
+    // bootstrap-feature-scene3d.js on this route. Measured:
+    // 1_521_189 / 410_555 / 346_843. Only gzip exceeds that envelope;
+    // 394_300 keeps narrow rounding headroom.
     raw: 1_465_500,
-    gzip: 394_115,
+    gzip: 394_300,
     brotli: 332_900,
   },
   {
