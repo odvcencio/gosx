@@ -644,8 +644,12 @@ const budgets = [
   // vec3 emissiveFactor, normal/occlusion factors, sRGB environment decode,
   // roughness-LOD env sampling, single-application exposure, the optional
   // rim term) plus the WebGPU material-uniform struct growth from 208 to
-  // 256 bytes combines with both on this merge. Caps re-measured from the
-  // merged source below.
+  // 256 bytes combines with the above on merge.
+  // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
+  // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
+  // slots, the __proto__-safe normalized attribute map) combines with all
+  // of the above on this merge. Caps re-measured from the merged source
+  // below.
   { file: "bootstrap.js", raw: 1_655_000, gzip: 453_200, brotli: 364_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1116,7 +1120,11 @@ const budgets = [
   // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds its
   // loader IIFE here, in this base chunk, so the actual chunk it lazy-loads
   // stays outside it. Measured: 584_696 / 162_859 / 134_858.
-  { file: "bootstrap-feature-scene3d.js", raw: 559_000, gzip: 156_000, brotli: 129_500 },
+  // Custom per-vertex float BufferAttributes (Selena retained-geometry
+  // eligibility, WebGL2/WebGPU custom attribute binding). Measured:
+  // 587_284 / 163_846 / unchanged brotli. Raw and gzip exceeded the prior
+  // hard limit; bumped raw 559_000 -> 564_000 and gzip 156_000 -> 159_500.
+  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 129_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1857,8 +1865,11 @@ const routeBudgets = [
     // glTF material-shading parity fixes plus the WebGPU material-uniform
     // struct growth (see the bootstrap.js note above) carried by
     // bootstrap-feature-scene3d.js and bootstrap-feature-scene3d-webgl.js on
-    // this route. Measured: 1_134_981 / 316_709 / 268_296; all three caps
-    // raised with narrow rounding headroom.
+    // this route. Measured: 1_134_981 / 316_709 / 268_296.
+    // Custom per-vertex float BufferAttributes add WebGL2 Selena attribute
+    // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
+    // Both combine on this merge; caps re-measured from the merged source
+    // below.
     raw: 1_136_000,
     gzip: 317_000,
     brotli: 268_500,
@@ -2014,11 +2025,16 @@ const routeBudgets = [
     // this route since it loads both backends. Measured:
     // 1_529_592 / 412_738 / 348_560. Only gzip exceeds the prior envelope;
     // 397_500 restores headroom. Raw and brotli caps stay put.
-    raw: 1_465_500,
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
-    gzip: 397_500,
-    brotli: 332_900,
+    // Custom per-vertex float BufferAttributes carry both backends' custom
+    // attribute binding on this route, combining with the above on this
+    // merge. Measured: 1_533_139 / 414_073 / 349_737. All three exceeded
+    // the prior hard limit; bumped raw 1_465_500 -> 1_468_500, gzip
+    // 400_500 -> 401_000, and brotli 332_900 -> 334_000 for headroom.
+    raw: 1_468_500,
+    gzip: 401_000,
+    brotli: 334_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,

@@ -15,6 +15,6 @@
   "scene3d/mount.ts": 335,
   "scene3d/overlay-dom.ts": 133,
   "scene3d/overlays.ts": 9,
-  "scene3d/webgl.ts": 1084,
-  "scene3d/webgpu.ts": 1740
+  "scene3d/webgl.ts": 1092,
+  "scene3d/webgpu.ts": 1743
 }
