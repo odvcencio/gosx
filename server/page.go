@@ -56,7 +56,9 @@ type DocumentContext struct {
 	Status  int
 	Title   string
 	// Language is the BCP 47 language tag written to the document's html
-	// element. Empty preserves the historical document output.
+	// element. Empty falls back to defaultDocumentLanguage ("en") so the
+	// rendered document always carries a lang attribute; set it explicitly
+	// to serve a different locale.
 	Language      string
 	PageID        string
 	Path          string
