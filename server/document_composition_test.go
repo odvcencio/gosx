@@ -155,7 +155,7 @@ func TestHTMLDocumentNilAndZeroContextsAreValid(t *testing.T) {
 			rendered := gosx.RenderHTML(HTMLDocument(tt.doc))
 			for _, shell := range []string{
 				"<!DOCTYPE html>",
-				`<html data-gosx-document="true">`,
+				`<html data-gosx-document="true" lang="en">`,
 				"<head>",
 				"<title></title>",
 				`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html">`,

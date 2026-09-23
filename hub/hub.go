@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -264,6 +265,39 @@ type Context struct {
 	Hub    *Hub
 	Event  string
 	Data   json.RawMessage
+}
+
+// invokeHandler calls a registered HandlerFunc under a panic boundary.
+//
+// WHY: ServeHTTPWithMetadata starts readPump and writePump on their own
+// goroutines (`go client.readPump()`), and every handler this package calls
+// — join, leave, and per-event — runs from inside one of those. net/http
+// recovers a panic inside the synchronous call to a request's own
+// http.Handler, but that recovery never reaches a goroutine the handler
+// spawned and returned from: an unrecovered panic on ANY goroutine
+// terminates the whole process, not just the offending connection. Before
+// this boundary, one client sending a message that panicked a handler could
+// take down every other client's connection along with it.
+//
+// Recovering here, at the single call site every handler invocation shares,
+// means one misbehaving handler drops only the message or lifecycle event
+// that triggered it — the client's connection, and the rest of the hub,
+// keep running.
+func (h *Hub) invokeHandler(handler HandlerFunc, ctx *Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			clientID := ""
+			if ctx != nil && ctx.Client != nil {
+				clientID = ctx.Client.ID
+			}
+			event := ""
+			if ctx != nil {
+				event = ctx.Event
+			}
+			log.Printf("[hub/%s] recovered panic in handler (client=%q event=%q): %v\n%s", h.name, clientID, event, r, debug.Stack())
+		}
+	}()
+	handler(ctx)
 }
 
 // Presence tracks connected clients.
@@ -695,7 +729,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 
 	// Fire join handler (may broadcast to all clients including this one)
 	if handler, ok := h.handlers["join"]; ok {
-		handler(&Context{
+		h.invokeHandler(handler, &Context{
 			Client: client,
 			Hub:    h,
 			Event:  "join",
@@ -759,6 +793,16 @@ func (c *Client) readPump() {
 		c.Hub.removeClient(c)
 		c.conn.Close()
 	}()
+	// Defense in depth: invokeHandler already recovers every handler call
+	// below, but this outer recover keeps a panic anywhere else in the loop
+	// (a future change, a third-party dependency) from crashing the process
+	// too — readPump runs on its own goroutine, so an unrecovered panic here
+	// is not a per-connection failure, it is a whole-server outage.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[hub/%s] recovered panic in readPump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
+		}
+	}()
 
 	for {
 		if err := c.conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
@@ -791,7 +835,7 @@ func (c *Client) readPump() {
 		c.Hub.mu.RUnlock()
 
 		if ok {
-			handler(&Context{
+			c.Hub.invokeHandler(handler, &Context{
 				Client: c,
 				Hub:    c.Hub,
 				Event:  msg.Event,
@@ -802,6 +846,14 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
+	// writePump runs on its own goroutine and calls no hub-registered
+	// handler, but the same whole-process-crash risk applies to any panic
+	// here (see readPump's matching recover), so it gets the same boundary.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[hub/%s] recovered panic in writePump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
+		}
+	}()
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -864,7 +916,7 @@ func (h *Hub) removeClient(c *Client) {
 
 	// Fire leave handler
 	if handler, ok := h.handlers["leave"]; ok {
-		handler(&Context{
+		h.invokeHandler(handler, &Context{
 			Client: c,
 			Hub:    h,
 			Event:  "leave",

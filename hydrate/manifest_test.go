@@ -1,6 +1,7 @@
 package hydrate
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -89,6 +90,32 @@ func TestManifestAddComputeIsland(t *testing.T) {
 	}
 	if props["match"] != "abc" {
 		t.Fatalf("unexpected props: %#v", props)
+	}
+}
+
+func TestManifestMarshalIsCompact(t *testing.T) {
+	m := NewManifest()
+	m.Bundles["main"] = BundleRef{Path: "/app.wasm", Hash: "abc123"}
+	m.AddIsland("Counter", "main", map[string]int{"initial": 0})
+
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	if strings.Contains(string(data), "\n") {
+		t.Fatalf("expected compact single-line JSON, got %q", data)
+	}
+	if strings.Contains(string(data), "  ") {
+		t.Fatalf("expected no indentation whitespace, got %q", data)
+	}
+
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, data); err != nil {
+		t.Fatalf("json.Compact rejected Marshal output: %v", err)
+	}
+	if compact.String() != string(data) {
+		t.Fatalf("Marshal output is not already compact:\ngot:  %s\nwant: %s", data, compact.String())
 	}
 }
 

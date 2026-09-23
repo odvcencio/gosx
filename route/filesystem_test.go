@@ -721,8 +721,8 @@ func Page() Node {
 	for _, snippet := range []string{
 		`gosx-manifest`,
 		`bootstrap-runtime.js`,
-		`"audioTrack": "jpn"`,
-		`"audioTracks": [`,
+		`"audioTrack":"jpn"`,
+		`"audioTracks":[`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in video runtime head %q", snippet, head)
@@ -818,13 +818,8 @@ func Page() Node {
 		`Whiteboard`,
 		`SearchIndexer`,
 		`GoSXScene3D`,
-		`"requiredCapabilities": [
-        "canvas"
-      ]`,
-		`"requiredCapabilities": [
-        "canvas",
-        "webgl"
-      ]`,
+		`"requiredCapabilities":["canvas"]`,
+		`"requiredCapabilities":["canvas","webgl"]`,
 		`bootstrap-runtime.js`,
 	} {
 		if !strings.Contains(head, snippet) {
@@ -933,70 +928,70 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"camera": {`,
-		`"z": 7`,
-		`"fov": 64`,
-		`"environment": {`,
-		`"ambientColor": "#f4fbff"`,
-		`"lights": [`,
-		`"kind": "directional"`,
-		`"id": "sun"`,
-		`"id": "softbox"`,
-		`"kind": "rect-area"`,
-		`"width": 2.5`,
-		`"id": "probe"`,
-		`"kind": "light-probe"`,
-		`"postEffects": [`,
-		`"kind": "ssao"`,
-		`"kind": "dof"`,
-		`"focusDistance": 7`,
-		`"kind": "bloom"`,
-		`"kind": "customPost"`,
-		`"name": "lens"`,
-		`"vertexWGSL": "vertex wgsl"`,
-		`"fragmentWGSL": "fragment wgsl"`,
-		`"vertexGLSL": "vertex glsl"`,
-		`"fragmentGLSL": "fragment glsl"`,
-		`"shaderBackend": "selena"`,
-		`"kind": "tonemap"`,
-		`"materials": [`,
-		`"kind": "line-basic"`,
-		`"kind": "line-dashed"`,
-		`"lineDash": true`,
-		`"kind": "custom"`,
-		`"customFragment": "color *= 0.5;"`,
-		`"clearcoat": 0.4`,
-		`"objects": [`,
-		`"id": "hero"`,
-		`"id": "badge"`,
-		`"texture": "/textures/badge.png"`,
-		`"depthWrite": false`,
-		`"id": "custom-hero"`,
-		`"selected": true`,
-		`"outlineColor": "#ffcc00"`,
-		`"id": "axes-x"`,
-		`"id": "grid"`,
-		`"id": "box-helper"`,
-		`"id": "bounds-helper"`,
-		`"id": "bones-helper"`,
-		`"id": "gizmo-ring"`,
-		`"materialKind": "line-basic"`,
-		`"id": "dynamic-hero"`,
-		`"kind": "box"`,
-		`"models": [`,
-		`"id": "ship"`,
-		`"src": "/models/ship.glb"`,
-		`"animation": "idle"`,
-		`"static": true`,
-		`"points": [`,
-		`"id": "stars"`,
-		`"id": "extra-stars"`,
-		`"positions": [`,
-		`"blendMode": "additive"`,
-		`"html": [`,
-		`"id": "hud-card"`,
-		`"class": "scene-hud"`,
-		`"pointerEvents": "auto"`,
+		`"camera":{`,
+		`"z":7`,
+		`"fov":64`,
+		`"environment":{`,
+		`"ambientColor":"#f4fbff"`,
+		`"lights":[`,
+		`"kind":"directional"`,
+		`"id":"sun"`,
+		`"id":"softbox"`,
+		`"kind":"rect-area"`,
+		`"width":2.5`,
+		`"id":"probe"`,
+		`"kind":"light-probe"`,
+		`"postEffects":[`,
+		`"kind":"ssao"`,
+		`"kind":"dof"`,
+		`"focusDistance":7`,
+		`"kind":"bloom"`,
+		`"kind":"customPost"`,
+		`"name":"lens"`,
+		`"vertexWGSL":"vertex wgsl"`,
+		`"fragmentWGSL":"fragment wgsl"`,
+		`"vertexGLSL":"vertex glsl"`,
+		`"fragmentGLSL":"fragment glsl"`,
+		`"shaderBackend":"selena"`,
+		`"kind":"tonemap"`,
+		`"materials":[`,
+		`"kind":"line-basic"`,
+		`"kind":"line-dashed"`,
+		`"lineDash":true`,
+		`"kind":"custom"`,
+		`"customFragment":"color *= 0.5;"`,
+		`"clearcoat":0.4`,
+		`"objects":[`,
+		`"id":"hero"`,
+		`"id":"badge"`,
+		`"texture":"/textures/badge.png"`,
+		`"depthWrite":false`,
+		`"id":"custom-hero"`,
+		`"selected":true`,
+		`"outlineColor":"#ffcc00"`,
+		`"id":"axes-x"`,
+		`"id":"grid"`,
+		`"id":"box-helper"`,
+		`"id":"bounds-helper"`,
+		`"id":"bones-helper"`,
+		`"id":"gizmo-ring"`,
+		`"materialKind":"line-basic"`,
+		`"id":"dynamic-hero"`,
+		`"kind":"box"`,
+		`"models":[`,
+		`"id":"ship"`,
+		`"src":"/models/ship.glb"`,
+		`"animation":"idle"`,
+		`"static":true`,
+		`"points":[`,
+		`"id":"stars"`,
+		`"id":"extra-stars"`,
+		`"positions":[`,
+		`"blendMode":"additive"`,
+		`"html":[`,
+		`"id":"hud-card"`,
+		`"class":"scene-hud"`,
+		`"pointerEvents":"auto"`,
 		`scene-hud__card`,
 		`Hull`,
 		`stable`,
@@ -1043,11 +1038,11 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"camera": {`,
-		`"z": 7`,
-		`"fov": 54`,
-		`"far": 96`,
-		`"id": "legacy"`,
+		`"camera":{`,
+		`"z":7`,
+		`"fov":54`,
+		`"far":96`,
+		`"id":"legacy"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in merged Scene3D runtime head %q", snippet, head)
@@ -1077,10 +1072,10 @@ func Page() Node {
 	}
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
-	if !strings.Contains(head, `"id": "solo"`) {
+	if !strings.Contains(head, `"id":"solo"`) {
 		t.Fatalf("expected solo mesh in Scene3D runtime head %q", head)
 	}
-	if strings.Contains(head, `"kind": "cube"`) || strings.Contains(head, `#ffd48f`) {
+	if strings.Contains(head, `"kind":"cube"`) || strings.Contains(head, `#ffd48f`) {
 		t.Fatalf("expected no injected demo scene objects in %q", head)
 	}
 }
@@ -1105,7 +1100,7 @@ func Page() Node {
 	}
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
-	if !strings.Contains(head, `"kind": "cube"`) {
+	if !strings.Contains(head, `"kind":"cube"`) {
 		t.Fatalf("expected default Scene3D demo objects in %q", head)
 	}
 	for _, snippet := range []string{
@@ -1214,8 +1209,8 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`"webgpu"`,
-		`"computeParticles": [`,
-		`"id": "spark-field"`,
+		`"computeParticles":[`,
+		`"id":"spark-field"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1252,18 +1247,18 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`"webgpu"`,
-		`"backendCaps": {`,
-		`"capable": [`,
+		`"backendCaps":{`,
+		`"capable":[`,
 		`"water-object-texture-pass"`,
 		`"water-simulation"`,
-		`"waterSystems": [`,
-		`"id": "pool-water"`,
-		`"objectKind": "sphere"`,
-		`"objectRadius": 0.44`,
-		`"objectTextureResolution": 512`,
-		`"objectTextureResolutionMode": "viewport"`,
-		`"computeBackend": "elio"`,
-		`"materialBackend": "selena"`,
+		`"waterSystems":[`,
+		`"id":"pool-water"`,
+		`"objectKind":"sphere"`,
+		`"objectRadius":0.44`,
+		`"objectTextureResolution":512`,
+		`"objectTextureResolutionMode":"viewport"`,
+		`"computeBackend":"elio"`,
+		`"materialBackend":"selena"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1297,7 +1292,7 @@ func Page() Node {
 		`"water-object-mesh-shadow-pass"`,
 		`"water-object-texture-pass"`,
 		`"water-simulation"`,
-		`"objectMeshShadowVertexWGSL": "vertex"`,
+		`"objectMeshShadowVertexWGSL":"vertex"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1360,7 +1355,7 @@ func Page() Node {
 		`"webgpu"`,
 		`"webgpu:timestamp-query"`,
 		`"webgpu:adapter-limit:maxTextureDimension2D\u003e=8192"`,
-		`"computeParticles": [`,
+		`"computeParticles":[`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1412,7 +1407,7 @@ func Page() Node {
 		t.Fatalf("expected typed compute Scene3D to declare webgpu capability in runtime head %q", head)
 	}
 	for _, snippet := range []string{
-		`"requiredCapabilities": [`,
+		`"requiredCapabilities":[`,
 		`"webgpu:timestamp-query"`,
 		`"webgpu:limit:maxTextureDimension2D\u003e=4096"`,
 	} {
@@ -1488,28 +1483,28 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"background": "#101820"`,
-		`"ambientIntensity": 0.33`,
-		`"kind": "bloom"`,
-		`"threshold": 0.8`,
-		`"intensity": 0.7`,
-		`"kind": "vignette"`,
-		`"id": "hero"`,
-		`"color": "#8de1ff"`,
-		`"roughness": 0.42`,
-		`"castShadow": true`,
-		`"x": 1.5`,
-		`"models": [`,
-		`"id": "ship"`,
-		`"src": "/models/ship.glb"`,
-		`"x": 2`,
-		`"id": "stars"`,
-		`"size": 0.5`,
-		`"blendMode": "additive"`,
-		`"spinY": 0.04`,
-		`"id": "sun"`,
-		`"color": "#fff4cc"`,
-		`"intensity": 2`,
+		`"background":"#101820"`,
+		`"ambientIntensity":0.33`,
+		`"kind":"bloom"`,
+		`"threshold":0.8`,
+		`"intensity":0.7`,
+		`"kind":"vignette"`,
+		`"id":"hero"`,
+		`"color":"#8de1ff"`,
+		`"roughness":0.42`,
+		`"castShadow":true`,
+		`"x":1.5`,
+		`"models":[`,
+		`"id":"ship"`,
+		`"src":"/models/ship.glb"`,
+		`"x":2`,
+		`"id":"stars"`,
+		`"size":0.5`,
+		`"blendMode":"additive"`,
+		`"spinY":0.04`,
+		`"id":"sun"`,
+		`"color":"#fff4cc"`,
+		`"intensity":2`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D styled runtime head %q", snippet, head)
@@ -1651,24 +1646,24 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`/api/runtime/scene-program`,
-		`"maxFrameRate": 48`,
-		`"near": 0.15`,
-		`"far": 64`,
+		`"maxFrameRate":48`,
+		`"near":0.15`,
+		`"far":64`,
 		`"$scene.demo.pick"`,
 		`"$scene.demo.event"`,
-		`"lights": [`,
-		`"kind": "directional"`,
-		`"ambientIntensity": 0.22`,
-		`"models": [`,
+		`"lights":[`,
+		`"kind":"directional"`,
+		`"ambientIntensity":0.22`,
+		`"models":[`,
 		`"/models/runner.gosx3d.json"`,
-		`"sprites": [`,
+		`"sprites":[`,
 		`"/paper-card.png"`,
-		`"pickable": true`,
-		`"kind": "box"`,
-		`"kind": "lines"`,
-		`"pickable": false`,
-		`"text": "Typed spread"`,
-		`"driftSpeed": 0.8`,
+		`"pickable":true`,
+		`"kind":"box"`,
+		`"kind":"lines"`,
+		`"pickable":false`,
+		`"text":"Typed spread"`,
+		`"driftSpeed":0.8`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in typed Scene3D runtime head %q", snippet, head)
@@ -1726,13 +1721,13 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"background": "#08151f"`,
-		`"camera": {`,
-		`"near": 0.15`,
-		`"far": 64`,
-		`"scene": {`,
-		`"objects": [`,
-		`"kind": "box"`,
+		`"background":"#08151f"`,
+		`"camera":{`,
+		`"near":0.15`,
+		`"far":64`,
+		`"scene":{`,
+		`"objects":[`,
+		`"kind":"box"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in canonical Scene3D runtime head %q", snippet, head)
@@ -1826,26 +1821,26 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`/api/runtime/scene-program`,
-		`"capabilities": [`,
+		`"capabilities":[`,
 		`"pointer"`,
-		`"controls": "orbit"`,
-		`"controlTarget": {`,
-		`"controlRotateMode": "pixel-degrees"`,
-		`"controlRotateSpeed": 1.25`,
-		`"controlZoomSpeed": 0.9`,
-		`"controlMinDistance": 2`,
-		`"controlMaxDistance": 10`,
-		`"controlPitchLimit": 1.5707788735`,
-		`"rotationX": 0.18`,
-		`"rotationY": -0.3`,
-		`"near": 0.15`,
-		`"far": 64`,
-		`"kind": "box"`,
-		`"materialKind": "glass"`,
-		`"opacity": 0.45`,
-		`"emissive": 0.08`,
-		`"blendMode": "alpha"`,
-		`"renderPass": "alpha"`,
+		`"controls":"orbit"`,
+		`"controlTarget":{`,
+		`"controlRotateMode":"pixel-degrees"`,
+		`"controlRotateSpeed":1.25`,
+		`"controlZoomSpeed":0.9`,
+		`"controlMinDistance":2`,
+		`"controlMaxDistance":10`,
+		`"controlPitchLimit":1.5707788735`,
+		`"rotationX":0.18`,
+		`"rotationY":-0.3`,
+		`"near":0.15`,
+		`"far":64`,
+		`"kind":"box"`,
+		`"materialKind":"glass"`,
+		`"opacity":0.45`,
+		`"emissive":0.08`,
+		`"blendMode":"alpha"`,
+		`"renderPass":"alpha"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in typed Scene3D props runtime head %q", snippet, head)
@@ -1887,14 +1882,14 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"controls": "orbit"`,
-		`"controlTarget": {`,
-		`"x": 0.25`,
-		`"y": -0.5`,
-		`"z": 1.75`,
-		`"fov": 45`,
-		`"near": 0.01`,
-		`"far": 100`,
+		`"controls":"orbit"`,
+		`"controlTarget":{`,
+		`"x":0.25`,
+		`"y":-0.5`,
+		`"z":1.75`,
+		`"fov":45`,
+		`"near":0.01`,
+		`"far":100`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -3617,6 +3612,44 @@ func Page() Node {
 		if !strings.Contains(reloaded, snippet) {
 			t.Fatalf("expected %q in %q", snippet, reloaded)
 		}
+	}
+}
+
+// TestRouterFilePagesSkipCSRFMintWithoutTemplateUse proves the lazy-mint
+// fix: a page whose template never reads csrf.token or csrf.field must not
+// mint one, so its GET response carries no Set-Cookie header and stays
+// publicly cacheable. TestRouterFilePagesSupportRequestDataActionsAndCSRF
+// above is the paired proof that a page which does read csrf.token keeps
+// minting one and keeps its Set-Cookie header exactly as before.
+func TestRouterFilePagesSkipCSRFMintWithoutTemplateUse(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <main><h1>No form here</h1></main>
+}
+`)
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := session.MustNew("route-render-session-secret", session.Options{})
+	handler := sessions.Middleware(router.Build())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "No form here") {
+		t.Fatalf("unexpected body %q", res.Body.String())
+	}
+	if cookies := res.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("expected no Set-Cookie for a page that never reads csrf, got %v", cookies)
 	}
 }
 

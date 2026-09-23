@@ -308,7 +308,7 @@ func TestHTMLDocument(t *testing.T) {
 		t.Fatal("missing body content")
 	}
 	for _, snippet := range []string{
-		`<html data-gosx-document="true">`,
+		`<html data-gosx-document="true" lang="en">`,
 		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html">`,
 	} {
 		if !strings.Contains(html, snippet) {
@@ -326,6 +326,25 @@ func TestHTMLDocumentLanguageComposition(t *testing.T) {
 	}
 	if withEmpty, plain := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Body: gosx.Text("body")})), gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Language: " \t", Body: gosx.Text("body")})); withEmpty != plain {
 		t.Fatalf("expected empty language document to match plain output")
+	}
+}
+
+// TestHTMLDocumentDefaultsLanguageToEnglish proves the <html lang> default:
+// a document that never sets Language still ships a lang attribute (browsers
+// and assistive tech both need one to pick the right locale), and an app
+// that does set Language keeps its own value untouched.
+func TestHTMLDocumentDefaultsLanguageToEnglish(t *testing.T) {
+	unset := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Body: gosx.Text("body")}))
+	if !strings.Contains(unset, `<html data-gosx-document="true" lang="en">`) {
+		t.Fatalf("expected default lang=\"en\" when Language is unset, got %q", unset)
+	}
+
+	explicit := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Language: "fr", Body: gosx.Text("body")}))
+	if !strings.Contains(explicit, `<html data-gosx-document="true" lang="fr">`) {
+		t.Fatalf("expected explicit lang=\"fr\" to survive untouched, got %q", explicit)
+	}
+	if strings.Contains(explicit, `lang="en"`) {
+		t.Fatalf("did not expect the default to override an explicit language, got %q", explicit)
 	}
 }
 
@@ -1100,7 +1119,7 @@ func TestAppSeedsInitialNavigationDocumentState(t *testing.T) {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`<html data-gosx-document="true" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+		`<html data-gosx-document="true" lang="en" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 	} {
 		if !strings.Contains(body, snippet) {
@@ -1138,7 +1157,7 @@ func TestCustomDocumentCanReuseDocumentContractAttrs(t *testing.T) {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`<html data-gosx-document="true" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+		`<html data-gosx-document="true" lang="en" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 	} {
 		if !strings.Contains(body, snippet) {

@@ -74,7 +74,7 @@ func TestManifestScript(t *testing.T) {
 	if strings.Contains(html, "&#34;") {
 		t.Fatalf("manifest script should contain raw JSON, got %q", html)
 	}
-	if !strings.Contains(html, `"component": "Counter"`) {
+	if !strings.Contains(html, `"component":"Counter"`) {
 		t.Fatalf("expected raw manifest JSON in script tag, got %q", html)
 	}
 }

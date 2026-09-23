@@ -85,6 +85,25 @@ func lowerFileExpr(expr ast.Expr) fileExprFunc {
 		}
 
 	case *ast.CallExpr:
+		// len(x) is a language builtin on every other evaluator — transpile
+		// compiles to Go's real len(), and the island DSL's own parser
+		// (ir/exprparse.go) lowers it to OpLen — never a registered
+		// function. Route used to resolve the bare identifier "len" through
+		// evalIdent like any other call target, which only found a callable
+		// when the caller's fileRenderEnv had registered one itself (see
+		// registerBaseFileFuncs, which only newFileRenderEnv's callers
+		// reach — RenderProgramComponent, and any other bare-env caller,
+		// silently rendered every len(...) hole empty). Special-casing it
+		// here, before the generic identifier/funcs lookup below, makes
+		// len(x) behave identically on every fileRenderEnv, matching the
+		// other two evaluators and closing the gap
+		// docs/expression-support-matrix.md pinned as string_len_builtin.
+		if id, ok := node.Fun.(*ast.Ident); ok && id.Name == "len" && len(node.Args) == 1 {
+			arg := lowerFileExpr(node.Args[0])
+			return func(env fileRenderEnv) any {
+				return fileEvalLen(arg(env))
+			}
+		}
 		fn := lowerFileExpr(node.Fun)
 		args := make([]fileExprFunc, len(node.Args))
 		for i, arg := range node.Args {
