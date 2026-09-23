@@ -223,8 +223,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 10445,
-      "maxFileLines": 10445
+      "maxLines": 10451,
+      "maxFileLines": 10451
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -246,17 +246,17 @@
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"
       ],
-      "maxLines": 19025,
+      "maxLines": 19032,
       "maxFileLines": 18827
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 10445,
+    "../runtime/scene3d/webgl.ts": 10451,
     "../runtime/scene3d/webgpu.ts": 18827,
-    "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
+    "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205,
     "../runtime/scene3d/hydrate-input.ts": 89,
     "../runtime/scene3d/mount-webgl.ts": 5399,
-    "../runtime/scene3d/mount.ts": 3578
+    "../runtime/scene3d/mount.ts": 3593
   },
   "functionDefaults": {
     "lines": 200,
