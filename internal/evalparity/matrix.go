@@ -85,7 +85,13 @@ func GenerateMatrix(cases []Case) string {
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	// Trim any run of trailing newlines (the per-category loop above
+	// always appends one after the last category's notes) down to
+	// exactly one, so the generated file ends in a single final newline
+	// instead of a trailing blank line. git diff --check rejects a
+	// blank line at EOF, and a missing final newline is its own
+	// diagnostic, so exactly one is the only value that passes both.
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 // backendReason returns the one-line explanation for a non-agreeing
