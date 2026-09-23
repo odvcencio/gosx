@@ -48,6 +48,12 @@ type Options struct {
 	// is called from the client's internal goroutine — treat it like an
 	// event handler, not call back into blocking work.
 	OnStateChange func(State)
+	// EnableCompression offers permessage-deflate at handshake on the native
+	// (gorilla) transport, matching a hub's own EnableCompression opt-in.
+	// Off by default. The browser transport ignores this field: every major
+	// browser already offers permessage-deflate on its own, so there is
+	// nothing to enable from client Go code running as js/wasm.
+	EnableCompression bool
 }
 
 // Client is a reconnecting hub connection. The zero value is not usable;
@@ -78,7 +84,7 @@ func New(opts Options) *Client {
 	}
 	c := &Client{
 		opts:     opts,
-		dial:     newDefaultDialer(),
+		dial:     newDefaultDialer(opts.EnableCompression),
 		backoff:  opts.Backoff,
 		handlers: make(map[string]func(json.RawMessage)),
 		closeCh:  make(chan struct{}),
