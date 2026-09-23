@@ -228,8 +228,10 @@ test("packed rigid poses commit atomically, reuse matrices, and survive membersh
   }
   const state = { instancedGLBMeshes: [{ id: "heroes", instances }], objects: new Map(objects.map(object => [object.id, object])), _modelTextureVariantScope: { key: "scope" }, _hydratedModelRecords: records };
   const pose = x => [{ id: "heroes", instances: instances.map((instance, index) => ({ ...instance, x: x + index, animation: "run", animationTime: .25 })) }];
-  const apply = batches => bridge.applyMountedPoseFrame(state, batches, () => false, () => {}, {}, helpers);
+  const handle = {};
+  const apply = batches => bridge.applyMountedPoseFrame(state, batches, () => false, () => {}, handle, helpers);
   assert.equal(apply(pose(2)).binary, true);
+  assert.equal(handle.__gosxPoseFrameStats.directAccepted, 1);
   assert.deepEqual(objects.map(object => object.parentMatrix[12]), [2, 3]);
   assert.deepEqual(objects.map(object => Array.from(object._crowdSkin.rows.slice(0, 2))), [[1, .25], [1, .25]]);
   const firstMatrices = objects.map(object => object.parentMatrix);

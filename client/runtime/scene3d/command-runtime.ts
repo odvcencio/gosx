@@ -364,7 +364,12 @@
     }
     previous.length = offset;
     var retained = false;
-    try { retained = helpers && updatePackedRigidInstancePoses(state, batches, targets, helpers) || updateRigidPoses(state); } catch (_error) { retained = false; }
+    try {
+      var direct = helpers && updatePackedRigidInstancePoses(state, batches, targets, helpers);
+      retained = direct || updateRigidPoses(state);
+      if (direct) stats.directAccepted = (stats.directAccepted || 0) + 1;
+      else if (helpers && retained) stats.retainedFallback = (stats.retainedFallback || 0) + 1;
+    } catch (_error) { retained = false; }
     if (!retained) {
       offset = 0;
       for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
