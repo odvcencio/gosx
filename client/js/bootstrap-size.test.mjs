@@ -1091,8 +1091,9 @@ const budgets = [
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   // GSP2 decoding, validation, and retained pose application are loaded only
-  // for command users. Measured: 6_248 / 2_395 / 2_143.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 6_500, gzip: 2_500, brotli: 2_200 },
+  // for command users. The bounded per-target queue and async error telemetry
+  // measure 8_135 / 2_972 / 2_661 after generation.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 8_200, gzip: 3_000, brotli: 2_700 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
