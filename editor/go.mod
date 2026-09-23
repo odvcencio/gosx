@@ -22,7 +22,7 @@ require (
 	m31labs.dev/eos v0.1.4 // indirect
 	m31labs.dev/mll v0.1.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
-	m31labs.dev/turboquant v0.2.0 // indirect
+	m31labs.dev/turboquant v0.2.1 // indirect
 )
 
 replace m31labs.dev/gosx => ..
