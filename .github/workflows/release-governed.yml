@@ -240,8 +240,53 @@ jobs:
           retention-days: 7
           path: source/release-artifacts/
 
+  browser-runtime:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install pinned TinyGo toolchain
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Build and package browser runtime
+        run: |
+          set -euo pipefail
+          runtime_dir="${RUNNER_TEMP}/gosx-browser-runtime"
+          mkdir -p runtime-release-artifacts
+          (cd source && go run ./cmd/gosx build-runtime "${runtime_dir}")
+          python3 scripts/package-browser-runtime.py pack \
+            --source source \
+            --wasm-dir "${runtime_dir}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.prepare.outputs.commit }}" \
+            --output "runtime-release-artifacts/gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-browser-runtime-${{ inputs.tag }}
+          retention-days: 7
+          path: runtime-release-artifacts/
+
   publish:
-    needs: [prepare, validate, test-unit, test-cli, vet, build]
+    needs: [prepare, validate, test-unit, test-cli, vet, build, browser-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: governed-release
@@ -328,7 +373,12 @@ jobs:
             gosx-darwin-arm64
             gosx-windows-amd64.exe
             gosx-windows-arm64.exe
+            "gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
           )
+          python3 ../scripts/package-browser-runtime.py verify \
+            --archive "gosx-browser-runtime-${RELEASE_TAG}.tar.gz" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.prepare.outputs.commit }}"
           for artifact in "${expected[@]}"; do
             test -f "${artifact}"
           done
@@ -346,6 +396,7 @@ jobs:
             artifacts/gosx-darwin-arm64
             artifacts/gosx-windows-amd64.exe
             artifacts/gosx-windows-arm64.exe
+            artifacts/gosx-browser-runtime-${{ env.RELEASE_TAG }}.tar.gz
             artifacts/checksums.txt
           generate_release_notes: true
 

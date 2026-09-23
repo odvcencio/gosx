@@ -610,7 +610,10 @@ const budgets = [
   // Typed world-mesh attribute builders measure 1_645_660 / 450_589 /
   // 362_277. Only gzip exceeds that envelope; 434_205 keeps the exact
   // governed hard limit at 450_589.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_205, brotli: 346_700 },
+  // The retained Scene3D pose-frame hook adds 241 raw bytes to the optional
+  // Scene3D feature and 69 gzip bytes to this legacy monolith. The decoder
+  // and validation live in the lazily fetched command chunk below.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_300, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1072,7 +1075,7 @@ const budgets = [
   // limits equal to those reviewed artifacts.
   // Typed world-mesh attribute builders measure 582_224 / 162_304 / 134_535.
   // Baselines below set exact minimum hard limits equal to those artifacts.
-  { file: "bootstrap-feature-scene3d.js", raw: 554_499, gzip: 154_575, brotli: 128_128 },
+  { file: "bootstrap-feature-scene3d.js", raw: 554_750, gzip: 154_640, brotli: 128_128 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1087,7 +1090,10 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-decompress.js", raw: 9_500, gzip: 3_800, brotli: 3_300 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
+  // GSP2 decoding, validation, and retained pose application are loaded only
+  // for command users. The bounded per-target queue and async error telemetry
+  // measure 8_135 / 2_972 / 2_661 after generation.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 8_200, gzip: 3_000, brotli: 2_700 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
@@ -1791,8 +1797,10 @@ const routeBudgets = [
     // Typed world-mesh attribute builders measure 1_128_184 / 314_915 /
     // 266_904. The baselines below set the minimum hard limits for those
     // reviewed route totals.
-    raw: 1_074_461,
-    gzip: 299_919,
+    // Retained pose-frame mount hook adds 241 bytes; the binary decoder is
+    // deferred to bootstrap-feature-scene3d-command.js.
+    raw: 1_074_800,
+    gzip: 299_980,
     brotli: 254_194,
   },
   {
@@ -1929,7 +1937,8 @@ const routeBudgets = [
     // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
     // limit at 410_499.
     raw: 1_465_500,
-    gzip: 394_115,
+    // Retained pose-frame mount hook adds 52 gzip bytes to this route.
+    gzip: 394_180,
     brotli: 332_900,
   },
   {

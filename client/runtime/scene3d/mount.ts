@@ -3349,9 +3349,8 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
-      getCamera() {
-        return currentMountedSceneCamera();
-      },
+      applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
+      getCamera() { return currentMountedSceneCamera(); },
       getTelemetry() {
         return {
           camera: currentMountedSceneCamera(),
@@ -3359,6 +3358,7 @@
           selectionID: lastAppliedSelectionID || "",
           lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
           rendererStats: renderer && typeof renderer.getStats === "function" ? renderer.getStats() : null,
+          poseFrames: handle.__gosxPoseFrameStats || null,
         };
       },
       setCamera(camera) {
