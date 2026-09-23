@@ -97,10 +97,15 @@ rendered field from schema data the compiler writes into the IR, and the
 compiler builds that data from the one `.gsx` file it reads. A type declared
 in a sibling `.go` file is invisible at that moment.
 
-A strict `component Name` compiles to a package-level Go `func Name`, and a
-`.gsx` type declaration compiles to itself. `gosx check` reports a name a
-sibling `.go` file in the same package already declares, naming both
-declarations and their positions.
+`gosx compile` transpiles a strict `component Name` to a package-level Go
+`func Name`. A `.gsx` type declaration compiles to itself. `gosx check`
+reads that generated Go and reports a name a sibling `.go` file in the
+same package already declares, naming both declarations and positions.
+
+The file renderer never runs this generated Go. `router.AddDir` — the
+form the scaffold's `main.go` calls in production — parses and lowers
+each `.gsx` file to IR once. It then interprets that IR per request, the
+way the previous paragraph describes.
 
 ### Islands are strict-capable; engines use the programmatic v1 surface
 
