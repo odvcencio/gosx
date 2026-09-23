@@ -196,7 +196,66 @@ test("retained pose application reaches the existing crowd animation rows", () =
   const object = { _crowdSkin: { atlas, rows, poseRows(_atlas, pose, out) { out[0] = pose.animation === "run" ? 1 + pose.animationTime * 4 : 0; out[1] = pose.animationLoop ? 1 : 0; return out; } } };
   const staged = { objects: [object] };
   const state = { instancedGLBMeshes: [{ id: "heroes", instances: [{ id: "hero", x: 0, animation: "idle", animationTime: 0, animationLoop: false }] }], _hydratedModelRecords: { modelCount: 1, rigidInstances: new Map([["hero", staged]]) } };
-  bridge.applyMountedPoseFrame(state, bridge.decodePoseFrame(frame()), context.sceneUpdateRigidInstancePoses, () => {}, {});
+  bridge.applyMountedPoseFrame(state, bridge.decodePoseFrame(frame()), state => context.sceneUpdateRigidInstancePoses(state), () => {}, {});
   assert.equal(object.parentMatrix[12], 1.5);
   assert.deepEqual(Array.from(rows.slice(0, 2)), [2, 1]);
+});
+
+test("packed rigid poses commit atomically, reuse matrices, and survive membership churn", () => {
+  const { bridge } = runtime();
+  const matrixCache = new WeakMap();
+  const helpers = [
+    function modelMatrix(instance) {
+      let matrix = matrixCache.get(instance);
+      if (!matrix) { matrix = new Float32Array(16); matrixCache.set(instance, matrix); }
+      matrix[0] = instance.scaleX;
+      matrix[5] = matrix[10] = matrix[15] = 1;
+      matrix[12] = instance.x;
+      return matrix;
+    },
+    matrix => matrix[0],
+  ];
+  const instances = ["a", "b"].map(id => ({ id, x: 0, y: 0, z: 0, scaleX: 1, animation: "idle", animationTime: 0, animationLoop: false }));
+  const objects = instances.map(instance => ({ id: `heroes/${instance.id}/part`, vertices: { immutable: true, revision: 0 }, parentMatrix: "original", _crowdSkin: {
+    atlas: {}, rows: new Float32Array(3), poseRows(_atlas, pose, out) { out[0] = pose.animation === "run" ? 1 : 0; out[1] = pose.animationTime; return out; },
+  } }));
+  const staged = objects.map((object, index) => ({ objects: [object], model: { id: `heroes/${instances[index].id}` }, rigidInstanceModel: {}, modelSkins: [], modelAnimations: [], points: [], labels: [], sprites: [], html: [], lights: [] }));
+  const records = { modelCount: 2, staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+  for (let index = 0; index < instances.length; index++) {
+    const id = `heroes/${instances[index].id}`;
+    records.rigidInstances.set(id, staged[index]);
+    records.rigidInstancesByID.set(id, { key: id, staged: staged[index], scope: "scope" });
+  }
+  const state = { instancedGLBMeshes: [{ id: "heroes", instances }], objects: new Map(objects.map(object => [object.id, object])), _modelTextureVariantScope: { key: "scope" }, _hydratedModelRecords: records };
+  const pose = x => [{ id: "heroes", instances: instances.map((instance, index) => ({ ...instance, x: x + index, animation: "run", animationTime: .25 })) }];
+  const apply = batches => bridge.applyMountedPoseFrame(state, batches, () => false, () => {}, {}, helpers);
+  assert.equal(apply(pose(2)).binary, true);
+  assert.deepEqual(objects.map(object => object.parentMatrix[12]), [2, 3]);
+  assert.deepEqual(objects.map(object => Array.from(object._crowdSkin.rows.slice(0, 2))), [[1, .25], [1, .25]]);
+  const firstMatrices = objects.map(object => object.parentMatrix);
+  const secondPoseRows = objects[1]._crowdSkin.poseRows;
+  objects[1]._crowdSkin.poseRows = () => { throw new Error("bad atlas"); };
+  assert.throws(() => apply(pose(4)), /retained-pose-unavailable/);
+  assert.deepEqual(objects.map(object => object.parentMatrix[12]), [2, 3]);
+  assert.deepEqual(objects.map(object => Array.from(object._crowdSkin.rows.slice(0, 2))), [[1, .25], [1, .25]]);
+  assert.deepEqual(instances.map(instance => instance.x), [2, 3]);
+  objects[1]._crowdSkin.poseRows = secondPoseRows;
+  records.rigidInstancesByID.delete("heroes/b");
+  assert.throws(() => apply(pose(5)), /retained-pose-unavailable/);
+  assert.deepEqual(objects.map(object => object.parentMatrix[12]), [2, 3]);
+  assert.equal(objects[0].parentMatrix, firstMatrices[0]);
+  assert.deepEqual(instances.map(instance => instance.x), [2, 3]);
+  records.rigidInstancesByID.set("heroes/b", { key: "heroes/b", staged: staged[1], scope: "scope" });
+  assert.equal(apply(pose(8)).binary, true);
+  assert.deepEqual(objects.map(object => object.parentMatrix[12]), [8, 9]);
+  assert.notEqual(objects[0].parentMatrix, firstMatrices[0]);
+  assert.equal(apply(pose(11)).binary, true);
+  assert.equal(objects[0].parentMatrix, firstMatrices[0]);
+  state.instancedGLBMeshes[0].instances.pop();
+  records.modelCount = 1;
+  records.rigidInstances.delete("heroes/b");
+  records.rigidInstancesByID.delete("heroes/b");
+  assert.equal(apply([{ id: "heroes", instances: [{ ...instances[0], x: 14 }] }]).binary, true);
+  assert.equal(objects[0].parentMatrix[12], 14);
+  assert.equal(objects[1].parentMatrix[12], 12);
 });
