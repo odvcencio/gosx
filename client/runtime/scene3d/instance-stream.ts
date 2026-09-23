@@ -123,8 +123,6 @@
 
   // --- apply (called through mount.ts's handle.applyInstanceStream) ---
 
-  var revisionsByBatchID = new Map();
-
   function reportFailure(mount, reason, batchId) {
     console.error("[gosx] scene3d instance-stream: " + reason + (batchId ? " (batch " + batchId + ")" : ""));
     if (mount && typeof mount.dispatchEvent === "function") {
@@ -147,10 +145,26 @@
   // batch they name. sceneState and scheduleRender are the mount's own
   // closure state, passed in by mount.ts's forwarding handle method so this
   // file needs no access to renderer internals to do its job.
+  //
+  // The per-batch revision counter used to live in a module-scope Map
+  // (revisionsByBatchID), shared by every Scene3D mount this chunk's IIFE
+  // ever sees on the page. Two independent mounts that happen to register a
+  // batch under the same id -- plausible, since a batch id is author-chosen
+  // per component instance, not page-unique -- then shared one revision
+  // counter: a frame for mount B could be rejected as "stale" because mount
+  // A had already advanced past that revision, or vice versa. The counter
+  // now lives on sceneState itself, so it is scoped to the one mount that
+  // owns it, exactly like every other piece of per-mount state this
+  // function reads and writes.
   function applyInstanceStreamFrame(sceneState, bytes, scheduleRender, mount) {
     var frame = decodeInstanceStreamFrame(bytes);
     if (!frame) return reportFailure(mount, "malformed or unrecognized instance-stream frame", "");
-    var lastRevision = revisionsByBatchID.get(frame.batchId) || 0;
+    var revisions = sceneState._instanceStreamRevisions;
+    if (!(revisions instanceof Map)) {
+      revisions = new Map();
+      sceneState._instanceStreamRevisions = revisions;
+    }
+    var lastRevision = revisions.get(frame.batchId) || 0;
     if (!Number.isFinite(frame.revision) || frame.revision <= 0 || frame.revision <= lastRevision) {
       return { applied: false, reason: "stale-revision" };
     }
@@ -170,7 +184,7 @@
       entry.transforms = entry._instanceStreamBuffer;
     }
     entry._instanceStreamBuffer.set(frame.data.subarray(0, floatsNeeded));
-    revisionsByBatchID.set(frame.batchId, frame.revision);
+    revisions.set(frame.batchId, frame.revision);
     scheduleRender("instance-stream");
     return { applied: true, revision: frame.revision };
   }

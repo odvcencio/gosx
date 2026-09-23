@@ -30,8 +30,10 @@ const source = fs.readFileSync(
 
 // loadInstanceStream evaluates instance-stream.ts's IIFE against a fresh fake
 // window/document pair and returns the globals it publishes. A fresh
-// evaluation per call keeps revisionsByBatchID (module-scope inside the IIFE)
-// isolated between tests.
+// evaluation per call gives each test its own window, matching one page
+// load of the chunk; within one such load, apply's per-batch revision
+// counter lives on the sceneState object a caller passes in (one per
+// mount), not on this shared window -- see the two-mounts test below.
 function loadInstanceStream(documentStub) {
   const window = {};
   const factory = new Function(
@@ -196,6 +198,43 @@ test("applyInstanceStreamFrame drops a stale or replayed revision without touchi
   assert.deepEqual(scheduled, []);
 });
 
+// Regression test: the per-batch revision counter used to live in a
+// module-scope Map, shared by every mount this chunk's one page-level IIFE
+// ever sees. A batch id is author-chosen per component instance, not
+// page-unique, so two independent Scene3D mounts that both name their
+// InstancedMesh batch "crowd-actors" shared one counter: the second mount's
+// first frame, at the same revision the first mount had already recorded,
+// was wrongly rejected as a stale replay. The counter now lives on each
+// call's sceneState, so two mounts sharing a batch id -- and even replaying
+// the exact same revision -- apply independently.
+test("applyInstanceStreamFrame tracks revisions per mount (sceneState), not globally, for two mounts sharing a batch id", () => {
+  const { apply } = loadInstanceStream();
+  const frames = goFixtureFrames();
+
+  const entryA = { id: "crowd-actors", count: 2 };
+  const sceneStateA = makeSceneState([entryA]);
+  const entryB = { id: "crowd-actors", count: 2 };
+  const sceneStateB = makeSceneState([entryB]);
+
+  const resultA = apply(sceneStateA, frames["aligned-id-transform"], () => {}, makeMount());
+  assert.deepEqual(resultA, { applied: true, revision: 3 });
+
+  // Same batch id, same revision, but a DIFFERENT mount's sceneState: a
+  // module-scope revision tracker would see revision 3 already recorded for
+  // "crowd-actors" (from mount A above) and reject this as stale. A
+  // per-sceneState tracker has never seen "crowd-actors" for mount B, so it
+  // must apply.
+  const resultB = apply(sceneStateB, frames["aligned-id-transform"], () => {}, makeMount());
+  assert.deepEqual(resultB, { applied: true, revision: 3 });
+  assert.ok(entryB.transforms instanceof Float32Array);
+  assert.deepEqual(Array.from(entryB.transforms), Array.from(sequentialFloats(32)));
+
+  // Mount A's own replay of the same revision is still correctly rejected:
+  // per-mount tracking must not turn off the stale-revision guard entirely.
+  const replayA = apply(sceneStateA, frames["aligned-id-transform"], () => {}, makeMount());
+  assert.deepEqual(replayA, { applied: false, reason: "stale-revision" });
+});
+
 test("applyInstanceStreamFrame fails named (not silently) for an unsupported kind", () => {
   const { apply } = loadInstanceStream();
   const frames = goFixtureFrames();
@@ -298,9 +337,11 @@ function benchBinaryApply(apply, count, revision) {
   header[4] = 1;
   header[5] = 0;
   const dv = new DataView(header.buffer);
-  // Callers pass a strictly increasing revision across iterations that reuse
-  // the same "crowd-actors" id, so the module-scope revisionsByBatchID
-  // tracker does not (correctly) treat a later call as a stale replay.
+  // Each call below builds its own fresh sceneState (one simulated mount
+  // per call), so the per-sceneState revision tracker never sees a repeat
+  // batch id and the revision argument does not strictly need to increase
+  // across calls; it still does here, matching what a real per-frame
+  // caller sends.
   dv.setUint32(8, revision, true);
   dv.setUint32(16, count, true);
   dv.setUint16(20, 12, true);
