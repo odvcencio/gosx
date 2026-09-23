@@ -6199,7 +6199,7 @@
     default: return "";
     }
   }
-/* @ts-expect-error TS2393 -- webgl.ts carries an identical copy of this helper; see the note on its declaration there */ 
+/* @ts-expect-error TS2393 -- webgl.ts carries an identical copy of this helper; see the note on its declaration there */
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
@@ -7509,7 +7509,7 @@
           }
         }
         renderTruth().record("webgpu-device-ready", renderTruth().implementation(webGPUAdapterInfoSnapshot()));
-/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ 
+/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
         configureWebGPUCanvas();
 
         // Create bind group layouts.
@@ -18517,7 +18517,7 @@
         if (shadowSlots[si]) destroyRendererGPUResource(shadowSlots[si].texture);
         shadowSlots[si] = null;
       }
-/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ 
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
       textureCache._gosxGeneration.disposed = true;
       for (var record of textureCache.values()) {
         if (record) {

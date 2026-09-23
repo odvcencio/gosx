@@ -2217,7 +2217,7 @@
         descriptor: sceneWaterParseDescriptor(descriptors[spec.desc]),
       };
     }
-/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ 
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.simulation = compilePass("simulation");
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.normal = compilePass("normal");
     if (!programs.simulation || !programs.normal) {
@@ -5606,7 +5606,7 @@
     default: return 1;
     }
   }
-/* @ts-expect-error TS2393 -- webgpu.ts carries an identical copy of this helper; each renderer backend chunk loads on its own, so this file must not depend on the other for a small pure function */ 
+/* @ts-expect-error TS2393 -- webgpu.ts carries an identical copy of this helper; each renderer backend chunk loads on its own, so this file must not depend on the other for a small pure function */
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
@@ -9246,7 +9246,7 @@
             /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.joints);
             gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
           }
-/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ 
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
           if (!bindScenePBRDirectAttribute(obj, "weights", currentAttribs.weights, 4, directWeights)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
             /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
@@ -10052,7 +10052,7 @@
           instancedAllowedAttribs[ip.attributes.instanceColor] = true;
         }
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
-/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ 
+/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
         gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
@@ -10139,7 +10139,7 @@
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
-/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ 
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
       textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {
         if (record) {

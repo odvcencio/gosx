@@ -226,4 +226,3 @@ Notes:
 - `escape_double_quote`: double quote escapes to &#34;
 - `escape_apostrophe`: apostrophe escapes to &#39;
 - `escape_concat_result`: an expression's computed (not just a bare prop's) result still escapes
-
