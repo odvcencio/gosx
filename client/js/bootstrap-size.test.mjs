@@ -618,7 +618,12 @@ const budgets = [
   // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
   // outside this monolith. Only gzip exceeds that envelope; 434_400 keeps
   // narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_400, brotli: 346_700 },
+  // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds a
+  // small loader IIFE to the same monolith, so the chunk it lazy-loads can
+  // ship outside this bundle instead of eagerly. Measured: 1_648_132 /
+  // 451_153 / 362_586. Only gzip exceeds the prior envelope; 435_200 keeps
+  // narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 435_200, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1085,7 +1090,10 @@ const budgets = [
   // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
   // outside this base chunk. Narrow rounding headroom on raw and gzip; brotli
   // fits the prior envelope.
-  { file: "bootstrap-feature-scene3d.js", raw: 556_000, gzip: 154_800, brotli: 128_128 },
+  // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds its
+  // loader IIFE here, in this base chunk, so the actual chunk it lazy-loads
+  // stays outside it. Measured: 584_696 / 162_859 / 134_858.
+  { file: "bootstrap-feature-scene3d.js", raw: 559_000, gzip: 156_000, brotli: 129_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1815,9 +1823,13 @@ const routeBudgets = [
     // bootstrap-feature-scene3d.js on this route -- so every page pays a few
     // bytes even though the fast path itself ships in its own lazy chunk.
     // Narrow rounding headroom.
-    raw: 1_075_100,
-    gzip: 300_100,
-    brotli: 254_300,
+    //
+    // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
+    // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
+    // carries. Measured: 1_130_656 / 315_470 / 267_227.
+    raw: 1_079_000,
+    gzip: 301_000,
+    brotli: 255_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1957,10 +1969,14 @@ const routeBudgets = [
     // bootstrap-feature-scene3d.js on this route. Measured:
     // 1_521_189 / 410_555 / 346_843. Only gzip exceeds that envelope;
     // 394_300 keeps narrow rounding headroom.
+    // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
+    // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
+    // carries. Measured: 1_523_490 / 411_054 / 347_173. Only gzip exceeds
+    // that envelope; 395_200 keeps narrow rounding headroom.
     raw: 1_465_500,
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
-    gzip: 394_300,
+    gzip: 395_200,
     brotli: 332_900,
   },
   {

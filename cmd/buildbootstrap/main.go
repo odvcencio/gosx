@@ -67,32 +67,33 @@ import (
 // 10-runtime-scene-utils.ts. Each seam is a file, so a chunk manifest names
 // files only.
 const (
-	textLayoutEngineFile     = "bootstrap-src/01-textlayout-engine.ts"
-	runtimeSceneUtilsFile    = "bootstrap-src/10-runtime-scene-utils.ts"
-	runtimeSceneCoreFile     = "bootstrap-src/10-runtime-scene-core.ts"
-	runtimePrimitivesFile    = "bootstrap-src/10-runtime-primitives.ts"
-	tailEventDelegationFile  = "../runtime/host/events.ts"
-	tailEngineMountingFile   = "bootstrap-src/30b-tail-engine-mounting.ts"
-	tailHubConnectionsFile   = "../runtime/host/hubs.ts"
-	tailHubFightInputFile    = "bootstrap-src/30c1-tail-hub-fight-input.ts"
-	tailArcadeAudioFile      = "bootstrap-src/30c2-tail-arcade-audio.ts"
-	tailIslandDisposeFile    = "../runtime/host/disposal.ts"
-	tailEngineDisposeFile    = "../runtime/host/engine-disposal.ts"
-	tailHubDisconnectFile    = "../runtime/host/hub-disposal.ts"
-	tailPageDisposeFile      = "../runtime/host/page-disposal.ts"
-	tailCapabilityProbeFile  = "bootstrap-src/30h-tail-capability-probe.ts"
-	tailHydrationFile        = "../runtime/host/hydration.ts"
-	tailRuntimeReadyFile     = "bootstrap-src/30j-tail-runtime-ready.ts"
-	tailInitFile             = "bootstrap-src/30k-tail-init.ts"
-	videoSyncFallbackFile    = "bootstrap-src/28-video-sync-fallback.ts"
-	scene3DCommandBridgeFile = "../runtime/scene3d/command-bridge.ts"
-	controllersFile          = "../runtime/host/controllers.ts"
-	hostCompatibilityFile    = "../runtime/host/compatibility.ts"
-	disclosureFile           = "../runtime/host/disclosure.ts"
-	runtimeContractFile      = "../runtime/generated/runtime-abi.ts"
-	runtimeABISupportFile    = "../runtime/wasm/abi.ts"
-	runtimeMailboxFile       = "../runtime/wasm/mailbox.ts"
-	runtimeLoaderFile        = "../runtime/wasm/loader.ts"
+	textLayoutEngineFile            = "bootstrap-src/01-textlayout-engine.ts"
+	runtimeSceneUtilsFile           = "bootstrap-src/10-runtime-scene-utils.ts"
+	runtimeSceneCoreFile            = "bootstrap-src/10-runtime-scene-core.ts"
+	runtimePrimitivesFile           = "bootstrap-src/10-runtime-primitives.ts"
+	tailEventDelegationFile         = "../runtime/host/events.ts"
+	tailEngineMountingFile          = "bootstrap-src/30b-tail-engine-mounting.ts"
+	tailHubConnectionsFile          = "../runtime/host/hubs.ts"
+	tailHubFightInputFile           = "bootstrap-src/30c1-tail-hub-fight-input.ts"
+	tailArcadeAudioFile             = "bootstrap-src/30c2-tail-arcade-audio.ts"
+	tailIslandDisposeFile           = "../runtime/host/disposal.ts"
+	tailEngineDisposeFile           = "../runtime/host/engine-disposal.ts"
+	tailHubDisconnectFile           = "../runtime/host/hub-disposal.ts"
+	tailPageDisposeFile             = "../runtime/host/page-disposal.ts"
+	tailCapabilityProbeFile         = "bootstrap-src/30h-tail-capability-probe.ts"
+	tailHydrationFile               = "../runtime/host/hydration.ts"
+	tailRuntimeReadyFile            = "bootstrap-src/30j-tail-runtime-ready.ts"
+	tailInitFile                    = "bootstrap-src/30k-tail-init.ts"
+	videoSyncFallbackFile           = "bootstrap-src/28-video-sync-fallback.ts"
+	scene3DCommandBridgeFile        = "../runtime/scene3d/command-bridge.ts"
+	scene3DInstanceStreamBridgeFile = "../runtime/scene3d/instance-stream-bridge.ts"
+	controllersFile                 = "../runtime/host/controllers.ts"
+	hostCompatibilityFile           = "../runtime/host/compatibility.ts"
+	disclosureFile                  = "../runtime/host/disclosure.ts"
+	runtimeContractFile             = "../runtime/generated/runtime-abi.ts"
+	runtimeABISupportFile           = "../runtime/wasm/abi.ts"
+	runtimeMailboxFile              = "../runtime/wasm/mailbox.ts"
+	runtimeLoaderFile               = "../runtime/wasm/loader.ts"
 )
 
 type source struct {
@@ -132,6 +133,7 @@ var outputs = []output{
 			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile(scene3DCommandBridgeFile),
+			sourceFile(scene3DInstanceStreamBridgeFile),
 			sourceFile("../runtime/host/regions.ts"),
 			sourceFile(controllersFile),
 			sourceFile("../runtime/host/facade.ts"),
@@ -349,6 +351,7 @@ var outputs = []output{
 		sources: []source{
 			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.ts"),
 			sourceFile(scene3DCommandBridgeFile),
+			sourceFile(scene3DInstanceStreamBridgeFile),
 			sourceFile(runtimePrimitivesFile),
 			// 10-runtime-scene-utils.ts is NOT here any more. This chunk
 			// carried a full copy of it while bootstrap-runtime.js carried
@@ -473,10 +476,12 @@ var outputs = []output{
 	},
 	{
 		// Opt-in binary instance-transform fast path. A page fetches this only
-		// when it calls window.__gosx_scene3d_instance_stream_bridge or a
-		// scene.InstanceStreamFrame-emitting engine explicitly loads it; every
-		// other Scene3D page's base bundle stays byte-identical. See
-		// client/runtime/scene3d/instance-stream.ts and scene/instance_stream.go.
+		// when a caller's first handle.applyInstanceStream(bytes) call makes
+		// instance-stream-bridge.ts (in the base scene3d bundle) lazy-load it;
+		// every other Scene3D page's base bundle stays byte-identical. See
+		// client/runtime/scene3d/instance-stream.ts,
+		// client/runtime/scene3d/instance-stream-bridge.ts and
+		// scene/instance_stream.go.
 		name: "bootstrap-feature-scene3d-instance-stream.js",
 		sources: []source{
 			sourceFile("../runtime/scene3d/instance-stream.ts"),

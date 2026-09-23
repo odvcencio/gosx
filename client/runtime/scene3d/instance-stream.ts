@@ -3,13 +3,17 @@
 //
 // The opt-in counterpart to command-runtime.ts. A page-owned game loop that
 // wants to update a registered InstancedMesh batch's per-instance transforms
-// every frame without paying for a MountCommandBatch JSON round trip fetches
-// this chunk once (bootstrap-feature-scene3d-instance-stream.js) and calls
+// every frame without paying for a MountCommandBatch JSON round trip calls
 // window.__gosx_scene3d_instance_stream_bridge.dispatchInstanceStream(target,
-// bytes) with the raw bytes scene.InstanceStreamFrame.Encode produced.
+// bytes) with the raw bytes scene.InstanceStreamFrame.Encode produced. This
+// chunk (bootstrap-feature-scene3d-instance-stream.js) is fetched lazily on
+// the FIRST such call, by instance-stream-bridge.ts -- part of the base
+// scene3d bundle every page pays for -- not by the caller; see that file's
+// doc comment for the load, queue, and error-event contract.
 //
-// This file owns everything the fast path needs, so mount.ts (the base
-// bundle every Scene3D page pays for) carries only a tiny forwarding method:
+// This file owns everything the fast path needs once loaded, so mount.ts
+// (the base bundle every Scene3D page pays for) carries only a tiny
+// forwarding method:
 //
 //   1. The wire decoder (decodeInstanceStreamFrame).
 //   2. applyInstanceStreamFrame, published as

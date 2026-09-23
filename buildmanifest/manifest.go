@@ -69,13 +69,15 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DDecompress HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
 	// instance-transform fast path (see client/runtime/scene3d/
-	// instance-stream.ts and scene/instance_stream.go). Unlike its scene3d
-	// siblings above, no Scene3D mount fetches it automatically; a page
-	// fetches it only when application code calls
-	// window.__gosx_scene3d_instance_stream_bridge or an
-	// InstanceStreamFrame-emitting engine explicitly loads it. It still
-	// needs a manifest entry and a servable URL like every other chunk, or
-	// that opt-in load 404s.
+	// instance-stream.ts and scene/instance_stream.go). It is opt-in in the
+	// sense that no scene content makes a mount decide it needs the chunk
+	// (unlike compute/decompress below): a page fetches it only on a
+	// caller's first handle.applyInstanceStream(bytes) call. That call is
+	// itself what lazy-loads the chunk (instance-stream-bridge.ts, in the
+	// always-loaded base scene3d bundle), the same way command-bridge.ts
+	// lazy-loads the command chunk. It still needs a manifest entry and a
+	// servable, versioned URL like every other chunk, or that first call
+	// 404s.
 	BootstrapFeatureScene3DInstanceStream HashedAsset `json:"bootstrapFeatureScene3dInstanceStream,omitzero"`
 	Patch                                 HashedAsset `json:"patch"`
 	VideoHLS                              HashedAsset `json:"videoHLS,omitzero"`

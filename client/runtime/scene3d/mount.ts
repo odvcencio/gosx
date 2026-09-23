@@ -3350,12 +3350,11 @@
         return applyMountedSceneCommands(commands, "commands");
       },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
-      // applyInstanceStream: opt-in fast path; see instance-stream.ts.
+      // applyInstanceStream: opt-in fast path; the bridge (instance-stream-
+      // bridge.ts) lazy-loads the chunk on first use, queues an in-flight
+      // frame, and reports a load failure -- never a silent drop.
       applyInstanceStream(bytes) {
-        const apply = window.__gosx_scene3d_instance_stream_apply;
-        return typeof apply === "function"
-          ? apply(sceneState, bytes, scheduleRender, mount)
-          : { applied: false, reason: "instance-stream chunk not loaded" };
+        return window.__gosx_scene3d_apply_instance_stream_frame(sceneState, bytes, scheduleRender, mount);
       },
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
         return currentMountedSceneCamera();
