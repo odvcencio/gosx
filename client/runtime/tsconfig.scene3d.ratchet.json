@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.scene3d.json",
+  "compilerOptions": {
+    "noImplicitAny": true
+  }
+}

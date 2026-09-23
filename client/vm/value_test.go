@@ -28,6 +28,92 @@ func TestIntVal(t *testing.T) {
 	}
 }
 
+// TestValueTruthNonBoolKinds pins truth()'s per-kind derivation for every
+// kind BoolVal(true) does not touch. Before this, tagTruthBit was set ONLY
+// by BoolVal(true), so IntVal, StringVal and a non-nil ArrayVal/ObjectVal
+// all read as false through Truth()/And/Or/Not — reachable from ordinary
+// (non-strict) GSX markup wherever `{expr}` && a nonzero int prop, or !
+// on a non-empty string prop (the GSX expression grammar has no static
+// bool requirement the way Go's own && does). See truth()'s doc comment.
+func TestValueTruthNonBoolKinds(t *testing.T) {
+	cases := []struct {
+		name string
+		v    Value
+		want bool
+	}{
+		{"bool true", BoolVal(true), true},
+		{"bool false", BoolVal(false), false},
+		{"int nonzero", IntVal(3), true},
+		{"int zero", IntVal(0), false},
+		{"int negative", IntVal(-1), true},
+		{"float nonzero", FloatVal(0.5), true},
+		{"float zero", FloatVal(0), false},
+		{"string non-empty", StringVal("x"), true},
+		{"string empty", StringVal(""), false},
+		{"string \"0\"", StringVal("0"), false},
+		{"string \"false\"", StringVal("false"), false},
+		{"array non-empty", ArrayVal([]Value{IntVal(1)}), true},
+		{"array nil", ArrayVal(nil), false},
+		{"object non-empty", ObjectVal(map[string]Value{"k": IntVal(1)}), true},
+		{"object nil", ObjectVal(nil), false},
+		{"zero value", ZeroValue(program.TypeAny), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.v.Truth(); got != c.want {
+				t.Errorf("Truth() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestValueAndOrNotNonBoolOperands is evalBinaryOp/evalUnaryOp's own view
+// of TestValueTruthNonBoolKinds: OpAnd, OpOr, and OpNot dispatch straight
+// to And/Or/Not, which call truth() on each raw operand with no bool
+// conversion first (see value.go). A nonzero int prop on either side of
+// && used to force the whole expression false.
+func TestValueAndOrNotNonBoolOperands(t *testing.T) {
+	three, zero := IntVal(3), IntVal(0)
+	if got := three.And(three); !got.Truth() {
+		t.Errorf("IntVal(3).And(IntVal(3)) = %v, want true", got.Truth())
+	}
+	if got := three.And(zero); got.Truth() {
+		t.Errorf("IntVal(3).And(IntVal(0)) = %v, want false", got.Truth())
+	}
+	if got := zero.Or(three); !got.Truth() {
+		t.Errorf("IntVal(0).Or(IntVal(3)) = %v, want true", got.Truth())
+	}
+	if got := StringVal("").Not(); !got.Truth() {
+		t.Errorf(`StringVal("").Not() = %v, want true`, got.Truth())
+	}
+	if got := StringVal("x").Not(); got.Truth() {
+		t.Errorf(`StringVal("x").Not() = %v, want false`, got.Truth())
+	}
+}
+
+// TestValueStringOrderingComparisons pins Lt/Gt/Lte/Gte's string case: a
+// plain v.num < b.num compares the num field StringVal never writes, so
+// two strings always compared 0 < 0 (false) no matter their text — see
+// Lt's doc comment.
+func TestValueStringOrderingComparisons(t *testing.T) {
+	apple, banana := StringVal("apple"), StringVal("banana")
+	if got := apple.Lt(banana); !got.Truth() {
+		t.Errorf(`StringVal("apple").Lt(StringVal("banana")) = %v, want true`, got.Truth())
+	}
+	if got := banana.Lt(apple); got.Truth() {
+		t.Errorf(`StringVal("banana").Lt(StringVal("apple")) = %v, want false`, got.Truth())
+	}
+	if got := banana.Gt(apple); !got.Truth() {
+		t.Errorf(`StringVal("banana").Gt(StringVal("apple")) = %v, want true`, got.Truth())
+	}
+	if got := apple.Lte(apple); !got.Truth() {
+		t.Errorf(`StringVal("apple").Lte(StringVal("apple")) = %v, want true`, got.Truth())
+	}
+	if got := apple.Gte(apple); !got.Truth() {
+		t.Errorf(`StringVal("apple").Gte(StringVal("apple")) = %v, want true`, got.Truth())
+	}
+}
+
 func TestFloatVal(t *testing.T) {
 	v := FloatVal(3.14)
 	if v.Type != program.TypeFloat {

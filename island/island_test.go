@@ -791,12 +791,13 @@ func TestApplyBuildManifestRejectsAmbiguousIslandAssetsBeforeMutation(t *testing
 func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
-		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
-		BootstrapRuntime:               buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
-		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
-		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
-		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
-		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                      buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:               buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:               buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-instance-stream.js", Hash: "instream"},
+		BootstrapFeatureScene3DWebGPU:         buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -808,6 +809,92 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`) {
 		t.Fatalf("Scene3D script lacks command chunk URL: %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-instance-stream-url="/gosx/assets/runtime/bootstrap-feature-scene3d-instance-stream.js"`) {
+		t.Fatalf("Scene3D script lacks instance-stream chunk URL: %s", html)
+	}
+}
+
+// TestScene3DInstanceStreamURLIsUnconditionalLikeCommand proves the
+// instance-stream sub-feature URL is emitted the same way the command URL
+// is (unconditionally, whenever the manifest carries the asset) rather than
+// gated behind a scene-content heuristic like compute/decompress: there is
+// no scene-content signal that predicts a future handle.applyInstanceStream
+// call, so a page with nothing but a single static engine and no compute
+// particles, no compressed arrays, and no instanced meshes must still carry
+// the URL -- otherwise instance-stream-bridge.ts has nothing to lazy-load
+// from and a caller's first frame fails with no possible recovery.
+func TestScene3DInstanceStreamURLIsUnconditionalLikeCommand(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                      buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:               buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:               buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-instance-stream.js", Hash: "instream"},
+		BootstrapFeatureScene3DCompute:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
+		BootstrapFeatureScene3DDecompress:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	// A plain engine with no compute particles, no compressed arrays, no
+	// generator descriptors and no instanced meshes: scene3DChunkNeeds()
+	// (which gates compute/decompress) must report both false for this
+	// scene, unlike the instance-stream URL.
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScript())
+	if !strings.Contains(html, `data-gosx-scene3d-instance-stream-url=`) {
+		t.Fatalf("plain scene, no compute/decompress content: instance-stream URL must still be present: %s", html)
+	}
+	if strings.Contains(html, `data-gosx-scene3d-compute-url=`) {
+		t.Fatalf("plain scene: compute URL should be gated off (test setup assumption broken): %s", html)
+	}
+	if strings.Contains(html, `data-gosx-scene3d-decompress-url=`) {
+		t.Fatalf("plain scene: decompress URL should be gated off (test setup assumption broken): %s", html)
+	}
+}
+
+// TestSetBootstrapFeatureScene3DInstanceStreamPathAddsVersionQueryLikeCommand
+// covers the compat URL override surface every SetBootstrapFeatureScene3DXPath
+// method exposes: a caller that re-points a chunk at its BARE canonical path
+// (rather than the asset-hashed filename ApplyBuildManifest's own
+// AssetURL-based URLs already carry) gets a "?v=<hash>" query appended, but
+// only when that bare canonical path is listed in versionCompatRuntimePath's
+// switch. Before this fix, the instance-stream chunk's canonical path was
+// absent from that switch, so this override path would have silently
+// dropped the hash and returned an unversioned URL — server-side
+// indistinguishable from a hand-written plain script tag, and cached
+// forever the moment a production deploy changed its bytes.
+func TestSetBootstrapFeatureScene3DInstanceStreamPathAddsVersionQueryLikeCommand(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapFeatureScene3D:               buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.abc123.js", Hash: "commandhash"},
+		BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-instance-stream.def456.js", Hash: "instreamhash"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	// Re-point both paths at their bare canonical (compat) form explicitly:
+	// the same override a caller that wants the compat "?v=" URL scheme
+	// instead of ApplyBuildManifest's asset-hashed-filename scheme already
+	// has for the command chunk. compatRuntimeHash resolves the hash by
+	// matching against the manifest ApplyBuildManifest already installed
+	// above, regardless of the renderer's current path value.
+	r.SetBootstrapFeatureScene3DCommandPath("/gosx/bootstrap-feature-scene3d-command.js")
+	r.SetBootstrapFeatureScene3DInstanceStreamPath("/gosx/bootstrap-feature-scene3d-instance-stream.js")
+
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScript())
+
+	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js?v=commandhash"`) {
+		t.Fatalf("command URL should carry ?v=<hash> after an explicit compat-path override (test setup assumption broken): %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-instance-stream-url="/gosx/bootstrap-feature-scene3d-instance-stream.js?v=instreamhash"`) {
+		t.Fatalf("instance-stream URL must carry ?v=<hash> too, matching the command URL's shape: %s", html)
 	}
 }
 

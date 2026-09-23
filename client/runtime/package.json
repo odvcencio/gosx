@@ -2,7 +2,10 @@
   "name": "@gosx/runtime-contract",
   "private": true,
   "scripts": {
-    "typecheck": "tsc --project tsconfig.json"
+    "typecheck": "npm run typecheck:abi && npm run typecheck:scene3d && npm run typecheck:scene3d-ratchet",
+    "typecheck:abi": "tsc --project tsconfig.json",
+    "typecheck:scene3d": "tsc --project tsconfig.scene3d.json",
+    "typecheck:scene3d-ratchet": "node scripts/scene3d-noimplicitany-ratchet.mjs"
   },
   "devDependencies": {
     "typescript": "5.9.3"

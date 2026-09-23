@@ -613,7 +613,21 @@ const budgets = [
   // The retained Scene3D pose-frame hook adds 241 raw bytes to the optional
   // Scene3D feature and 69 gzip bytes to this legacy monolith. The decoder
   // and validation live in the lazily fetched command chunk below.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_300, brotli: 346_700 },
+  // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+  // adds a tiny forwarding method to mount.ts's handle; the fast path itself
+  // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
+  // outside this monolith. Only gzip exceeds that envelope; 434_400 keeps
+  // narrow rounding headroom.
+  // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds a
+  // small loader IIFE to the same monolith, so the chunk it lazy-loads can
+  // ship outside this bundle instead of eagerly. Measured: 1_648_132 /
+  // 451_153 / 362_586. Only gzip exceeds the prior envelope; 435_200 keeps
+  // narrow rounding headroom.
+  // Bounding the pending-frame coalescing (per (mount, batch) instead of
+  // per frame) added a small header-parsing helper to the same loader IIFE.
+  // Measured: 1_649_209 / 451_571 / 362_775. Only gzip was within 13 bytes
+  // of the prior hard limit; 436_000 restores real headroom.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 436_000, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1075,7 +1089,15 @@ const budgets = [
   // limits equal to those reviewed artifacts.
   // Typed world-mesh attribute builders measure 582_224 / 162_304 / 134_535.
   // Baselines below set exact minimum hard limits equal to those artifacts.
-  { file: "bootstrap-feature-scene3d.js", raw: 554_750, gzip: 154_640, brotli: 128_128 },
+  // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+  // adds a tiny forwarding method to mount.ts's handle; the fast path itself
+  // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
+  // outside this base chunk. Narrow rounding headroom on raw and gzip; brotli
+  // fits the prior envelope.
+  // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds its
+  // loader IIFE here, in this base chunk, so the actual chunk it lazy-loads
+  // stays outside it. Measured: 584_696 / 162_859 / 134_858.
+  { file: "bootstrap-feature-scene3d.js", raw: 559_000, gzip: 156_000, brotli: 129_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1799,9 +1821,23 @@ const routeBudgets = [
     // reviewed route totals.
     // Retained pose-frame mount hook adds 241 bytes; the binary decoder is
     // deferred to bootstrap-feature-scene3d-command.js.
-    raw: 1_074_800,
-    gzip: 299_980,
-    brotli: 254_194,
+    //
+    // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+    // adds a tiny forwarding method to mount.ts's handle -- carried by
+    // bootstrap-feature-scene3d.js on this route -- so every page pays a few
+    // bytes even though the fast path itself ships in its own lazy chunk.
+    // Narrow rounding headroom.
+    //
+    // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
+    // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
+    // carries. Measured: 1_130_656 / 315_470 / 267_227.
+    // Bounding the pending-frame coalescing added a small header-parsing
+    // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
+    // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
+    // restores real headroom.
+    raw: 1_079_000,
+    gzip: 301_500,
+    brotli: 255_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1936,9 +1972,23 @@ const routeBudgets = [
     // Typed world-mesh attribute builders measure 1_521_018 / 410_499 /
     // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
     // limit at 410_499.
+    // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+    // adds a tiny forwarding method to mount.ts's handle, carried by
+    // bootstrap-feature-scene3d.js on this route. Measured:
+    // 1_521_189 / 410_555 / 346_843. Only gzip exceeds that envelope;
+    // 394_300 keeps narrow rounding headroom.
+    // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
+    // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
+    // carries. Measured: 1_523_490 / 411_054 / 347_173. Only gzip exceeds
+    // that envelope; 395_200 keeps narrow rounding headroom.
+    // Bounding the pending-frame coalescing added a small header-parsing
+    // helper to the same loader IIFE. Measured: 1_524_567 / 411_507 /
+    // 347_451. Gzip was within 77 bytes of the prior hard limit; 396_000
+    // restores real headroom.
     raw: 1_465_500,
-    // Retained pose-frame mount hook adds 52 gzip bytes to this route.
-    gzip: 394_180,
+    // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
+    // instance-stream forwarding method (see above) adds a few more.
+    gzip: 396_000,
     brotli: 332_900,
   },
   {

@@ -1,4 +1,4 @@
-// Slice X.C.7: lower three representative engine-surface handler
+// Lower three representative engine-surface handler
 // functions of increasing complexity and verify they round-trip
 // against a Go-side reference.
 //
@@ -8,9 +8,8 @@
 // small in-test fixture that mirrors the *kinds* of code engine-surface
 // handlers contain: pure predicates, arithmetic loops over slices, and
 // numeric reductions. This keeps the test independent of the hyphae
-// checkout (the parity SSIM test in Slice X.E is the real cross-repo
-// integration), while still proving the lowerer can handle the three
-// complexity tiers the plan calls out.
+// checkout, while still proving the lowerer can handle three
+// complexity tiers.
 
 package golower
 
@@ -93,18 +92,18 @@ func TestGraphSurfaceTier2AccumulateAngle(t *testing.T) {
 	}
 }
 
-// TestGraphSurfaceTier4StepLayoutKernel is a Slice Y.C addition: it
+// TestGraphSurfaceTier4StepLayoutKernel
 // lowers a fixture that mirrors the stepLayout repulsion-accumulator
 // kernel from graph_surface.go but scrubbed of canvas calls and
-// user-function dispatch (still Y.D/Y.E territory). The kernel
-// exercises the full Y.A-Y.C lowering stack end-to-end:
+// user-function dispatch. The kernel
+// exercises the full lowering stack end-to-end:
 //
-//   - Y.A composite literals for the initial fx/fy slices and the
+//   - composite literals for the initial fx/fy slices and the
 //     gPos/gVel maps
-//   - Y.B comma-ok map lookups for the `pa, paOK := gPos[a.ID]` form
-//     (here simplified to a present-only path so we don't need Y.D
-//     to dispatch the "missing-pair skip" check)
-//   - Y.C LHS selector / indexed-set for the `fx[i] = 0`, `v.X = ...`,
+//   - comma-ok map lookups for the `pa, paOK := gPos[a.ID]` form
+//     (here simplified to a present-only path so we don't need
+//     user-fn dispatch for the "missing-pair skip" check)
+//   - LHS selector / indexed-set for the `fx[i] = 0`, `v.X = ...`,
 //     `gVel[id] = v`, `gPos[id] = p` writebacks
 //
 // The reference implementation in refStepLayoutKernel uses the same
@@ -129,7 +128,7 @@ func F() float64 {
 		fy[i] = 0.0
 	}
 	// Apply a fake repulsion force on node 0 from node 1
-	// using the Y.B comma-ok lookup pattern.
+	// using the comma-ok lookup pattern.
 	pa, paOK := gPos["n0"]
 	pb, pbOK := gPos["n1"]
 	if paOK && pbOK {

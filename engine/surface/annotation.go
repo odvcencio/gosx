@@ -1,8 +1,8 @@
 // Detection of the legacy `//gosx:engine surface=wasm` escape-hatch
 // annotation. The annotation referred to the per-component WASM backend
-// (internal/buildsurface) which was deleted per ADR 0005. Surfaces still
-// carrying the annotation must be flagged so authors know to drop it —
-// the bytecode pipeline now handles every surface unconditionally.
+// (internal/buildsurface) which was deleted. Surfaces still carrying the
+// annotation must be flagged so authors know to drop it — the bytecode
+// pipeline now handles every surface unconditionally.
 
 package surface
 

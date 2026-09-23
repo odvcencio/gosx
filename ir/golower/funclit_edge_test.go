@@ -1,10 +1,10 @@
-// Slice Y.G — FuncLit edge-case + failure-mode tests.
+// FuncLit edge-case + failure-mode tests.
 //
 // Pin the corner cases that distinguish a robust closure
 // implementation from one that just compiles the happy path:
 //
 //  - Nested closures (outer captures, inner captures both)
-//  - Multi-return closures (uses Y.D's multi-return scaffolding)
+//  - Multi-return closures (uses the multi-return scaffolding)
 //  - Closures that don't capture anything (degenerate case)
 //  - Closures stored in maps/slices (delayed dispatch)
 //  - Closures that reference signals (package-var path, not capture)
@@ -154,8 +154,8 @@ func F() bool {
 	if err != nil {
 		t.Fatalf("LowerFile: %v", err)
 	}
-	// The synthetic FuncDef (alongside F's own user-fn FuncDef
-	// per Y.D) should have ZERO params — `func() bool { return true }`
+	// The synthetic FuncDef (alongside F's own user-fn FuncDef)
+	// should have ZERO params — `func() bool { return true }`
 	// captures nothing because `true` is a keyword. Locate the
 	// synthetic by its reserved __y_g_funclit_ prefix.
 	var synth *program.FuncDef

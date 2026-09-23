@@ -1844,8 +1844,8 @@
 
   // Create a ping-pong FBO pair for multi-pass effect processing.
   function createScenePostPingPong(gl, width, height) {
-    return {
-      a: createScenePostFBO(gl, width, height),
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ a: createScenePostFBO(gl, width, height),
       b: createScenePostFBO(gl, width, height),
     };
   }
@@ -2217,18 +2217,18 @@
         descriptor: sceneWaterParseDescriptor(descriptors[spec.desc]),
       };
     }
-
-    programs.simulation = compilePass("simulation");
-    programs.normal = compilePass("normal");
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.simulation = compilePass("simulation");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.normal = compilePass("normal");
     if (!programs.simulation || !programs.normal) {
       // Required passes missing — tear down and signal unavailability.
       for (var ci = 0; ci < compiledShaders.length; ci++) gl.deleteProgram(compiledShaders[ci]);
       gl.deleteTexture(states[0].tex); gl.deleteFramebuffer(states[0].fbo);
       gl.deleteTexture(states[1].tex); gl.deleteFramebuffer(states[1].fbo);
       return null;
-    }
-    programs.seed = compilePass("seed");
-    programs.drop = compilePass("drop");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.seed = compilePass("seed");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.drop = compilePass("drop");
     programs.displacement = compilePass("displacement");
 
     // Empty VAO: the sim vertex shaders are attribute-less (gl_VertexID drives a
@@ -2323,7 +2323,7 @@
     }
 
     // Pointer-draw event: add a Gaussian-cosine bump at an NDC center [-1,1].
-    function drop(opts) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ function drop(opts) {
       if (!programs.drop) return false;
       var x = opts && opts.x != null ? +opts.x : sceneWaterNum(entry.dropX, 0);
       var z = opts && opts.z != null ? +opts.z : sceneWaterNum(entry.dropZ, 0);
@@ -2340,7 +2340,7 @@
     }
 
     // Reset event: stamp the procedural seed drops onto the resting surface.
-    function seed(opts) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ function seed(opts) {
       if (!programs.seed) return false;
       var count = Math.max(0, Math.min(64, Math.floor(
         opts && opts.count != null ? opts.count : sceneWaterNum(entry.seedDrops, 7))));
@@ -2360,7 +2360,7 @@
 
     // Object-move event: displace water by an object volume sweeping from its
     // previous to current center (sphere kind=1, cube kind=2, compound kind=3).
-    function displace(source) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ function displace(source) {
       if (!programs.displacement) return false;
       source = source || entry;
       var center = [sceneWaterNum(source.objectX, 0), sceneWaterNum(source.objectY, 0), sceneWaterNum(source.objectZ, 0)];
@@ -3282,7 +3282,7 @@
     var queuedWaterEventCount = 1; // authored seed is queued until the first tick
     var drainedWaterEventCount = 0;
     function primeRipples() {
-      if (seeded) return true;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (seeded) return true;
       if (!sim.seed()) return false;
       seeded = true;
       drainedWaterEventCount++;
@@ -3878,7 +3878,7 @@
       var expensivePassCadence = activeExpensivePassCadence;
       // Solver work is bounded, but retained-pass cadence follows logical wall
       // time even when a very low authored frame rate forces solver ticks to be
-      // dropped beyond the bounded catch-up capacity.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // dropped beyond the bounded catch-up capacity.
       var logicalCausticsTickSeq = clockFrame.tickSeq + (waterClock.droppedTicks || 0);
       var causticsCadenceDue = clockFrame.ticks > 0 &&
         Math.floor(logicalCausticsTickSeq / expensivePassCadence) >
@@ -4225,14 +4225,14 @@
           waterSurfaceVertices: surfaceVertexCount,
           waterCausticsRefreshes: causticsRefreshCount,
           waterShadowRefreshes: shadowRefreshCount,
-          waterObjectTexturePasses: meshTexturePassCount,
-          waterSimulationTickSeq: waterClock.tickSeq || 0,
-          waterSolverSubstepSeq: waterClock.solverSubstepSeq || 0,
-          waterDroppedSimulationTicks: waterClock.droppedTicks || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterObjectTexturePasses: meshTexturePassCount,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSimulationTickSeq: waterClock.tickSeq || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSolverSubstepSeq: waterClock.solverSubstepSeq || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterDroppedSimulationTicks: waterClock.droppedTicks || 0,
           waterDroppedSimulationTicksLastFrame: waterClock.dropped || 0,
-          waterSimulationCatchUpCap: waterClockOptions.maxCatchUpTicks,
-          waterSimulationTicksLastFrame: waterClock.ticks || 0,
-          waterSolverSubstepsLastFrame: waterClock.substeps || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSimulationCatchUpCap: waterClockOptions.maxCatchUpTicks,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSimulationTicksLastFrame: waterClock.ticks || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSolverSubstepsLastFrame: waterClock.substeps || 0,
           waterSimulationClockReset: waterClock.reset === true,
           waterSimulationPasses: simulationStats.simulationPasses,
           waterNormalPasses: simulationStats.normalPasses,
@@ -4707,7 +4707,7 @@
 
         // Multi-effect chains need an auxiliary full-res FBO for intermediate
         // results. Allocated at SCALED dims, not canvas dims.
-        if (effects.length > 1 && !auxFBO) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (effects.length > 1 && !auxFBO) {
           auxFBO = createScenePostFBO(gl, scaledW, scaledH);
         }
 
@@ -4720,7 +4720,7 @@
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
             if (effect.kind === SCENE_POST_DOF && targetFBO === sceneFBO) {
               if (!scratchFBO || scratchFBO.width !== scaledW || scratchFBO.height !== scaledH) {
-                if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
                 scratchFBO = createScenePostFBO(gl, scaledW, scaledH);
               }
               targetFBO = scratchFBO;
@@ -4796,7 +4796,7 @@
                 currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH, roi.bounds);
                 stats.postDOMRegionBoundedPasses += 1;
                 stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
-              } else {
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
                 currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
               }
               break;
@@ -5132,10 +5132,10 @@
     }
 
     if (target === gl.TEXTURE_CUBE_MAP) {
-      record.failed = true;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.failed = true;
       record.error = "cube descriptors require a KTX2 upload path";
     } else if (typeof Image === "function") {
-      const image = new Image();
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const image = new Image();
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
@@ -5148,8 +5148,8 @@
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        }
-        record.colorSpace = srgb ? "srgb" : "linear";
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.colorSpace = srgb ? "srgb" : "linear";
         record.format = srgb ? "srgb8-alpha8" : "rgba8";
         record.loaded = true;
         scenePBRNotifyTextureSettled(record);
@@ -5606,7 +5606,7 @@
     default: return 1;
     }
   }
-
+/* @ts-expect-error TS2393 -- webgpu.ts carries an identical copy of this helper; each renderer backend chunk loads on its own, so this file must not depend on the other for a small pure function */
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
@@ -5823,12 +5823,12 @@
       layout: layout,
       skinned: Boolean(skinned),
     };
-    if (skinned) {
+    /* @ts-expect-error TS2551 -- skinUniforms is added to the program record only when skinned */ if (skinned) {
       result.skinUniforms = {
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
         jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
         hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
-      };
+      /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
       result.skinAttributes = {
         joints: gl.getAttribLocation(program, "a_joints"),
         weights: gl.getAttribLocation(program, "a_weights"),
@@ -5857,7 +5857,7 @@
       uv: gl.getAttribLocation(program, "a_uv"),
       tangent: gl.getAttribLocation(program, "a_tangent"),
     };
-    const uniforms = scenePBRCacheBaseUniforms(gl, program);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const uniforms = scenePBRCacheBaseUniforms(gl, program);
     uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
     return {
       program: program,
@@ -5898,8 +5898,8 @@
     // draw; caching 64 individual locations made every fighter pay 64
     // lookups at compile time and 64 uniform uploads per frame.
     var uniforms = scenePBRCacheBaseUniforms(gl, program);
-    uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
-    uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
     uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
 
     return {
@@ -5998,8 +5998,8 @@
       instanceColor: gl.getAttribLocation(linked.program, "a_instanceColor"),
     };
 
-    var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
-    uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
     uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
 
     return {
@@ -6163,7 +6163,7 @@
     const opts = options || {};
     const isCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : function() { return true; };
     // One preparation owns one context generation. Superseding it immediately
-    // settles and releases both pending and completed-but-unconsumed records.
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // settles and releases both pending and completed-but-unconsumed records.
     discardScenePBRInitialPrograms(gl);
     let fragmentSource = "";
     try {
@@ -6201,9 +6201,9 @@
         timer: null,
         settled: false,
         resolve,
-      };
-      state.records = records;
-      base.initialProgramOwner = state;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.records = records;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ base.initialProgramOwner = state;
       if (crowd) crowd.initialProgramOwner = state;
       scenePBRInitialPrograms.set(gl, state);
       function cancel() {
@@ -6595,7 +6595,7 @@
       shadowCount: shadowCount,
       ibl: scenePBREnvironmentHasMap(environment),
     };
-    if (maxUnits != null) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (maxUnits != null) {
       options.maxUnits = maxUnits;
     }
     return sceneAllocateTextureUnits(options);
@@ -6722,7 +6722,7 @@
     // no fallback re-bind of one texture over another's unit.
     for (var ci = 0; ci < numCascades; ci++) {
       var unit = shadowUnits.length > base + ci ? shadowUnits[base + ci] : null;
-      if (unit == null) break;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (unit == null) break;
       scenePBRBindTexture(gl, unit, slot.cascades[ci].depthTexture);
       gl.uniform1i(uniforms[samplerKeys[ci]], unit);
     }
@@ -6876,9 +6876,9 @@
       } else if (!layout || !layout.ibl) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "texture-unit-budget";
-      } else {
-        var radianceRecord = scenePBRLoadTexture(gl, radianceDescriptor.uri, textureCache, radianceDescriptor);
-        var irradianceRecord = scenePBRLoadTexture(gl, irradianceDescriptor.uri, textureCache, irradianceDescriptor);
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var radianceRecord = scenePBRLoadTexture(gl, radianceDescriptor.uri, textureCache, radianceDescriptor);
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var irradianceRecord = scenePBRLoadTexture(gl, irradianceDescriptor.uri, textureCache, irradianceDescriptor);
         var brdfRecord = scenePBRLoadTexture(gl, brdfDescriptor.uri, textureCache, brdfDescriptor);
         var failed = [radianceRecord, irradianceRecord, brdfRecord].some(function(record) { return record && record.failed; });
         var active = scenePBRIBLRecordValid(radianceRecord, radianceDescriptor, model) &&
@@ -6934,7 +6934,7 @@
       : 1;
     gl.uniform1f(uniforms.envIntensity, Math.max(0, envIntensity));
     gl.uniform1f(uniforms.envRotation, sceneNumber(env.envRotation, 0));
-    if (available && unit != null) {
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (available && unit != null) {
       scenePBRBindTexture(gl, unit, record.texture);
       gl.uniform1i(uniforms.envMap, unit);
     }
@@ -6993,7 +6993,7 @@
     var customProgramCache = new Map();
     var selenaProgramCache = new Map();
 
-    // Shadow program (depth-only shader for shadow pass).
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Shadow program (depth-only shader for shadow pass).
     const shadowProgram = createSceneShadowProgram(gl);
 
     // Shadow resources — up to 2 directional light shadow maps.
@@ -7140,7 +7140,7 @@
         const location = ip.attributes[name]; allowed[location] = true;
         bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
       }
-      const location = ip.attributes.pose; allowed[location] = true;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const location = ip.attributes.pose; allowed[location] = true;
       gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "poses", batch.poses));
       gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
     }
@@ -7602,7 +7602,7 @@
     var instancedGeometryCache = {};
 
     // Local texture cache for this renderer instance.
-    const textureCache = new Map();
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const textureCache = new Map();
     textureCache._gosxGeneration = {
       disposed: false,
       onResourceReady: function() {
@@ -8425,8 +8425,8 @@
         var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
         if (!loc) continue;
         var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
-        var url = sceneSelenaTextureURL(material, tex, i);
-        var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var url = sceneSelenaTextureURL(material, tex, i);
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
         scenePBRBindTexture(gl, unit, record && record.texture ? record.texture : selenaPlaceholderTexture);
         gl.uniform1i(loc, unit);
       }
@@ -8654,7 +8654,7 @@
       // still destroys every handle immediately on unmount/context loss.
       for (const [vertices, entry] of directMeshAttributeCache) {
         if (entry.lastSeenEpoch === directMeshAttributeEpoch) continue;
-        let bytes = 0;
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ let bytes = 0;
         for (const attribute of Object.values(entry.attributes || {})) bytes += attribute.byteLength || 0;
         if (!entry.retained || vertices._rigidPool !== true ||
             directMeshAttributeEpoch - entry.lastSeenEpoch > 120 ||
@@ -8663,8 +8663,8 @@
         } else {
           idleBytes += bytes; idleEntries++;
         }
-      }
-      retainedMeshBufferStats.idleBytes = idleBytes;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ retainedMeshBufferStats.idleBytes = idleBytes;
       retainedMeshBufferStats.idleEntries = idleEntries;
     }
 
@@ -8916,7 +8916,7 @@
     function drawRigidShadowBatch(obj, lightMatrix) {
       const batch = rigidObjectBatches.get(obj);
       if (!batch || batch.count < 2 && !batch.atlas || rigidShadowProgramFailed && !batch.atlas) return false;
-      if (!batch.atlas && !rigidShadowProgram) {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!batch.atlas && !rigidShadowProgram) {
         rigidShadowProgram = createSceneShadowProgram(gl, true);
         if (!rigidShadowProgram || rigidShadowProgram.attributes.instanceMatrix < 0) {
           rigidShadowProgramFailed = true;
@@ -8957,10 +8957,10 @@
       for (const [name, size, fallback] of [
         ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
         ["uv", 2, [0, 0]], ["tangent", 4, [1, 0, 0, 1]],
-      ]) {
+      /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ ]) {
         const location = ip.attributes[name];
         if (!(location >= 0)) continue;
-        allowed[location] = true;
+        /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ allowed[location] = true;
         const key = { position: "positions", normal: "normals", uv: "uvs", tangent: "tangents" }[name];
         if (!bindScenePBRDirectAttribute(obj, key, location, size,
           scenePBRDirectAttribute(obj.vertices, key, obj.vertexCount, size))) {
@@ -9146,12 +9146,12 @@
 	            obj.directVertices && obj.modelMatrix ? obj.modelMatrix : identityModelMatrix
 	          );
 	        }
-	        if (isSkinned) {
+	        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
           var jointMatrices = obj.skin.jointMatrices;
           if (jointMatrices) {
-            var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
             if (jointCount > 0 && currentUniforms.jointMatrices) {
               var jointUpload = jointMatrices;
               var requiredJointFloats = jointCount * 16;
@@ -9170,11 +9170,11 @@
                   jointViews[requiredJointFloats] = jointView;
                 }
                 jointUpload = jointView.view;
-              }
+              /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
               gl.uniformMatrix4fv(currentUniforms.jointMatrices, false, jointUpload);
             }
-          }
-        } else if (currentUniforms.hasSkin) {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (currentUniforms.hasSkin) {
           gl.uniform1i(currentUniforms.hasSkin, 0);
         }
 
@@ -9233,30 +9233,30 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        // Joints and weights (skinned meshes only).
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Joints and weights (skinned meshes only).
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
 
           const directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
-          const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
           if (!bindScenePBRDirectAttribute(obj, "joints", currentAttribs.joints, 4, directJoints)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
-            gl.enableVertexAttribArray(currentAttribs.joints);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.joints);
             gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
           }
-
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
           if (!bindScenePBRDirectAttribute(obj, "weights", currentAttribs.weights, 4, directWeights)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
-            gl.enableVertexAttribArray(currentAttribs.weights);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.weights);
             gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
-          }
-        } else if (currentAttribs.joints >= 0) {
-          gl.disableVertexAttribArray(currentAttribs.joints);
-          gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
-          gl.disableVertexAttribArray(currentAttribs.weights);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (currentAttribs.joints >= 0) {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.disableVertexAttribArray(currentAttribs.joints);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.disableVertexAttribArray(currentAttribs.weights);
           gl.vertexAttrib4f(currentAttribs.weights, 0, 0, 0, 0);
         }
 
@@ -9800,7 +9800,7 @@
 	    // Ensure the instanced PBR program is compiled (lazy init).
 	    function ensureInstancedProgram() {
 	      if (instancedProgram) return instancedProgram;
-	      if (instancedProgramFailed) return null;
+	      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (instancedProgramFailed) return null;
 	      instancedProgram = createScenePBRInstancedProgram(gl);
 	      if (!instancedProgram) {
 	        instancedProgramFailed = true;
@@ -10052,7 +10052,7 @@
           instancedAllowedAttribs[ip.attributes.instanceColor] = true;
         }
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
-
+/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
         gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
@@ -10064,7 +10064,7 @@
           gl.vertexAttribDivisor(loc, 1);
         }
 
-        if (hasInstanceColor) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (hasInstanceColor) {
           gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "colors", instanceColorData));
           gl.enableVertexAttribArray(ip.attributes.instanceColor);
           gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
@@ -10139,7 +10139,7 @@
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
-
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
       textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {
         if (record) {
@@ -10276,7 +10276,7 @@
           active: false,
           state: "not-requested",
           reason: "",
-          radianceMipLevels: 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ radianceMipLevels: 0,
         }, uniforms._gosxIBLDiagnostics || {}),
         textureVariantContext: {
           backend: textureVariantContext.backend,

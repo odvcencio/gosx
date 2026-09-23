@@ -460,7 +460,16 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// __gosx_manifest: the memoized manifest parse published by loadManifest
 	// (see 10-runtime-scene-utils.ts) so other bundles reuse the parse instead
 	// of re-reading the DOM text.
-	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_html", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
+	// __gosx_scene3d_instance_stream_apply / __gosx_scene3d_instance_stream_bridge:
+	// the lazily fetched Scene3D binary instance-transform fast path's apply
+	// function and dispatch bridge (client/runtime/scene3d/instance-stream.ts).
+	// __gosx_scene3d_apply_instance_stream_frame: the base-bundle-resident
+	// lazy-load wrapper mount.ts's handle.applyInstanceStream forwards to
+	// (client/runtime/scene3d/instance-stream-bridge.ts). It lazy-loads the
+	// chunk above on first use instead of requiring a caller to already have
+	// it loaded, the same way __gosx_scene3d_command_bridge's own dispatch
+	// wrappers lazy-load the command chunk.
+	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

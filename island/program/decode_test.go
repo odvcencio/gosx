@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// TestFixturesRoundTrip is the wire-format contract test required by ADR 0001.
-// Each fixture is decoded, re-encoded, and re-decoded — the second encoding
-// must match the first byte-for-byte (modulo whitespace). A failure here is
-// the signal that a v2 envelope is required (see ADR 0001 §"Test contract").
+// TestFixturesRoundTrip is the wire-format contract test. Each fixture is
+// decoded, re-encoded, and re-decoded — the second encoding must match the
+// first byte-for-byte (modulo whitespace). A failure here is the signal
+// that a v2 envelope is required.
 func TestFixturesRoundTrip(t *testing.T) {
 	entries, err := os.ReadDir("testdata/fixtures")
 	if err != nil {
@@ -67,8 +67,8 @@ func TestDecodeProgramJSONDoesNotInjectScene3D(t *testing.T) {
 	// Even if the payload "looks" engine-ish (has engineNodes), the island
 	// decoder must still mark it SurfaceDOM. The unified Program type allows
 	// the field to deserialize; the surface kind is recovered from the
-	// decoder, not from field presence. See ADR 0001 §"Test contract" — the
-	// decoder identity wins over payload shape.
+	// decoder, not from field presence. The decoder identity wins over
+	// payload shape.
 	data := []byte(`{"engineNodes":[{"kind":"mesh"}]}`)
 	p, err := DecodeProgramJSON(data)
 	if err != nil {

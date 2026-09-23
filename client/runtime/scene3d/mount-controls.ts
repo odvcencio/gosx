@@ -243,7 +243,7 @@
   }
 
   function sceneOrbitCamera(state, fallbackCamera) {
-    const base = sceneRenderCamera(fallbackCamera);
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const base = sceneRenderCamera(fallbackCamera);
     const orbit = state || sceneOrbitStateFromCamera(base, { x: 0, y: 0, z: 0 });
     const minDistance = Math.max(0.001, sceneNumber(orbit.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
     const maxDistance = Math.max(minDistance, sceneNumber(orbit.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));

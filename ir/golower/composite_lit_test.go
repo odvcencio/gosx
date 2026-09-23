@@ -1,7 +1,7 @@
-// Slice Y.A.1 — failing-first tests for composite literal lowering.
+// Failing-first tests for composite literal lowering.
 //
-// These tests pin the five representative composite-literal patterns the
-// Y.A plan calls out as the simplest gaps blocking graph_surface.go:
+// These tests pin the five representative composite-literal patterns
+// that were the simplest gaps blocking graph_surface.go:
 //
 //  1. positional struct literal:  vec2{X, Y}
 //  2. named struct literal:       Node{ID: "n1", Pos: p}
@@ -9,10 +9,10 @@
 //  4. slice literal:              []Node{a, b}
 //  5. map literal:                map[string]float64{"x": 1.5}
 //
-// At Y.A.1 each lowering call still fails: the lowerer reports
+// Before this, the lowerer reports
 // "unsupported expression *ast.CompositeLit" because expr.go has no
-// CompositeLit case yet. Y.A.2-Y.A.4 add the OpComposite opcode, its
-// VM evaluator, and the lowering rules; Y.A.5 marks these tests PASS.
+// CompositeLit case yet. The OpComposite opcode, its
+// VM evaluator, and the lowering rules make these tests PASS.
 package golower
 
 import (

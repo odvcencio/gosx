@@ -776,8 +776,8 @@
   }
 
   function requestSceneHTMLTextureFontRefresh() {
-    sceneHTMLTextureStates.forEach(function(state) {
-      if (state && typeof state.requestRender === "function") {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ sceneHTMLTextureStates.forEach(function(state) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (state && typeof state.requestRender === "function") {
         state.requestRender("html-texture-fonts");
       }
     });

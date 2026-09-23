@@ -172,6 +172,65 @@ jobs:
           make test-cli
           CGO_ENABLED=0 go build ./cmd/gosx
 
+  # build-runtime-release builds this release's prebuilt runtime WASM
+  # variants with a real TinyGo toolchain and publishes them, plus a hashed
+  # integrity manifest, as release assets. cmd/gosx (cmd/gosx/runtime_
+  # prebuilt.go) fetches and verifies these for a consumer with no TinyGo
+  # installed — see docs/deployment or README's "Prebuilt runtime" section.
+  build-runtime-release:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install TinyGo
+        working-directory: source
+        env:
+          TINYGO_VERSION: 0.41.1
+          TINYGO_GO_VERSION: 1.25.5
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Build runtime WASM variants
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/runtime-dist"
+          go run ./cmd/gosx build-runtime "${RUNNER_TEMP}/runtime-dist"
+
+      - name: Generate runtime release manifest
+        working-directory: source
+        run: |
+          set -euo pipefail
+          python3 scripts/build-runtime-release-manifest.py \
+            "${RUNNER_TEMP}/runtime-dist" \
+            "${RUNNER_TEMP}/runtime-dist/gosx-runtime-artifacts.json"
+
+      - name: Stage runtime release assets
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/runtime-dist-release"
+          cd "${RUNNER_TEMP}/runtime-dist"
+          cp gosx-runtime-core.wasm gosx-runtime-engine.wasm gosx-runtime-collab.wasm \
+            gosx-runtime.wasm gosx-runtime-islands.wasm gosx-runtime-artifacts.json \
+            "${RUNNER_TEMP}/runtime-dist-release/"
+          cp wasm_exec.js "${RUNNER_TEMP}/runtime-dist-release/gosx-runtime-wasm_exec.js"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-runtime
+          retention-days: 7
+          path: ${{ runner.temp }}/runtime-dist-release/
+
   vet:
     needs: [prepare, validate]
     runs-on: ubuntu-latest
@@ -286,7 +345,7 @@ jobs:
           path: runtime-release-artifacts/
 
   publish:
-    needs: [prepare, validate, test-unit, test-cli, vet, build, browser-runtime]
+    needs: [prepare, validate, test-unit, test-cli, vet, build, browser-runtime, build-runtime-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: governed-release
@@ -374,6 +433,13 @@ jobs:
             gosx-windows-amd64.exe
             gosx-windows-arm64.exe
             "gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
+            gosx-runtime-core.wasm
+            gosx-runtime-engine.wasm
+            gosx-runtime-collab.wasm
+            gosx-runtime.wasm
+            gosx-runtime-islands.wasm
+            gosx-runtime-wasm_exec.js
+            gosx-runtime-artifacts.json
           )
           python3 ../scripts/package-browser-runtime.py verify \
             --archive "gosx-browser-runtime-${RELEASE_TAG}.tar.gz" \
@@ -397,6 +463,13 @@ jobs:
             artifacts/gosx-windows-amd64.exe
             artifacts/gosx-windows-arm64.exe
             artifacts/gosx-browser-runtime-${{ env.RELEASE_TAG }}.tar.gz
+            artifacts/gosx-runtime-core.wasm
+            artifacts/gosx-runtime-engine.wasm
+            artifacts/gosx-runtime-collab.wasm
+            artifacts/gosx-runtime.wasm
+            artifacts/gosx-runtime-islands.wasm
+            artifacts/gosx-runtime-wasm_exec.js
+            artifacts/gosx-runtime-artifacts.json
             artifacts/checksums.txt
           generate_release_notes: true
 

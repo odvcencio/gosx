@@ -67,7 +67,7 @@ type CanvasBoardProps struct {
 
 	// OnPick is the name of a Go handler invoked when a board node is
 	// clicked. The handler receives the pick payload via $surface.event.*
-	// signals (per ADR 0007). Empty string disables pick routing.
+	// signals. Empty string disables pick routing.
 	OnPick string
 
 	// ClassName forwards to the canvas's CSS class attribute.

@@ -17,8 +17,7 @@ type previewModeQuery struct {
 // the cross-frame relay. The prefix defaults to "$preview.". The peer origin
 // is mandatory so URL-driven preview mode never silently enables a wildcard.
 //
-// Query parameter contract — see ADR 0009 + plan section C of
-// plans/2026-05-26-iframe-cross-frame-signal-transport.md:
+// Query parameter contract:
 //
 //   - gosx-preview=1               → activate the relay
 //   - gosx-preview-origin=<origin> → pin the expected peer origin

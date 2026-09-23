@@ -1,7 +1,7 @@
-// Slice Y.B.1 — failing-first tests for multi-value assignment lowering.
+// Failing-first tests for multi-value assignment lowering.
 //
-// These tests pin the multi-value assignment patterns the Y.B plan calls
-// out as the next gap blocking graph_surface.go. Pre-Y.B the lowerer
+// These tests pin the multi-value assignment patterns that were
+// the gap blocking graph_surface.go. Before this, the lowerer
 // rejects every form with "multi-value assignment is not supported".
 //
 //  1. parallel assignment:        a, b := expr1, expr2
@@ -13,10 +13,10 @@
 //  7. range with two map vars:    for k, v := range m
 //  8. if-init two-value map:      if _, ok := m[k]; !ok { ... }
 //
-// At Y.B.1 each lowering call still fails: stmt.go's lowerAssignStmt
-// rejects every `len(Lhs) != 1 || len(Rhs) != 1` case up front. Y.B.2-Y.B.4
-// add the OpMapLookup opcode, its VM evaluator, and the lowering rules;
-// Y.B.5 marks these tests PASS.
+// Before this, stmt.go's lowerAssignStmt rejects every
+// `len(Lhs) != 1 || len(Rhs) != 1` case up front. The OpMapLookup
+// opcode, its VM evaluator, and the lowering rules make these tests
+// PASS.
 package golower
 
 import (
@@ -80,7 +80,7 @@ func F(x int, y int) int {
 
 // TestLowerTwoValueMapIndexPresent verifies `v, ok := m[k]` populates
 // both bindings when the key exists. Map values come from a composite
-// literal lowered through Y.A's OpComposite.
+// literal lowered through OpComposite.
 func TestLowerTwoValueMapIndexPresent(t *testing.T) {
 	src := []byte(`package handlers
 
@@ -105,7 +105,7 @@ func F() float64 {
 }
 
 // TestLowerTwoValueMapIndexMissing verifies `v, ok := m[k]` returns the
-// zero value + false when the key is absent. The Y.B lowerer must emit
+// zero value + false when the key is absent. The lowerer must emit
 // OpMapLookup (not OpIndex) so the runtime can supply the presence flag.
 func TestLowerTwoValueMapIndexMissing(t *testing.T) {
 	src := []byte(`package handlers
@@ -211,7 +211,7 @@ func F() float64 {
 // binds the map key (not an integer index) when iterating a map. The
 // VM provides "_key" alongside "_item" for maps so the lowerer's
 // range alias must distinguish slice (k = _index) from map (k = _key).
-// Y.B picks _key when the range target's runtime kind is a map; the
+// The VM picks _key when the range target's runtime kind is a map; the
 // lowerer can't know in advance so it emits a dual-alias that prefers
 // _key when present and falls back to _index otherwise.
 func TestLowerRangeMapKeyAndValue(t *testing.T) {
@@ -243,7 +243,8 @@ func F() string {
 // multi-assignment shapes that graph_surface.go uses inside its
 // stepLayout handler — parallel `:=`, parallel `=`, two-value map
 // indexing, and the `ux, uy := dx/dist, dy/dist` form. This is the
-// canonical "does Y.B unblock the real consumer?" regression check.
+// canonical "does multi-value assignment unblock the real consumer?"
+// regression check.
 // Numbers chosen so the answer is exact float arithmetic.
 func TestLowerGraphSurfaceMultiAssignPatterns(t *testing.T) {
 	src := []byte(`package handlers

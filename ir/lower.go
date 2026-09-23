@@ -29,7 +29,6 @@ package ir
 import (
 	"fmt"
 	"html"
-	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -43,11 +42,11 @@ import (
 // Lower converts a parsed GoSX CST into the component IR.
 func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) (*Program, error) {
 	l := &lowerer{
-		src:           source,
-		srcStr:        string(source),
-		lang:          lang,
-		prog:          &Program{},
-		signalImports: make(map[string]struct{}),
+		src:     source,
+		srcStr:  string(source),
+		lang:    lang,
+		prog:    &Program{},
+		imports: NewImportTable(),
 	}
 
 	l.lowerSourceFile(root)
@@ -59,21 +58,20 @@ func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) 
 }
 
 type lowerer struct {
-	src           []byte
-	srcStr        string
-	lang          *gotreesitter.Language
-	prog          *Program
-	errs          []Diagnostic
-	signalImports map[string]struct{}
-	signalDot     bool
-	strict        bool
-	strictNames   map[string]struct{}
-	legacyNames   map[string]struct{}
-	strictProps   map[string]string
-	strictReads   map[string]map[string]strictReadClass
-	structFields  map[string]map[string]string
-	structTypes   map[string]map[string]string
-	strictServer  bool
+	src          []byte
+	srcStr       string
+	lang         *gotreesitter.Language
+	prog         *Program
+	errs         []Diagnostic
+	imports      *ImportTable // file-wide import table; see binding.go
+	strict       bool
+	strictNames  map[string]struct{}
+	legacyNames  map[string]struct{}
+	strictProps  map[string]string
+	strictReads  map[string]map[string]strictReadClass
+	structFields map[string]map[string]string
+	structTypes  map[string]map[string]string
+	strictServer bool
 
 	// legacyProps records every legacy (func-spelled) renderer's declared
 	// props type text, and typedLegacyProps the subset whose base type is a
@@ -476,9 +474,19 @@ func (l *lowerer) precedingCommentLines(n *gotreesitter.Node) []string {
 //	state := signal.NewShared("app", ...)  → SignalInfo{Name: "$app", InitExpr: "..."}
 //	doubled := signal.Derive(...)          → ComputedInfo{Name: "doubled", BodyExpr: "..."}
 //	increment := func() { ... }            → HandlerInfo{Name: "increment", Statements: [...]}
-func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
+//
+// funcDecl is the enclosing function declaration node, used only to seed
+// the lexical scope with parameter names (see LexicalScope in
+// binding.go) so a parameter named "signal" shadows the package meaning
+// the same way a local declared inside the body does.
+func (l *lowerer) analyzeBody(funcDecl, bodyNode *gotreesitter.Node) *ComponentScope {
 	scope := &ComponentScope{
 		Locals: make(map[string]string),
+	}
+
+	lex := NewLexicalScope()
+	for _, name := range l.paramNames(funcDecl) {
+		lex.Bind(name)
 	}
 
 	stmtList := l.statementListNode(bodyNode)
@@ -486,8 +494,12 @@ func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 		stmtList = bodyNode
 	}
 
-	// Walk all named statements looking for declarations that produce signals,
-	// computeds, or handlers.
+	// Walk all named statements looking for declarations that produce
+	// signals, computeds, or handlers. lex accumulates each statement's
+	// declared names only AFTER that statement's own right-hand side is
+	// inspected, matching Go's `:=`/`var` scoping: a name a statement
+	// declares shadows sibling statements that follow it, never its own
+	// right-hand side.
 	for i := 0; i < int(stmtList.NamedChildCount()); i++ {
 		child := stmtList.NamedChild(i)
 		if child == nil {
@@ -495,9 +507,9 @@ func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 		}
 		switch l.nodeType(child) {
 		case "short_var_declaration":
-			l.analyzeShortVarDecl(child, scope)
+			l.analyzeShortVarDecl(child, scope, lex)
 		case "var_declaration":
-			l.analyzeVarDecl(child, scope)
+			l.analyzeVarDecl(child, scope, lex)
 		}
 	}
 
@@ -508,9 +520,31 @@ func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 	return scope
 }
 
+// paramNames returns the parameter identifiers of a function or
+// component declaration, in source order. Used only to seed a
+// LexicalScope: a parameter shadows an import identifier of the same
+// name for the whole body (see analyzeBody).
+func (l *lowerer) paramNames(funcDecl *gotreesitter.Node) []string {
+	params := l.childByField(funcDecl, "parameters")
+	if params == nil {
+		return nil
+	}
+	var names []string
+	for i := 0; i < int(params.NamedChildCount()); i++ {
+		param := params.NamedChild(i)
+		switch l.nodeType(param) {
+		case "parameter_declaration", "gosx_component_parameter":
+			if nameNode := l.childByField(param, "name"); nameNode != nil {
+				names = append(names, l.extractAssignedNames(nameNode)...)
+			}
+		}
+	}
+	return names
+}
+
 // analyzeShortVarDecl checks if a short variable declaration matches
 // a signal, computed, or handler pattern.
-func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScope) {
+func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScope, lex *LexicalScope) {
 	// short_var_declaration has "left" (expression_list) and "right" (expression_list)
 	leftNode := l.childByField(n, "left")
 	rightNode := l.childByField(n, "right")
@@ -520,10 +554,13 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 
 	names := l.extractAssignedNames(leftNode)
 	exprs := l.extractAssignedExprs(rightNode)
-	l.analyzeAssignments(names, exprs, scope)
+	l.analyzeAssignments(names, exprs, scope, lex)
+	for _, name := range names {
+		lex.Bind(name)
+	}
 }
 
-func (l *lowerer) analyzeVarDecl(n *gotreesitter.Node, scope *ComponentScope) {
+func (l *lowerer) analyzeVarDecl(n *gotreesitter.Node, scope *ComponentScope, lex *LexicalScope) {
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
 		if child == nil {
@@ -531,19 +568,19 @@ func (l *lowerer) analyzeVarDecl(n *gotreesitter.Node, scope *ComponentScope) {
 		}
 		switch l.nodeType(child) {
 		case "var_spec":
-			l.analyzeVarSpec(child, scope)
+			l.analyzeVarSpec(child, scope, lex)
 		case "var_spec_list":
 			for j := 0; j < int(child.NamedChildCount()); j++ {
 				spec := child.NamedChild(j)
 				if spec != nil && l.nodeType(spec) == "var_spec" {
-					l.analyzeVarSpec(spec, scope)
+					l.analyzeVarSpec(spec, scope, lex)
 				}
 			}
 		}
 	}
 }
 
-func (l *lowerer) analyzeVarSpec(n *gotreesitter.Node, scope *ComponentScope) {
+func (l *lowerer) analyzeVarSpec(n *gotreesitter.Node, scope *ComponentScope, lex *LexicalScope) {
 	names := l.extractAssignedNames(n)
 	var values *gotreesitter.Node
 	for i := 0; i < int(n.NamedChildCount()); i++ {
@@ -553,15 +590,18 @@ func (l *lowerer) analyzeVarSpec(n *gotreesitter.Node, scope *ComponentScope) {
 			break
 		}
 	}
-	l.analyzeAssignments(names, l.extractAssignedExprs(values), scope)
+	l.analyzeAssignments(names, l.extractAssignedExprs(values), scope, lex)
+	for _, name := range names {
+		lex.Bind(name)
+	}
 }
 
-func (l *lowerer) analyzeAssignments(names []string, exprs []*gotreesitter.Node, scope *ComponentScope) {
+func (l *lowerer) analyzeAssignments(names []string, exprs []*gotreesitter.Node, scope *ComponentScope, lex *LexicalScope) {
 	for idx, varName := range names {
 		if idx >= len(exprs) {
 			return
 		}
-		l.analyzeAssignedExpr(varName, exprs[idx], scope)
+		l.analyzeAssignedExpr(varName, exprs[idx], scope, lex)
 	}
 }
 
@@ -602,18 +642,18 @@ func (l *lowerer) extractAssignedExprs(n *gotreesitter.Node) []*gotreesitter.Nod
 	return exprs
 }
 
-func (l *lowerer) analyzeAssignedExpr(varName string, rightExpr *gotreesitter.Node, scope *ComponentScope) {
+func (l *lowerer) analyzeAssignedExpr(varName string, rightExpr *gotreesitter.Node, scope *ComponentScope, lex *LexicalScope) {
 	if varName == "" || rightExpr == nil {
 		return
 	}
 
-	if sig, ok := l.signalInfoForAssignedExpr(varName, rightExpr); ok {
+	if sig, ok := l.signalInfoForAssignedExpr(varName, rightExpr, lex); ok {
 		scope.Signals = append(scope.Signals, sig)
 		scope.Locals[varName] = "signal"
 		return
 	}
 
-	if computed, ok := l.computedInfoForAssignedExpr(varName, rightExpr); ok {
+	if computed, ok := l.computedInfoForAssignedExpr(varName, rightExpr, lex); ok {
 		scope.Computeds = append(scope.Computeds, computed)
 		scope.Locals[varName] = "computed"
 		return
@@ -626,8 +666,8 @@ func (l *lowerer) analyzeAssignedExpr(varName string, rightExpr *gotreesitter.No
 	}
 }
 
-func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (SignalInfo, bool) {
-	callKind, argsNode, ok := l.signalCallExpr(rightExpr)
+func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node, lex *LexicalScope) (SignalInfo, bool) {
+	callKind, argsNode, ok := l.signalCallExpr(rightExpr, lex)
 	if !ok || argsNode == nil {
 		return SignalInfo{}, false
 	}
@@ -657,8 +697,8 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 	}
 }
 
-func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (ComputedInfo, bool) {
-	callKind, argsNode, ok := l.signalCallExpr(rightExpr)
+func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node, lex *LexicalScope) (ComputedInfo, bool) {
+	callKind, argsNode, ok := l.signalCallExpr(rightExpr, lex)
 	if !ok || callKind != signalCallDerive || argsNode == nil {
 		return ComputedInfo{}, false
 	}
@@ -696,20 +736,44 @@ const (
 	signalCallDerive
 )
 
-func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node) signalCall {
+// signalImportPath is the import path signalCallKind treats as the gosx
+// signal package, resolved through l.imports (see binding.go) rather
+// than by comparing source text to the literal string "signal".
+const signalImportPath = "m31labs.dev/gosx/signal"
+
+// signalCallKind decides whether funcNode (a call expression's function
+// node) invokes the gosx signal package's constructors, using the
+// file's import table and lex's local bindings so a shadowing
+// param/local or an unrelated import cannot be mistaken for the signal
+// package (gosx import-binding fix — see binding.go's package doc).
+//
+// A bare "signal.New(...)" with no import of
+// "m31labs.dev/gosx/signal" anywhere in the file still resolves, for
+// backward compatibility with gosx's documented convention of writing
+// components without an explicit signal import (examples/hotswap,
+// most of this test corpus). That implicit default only applies when
+// no import at all claims the "signal" identifier — an explicit,
+// differently-pathed import of "signal" (or a shadowing local) always
+// wins over it.
+func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node, lex *LexicalScope) signalCall {
 	if funcNode == nil {
 		return signalCallUnknown
 	}
 	pkgName, funcName := l.callName(funcNode)
 	if pkgName == "" {
-		if !l.signalDot {
+		if !l.imports.HasDotImport(signalImportPath) || lex.Shadows(funcName) {
 			return signalCallUnknown
 		}
 	} else {
-		if pkgName != "signal" {
-			if _, ok := l.signalImports[pkgName]; !ok {
+		if lex.Shadows(pkgName) {
+			return signalCallUnknown
+		}
+		if boundPath, present := l.imports.Lookup(pkgName); present {
+			if boundPath != signalImportPath {
 				return signalCallUnknown
 			}
+		} else if pkgName != "signal" {
+			return signalCallUnknown
 		}
 	}
 	switch funcName {
@@ -729,7 +793,7 @@ func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node) signalCall {
 	}
 }
 
-func (l *lowerer) signalCallExpr(n *gotreesitter.Node) (signalCall, *gotreesitter.Node, bool) {
+func (l *lowerer) signalCallExpr(n *gotreesitter.Node, lex *LexicalScope) (signalCall, *gotreesitter.Node, bool) {
 	if n == nil || l.nodeType(n) != "call_expression" {
 		return signalCallUnknown, nil, false
 	}
@@ -737,7 +801,7 @@ func (l *lowerer) signalCallExpr(n *gotreesitter.Node) (signalCall, *gotreesitte
 	if funcNode == nil {
 		return signalCallUnknown, nil, false
 	}
-	return l.signalCallKind(funcNode), l.childByField(n, "arguments"), true
+	return l.signalCallKind(funcNode, lex), l.childByField(n, "arguments"), true
 }
 
 func (l *lowerer) callName(funcNode *gotreesitter.Node) (string, string) {
@@ -2592,7 +2656,7 @@ func (l *lowerer) lowerImportSpec(n *gotreesitter.Node) {
 		}
 	}
 	l.prog.Imports = append(l.prog.Imports, imp)
-	l.recordSignalImport(imp)
+	l.imports.Add(imp.Path, imp.Alias)
 }
 
 // isImportAlias reports whether name is this file's explicit alias for an
@@ -2614,23 +2678,6 @@ func (l *lowerer) isImportAlias(name string) bool {
 		}
 	}
 	return false
-}
-
-func (l *lowerer) recordSignalImport(imp Import) {
-	if strings.TrimSpace(imp.Path) != "m31labs.dev/gosx/signal" {
-		return
-	}
-	alias := strings.TrimSpace(imp.Alias)
-	switch alias {
-	case "":
-		l.signalImports[path.Base(imp.Path)] = struct{}{}
-	case ".":
-		l.signalDot = true
-	case "_":
-		return
-	default:
-		l.signalImports[alias] = struct{}{}
-	}
 }
 
 // lowerFunctionDecl checks if a function returns Node and contains GSX,
@@ -2671,7 +2718,7 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 
 	// Analyze the function body for signal/computed/handler declarations.
 	// This extracts the component scope needed for island lowering.
-	scope := l.analyzeBody(bodyNode)
+	scope := l.analyzeBody(n, bodyNode)
 
 	// Run before reading the directives, so a misspelled one is reported as
 	// itself rather than as a component that mysteriously is not an island.
@@ -2759,7 +2806,7 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	}
 	l.validateStrictRenderedProps(n, componentName, propsType)
 
-	gsxRoot := l.strictComponentGSXRoot(bodyNode, isIsland || isEngine)
+	gsxRoot := l.strictComponentGSXRoot(n, bodyNode, isIsland || isEngine)
 	if gsxRoot == nil {
 		return
 	}
@@ -2777,7 +2824,7 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.strictServer = wasStrictServer
 	l.currentStrictComponent = prevComponent
 	l.currentStrictPropsType = prevPropsType
-	scope := l.analyzeBody(bodyNode)
+	scope := l.analyzeBody(n, bodyNode)
 	propsFields, propsPaths := l.copyStrictPropTypes(propsType, l.strictReads[componentName])
 	comp := Component{
 		Name:        componentName,
@@ -2855,7 +2902,7 @@ func (l *lowerer) copyStrictPropTypes(propsType string, reads map[string]strictR
 	return propsFields, propsPaths
 }
 
-func (l *lowerer) strictComponentGSXRoot(body *gotreesitter.Node, allowIslandDecls bool) *gotreesitter.Node {
+func (l *lowerer) strictComponentGSXRoot(funcDecl, body *gotreesitter.Node, allowIslandDecls bool) *gotreesitter.Node {
 	statements := l.statementListNode(body)
 	if statements == nil {
 		statements = body
@@ -2868,7 +2915,7 @@ func (l *lowerer) strictComponentGSXRoot(body *gotreesitter.Node, allowIslandDec
 
 	for i := 0; i < count-1; i++ {
 		stmt := statements.NamedChild(i)
-		if allowIslandDecls && l.nodeType(stmt) == "short_var_declaration" && l.isSupportedStrictIslandDeclaration(stmt) {
+		if allowIslandDecls && l.nodeType(stmt) == "short_var_declaration" && l.isSupportedStrictIslandDeclaration(funcDecl, stmt) {
 			continue
 		}
 		l.errorf(stmt, "strict component body contains a statement the IR renderer cannot execute")
@@ -2895,10 +2942,14 @@ func (l *lowerer) strictComponentGSXRoot(body *gotreesitter.Node, allowIslandDec
 	return exprs[0]
 }
 
-func (l *lowerer) isSupportedStrictIslandDeclaration(n *gotreesitter.Node) bool {
+func (l *lowerer) isSupportedStrictIslandDeclaration(funcDecl, n *gotreesitter.Node) bool {
 	scope := &ComponentScope{Locals: make(map[string]string)}
+	lex := NewLexicalScope()
+	for _, name := range l.paramNames(funcDecl) {
+		lex.Bind(name)
+	}
 	before := len(l.errs)
-	l.analyzeShortVarDecl(n, scope)
+	l.analyzeShortVarDecl(n, scope, lex)
 	if len(l.errs) != before {
 		return true // the declaration was recognized; its own diagnostic is clearer
 	}

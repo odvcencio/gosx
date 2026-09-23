@@ -301,7 +301,7 @@ func encodeHandlers(buf *bytes.Buffer, p *Program, st *stringTable) {
 	}
 }
 
-// encodeFuncs writes the user-function registry (Slice Y.D). Programs with no
+// encodeFuncs writes the user-function registry. Programs with no
 // user functions write a zero count.
 func encodeFuncs(buf *bytes.Buffer, p *Program, st *stringTable) {
 	putUint16(buf, uint16(len(p.Funcs)))

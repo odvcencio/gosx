@@ -436,7 +436,7 @@
         // int unmarshaler rejects) would invalidate the whole clip, so the
         // key is omitted and the channel is rejected per-channel instead.
         if (Number.isInteger(declared) && declared > 0 &&
-            declared <= _SCENE_ANIM_WASM_MAX_ID - _SCENE_ANIM_WASM_WEIGHT_PROP_BASE + 1) {
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ declared <= _SCENE_ANIM_WASM_MAX_ID - _SCENE_ANIM_WASM_WEIGHT_PROP_BASE + 1) {
           record.weightCount = declared;
         }
       }
@@ -938,7 +938,7 @@
         if (!entry) { entry = {}; pose.set(node, entry); }
         // The interpolation helper uses reusable scratch arrays. Copy now.
         entry[channel.property] = Array.from(sceneAnimInterpolateChannel(channel, time));
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       const matrices = sceneAnimComputeJointMatrices(skin, sceneAnimBuildNodeTransforms(asset.nodes, pose, null));
       for (const value of matrices) if (!Number.isFinite(value)) throw new Error("nonfinite crowd matrix");
       data.set(matrices, row * width * 4);

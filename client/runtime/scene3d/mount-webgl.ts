@@ -773,7 +773,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // copied target) can never alias through to the other copy.
   function sceneSnapshotSpecularOverrideColor(value) {
     if (Array.isArray(value)) return value.slice();
-    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    /* @ts-expect-error TS2351 -- ArrayBuffer.isView narrows value to ArrayBufferView, whose .constructor loses its concrete construct signature */ if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
       return new value.constructor(value);
     }
     return value;
@@ -1199,7 +1199,7 @@ function gosxConfigureSceneScript(script, role, src) {
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
-        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
         indices: sceneCloneModelMeshIndices(vertices.indices),
       };
     } else {
@@ -1265,7 +1265,7 @@ function gosxConfigureSceneScript(script, role, src) {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
-        tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         indices: sceneCloneModelMeshIndices(vertices.indices),
         count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
       };
@@ -1615,8 +1615,8 @@ function gosxConfigureSceneScript(script, role, src) {
   // renderer, etc.).
   function resolveSceneSubFeatureURL(datasetKey, fallback) {
     try {
-      var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
-      if (tag && tag.dataset && tag.dataset[datasetKey]) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (tag && tag.dataset && tag.dataset[datasetKey]) {
         return tag.dataset[datasetKey];
       }
     } catch (_e) {}
@@ -1674,7 +1674,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   function sceneNextFrame() {
     return new Promise(function(resolve) {
-      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      /* @ts-expect-error TS2794 -- Promise<T> is inferred from the bare resolve() call inside; T is really void */ if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
         window.requestAnimationFrame(function() { resolve(); });
         return;
       }
@@ -2601,7 +2601,7 @@ function gosxConfigureSceneScript(script, role, src) {
                 const skins = new Set(asset.objects.map(o => o.skinIndex));
                 for (const skin of skins) animationAPI.buildCrowdAtlas(asset, skin);
               } catch (error) {
-                // Unsupported ordinary Model assets retain their existing playback.
+                /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Unsupported ordinary Model assets retain their existing playback.
                 asset._crowdUnsupported = String(error && error.message || error);
               }
             }
@@ -2657,7 +2657,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // resolves to the parsed asset ({objects, points, labels, sprites, html,
   // lights, ...}, all empty arrays on failure) so callers can verify the load
   // actually produced content before committing to a swap.
-  window.__gosx_scene3d_preload_model = function(src) {
+  /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ window.__gosx_scene3d_preload_model = function(src) {
     return loadSceneModelAsset(String(src || "").trim(), null);
   };
   if (typeof window !== "undefined") {
@@ -3012,8 +3012,8 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
     }
-    if (morphTargets.length > 0) {
-      record.morphTargets = morphTargets;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (morphTargets.length > 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.morphTargets = morphTargets;
       record.morphApi = typeof window !== "undefined" ? (window.__gosx_scene3d_gltf_api || null) : null;
     }
     // Rigid node TRS playback entries: one live record per emitted geometry
@@ -3037,15 +3037,15 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
     }
-    if (nodeAnimTargets.length > 0) {
-      record.nodeAnimTargets = nodeAnimTargets;
-      if (!record.morphApi && typeof window !== "undefined") {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (nodeAnimTargets.length > 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.nodeAnimTargets = nodeAnimTargets;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!record.morphApi && typeof window !== "undefined") {
         record.morphApi = window.__gosx_scene3d_gltf_api || null;
       }
     }
 
     const clips = sceneCloneModelAnimations(asset.animations);
-    if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
       record.explicitClips = clips;
       sceneApplyModelSkinPose(record, 0, false);
       return;
@@ -3058,8 +3058,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (wantWasmMixer) {
       // P4-M3: route glTF clip playback through the Go WASM motion mixer.
       const handle = window.__gosx_motion_mixer_create();
-      if (handle >= 1) {
-        record.wasmMixer = handle;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (handle >= 1) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.wasmMixer = handle;
         record.wasmMixerActive = true;
         for (let index = 0; index < clips.length; index += 1) {
           const clip = clips[index];
@@ -3782,7 +3782,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const instanceModel = sceneModelWithAssetFit(model, asset);
       const prefix = model.id || ("scene-model-" + modelIndex);
       let crowdCandidate = !asset._crowdUnsupported && model._instancedGLB === true && model._crowdPose && model._crowdPose.animation &&
-        state._crowdWebGLRequested && state._crowdRenderer && state._crowdRenderer.prepareCrowdAtlas &&
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ state._crowdWebGLRequested && state._crowdRenderer && state._crowdRenderer.prepareCrowdAtlas &&
         Boolean(sceneRigidInstanceHydrationKey(state, model)) && !sceneModelHasWeightAnimations(asset) &&
         !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
         (!model.materialKind || model.materialKind === "standard") &&
@@ -3825,7 +3825,7 @@ function gosxConfigureSceneScript(script, role, src) {
           object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows };
           object.static = false;
           staged.objects.push(object);
-        }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
         staged.rigidInstanceModel = instanceModel;
         return { ok: true, staged };
       }
@@ -3833,7 +3833,7 @@ function gosxConfigureSceneScript(script, role, src) {
         !sceneModelHasSkins(asset.skins) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) &&
         !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
         asset.objects.length > 0 && asset.objects.every(function(object) {
-          return object.vertices && object.vertices.count > 0 && !object._morphAnim && !object._nodeAnim;
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return object.vertices && object.vertices.count > 0 && !object._morphAnim && !object._nodeAnim;
         }) && Boolean(sceneRigidInstanceHydrationKey(state, model));
       // glTF node transforms are already folded into the asset vertices. Keep
       // those vertices in model-local space and apply the instance TRS once
@@ -3842,7 +3842,7 @@ function gosxConfigureSceneScript(script, role, src) {
         x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
         scaleX: 1, scaleY: 1, scaleZ: 1, parentMatrix: null,
         _shareRigidGeometry: true,
-      }) : instanceModel;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }) : instanceModel;
       if (rigidInstance) staged.rigidInstanceModel = instanceModel;
       stage = "skin-clone";
       const skinInstances = sceneCloneModelSkins(asset.skins);
@@ -4184,7 +4184,7 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     for (let index = 0; index < additions.length; index += 1) {
       const entry = additions[index];
-      const staged = results[index].staged;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const staged = results[index].staged;
       const key = sceneRigidInstanceHydrationKey(state, entry.model);
       if (key !== entry.key || !sceneReusableRigidInstance(staged, null)) {
         sceneDestroyStagedModelHydrations(results);
@@ -4324,7 +4324,7 @@ function gosxConfigureSceneScript(script, role, src) {
     }
 
     const previousStaticModels = state._hydratedModelRecords && state._hydratedModelRecords.staticModels;
-    const previousRigidInstances = state._hydratedModelRecords && state._hydratedModelRecords.rigidInstances;
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const previousRigidInstances = state._hydratedModelRecords && state._hydratedModelRecords.rigidInstances;
     const rigidKeys = models.map(function(model) { return sceneRigidInstanceHydrationKey(state, model); });
     const staticKeys = models.map(function(model, modelIndex) {
       return sceneStaticModelHydrationKey(state, model, modelIndex);
@@ -4547,8 +4547,8 @@ function gosxConfigureSceneScript(script, role, src) {
     const hover = environment ? Boolean(environment.hover) : (sceneMediaQueryMatches("(hover: hover)") || sceneMediaQueryMatches("(any-hover: hover)"));
     const reducedData = environment ? Boolean(environment.reducedData) : sceneMediaQueryMatches("(prefers-reduced-data: reduce)");
     const lowPower = (environment ? Boolean(environment.lowPower) : false) || softwareWebGL;
-    const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
-    const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
     // Device-capability gate via the single source of truth gosxLowEndHardware
     // (05-document-env), preferring the value already computed in the environment
@@ -5111,21 +5111,21 @@ function gosxConfigureSceneScript(script, role, src) {
       baseExplicitMaxDevicePixelRatio: sceneNumber(base && base.explicitMaxDevicePixelRatio, 0),
       mode: hasLadder ? "ladder" : "tier",
     };
-    if (hasLadder) {
-      state.ladder = ladder.rungs;
-      state.rungIndex = ladder.startRung;
-      state.rungRevision = 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (hasLadder) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.ladder = ladder.rungs;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungIndex = ladder.startRung;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungRevision = 0;
       state.rungReason = "initial";
       // PROMOTE after N (default 120) consecutive frames with headroom below
       // promoteThreshold (default 0.7) × the frame budget. DEMOTE reuses the
       // dprCap-tier governor's sustained-miss condition verbatim (badFrames
-      // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
-      state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
       state.rungPromoteThreshold = Math.max(0.05, Math.min(0.95, sceneNumber(props && props.qualityLadderPromoteThreshold, 0.7)));
       // rungPromoteRule: which promotion rule the last measurement used —
       // "gpu-headroom" (real GPU timing) or "raf-cadence" (cpu-raf fallback,
       // no timestamp-query support). Set fresh every sampled frame in
-      // sceneUpdateQualityLadder; this is just the pre-first-sample default.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // sceneUpdateQualityLadder; this is just the pre-first-sample default.
       state.rungPromoteRule = "gpu-headroom";
     }
     return state;

@@ -213,13 +213,16 @@ func AABBFromCenterHalfExtents(center, halfExtents Vec3) AABB {
 }
 
 func (a AABB) IsFinite() bool {
-	values := []float64{a.Min.X, a.Min.Y, a.Min.Z, a.Max.X, a.Max.Y, a.Max.Z}
-	for _, v := range values {
-		if math.IsInf(v, 0) || math.IsNaN(v) {
-			return false
-		}
-	}
-	return true
+	return isFiniteFloat(a.Min.X) && isFiniteFloat(a.Min.Y) && isFiniteFloat(a.Min.Z) &&
+		isFiniteFloat(a.Max.X) && isFiniteFloat(a.Max.Y) && isFiniteFloat(a.Max.Z)
+}
+
+// isFiniteFloat reports the same boolean AABB.IsFinite always computed, one
+// value at a time instead of through a slice literal, which let the compiler
+// keep every check on the stack instead of materializing and ranging a
+// []float64 for six values on the narrowphase and broadphase hot paths.
+func isFiniteFloat(v float64) bool {
+	return !math.IsInf(v, 0) && !math.IsNaN(v)
 }
 
 func (a AABB) Overlaps(b AABB) bool {

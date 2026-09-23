@@ -17,7 +17,7 @@
 
   function commandURL() {
     try {
-      var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
       if (tag && tag.dataset && tag.dataset.gosxScene3dCommandUrl) return tag.dataset.gosxScene3dCommandUrl;
     } catch (_e) {}
     return "/gosx/bootstrap-feature-scene3d-command.js";

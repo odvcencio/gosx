@@ -33,6 +33,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -179,7 +180,10 @@ Usage:
 		fmt.Fprintf(w, `gosx check - Parse and validate .gsx source
 
 Usage:
-  gosx check <file.gsx>
+  gosx check [--types] <file.gsx>
+
+Flags:
+  --types  Also run the go/types oracle over the package (experimental)
 
 `)
 	case "render":
@@ -390,9 +394,30 @@ func cmdCompile() {
 }
 
 func cmdCheck() {
-	file := requireArg(2, "check")
+	fs := flag.NewFlagSet("gosx check", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	// --types is opt-in (gosx#typeoracle milestone 1): a real go/types pass
+	// over the package's strict projection plus its sibling .go files,
+	// beside strictcheck's own go/ast-based checks rather than in place of
+	// them. Opt-in until it has run clean across enough real gosx code to
+	// trust as a default -- see internal/typeoracle's package doc for the
+	// design, and this slice's own report for what running it over
+	// examples/ found.
+	withTypes := fs.Bool("types", false, "also run the go/types oracle over the package (experimental; internal/typeoracle)")
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fatal("check: %v", err)
+	}
+	if fs.NArg() < 1 {
+		fatal("check requires a file argument")
+	}
+	file := fs.Arg(0)
 	if err := runCheck(file, os.Stderr); err != nil {
 		fatal("check: %v", err)
+	}
+	if *withTypes {
+		if err := runCheckTypes(file, os.Stderr); err != nil {
+			fatal("check: %v", err)
+		}
 	}
 }
 

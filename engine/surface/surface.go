@@ -248,9 +248,9 @@ func (c *Canvas) StartLoop(step func(dt float64)) { c.impl.startLoop(step) }
 
 // registryEntry is the in-memory record for a discovered surface component.
 //
-// Every surface lowers to shared-VM bytecode (ADR 0003 / ADR 0005); the
-// legacy per-component WASM fields (wasmURL, stale) were removed when
-// internal/buildsurface was deleted.
+// Every surface lowers to shared-VM bytecode; the legacy per-component
+// WASM fields (wasmURL, stale) were removed when internal/buildsurface
+// was deleted.
 type registryEntry struct {
 	hash         string
 	propsType    string

@@ -54,8 +54,16 @@ type Renderer struct {
 	bootstrapFeatureControllersPath    string
 	bootstrapFeatureScene3dPath        string
 	bootstrapFeatureScene3dCommandPath string
-	bootstrapFeatureScene3dHydratePath string
-	bootstrapFeatureScene3dWebGPUPath  string
+	// bootstrapFeatureScene3dInstanceStreamPath serves the opt-in binary
+	// instance-transform fast path. Advertised unconditionally, exactly like
+	// bootstrapFeatureScene3dCommandPath above: instance-stream-bridge.ts
+	// (in the always-loaded base scene3d bundle) lazy-loads the chunk on a
+	// caller's first handle.applyInstanceStream(bytes) call, so the URL
+	// must be on the page before any scene-content heuristic could ever
+	// decide the page "needs" it — there is no such heuristic.
+	bootstrapFeatureScene3dInstanceStreamPath string
+	bootstrapFeatureScene3dHydratePath        string
+	bootstrapFeatureScene3dWebGPUPath         string
 	// bootstrapFeatureScene3dWebGLPath serves the WebGL2 renderer, which now
 	// loads on demand. A WebGPU-capable browser never fetches it. The mount
 	// code also fetches it when a WebGPU device is lost, so the fallback
@@ -128,7 +136,7 @@ type clientRuntimePlan struct {
 	// PreviewRelay is true when the page should emit the cross-frame relay
 	// script (gosx/relay.js) alongside the standard bootstrap. Driven by
 	// the process-level previewBootstrapEnabled flag — see
-	// island/preview_bootstrap.go and ADR 0009. Independent of Mode: a
+	// island/preview_bootstrap.go. Independent of Mode: a
 	// page may emit relay.js with mode="preview" (no islands, no engines)
 	// or with mode="full" (islands present AND preview enabled).
 	PreviewRelay bool
@@ -204,6 +212,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureControllersPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-controllers.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureControllers.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.bootstrapFeatureScene3dCommandPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-command.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCommand.Hash))
+	renderer.bootstrapFeatureScene3dInstanceStreamPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-instance-stream.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DInstanceStream.Hash))
 	renderer.bootstrapFeatureScene3dHydratePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hydrate.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHydrate.Hash))
 	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
 	renderer.bootstrapFeatureScene3dWebGLPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgl.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGL.Hash))
@@ -524,6 +533,19 @@ func (r *Renderer) SetBootstrapFeatureScene3DCommandPath(path string) {
 	r.bootstrapFeatureScene3dCommandPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DInstanceStreamPath overrides the lazy Scene3D
+// instance-stream sub-feature chunk URL. Emitted unconditionally as a
+// data-* attribute, the same as SetBootstrapFeatureScene3DCommandPath: there
+// is no scene-content signal that predicts whether a page will ever call
+// handle.applyInstanceStream, so (unlike Compute/Decompress below) this
+// cannot be gated on one.
+func (r *Renderer) SetBootstrapFeatureScene3DInstanceStreamPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dInstanceStreamPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DHydratePath overrides the strict initial-hydrate
 // chunk URL. The renderer emits it only for a shared Scene3D program.
 func (r *Renderer) SetBootstrapFeatureScene3DHydratePath(path string) {
@@ -661,6 +683,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3D, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
 		return r.runtimeAssets.BootstrapFeatureScene3DCommand, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-instance-stream.js", r.bootstrapFeatureScene3dInstanceStreamPath, r.runtimeAssets.BootstrapFeatureScene3DInstanceStream):
+		return r.runtimeAssets.BootstrapFeatureScene3DInstanceStream, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hydrate.js", r.bootstrapFeatureScene3dHydratePath, r.runtimeAssets.BootstrapFeatureScene3DHydrate):
 		return r.runtimeAssets.BootstrapFeatureScene3DHydrate, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgpu.js", r.bootstrapFeatureScene3dWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DWebGPU):
@@ -713,7 +737,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -818,6 +842,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureTextlayoutPath(runtime.BootstrapFeatureTextlayout)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetBootstrapFeatureScene3DCommandPath(runtime.BootstrapFeatureScene3DCommand)
+	r.SetBootstrapFeatureScene3DInstanceStreamPath(runtime.BootstrapFeatureScene3DInstanceStream)
 	r.SetBootstrapFeatureScene3DHydratePath(runtime.BootstrapFeatureScene3DHydrate)
 	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
 	r.SetBootstrapFeatureScene3DWebGLPath(runtime.BootstrapFeatureScene3DWebGL)
@@ -1015,10 +1040,10 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	var b strings.Builder
 	plan := r.clientRuntimePlan()
 	nonceAttr := cspNonceAttr(nonce)
-	// Preview-mode relay (ADR 0009) emits an additional script that wires
+	// Preview-mode relay emits an additional script that wires
 	// window.__gosx_relay_* before the bootstrap runs. Emitted FIRST so
 	// the relay's message listener is installed before any cross-frame
-	// signals arrive — see plan section C and client/js/relay.js.
+	// signals arrive — see client/js/relay.js.
 	if plan.PreviewRelay && r.relayPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), r.runtimeScriptAttrs(r.relayPath, nonce)))
 		b.WriteByte('\n')
@@ -1062,6 +1087,16 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		if commandPath := r.bootstrapFeatureScene3dCommandPath; commandPath != "" {
 			b.WriteString(` data-gosx-scene3d-command-url="`)
 			b.WriteString(html.EscapeString(commandPath))
+			b.WriteByte('"')
+		}
+		// Unconditional, exactly like the command URL above: no scene-content
+		// signal exists to gate this on (unlike compute/decompress below),
+		// since handle.applyInstanceStream is a page-authored/engine call the
+		// renderer cannot see coming. instance-stream-bridge.ts (base scene3d
+		// bundle) reads this attribute to lazy-load the chunk on first use.
+		if instanceStreamPath := r.bootstrapFeatureScene3dInstanceStreamPath; instanceStreamPath != "" {
+			b.WriteString(` data-gosx-scene3d-instance-stream-url="`)
+			b.WriteString(html.EscapeString(instanceStreamPath))
 			b.WriteByte('"')
 		}
 		if animPath := r.bootstrapFeatureScene3dAnimationPath; animPath != "" {
@@ -1954,7 +1989,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	// cross-frame relay) get a dedicated "preview" mode. They emit
 	// wasm_exec + the tiny islands runtime + relay.js, but no manifest
 	// (no islands to hydrate yet — the storefront subscriber island is
-	// added by slice 6's downstream consumer).
+	// added by a later consumer).
 	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
 		mode = "preview"
 	}

@@ -25,8 +25,8 @@ func defaultNow() time.Time { return time.Now() }
 //
 // BytecodeURL / BytecodePath / SurfaceKind name the shared-VM bytecode
 // program the client bootstrap fetches and hydrates through the shared
-// runtime. The legacy per-component WASM fields are gone — see ADR
-// 0003 (supersedure) and ADR 0005 (buildsurface deletion).
+// runtime. The legacy per-component WASM fields are gone: shared-VM
+// bytecode superseded the format, and buildsurface itself was later deleted.
 type surfaceManifestEntry struct {
 	Component    string            `json:"component"`
 	Hash         string            `json:"hash"`
@@ -138,9 +138,8 @@ func Handler() http.Handler {
 // have a real .gsx tree).
 //
 // All surfaces lower through the unified shared-VM bytecode path. The
-// per-component WASM backend (internal/buildsurface) was deleted per
-// ADR 0005; the `surface=wasm` escape hatch (ADR 0006) is no longer
-// recognized and fails the build.
+// per-component WASM backend (internal/buildsurface) was deleted; the
+// `surface=wasm` escape hatch is no longer recognized and fails the build.
 func Discover(projectRoot string) error {
 	if os.Getenv("GOSX_DISABLE_SURFACE_AUTO") != "" {
 		return nil
@@ -214,8 +213,8 @@ func writeManifest(cacheDir string, m *surfaceManifest) error {
 // discoverFile handles a single .gsx file: lowers each surface component
 // to bytecode, registers routes, and appends manifest entries. Surfaces
 // carrying the legacy `//gosx:engine surface=wasm` escape-hatch
-// annotation are rejected with a clear error pointing at the deletion
-// ADR — the WASM backend they targeted no longer exists.
+// annotation are rejected with a clear error: the WASM backend they
+// targeted no longer exists.
 func discoverFile(gszPath, cacheDir string, mux *http.ServeMux, manifest *surfaceManifest) error {
 	src, err := os.ReadFile(gszPath)
 	if err != nil {

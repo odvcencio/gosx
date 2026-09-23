@@ -114,8 +114,8 @@ func TestComputeMVPOrthoCamera2DScalesByZoom(t *testing.T) {
 	}
 }
 
-// TestConfigure2DBundleDisablesLightingDepthPostFX is the A1.3 acceptance:
-// the 2D-mode pipeline-config switch (per ADR 0004) strips lighting,
+// TestConfigure2DBundleDisablesLightingDepthPostFX verifies that
+// the 2D-mode pipeline-config switch strips lighting,
 // post-FX, and shadow-casting flags from a bundle. The CanvasBoardAdapter
 // calls Configure2DBundle at the end of RenderBundle to enforce this.
 func TestConfigure2DBundleDisablesLightingDepthPostFX(t *testing.T) {

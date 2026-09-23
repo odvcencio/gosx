@@ -12,7 +12,7 @@
 //  1. Decodes a Program JSON the JS bootstrap fetched from
 //     data-gosx-engine-bytecode (surface.Renderer.Mount emits this).
 //  2. Constructs a fresh vm.VM bound to that Program.
-//  3. Wires the SignalDefs into reactive signals (Y.B/Y.C local-write +
+//  3. Wires the SignalDefs into reactive signals (local-write +
 //     OpAssign reads/writes through the signal layer).
 //  4. Binds a CanvasHostReceiver under "c" — the convention every
 //     `//gosx:engine surface` author writes against.
@@ -152,9 +152,9 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 
 	// "ctx" is the other half of the surface author contract. The
 	// ContextHostReceiver decodes propsJSON into the surface's typed
-	// props struct via OpHostCall("ctx.PropsInto", [&props]) — Y.G's
+	// props struct via OpHostCall("ctx.PropsInto", [&props]) — the
 	// eager struct zero-init guarantees props.Fields is non-nil at the
-	// call site, and Y.C's in-place mutation propagates the writes
+	// call site, and in-place mutation propagates the writes
 	// back to the handler's local.
 	ctxRecv := surface.NewContextHostReceiver([]byte(propsJSON))
 	machine.BindHost("ctx", ctxRecv)
@@ -176,7 +176,7 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 	b.engineSurfaces[id] = inst
 
 	// Invoke Mount with a fresh frame so OpLocalDecl / OpAssign land in
-	// per-handler locals (per X.A's EvalWithFrame contract). Missing
+	// per-handler locals (per EvalWithFrame's contract). Missing
 	// Mount handler is OK — some surfaces only react to events.
 	if mountID, ok := inst.handlerByName["Mount"]; ok {
 		machine.EvalWithFrame(mountID)
@@ -193,7 +193,7 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 //
 // Event coords land in props named "ev.X" / "ev.Y" / "ev.button" / … so
 // handlers wired by the lowerer can read them via OpPropGet. The naming
-// matches what Y.E's `ev.X` + `ev.Y` lowering already produces.
+// matches what the `ev.X` + `ev.Y` lowering already produces.
 //
 // Missing instance / missing handler are silent no-ops — surfaces are
 // allowed to omit any handler they don't need (per the Surface struct's
@@ -271,7 +271,7 @@ func (b *Bridge) EngineSurfaceCount() int {
 // decodeEngineSurfaceProgram parses the program emitted by
 // engine/surface.LowerToBytecode. Format mirrors HydrateIsland's
 // accepted set (json + bin) with "" defaulting to json. Surface kind
-// is set to Canvas2D per ADR 0003 — every engine surface today is a
+// is set to Canvas2D — every engine surface today is a
 // Canvas2D root. Future Scene3D-root surfaces will bump the
 // discriminator.
 func decodeEngineSurfaceProgram(data []byte, format string) (*program.Program, error) {

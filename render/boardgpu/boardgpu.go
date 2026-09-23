@@ -273,12 +273,12 @@ func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 // appends one quad per b.Lines segment (appendBoardLineQuads) and one per
 // b.Sprites record (appendBoardSpriteQuads), each with its own RenderObject.
 // Objects land in painter z-order — rects, then lines, then sprites — which is
-// the order the GPU object paths draw them in (labels stay wire-only; M1 slice
-// 2C renders them as a DOM overlay). ObjectCount is kept in sync.
+// the order the GPU object paths draw them in (labels stay wire-only; they
+// render as a DOM overlay). ObjectCount is kept in sync.
 //
 // DRY: the rect geometry has ONE source — the object's existing Bounds (already
 // computed by package vm). Lighting/depth stay off via the bundle's
-// OrthoCamera2D camera (ADR 0004); rect/line color comes from the Selena
+// OrthoCamera2D camera; rect/line color comes from the Selena
 // BoardFill shader this also attaches to the flat materials
 // (attachBoardFillMaterials) — custom WGSL the 16a WebGPU renderer draws unlit
 // at full brightness, with the flat/Unlit Color kept alongside for the native
