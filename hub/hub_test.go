@@ -653,10 +653,24 @@ func TestHubHandlerPanicRecovers(t *testing.T) {
 		ctx.Client.trySend(mustMarshalMessage("pong", nil))
 	})
 
-	var logBuf bytes.Buffer
+	// log.SetOutput redirects the package-global logger, and a prior
+	// subtest's server.Close() does not block until its clients'
+	// readPump/writePump goroutines actually exit (net/http.Server.Close
+	// closes the listener but explicitly does not wait for background
+	// goroutines) — so a straggler from an earlier subtest, or this
+	// test's own bystander client logging its own join/disconnect, can
+	// still call log.Printf while this test reads the buffer below. A
+	// bare bytes.Buffer has no locking, so that's a real, race-detector-
+	// visible data race, not just a hypothetical one — this exact
+	// scenario failed go-race-tests in CI before syncLogBuffer existed.
+	// The mutex serializes every writer (mine and any straggler's), and
+	// the strings.Contains assertions below only look for text unique to
+	// this test's own panic, so stray unrelated log lines can't produce
+	// a false pass.
+	logBuf := &syncLogBuffer{}
 	prevOutput := log.Writer()
 	prevFlags := log.Flags()
-	log.SetOutput(&logBuf)
+	log.SetOutput(logBuf)
 	log.SetFlags(0)
 	t.Cleanup(func() {
 		log.SetOutput(prevOutput)
@@ -725,4 +739,29 @@ func TestHubHandlerPanicRecovers(t *testing.T) {
 func mustMarshalMessage(event string, data any) []byte {
 	msg, _ := json.Marshal(Message{Event: event, Data: mustMarshal(data)})
 	return msg
+}
+
+// syncLogBuffer is a mutex-guarded io.Writer + String() sink for tests that
+// redirect the package-global log output (log.SetOutput). The global
+// logger has writers this package does not control — a straggler
+// goroutine from an earlier subtest's not-yet-exited readPump/writePump
+// (net/http.Server.Close does not wait for them), or a concurrent client
+// in the same test — so a plain bytes.Buffer read from the test goroutine
+// races with any of those writes. Every access here goes through the same
+// mutex, so it stays race-free regardless of who else writes.
+type syncLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
