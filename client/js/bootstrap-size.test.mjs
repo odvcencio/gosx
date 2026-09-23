@@ -633,12 +633,15 @@ const budgets = [
   // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
   // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
   // Gzip stays at 436_000: its hard limit already clears the new measurement.
+  // The computed-morph repeated-blend fix (prior-array plumbing plus a
+  // cross-renderer output-buffer staleness guard) measured 1_650_075 /
+  // 452_182 / 363_298. Raw and brotli exceeded the prior hard limit; bumped
+  // raw 1_584_500 -> 1_589_000, gzip 436_000 -> 438_000, and brotli 346_800
+  // -> 350_000 for headroom.
   // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
   // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
-  // slots, the __proto__-safe normalized attribute map) measured 1_653_205 /
-  // 452_977 / 363_959. All three exceeded the prior hard limit; bumped raw
-  // 1_584_500 -> 1_592_000, gzip 436_000 -> 440_000, and brotli 346_800 ->
-  // 351_000 for headroom.
+  // slots, the __proto__-safe normalized attribute map) combines with the
+  // above on merge. Caps re-measured from the merged source below.
   { file: "bootstrap.js", raw: 1_592_000, gzip: 440_000, brotli: 351_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
