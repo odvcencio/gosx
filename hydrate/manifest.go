@@ -347,9 +347,11 @@ type EventSlot struct {
 	ServerAction bool `json:"serverAction,omitempty"`
 }
 
-// Marshal serializes the manifest to JSON.
+// Marshal serializes the manifest to compact JSON. Production pages embed
+// this output verbatim in a script tag, so indentation would only add
+// transfer weight with no reader benefit.
 func (m *Manifest) Marshal() ([]byte, error) {
-	return json.MarshalIndent(m, "", "  ")
+	return json.Marshal(m)
 }
 
 // Unmarshal deserializes a manifest from JSON.
