@@ -3349,12 +3349,8 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
-      applyPoseFrame(batches) {
-        return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle);
-      },
-      getCamera() {
-        return currentMountedSceneCamera();
-      },
+      applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
+      getCamera() { return currentMountedSceneCamera(); },
       getTelemetry() {
         return {
           camera: currentMountedSceneCamera(),
