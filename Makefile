@@ -368,6 +368,7 @@ test-docs-deploy:
 
 test-release-workflow:
 	sh scripts/check-release-workflow-topology.sh
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/package-browser-runtime-test.py
 
 test-release-ancestry:
 	sh scripts/check-release-tag-ancestry-test.sh
