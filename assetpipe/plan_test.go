@@ -39,7 +39,7 @@ func TestPlanSceneAssetOptimizationSurface(t *testing.T) {
 	mustWriteBytes(t, filepath.Join(dir, "public", "shaders", "spark.wgsl"), []byte("@compute @workgroup_size(1) fn main() {}\n"))
 	mustWriteBytes(t, filepath.Join(dir, "public", "textures", "cube.ktx2"), buildTestKTX2(ktx2.VkFormatBC7SRGBBlock, 8, 4, 1, 1, 1, [][]byte{make([]byte, 32)}))
 
-	report, err := Plan([]string{dir}, Options{TurboQuantBitWidth: 10, TurboQuantPreviewBits: 5})
+	report, err := Plan([]string{dir}, Options{QuantizeBitWidth: 10, QuantizePreviewBits: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +61,14 @@ func TestPlanSceneAssetOptimizationSurface(t *testing.T) {
 	if hero.GLTF == nil || hero.GLTF.Primitives != 1 || hero.GLTF.Images != 1 || hero.GLTF.Animations != 1 || hero.GLTF.Skins != 1 {
 		t.Fatalf("unexpected gltf probe: %+v", hero.GLTF)
 	}
-	assertAction(t, hero, "turboquant-streams", "candidate")
-	assertActionTargetContains(t, hero, "turboquant-streams", "10-bit")
+	assertAction(t, hero, "quantize-streams", "candidate")
+	assertActionTargetContains(t, hero, "quantize-streams", "10-bit")
 	assertAction(t, hero, "draco-compress", "present")
 	assertAction(t, hero, "texture-transcode-ktx2", "candidate")
 	assertAction(t, hero, "preserve-pbr-extensions", "candidate")
 	assertAction(t, hero, "animation-stream-quantization", "candidate")
 	assertVariant(t, hero, "public/models/hero.meshopt.glb", "meshopt")
-	assertVariant(t, hero, "public/models/hero.tq.glb", "turboquant")
+	assertVariant(t, hero, "public/models/hero.kq.glb", "khr-quantization")
 	assertVariant(t, hero, "public/models/hero.textures.bc7.ktx2", "ktx2-bc7")
 
 	ktx := findAsset(t, report, "public/textures/cube.ktx2")
@@ -126,7 +126,7 @@ func TestPlanLargeGLTFUsesFallbackWithoutReadingWholeFile(t *testing.T) {
 		t.Fatalf("expected max probe warning, got %+v", asset.Warnings)
 	}
 	assertAction(t, asset, "inspect-gltf", "planned")
-	assertAction(t, asset, "turboquant-streams", "candidate")
+	assertAction(t, asset, "quantize-streams", "candidate")
 }
 
 func TestPlanHTMLTextureManifest(t *testing.T) {

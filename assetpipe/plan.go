@@ -80,9 +80,13 @@ const (
 // Options controls how much asset data Plan reads while probing. The defaults
 // intentionally cap reads so build planning cannot OOM on large authored assets.
 type Options struct {
-	MaxProbeBytes           int64
-	TurboQuantBitWidth      int
-	TurboQuantPreviewBits   int
+	MaxProbeBytes int64
+	// QuantizeBitWidth and QuantizePreviewBits size the KHR_mesh_quantization
+	// pass the quantize-streams action plans (assetpipe/quantize). They do
+	// not configure github.com/odvcencio/turboquant, which vecdb uses for
+	// vector search and which GoSX's mesh pipeline does not call.
+	QuantizeBitWidth        int
+	QuantizePreviewBits     int
 	IncludeUntrackedFormats bool
 }
 
@@ -372,11 +376,11 @@ func normalizeOptions(opts Options) Options {
 	if opts.MaxProbeBytes <= 0 {
 		opts.MaxProbeBytes = DefaultMaxProbeBytes
 	}
-	if opts.TurboQuantBitWidth <= 0 {
-		opts.TurboQuantBitWidth = 12
+	if opts.QuantizeBitWidth <= 0 {
+		opts.QuantizeBitWidth = 12
 	}
-	if opts.TurboQuantPreviewBits < 0 {
-		opts.TurboQuantPreviewBits = 0
+	if opts.QuantizePreviewBits < 0 {
+		opts.QuantizePreviewBits = 0
 	}
 	return opts
 }
@@ -541,7 +545,7 @@ func applyGLTFInfo(asset Asset, jsonData []byte, opts Options) Asset {
 func gltfFallbackActions(opts Options) []Action {
 	return []Action{
 		{Name: "inspect-gltf", Status: "planned", Reason: "probe skipped or failed"},
-		turboQuantAction(opts),
+		quantizeStreamsAction(opts),
 		{Name: "build-lod-stack", Status: "candidate", Reason: "large model assets should ship authored LODs"},
 	}
 }
@@ -559,7 +563,7 @@ func gltfActions(info GLTFInfo, opts Options) []Action {
 			},
 			Action{Name: "meshopt-compress", Status: compressionStatus(info, "EXT_meshopt_compression"), Reason: "compact index and vertex streams"},
 			Action{Name: "draco-compress", Status: compressionStatus(info, "KHR_draco_mesh_compression"), Reason: "asset-store compatibility path"},
-			turboQuantAction(opts),
+			quantizeStreamsAction(opts),
 		)
 	}
 	if info.Images > 0 || info.Textures > 0 {
@@ -583,7 +587,7 @@ func gltfActions(info GLTFInfo, opts Options) []Action {
 		actions = append(actions, Action{Name: "preserve-punctual-lights", Status: "candidate", Reason: "glTF-authored lights should lower into Scene3D lights"})
 	}
 	if info.Animations > 0 || info.Skins > 0 {
-		actions = append(actions, Action{Name: "animation-stream-quantization", Status: "candidate", Reason: "animation keyframes are high-leverage TurboQuant targets"})
+		actions = append(actions, Action{Name: "animation-stream-quantization", Status: "candidate", Reason: "animation keyframes are high-leverage quantization targets"})
 	}
 	return actions
 }
@@ -606,10 +610,10 @@ func gltfVariants(path string, info GLTFInfo) []Variant {
 				SourceAction: "draco-compress",
 			},
 			Variant{
-				URI:          siblingVariant(path, ".tq", ".glb"),
+				URI:          siblingVariant(path, ".kq", ".glb"),
 				Kind:         "model",
-				Compression:  "turboquant",
-				SourceAction: "turboquant-streams",
+				Compression:  "khr-quantization",
+				SourceAction: "quantize-streams",
 			},
 			Variant{
 				URI:          siblingVariant(path, ".opt", ".glb"),
@@ -637,13 +641,18 @@ func gltfVariants(path string, info GLTFInfo) []Variant {
 	return variants
 }
 
-func turboQuantAction(opts Options) Action {
-	target := fmt.Sprintf("vertex and transform streams (%d-bit)", opts.TurboQuantBitWidth)
-	if opts.TurboQuantPreviewBits > 0 {
-		target += fmt.Sprintf(", preview %d-bit", opts.TurboQuantPreviewBits)
+// quantizeStreamsAction plans a standalone KHR_mesh_quantization pass over
+// vertex and transform streams (assetpipe/quantize), separate from the
+// quantization optimize-mesh already bundles into its own output. It does
+// not call github.com/odvcencio/turboquant, which is incompatible with glTF
+// (see assetpipe/quantize's package doc).
+func quantizeStreamsAction(opts Options) Action {
+	target := fmt.Sprintf("vertex and transform streams (%d-bit)", opts.QuantizeBitWidth)
+	if opts.QuantizePreviewBits > 0 {
+		target += fmt.Sprintf(", preview %d-bit", opts.QuantizePreviewBits)
 	}
 	return Action{
-		Name:   "turboquant-streams",
+		Name:   "quantize-streams",
 		Status: "candidate",
 		Reason: "GoSX owns the SceneIR stream format and can quantize before runtime load",
 		Target: target,
