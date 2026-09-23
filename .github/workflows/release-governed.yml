@@ -375,7 +375,7 @@ jobs:
             gosx-windows-arm64.exe
             "gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
           )
-          python3 scripts/package-browser-runtime.py verify \
+          python3 ../scripts/package-browser-runtime.py verify \
             --archive "gosx-browser-runtime-${RELEASE_TAG}.tar.gz" \
             --tag "${RELEASE_TAG}" \
             --commit "${{ needs.prepare.outputs.commit }}"
