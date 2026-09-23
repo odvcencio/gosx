@@ -1,4 +1,4 @@
-// Slice Y.E.2 — host-receiver method-call lowering.
+// Host-receiver method-call lowering.
 //
 // Engine-surface handlers receive `c *surface.Canvas` and
 // `ctx *surface.Context` parameters and dispatch through them like:
@@ -6,9 +6,9 @@
 //   c.MoveTo(x, y)
 //   ctx.PropsInto(&props)
 //
-// Pre-Y.E the lowerer treated every selector-call as a stdlib
+// Before this, the lowerer treated every selector-call as a stdlib
 // intrinsic candidate and rejected unknown ones with "call to <X> is
-// not in the supported intrinsic set." Y.E introduces OpHostCall and
+// not in the supported intrinsic set." OpHostCall
 // routes selector-calls whose receiver is NOT an imported package
 // into the host-dispatch path.
 //

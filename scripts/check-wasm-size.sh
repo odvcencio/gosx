@@ -18,13 +18,12 @@
 # WASM_TINY_BUDGET_KB. Any deliberate increase should be recorded in an ADR.
 set -euo pipefail
 
-# TinyGo production runtime budgets. Historical reference (pre-engine-surface,
-# wasm-opt -Oz): full ~862 KB, islands ~425 KB. The budgets below leave room
-# for the engine-surface runtime and for CI environments without wasm-opt
-# (which produces a larger, unoptimized binary). These are provisional — once
-# CI reports the actual sizes, tighten them toward the observed value + ~15%.
-FULL_BUDGET_KB="${WASM_FULL_BUDGET_KB:-5500}"
-TINY_BUDGET_KB="${WASM_TINY_BUDGET_KB:-3200}"
+# TinyGo production runtime budgets. Measured on 2026-09-23 (TinyGo 0.41.1,
+# wasm-opt -Oz): full 2191 KB, islands 817 KB. The defaults below carry
+# roughly +12% headroom over that measurement so ordinary build variance
+# does not flip the gate; a real regression should still fail it.
+FULL_BUDGET_KB="${WASM_FULL_BUDGET_KB:-2450}"
+TINY_BUDGET_KB="${WASM_TINY_BUDGET_KB:-920}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${TMPDIR:-/tmp}/gosx-wasm-size"

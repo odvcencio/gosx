@@ -4,7 +4,7 @@
 // CanvasHostReceiver bridge larch shipped in PR #18 (gosx v0.22.1). Where
 // the canvas2d adapter (TestHydrateReconcilerCanvas2DSucceeds) wires the
 // <CanvasBoard> primitive program shape (EngineNodes-driven reconciler),
-// engine surfaces (per ADR 0003 / ADR 0005) ship a handler-driven program
+// engine surfaces ship a handler-driven program
 // shape: Mount + OnClick + OnFrame + ... lowered by ir/golower from .gsx
 // + companion .go.
 //
@@ -41,7 +41,7 @@ import (
 
 // engineSurfaceRecordingCanvas implements surface.HostCanvasImpl so the
 // test can assert which drawing calls a Mount handler made through the
-// host-call bridge. Mirrors the parity-test harness pattern Y.F established
+// host-call bridge. Mirrors the parity-test harness pattern
 // (see hyphae/cmd/hypha-viz before the dogfood-parity deletion).
 type engineSurfaceRecordingCanvas struct {
 	calls     []string
@@ -183,7 +183,7 @@ func TestHydrateEngineSurfaceDispatchEvent(t *testing.T) {
 	//
 	// The dispatcher stages event coords into VM props named "ev.X", "ev.Y"
 	// (mirrors how the surface lowerer exposes pointer events — see the
-	// $surface.event.* signal contract per ADR 0007). The handler reads them
+	// $surface.event.* signal contract). The handler reads them
 	// via OpPropGet.
 	prog := &islandprogram.Program{
 		Name: "MiniClick",
@@ -231,10 +231,10 @@ func TestHydrateEngineSurfaceDispatchEvent(t *testing.T) {
 // TestHydrateEngineSurfaceStartLoopTicksThroughBridge verifies the canonical
 // hard path: a Mount handler that calls c.StartLoop(func(dt) { ... }) registers
 // a closure that subsequent rAF ticks (TickEngineSurface) invoke. This is the
-// Y.G FuncLit closure path lowered into a Program — pinning that the bridge
+// FuncLit closure path lowered into a Program — pinning that the bridge
 // correctly stitches the CanvasHostReceiver to the VM's InvokeClosure.
 //
-// Because Y.G FuncLit lowering is exercised by ir/golower tests already, this
+// Because FuncLit lowering is exercised by ir/golower tests already, this
 // test bypasses the lowerer and constructs the closure machinery directly:
 // the Mount handler emits OpClosure (referencing a synthetic FuncDef) and
 // passes the resulting ClosureVal as the StartLoop argument. The synthetic

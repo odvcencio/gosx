@@ -97,10 +97,15 @@ rendered field from schema data the compiler writes into the IR, and the
 compiler builds that data from the one `.gsx` file it reads. A type declared
 in a sibling `.go` file is invisible at that moment.
 
-A strict `component Name` compiles to a package-level Go `func Name`, and a
-`.gsx` type declaration compiles to itself. `gosx check` reports a name a
-sibling `.go` file in the same package already declares, naming both
-declarations and their positions.
+`gosx compile` transpiles a strict `component Name` to a package-level Go
+`func Name`. A `.gsx` type declaration compiles to itself. `gosx check`
+reads that generated Go and reports a name a sibling `.go` file in the
+same package already declares, naming both declarations and positions.
+
+The file renderer never runs this generated Go. `router.AddDir` — the
+form the scaffold's `main.go` calls in production — parses and lowers
+each `.gsx` file to IR once. It then interprets that IR per request, the
+way the previous paragraph describes.
 
 ### Islands are strict-capable; engines use the programmatic v1 surface
 
@@ -800,19 +805,18 @@ Production builds and static exports also write route capability metadata into `
 
 `make wasm-size-budget` (script: `scripts/check-wasm-size.sh`) builds both
 flavors of `client/wasm` and asserts the resulting WebAssembly artifacts stay
-within budget. CI runs the gate on every PR. Baselines (Phase 1c shipped):
+within budget. CI runs the gate on every PR. Measured 2026-09-23 (TinyGo
+0.41.1, wasm-opt -Oz):
 
-| Flavor | Build tags                    | Shipped (Phase 1c) | Budget |
-|--------|-------------------------------|--------------------|--------|
-| full   | _(none)_                      | ~1,368 KB          | 5,500 KB |
-| tiny   | `gosx_tiny_islands_only`      | ~684 KB            | 3,200 KB |
+| Flavor | Build tags                    | Measured | Budget |
+|--------|-------------------------------|----------|--------|
+| full   | _(none)_                      | 2,191 KB | 2,450 KB |
+| tiny   | `gosx_tiny_islands_only`      | 817 KB   | 920 KB |
 
 Override the budget for a planned-growth slice by exporting
-`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. **Any budget increase
-greater than 10% over the Phase 1c baseline requires an ADR** explaining what
-deliberate growth shipped (e.g. Phase 2's `<CanvasBoard>` primitive, future
-opcode-set expansion). The gate fires on incidental regressions so they get
-caught at the PR boundary instead of slipping into a release.
+`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. The gate fires on
+incidental regressions so they get caught at the PR boundary instead of
+slipping into a release.
 
 `gosx desktop [app]` opens the dev server in the native desktop host. On Windows
 it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url

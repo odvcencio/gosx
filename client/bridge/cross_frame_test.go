@@ -8,8 +8,6 @@ import (
 // TestEnableCrossFrameRelayRegistersPrefix verifies that EnableCrossFrameRelay
 // records the prefix + allowed origin and that the public CrossFrameRelays()
 // accessor surfaces them for inspection by the wasm-side message listener.
-//
-// Plan A.1 / A.2 — see plans/2026-05-26-iframe-cross-frame-signal-transport.md.
 func TestEnableCrossFrameRelayRegistersPrefix(t *testing.T) {
 	b := New()
 	b.EnableCrossFrameRelay("$preview.", "https://editor.example")
@@ -53,8 +51,7 @@ func TestEnableCrossFrameRelayEmptyPrefixIsRejected(t *testing.T) {
 
 // TestEnableCrossFrameRelayDevModeOriginWarns verifies that the "*" origin
 // (dev-mode wildcard) is permitted but flagged so callers can audit.
-//
-// Plan A.5 / ADR 0009 — origin validation is non-optional; "*" is dev-only.
+// Origin validation is non-optional; "*" is dev-only.
 func TestEnableCrossFrameRelayDevModeOriginAllowed(t *testing.T) {
 	b := New()
 	b.EnableCrossFrameRelay("$preview.", "*")

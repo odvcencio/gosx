@@ -159,8 +159,8 @@ func TestCanvasBoardEventZoomClamps(t *testing.T) {
 
 // TestCanvasBoardEventPickWritesSelectedID is the pick keystone for the bridge:
 // a "pick" event at a screen position over a node converts to world, hit-tests,
-// and writes the node's id into $surface.event.selectedID / targetID per ADR
-// 0007. A pick over empty space clears selection.
+// and writes the node's id into $surface.event.selectedID / targetID.
+// A pick over empty space clears selection.
 func TestCanvasBoardEventPickWritesSelectedID(t *testing.T) {
 	b := New()
 	// Rect at world (0,0,100,100). At pan=(0,0), zoom=1, viewport 200x200, the
@@ -192,7 +192,7 @@ func TestCanvasBoardEventPickWritesSelectedID(t *testing.T) {
 	if got.Text() != "node-A" {
 		t.Errorf("selectedID = %q, want node-A", got.Text())
 	}
-	// Legacy alias must forward (ADR 0007).
+	// Legacy alias must forward.
 	if legacy, ok := store.Get("$scene.event.selectedID"); !ok || legacy.Text() != "node-A" {
 		t.Errorf("legacy $scene.event.selectedID = (%q,%v), want node-A", legacy.Text(), ok)
 	}
@@ -278,7 +278,7 @@ func gridBoardProg(specs [][5]any) *rootengine.Program {
 // bridge: a "marquee" event with a screen rect converts the rect to world via
 // the camera, hit-tests every pickable node it covers, and writes the comma-
 // joined ids into $surface.event.selectedIDs plus the first/primary into
-// selectedID (ADR 0007).
+// selectedID.
 func TestCanvasBoardEventMarqueeWritesSelectedIDs(t *testing.T) {
 	b := New()
 	_ = b.HydrateReconciler("canvas2d", "board-mq", "Board", `{}`, []byte("{}"), "json")

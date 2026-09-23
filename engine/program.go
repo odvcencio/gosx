@@ -9,9 +9,9 @@ import (
 
 // Program is the VM-driven engine scene graph.
 //
-// Aliased to the unified islandprogram.Program per Phase 1a (ADR 0001).
-// Engine programs populate the EngineNodes slice and carry Surface=SurfaceScene3D
-// after decode via DecodeProgramJSON.
+// Aliased to the unified islandprogram.Program. Engine programs populate the
+// EngineNodes slice and carry Surface=SurfaceScene3D after decode via
+// DecodeProgramJSON.
 type Program = islandprogram.Program
 
 // Node is a single engine-scene node, aliased to islandprogram.EngineNode so
@@ -69,7 +69,7 @@ func EncodeProgramJSON(p *Program) ([]byte, error) {
 }
 
 // DecodeProgramJSON deserializes an engine program from JSON, injecting
-// Surface=SurfaceScene3D into the in-memory model per ADR 0001.
+// Surface=SurfaceScene3D into the in-memory model.
 func DecodeProgramJSON(data []byte) (*Program, error) {
 	var p Program
 	if err := json.Unmarshal(data, &p); err != nil {

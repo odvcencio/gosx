@@ -18,7 +18,7 @@ import (
 //
 // The adapter operates on the same shared signal store the scene3d path
 // uses, so a single <CanvasBoard> page picks up cross-island reactivity
-// without extra wiring. Pick events flow into $surface.event.* per ADR 0007.
+// without extra wiring. Pick events flow into $surface.event.*.
 func (b *Bridge) hydrateCanvas2D(id, componentName, propsJSON string, programData []byte, format string) error {
 	prog, err := DecodeCanvasBoardProgram(programData, format)
 	if err != nil {

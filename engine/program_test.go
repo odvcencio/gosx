@@ -85,10 +85,10 @@ func TestEngineDecodeProgramJSONDoesNotInjectDOM(t *testing.T) {
 	}
 }
 
-// TestEngineFixturesRoundTrip is the engine-side wire-format contract test
-// (ADR 0001 §"Test contract"). A failure on the captured fixture is the
-// signal that the per-decoder surface-injection design is insufficient and a
-// v2 wire envelope is required sooner than planned. STOP and file an ADR.
+// TestEngineFixturesRoundTrip is the engine-side wire-format contract test.
+// A failure on the captured fixture is the signal that the per-decoder
+// surface-injection design is insufficient and a v2 wire envelope is
+// required sooner than planned. STOP and file an ADR.
 func TestEngineFixturesRoundTrip(t *testing.T) {
 	entries, err := os.ReadDir("testdata/fixtures")
 	if err != nil {

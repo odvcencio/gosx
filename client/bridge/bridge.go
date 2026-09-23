@@ -55,7 +55,7 @@ type Bridge struct {
 	videoSyncEngines map[string]*videosync.Engine
 
 	// crossFrameRelays records the prefix → allowed-origin bindings opted-in
-	// via EnableCrossFrameRelay. See cross_frame.go and ADR 0009. Both the
+	// via EnableCrossFrameRelay. See cross_frame.go. Both the
 	// outbound observer path (relaySharedSignal) and the inbound message
 	// listener (DispatchInboundSignal) consult these.
 	crossFrameRelays []CrossFrameRelayConfig
@@ -109,7 +109,7 @@ func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
 
 // Set creates or updates a shared signal.
 //
-// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// name is run through signal.ResolveAlias so legacy
 // $scene.event.* writes are redirected to the canonical $surface.event.*
 // target. Renderer-driven writes already use the canonical names; the alias
 // pass here is defensive for hand-rolled callers that haven't migrated.
@@ -145,7 +145,7 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 
 // Get reads a shared signal value.
 //
-// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// name is run through signal.ResolveAlias so legacy
 // $scene.event.* reads transparently forward to the canonical
 // $surface.event.* target. A subscriber reading $scene.event.selectedID
 // after a renderer-driven write to $surface.event.selectedID gets the
@@ -162,7 +162,7 @@ func (s *Store) Get(name string) (vm.Value, bool) {
 // if it doesn't exist yet. If it already exists, the init value is ignored
 // (first island to declare wins).
 //
-// Per ADR 0007 the name is run through signal.ResolveAlias before lookup, so
+// The name is run through signal.ResolveAlias before lookup, so
 // an island declaring a dependency on the legacy $scene.event.X automatically
 // hooks into the canonical $surface.event.X signal.
 func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
@@ -604,7 +604,7 @@ func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
 	}
 	// Outbound cross-frame relay fans out for matching prefixes only.
 	// Separate from the JS notify path so single-frame consumers are
-	// unaffected; see ADR 0009 and cross_frame.go.
+	// unaffected; see cross_frame.go.
 	b.relaySharedSignal(name, valueJSON)
 }
 

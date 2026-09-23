@@ -7,7 +7,7 @@ import (
 // OrthoCamera2DMode is the discriminator string written into
 // engine.RenderCamera.Mode by OrthoCamera2D. The renderer (and computeMVP)
 // branches on this value to build an orthographic projection that disables
-// depth, lighting, and post-FX (the 2D mode flag from ADR 0004).
+// depth, lighting, and post-FX (the 2D mode flag).
 //
 // Keep the constant value stable — it crosses the WASM/JSON boundary as part
 // of RenderBundle.Camera.
@@ -34,7 +34,7 @@ const OrthoCamera2DMode = "ortho2d"
 //   - FOV      = 0 (unused in 2D mode; computeMVP ignores it)
 //   - Near, Far = -1, 1 (symmetric depth range; nothing clips in 2D)
 //
-// Per ADR 0004 the OrthoCamera2D helper IS the API for the 2D camera — it
+// The OrthoCamera2D helper IS the API for the 2D camera — it
 // returns the same engine.RenderCamera type the rest of the renderer already
 // consumes, with the Mode field acting as the pipeline-config 2D switch.
 func OrthoCamera2D(zoom, panX, panY float64, width, height int) engine.RenderCamera {
@@ -60,7 +60,7 @@ func IsOrthoCamera2D(cam engine.RenderCamera) bool {
 	return cam.Mode == OrthoCamera2DMode
 }
 
-// Configure2DBundle enforces the 2D-mode pipeline config from ADR 0004 on b:
+// Configure2DBundle enforces the 2D-mode pipeline config on b:
 //
 //   - Lighting disabled  : Lights, Environment cleared
 //   - Depth disabled     : Bundle still carries a depth attachment in the

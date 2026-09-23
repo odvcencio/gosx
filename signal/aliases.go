@@ -1,7 +1,7 @@
-// Package signal aliases per ADR 0007 (surface event signal namespace).
+// Package signal aliases the surface event signal namespace.
 //
-// Pick events used to write into $scene.event.<field>. Phase 2 generalizes
-// this to $surface.event.<field> so the same name set works for both
+// Pick events used to write into $scene.event.<field>. This generalizes
+// that to $surface.event.<field> so the same name set works for both
 // Canvas2D and Scene3D surfaces. The migration is in-place: every existing
 // $scene.event.<field> is registered here as a READ-ONLY alias for the
 // corresponding $surface.event.<field>. Renderer writes go to
@@ -10,8 +10,7 @@
 // Consumers that have not migrated keep working transparently: a name lookup
 // for $scene.event.X is rewritten to $surface.event.X before any storage
 // access. The alias is sunsetted (file deleted, lookups removed) when no
-// consumer references $scene.event.* across tracked repos — see the ADR's
-// grep gate.
+// consumer references $scene.event.* across tracked repos.
 
 package signal
 
@@ -21,7 +20,7 @@ import (
 )
 
 // aliasTable is the canonical map: legacy name → target name. Populated at
-// init time with the ADR 0007 field list. Public callers go through
+// init time with the surface event field list. Public callers go through
 // ResolveAlias and AliasedFrom; do not mutate the table at runtime.
 var (
 	aliasMu      sync.RWMutex
@@ -35,8 +34,8 @@ var (
 // pushPickToSignals in client/wasm/render_full.go — keep it in sync when
 // fields are added or removed.
 //
-// New fields go DIRECTLY into $surface.event.* with no $scene.event.* alias
-// (per ADR 0007 "New surfaces use $surface.event.* unconditionally").
+// New fields go DIRECTLY into $surface.event.* with no $scene.event.* alias:
+// new surfaces use $surface.event.* unconditionally.
 var surfaceEventFields = []string{
 	"pointerX",
 	"pointerY",
@@ -78,7 +77,7 @@ var surfaceEventFields = []string{
 	"marqueeStartY",
 	"marqueeEndX",
 	"marqueeEndY",
-	// Slice 3 — multi-select. selectedIDs is the comma-joined set a marquee
+	// Multi-select. selectedIDs is the comma-joined set a marquee
 	// produces; selectedID stays the primary (first). No $scene.event.* alias.
 	"selectedIDs",
 }
@@ -88,7 +87,7 @@ func init() {
 		target := "$surface.event." + field
 		legacy := "$scene.event." + field
 		// Some fields are Canvas2D-only (no Scene3D legacy). Track the alias
-		// for every field that DID exist under $scene.event.* per ADR 0007.
+		// for every field that DID exist under $scene.event.*.
 		if isLegacySceneEventField(field) {
 			aliasTable[legacy] = target
 			reverseAlias[target] = append(reverseAlias[target], legacy)

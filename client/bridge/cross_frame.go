@@ -7,9 +7,8 @@ import (
 
 // CrossFrameRelayConfig describes one registered cross-frame relay binding.
 //
-// See ADR 0009 (decisions/0009-iframe-transport-postmessage-relay.md) for the
-// architectural rationale: editor-side $preview.* shared-signal writes need
-// to reach the storefront iframe's Bridge, but js.Global() is per-frame.
+// The architectural rationale: editor-side $preview.* shared-signal writes
+// need to reach the storefront iframe's Bridge, but js.Global() is per-frame.
 // The relay opt-in lets a Bridge announce "signals matching <prefix> should
 // also cross the postMessage boundary to peers running my allowed origin."
 //
@@ -46,9 +45,6 @@ func (c CrossFrameRelayConfig) DevModeOrigin() bool {
 //
 // An empty prefix is rejected silently — relaying every signal would break
 // frame-local semantics for non-preview namespaces.
-//
-// See ADR 0009 (decisions/0009-iframe-transport-postmessage-relay.md) and
-// plan section A of plans/2026-05-26-iframe-cross-frame-signal-transport.md.
 func (b *Bridge) EnableCrossFrameRelay(prefix, allowedOrigin string) {
 	if b == nil {
 		return

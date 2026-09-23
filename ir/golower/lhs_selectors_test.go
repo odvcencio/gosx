@@ -1,11 +1,10 @@
-// Slice Y.C.1 — failing-first tests for LHS selector / indexed-set
-// lowering.
+// Failing-first tests for LHS selector / indexed-set lowering.
 //
-// These tests pin the three assignment shapes Y.C's plan calls out as
-// the next gap blocking graph_surface.go. Pre-Y.C the lowerer rejects
-// every form with "left-hand side must be a simple identifier" (from
-// the single-LHS path in lowerAssignStmt) because the existing identName
-// helper only accepts *ast.Ident.
+// These tests pin the assignment shapes that were the gap blocking
+// graph_surface.go. Before OpFieldSet / OpIndexSet existed, the
+// lowerer rejected every form with "left-hand side must be a simple
+// identifier" (from the single-LHS path in lowerAssignStmt) because the
+// existing identName helper only accepts *ast.Ident.
 //
 //   1. struct field set:        node.X = 5
 //   2. struct field compound:   node.X += 1
@@ -15,12 +14,8 @@
 //   6. map key set:             m[k] = v
 //   7. map key set (literal):   m["foo"] = 12.5
 //
-// At Y.C.1 each lowering call still fails or emits an issue: stmt.go's
-// lowerAssignStmt's `identName(s.Lhs[0])` returns false for any
-// non-Ident LHS, producing the "left-hand side must be a simple
-// identifier" diagnostic. Y.C.2-Y.C.4 add OpFieldSet / OpIndexSet
-// opcodes, their VM evaluators, and the lowering dispatch; Y.C.5
-// marks these tests PASS.
+// OpFieldSet / OpIndexSet opcodes, their VM evaluators, and the
+// lowering dispatch now handle every shape above.
 
 package golower
 
@@ -32,7 +27,7 @@ import (
 
 // TestLowerStructFieldSet verifies `node.X = expr` writes back into
 // node's Fields map in place. The receiver is a local that holds an
-// ObjectVal constructed via Y.A's OpComposite; after the assignment,
+// ObjectVal constructed via OpComposite; after the assignment,
 // reading node.X must see the new value.
 func TestLowerStructFieldSet(t *testing.T) {
 	src := []byte(`package handlers
@@ -114,8 +109,8 @@ func F() float64 {
 	}
 }
 
-// TestLowerSliceIndexCompoundSet covers `s[i] += delta`, which Y.C must
-// support because graph_surface.go uses `fx[a.ID] += ux * force` in
+// TestLowerSliceIndexCompoundSet covers `s[i] += delta`, which must be
+// supported because graph_surface.go uses `fx[a.ID] += ux * force` in
 // the repulsion accumulation loop.
 func TestLowerSliceIndexCompoundSet(t *testing.T) {
 	src := []byte(`package handlers
