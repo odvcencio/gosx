@@ -93,6 +93,7 @@ const (
 	runtimeABISupportFile    = "../runtime/wasm/abi.ts"
 	runtimeMailboxFile       = "../runtime/wasm/mailbox.ts"
 	runtimeLoaderFile        = "../runtime/wasm/loader.ts"
+	wasmHubTransportFile     = "../runtime/host/wasm-hub.ts"
 )
 
 type source struct {
@@ -129,6 +130,7 @@ var outputs = []output{
 			sourceFile(runtimeABISupportFile),
 			sourceFile(runtimeMailboxFile),
 			sourceFile(runtimeLoaderFile),
+			sourceFile(wasmHubTransportFile),
 			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile(scene3DCommandBridgeFile),
@@ -252,6 +254,7 @@ var outputs = []output{
 			sourceFile(runtimeABISupportFile),
 			sourceFile(runtimeMailboxFile),
 			sourceFile(runtimeLoaderFile),
+			sourceFile(wasmHubTransportFile),
 			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile("../runtime/host/regions.ts"),

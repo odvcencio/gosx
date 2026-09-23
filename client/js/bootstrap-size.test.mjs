@@ -610,7 +610,8 @@ const budgets = [
   // Typed world-mesh attribute builders measure 1_645_660 / 450_589 /
   // 362_277. Only gzip exceeds that envelope; 434_205 keeps the exact
   // governed hard limit at 450_589.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_205, brotli: 346_700 },
+  // Engine-owned raw hub transport adds 1,601 raw bytes to the WASM runtime.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_850, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1791,9 +1792,9 @@ const routeBudgets = [
     // Typed world-mesh attribute builders measure 1_128_184 / 314_915 /
     // 266_904. The baselines below set the minimum hard limits for those
     // reviewed route totals.
-    raw: 1_074_461,
-    gzip: 299_919,
-    brotli: 254_194,
+    raw: 1_076_000,
+    gzip: 300_600,
+    brotli: 254_700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1929,7 +1930,7 @@ const routeBudgets = [
     // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
     // limit at 410_499.
     raw: 1_465_500,
-    gzip: 394_115,
+    gzip: 394_750,
     brotli: 332_900,
   },
   {
