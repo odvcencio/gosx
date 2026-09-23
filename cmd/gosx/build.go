@@ -413,13 +413,16 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		err      error
 	}
 
-	compiler, tinygoPath, err := resolveWASMCompiler(opts, exec.LookPath)
+	compiler, tinygoPath, prebuiltRuntime, err := resolveWASMCompilerForProject(opts, dir, exec.LookPath)
 	if err != nil {
 		return err
 	}
 	if compiler == wasmCompilerTinyGo {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
 		fmt.Printf("    TinyGo toolchain: current Go\n")
+	}
+	if compiler == wasmCompilerPrebuilt {
+		fmt.Println("    TinyGo not found; using a release-matched prebuilt runtime instead...")
 	}
 
 	// Build both WASM binaries in parallel. The islands-only runtime is a
@@ -436,7 +439,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		defer wg.Done()
 		tmpPath := filepath.Join(distDir, outputName+".wasm.tmp")
 
-		if compiler == wasmCompilerTinyGo {
+		switch compiler {
+		case wasmCompilerTinyGo:
 			if err := buildTinyGoWASM(dir, gosxRoot, tmpPath, tinygoPath, extraTags...); err != nil {
 				result.err = err
 				return
@@ -448,7 +452,27 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			} else if optimized {
 				fmt.Printf("    Applied wasm-opt -Oz (%s)\n", name)
 			}
-		} else {
+		case wasmCompilerPrebuilt:
+			srcPath, variant, ok := prebuiltRuntime.VariantPath(name)
+			if !ok {
+				result.err = fmt.Errorf("prebuilt runtime bundle has no %q variant", name)
+				return
+			}
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				result.err = fmt.Errorf("read prebuilt runtime %s: %w", name, err)
+				return
+			}
+			if err := verifyRuntimeAssetDigest(variant.File, data, variant.SHA256, variant.Bytes); err != nil {
+				result.err = err
+				return
+			}
+			if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+				result.err = fmt.Errorf("stage prebuilt runtime %s: %w", name, err)
+				return
+			}
+			result.compiler = string(wasmCompilerPrebuilt)
+		default:
 			cmd := exec.Command("go", goWASMBuildArgs(tmpPath, extraTags...)...)
 			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS="+goModuleCommandFlags)
 			cmd.Dir = dir
@@ -539,15 +563,25 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 
-	// wasm_exec.js — use TinyGo's version if we built with TinyGo
+	// wasm_exec.js — use TinyGo's version if we built with TinyGo, or the
+	// prebuilt runtime's own verified shim if we built with that instead.
 	wasmExecFound := false
-	if runtimeResult.compiler == "TinyGo" {
+	if runtimeResult.compiler == string(wasmCompilerTinyGo) {
 		asset, err := writeTinyGoWASMExec(tinygoPath, runtimeDir)
 		if err != nil {
 			return err
 		}
 		manifest.Runtime.WASMExec = asset
 		fmt.Printf("    %s (%d bytes, TinyGo)\n", asset.File, asset.Size)
+		wasmExecFound = true
+	}
+	if !wasmExecFound && runtimeResult.compiler == string(wasmCompilerPrebuilt) {
+		asset, err := writePrebuiltWASMExec(prebuiltRuntime, runtimeDir)
+		if err != nil {
+			return err
+		}
+		manifest.Runtime.WASMExec = asset
+		fmt.Printf("    %s (%d bytes, prebuilt)\n", asset.File, asset.Size)
 		wasmExecFound = true
 	}
 	if !wasmExecFound {

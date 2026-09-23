@@ -57,6 +57,13 @@ type goListModule struct {
 // is not required, projectDir is not inside a module, or the toolchain
 // invocation itself failed (offline, no go on PATH, malformed output, and so
 // on). None of those are grounds to block a build over a diagnostic.
+// resolveProjectGoSXVersionFunc is resolveProjectGoSXVersion behind a
+// package variable so resolvePrebuiltRuntimeForProject's tests
+// (cmd/gosx/runtime_prebuilt_test.go) can substitute a fixed answer instead
+// of shelling out to `go list`, the same seam style runtimepaths.go uses for
+// the build-runtime command's own hooks.
+var resolveProjectGoSXVersionFunc = resolveProjectGoSXVersion
+
 func resolveProjectGoSXVersion(projectDir string) (version string, localReplace bool, ok bool) {
 	cmd := exec.Command("go", "list", "-m", "-json", gosxModulePath)
 	cmd.Dir = projectDir
