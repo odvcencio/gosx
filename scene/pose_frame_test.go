@@ -49,6 +49,20 @@ func BenchmarkEncodeCrowdPoseFrame(b *testing.B) {
 		b.SetBytes(int64(size))
 		b.ReportMetric(float64(size), "wire-B")
 	})
+	b.Run("binary-reused", func(b *testing.B) {
+		encoder := new(PoseFrameEncoder)
+		b.ReportAllocs()
+		var size int
+		for i := 0; i < b.N; i++ {
+			data, err := encoder.Encode(frame)
+			if err != nil {
+				b.Fatal(err)
+			}
+			size = len(data)
+		}
+		b.SetBytes(int64(size))
+		b.ReportMetric(float64(size), "wire-B")
+	})
 	b.Run("json-command", func(b *testing.B) {
 		command := SetInstancedGLBMeshesCommand([]InstancedGLBMeshIR{{ID: "crowd", Src: "/crowd.glb", Instances: instances}})
 		b.ReportAllocs()
@@ -63,6 +77,38 @@ func BenchmarkEncodeCrowdPoseFrame(b *testing.B) {
 		b.SetBytes(int64(size))
 		b.ReportMetric(float64(size), "wire-B")
 	})
+}
+
+func TestPoseFrameEncoderReuseResetsClipAndIdentityTables(t *testing.T) {
+	encoder := new(PoseFrameEncoder)
+	first := PoseFrame{Batches: []PoseBatch{{ID: "actors", Instances: []MeshInstanceIR{
+		{ID: "one", Animation: "Run", ScaleX: 1},
+		{ID: "two", Animation: "Idle", ScaleX: 1},
+	}}}}
+	if _, err := encoder.Encode(first); err != nil {
+		t.Fatal(err)
+	}
+	second := PoseFrame{Batches: []PoseBatch{
+		{ID: "actors", Instances: []MeshInstanceIR{{ID: "one", Animation: "Idle", ScaleX: 2}}},
+		{ID: "effects", Instances: []MeshInstanceIR{{ID: "one", Animation: "Cast", ScaleX: 3}}},
+	}}
+	got, err := encoder.Encode(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := EncodePoseFrame(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatal("reused encoder retained stale clip or identity state")
+	}
+	if _, err := encoder.Encode(PoseFrame{Batches: []PoseBatch{{ID: "actors", Instances: []MeshInstanceIR{{ID: "one"}, {ID: "one"}}}}}); err == nil {
+		t.Fatal("reused encoder missed duplicate instance")
+	}
+	if _, err := encoder.Encode(second); err != nil {
+		t.Fatalf("encoder did not recover after rejection: %v", err)
+	}
 }
 
 func TestEncodePoseFrameRejectsAmbiguousOrUnrepresentableInput(t *testing.T) {
