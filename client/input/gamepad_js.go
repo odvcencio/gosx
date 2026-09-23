@@ -22,7 +22,7 @@ func PollGamepads() Gamepads {
 	}
 
 	var result Gamepads
-	length := boundedCount(padLength.Int(), MaxGamepads)
+	length := boundedCount(padLength.Int(), MaxGamepadSlots)
 	for index := 0; index < length && result.Count < len(result.Pads); index++ {
 		value := values.Index(index)
 		if !value.Truthy() || value.Get("connected").Type() != js.TypeBoolean || !value.Get("connected").Bool() {

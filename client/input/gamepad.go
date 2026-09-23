@@ -6,9 +6,10 @@ package input
 
 // These bounds keep each poll allocation-free and snapshots cheap to copy.
 const (
-	MaxGamepads = 4
-	MaxButtons  = 32
-	MaxAxes     = 8
+	MaxGamepads     = 4
+	MaxGamepadSlots = 16
+	MaxButtons      = 32
+	MaxAxes         = 8
 )
 
 // ButtonState is an owned copy of one GamepadButton state.

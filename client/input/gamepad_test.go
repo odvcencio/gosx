@@ -11,6 +11,7 @@ func TestBoundedCount(t *testing.T) {
 		{3, 8, 3},
 		{8, 8, 8},
 		{12, 8, 8},
+		{MaxGamepadSlots + 3, MaxGamepadSlots, MaxGamepadSlots},
 	} {
 		if got := boundedCount(tc.length, tc.limit); got != tc.want {
 			t.Errorf("boundedCount(%d, %d) = %d, want %d", tc.length, tc.limit, got, tc.want)
