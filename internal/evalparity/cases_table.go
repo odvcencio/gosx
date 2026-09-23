@@ -219,18 +219,12 @@ var cases = []Case{
 	{
 		ID:           "string_len_builtin",
 		Category:     "string",
-		Note:         "len(string): the island DSL has a builtin OpLen opcode; route's CallExpr path only resolves bound Funcs/component identifiers, so the unbound \"len\" identifier evaluates to nil and the call silently renders empty",
+		Note:         "len(string): all three backends treat len as a builtin — the island DSL's own parser lowers it to OpLen, transpile compiles to Go's real len(), and route/exprlower.go's CallExpr case now special-cases the \"len\" identifier the same way, instead of resolving it through the caller-supplied Funcs map",
 		Expr:         "len(props.S)",
 		PropsFields:  "S string",
 		PropsLiteral: `S: "hello"`,
 		PropsValue:   map[string]any{"S": "hello"},
 		Want:         "5",
-		Diverges: map[Backend]string{
-			Route: "",
-		},
-		DivergesReason: map[Backend]string{
-			Route: `route/exprlower.go's CallExpr case lowers node.Fun (the identifier "len") the same way any other identifier lowers; nothing in route/fileeval.go registers a "len" builtin, so it resolves to a nil function and callValue silently returns nil`,
-		},
 	},
 
 	// --- comparison ------------------------------------------------------
@@ -318,7 +312,7 @@ var cases = []Case{
 	{
 		ID:           "ternary_plain_value",
 		Category:     "ternary",
-		Note:         "GSX-only ternary (Go has none) on a plain (non-JSX) value",
+		Note:         "GSX-only ternary (Go has none) on a plain (non-JSX) value; route/exprternary.go now recognizes the syntax go/parser rejects, so route/client-vm agree",
 		Expr:         `props.Flag ? "yes" : "no"`,
 		PropsFields:  "Flag bool",
 		PropsLiteral: "Flag: true",
@@ -326,12 +320,6 @@ var cases = []Case{
 		Want:         "yes",
 		Unsupported: map[Backend]string{
 			Transpile: `GSX ternary "?:" is not valid Go syntax; transpile.go has no lowering for gsx_ternary_expression, so Transpile fails with "illegal character U+003F '?'"`,
-		},
-		Diverges: map[Backend]string{
-			Route: "",
-		},
-		DivergesReason: map[Backend]string{
-			Route: `go/parser.ParseExpr rejects the "?" token the same way transpile does, but compiledFileExpr (route/exprcache.go) treats any parse failure as "render empty" instead of surfacing an error, so the hole silently renders nothing instead of "yes"`,
 		},
 	},
 	{

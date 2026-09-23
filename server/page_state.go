@@ -174,7 +174,9 @@ func (s *PageState) SetNonce(nonce string) {
 
 // SetLanguage records the BCP 47 language tag for the document shell.
 // Language is request-scoped; PageState deliberately has no implicit global
-// language default so applications can choose the locale they serve.
+// language default so applications can choose the locale they serve. An
+// unset value still reaches the document as lang="en":
+// documentHTMLAttrValues applies that fallback at render time, not here.
 func (s *PageState) SetLanguage(language string) {
 	if s == nil {
 		return

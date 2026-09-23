@@ -127,9 +127,9 @@ func TestFixtureRoutesServeAndDeclarePlans(t *testing.T) {
 				assertNoWASMRuntimePath(t, body)
 			case "R07":
 				assertContains(t, body, `data-gosx-engine="GoSXVideo"`)
-				assertContains(t, body, `"syncMode": "follow"`)
-				assertContains(t, body, `"src": "/media/ouroboros-placeholder.mp4"`)
-				assertContains(t, body, `"sync": "/_ouroboros/video-sync"`)
+				assertContains(t, body, `"syncMode":"follow"`)
+				assertContains(t, body, `"src":"/media/ouroboros-placeholder.mp4"`)
+				assertContains(t, body, `"sync":"/_ouroboros/video-sync"`)
 				assertNoWASMRuntimePath(t, body)
 			case "R08":
 				assertContains(t, body, `data-gosx-engine="GoSXScene3D"`)

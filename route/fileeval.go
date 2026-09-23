@@ -194,7 +194,33 @@ type fileRequestBindings struct {
 	actions       map[string]any
 	currentAction map[string]any
 	user          any
-	csrf          map[string]any
+	csrf          any
+}
+
+// csrfBinding backs the `csrf` template value with a lazy mint. session.Token
+// dirties the session store (it writes the minted token as a value), and a
+// dirty store forces a Set-Cookie on every response. Binding a real token map
+// on every request — as the old code did — paid that Set-Cookie, and the
+// private-cache behavior it implies, on pages with no form or action that
+// ever reads csrf.token or csrf.field. selectValue's csrfBinding case defers
+// the mint to the first read, so a page that never reads csrf never dirties
+// the session.
+type csrfBinding struct {
+	request *http.Request
+}
+
+// selectField answers the two names a `.gsx` template reads off csrf:
+// csrf.token (the minted value) and csrf.field (the form field name it
+// posts under). Any other name misses, matching the old map's behavior.
+func (c csrfBinding) selectField(name string) (any, bool) {
+	switch name {
+	case "token":
+		return session.Token(c.request), true
+	case "field":
+		return defaultCSRFFieldName(), true
+	default:
+		return nil, false
+	}
 }
 
 // withValue returns an env that binds name to value.
@@ -333,11 +359,14 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	if resolvedUser, ok := auth.Current(ctx.Request); ok {
 		bindings.user = templateUser(resolvedUser)
 	}
-	if token := session.Token(ctx.Request); token != "" {
-		bindings.csrf = map[string]any{
-			"token": token,
-			"field": defaultCSRFFieldName(),
-		}
+	// Bind csrf whenever a session store exists, but do not mint here:
+	// session.Current only reads whether Middleware ran for this request, so
+	// checking it — unlike the session.Token call this replaced — never
+	// dirties the store. The mint happens on first csrf.token/csrf.field
+	// read (see csrfBinding.selectField), so a page whose template never
+	// reads csrf never triggers a Set-Cookie.
+	if session.Current(ctx.Request) != nil {
+		bindings.csrf = csrfBinding{request: ctx.Request}
 	}
 	return bindings
 }
@@ -436,6 +465,10 @@ func evalIdent(name string, env fileRenderEnv) any {
 func selectValue(target any, name string) any {
 	if target == nil {
 		return nil
+	}
+	if cb, ok := target.(csrfBinding); ok {
+		value, _ := cb.selectField(name)
+		return value
 	}
 	if value, ok := selectMappedValue(target, name); ok {
 		return value
