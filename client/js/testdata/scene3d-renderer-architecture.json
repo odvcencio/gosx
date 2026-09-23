@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2700,
-    "actualGovernanceLinesAtReview": 2697,
-    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
+    "revisedGovernanceLineBudget": 2715,
+    "actualGovernanceLinesAtReview": 2705,
+    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots. Raised by 8 lines (2697 to 2705) to register the new tsconfig.scene3d.json and noimplicitany-baseline.json direct renderer-source references added when client/runtime/scene3d/*.ts first got real tsc coverage."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -190,7 +190,15 @@
       "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
       "source": "webgpu.ts",
       "count": 1
-    }
+    },
+    { "file": "client/runtime/scene3d/noimplicitany-baseline.json", "source": "hydrate-input.ts", "count": 1 },
+    { "file": "client/runtime/scene3d/noimplicitany-baseline.json", "source": "mount-webgl.ts", "count": 1 },
+    { "file": "client/runtime/scene3d/noimplicitany-baseline.json", "source": "webgl.ts", "count": 1 },
+    { "file": "client/runtime/scene3d/noimplicitany-baseline.json", "source": "webgpu.ts", "count": 1 },
+    { "file": "client/runtime/tsconfig.scene3d.json", "source": "hydrate-input.ts", "count": 1 },
+    { "file": "client/runtime/tsconfig.scene3d.json", "source": "mount-webgl.ts", "count": 1 },
+    { "file": "client/runtime/tsconfig.scene3d.json", "source": "webgl.ts", "count": 1 },
+    { "file": "client/runtime/tsconfig.scene3d.json", "source": "webgpu.ts", "count": 1 }
   ],
   "sourceSets": {
     "webgl": {
@@ -260,7 +268,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createSceneWaterSimWebGL@2160:3",
-      "lines": 255,
+      "lines": 256,
       "cyclomatic": 78,
       "cognitive": 84,
       "maxNesting": 2,
@@ -359,7 +367,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@6973:3",
-      "lines": 3127,
+      "lines": 3130,
       "cyclomatic": 933,
       "cognitive": 1477,
       "maxNesting": 7,
@@ -395,7 +403,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawPBRObjectList@8988:5",
-      "lines": 272,
+      "lines": 273,
       "cyclomatic": 79,
       "cognitive": 187,
       "maxNesting": 6,
@@ -422,7 +430,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawInstancedMeshes@9886:5",
-      "lines": 183,
+      "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
       "maxNesting": 5,
@@ -485,7 +493,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6234:3",
-      "lines": 11915,
+      "lines": 11917,
       "cyclomatic": 4018,
       "cognitive": 5185,
       "maxNesting": 7,
@@ -494,7 +502,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "initGPUResources@7460:6",
-      "lines": 394,
+      "lines": 395,
       "cyclomatic": 26,
       "cognitive": 34,
       "maxNesting": 4,
@@ -619,7 +627,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderShadowPass@15412:5",
+      "name": "renderShadowPass@15412:116",
       "lines": 102,
       "cyclomatic": 31,
       "cognitive": 61,
@@ -701,15 +709,6 @@
   ],
   "symbols": [
     {
-      "source": "../runtime/scene3d/mount-telemetry.ts",
-      "name": "mountSnapshot",
-      "lines": 118,
-      "cyclomatic": 66,
-      "cognitive": 81,
-      "maxNesting": 4,
-      "parameters": 3
-    },
-    {
       "source": "../runtime/scene3d/mount.ts",
       "name": "renderFrame",
       "lines": 206,
@@ -721,7 +720,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createSceneWaterSimWebGL",
-      "lines": 255,
+      "lines": 256,
       "cyclomatic": 78,
       "cognitive": 84,
       "maxNesting": 2,
@@ -757,7 +756,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3127,
+      "lines": 3130,
       "cyclomatic": 933,
       "cognitive": 1477,
       "maxNesting": 7,
@@ -766,7 +765,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawPBRObjectList",
-      "lines": 272,
+      "lines": 273,
       "cyclomatic": 79,
       "cognitive": 187,
       "maxNesting": 6,
@@ -793,7 +792,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
-      "lines": 11915,
+      "lines": 11917,
       "cyclomatic": 4018,
       "cognitive": 5185,
       "maxNesting": 7,
@@ -832,6 +831,15 @@
       "lines": 653,
       "cyclomatic": 175,
       "cognitive": 226,
+      "maxNesting": 4,
+      "parameters": 3
+    },
+    {
+      "source": "../runtime/scene3d/mount-telemetry.ts",
+      "name": "mountSnapshot",
+      "lines": 118,
+      "cyclomatic": 66,
+      "cognitive": 81,
       "maxNesting": 4,
       "parameters": 3
     }

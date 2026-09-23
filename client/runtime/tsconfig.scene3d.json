@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "allowJs": false,
+    "lib": ["DOM", "ES2022"],
+    "module": "none",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "target": "ES2022"
+  },
+  "files": [
+    "scene3d/bootstrap-bridge.d.ts",
+    "scene3d/webgl.ts",
+    "scene3d/webgpu.ts",
+    "scene3d/mount-webgl.ts",
+    "scene3d/gltf.ts",
+    "scene3d/mount.ts",
+    "scene3d/compute.ts",
+    "scene3d/overlay-dom.ts",
+    "scene3d/mount-controls.ts",
+    "scene3d/animation.ts",
+    "scene3d/mount-backend.ts",
+    "scene3d/dom-regions.ts",
+    "scene3d/mount-quality.ts",
+    "scene3d/overlays.ts",
+    "scene3d/mount-viewport.ts",
+    "scene3d/command-bridge.ts",
+    "scene3d/mount-telemetry.ts",
+    "scene3d/hydrate-input.ts",
+    "scene3d/command-runtime.ts"
+  ]
+}

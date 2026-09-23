@@ -109,7 +109,7 @@
         return value == null ? null : String(value);
       }
       function invalidAttr(name, value, expected, reason, error) {
-        var data = { attribute: attributeName(name), value: value, expected: expected, reason: reason };
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var data = { attribute: attributeName(name), value: value, expected: expected, reason: reason };
         if (error) data.error = error;
         parseDiagnostics.push({
           severity: "warn",
@@ -123,7 +123,7 @@
         if (value === null) return null;
         var trimmed = value.trim();
         var parsed = trimmed === "" ? NaN : Number(trimmed);
-        if (!Number.isFinite(parsed)) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!Number.isFinite(parsed)) {
           invalidAttr(name, value, "finite-number", "invalid-value");
           return null;
         }
@@ -133,7 +133,7 @@
         var value = attr(name);
         if (value === null) return null;
         if (value === "true") return true;
-        if (value === "false") return false;
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (value === "false") return false;
         invalidAttr(name, value, "true-or-false", "invalid-value");
         return null;
       }
@@ -142,7 +142,7 @@
         if (value === null) return null;
         try {
           var parsed = JSON.parse(value);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             invalidAttr(name, value, "json-object", "invalid-value");
             return null;
           }
@@ -258,6 +258,6 @@
       mount = typeof document !== "undefined" && typeof document.querySelector === "function"
         ? document.querySelector("[data-gosx-scene3d-mounted]")
         : null;
-    }
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
     return mountSnapshot(mount, null);
   };
