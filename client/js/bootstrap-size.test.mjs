@@ -640,10 +640,12 @@ const budgets = [
   // -> 350_000 for headroom.
   // Marking the point-sprite color/fog/alpha/size varyings @interpolate(flat)
   // combines with the above on merge.
+  // Perspective spot shadows (WebGL and WebGPU one-map slots, fail-closed
+  // validation, retirement) combines with both on this merge.
   // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
   // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
-  // slots, the __proto__-safe normalized attribute map) combines with both
-  // on this merge. Caps re-measured from the merged source below.
+  // slots, the __proto__-safe normalized attribute map) combines with all
+  // three on this merge. Caps re-measured from the merged source below.
   { file: "bootstrap.js", raw: 1_592_000, gzip: 440_000, brotli: 351_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1114,11 +1116,17 @@ const budgets = [
   // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds its
   // loader IIFE here, in this base chunk, so the actual chunk it lazy-loads
   // stays outside it. Measured: 584_696 / 162_859 / 134_858.
+  // Perspective spot shadows add the shared-PBR one-map slot, fail-closed
+  // validation, and depth padding to this base chunk. Measured:
+  // 587_941 / 164_203 / 135_919. Raw and gzip exceeded the prior hard limit;
+  // bumped raw 559_000 -> 564_000 and gzip 156_000 -> 159_500 for headroom.
+  // Merged with the computed-morph repeated-blend fix. Measured:
+  // 588_019 / 164_285 / 135_995. Brotli exceeded the prior hard limit by 20
+  // bytes; bumped 129_500 -> 130_000 for headroom.
   // Custom per-vertex float BufferAttributes (Selena retained-geometry
-  // eligibility, WebGL2/WebGPU custom attribute binding). Measured:
-  // 587_284 / 163_846 / unchanged brotli. Raw and gzip exceeded the prior
-  // hard limit; bumped raw 559_000 -> 564_000 and gzip 156_000 -> 159_500.
-  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 129_500 },
+  // eligibility, WebGL2/WebGPU custom attribute binding) combines with the
+  // above on this merge. Caps re-measured from the merged source below.
+  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 130_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1856,11 +1864,14 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
     // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
     // restores real headroom.
+    // Perspective spot shadows add the WebGL one-map slot, fail-closed
+    // validation, and retirement to bootstrap-feature-scene3d.js and
+    // bootstrap-feature-scene3d-webgl.js, both carried by this route.
+    // Measured: 1_134_321 / 317_007 / 268_471.
     // Custom per-vertex float BufferAttributes add WebGL2 Selena attribute
     // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
-    // Measured: 1_134_193 / 316_839 / 268_369. All three exceeded the prior
-    // hard limit; bumped raw 1_079_000 -> 1_085_000, gzip 301_500 ->
-    // 305_000, and brotli 255_500 -> 259_000 for headroom.
+    // Both combine on this merge; caps re-measured from the merged source
+    // below.
     raw: 1_085_000,
     gzip: 305_000,
     brotli: 259_000,
@@ -2011,14 +2022,20 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_524_567 / 411_507 /
     // 347_451. Gzip was within 77 bytes of the prior hard limit; 396_000
     // restores real headroom.
-    raw: 1_465_500,
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
+    // Perspective spot shadows carry both backends' one-map slots and
+    // fail-closed validation on this route. Measured: 1_528_057 / 412_845 /
+    // 348_680. Gzip exceeded the prior hard limit; bumped 396_000 ->
+    // 400_500. Raw and brotli headroom is unchanged.
     // Custom per-vertex float BufferAttributes carry both backends' custom
-    // attribute binding on this route. Measured: 412_968 gzip. Bumped
-    // 396_000 -> 400_500. Raw and brotli headroom is unchanged.
-    gzip: 400_500,
-    brotli: 332_900,
+    // attribute binding on this route, combining with the above on this
+    // merge. Measured: 1_531_610 / 414_123 / 349_595. All three exceeded
+    // the prior hard limit; bumped raw 1_465_500 -> 1_468_000, gzip
+    // 400_500 -> 402_000, and brotli 332_900 -> 334_000 for headroom.
+    raw: 1_468_000,
+    gzip: 402_000,
+    brotli: 334_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2151,8 +2168,12 @@ const routeBudgets = [
     // retain one 100-byte step of reviewed headroom.
     // v0.55.0 navigation reconciliation plus Scene3D command-diff reuse.
     // Measured: 1_093_330 / 289_512 / 242_867.
+    // Perspective spot shadows plus custom per-vertex float BufferAttributes
+    // (WebGPU side of both) combine on this merge. Measured:
+    // 1_141_513 / 304_230 / 254_461. Only gzip exceeded the prior hard
+    // limit; bumped 289_700 -> 290_000 for headroom.
     raw: 1_093_500,
-    gzip: 289_700,
+    gzip: 290_000,
     brotli: 243_000,
   },
 

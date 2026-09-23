@@ -831,16 +831,20 @@ func Page() Node {
 	    Decay:     2,
 	}
 
-	// Spot — a cone with a soft edge.
+	// Spot — a cone with a soft edge and one perspective shadow map.
 	scene.SpotLight{
-	    Color:     "#ffffff",
-	    Intensity: 1.5,
-	    Position:  scene.Vec3(0, 6, 0),
-	    Direction: scene.Vec3(0, -1, 0),
-	    Angle:     0.35, // outer cone, radians
-	    Penumbra:  0.2,  // 0 = hard edge, 1 = fully soft
-	    Range:     30,
-	    Decay:     2,
+	    Color:          "#ffffff",
+	    Intensity:      1.5,
+	    Position:       scene.Vec3(0, 6, 0),
+	    Direction:      scene.Vec3(0, -1, 0),
+	    Angle:          0.35, // cone half-angle, radians; must be less than pi/2
+	    Penumbra:       0.2,  // 0 = hard edge, 1 = fully soft
+	    Range:          30,
+	    Decay:          2,
+	    CastShadow:     true,
+	    ShadowBias:     -0.001,
+	    ShadowSize:     1024,
+	    ShadowSoftness: 1.0,
 	}
 
 	// Hemisphere — a sky and ground gradient.
@@ -880,19 +884,6 @@ func Page() Node {
 					reaches the IR, and then no renderer reads it. Both GPU backends fold a probe into a flat ambient term built from Color and Intensity. Ambient is the right fold — a probe carries no position, so a point light would invent a falloff — but it is not a spherical-harmonic evaluation.
 				</li>
 			</ul>
-			<p>
-				One more gap carries no capability flag yet: a spot light casts no shadow on either backend. Both shadow passes skip any light whose kind is not
-				<span class="inline-code">directional</span>
-				, even though
-				<span class="inline-code">SpotLight</span>
-				accepts
-				<span class="inline-code">CastShadow</span>
-				,
-				<span class="inline-code">ShadowBias</span>
-				, and
-				<span class="inline-code">ShadowSize</span>
-				.
-			</p>
 		</section>
 		<section id="shadows">
 			<h2>Shadows</h2>
@@ -916,13 +907,14 @@ func Page() Node {
 				to sample it. A ground plane usually receives without casting.
 			</p>
 			<div class="scene3d-warning" role="note">
-				<p class="scene3d-warning__title">
-					Two shadow slots, directional lights only.
+				<p class="scene3d-warning__title">Two authored-order shadow-light slots.</p>
+				<p>
+					Both GPU backends admit at most two valid shadow-casting directional or spot lights, in scene order. A spot consumes one perspective map; a directional light uses the backend's supported cascade count and shared texture-unit budget. An unsupported spot cone half-angle of pi/2 or wider, or more than one requested spot cascade, fails validation instead of consuming a slot. A third otherwise eligible light is ignored. Point-light shadows remain unsupported.
 				</p>
 				<p>
-					Both GPU backends allocate at most two shadow maps per scene, and both skip any light that is not a
-					<span class="inline-code">DirectionalLight</span>
-					. A third shadow-casting directional light is ignored. A shadow-casting spot light is ignored.
+					Alpha cutoff currently affects the visible PBR surface, but both depth-only shadow passes still cast the mesh's closed geometry silhouette. Set
+					<span class="inline-code">CastShadow</span>
+					to false or use an opaque proxy caster when a cutout-accurate silhouette is required.
 				</p>
 			</div>
 		</section>
@@ -2313,7 +2305,7 @@ func Page() Node {
 				</div>
 				<div class="scene3d-geometry-card glass-panel">
 					<span class="scene3d-geometry-name">SpotLight</span>
-					<span class="scene3d-geometry-fields">cone, no shadow yet</span>
+					<span class="scene3d-geometry-fields">cone and one-map perspective shadows</span>
 				</div>
 				<div class="scene3d-geometry-card glass-panel">
 					<span class="scene3d-geometry-name">HemisphereLight</span>
