@@ -1085,7 +1085,7 @@ const budgets = [
   // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
   // outside this base chunk. Narrow rounding headroom on raw and gzip; brotli
   // fits the prior envelope.
-  { file: "bootstrap-feature-scene3d.js", raw: 554_800, gzip: 154_800, brotli: 128_128 },
+  { file: "bootstrap-feature-scene3d.js", raw: 556_000, gzip: 154_800, brotli: 128_128 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1815,7 +1815,7 @@ const routeBudgets = [
     // bootstrap-feature-scene3d.js on this route -- so every page pays a few
     // bytes even though the fast path itself ships in its own lazy chunk.
     // Narrow rounding headroom.
-    raw: 1_074_800,
+    raw: 1_075_100,
     gzip: 300_100,
     brotli: 254_300,
   },
