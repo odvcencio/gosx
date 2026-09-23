@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.56.10 (2026-09-22)
+
+### Added: retained Scene3D pose frames
+
+- Go/WASM clients can send versioned binary transform and animation frames to mounted InstancedGLBMesh batches. Stable actor membership updates the retained renderer directly, bypassing the JSON actor declaration and Scene3D command planner on those frames.
+- Membership and appearance changes still use ordered typed scene commands. A bounded latest-frame queue carries pending membership declarations forward, reports rejection and supersession through telemetry, and never blocks the animation-frame callback.
+
+### Added: versioned browser runtime release bundle
+
+- Governed releases now publish the complete browser runtime alongside CLI binaries, including all WASM variants, generated JavaScript chunks, compression sidecars, a per-file manifest, and exact tag/commit provenance. The release verifies the bundle and includes its digest in checksums.txt so applications can install an immutable runtime without recompiling TinyGo.
+
 ## v0.56.9 (2026-09-21)
 
 ### Improved: build world-mesh attributes in typed storage
