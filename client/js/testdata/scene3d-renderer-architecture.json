@@ -256,7 +256,7 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
     "../runtime/scene3d/hydrate-input.ts": 89,
     "../runtime/scene3d/mount-webgl.ts": 5399,
-    "../runtime/scene3d/mount.ts": 3569
+    "../runtime/scene3d/mount.ts": 3576
   },
   "functionDefaults": {
     "lines": 200,

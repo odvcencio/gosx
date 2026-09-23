@@ -231,6 +231,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-instance-stream.js",
+      "sources": [
+        "../runtime/scene3d/instance-stream.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-hydrate.js",
       "sources": [
         "../runtime/scene3d/hydrate-input.ts"
