@@ -633,7 +633,12 @@ const budgets = [
   // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
   // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
   // Gzip stays at 436_000: its hard limit already clears the new measurement.
-  { file: "bootstrap.js", raw: 1_584_500, gzip: 436_000, brotli: 346_800 },
+  // The computed-morph repeated-blend fix (prior-array plumbing plus a
+  // cross-renderer output-buffer staleness guard) measured 1_650_075 /
+  // 452_182 / 363_298. Raw and brotli exceeded the prior hard limit; bumped
+  // raw 1_584_500 -> 1_589_000, gzip 436_000 -> 438_000, and brotli 346_800
+  // -> 350_000 for headroom.
+  { file: "bootstrap.js", raw: 1_589_000, gzip: 438_000, brotli: 350_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
