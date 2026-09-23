@@ -167,7 +167,17 @@ func (c *lowerCtx) lowerUnaryExpr(u *ast.UnaryExpr) program.ExprID {
 //     string key, treating the LHS as a Value with .Fields populated.
 func (c *lowerCtx) lowerSelectorExpr(s *ast.SelectorExpr) program.ExprID {
 	if pkg, ok := identName(s.X); ok {
-		qualified := pkg + "." + s.Sel.Name
+		// Resolve through the import alias map so an aliased import
+		// (`p "math"` → pkg == "p") still builds the canonical
+		// "math.Pi"/"math.Sin" name knownIntrinsics is keyed by, not the
+		// alias itself. canonicalPackageName falls back to pkg unchanged
+		// when pkg isn't a tracked import (e.g. a genuine obj.Field
+		// selector), which correctly misses both intrinsic tables below.
+		qualifiedPkg := pkg
+		if canonical, ok := c.canonicalPackageName(pkg); ok {
+			qualifiedPkg = canonical
+		}
+		qualified := qualifiedPkg + "." + s.Sel.Name
 		if isConstantIntrinsic(qualified) {
 			return c.addExpr(program.Expr{Op: program.OpCall, Value: qualified})
 		}
@@ -290,8 +300,13 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 	// imported, so it goes through intrinsics; a typo `maht.Sin`
 	// falls through to host dispatch and records a `host_unbound`
 	// diagnostic at evaluation time.
-	if c.isImportedPackage(pkg) {
-		qualified := pkg + "." + sel.Sel.Name
+	if canonicalPkg, ok := c.canonicalPackageName(pkg); ok {
+		// Build the qualified name from the canonical package name, not
+		// the source-level receiver text: an aliased import (`m "math"`)
+		// makes pkg == "m", but knownIntrinsics only has "math.Sqrt", so
+		// qualifying against pkg directly would reject every intrinsic
+		// call made through an alias.
+		qualified := canonicalPkg + "." + sel.Sel.Name
 		if !isIntrinsic(qualified) {
 			c.addIssue(call, fmt.Sprintf("call to %s is not in the supported intrinsic set", qualified), escapeHatchSuggestion)
 			return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})

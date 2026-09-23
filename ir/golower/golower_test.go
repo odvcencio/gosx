@@ -153,6 +153,31 @@ func F() float64 { return math.Sqrt(16) }`)
 	}
 }
 
+// TestLowerIntrinsicCallThroughImportAlias proves the alias bug: an
+// intrinsic call through an aliased import (`m "math"`) must resolve to
+// the SAME canonical intrinsic ("math.Sqrt") that the unaliased import
+// resolves to in TestLowerIntrinsicCall, not to the alias-qualified name
+// ("m.Sqrt"), which knownIntrinsics never contains. Before the fix, the
+// lowerer built the qualified name from the source-level selector text —
+// the alias itself — so this call missed the intrinsic table and failed
+// to lower with "call to m.Sqrt is not in the supported intrinsic set."
+func TestLowerIntrinsicCallThroughImportAlias(t *testing.T) {
+	src := []byte(`package handlers
+
+import m "math"
+
+func F() float64 { return m.Sqrt(16) }`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
+	if got.Number() != 4 {
+		t.Errorf("F() = %f, want 4", got.Number())
+	}
+}
+
 // TestLowerMathPi confirms the constant-intrinsic special-case fires.
 func TestLowerMathPi(t *testing.T) {
 	src := []byte(`package handlers

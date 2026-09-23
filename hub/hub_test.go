@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -628,4 +630,138 @@ func TestHubBroadcast(t *testing.T) {
 	mu.Unlock()
 
 	t.Logf("Broadcast test passed: 3 clients, ping/pong")
+}
+
+// TestHubHandlerPanicRecovers proves the recover boundary in invokeHandler:
+// a handler that panics must not crash the server — the panicking client's
+// connection keeps working, a second unrelated client keeps working, and the
+// panic reaches the log. Run this test against a build that reverts the
+// invokeHandler wrapper and the whole `go test` process dies instead of
+// failing the assertions below.
+func TestHubHandlerPanicRecovers(t *testing.T) {
+	h := New("panic-recovery")
+
+	var pongs int32
+	var mu sync.Mutex
+	h.On("boom", func(ctx *Context) {
+		panic("deliberate handler panic for TestHubHandlerPanicRecovers")
+	})
+	h.On("ping", func(ctx *Context) {
+		mu.Lock()
+		pongs++
+		mu.Unlock()
+		ctx.Client.trySend(mustMarshalMessage("pong", nil))
+	})
+
+	// log.SetOutput redirects the package-global logger, and a prior
+	// subtest's server.Close() does not block until its clients'
+	// readPump/writePump goroutines actually exit (net/http.Server.Close
+	// closes the listener but explicitly does not wait for background
+	// goroutines) — so a straggler from an earlier subtest, or this
+	// test's own bystander client logging its own join/disconnect, can
+	// still call log.Printf while this test reads the buffer below. A
+	// bare bytes.Buffer has no locking, so that's a real, race-detector-
+	// visible data race, not just a hypothetical one — this exact
+	// scenario failed go-race-tests in CI before syncLogBuffer existed.
+	// The mutex serializes every writer (mine and any straggler's), and
+	// the strings.Contains assertions below only look for text unique to
+	// this test's own panic, so stray unrelated log lines can't produce
+	// a false pass.
+	logBuf := &syncLogBuffer{}
+	prevOutput := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(logBuf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOutput)
+		log.SetFlags(prevFlags)
+	})
+
+	server := httptest.NewServer(h)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	// The client that triggers the panic.
+	panicker, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial panicker: %v", err)
+	}
+	defer panicker.Close()
+	readUntilEvent(t, panicker, "__welcome")
+
+	// A second, unrelated client that must keep working after the panic.
+	bystander, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial bystander: %v", err)
+	}
+	defer bystander.Close()
+	readUntilEvent(t, bystander, "__welcome")
+
+	if h.ClientCount() != 2 {
+		t.Fatalf("expected 2 clients before the panic, got %d", h.ClientCount())
+	}
+
+	panicker.WriteJSON(Message{Event: "boom"})
+	time.Sleep(100 * time.Millisecond)
+
+	// The panicking handler must not have taken its own connection down:
+	// the same socket still answers a later, unrelated event.
+	panicker.WriteJSON(Message{Event: "ping"})
+	pong := readUntilEvent(t, panicker, "pong")
+	if pong.Event != "pong" {
+		t.Fatalf("expected pong on the panicker's own connection after recovery, got %+v", pong)
+	}
+
+	// The bystander's connection, and the hub as a whole, must still work.
+	bystander.WriteJSON(Message{Event: "ping"})
+	if pong := readUntilEvent(t, bystander, "pong"); pong.Event != "pong" {
+		t.Fatalf("expected pong on the bystander connection, got %+v", pong)
+	}
+
+	mu.Lock()
+	if pongs != 2 {
+		t.Fatalf("expected 2 ping handler calls after the panic, got %d", pongs)
+	}
+	mu.Unlock()
+
+	if h.ClientCount() != 2 {
+		t.Fatalf("expected both clients still connected after the panic, got %d", h.ClientCount())
+	}
+
+	if !strings.Contains(logBuf.String(), "recovered panic") {
+		t.Fatalf("expected the panic to be logged, got log output: %q", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "deliberate handler panic for TestHubHandlerPanicRecovers") {
+		t.Fatalf("expected the panic message in the log, got: %q", logBuf.String())
+	}
+}
+
+func mustMarshalMessage(event string, data any) []byte {
+	msg, _ := json.Marshal(Message{Event: event, Data: mustMarshal(data)})
+	return msg
+}
+
+// syncLogBuffer is a mutex-guarded io.Writer + String() sink for tests that
+// redirect the package-global log output (log.SetOutput). The global
+// logger has writers this package does not control — a straggler
+// goroutine from an earlier subtest's not-yet-exited readPump/writePump
+// (net/http.Server.Close does not wait for them), or a concurrent client
+// in the same test — so a plain bytes.Buffer read from the test goroutine
+// races with any of those writes. Every access here goes through the same
+// mutex, so it stays race-free regardless of who else writes.
+type syncLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
