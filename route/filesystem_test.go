@@ -3615,6 +3615,44 @@ func Page() Node {
 	}
 }
 
+// TestRouterFilePagesSkipCSRFMintWithoutTemplateUse proves the lazy-mint
+// fix: a page whose template never reads csrf.token or csrf.field must not
+// mint one, so its GET response carries no Set-Cookie header and stays
+// publicly cacheable. TestRouterFilePagesSupportRequestDataActionsAndCSRF
+// above is the paired proof that a page which does read csrf.token keeps
+// minting one and keeps its Set-Cookie header exactly as before.
+func TestRouterFilePagesSkipCSRFMintWithoutTemplateUse(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <main><h1>No form here</h1></main>
+}
+`)
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := session.MustNew("route-render-session-secret", session.Options{})
+	handler := sessions.Middleware(router.Build())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "No form here") {
+		t.Fatalf("unexpected body %q", res.Body.String())
+	}
+	if cookies := res.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("expected no Set-Cookie for a page that never reads csrf, got %v", cookies)
+	}
+}
+
 func writeRouteFile(t *testing.T, root, rel, contents string) {
 	t.Helper()
 	path := filepath.Join(root, rel)
