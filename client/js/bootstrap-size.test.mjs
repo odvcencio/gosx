@@ -1093,7 +1093,9 @@ const budgets = [
   // GSP2 decoding, validation, and retained pose application are loaded only
   // for command users. The bounded per-target queue and async error telemetry
   // measure 8_135 / 2_972 / 2_661 after generation.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 8_200, gzip: 3_000, brotli: 2_700 },
+  // Direct packed pose validation and atomic crowd-row staging measure
+  // 10_706 / 3_873 / 3_493; reviewed targets leave narrow headroom.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 8_700, gzip: 3_200, brotli: 2_900 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
