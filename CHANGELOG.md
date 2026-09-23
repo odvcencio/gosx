@@ -541,6 +541,22 @@ changes source-map generation, and is tracked separately.
   that composes the full request-scoped context without dropping route or
   runtime state. Generated scaffolds opt into English explicitly.
 
+### Breaking — removed navigation and managed-script loading helpers
+
+- **`server.NavigationScript` and `server.NavigationScriptWithNonce` are
+  removed.** Call `app.EnableNavigation` instead. It owns navigation-runtime
+  injection and threads the request's CSP (Content Security Policy) nonce for
+  you, so you no longer add the navigation script by hand.
+- **`ManagedScriptOptions.Load` is removed**, together with the fetch/eval
+  loading mode it selected. A managed script now always loads through a real
+  DOM `<script>` element, with an explicit type, cross-origin policy, and
+  referrer policy.
+- Compose the document shell through
+  `server.HTMLDocument(*server.DocumentContext)` (see "Changed: document
+  composition has one explicit renderer" above). It threads the CSP nonce
+  through navigation, inline helpers, and managed scripts, and strips nonces
+  from shared-cacheable responses.
+
 ### Added: a shared component call executes end to end for a strict caller
 
 - **A strict caller's shared component call now renders.** WP4 (v0.49.0)
