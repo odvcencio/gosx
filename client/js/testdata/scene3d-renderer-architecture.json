@@ -194,7 +194,7 @@
     {
       "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
       "source": "webgpu.ts",
-      "count": 1
+      "count": 2
     },
     {
       "file": "client/runtime/scene3d/noimplicitany-baseline.json",
