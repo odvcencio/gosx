@@ -124,22 +124,12 @@ func importCanonicalName(spec *ast.ImportSpec) string {
 	return base
 }
 
-// isImportedPackage reports whether name is the source-level
-// identifier of an imported package in the current file.
-func (c *lowerCtx) isImportedPackage(name string) bool {
-	if c.imports == nil {
-		return false
-	}
-	_, ok := c.imports[name]
-	return ok
-}
-
 // canonicalPackageName resolves the source-level identifier a call site
 // wrote (name, possibly an import alias) to the canonical package name
-// knownIntrinsics is keyed by. Callers that already confirmed
-// isImportedPackage(name) can treat the ok result as always true; it exists
-// so a caller that hasn't checked yet gets a safe zero value instead of a
-// silently wrong qualified name.
+// knownIntrinsics is keyed by. The ok result doubles as import-set
+// membership — every caller either branches on it directly or (like
+// lowerSelectorExpr) falls back to treating name as unresolved, so no
+// separate isImportedPackage lookup is needed.
 func (c *lowerCtx) canonicalPackageName(name string) (string, bool) {
 	if c.imports == nil {
 		return "", false

@@ -19,7 +19,7 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 | Backend | Agrees | Diverges | Unsupported | Total |
 |---|---|---|---|---|
 | transpile | 46 | 0 | 16 | 62 |
-| route | 56 | 6 | 0 | 62 |
+| route | 58 | 4 | 0 | 62 |
 | client-vm | 61 | 1 | 0 | 62 |
 
 ## numeric
@@ -79,7 +79,7 @@ Notes:
 | `string_lt_lexicographic` | `"apple" < "banana"` | agrees: `true` | agrees: `true` | agrees: `true` |
 | `string_neq_literal` | `"a" != "b"` | agrees: `true` | agrees: `true` | agrees: `true` |
 | `string_empty_concat` | `"" + "x"` | agrees: `x` | agrees: `x` | agrees: `x` |
-| `string_len_builtin` | `len(props.S)` | agrees: `5` | diverges: `(empty)` | agrees: `5` |
+| `string_len_builtin` | `len(props.S)` | agrees: `5` | agrees: `5` | agrees: `5` |
 | `string_concat_three_literals` | `"a" + "b" + "c"` | agrees: `abc` | agrees: `abc` | agrees: `abc` |
 
 Notes:
@@ -91,8 +91,7 @@ Notes:
 - `string_lt_lexicographic`: string < is lexicographic byte comparison
 - `string_neq_literal`: string inequality
 - `string_empty_concat`: concatenating with an empty string literal is a no-op
-- `string_len_builtin`: len(string): the island DSL has a builtin OpLen opcode; route's CallExpr path only resolves bound Funcs/component identifiers, so the unbound "len" identifier evaluates to nil and the call silently renders empty
-  - route diverges: route/exprlower.go's CallExpr case lowers node.Fun (the identifier "len") the same way any other identifier lowers; nothing in route/fileeval.go registers a "len" builtin, so it resolves to a nil function and callValue silently returns nil
+- `string_len_builtin`: len(string): all three backends treat len as a builtin — the island DSL's own parser lowers it to OpLen, transpile compiles to Go's real len(), and route/exprlower.go's CallExpr case now special-cases the "len" identifier the same way, instead of resolving it through the caller-supplied Funcs map
 - `string_concat_three_literals`: chained + associates left to right the same way everywhere
 
 ## comparison
@@ -127,16 +126,15 @@ Notes:
 
 | Case | Expression | transpile | route | client-vm |
 |---|---|---|---|---|
-| `ternary_plain_value` | `props.Flag ? "yes" : "no"` | unsupported | diverges: `(empty)` | agrees: `yes` |
+| `ternary_plain_value` | `props.Flag ? "yes" : "no"` | unsupported | agrees: `yes` | agrees: `yes` |
 | `ternary_jsx_both_branches` | `props.Flag ? <span>yes</span> : <b>no</b>` | unsupported | agrees: `<span>yes</span>` | agrees: `<span>yes</span>` |
 | `and_jsx_conditional_true` | `props.Flag && <span>yes</span>` | unsupported | agrees: `<span>yes</span>` | agrees: `<span>yes</span>` |
 | `and_jsx_conditional_false` | `props.Flag && <span>yes</span>` | unsupported | agrees: `(empty)` | agrees: `(empty)` |
 
 Notes:
 
-- `ternary_plain_value`: GSX-only ternary (Go has none) on a plain (non-JSX) value
+- `ternary_plain_value`: GSX-only ternary (Go has none) on a plain (non-JSX) value; route/exprternary.go now recognizes the syntax go/parser rejects, so route/client-vm agree
   - transpile unsupported: GSX ternary "?:" is not valid Go syntax; transpile.go has no lowering for gsx_ternary_expression, so Transpile fails with "illegal character U+003F '?'"
-  - route diverges: go/parser.ParseExpr rejects the "?" token the same way transpile does, but compiledFileExpr (route/exprcache.go) treats any parse failure as "render empty" instead of surfacing an error, so the hole silently renders nothing instead of "yes"
 - `ternary_jsx_both_branches`: ternary with a JSX element on both branches lowers to two <If> subtrees (ir/lower.go's lowerConditionalExprContainer); route/VM agree
   - transpile unsupported: GSX ternary "?:" is not valid Go syntax and transpile.go has no JSX-conditional lowering either; author <If cond={...}>...</If> instead for a transpile-safe conditional
 - `and_jsx_conditional_true`: GSX's `cond && <jsx>` sugar (not real Go's &&) mounts the element when true; route/VM agree

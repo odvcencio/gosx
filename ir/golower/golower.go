@@ -186,8 +186,8 @@ type lowerCtx struct {
 	// always the canonical name (`m "math"` → value "math"), because
 	// knownIntrinsics in intrinsics_table.go is keyed by canonical
 	// package name, not by whatever alias one file happens to use.
-	// isImportedPackage answers membership; canonicalPackageName answers
-	// the value a caller needs to build a qualified intrinsic name.
+	// canonicalPackageName resolves a key to its value, doubling as the
+	// import-set membership check every caller needs.
 	imports map[string]string
 
 	// closureLocals holds the set of bare identifiers that the current
