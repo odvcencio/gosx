@@ -21,14 +21,22 @@ import (
 // not the source float32 vector, so there is no way to re-derive a correct
 // three-round encoding from an old payload after the fact.
 //
-// This only matters for a persisted crdt.Doc (workspace.Workspace.Save,
-// crdt.Doc.Save) that already contains a ValueKindVector entry written before
-// this upgrade. Loading that snapshot after the bump silently dequantizes to
-// an incorrect vector instead of failing closed. There is no in-place
-// migration: a workspace carrying pre-v0.2.1 vector values must re-embed and
+// vectorQuantFormatV1 guards against that silently: VectorValue prepends it
+// as a one-byte tag before the packed codes, and Vector checks both the tag
+// and the tagged payload's exact expected length before it trusts the bytes.
+// A payload from before this tag existed is always one byte short of that
+// expected length, so Vector treats it (and any other unrecognized payload)
+// as undecodable and fails closed to nil instead of returning a silently
+// wrong vector. A persisted crdt.Doc (workspace.Workspace.Save, crdt.Doc.Save)
+// carrying pre-v0.2.1 vector values has no in-place migration: re-embed and
 // re-write each one (WriteVector) from its original source, not from the
 // stored snapshot, after upgrading past this commit.
 const vectorQuantSeed int64 = 0x676f73785f637264 // "gosx_crd"
+
+// vectorQuantFormatV1 tags a VectorPacked payload produced by the three-round
+// Hadamard rotation (turboquant >= v0.2.1). Bump this, and the length check in
+// Vector, if the quantizer's output format ever changes again.
+const vectorQuantFormatV1 byte = 1
 
 var vectorQuantCache sync.Map // key: vectorCacheKey -> *turboquant.Quantizer
 
@@ -52,9 +60,12 @@ func vectorQuantizer(dim, bitWidth int) *turboquant.Quantizer {
 func VectorValue(vec []float32, dim, bitWidth int) Value {
 	q := vectorQuantizer(dim, bitWidth)
 	packed, norm := q.Quantize(vec)
+	tagged := make([]byte, len(packed)+1)
+	tagged[0] = vectorQuantFormatV1
+	copy(tagged[1:], packed)
 	return Value{
 		Kind:         ValueKindVector,
-		VectorPacked: packed,
+		VectorPacked: tagged,
 		VectorNorm:   norm,
 		VectorDim:    dim,
 		VectorBits:   bitWidth,
@@ -62,13 +73,22 @@ func VectorValue(vec []float32, dim, bitWidth int) Value {
 }
 
 // Vector dequantizes a vector value back to float32.
-// Returns nil if the value is not ValueKindVector.
+// Returns nil if the value is not ValueKindVector, or if VectorPacked does
+// not carry the current quantizer format tag: that happens for a value a
+// pre-v0.2.1 turboquant wrote (see vectorQuantFormatV1), which this version
+// cannot decode correctly, and for any other payload this version does not
+// recognize. Either way, Vector fails closed instead of returning a silently
+// wrong vector.
 func (v Value) Vector() []float32 {
 	if v.Kind != ValueKindVector || len(v.VectorPacked) == 0 {
 		return nil
 	}
+	want := turboquant.PackedSize(v.VectorDim, v.VectorBits) + 1
+	if len(v.VectorPacked) != want || v.VectorPacked[0] != vectorQuantFormatV1 {
+		return nil
+	}
 	q := vectorQuantizer(v.VectorDim, v.VectorBits)
-	unit := q.Dequantize(v.VectorPacked)
+	unit := q.Dequantize(v.VectorPacked[1:])
 	for i := range unit {
 		unit[i] *= v.VectorNorm
 	}

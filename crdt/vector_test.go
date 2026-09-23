@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	crdtsync "m31labs.dev/gosx/crdt/sync"
+	"m31labs.dev/turboquant"
 )
 
 func randomVec(dim int, rng *rand.Rand) []float32 {
@@ -111,6 +112,49 @@ func TestVectorValueNonVectorReturnsNil(t *testing.T) {
 	val := StringValue("hello")
 	if got := val.Vector(); got != nil {
 		t.Fatalf("expected nil from non-vector, got %v", got)
+	}
+}
+
+// TestVectorValueLegacyPayloadFailsClosed proves that a VectorPacked payload
+// written before the vectorQuantFormatV1 tag existed (turboquant < v0.2.1's
+// single-round Hadamard rotation) does not silently dequantize to a wrong
+// vector under the current three-round rotation. It must return nil instead.
+func TestVectorValueLegacyPayloadFailsClosed(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	original := randomVec(128, rng)
+
+	// Reproduce a pre-tag payload directly: the raw packed codes, with no
+	// leading format byte, exactly as VectorValue wrote them before this tag
+	// was introduced.
+	legacyPacked, norm := turboquant.NewWithSeed(128, 2, vectorQuantSeed).Quantize(original)
+	legacy := Value{
+		Kind:         ValueKindVector,
+		VectorPacked: legacyPacked,
+		VectorNorm:   norm,
+		VectorDim:    128,
+		VectorBits:   2,
+	}
+	if got := legacy.Vector(); got != nil {
+		t.Fatalf("expected legacy (untagged) payload to fail closed to nil, got %d-dim vector", len(got))
+	}
+
+	// A tagged, current-format payload of the same shape still decodes.
+	current := VectorValue(original, 128, 2)
+	if got := current.Vector(); len(got) != 128 {
+		t.Fatalf("expected current-format payload to decode to 128 dims, got %d", len(got))
+	}
+
+	// An unrecognized tag byte (future format, or corruption) also fails
+	// closed rather than being trusted.
+	wrongTag := Value{
+		Kind:         ValueKindVector,
+		VectorPacked: append([]byte{0xff}, legacyPacked...),
+		VectorNorm:   norm,
+		VectorDim:    128,
+		VectorBits:   2,
+	}
+	if got := wrongTag.Vector(); got != nil {
+		t.Fatalf("expected unrecognized format tag to fail closed to nil, got %d-dim vector", len(got))
 	}
 }
 
