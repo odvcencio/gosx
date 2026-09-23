@@ -53,12 +53,21 @@ type SpatialHash struct {
 	staticKeys     []cellKey
 	staticEntries  []spatialEntry
 	staticInfinite []int32
-	// staticSlot maps a collider's permanent index to its slot in
-	// staticEntries. The slot is stable for the collider's lifetime, which is
-	// what lets staticCells cache cell membership across steps; a positional
-	// index into a slice rebuilt every step could not do that; because
-	// removing an unrelated collider shifts everything after it.
-	staticSlot map[int]int32
+	// staticSlot maps a collider's identity (the *Collider pointer itself,
+	// not collider.index) to its slot in staticEntries. The slot is stable
+	// for the collider's lifetime, which is what lets staticCells cache cell
+	// membership across steps; a positional index into a slice rebuilt every
+	// step could not do that, because removing an unrelated collider shifts
+	// everything after it.
+	//
+	// This must not key on collider.index: that field is assigned only by
+	// World.registerCollider, so a *Collider built directly with NewCollider
+	// and used through this package's public API (NewSpatialHash,
+	// CandidatePairs, QueryStaticAABB) without a World keeps index == 0 for
+	// every collider. Keying on index would then collapse every standalone
+	// static collider onto the same slot, silently dropping all but the
+	// last one from the static grid.
+	staticSlot map[*Collider]int32
 	// staticFree lists slots a removed static collider left behind, so a
 	// later static collider reuses the slot instead of growing the array.
 	staticFree []int32
@@ -92,7 +101,7 @@ func NewSpatialHash(cellSize float64) *SpatialHash {
 		cellSize:    cellSize,
 		cells:       make(map[cellKey][]int32),
 		staticCells: make(map[cellKey][]int32),
-		staticSlot:  make(map[int]int32),
+		staticSlot:  make(map[*Collider]int32),
 		skin:        0.001,
 	}
 }
@@ -183,10 +192,10 @@ func (s *SpatialHash) insert(cells map[cellKey][]int32, keys *[]cellKey, key cel
 // else; only a new, moved, or reclassified collider pays for a cell
 // re-insertion.
 func (s *SpatialHash) syncStatic(collider *Collider, aabb AABB, build uint64) {
-	slot, known := s.staticSlot[collider.index]
+	slot, known := s.staticSlot[collider]
 	if !known {
 		slot = s.allocStaticSlot()
-		s.staticSlot[collider.index] = slot
+		s.staticSlot[collider] = slot
 		s.staticEntries[slot] = spatialEntry{collider: collider, aabb: aabb, touchedBuild: build}
 		s.insertStatic(slot, aabb)
 		return
@@ -274,14 +283,14 @@ func (s *SpatialHash) pruneStatic(build uint64) {
 	if len(s.staticSlot) == 0 {
 		return
 	}
-	for index, slot := range s.staticSlot {
+	for collider, slot := range s.staticSlot {
 		entry := &s.staticEntries[slot]
 		if entry.touchedBuild == build {
 			continue
 		}
 		s.removeStatic(slot, entry.aabb, entry.infinite)
 		*entry = spatialEntry{}
-		delete(s.staticSlot, index)
+		delete(s.staticSlot, collider)
 		s.staticFree = append(s.staticFree, slot)
 	}
 }
