@@ -18,6 +18,7 @@
         "../runtime/host/disclosure.ts",
         "../runtime/host/actions.ts",
         "../runtime/scene3d/command-bridge.ts",
+        "../runtime/scene3d/instance-stream-bridge.ts",
         "../runtime/host/regions.ts",
         "../runtime/host/controllers.ts",
         "../runtime/host/facade.ts",
@@ -182,6 +183,7 @@
       "sources": [
         "bootstrap-src/26d-feature-scene3d-prefix.ts",
         "../runtime/scene3d/command-bridge.ts",
+        "../runtime/scene3d/instance-stream-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
