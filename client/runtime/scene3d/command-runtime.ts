@@ -233,104 +233,7 @@
     return new Promise(poll).catch(fallback);
   }
 
-  // Packed frames only change pose fields on the mounted instance records.
-  // Resolve their committed actors directly: expanding Model declarations and
-  // normalizing each batch template again is unnecessary on this path.
-  // helpers: [modelMatrix, determinant].
-  function reusablePackedRigidInstance(staged, state) {
-    if (!staged?.rigidInstanceModel || !staged.objects.length || staged.modelSkins.length ||
-        staged.modelAnimations.length || staged.points.length || staged.labels.length ||
-        staged.sprites.length || staged.html.length || staged.lights.length) return false;
-    for (const object of staged.objects) {
-      const vertices = object?.vertices;
-      if (!vertices || vertices.immutable !== true || vertices.revision !== 0 ||
-          state.objects.get(object.id) !== object) return false;
-    }
-    return true;
-  }
-  function updatePackedRigidInstancePoses(state, batches, targets, helpers) {
-    const records = state && state._hydratedModelRecords;
-    const cache = records && records.rigidInstances;
-    const byID = records && records.rigidInstancesByID;
-    if (!cache || !(byID instanceof Map) || !Array.isArray(batches) || !Array.isArray(targets) ||
-        batches.length !== targets.length || state._modelHydrationPromise ||
-        state._modelOwner && !state._modelOwner() ||
-        records.modelCount !== cache.size + records.staticModels.size || byID.size !== cache.size) return false;
-    const scope = state._modelTextureVariantScope && state._modelTextureVariantScope.key || "";
-    const patches = state._packedRigidPosePatches || (state._packedRigidPosePatches = []);
-    const rowPatches = state._packedRigidRowPatches || (state._packedRigidRowPatches = []);
-    const seen = state._packedRigidPoseSeen || (state._packedRigidPoseSeen = new Set());
-    patches.length = 0;
-    rowPatches.length = 0;
-    seen.clear();
-    const buffers = state._packedRigidMatrixBuffers || (state._packedRigidMatrixBuffers = new WeakMap());
-    const rowBuffers = state._packedRigidRowBuffers || (state._packedRigidRowBuffers = new WeakMap());
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex];
-      const target = targets[batchIndex];
-      if (!batch || !target || batch.id !== target.id || !Array.isArray(batch.instances) ||
-          !Array.isArray(target.instances) || batch.instances.length !== target.instances.length) return false;
-      for (let index = 0; index < target.instances.length; index++) {
-        const instance = target.instances[index];
-        if (!instance || instance.id !== batch.instances[index].id) return false;
-        const id = batch.id + "/" + instance.id;
-        const membership = byID.get(id);
-        if (!membership || seen.has(id) || membership.scope !== scope ||
-            membership.staged !== cache.get(membership.key) ||
-            !reusablePackedRigidInstance(membership.staged, state)) return false;
-        seen.add(id);
-        // The cached matrix belongs to the stable instance, never to a live
-        // object. Composing it during validation cannot move an actor early.
-        const matrix = helpers[0](instance);
-        if (helpers[1](matrix) <= 0.000001) return false;
-        let pair = buffers.get(instance);
-        if (!pair) { pair = { front: null, back: new Float32Array(16) }; buffers.set(instance, pair); }
-        patches.push(membership, instance, matrix, pair);
-      }
-    }
-    // Crowd row calculation can fail for a malformed atlas. Finish it before
-    // changing a single committed matrix or row.
-    for (let index = 0; index < patches.length; index += 4) {
-      const membership = patches[index];
-      const instance = patches[index + 1];
-      for (const object of membership.staged.objects) {
-        const skin = object._crowdSkin;
-        if (!skin) continue;
-        if (!skin.rows || typeof skin.rows.set !== "function" || typeof skin.poseRows !== "function") return false;
-        let rows = rowBuffers.get(object);
-        if (!rows || rows.length !== skin.rows.length) { rows = new Float32Array(skin.rows.length); rowBuffers.set(object, rows); }
-        if (skin.poseRows(skin.atlas, instance, rows) !== rows) return false;
-        rowPatches.push(skin, rows);
-      }
-    }
-    // Commit only after every identity and transform has passed validation.
-    for (let index = 0; index < patches.length; index += 4) {
-      const membership = patches[index];
-      const instance = patches[index + 1];
-      const matrix = patches[index + 2];
-      const pair = patches[index + 3];
-      pair.back.set(matrix);
-      const previous = pair.front;
-      pair.front = pair.back;
-      pair.back = previous || new Float32Array(16);
-      for (const object of membership.staged.objects) {
-        object.parentMatrix = pair.front;
-      }
-      const model = membership.staged.model;
-      if (model) {
-        model.x = instance.x; model.y = instance.y; model.z = instance.z;
-        model.rotationX = instance.rotationX; model.rotationY = instance.rotationY; model.rotationZ = instance.rotationZ;
-        model.scaleX = instance.scaleX; model.scaleY = instance.scaleY; model.scaleZ = instance.scaleZ;
-        model.parentMatrix = instance.parentMatrix;
-        const pose = model._crowdPose || (model._crowdPose = {});
-        pose.animation = instance.animation; pose.animationTime = instance.animationTime; pose.animationLoop = instance.animationLoop;
-      }
-    }
-    for (let index = 0; index < rowPatches.length; index += 2) rowPatches[index].rows.set(rowPatches[index + 1]);
-    return true;
-  }
-
-  function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle, helpers) {
+  function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle) {
     var stats = handle.__gosxPoseFrameStats || (handle.__gosxPoseFrameStats = { accepted: 0, plannerCallsSkipped: 0, fallback: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null) });
     function reject(reason) {
       stats.rejected[reason] = (stats.rejected[reason] || 0) + 1;
@@ -364,12 +267,7 @@
     }
     previous.length = offset;
     var retained = false;
-    try {
-      var direct = helpers && updatePackedRigidInstancePoses(state, batches, targets, helpers);
-      retained = direct || updateRigidPoses(state);
-      if (direct) stats.directAccepted = (stats.directAccepted || 0) + 1;
-      else if (helpers && retained) stats.retainedFallback = (stats.retainedFallback || 0) + 1;
-    } catch (_error) { retained = false; }
+    try { retained = updateRigidPoses(state); } catch (_error) { retained = false; }
     if (!retained) {
       offset = 0;
       for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
