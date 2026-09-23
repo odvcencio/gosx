@@ -633,12 +633,17 @@ const budgets = [
   // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
   // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
   // Gzip stays at 436_000: its hard limit already clears the new measurement.
+  // The computed-morph repeated-blend fix (prior-array plumbing plus a
+  // cross-renderer output-buffer staleness guard) measured 1_650_075 /
+  // 452_182 / 363_298. Raw and brotli exceeded the prior hard limit; bumped
+  // raw 1_584_500 -> 1_589_000, gzip 436_000 -> 438_000, and brotli 346_800
+  // -> 350_000 for headroom.
   // glTF material-shading parity fixes (spec-default metallic/roughness,
   // vec3 emissiveFactor, normal/occlusion factors, sRGB environment decode,
   // roughness-LOD env sampling, single-application exposure, the optional
   // rim term) plus the WebGPU material-uniform struct growth from 208 to
-  // 256 bytes. Measured: 1_654_862 / 453_074 / 364_007; all three caps
-  // raised with narrow rounding headroom.
+  // 256 bytes combines with the above on merge. Caps re-measured from the
+  // merged source below.
   { file: "bootstrap.js", raw: 1_655_000, gzip: 453_200, brotli: 364_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw

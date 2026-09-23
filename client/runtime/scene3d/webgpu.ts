@@ -395,7 +395,7 @@
     "  outTangents[t] = wt.x;",
     "  outTangents[t + 1u] = wt.y;",
     "  outTangents[t + 2u] = wt.z;",
-    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5) * an.w;",
+    "  outTangents[t + 3u] = mix(sourcePacked[packed + 9u], targetPacked[packed + 9u], a) * an.w;",
     "}",
   ].join("\n");
 
@@ -15230,9 +15230,30 @@
     function webGPUComputedMorphEnsureOutputBuffer(record, slot, count, components) {
       var bytes = Math.max(4, Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, components) * 4);
       var buffer = record && record[slot];
+      // Cross-renderer staleness guard: scene objects retain their morph
+      // records across renderer rebuilds, but dispose() destroys every buffer
+      // tracked in pointsEntryGPUBuffers. A cached output buffer absent from
+      // THIS renderer's set belongs to a dead device — drop the stale JS
+      // reference WITHOUT calling destroy() again (dispose already destroyed
+      // it), so the alloc path below creates a fresh buffer on the current
+      // device. The bind group is invalidated too: it was created on the dead
+      // device and references the destroyed output buffers, so no cache path
+      // may return with a live-looking bindGroup around a dead buffer.
+      // Mirrors the guard in webGPUElioEnsureOutputBuffer.
+      if (buffer && !pointsEntryGPUBuffers.has(buffer)) {
+        record[slot] = null;
+        record.bindGroup = null;
+        buffer = null;
+      }
       if (buffer && wgpuTrackedBufferSize(buffer) >= bytes) return buffer;
       if (buffer && typeof buffer.destroy === "function") {
         pointsEntryGPUBuffers.delete(buffer);
+        // The live-but-undersized buffer is about to be destroyed and
+        // replaced. Invalidate the cached bind group BEFORE destruction so it
+        // cannot retain a reference to this soon-to-be-destroyed output
+        // buffer; a stale bindGroup around a destroyed buffer must never be
+        // returned by the cache path.
+        record.bindGroup = null;
         buffer.destroy();
       }
       buffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, bytes);

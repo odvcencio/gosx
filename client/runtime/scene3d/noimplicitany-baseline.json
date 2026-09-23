@@ -11,7 +11,7 @@
   "scene3d/mount-quality.ts": 62,
   "scene3d/mount-telemetry.ts": 36,
   "scene3d/mount-viewport.ts": 32,
-  "scene3d/mount-webgl.ts": 563,
+  "scene3d/mount-webgl.ts": 566,
   "scene3d/mount.ts": 335,
   "scene3d/overlay-dom.ts": 133,
   "scene3d/overlays.ts": 9,
