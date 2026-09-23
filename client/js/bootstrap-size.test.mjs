@@ -638,6 +638,9 @@ const budgets = [
   // 452_182 / 363_298. Raw and brotli exceeded the prior hard limit; bumped
   // raw 1_584_500 -> 1_589_000, gzip 436_000 -> 438_000, and brotli 346_800
   // -> 350_000 for headroom.
+  // Marking the point-sprite color/fog/alpha/size varyings @interpolate(flat)
+  // combines with the above on merge. Caps re-measured from the merged
+  // source below.
   { file: "bootstrap.js", raw: 1_589_000, gzip: 438_000, brotli: 350_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
