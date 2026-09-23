@@ -31,11 +31,15 @@ class BundleTests(unittest.TestCase):
             {"name": "bootstrap-runtime.js"},
             {"name": "bootstrap-feature-scene3d.js"},
         ]}))
-        (js / "bootstrap-runtime.js").write_text("// runtime\n")
-        (js / "bootstrap-feature-scene3d.js").write_text("// scene3d\n")
+        for name in ("bootstrap-runtime.js", "bootstrap-feature-scene3d.js"):
+            for suffix in ("", ".br", ".gz", ".map"):
+                (js / (name + suffix)).write_text(f"// {name}{suffix}\n")
         (js / "vendor/hls.min.js").write_text("// vendor\n")
         for name in package.WASM_FILES:
             (self.wasm / name).write_bytes(name.encode())
+            if name.endswith(".wasm"):
+                for suffix in (".br", ".gz"):
+                    (self.wasm / (name + suffix)).write_bytes((name + suffix).encode())
         subprocess.run(["git", "init", "-q", str(self.source)], check=True)
         subprocess.run(["git", "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"], check=True)
         self.commit = subprocess.check_output(["git", "-C", str(self.source), "rev-parse", "HEAD"], text=True).strip()
@@ -49,7 +53,11 @@ class BundleTests(unittest.TestCase):
         package.verify(type("Args", (), {"archive": str(self.archive), "tag": "v1.2.3", "commit": self.commit})())
         with tarfile.open(self.archive, "r:gz") as tar:
             names = {member.name for member in tar.getmembers()}
-        self.assertEqual(names, {"manifest.json", "client/js/bootstrap-runtime.js", "client/js/bootstrap-feature-scene3d.js", "client/js/vendor/hls.min.js"} | {f"wasm/{name}" for name in package.WASM_FILES})
+        expected = {"manifest.json", "client/js/vendor/hls.min.js"}
+        expected |= {f"client/js/{name}{suffix}" for name in ("bootstrap-runtime.js", "bootstrap-feature-scene3d.js") for suffix in ("", ".br", ".gz", ".map")}
+        expected |= {f"wasm/{name}" for name in package.WASM_FILES}
+        expected |= {f"wasm/{name}{suffix}" for name in package.WASM_FILES if name.endswith(".wasm") for suffix in (".br", ".gz")}
+        self.assertEqual(names, expected)
 
     def test_reject_missing_runtime_file(self):
         (self.wasm / "gosx-runtime-engine.wasm").unlink()

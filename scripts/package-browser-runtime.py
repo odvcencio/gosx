@@ -45,7 +45,18 @@ def browser_files(source, wasm_dir):
     if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.js", name) for name in names):
         raise ValueError("unsafe browser chunk name")
     files = {f"wasm/{name}": read_regular(wasm_dir / name) for name in WASM_FILES}
-    for name in (*names, *EXTRA_JS):
+    # build-runtime writes these only when compression reduces transfer size.
+    for name in WASM_FILES:
+        if not name.endswith(".wasm"):
+            continue
+        for suffix in (".br", ".gz"):
+            sidecar = wasm_dir / (name + suffix)
+            if sidecar.exists() or sidecar.is_symlink():
+                files[f"wasm/{name}{suffix}"] = read_regular(sidecar)
+    for name in names:
+        for suffix in ("", ".br", ".gz", ".map"):
+            files[f"client/js/{name}{suffix}"] = read_regular(source / "client/js" / (name + suffix))
+    for name in EXTRA_JS:
         files[f"client/js/{name}"] = read_regular(source / "client/js" / name)
     return files
 
