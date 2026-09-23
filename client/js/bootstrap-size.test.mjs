@@ -633,7 +633,13 @@ const budgets = [
   // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
   // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
   // Gzip stays at 436_000: its hard limit already clears the new measurement.
-  { file: "bootstrap.js", raw: 1_584_500, gzip: 436_000, brotli: 346_800 },
+  // glTF material-shading parity fixes (spec-default metallic/roughness,
+  // vec3 emissiveFactor, normal/occlusion factors, sRGB environment decode,
+  // roughness-LOD env sampling, single-application exposure, the optional
+  // rim term) plus the WebGPU material-uniform struct growth from 208 to
+  // 256 bytes. Measured: 1_654_862 / 453_074 / 364_007; all three caps
+  // raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_655_000, gzip: 453_200, brotli: 364_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1841,9 +1847,14 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
     // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
     // restores real headroom.
-    raw: 1_079_000,
-    gzip: 301_500,
-    brotli: 255_500,
+    // glTF material-shading parity fixes plus the WebGPU material-uniform
+    // struct growth (see the bootstrap.js note above) carried by
+    // bootstrap-feature-scene3d.js and bootstrap-feature-scene3d-webgl.js on
+    // this route. Measured: 1_134_981 / 316_709 / 268_296; all three caps
+    // raised with narrow rounding headroom.
+    raw: 1_136_000,
+    gzip: 317_000,
+    brotli: 268_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1991,10 +2002,15 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_524_567 / 411_507 /
     // 347_451. Gzip was within 77 bytes of the prior hard limit; 396_000
     // restores real headroom.
+    // glTF material-shading parity fixes plus the WebGPU material-uniform
+    // struct growth (see the bootstrap.js note above), carried in full by
+    // this route since it loads both backends. Measured:
+    // 1_529_592 / 412_738 / 348_560. Only gzip exceeds the prior envelope;
+    // 397_500 restores headroom. Raw and brotli caps stay put.
     raw: 1_465_500,
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
-    gzip: 396_000,
+    gzip: 397_500,
     brotli: 332_900,
   },
   {

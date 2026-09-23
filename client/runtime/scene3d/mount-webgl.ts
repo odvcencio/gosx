@@ -759,7 +759,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -768,9 +768,9 @@ function gosxConfigureSceneScript(script, role, src) {
     return null;
   }
 
-  // The specular tint is a freshly authored RGB array on the override bag;
-  // snapshot it per target so later mutation of the override RGB (or of one
-  // copied target) can never alias through to the other copy.
+  // The specular/emissive/rim tints are freshly authored RGB arrays on the
+  // override bag; snapshot per target so later mutation of the override RGB
+  // (or of one copied target) can never alias through to the other copy.
   function sceneSnapshotSpecularOverrideColor(value) {
     if (Array.isArray(value)) return value.slice();
     /* @ts-expect-error TS2351 -- ArrayBuffer.isView narrows value to ArrayBufferView, whose .constructor loses its concrete construct signature */ if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
@@ -779,12 +779,14 @@ function gosxConfigureSceneScript(script, role, src) {
     return value;
   }
 
+  const SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS = new Set(["specularColor", "emissiveColor", "rimColor"]);
+
   function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
     if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
       return;
     }
     const key = targetKey || sourceKey;
-    if (sourceKey === "specularColor") {
+    if (SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS.has(sourceKey)) {
       next[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
       if (material) {
         material[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
@@ -823,6 +825,9 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "texture", "texture", override);
     sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
     sceneAssignMaterialOverride(next, material, "emissive", "emissive", override);
+    sceneAssignMaterialOverride(next, material, "emissiveColor", "emissiveColor", override);
+    sceneAssignMaterialOverride(next, material, "normalScale", "normalScale", override);
+    sceneAssignMaterialOverride(next, material, "occlusionStrength", "occlusionStrength", override);
     sceneAssignMaterialOverride(next, material, "blendMode", "blendMode", override);
     sceneAssignMaterialOverride(next, material, "renderPass", "renderPass", override);
     sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
@@ -849,6 +854,9 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
     sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
     sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
+    sceneAssignMaterialOverride(next, material, "rimColor", "rimColor", override);
+    sceneAssignMaterialOverride(next, material, "rimPower", "rimPower", override);
+    sceneAssignMaterialOverride(next, material, "rimStrength", "rimStrength", override);
     sceneAssignMaterialOverride(next, material, "customVertex", "customVertex", override);
     sceneAssignMaterialOverride(next, material, "customFragment", "customFragment", override);
     sceneAssignMaterialOverride(next, material, "customVertexWGSL", "customVertexWGSL", override);

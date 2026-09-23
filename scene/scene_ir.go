@@ -233,28 +233,32 @@ type ObjectIR struct {
 	GizmoFormMode string `json:"gizmoFormMode,omitempty"`
 	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
 	// (scene/quality_ladder.go). Empty means unconditionally visible.
-	QualityGroup       string                     `json:"qualityGroup,omitempty"`
-	OutlineColor       string                     `json:"outlineColor,omitempty"`
-	OutlineWidth       float64                    `json:"outlineWidth,omitempty"`
-	CastShadow         bool                       `json:"castShadow,omitempty"`
-	ReceiveShadow      bool                       `json:"receiveShadow,omitempty"`
-	DepthWrite         *bool                      `json:"depthWrite,omitempty"`
-	Roughness          float64                    `json:"roughness,omitempty"`
-	Metalness          float64                    `json:"metalness,omitempty"`
-	Clearcoat          float64                    `json:"clearcoat,omitempty"`
-	Sheen              float64                    `json:"sheen,omitempty"`
-	Transmission       float64                    `json:"transmission,omitempty"`
-	Iridescence        float64                    `json:"iridescence,omitempty"`
-	Anisotropy         float64                    `json:"anisotropy,omitempty"`
-	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
-	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
-	IOR                *float64                   `json:"ior,omitempty"`
-	NormalMap          string                     `json:"normalMap,omitempty"`
-	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
-	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
-	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
-	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
-	AlphaCutoff        AlphaCutoff                `json:"alphaCutoff,omitzero"`
+	QualityGroup      string      `json:"qualityGroup,omitempty"`
+	OutlineColor      string      `json:"outlineColor,omitempty"`
+	OutlineWidth      float64     `json:"outlineWidth,omitempty"`
+	CastShadow        bool        `json:"castShadow,omitempty"`
+	ReceiveShadow     bool        `json:"receiveShadow,omitempty"`
+	DepthWrite        *bool       `json:"depthWrite,omitempty"`
+	Roughness         float64     `json:"roughness,omitempty"`
+	Metalness         float64     `json:"metalness,omitempty"`
+	Clearcoat         float64     `json:"clearcoat,omitempty"`
+	Sheen             float64     `json:"sheen,omitempty"`
+	Transmission      float64     `json:"transmission,omitempty"`
+	Iridescence       float64     `json:"iridescence,omitempty"`
+	Anisotropy        float64     `json:"anisotropy,omitempty"`
+	SpecularIntensity *float64    `json:"specularIntensity,omitempty"`
+	SpecularColor     *[3]float64 `json:"specularColor,omitempty"`
+	IOR               *float64    `json:"ior,omitempty"`
+	NormalMap         string      `json:"normalMap,omitempty"`
+	RoughnessMap      string      `json:"roughnessMap,omitempty"`
+	MetalnessMap      string      `json:"metalnessMap,omitempty"`
+	OcclusionMap      string      `json:"occlusionMap,omitempty"`
+	EmissiveMap       string      `json:"emissiveMap,omitempty"`
+	AlphaCutoff       AlphaCutoff `json:"alphaCutoff,omitzero"`
+	// RimColor/RimPower/RimStrength: see StandardMaterial. Off by default.
+	RimColor           *[3]float64                `json:"rimColor,omitempty"`
+	RimPower           float64                    `json:"rimPower,omitempty"`
+	RimStrength        float64                    `json:"rimStrength,omitempty"`
 	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
 	LODGroup           string                     `json:"lodGroup,omitempty"`
 	LODLevel           int                        `json:"lodLevel,omitempty"`

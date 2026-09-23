@@ -1390,6 +1390,79 @@ func TestStandardMaterialPointerUsesSolidDefault(t *testing.T) {
 	}
 }
 
+func TestStandardMaterialRimTermOffByDefault(t *testing.T) {
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "plain-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{Color: "#60a8dc"},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected exactly one object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.RimColor != nil {
+		t.Fatalf("rim term must stay off by default: RimColor = %#v, want nil", object.RimColor)
+	}
+	if object.RimStrength != 0 {
+		t.Fatalf("rim term must stay off by default: RimStrength = %v, want 0", object.RimStrength)
+	}
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("marshal ObjectIR: %v", err)
+	}
+	for _, key := range []string{`"rimColor"`, `"rimPower"`, `"rimStrength"`} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("rim term must be omitted from JSON when unset, found %s in %s", key, raw)
+		}
+	}
+}
+
+func TestStandardMaterialRimTermOptInPreserved(t *testing.T) {
+	rimColor := [3]float64{0.2, 0.6, 1}
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "rim-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{
+			Color:       "#60a8dc",
+			RimColor:    &rimColor,
+			RimPower:    3,
+			RimStrength: 0.75,
+		},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected exactly one object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.RimColor == nil || *object.RimColor != rimColor {
+		t.Fatalf("rim colour was not preserved: got %#v, want %#v", object.RimColor, rimColor)
+	}
+	if object.RimPower != 3 {
+		t.Fatalf("rim power was not preserved: got %v, want 3", object.RimPower)
+	}
+	if object.RimStrength != 0.75 {
+		t.Fatalf("rim strength was not preserved: got %v, want 0.75", object.RimStrength)
+	}
+
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("marshal ObjectIR: %v", err)
+	}
+	var back ObjectIR
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal ObjectIR: %v", err)
+	}
+	if back.RimColor == nil || *back.RimColor != rimColor {
+		t.Fatalf("rim colour did not round-trip through JSON: got %#v, want %#v", back.RimColor, rimColor)
+	}
+	if back.RimPower != 3 || back.RimStrength != 0.75 {
+		t.Fatalf("rim power/strength did not round-trip through JSON: got %v/%v", back.RimPower, back.RimStrength)
+	}
+}
+
 func TestStandardMaterialSolidDefaultDoesNotRewriteOtherMaterialKinds(t *testing.T) {
 	props := Props{Graph: NewGraph(
 		Mesh{

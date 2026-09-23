@@ -104,6 +104,13 @@
     "uniform float u_specularF90;",
     "uniform vec3 u_specularColorLog;",
     "uniform float u_emissive;",
+    "uniform vec3 u_emissiveColor;",
+    "uniform bool u_hasEmissiveColor;",
+    "uniform float u_normalScale;",
+    "uniform float u_occlusionStrength;",
+    "uniform vec3 u_rimColor;",
+    "uniform float u_rimPower;",
+    "uniform float u_rimStrength;",
     "uniform float u_opacity;",
     "uniform float u_alphaCutoff;",
     "uniform bool u_unlit;",
@@ -152,6 +159,7 @@
     "uniform float u_groundIntensity;",
     "uniform sampler2D u_envMap;",
     "uniform bool u_hasEnvMap;",
+    "uniform float u_envMapMaxLod;",
     "#if GOSX_HDR_IBL",
     "uniform samplerCube u_iblIrradiance;",
     "uniform samplerCube u_iblRadiance;",
@@ -410,14 +418,33 @@
     "    float ambientOcclusion = 1.0;",
     "#if GOSX_HDR_IBL",
     "    if (u_hasOcclusionMap) {",
-    "        ambientOcclusion = clamp(texture(u_occlusionMap, v_uv).r, 0.0, 1.0);",
+    // KHR occlusion contract: occludedColor = mix(color, color * sample,
+    // strength) — i.e. the sampled AO blends toward full strength rather
+    // than always applying at 100%.
+    "        float occlusionSample = clamp(texture(u_occlusionMap, v_uv).r, 0.0, 1.0);",
+    "        ambientOcclusion = mix(1.0, occlusionSample, clamp(u_occlusionStrength, 0.0, 1.0));",
     "    }",
     "#endif",
     "",
+    // Emission: when the material carries an authored emissive colour
+    // factor (u_hasEmissiveColor — every glTF-imported material sets this,
+    // even to black) emission is emissiveFactor * emissiveTexture(if any),
+    // times the KHR_materials_emissive_strength multiplier (u_emissive) —
+    // NEVER albedo. Hand-authored materials that only ever set the scalar
+    // `emissive` glow knob and never an emissive colour keep their
+    // pre-existing albedo-tinted glow (u_hasEmissiveColor == false), so
+    // this fix changes nothing for that authoring style.
     "    float emissiveStrength = u_emissive;",
-    "    vec3 emissiveColor = albedo;",
-    "    if (u_hasEmissiveMap) {",
+    "    vec3 emissiveColor;",
+    "    if (u_hasEmissiveColor) {",
+    "        emissiveColor = u_emissiveColor;",
+    "        if (u_hasEmissiveMap) {",
+    "            emissiveColor *= texture(u_emissiveMap, v_uv).rgb;",
+    "        }",
+    "    } else if (u_hasEmissiveMap) {",
     "        emissiveColor = texture(u_emissiveMap, v_uv).rgb;",
+    "    } else {",
+    "        emissiveColor = albedo;",
     "    }",
     "",
     // Unlit path: output albedo directly.
@@ -436,6 +463,7 @@
     "        vec3 B = normalize(v_bitangent);",
     "        mat3 TBN = mat3(T, B, N);",
     "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
     "",
@@ -599,8 +627,14 @@
     "    if (u_hasEnvMap) {",
     "        vec3 Nr = rotateEnvY(N, u_envRotation);",
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 envDiffuse = texture(u_envMap, envEquirectUV(Nr)).rgb * albedo;",
-    "        vec3 envSpecular = texture(u_envMap, envEquirectUV(Rr)).rgb;",
+    // Diffuse irradiance stand-in: the loader mipmaps this equirect on
+    // upload, so the heaviest mip already averages the whole sphere into a
+    // few texels — a cheap substitute for a proper convolved irradiance map,
+    // instead of resampling the sharp, unblurred radiance at the normal.
+    "        vec3 envDiffuse = textureLod(u_envMap, envEquirectUV(Nr), u_envMapMaxLod).rgb * albedo;",
+    // Specular reflection: walk the mip chain by roughness so rough
+    // surfaces blur into the environment instead of mirror-sampling it.
+    "        vec3 envSpecular = textureLod(u_envMap, envEquirectUV(Rr), roughness * u_envMapMaxLod).rgb;",
     "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
@@ -620,6 +654,15 @@
     "    vec3 emission = emissiveColor * emissiveStrength;",
     "",
     "    vec3 color = ambient + Lo + emission;",
+    "",
+    // Rim light: a fresnel-style glancing-angle highlight, off by default
+    // (u_rimStrength == 0 skips the pow() entirely). Additive, so it never
+    // darkens the base shading and composites the same way under any tone
+    // mapping mode.
+    "    if (u_rimStrength > 0.0001) {",
+    "        float rim = pow(clamp(1.0 - NoV, 0.0, 1.0), max(u_rimPower, 0.0001)) * u_rimStrength;",
+    "        color += u_rimColor * rim;",
+    "    }",
     "",
     "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
     "    if (clearcoat > 0.0001) {",
@@ -652,8 +695,17 @@
     "        color = mix(u_fogColor, color, fogFactor);",
     "    }",
     "",
-    // Apply exposure.
-    "    color *= u_exposure;",
+    // Apply exposure exactly once. u_outputLinear == 0 means this shader
+    // owns the final display encode (no post-processing tone-mapping pass
+    // is active), so it applies exposure itself, right before its own
+    // tone-mapping curve below. u_outputLinear == 1 means a post-processing
+    // pass owns the encode instead (see applyToneMapping / applyColorGrade
+    // in the post-processing pipeline), which applies exposure on the
+    // resolved HDR buffer — applying it again here used to multiply the
+    // image by exposure^2 whenever a toneMapping post effect was active.
+    "    if (u_outputLinear == 0) {",
+    "        color *= u_exposure;",
+    "    }",
     "",
     // Tone mapping, then the display encode.
     //
@@ -5151,6 +5203,10 @@
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.colorSpace = srgb ? "srgb" : "linear";
         record.format = srgb ? "srgb8-alpha8" : "rgba8";
+        // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
+        record.width = image.naturalWidth || image.width || 0;
+        // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
+        record.height = image.naturalHeight || image.height || 0;
         record.loaded = true;
         scenePBRNotifyTextureSettled(record);
       };
@@ -5265,6 +5321,54 @@
     return out;
   }
 
+  // Whether the material carries a valid authored emissive colour factor:
+  // exactly three finite, non-negative components, matching the glTF
+  // emissiveFactor triple. The gltf.ts loader always sets this (even to
+  // [0, 0, 0] for a non-emissive material); hand-authored materials that
+  // only set the scalar `emissive` glow knob never set it, which keeps
+  // their pre-existing albedo-tinted glow — see u_hasEmissiveColor in the
+  // fragment shader.
+  function scenePBRHasEmissiveColor(material) {
+    var color = material && material.emissiveColor;
+    if (!(color && typeof color.length === "number" && color.length === 3)) {
+      return false;
+    }
+    for (var i = 0; i < 3; i++) {
+      var component = color[i];
+      if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Effective emissive colour factor for upload; only meaningful when
+  // scenePBRHasEmissiveColor(material) is true, but always returns a finite
+  // triple so the uniform upload can never see NaN/undefined.
+  function scenePBREmissiveColor(material) {
+    var mat = material || {};
+    return scenePBRHasEmissiveColor(mat) ? mat.emissiveColor : [0, 0, 0];
+  }
+
+  // Rim highlight tint. Off by default (rimStrength 0 in uploadMaterial, so
+  // this colour is inert unless an author opts in). Contract matches
+  // scenePBRSpecularFactors: a valid three-component finite non-negative
+  // triple passes through, anything else falls back to white.
+  function scenePBRRimColor(material) {
+    var color = material && material.rimColor;
+    var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+    if (valid) {
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    return valid ? color : [1, 1, 1];
+  }
+
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
@@ -5286,6 +5390,13 @@
       specularF90: gl.getUniformLocation(program, "u_specularF90"),
       specularColorLog: gl.getUniformLocation(program, "u_specularColorLog"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
+      emissiveColor: gl.getUniformLocation(program, "u_emissiveColor"),
+      hasEmissiveColor: gl.getUniformLocation(program, "u_hasEmissiveColor"),
+      normalScale: gl.getUniformLocation(program, "u_normalScale"),
+      occlusionStrength: gl.getUniformLocation(program, "u_occlusionStrength"),
+      rimColor: gl.getUniformLocation(program, "u_rimColor"),
+      rimPower: gl.getUniformLocation(program, "u_rimPower"),
+      rimStrength: gl.getUniformLocation(program, "u_rimStrength"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -5327,6 +5438,7 @@
       groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
       envMap: gl.getUniformLocation(program, "u_envMap"),
       hasEnvMap: gl.getUniformLocation(program, "u_hasEnvMap"),
+      envMapMaxLod: gl.getUniformLocation(program, "u_envMapMaxLod"),
       iblIrradiance: gl.getUniformLocation(program, "u_iblIrradiance"),
       iblRadiance: gl.getUniformLocation(program, "u_iblRadiance"),
       iblBRDFLUT: gl.getUniformLocation(program, "u_iblBRDFLUT"),
@@ -6926,7 +7038,15 @@
     }
 
     var unit = layout && layout.ibl ? layout.ibl.irradiance : null;
-    var record = scenePBRLoadTexture(gl, envMap, textureCache, null, "environment-radiance", "linear");
+    // The legacy equirect environment map is an ordinary photographic/baked
+    // PNG or JPEG — sRGB-encoded, same as a base-color texture — not a raw
+    // linear radiance buffer. Loading it as "linear" skipped the SRGB8_ALPHA8
+    // decode and left every sample ~2.2x too bright (linear-space math
+    // applied to still-gamma-encoded texels), which the diffuse and specular
+    // sums below both further scale up. True HDR sources (.hdr) are
+    // unaffected: scenePBRLoadTexture routes them through the Radiance HDR
+    // path before this colour-space argument is even consulted.
+    var record = scenePBRLoadTexture(gl, envMap, textureCache, null, "environment-radiance", "srgb");
     var available = Boolean(record && record.texture && record.loaded && !record.failed);
     gl.uniform1i(uniforms.hasEnvMap, available ? 1 : 0);
     var envIntensity = Object.prototype.hasOwnProperty.call(env, "envIntensity")
@@ -6934,6 +7054,14 @@
       : 1;
     gl.uniform1f(uniforms.envIntensity, Math.max(0, envIntensity));
     gl.uniform1f(uniforms.envRotation, sceneNumber(env.envRotation, 0));
+    // Mip count the loader generated for this equirect (see scenePBRLoadTexture:
+    // generateMipmap runs unconditionally on the 2D image-load path). The
+    // shader uses the top LOD as a cheap diffuse-irradiance stand-in and
+    // walks the chain by roughness for the specular reflection.
+    var envMaxLod = available && record.width && record.height
+      ? Math.max(0, Math.floor(Math.log2(Math.max(record.width, record.height))))
+      : 0;
+    gl.uniform1f(uniforms.envMapMaxLod, envMaxLod);
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (available && unit != null) {
       scenePBRBindTexture(gl, unit, record.texture);
       gl.uniform1i(uniforms.envMap, unit);
@@ -7816,6 +7944,15 @@
       const specularColorLogs = scenePBRSpecularColorLogs(mat);
       gl.uniform3f(uniforms.specularColorLog, specularColorLogs[0], specularColorLogs[1], specularColorLogs[2]);
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
+      var emissiveColor = scenePBREmissiveColor(mat);
+      gl.uniform3f(uniforms.emissiveColor, emissiveColor[0], emissiveColor[1], emissiveColor[2]);
+      gl.uniform1i(uniforms.hasEmissiveColor, scenePBRHasEmissiveColor(mat) ? 1 : 0);
+      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1));
+      gl.uniform1f(uniforms.occlusionStrength, clamp01(sceneNumber(mat.occlusionStrength, 1)));
+      var rimColor = scenePBRRimColor(mat);
+      gl.uniform3f(uniforms.rimColor, rimColor[0], rimColor[1], rimColor[2]);
+      gl.uniform1f(uniforms.rimPower, Math.max(0.0001, sceneNumber(mat.rimPower, 2)));
+      gl.uniform1f(uniforms.rimStrength, Math.max(0, sceneNumber(mat.rimStrength, 0)));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       // Alpha-mask cutoff: the shared normalizer accepts finite numbers >= 0,
       // including numeric strings; unresolved CSS var text, invalid values and
