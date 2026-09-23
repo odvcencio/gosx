@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,6 +28,7 @@ import (
 	cdppage "github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/internal/chrometest"
 )
 
 // e2eChromePath resolves the browser binary: GOSX_E2E_CHROME first,
@@ -253,24 +255,33 @@ func (p *browserPage) anyRequest(match func(string) bool) bool {
 // before every document in the tab (playwright addInitScript equivalent).
 func newBrowserPage(t *testing.T, chrome string, extraFlags map[string]any, width, height int, initScript string, timeout time.Duration) *browserPage {
 	t.Helper()
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chrome),
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Headless,
-		chromedp.Flag("no-sandbox", true),
-		chromedp.WindowSize(width, height),
-	)
-	for name, value := range extraFlags {
-		allocOpts = append(allocOpts, chromedp.Flag(name, value))
+	args := []string{"--no-sandbox", fmt.Sprintf("--window-size=%d,%d", width, height)}
+	names := make([]string, 0, len(extraFlags))
+	for name := range extraFlags {
+		names = append(names, name)
 	}
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	ctx, timeoutCancel := context.WithTimeout(browserCtx, timeout)
+	sort.Strings(names)
+	for _, name := range names {
+		switch value := extraFlags[name].(type) {
+		case string:
+			args = append(args, "--"+name+"="+value)
+		case bool:
+			if !value {
+				t.Fatalf("unsupported disabled Chrome flag %q", name)
+			}
+			args = append(args, "--"+name)
+		default:
+			t.Fatalf("unsupported Chrome flag %q", name)
+		}
+	}
+	browser, err := chrometest.Start(t.Context(), chrome, args...)
+	if err != nil {
+		t.Fatalf("start Chrome: %v", err)
+	}
+	ctx, timeoutCancel := context.WithTimeout(browser.Context, timeout)
 	t.Cleanup(func() {
 		timeoutCancel()
-		browserCancel()
-		allocCancel()
+		browser.Close()
 	})
 
 	page := &browserPage{ctx: ctx}
