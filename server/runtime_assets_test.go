@@ -235,3 +235,68 @@ func TestAppServesBootstrapFeatureScene3DWebGLChunk(t *testing.T) {
 		t.Fatalf("expected gzip content encoding, got %q", got)
 	}
 }
+
+// TestAppServesBootstrapFeatureScene3DInstanceStreamChunk is a regression
+// test: bootstrap-feature-scene3d-instance-stream.js (the opt-in binary
+// instance-transform chunk, see client/runtime/scene3d/instance-stream.ts)
+// used to be absent from every stage of the build/serve pipeline, so a page
+// that called window.__gosx_scene3d_instance_stream_bridge, or the
+// build.json manifest entry a matching client fetch relies on, 404ed. This
+// pins the same manifest-driven path cmd/gosx/build.go now writes into
+// build.json actually resolves to a servable file.
+func TestAppServesBootstrapFeatureScene3DInstanceStreamChunk(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rawPath := filepath.Join(assetsDir, "bootstrap-feature-scene3d-instance-stream.9999.js")
+	body := []byte("window.__gosx_scene3d_instance_stream_bridge = {};")
+	if err := os.WriteFile(rawPath, body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{
+				File: "bootstrap-feature-scene3d-instance-stream.9999.js",
+				Hash: "9999",
+				Size: int64(len(body)),
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/bootstrap-feature-scene3d-instance-stream.js?v=9999", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "javascript") {
+		t.Fatalf("expected JS content type, got %q", got)
+	}
+	if got := w.Body.String(); got != string(body) {
+		t.Fatalf("unexpected body %q", got)
+	}
+
+	// serveRuntimeAsset also tries runtimeCompatBuiltPath (the
+	// manifest-driven production lookup) unconditionally, not just when a
+	// ?v= query string is present; confirm the unversioned literal path
+	// resolves through that path too instead of 404ing.
+	req = httptest.NewRequest(http.MethodGet, "/gosx/bootstrap-feature-scene3d-instance-stream.js", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("expected the unversioned literal path to resolve, got 404")
+	}
+}

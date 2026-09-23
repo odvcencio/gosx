@@ -263,6 +263,7 @@ func TestRunBuildDefaultRuntimeConfigMatchesLegacyOutputShape(t *testing.T) {
 		"bootstrap-feature-scene3d-webgpu.", "bootstrap-feature-scene3d-webgl.",
 		"bootstrap-feature-scene3d-gltf.", "bootstrap-feature-scene3d-animation.",
 		"bootstrap-feature-scene3d-compute.", "bootstrap-feature-scene3d-decompress.",
+		"bootstrap-feature-scene3d-instance-stream.",
 		"patch.", "hls.min.", "stripe-bridge.", "relay.",
 	}
 	for _, prefix := range wantPrefixes {
@@ -284,5 +285,17 @@ func TestRunBuildDefaultRuntimeConfigMatchesLegacyOutputShape(t *testing.T) {
 		if prefix != "hls.min." && !foundMap {
 			t.Fatalf("default build (no gosx.config.json) dropped the .map sidecar for %q, listing: %v", prefix, names)
 		}
+	}
+
+	// The runtime dir listing above proves the file landed on disk; also
+	// confirm build.json's own manifest.Runtime field names it, since that
+	// field (not the raw directory listing) is what server.runtimeCompatBuiltPath
+	// and buildmanifest.Manifest.RuntimeURLs resolve a request against.
+	manifest, err := buildmanifest.Load(filepath.Join(dir, "dist", "build.json"))
+	if err != nil {
+		t.Fatalf("load build.json: %v", err)
+	}
+	if manifest.Runtime.BootstrapFeatureScene3DInstanceStream.File == "" {
+		t.Fatal("build.json manifest.runtime.bootstrapFeatureScene3dInstanceStream is empty; the instance-stream chunk built on disk but the manifest never recorded it")
 	}
 }
