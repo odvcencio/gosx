@@ -2041,7 +2041,7 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
   // (live state beats the material's static fallbacks), with unknown
   // context names falling through.
   const uniformFn = webgl.slice(webgl.indexOf("function selenaUniformValue"));
-  const timeAt = uniformFn.indexOf('if (name === "time")');
+  const timeAt = uniformFn.indexOf("sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity)");
   const contextAt = uniformFn.indexOf('field.class === "context"');
   const customAt = uniformFn.indexOf("material.customUniforms");
   assert.ok(timeAt >= 0 && contextAt > timeAt && customAt > contextAt,
