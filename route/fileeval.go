@@ -1031,6 +1031,28 @@ func isNumeric(value any) bool {
 	}
 }
 
+// isIntegerKind reports whether value is a Go/reflect integer kind, the
+// same set isNumeric checks minus float32/float64. applyFileBinaryOp's QUO
+// case uses this to decide int-truncating division vs float division: an
+// int-typed props field or int literal on both sides of "/" must divide the
+// same way the generated Go and the island VM do (see gosx eval-parity).
+func isIntegerKind(value any) bool {
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	}
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return false
+	}
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	default:
+		return false
+	}
+}
+
 // flattenQueryValues returns nil for an empty query. A nil map reads like an
 // empty one, and skipping the allocation saves one object per render.
 func flattenQueryValues(values url.Values) map[string]string {

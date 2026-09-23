@@ -124,6 +124,16 @@ func applyFileBinaryOp(op token.Token, left, right any) any {
 		if divisor == 0 {
 			return 0
 		}
+		// gosx eval-parity: generated Go and the island VM both truncate
+		// int/int division (matching real Go integer division); this
+		// evaluator used to always divide as float64, so `7 / 2` rendered
+		// "3.5" here but "3" everywhere else. Route only when both
+		// operands are an actual Go/reflect integer kind — a float
+		// operand on either side keeps the prior float division exactly,
+		// so no other case's output changes.
+		if isIntegerKind(left) && isIntegerKind(right) {
+			return int64(numericValue(left)) / int64(divisor)
+		}
 		return numericValue(left) / divisor
 	case token.REM:
 		divisor := int64(numericValue(right))
