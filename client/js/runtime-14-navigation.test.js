@@ -2714,6 +2714,28 @@ test("Scene3D canonical preloadModel wraps legacy model preload hook", async () 
   env.context.__gosx_scene3d_preload_model = original;
 });
 
+test("Scene3D mounted GLB residency API routes to one owned handle", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  const calls = [];
+  const mount = { __gosxScene3DHandle: {
+    preloadGLB(src, options) {
+      calls.push([src, options.mode]);
+      return Promise.resolve({ decoded: true, gpuReady: true, backend: "webgl" });
+    },
+    releasePreloadedGLB(src) { calls.push(["release", src]); return true; },
+  } };
+  const result = await env.context.__gosx.scene3d.preloadGLB(mount, "/models/creep.glb", { mode: "crowd" });
+  assert.equal(result.gpuReady, true);
+  assert.deepEqual(calls, [["/models/creep.glb", "crowd"]]);
+  assert.equal(env.context.__gosx.scene3d.releasePreloadedGLB(mount, "/models/creep.glb"), true);
+  assert.deepEqual(calls[1], ["release", "/models/creep.glb"]);
+  const missing = await env.context.__gosx.scene3d.preloadGLB({}, "/models/creep.glb");
+  assert.equal(missing.gpuReady, false);
+  assert.equal(missing.reason, "mount-unavailable");
+});
+
 test("Scene3D canonical performance telemetry API owns legacy perf flag", async () => {
   const env = createContext({});
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");

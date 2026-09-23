@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2700,
-    "actualGovernanceLinesAtReview": 2697,
-    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots."
+    "revisedGovernanceLineBudget": 2720,
+    "actualGovernanceLinesAtReview": 2710,
+    "reason": "Definitive final review required validateFiles:false to skip only physical filesystem checks, not semantic role governance. Fresh final review also required manifest-exact generated-artifact exclusion, canonical lexical and physical path validation, complete backend chunk role classification with closed path-authorized role vocabularies in JS and Go, Git-tracked text inventory scanning without a suffix allowlist, physical validation for extra protected sources, hardlink alias rejection, a manifest-derived Go source authority, canonical file identity checks, adversarial fixtures, and 47 explicit source-qualified legacy function exception baselines. The added machine-readable baselines are intentionally verbose so future reductions ratchet down safely instead of hiding legacy hotspots. Scene3D GLB residency adds one explicit function exception, renderer ABI entries and updated source/function ratchets; the reviewed governance surface remains machine-checked."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -214,8 +214,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 10445,
-      "maxFileLines": 10445
+      "maxLines": 10582,
+      "maxFileLines": 10582
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -242,12 +242,12 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 10445,
+    "../runtime/scene3d/webgl.ts": 10582,
     "../runtime/scene3d/webgpu.ts": 18827,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 198,
     "../runtime/scene3d/hydrate-input.ts": 89,
-    "../runtime/scene3d/mount-webgl.ts": 5399,
-    "../runtime/scene3d/mount.ts": 3569
+    "../runtime/scene3d/mount-webgl.ts": 5413,
+    "../runtime/scene3d/mount.ts": 3642
   },
   "functionDefaults": {
     "lines": 200,
@@ -331,7 +331,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareScenePBRInitialPrograms@6151:3",
+      "name": "prepareScenePBRInitialPrograms@6166:3",
       "lines": 126,
       "cyclomatic": 49,
       "cognitive": 58,
@@ -340,7 +340,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6356:3",
+      "name": "scenePBRUploadLights@6371:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -349,7 +349,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@6829:3",
+      "name": "scenePBRUploadEnvironmentMap@6844:3",
       "lines": 110,
       "cyclomatic": 49,
       "cognitive": 95,
@@ -358,16 +358,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@6973:3",
-      "lines": 3127,
-      "cyclomatic": 933,
-      "cognitive": 1477,
+      "name": "createScenePBRRenderer@6988:3",
+      "lines": 3247,
+      "cyclomatic": 999,
+      "cognitive": 1578,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@7752:5",
+      "name": "uploadCustomUniforms@7802:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -376,7 +376,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@7938:5",
+      "name": "render@7988:5",
       "lines": 283,
       "cyclomatic": 76,
       "cognitive": 105,
@@ -385,7 +385,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@8751:5",
+      "name": "prepareRigidMeshBatches@8884:5",
       "lines": 138,
       "cyclomatic": 83,
       "cognitive": 187,
@@ -394,7 +394,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@8988:5",
+      "name": "drawPBRObjectList@9121:5",
       "lines": 272,
       "cyclomatic": 79,
       "cognitive": 187,
@@ -403,7 +403,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@9409:5",
+      "name": "applyPointsAuthoredCustomUniforms@9542:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -412,7 +412,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@9585:5",
+      "name": "drawPointsEntries@9718:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -421,7 +421,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@9886:5",
+      "name": "drawInstancedMeshes@10019:5",
       "lines": 183,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -697,6 +697,15 @@
       "cognitive": 49,
       "maxNesting": 2,
       "parameters": 0
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "prepareGLBResidency@8809:5",
+      "lines": 70,
+      "cyclomatic": 46,
+      "cognitive": 64,
+      "maxNesting": 4,
+      "parameters": 3
     }
   ],
   "symbols": [
@@ -757,9 +766,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3127,
-      "cyclomatic": 933,
-      "cognitive": 1477,
+      "lines": 3247,
+      "cyclomatic": 999,
+      "cognitive": 1578,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -900,7 +909,9 @@
       "pollPerformanceSample",
       "getPerformanceTimingStatus",
       "disablePostProcessing",
-      "enablePostProcessing"
+      "enablePostProcessing",
+      "prepareGLBResidency",
+      "releaseGLBResidency"
     ],
     "experimental": [
       "queuePick"
@@ -914,6 +925,8 @@
         "dispose",
         "kind",
         "prepareCrowdAtlas",
+        "prepareGLBResidency",
+        "releaseGLBResidency",
         "render",
         "supportsRetainedGeometry",
         "supportsRigidImportedBatches",

@@ -610,7 +610,8 @@ const budgets = [
   // Typed world-mesh attribute builders measure 1_645_660 / 450_589 /
   // 362_277. Only gzip exceeds that envelope; 434_205 keeps the exact
   // governed hard limit at 450_589.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 434_205, brotli: 346_700 },
+  // Scene3D mounted GLB residency adds a small public mount API to the entry.
+  { file: "bootstrap.js", raw: 1_586_500, gzip: 436_250, brotli: 347_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1072,7 +1073,8 @@ const budgets = [
   // limits equal to those reviewed artifacts.
   // Typed world-mesh attribute builders measure 582_224 / 162_304 / 134_535.
   // Baselines below set exact minimum hard limits equal to those artifacts.
-  { file: "bootstrap-feature-scene3d.js", raw: 554_499, gzip: 154_575, brotli: 128_128 },
+  // Mounted GLB prewarm wiring adds 2,772 raw bytes to the Scene3D feature.
+  { file: "bootstrap-feature-scene3d.js", raw: 557_300, gzip: 155_400, brotli: 128_800 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1791,9 +1793,10 @@ const routeBudgets = [
     // Typed world-mesh attribute builders measure 1_128_184 / 314_915 /
     // 266_904. The baselines below set the minimum hard limits for those
     // reviewed route totals.
-    raw: 1_074_461,
-    gzip: 299_919,
-    brotli: 254_194,
+    // GPU prewarm and bounded residency live in the lazy WebGL renderer route.
+    raw: 1_080_200,
+    gzip: 301_750,
+    brotli: 255_800,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1929,7 +1932,7 @@ const routeBudgets = [
     // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
     // limit at 410_499.
     raw: 1_465_500,
-    gzip: 394_115,
+    gzip: 396_000,
     brotli: 332_900,
   },
   {

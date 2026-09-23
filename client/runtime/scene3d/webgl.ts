@@ -4913,6 +4913,10 @@
   }
 
   function scenePBRNotifyTextureSettled(record) {
+    if (record && typeof record._resolveReady === "function") {
+      record._resolveReady(record);
+      record._resolveReady = null;
+    }
     var generation = record && record.generation;
     if (
       !record ||
@@ -4941,6 +4945,7 @@
     var ktx2 = scenePBRKTX2API();
     if (!ktx2 || typeof ktx2.load !== "function" || typeof ktx2.uploadWebGL2 !== "function") {
       record.failed = true;
+      scenePBRNotifyTextureSettled(record);
       return Promise.resolve(record);
     }
     return ktx2.load(url).then(function(image) {
@@ -5005,6 +5010,7 @@
       try {
         console.warn("[gosx] HDR environment map " + key + " fell back: " + record.error);
       } catch (_error) {}
+      scenePBRNotifyTextureSettled(record);
       return true;
     }
     fetch(key)
@@ -5073,7 +5079,7 @@
     ].join("\u0000");
   }
 
-  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, prewarmOnly) {
     if (!cache) return null;
     const textureMap = cache;
     var descriptor = scenePBRTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
@@ -5083,7 +5089,9 @@
     }
     var cacheKey = scenePBRTextureCacheKey(descriptor);
     if (textureMap.has(cacheKey)) {
-      return textureMap.get(cacheKey);
+      const cached = textureMap.get(cacheKey);
+      if (!prewarmOnly && cached) cached.prewarmOnly = false;
+      return cached;
     }
 
     const texture = gl.createTexture();
@@ -5097,7 +5105,9 @@
       failed: false,
       generation: textureMap._gosxGeneration || null,
       disposed: false,
+      prewarmOnly: prewarmOnly === true,
     };
+    record.ready = new Promise(function(resolve) { record._resolveReady = resolve; });
     textureMap.set(cacheKey, record);
 
     // Initialize with a 1x1 white pixel placeholder.
@@ -5134,6 +5144,7 @@
     if (target === gl.TEXTURE_CUBE_MAP) {
       record.failed = true;
       record.error = "cube descriptors require a KTX2 upload path";
+      scenePBRNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
       const image = new Image();
       record.image = image;
@@ -5160,6 +5171,10 @@
         scenePBRNotifyTextureSettled(record);
       };
       image.src = key;
+    } else {
+      record.failed = true;
+      record.error = "image decoder unavailable";
+      scenePBRNotifyTextureSettled(record);
     }
 
     return record;
@@ -7163,6 +7178,41 @@
     // contexts, and context recovery may reuse the same JS `gl` identity
     // after all old handles have been deleted.
     const directMeshAttributeCache = new Map();
+    // Explicit GLB residency is bounded independently of the active scene.
+    // Pins prevent the ordinary 120-frame idle sweep from undoing a warmup
+    // between waves. They never outlive this WebGL context.
+    const glbResidency = new Map();
+    const maxGLBResidentFamilies = 8;
+    const maxGLBResidentBytes = 48 * 1024 * 1024;
+    function dropGLBResidency(key) {
+      const family = glbResidency.get(key);
+      if (!family) return false;
+      glbResidency.delete(key);
+      for (const vertices of family.vertices) {
+        let usedByAnotherFamily = false;
+        for (const other of glbResidency.values()) {
+          if (other.vertices.has(vertices)) { usedByAnotherFamily = true; break; }
+        }
+        const entry = directMeshAttributeCache.get(vertices);
+        if (!usedByAnotherFamily && entry && entry.prewarmOnly === true) {
+          retireWebGLDirectMeshEntry(vertices, entry);
+        }
+      }
+      for (const record of family.textures || []) {
+        let usedByAnotherFamily = false;
+        for (const other of glbResidency.values()) {
+          if (other.textures && other.textures.has(record)) { usedByAnotherFamily = true; break; }
+        }
+        if (!usedByAnotherFamily && record.prewarmOnly && !record.disposed) {
+          record.disposed = true;
+          if (record.image) { record.image.onload = null; record.image.onerror = null; }
+          scenePBRNotifyTextureSettled(record);
+          if (record.texture) gl.deleteTexture(record.texture);
+          textureCache.delete(scenePBRTextureCacheKey(record.descriptor));
+        }
+      }
+      return true;
+    }
     var directMeshAttributeEpoch = 0;
     var retainedMeshBufferStats = {
       liveBytes: 0,
@@ -8642,7 +8692,10 @@
         var obj = objects[i];
         if (!obj || !obj.directVertices || !obj.vertices) continue;
         var entry = directMeshAttributeCache.get(obj.vertices);
-        if (entry) entry.lastSeenEpoch = directMeshAttributeEpoch;
+        if (entry) {
+          entry.lastSeenEpoch = directMeshAttributeEpoch;
+          entry.prewarmOnly = false;
+        }
       }
     }
 
@@ -8654,6 +8707,11 @@
       // still destroys every handle immediately on unmount/context loss.
       for (const [vertices, entry] of directMeshAttributeCache) {
         if (entry.lastSeenEpoch === directMeshAttributeEpoch) continue;
+        let pinned = false;
+        for (const family of glbResidency.values()) {
+          if (family.vertices.has(vertices)) { pinned = true; break; }
+        }
+        if (pinned) continue;
         let bytes = 0;
         for (const attribute of Object.values(entry.attributes || {})) bytes += attribute.byteLength || 0;
         if (!entry.retained || vertices._rigidPool !== true ||
@@ -8746,6 +8804,81 @@
       gl.enableVertexAttribArray(attrib);
       gl.vertexAttribPointer(attrib, size, gl.FLOAT, false, 0, 0);
       return true;
+    }
+
+    async function prepareGLBResidency(src, primitives, atlases) {
+      const key = String(src || "").trim();
+      const rows = Array.isArray(primitives) ? primitives : [];
+      if (!key || !rows.length) return { gpuReady: false, reason: "no-mesh-primitives" };
+      const vertices = new Set();
+      let bytes = 0;
+      for (const row of rows) {
+        const streams = row && row.vertices;
+        if (!streams || vertices.has(streams)) continue;
+        vertices.add(streams);
+        for (const name of ["positions", "normals", "uvs", "tangents", "joints", "weights", "indices"]) {
+          if (streams[name] && streams[name].byteLength) bytes += streams[name].byteLength;
+        }
+      }
+      if (bytes > maxGLBResidentBytes) return { gpuReady: false, reason: "residency-budget", bytes };
+      const previous = glbResidency.get(key);
+      if (previous) dropGLBResidency(key);
+      let used = 0;
+      for (const family of glbResidency.values()) used += family.bytes;
+      while (glbResidency.size >= maxGLBResidentFamilies || used + bytes > maxGLBResidentBytes) {
+        const oldest = glbResidency.keys().next().value;
+        if (oldest == null) break;
+        used -= glbResidency.get(oldest).bytes;
+        dropGLBResidency(oldest);
+      }
+      const atlasRows = Array.isArray(atlases) ? atlases : [];
+      for (const atlas of atlasRows) prepareCrowdAtlas(atlas);
+      const ip = atlasRows.length ? crowdProgram : ensureInstancedProgram();
+      if (!ip) return { gpuReady: false, reason: "shader-unavailable", bytes };
+      const textures = new Set();
+      for (const row of rows) {
+        const streams = row && row.vertices;
+        if (!streams || !(streams.positions instanceof Float32Array)) continue;
+        const existingEntry = directMeshAttributeCache.get(streams);
+        const obj = { vertices: streams, vertexCount: streams.count, retainedGeometry: true, geometryRevision: 0 };
+        for (const [attribute, name, width] of [["position", "positions", 3], ["normal", "normals", 3], ["uv", "uvs", 2], ["tangent", "tangents", 4], ["joints", "joints", 4], ["weights", "weights", 4]]) {
+          const location = ip.attributes[attribute];
+          const data = scenePBRDirectAttribute(streams, name, streams.count, width);
+          if (location >= 0 && data) {
+            bindScenePBRDirectAttribute(obj, name, location, width, data);
+            gl.disableVertexAttribArray(location);
+          }
+        }
+        bindScenePBRDirectIndexBuffer(obj);
+        const preparedEntry = directMeshAttributeCache.get(streams);
+        if (preparedEntry && !existingEntry) preparedEntry.prewarmOnly = true;
+        const materialSource = row.material || {};
+        const material = materialSource.material && typeof materialSource.material === "object"
+          ? Object.assign({}, materialSource, materialSource.material) : materialSource;
+        for (const [prop, descriptorName, role, colorSpace] of [
+          ["texture", "baseColor", "base-color", "srgb"], ["normalMap", "normal", "normal", "linear"],
+          ["roughnessMap", "roughness", "roughness", "linear"], ["metalnessMap", "metalness", "metalness", "linear"],
+          ["emissiveMap", "emissive", "emissive", "srgb"], ["occlusionMap", "occlusion", "ambient-occlusion", "linear"],
+          ["specularIntensityMap", "specularIntensity", "specular-intensity", "linear"],
+          ["specularColorMap", "specularColor", "specular-color", "srgb"],
+        ]) {
+          if (prop === "occlusionMap" && !scenePBRHDRIBLAvailable(gl)) continue;
+          const descriptor = material.textureDescriptors && material.textureDescriptors[descriptorName];
+          const url = descriptor && descriptor.uri || material[prop];
+          if (url) {
+            const record = scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace, true);
+            if (record) textures.add(record);
+          }
+        }
+      }
+      glbResidency.set(key, { vertices, bytes, textures });
+      const settled = await Promise.all(Array.from(textures, record => record.ready));
+      const failed = settled.find(record => !record || !record.loaded || record.failed || record.disposed);
+      return { gpuReady: !failed, reason: failed ? "texture-unavailable" : "", bytes, primitives: rows.length, textures: textures.size };
+    }
+
+    function releaseGLBResidency(src) {
+      return dropGLBResidency(String(src || "").trim());
     }
 
     function prepareRigidMeshBatches(bundle) {
@@ -10093,6 +10226,7 @@
     }
 
     function dispose() {
+      glbResidency.clear();
       // The base warm record is consumed during construction. A crowd record
       // can remain unused when the requested rig is ineligible; keep that GL
       // ownership renderer-local and release it with the renderer.
@@ -10144,6 +10278,7 @@
       for (const record of textureCache.values()) {
         if (record) {
           record.disposed = true;
+          scenePBRNotifyTextureSettled(record);
           if (record.image) {
             record.image.onload = null;
             record.image.onerror = null;
@@ -10305,6 +10440,8 @@
       supportsRetainedGeometry: true,
       supportsRigidImportedBatches,
       prepareCrowdAtlas,
+      prepareGLBResidency,
+      releaseGLBResidency,
       render: render,
       dispose: dispose,
       diagnostics: diagnostics,

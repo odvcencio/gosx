@@ -515,6 +515,48 @@ function rigidBatchFixture(fresh, count = 100) {
   return { ...h, bundle, gl, render };
 }
 
+test("explicit GLB residency uploads shared geometry before the first actor draw", async () => {
+  const h = rigidBatchFixture(true, 2);
+  const vertices = h.bundle.meshObjects[0].vertices;
+  const before = h.gl.ops.length;
+  const ready = await h.renderer.prepareGLBResidency("/models/creep.glb", [{ vertices, material: {} }], []);
+  assert.equal(ready.gpuReady, true);
+  assert.ok(h.gl.ops.slice(before).some(op => op[0] === "bufferData" && op[4] === h.gl.STATIC_DRAW),
+    "preload must upload geometry without submitting a hidden actor");
+  assert.equal(h.gl.ops.slice(before).some(op => op[0].startsWith("draw")), false);
+  const warmUploads = h.renderer.diagnostics().retainedGeometry.uploadCalls;
+  h.render();
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, warmUploads,
+    "first actor draw must reuse preloaded vertex buffers");
+  assert.equal(h.renderer.releaseGLBResidency("/models/creep.glb"), true);
+  for (let index = 0; index < 9; index++) {
+    const item = await h.renderer.prepareGLBResidency("/models/variant-" + index + ".glb", [{ vertices, material: {} }], []);
+    assert.equal(item.gpuReady, true);
+  }
+  assert.equal(h.renderer.releaseGLBResidency("/models/variant-0.glb"), false,
+    "oldest explicit family must be evicted at the eight-family bound");
+  h.renderer.dispose();
+  assert.equal(h.renderer.releaseGLBResidency("/models/variant-8.glb"), false,
+    "context disposal must clear residency pins");
+  const unused = rigidBatchFixture(true, 1);
+  await unused.renderer.prepareGLBResidency("/models/unused.glb", [{ vertices: unused.bundle.meshObjects[0].vertices, material: {} }], []);
+  const beforeRelease = unused.gl.ops.length;
+  assert.equal(unused.renderer.releaseGLBResidency("/models/unused.glb"), true);
+  assert.ok(unused.gl.ops.slice(beforeRelease).some(op => op[0] === "deleteBuffer"),
+    "unused preload buffers must be retired when the caller releases the family");
+  unused.renderer.dispose();
+  const textured = rigidBatchFixture(true, 1);
+  const texturedReady = await textured.renderer.prepareGLBResidency("/models/textured.glb",
+    [{ vertices: textured.bundle.meshObjects[0].vertices, material: { texture: "/textures/creep.png" } }], []);
+  assert.equal(texturedReady.gpuReady, true);
+  assert.equal(texturedReady.textures, 1);
+  const beforeTextureRelease = textured.gl.ops.length;
+  assert.equal(textured.renderer.releaseGLBResidency("/models/textured.glb"), true);
+  assert.ok(textured.gl.ops.slice(beforeTextureRelease).some(op => op[0] === "deleteTexture"),
+    "unused preloaded textures must be retired with the family");
+  textured.renderer.dispose();
+});
+
 function earlyRigidFixture(fresh, xs, overrides = {}, rendererOptions = {}) {
   const h = createWebGLRendererForPost(Object.assign({ fresh }, rendererOptions));
   const api = h.env.context.__gosx_scene3d_api;

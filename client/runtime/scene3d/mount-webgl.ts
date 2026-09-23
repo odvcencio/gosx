@@ -2671,6 +2671,20 @@ function gosxConfigureSceneScript(script, role, src) {
     window.__gosx.scene3d.preloadModel = function(src) {
       return window.__gosx_scene3d_preload_model(src);
     };
+    window.__gosx.scene3d.preloadGLB = function(target, src, options) {
+      const mount = typeof target === "string" && typeof document !== "undefined"
+        ? document.getElementById(target) : target;
+      const handle = mount && mount.__gosxScene3DHandle;
+      return handle && typeof handle.preloadGLB === "function"
+        ? handle.preloadGLB(src, options)
+        : Promise.resolve({ decoded: false, gpuReady: false, reason: "mount-unavailable" });
+    };
+    window.__gosx.scene3d.releasePreloadedGLB = function(target, src) {
+      const mount = typeof target === "string" && typeof document !== "undefined"
+        ? document.getElementById(target) : target;
+      const handle = mount && mount.__gosxScene3DHandle;
+      return Boolean(handle && typeof handle.releasePreloadedGLB === "function" && handle.releasePreloadedGLB(src));
+    };
     window.__gosx.scene3d.setPerformanceTelemetry = function(enabled) {
       window.__gosx_scene3d_perf = enabled === true;
       return window.__gosx_scene3d_perf;

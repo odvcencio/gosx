@@ -3349,6 +3349,79 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
+      // Load a GLB into this mount's selected texture variant and WebGL
+      // context, then upload the same shared streams later instanced actors
+      // will use. No actor is inserted into the scene or draw list.
+      async preloadGLB(src, options) {
+        const key = String(src || "").trim();
+        const mode = options && options.mode === "crowd" ? "crowd" : "rigid";
+        if (disposed || !scene3DFactoryOwned()) return { decoded: false, gpuReady: false, reason: "disposed" };
+        if (sceneModelAssetFormat(key) !== "glb") return { decoded: false, gpuReady: false, reason: "glb-required" };
+        const activeRenderer = renderer;
+        const asset = await loadSceneModelAsset(key, mount, {
+          state: sceneState, generation: sceneState._modelHydrationGeneration,
+          variantScope: sceneState._modelTextureVariantScope, crowd: mode === "crowd",
+        });
+        if (disposed || !scene3DFactoryOwned() || renderer !== activeRenderer) {
+          return { decoded: Boolean(asset && asset.objects && asset.objects.length), gpuReady: false, reason: "renderer-changed" };
+        }
+        if (!asset || !Array.isArray(asset.objects) || !asset.objects.length) {
+          return { decoded: false, gpuReady: false, reason: "empty-glb" };
+        }
+        if (!activeRenderer || activeRenderer.kind !== "webgl" || typeof activeRenderer.prepareGLBResidency !== "function") {
+          return { decoded: true, gpuReady: false, reason: "backend-unsupported" };
+        }
+        const primitives = [];
+        const atlases = [];
+        if (mode === "crowd") {
+          if (!asset.objects.every(raw => raw.skin && !raw._morphAnim && !raw._nodeAnim)) {
+            return { decoded: true, gpuReady: false, reason: "crowd-geometry-unsupported" };
+          }
+          const animationAPI = await ensureAnimationFeatureLoaded();
+          const bySkin = new Map();
+          for (const raw of asset.objects) {
+            let atlas = bySkin.get(raw.skinIndex);
+            if (!atlas) {
+              atlas = animationAPI.buildCrowdAtlas(asset, raw.skinIndex);
+              bySkin.set(raw.skinIndex, atlas);
+              atlases.push(atlas);
+            }
+            const primitive = atlas.primitives.get(raw.vertices);
+            if (!primitive || !primitive.vertices) return { decoded: true, gpuReady: false, reason: "crowd-geometry-unavailable" };
+            primitive.vertices._rigidPool = true;
+            sceneRigidPrimitiveGeometry.set(primitive.vertices, primitive.vertices);
+            primitives.push({ vertices: primitive.vertices, material: sceneApplyMaterialOverride(raw, {}) });
+          }
+        } else {
+          if (!asset.objects.every(raw => !raw.skin && !raw._morphAnim && !raw._nodeAnim)) {
+            return { decoded: true, gpuReady: false, reason: "rigid-geometry-unsupported" };
+          }
+          const identity = { id: "preload", x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0,
+            rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1, _shareRigidGeometry: true };
+          for (let index = 0; index < asset.objects.length; index++) {
+            const raw = asset.objects[index];
+            const object = sceneInstantiateModelObject(raw, identity, "preload", index, null);
+            if (!object || !object.vertices) return { decoded: true, gpuReady: false, reason: "rigid-geometry-unavailable" };
+            object.vertices._rigidPool = true;
+            sceneRigidPrimitiveGeometry.set(raw.vertices, object.vertices);
+            primitives.push({ vertices: object.vertices, material: sceneApplyMaterialOverride(raw, {}) });
+          }
+        }
+        if (disposed || renderer !== activeRenderer) return { decoded: true, gpuReady: false, reason: "renderer-changed" };
+        try {
+          const prepared = await activeRenderer.prepareGLBResidency(key, primitives, atlases);
+          if (disposed || renderer !== activeRenderer) {
+            return { decoded: true, gpuReady: false, reason: "renderer-changed" };
+          }
+          return Object.assign({ decoded: true, backend: "webgl", mode }, prepared);
+        } catch (error) {
+          return { decoded: true, gpuReady: false, reason: error && error.message ? error.message : "gpu-preparation-failed" };
+        }
+      },
+      releasePreloadedGLB(src) {
+        return renderer && typeof renderer.releaseGLBResidency === "function"
+          ? renderer.releaseGLBResidency(src) : false;
+      },
       getCamera() {
         return currentMountedSceneCamera();
       },
