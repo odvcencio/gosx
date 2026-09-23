@@ -16,7 +16,16 @@ import (
 // allow custom request headers, so a resume token or other identity must
 // travel as a URL query parameter (see Options.ResumeParam) or a cookie the
 // browser attaches automatically.
-func newDefaultDialer() dialer { return browserDialer{} }
+//
+// enableCompression is ignored: the browser's WebSocket constructor takes no
+// compression option at all. Every major browser already offers
+// permessage-deflate on every WebSocket handshake and negotiates,
+// (de)compresses, and delivers frames to "message" transparently — there is
+// nothing for this transport to configure. A hub that opts into
+// EnableCompression (see package hub) is enough to compress traffic to a
+// browser client; Options.EnableCompression only matters for the native
+// transport in transport_native.go.
+func newDefaultDialer(enableCompression bool) dialer { return browserDialer{} }
 
 type browserDialer struct{}
 
