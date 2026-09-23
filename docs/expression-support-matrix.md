@@ -18,9 +18,9 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 
 | Backend | Agrees | Diverges | Unsupported | Total |
 |---|---|---|---|---|
-| transpile | 46 | 0 | 14 | 60 |
-| route | 54 | 6 | 0 | 60 |
-| client-vm | 59 | 1 | 0 | 60 |
+| transpile | 46 | 0 | 16 | 62 |
+| route | 56 | 6 | 0 | 62 |
+| client-vm | 61 | 1 | 0 | 62 |
 
 ## numeric
 
@@ -174,6 +174,8 @@ Notes:
 | `bool_not_nonbool_string_empty` | `!props.S` | unsupported | agrees: `true` | agrees: `true` |
 | `bool_not_nonbool_string_nonempty` | `!props.S` | unsupported | agrees: `false` | agrees: `false` |
 | `bool_or_nonbool_string_fallback` | `props.S || "fallback"` | unsupported | agrees: `true` | agrees: `true` |
+| `bool_not_nonbool_string_word_false` | `!props.S` | unsupported | agrees: `true` | agrees: `true` |
+| `bool_and_nonbool_string_zero_literal` | `props.S && props.T` | unsupported | agrees: `false` | agrees: `false` |
 | `bool_literal_true` | `true` | agrees: `true` | agrees: `true` | agrees: `true` |
 | `bool_not_literal_false` | `!false` | agrees: `true` | agrees: `true` | agrees: `true` |
 
@@ -189,6 +191,10 @@ Notes:
   - transpile unsupported: same as bool_not_nonbool_string_empty: real Go rejects ! on a string operand
 - `bool_or_nonbool_string_fallback`: || on a non-empty string prop short-circuits to that prop, JS-template style
   - transpile unsupported: real Go rejects "invalid operation: operator || not defined on props.S (variable of type string)"
+- `bool_not_nonbool_string_word_false`: ! on a string prop holding the word "false": route's truthy() (route/fileeval.go) and the VM's valueTruthy (client/vm/vm.go) both fold "0" and "false" to false, not just "". Value.truth()'s kindString case (client/vm/value.go) used to check only string length, so a non-empty "false" prop stayed truthy through &&/||/! — fixed alongside bool_and_nonbool_string_zero_literal.
+  - transpile unsupported: same as bool_not_nonbool_string_empty: real Go rejects ! on a string operand
+- `bool_and_nonbool_string_zero_literal`: && where the left string prop holds "0" (falsy, same rule as bool_not_nonbool_string_word_false) and the right holds a truthy string: the whole expression must be false, not short-circuit true on left operand length alone.
+  - transpile unsupported: same as bool_and_nonbool_int_truthy: real Go rejects && on string operands
 - `bool_literal_true`: bare bool literal
 - `bool_not_literal_false`: ! on a literal bool is ordinary Go, agrees everywhere
 

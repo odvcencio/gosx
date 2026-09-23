@@ -510,6 +510,32 @@ var cases = []Case{
 			Transpile: `real Go rejects "invalid operation: operator || not defined on props.S (variable of type string)"`,
 		},
 	},
+	{
+		ID:           "bool_not_nonbool_string_word_false",
+		Category:     "bool-coercion",
+		Note:         `! on a string prop holding the word "false": route's truthy() (route/fileeval.go) and the VM's valueTruthy (client/vm/vm.go) both fold "0" and "false" to false, not just "". Value.truth()'s kindString case (client/vm/value.go) used to check only string length, so a non-empty "false" prop stayed truthy through &&/||/! — fixed alongside bool_and_nonbool_string_zero_literal.`,
+		Expr:         "!props.S",
+		PropsFields:  "S string",
+		PropsLiteral: `S: "false"`,
+		PropsValue:   map[string]any{"S": "false"},
+		Want:         "true",
+		Unsupported: map[Backend]string{
+			Transpile: "same as bool_not_nonbool_string_empty: real Go rejects ! on a string operand",
+		},
+	},
+	{
+		ID:           "bool_and_nonbool_string_zero_literal",
+		Category:     "bool-coercion",
+		Note:         `&& where the left string prop holds "0" (falsy, same rule as bool_not_nonbool_string_word_false) and the right holds a truthy string: the whole expression must be false, not short-circuit true on left operand length alone.`,
+		Expr:         "props.S && props.T",
+		PropsFields:  "S string\nT string",
+		PropsLiteral: `S: "0", T: "y"`,
+		PropsValue:   map[string]any{"S": "0", "T": "y"},
+		Want:         "false",
+		Unsupported: map[Backend]string{
+			Transpile: "same as bool_and_nonbool_int_truthy: real Go rejects && on string operands",
+		},
+	},
 
 	// --- nil -------------------------------------------------------------
 

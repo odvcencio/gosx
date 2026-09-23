@@ -50,6 +50,8 @@ func TestValueTruthNonBoolKinds(t *testing.T) {
 		{"float zero", FloatVal(0), false},
 		{"string non-empty", StringVal("x"), true},
 		{"string empty", StringVal(""), false},
+		{"string \"0\"", StringVal("0"), false},
+		{"string \"false\"", StringVal("false"), false},
 		{"array non-empty", ArrayVal([]Value{IntVal(1)}), true},
 		{"array nil", ArrayVal(nil), false},
 		{"object non-empty", ObjectVal(map[string]Value{"k": IntVal(1)}), true},

@@ -185,10 +185,17 @@ func (v *Value) dict() map[string]Value {
 // this brings the VM's opcode-level operator to the same rule set: a real
 // bool reads its stored bit, every other kind derives the standard rule
 // (nonzero number, non-empty string/array/map, a bound closure is always
-// present). See TestValueTruthNonBoolKinds.
+// present) — except a string, which route's truthy() (route/fileeval.go)
+// and the VM's own valueTruthy (client/vm/vm.go) both also fold "0" and
+// "false" into false, so a GSX author's `{props.flag && <span/>}` agrees
+// with server-rendered hydration even when flag arrives as the string
+// "false" rather than a bool. See TestValueTruthNonBoolKinds.
 func (v *Value) truth() bool {
 	switch v.tag & tagKindMask {
-	case uint8(kindString), uint8(kindArray):
+	case uint8(kindString):
+		text := v.text()
+		return text != "" && text != "0" && text != "false"
+	case uint8(kindArray):
 		return v.n != 0
 	case uint8(kindMap):
 		return len(v.dict()) != 0
