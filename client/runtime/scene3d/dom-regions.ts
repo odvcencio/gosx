@@ -244,7 +244,7 @@
       ];
     }
     var patch = { name: config.name, uniforms: uniforms };
-    if (config.bounds && config.bounds.mode === "union") {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (config.bounds && config.bounds.mode === "union") {
       patch.domRegionBounds = measurement && measurement.bounds ? measurement.bounds : {
         mode: "union",
         active: false,
@@ -254,7 +254,7 @@
         bottom: 0,
         paddingPx: config.bounds.paddingPx || 0,
       };
-    } else {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else {
       patch.domRegionBounds = null;
     }
     return patch;

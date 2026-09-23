@@ -146,6 +146,7 @@ func TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph(t *testing.T) {
 		filepath.Join(runtimeDir, "types.d.ts"):                  "strict-check ambient declarations",
 		filepath.Join(runtimeDir, "generated", "runtime-abi.ts"): "consumed by wasm/abi.ts and checked by test-runtime-types",
 		filepath.Join(runtimeDir, "host", "navigation.ts"):       "embedded by host/navigation_asset.go and exercised by the runtime test harness",
+		filepath.Join(runtimeDir, "scene3d", "bootstrap-bridge.d.ts"): "ambient declarations for tsconfig.scene3d.json only; no bundle loads it",
 	}
 	err := filepath.WalkDir(runtimeDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {

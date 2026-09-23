@@ -101,7 +101,7 @@
     if (ready(target)) return { handle: target, mount: null };
     if (target && ready(target.__gosxScene3DHandle)) return { handle: target.__gosxScene3DHandle, mount: target };
     var id = key(target, options || {});
-    var mount = id && document && typeof document.getElementById === "function" ? document.getElementById(id) : null;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mount = id && document && typeof document.getElementById === "function" ? document.getElementById(id) : null;
     if (mount && ready(mount.__gosxScene3DHandle)) return { handle: mount.__gosxScene3DHandle, mount: mount };
     var engine = id && window.__gosx && window.__gosx.engines && typeof window.__gosx.engines.get === "function" ? window.__gosx.engines.get(id) : null;
     return engine && ready(engine.handle) ? { handle: engine.handle, mount: engine.mount || mount || null } : null;

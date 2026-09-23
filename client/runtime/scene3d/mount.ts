@@ -41,7 +41,7 @@
     await settleSceneIBLFeature(props);
     if (!scene3DFactoryCurrent()) return {};
     const sceneState = createSceneState(props, capability);
-    // Allocate model texture variants while state remains private.
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
     await settlePreferredWebGPUBackend(props, capability);
     if (!scene3DFactoryCurrent()) return {};
@@ -433,7 +433,7 @@
       console.warn("[gosx] Scene3D could not acquire a renderer");
       const unsupportedReason = initialRenderer && initialRenderer.unsupportedReason
         ? initialRenderer.unsupportedReason
-        : (sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable");
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ : (sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable");
       applySceneRendererState(mount, { kind: "unsupported" }, unsupportedReason);
       publishSceneWaterRendererState(mount, sceneState, null, unsupportedReason);
       publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
@@ -572,7 +572,7 @@
         if (sceneNodeSentinels.has(id)) {
           return;
         }
-        const sentinel = document.createElement("div");
+        /* @ts-expect-error TS2345 -- next is a Set<unknown> by default; every ID collectSceneNodeSentinelIDs adds is actually a string */ const sentinel = document.createElement("div");
         sentinel.setAttribute("data-gosx-scene-node", id);
         sentinel.setAttribute("aria-hidden", "true");
         sentinel.style.position = "absolute";
@@ -746,7 +746,7 @@
       };
     }
 
-    function publishSceneRenderWatchdogState(reason, stalledFor) {
+    /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function publishSceneRenderWatchdogState(reason, stalledFor) {
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog", sceneWebGLFallbackOwner === false ? "terminal" : (reason ? "recovering" : "ok"));
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
@@ -775,8 +775,8 @@
       return "";
     }
 
-    function terminalSceneWebGPURecovery(reason) {
-      sceneWebGLFallbackOwner = false;
+    /* @ts-expect-error TS2322 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function terminalSceneWebGPURecovery(reason) {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneWebGLFallbackOwner = false;
       applySceneRendererState(mount, { kind: "unsupported" }, sceneDebugAttr(mount, sceneAttr("renderer-fallback")) || reason);
       setAttrValue(mount, readyAttr, "false");
       publishSceneRenderWatchdogState(reason, 0);
@@ -828,7 +828,7 @@
           nextRenderer.dispose();
         }
       }
-      if (nativeOnly) {
+      /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (nativeOnly) {
         if (sceneWebGLFallbackOwner === false) publishSceneRenderWatchdogState("webgpu-device-lost", 0);
         return false;
       }
@@ -906,11 +906,11 @@
       if (!reason) {
         return;
       }
-      if (reason === "webgpu-device-lost") {
-        if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
+      /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (reason === "webgpu-device-lost") {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
         recoverSceneWebGPURenderer(reason, 0, true);
         return;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
     }
 
@@ -1039,7 +1039,7 @@
       if (renderer.kind !== "webgpu") {
         checkSceneWebGLLossRecovery();
         return;
-      }
+      /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ }
       if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
       const animation = sceneAnimationState();
       if (!animation.wants || !sceneCanRender()) {
@@ -1048,7 +1048,7 @@
         renderWatchdogLastAdvanceAt = 0;
         publishSceneRenderWatchdogState("", 0);
         return;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       const now = sceneFrameNowMS();
       // A hidden tab stalls requestAnimationFrame BY DESIGN, and the interval
       // that drives this check is itself throttled while hidden. Counting
@@ -1071,7 +1071,7 @@
       const progress = readSceneWebGPUProgress();
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const failureReason = rendererReportsWebGPUFailure(diagnostics);
-      if (failureReason) {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (failureReason) {
         recoverSceneWebGPURenderer(failureReason, 0, true);
         return;
       }
@@ -1097,7 +1097,7 @@
         return;
       }
       const reason = progress.seq > 0 || progress.at > 0 ? "webgpu-render-stall" : "webgpu-render-not-started";
-      const forceFallback = stalledFor >= SCENE_RENDER_FALLBACK_STALL_MS;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const forceFallback = stalledFor >= SCENE_RENDER_FALLBACK_STALL_MS;
       if (recoverSceneWebGPURenderer(reason, stalledFor, forceFallback)) {
         renderWatchdogLastAdvanceAt = now;
       }
@@ -1106,7 +1106,7 @@
     function startSceneRenderWatchdog() {
       if (renderWatchdogTimer != null || typeof setInterval !== "function") {
         return;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       const now = sceneFrameNowMS();
       const progress = readSceneWebGPUProgress();
       renderWatchdogLastSeq = progress.seq;
@@ -1379,7 +1379,7 @@
         }
         if (typeof now === "number") {
           lastAnimationFrameAt = now;
-        }
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
         renderFrame(now);
       });
       applySceneRenderLoopState(animation.reason);
@@ -1401,12 +1401,12 @@
       renderer = nextRenderer;
       sceneState._crowdRenderer = renderer;
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
-      publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
       applySceneRendererState(mount, renderer, renderer.kind === "webgpu" ? "" : fallbackReason);
       publishSceneWaterRendererState(mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
-      renderWatchdogLastAt = 0;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ renderWatchdogLastAt = 0;
       renderWatchdogLastAdvanceAt = sceneFrameNowMS();
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
@@ -1545,7 +1545,7 @@
         return false;
       }
       const owner = sceneWebGLFallbackOwner = renderer;
-      gosxSceneEmit("info", "webgl-fallback-chunk-fetch", { reason: reason || "" });
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ gosxSceneEmit("info", "webgl-fallback-chunk-fetch", { reason: reason || "" });
       ensureWebGLFeatureLoaded().then(function() { settleSceneWebGLFallback(reason, owner); })
         .catch(function(error) { settleSceneWebGLFallback(reason, owner, error); });
       return true;
@@ -1628,7 +1628,7 @@
                 // Canvas2D and generic WebGL cannot represent the water
                 // simulation. Expose the backend failure instead of swapping
                 // to a renderer that would produce a plausible-but-blank demo.
-                const waterReason = "water-webgl2-unavailable";
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const waterReason = "water-webgl2-unavailable";
                 applySceneRendererState(mount, renderer, waterReason);
                 publishSceneWaterRendererState(mount, sceneState, null, waterReason);
                 gosxSceneEmit("warn", "water-renderer-fallback-unavailable", {
@@ -1640,12 +1640,12 @@
                 gosxSceneEmit("warn", "renderer-fallback-disallowed", {
                   reason: fallbackReason,
                   capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
-                });
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
                 applySceneRendererState(mount, renderer, fallbackReason || "no-capable-backend");
                 return false;
               }
               if (sceneRequiresWebGL(props)) {
-                gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
                 applySceneRendererState(mount, renderer, reason || "webgl-required");
                 return false;
               }
@@ -1653,7 +1653,7 @@
                 gosxSceneEmit("warn", "renderer-canvas-fallback-disallowed", {
                   reason: fallbackReason,
                   capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
-                });
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
                 applySceneRendererState(mount, renderer, fallbackReason || "no-capable-backend");
                 return false;
               }
@@ -1796,7 +1796,7 @@
         /* dispose errors on a lost context are expected */
       }
       renderer = sceneRendererLostStub;
-      sceneState._crowdRenderer = renderer;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneState._crowdRenderer = renderer;
       applySceneRendererState(mount, renderer, "webgl-context-lost");
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
@@ -1863,7 +1863,7 @@
       mount.__gosxScene3DScheduleCounts = counters;
     }
 
-    function scheduleRender(reason) {
+    /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function scheduleRender(reason) {
       if (disposed || sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) {
         return;
       }
@@ -2139,11 +2139,11 @@
 	        return viewport;
 	      }, function() {
 	        return latestBundle;
-	      }, function(detail) {
+	      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }, function(detail) {
 	        latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
 	        dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
 	        ctx.emit("scene-interaction", detail);
-	        if (mount && typeof mount.dispatchEvent === "function") {
+	        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (mount && typeof mount.dispatchEvent === "function") {
 	          const inputDetail = { kind: "pick", input: detail ? sceneDebugClone(detail, 4) : null };
 	          const inputEvent = typeof CustomEvent === "function"
 	            ? new CustomEvent("gosx:scene3d:input", { detail: inputDetail, bubbles: true })
@@ -2280,12 +2280,12 @@
         if (obj.gizmoHelper) {
           const visible = Boolean(target) && obj.gizmoFormMode === mode;
           const patch = { visible: visible };
-          if (anchor) {
-            patch.x = anchor.x;
-            patch.y = anchor.y;
-            patch.z = anchor.z;
-            patch.rotationX = anchor.rotationX;
-            patch.rotationY = anchor.rotationY;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (anchor) {
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.x = anchor.x;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.y = anchor.y;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.z = anchor.z;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.rotationX = anchor.rotationX;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.rotationY = anchor.rotationY;
             patch.rotationZ = anchor.rotationZ;
           }
           applySceneObjectPatch(sceneState, obj.id, patch);
@@ -2374,7 +2374,7 @@
     function applyMountedSceneCamera(camera, reason) {
       if (!sceneIsPlainObject(camera)) {
         return false;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
 	      const currentCamera = currentMountedSceneCamera();
 	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
 	      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
@@ -2414,11 +2414,11 @@
         diagnostics: sceneDebugDiagnostics(mount, rendererKind, rendererDiagnostics),
         lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
       };
-      if (mode !== "summary") {
-        snapshot.camera = currentMountedSceneCamera();
-        snapshot.gpuResources = sceneDebugGPUResources(mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
-        snapshot.webgpuStats = sceneDebugClone(mount && mount.__gosxScene3DWebGPUStats, 3);
-        snapshot.waterShaderSources = { sceneState: [], bundle: [] };
+      /* @ts-expect-error TS2339, TS2554 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files); this call omits trailing arguments the JS caller has always been able to omit */ if (mode !== "summary") {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ snapshot.camera = currentMountedSceneCamera();
+        /* @ts-expect-error TS2339, TS2554 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files); this call omits trailing arguments the JS caller has always been able to omit */ snapshot.gpuResources = sceneDebugGPUResources(mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ snapshot.webgpuStats = sceneDebugClone(mount && mount.__gosxScene3DWebGPUStats, 3);
+        /* @ts-expect-error TS2339, TS2554 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files); this call omits trailing arguments the JS caller has always been able to omit */ snapshot.waterShaderSources = { sceneState: [], bundle: [] };
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
       }
       return snapshot;
@@ -2584,7 +2584,7 @@
     // Viewport observer fires on canvas/mount resize. Mark dirty so
     // renderFrame re-measures the rect on the next tick — this is the
     // one place we genuinely need a fresh getBoundingClientRect.
-    const releaseViewportObserver = observeSceneViewport(mount, function(reason) {
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const releaseViewportObserver = observeSceneViewport(mount, function(reason) {
       sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scheduleRenderWithViewport(reason);
     });
@@ -2599,10 +2599,10 @@
       if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
         fallbackSceneRenderer(desiredFallback || "environment-constrained");
       } else if (renderer && renderer.kind !== "webgl" && (webglPreference === "prefer" || webglPreference === "force")) {
-        if (!restoreSceneWebGLRenderer("")) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!restoreSceneWebGLRenderer("")) {
           applySceneRendererState(mount, renderer, desiredFallback);
         }
-      } else {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
         applySceneRendererState(mount, renderer, desiredFallback);
       }
       scheduleRender(reason || "capability");
@@ -3233,7 +3233,7 @@
     var visualViewportScrollHandler = null;
     if (sceneState._scrollCamera) {
       sceneState._scrollCamera._progress = 0;
-      sceneState._scrollCamera._smoothProgress = 0;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneState._scrollCamera._smoothProgress = 0;
       sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scrollHandler = function() {
         sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, false, true);
@@ -3277,7 +3277,7 @@
       if (result && typeof result.then === "function") {
         scheduleRender("progressive-models");
         return result.then(function(outcome) {
-          scheduleRender("progressive-models-hydrated");
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ scheduleRender("progressive-models-hydrated");
           return sceneModelHydrationOutcomeDetail(outcome) || outcome;
         });
       }
@@ -3350,9 +3350,11 @@
         return applyMountedSceneCommands(commands, "commands");
       },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
-      getCamera() { return currentMountedSceneCamera(); },
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
+        return currentMountedSceneCamera();
+      },
       getTelemetry() {
-        return {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return {
           camera: currentMountedSceneCamera(),
           orbit: currentMountedSceneOrbitState(),
           selectionID: lastAppliedSelectionID || "",

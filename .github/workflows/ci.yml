@@ -214,8 +214,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Node also runs the pinned strict TypeScript compiler for the generated
-      # ABI contract. make test-js performs the reproducible npm ci.
+      # Node also runs the pinned TypeScript compiler: strict mode for the
+      # generated ABI contract, plus tsconfig.scene3d.json, which type-checks
+      # every client/runtime/scene3d/*.ts source with a noImplicitAny ratchet.
+      # make test-js performs the reproducible npm ci.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
