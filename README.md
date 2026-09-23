@@ -739,6 +739,40 @@ compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
 
+### Prebuilt runtime (no TinyGo required)
+
+A project pinned to a stable released `m31labs.dev/gosx` version (a plain
+`require`, not a local `replace`) does not need TinyGo installed at all.
+When `gosx build --prod` cannot find `tinygo` on `PATH`, it automatically
+falls back to a release-matched, integrity-verified prebuilt runtime:
+
+1. It resolves the project's exact pinned GoSX version (the same check
+   `gosx`'s version-skew guard already runs).
+2. It fetches that release's runtime WASM variants, `wasm_exec.js` shim, and
+   a hashed manifest (`gosx-runtime-artifacts.json`) from the GitHub release
+   published for that tag.
+3. It verifies every file's SHA-256 against the manifest before staging it
+   into `dist/`, and caches the verified files under
+   `$GOSX_RUNTIME_CACHE` (default `os.UserCacheDir()/gosx/runtime`) so a
+   later build for the same version fetches nothing.
+
+Controls:
+
+| Env var | Effect |
+| --- | --- |
+| `GOSX_RUNTIME_MODE=tinygo` | Require TinyGo; never fall back to a prebuilt runtime. |
+| `GOSX_RUNTIME_MODE=prebuilt` | Skip the TinyGo probe; always resolve a prebuilt runtime. |
+| `GOSX_RUNTIME_MODE=auto` (default) | Prefer TinyGo; fall back to prebuilt only when TinyGo is missing. |
+| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-artifact cache directory. |
+| `GOSX_RUNTIME_RELEASE_REPO=<owner>/<repo>` | Resolve prebuilt runtimes from a fork's own releases. |
+| `gosx build --offline` | Disable the prebuilt *network fetch*; an already cached, verified version still resolves. |
+
+A project still building against unreleased GoSX source (a `go.mod` local
+`replace`, or a version with no published release, such as a pseudo-version)
+always requires TinyGo — there is no prebuilt runtime for source that was
+never tagged. `gosx dev` never needs TinyGo; it always uses the standard Go
+WASM compiler.
+
 ## Performance Budgets
 
 GoSX treats performance as a framework contract, not a dashboard you check after release. `gosx perf` already records TTFB, DCL, LCP, CLS, long tasks, TBT, network bytes, JS coverage, hub bytes, island hydration, Scene3D frame percentiles, and GPU context information. `gosx perf budget` turns those measurements into a CI gate.
