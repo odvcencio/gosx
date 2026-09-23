@@ -623,7 +623,11 @@ const budgets = [
   // ship outside this bundle instead of eagerly. Measured: 1_648_132 /
   // 451_153 / 362_586. Only gzip exceeds the prior envelope; 435_200 keeps
   // narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 435_200, brotli: 346_700 },
+  // Bounding the pending-frame coalescing (per (mount, batch) instead of
+  // per frame) added a small header-parsing helper to the same loader IIFE.
+  // Measured: 1_649_209 / 451_571 / 362_775. Only gzip was within 13 bytes
+  // of the prior hard limit; 436_000 restores real headroom.
+  { file: "bootstrap.js", raw: 1_584_000, gzip: 436_000, brotli: 346_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1827,8 +1831,12 @@ const routeBudgets = [
     // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
     // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
     // carries. Measured: 1_130_656 / 315_470 / 267_227.
+    // Bounding the pending-frame coalescing added a small header-parsing
+    // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
+    // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
+    // restores real headroom.
     raw: 1_079_000,
-    gzip: 301_000,
+    gzip: 301_500,
     brotli: 255_500,
   },
   {
@@ -1973,10 +1981,14 @@ const routeBudgets = [
     // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
     // carries. Measured: 1_523_490 / 411_054 / 347_173. Only gzip exceeds
     // that envelope; 395_200 keeps narrow rounding headroom.
+    // Bounding the pending-frame coalescing added a small header-parsing
+    // helper to the same loader IIFE. Measured: 1_524_567 / 411_507 /
+    // 347_451. Gzip was within 77 bytes of the prior hard limit; 396_000
+    // restores real headroom.
     raw: 1_465_500,
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
-    gzip: 395_200,
+    gzip: 396_000,
     brotli: 332_900,
   },
   {
