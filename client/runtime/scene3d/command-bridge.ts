@@ -4,6 +4,7 @@
 /**
  * @typedef {object} GoSXScene3DCommandBridge
  * @property {(target: unknown, commands: unknown[], options?: object) => Promise<unknown>} dispatchCommands
+ * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchPoseFrame
  * @property {(root: ParentNode) => unknown} applyCommandScripts
  */
 
@@ -57,6 +58,9 @@
 
   api.dispatchCommands = function(target, commands, options) {
     return loadCommandBridge().then(function(bridge) { return bridge.dispatchCommands(target, commands, options); });
+  };
+  api.dispatchPoseFrame = function(target, frame, options) {
+    return loadCommandBridge().then(function(bridge) { return bridge.dispatchPoseFrame(target, frame, options); });
   };
   function forceWebGLRequested() {
     if (window.__gosx_scene3d_force_webgl === true) return true;
