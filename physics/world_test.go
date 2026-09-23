@@ -338,3 +338,57 @@ func TestWorldTickAppliesRunnerInputCommands(t *testing.T) {
 		t.Fatalf("expected torque input to affect angular velocity, got %+v", body.AngularVelocity)
 	}
 }
+
+// buildRestingSpheresOnStaticFloor returns a world with count spheres resting,
+// motionless, on a grid of static box colliders. Unlike the sliding scenes in
+// bench_test.go, nothing here keeps moving once the stack settles, so it is
+// representative of the steady state a long-running simulation spends most of
+// its time in.
+func buildRestingSpheresOnStaticFloor(count int) *World {
+	world := NewWorld(WorldConfig{
+		Gravity:          Vec3{Y: -9.81},
+		FixedTimestep:    1.0 / 60.0,
+		SolverIterations: 8,
+		BroadPhaseCell:   2,
+	})
+	side := int(math.Ceil(math.Sqrt(float64(count))))
+	for x := 0; x < side; x++ {
+		for z := 0; z < side; z++ {
+			world.AddCollider(ColliderConfig{
+				Shape:  ShapeBox,
+				Offset: Vec3{X: float64(x) * 1.5, Y: -0.5, Z: float64(z) * 1.5},
+				Width:  1.5, Height: 1, Depth: 1.5,
+			})
+		}
+	}
+	for i := 0; i < count; i++ {
+		x := float64(i%side) * 1.5
+		z := float64(i/side) * 1.5
+		body := world.AddBody(BodyConfig{
+			Mass: 1, Position: Vec3{X: x, Y: 0.55, Z: z}, Friction: 0.6,
+		})
+		body.AddCollider(ColliderConfig{Shape: ShapeSphere, Radius: 0.5})
+	}
+	return world
+}
+
+// TestStepFixedIsAllocFreeInSteadyState pins the zero-allocation contract for
+// World.StepFixed: once a scene has settled into a repeating contact set, a
+// further step must not allocate. This guards the contact-cache pool and
+// broadphase scratch buffers against a regression back to the old per-body,
+// per-step allocation.
+func TestStepFixedIsAllocFreeInSteadyState(t *testing.T) {
+	world := buildRestingSpheresOnStaticFloor(200)
+	// Settle the stack: warm the contact cache, fill the broadphase grid, and
+	// let every body come to rest.
+	for i := 0; i < 180; i++ {
+		world.StepFixed()
+	}
+
+	allocs := testing.AllocsPerRun(50, func() {
+		world.StepFixed()
+	})
+	if allocs != 0 {
+		t.Fatalf("StepFixed allocated %.2f allocs/op once the scene settled, want 0", allocs)
+	}
+}
