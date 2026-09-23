@@ -116,24 +116,24 @@ const (
 	OpToInt    // Operands[0] = string/float → int
 	OpToFloat  // Operands[0] = string/int → float
 
-	// Statement sequencing + locals (Slice X.A — AST-compiler initiative).
-	// These opcodes let a Program carry multi-statement function bodies, not
-	// just single expressions. Backwards-compatible additions per ADR 0002:
-	// existing programs that never emit them keep evaluating exactly as before.
+	// Statement sequencing + locals. These opcodes let a Program carry
+	// multi-statement function bodies, not just single expressions.
+	// Backwards-compatible additions: existing programs that never emit
+	// them keep evaluating exactly as before.
 	OpSeq       // Sequence: Operands = ordered expressions; evaluate all, return last.
 	OpAssign    // Assign Operands[0] to target named in Value (signal or local).
 	OpLocalDecl // Reserve a local slot in the current frame; Value = local name.
 	OpLocalGet  // Read a local by name (Value); panic-free zero if unset.
 	OpLocalSet  // Write Operands[0] to local named in Value (frame-scoped).
 
-	// Imperative iteration (Slice X.C — AST-compiler initiative).
+	// Imperative iteration.
 	// Backwards-compatible like the sequencing opcodes above. Both
 	// carry a max-iteration safety cap (configurable via VM.SetForCap)
 	// so a runaway loop in lowered Go can't hang the shared client WASM.
 	OpFor      // 3-clause: Operands=[init, cond, post, body]. Evaluates init; while cond is truthy, evaluates body then post. Returns last body value (or zero).
 	OpForRange // range: Operands=[collection, body]. Body reads "_index" + "_item" props (or "_key" + "_item" for maps). Returns last body value (or zero).
 
-	// Control flow exit (Slice X.C). OpReturn evaluates Operands[0]
+	// Control flow exit. OpReturn evaluates Operands[0]
 	// (or yields the zero value when absent) and unwinds the enclosing
 	// OpSeq / OpFor / OpForRange / OpCond chain. The VM implements this
 	// via a sentinel that callers check; the unwind stops at the nearest
@@ -146,7 +146,7 @@ const (
 	OpBreak
 	OpContinue
 
-	// Composite literals (Slice Y.A — AST-compiler initiative). OpComposite
+	// Composite literals. OpComposite
 	// materializes a struct, slice, or map value at runtime. Value carries
 	// the kind tag — one of:
 	//   - "struct:<TypeName>" — named or positional struct literal.
@@ -161,11 +161,11 @@ const (
 	//     run 0..len-1 and are emitted by the lowerer.
 	//   - map:    pairs of (key expr, value expr); keys may be any
 	//     expression whose String() form becomes the map key.
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpComposite keep evaluating exactly as before.
 	OpComposite
 
-	// Two-value map lookup (Slice Y.B — AST-compiler initiative).
+	// Two-value map lookup.
 	// OpMapLookup evaluates Operands[0] as the map (any Value with
 	// Fields populated) and Operands[1] as the lookup key, and returns
 	// an ObjectVal carrying two named fields:
@@ -178,16 +178,16 @@ const (
 	// This encoding lets the comma-ok idiom (`v, ok := m[k]`) lower
 	// without expanding the Value model with a Tuple kind — the lowerer
 	// emits a single OpMapLookup plus per-LHS OpIndex reads of "value"
-	// and "ok" against the resulting ObjectVal. Y.A's Decision Point
-	// chose the ObjectVal carrier over a dedicated TupleVal because
-	// it reuses the existing OpIndex / Value.Fields machinery without
-	// touching formatters, equality, or JSON marshaling.
+	// and "ok" against the resulting ObjectVal. The ObjectVal carrier was
+	// chosen over a dedicated TupleVal because it reuses the existing
+	// OpIndex / Value.Fields machinery without touching formatters,
+	// equality, or JSON marshaling.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpMapLookup keep evaluating exactly as before.
 	OpMapLookup
 
-	// LHS selector / indexed-set (Slice Y.C — AST-compiler initiative).
+	// LHS selector / indexed-set.
 	// Two opcodes that mutate a collection in place so engine-surface
 	// handlers can write through their package-level state:
 	//
@@ -210,23 +210,23 @@ const (
 	//     the VM stays panic-free.
 	//
 	// **Mutation semantics.** Both opcodes mutate the underlying
-	// map/slice — they do NOT clone. Y.A's exit decision flagged the
-	// copy-on-write vs in-place question for Y.C; in-place won because
-	// (a) graph_surface.go's `gPos[id] = vec2{...}` and
+	// map/slice — they do NOT clone. The copy-on-write vs in-place
+	// question was weighed when these opcodes were designed; in-place
+	// won because (a) graph_surface.go's `gPos[id] = vec2{...}` and
 	// `fx[a.ID] += force` already rely on the map/slice being mutated
-	// by reference, (b) Y.B's range loop already mutates `_item` in
-	// place, and (c) Go's actual value-semantics for struct assignment
+	// by reference, (b) the range-loop lowering already mutates `_item`
+	// in place, and (c) Go's actual value-semantics for struct assignment
 	// surface here as the author's explicit `gVel[n.ID] = v` writeback
-	// in stepLayout, which Y.C lowers as an explicit OpIndexSet — the
+	// in stepLayout, which lowers as an explicit OpIndexSet — the
 	// Go-level copy already happened on the OpLocalGet read; the
 	// writeback restores the mutated value to the shared collection.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpFieldSet / OpIndexSet keep evaluating exactly as before.
 	OpFieldSet
 	OpIndexSet
 
-	// User-defined function call (Slice Y.D — AST-compiler initiative).
+	// User-defined function call.
 	// OpIndirectCall dispatches into a user-function registered on the
 	// containing Program (FuncDef table). The callee name lives in
 	// Value; the call arguments are evaluated left-to-right and bound
@@ -239,7 +239,7 @@ const (
 	// callees materialize their results into an ObjectVal carrier
 	// keyed by the callee's output param names ("__ret_0", "__ret_1",
 	// ...) so the lowerer can bind each LHS via OpIndex reads — same
-	// shape as Slice Y.B's OpMapLookup result. Void callees return
+	// shape as OpMapLookup's result. Void callees return
 	// the zero Value of TypeAny.
 	//
 	// **Recursion safety.** The VM enforces a per-evaluation call-stack
@@ -251,20 +251,20 @@ const (
 	// **Parameter semantics.** Composite params (struct/slice/map) pass
 	// by reference because Value.Fields and Value.Items are map / slice
 	// reference types — the callee's mutations via OpFieldSet /
-	// OpIndexSet land in the caller's storage. This matches Slice Y.C's
-	// in-place mutation contract and explicitly preserves the Y.C
-	// retrospective's "OpFieldSet on parameter-typed receivers already
-	// propagates" guarantee. Scalar params (int/float/bool/string) are
+	// OpIndexSet land in the caller's storage. This matches the
+	// OpFieldSet/OpIndexSet in-place mutation contract and preserves the
+	// guarantee that OpFieldSet on parameter-typed receivers already
+	// propagates. Scalar params (int/float/bool/string) are
 	// passed by Value-by-value copy — Go's normal scalar semantics.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpIndirectCall keep evaluating exactly as before.
 	OpIndirectCall
 
-	// make(...) builtin (Slice Y.E — AST-compiler initiative).
+	// make(...) builtin.
 	// OpMake allocates an empty collection: a fresh ObjectVal carrying a
 	// Fields map (for `make(map[K]V)`) or an ArrayVal carrying an Items
-	// slice (for `make([]T, n)`). Y.A's OpComposite handles populated
+	// slice (for `make([]T, n)`). OpComposite handles populated
 	// composite literals; OpMake covers the explicit allocation form
 	// graph_surface.go's stepLayout uses to build per-tick force tables.
 	//
@@ -275,15 +275,15 @@ const (
 	//              ignored, matching Go's runtime behavior).
 	//
 	// The lowerer detects `make(...)` BEFORE the user-function registry
-	// probe so a user can't accidentally shadow the builtin. Per Y.D's
-	// retrospective handoff, this lives alongside len/append/int/
-	// float64/string in lowerCallExpr's `switch id.Name` block.
+	// probe so a user can't accidentally shadow the builtin. This lives
+	// alongside len/append/int/float64/string in lowerCallExpr's
+	// `switch id.Name` block.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpMake keep evaluating exactly as before.
 	OpMake
 
-	// Host-receiver method call (Slice Y.E — AST-compiler initiative).
+	// Host-receiver method call.
 	// OpHostCall dispatches a method call into a runtime-bound host
 	// receiver — the engine-surface canvas, the surface context, or any
 	// other host-side object whose methods cannot be expressed as a pure
@@ -308,40 +308,39 @@ const (
 	// receivers live on the VM struct, so each engine-surface instance
 	// has its own canvas/context bindings. This is the cleanest place
 	// to land the "host-supplied capability dispatch" surface that the
-	// engine-surface authoring contract has implicitly assumed since
-	// X.A but never had a first-class opcode for.
+	// engine-surface authoring contract has implicitly assumed since the
+	// earliest opcodes but never had a first-class opcode for.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpHostCall keep evaluating exactly as before.
 	OpHostCall
 
-	// String-to-rune-array conversion (Slice Y.E.3 — AST-compiler
-	// initiative). OpToRunes corresponds to Go's `[]rune(s)`
-	// conversion. The operand is a string Value; the result is an
-	// ArrayVal whose Items are one-rune StringVals (each containing
-	// exactly one UTF-8-encoded rune).
+	// String-to-rune-array conversion. OpToRunes corresponds to Go's
+	// `[]rune(s)` conversion. The operand is a string Value; the result
+	// is an ArrayVal whose Items are one-rune StringVals (each
+	// containing exactly one UTF-8-encoded rune).
 	//
 	// This lets graph_surface.go's label truncation pattern
 	// (`len([]rune(label))` + `string([]rune(label)[:22])`) lower
 	// cleanly: OpLen on the resulting array gives the rune count,
 	// OpSlice gives a rune subsequence, and OpToString concatenates
-	// it back into a string (via the Y.E.3 ToStringVal join path).
+	// it back into a string (via the ToStringVal join path).
 	//
 	//   Operands — Operands[0] evaluates to the source string.
 	//   Value    — unused.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpToRunes keep evaluating exactly as before.
 	OpToRunes
 
-	// Closure allocation (Slice Y.G — AST-compiler initiative).
+	// Closure allocation.
 	// OpClosure materializes a ClosureVal at runtime that wraps a
 	// pre-registered anonymous FuncDef plus a snapshot of the locals
 	// the closure captures BY REFERENCE.
 	//
 	//   Value    — the synthetic FuncDef name registered by the
 	//              lowerer (e.g., "__y_g_funclit_<pos>") which lives
-	//              in Program.Funcs alongside Y.D's user functions.
+	//              in Program.Funcs alongside other user functions.
 	//   Operands — ordered captured-local names, each lowered as an
 	//              OpLitString. The VM resolves each name against the
 	//              CURRENT frame at OpClosure-evaluation time, takes
@@ -364,13 +363,13 @@ const (
 	// references before falling through to the synthetic FuncDef's
 	// own locals.
 	//
-	// Backwards-compatible per ADR 0002 — programs that never emit
+	// Backwards-compatible — programs that never emit
 	// OpClosure keep evaluating exactly as before.
 	OpClosure
 )
 
 // FuncDef defines a user-defined function callable from a handler or
-// from another user function via OpIndirectCall (Slice Y.D). The lowerer
+// from another user function via OpIndirectCall. The lowerer
 // (ir/golower/decl.go's pre-pass) walks the surface's top-level FuncDecls
 // and emits one FuncDef per declaration; the VM looks them up by Name
 // when an OpIndirectCall fires.
@@ -383,7 +382,8 @@ const (
 // Results is the count of return values (0 for void, 1 for the common
 // case, 2+ for multi-return like `func split(n int) (int, int)`). The
 // VM uses Results to decide whether to materialize the return as an
-// ObjectVal carrier (Y.B-style) for the lowerer's multi-LHS bindings.
+// ObjectVal carrier (the same style OpMapLookup uses) for the lowerer's
+// multi-LHS bindings.
 type FuncDef struct {
 	Name    string   `json:"name"`
 	Params  []string `json:"params"`
@@ -440,12 +440,12 @@ const (
 // It is the VM-oriented artifact shipped to the browser, distinct from the
 // compiler IR.
 //
-// Version is a reserved envelope field per ADR 0002 (versioning posture: stay
-// on v1). It is never default-emitted today; absent → treat as v1. A future
-// v2 wire format would set this explicitly and add wire-level discriminators.
+// Version is a reserved envelope field (versioning posture: stay on v1). It
+// is never default-emitted today; absent → treat as v1. A future v2 wire
+// format would set this explicitly and add wire-level discriminators.
 //
-// Surface is a runtime-only field per ADR 0001 (per-decoder surface injection,
-// no wire field). It is set by the surface-specific decoder (island, engine,
+// Surface is a runtime-only field (per-decoder surface injection, no wire
+// field). It is set by the surface-specific decoder (island, engine,
 // future canvas2d) and is never serialized.
 type Program struct {
 	Version     string        `json:"version,omitempty"`
@@ -457,13 +457,13 @@ type Program struct {
 	Signals     []SignalDef   `json:"signals"`
 	Computeds   []ComputedDef `json:"computeds"`
 	Handlers    []Handler     `json:"handlers"`
-	Funcs       []FuncDef     `json:"funcs,omitempty"` // user-defined helpers (Slice Y.D)
+	Funcs       []FuncDef     `json:"funcs,omitempty"` // user-defined helpers
 	StaticMask  []bool        `json:"static_mask"`
 	EngineNodes []EngineNode  `json:"engineNodes,omitempty"` // populated for SurfaceScene3D/Canvas2D
 	Surface     SurfaceKind   `json:"-"`
 
-	// MaxCallDepth caps the OpIndirectCall recursion depth (Slice Y.D).
-	// Zero means "use DefaultMaxCallDepth (256)". Surfaces with
+	// MaxCallDepth caps the OpIndirectCall recursion depth. Zero means
+	// "use DefaultMaxCallDepth (256)". Surfaces with
 	// genuinely-deep recursion can raise the value at lowering time.
 	MaxCallDepth int `json:"maxCallDepth,omitempty"`
 }

@@ -1,13 +1,13 @@
-// Slice Y.E.1 — lowering for the `make(...)` builtin.
+// Lowering for the `make(...)` builtin.
 //
 // `make` is a Go builtin (not a user function), and the lowerer must
 // route it BEFORE the user-function registry probe in lowerCallExpr.
-// Per Y.D's retrospective handoff, the dispatch lives alongside
+// The dispatch lives alongside
 // len/append/int/float64/string in the `switch id.Name` block so a
 // user-declared `make` (even though such a declaration would shadow the
 // builtin and confuse Go itself) cannot misroute the call.
 //
-// Supported forms — matches the Y.E plan's coverage exactly:
+// Supported forms:
 //
 //   make(map[K]V)               → OpMake("map")
 //   make(map[K]V, hint)         → OpMake("map")          // hint is ignored

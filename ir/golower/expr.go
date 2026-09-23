@@ -5,7 +5,7 @@
 // Identifier resolution is intentionally simple: the lowerer doesn't
 // know which names are locals vs signals vs props. It emits OpLocalGet
 // for every bare identifier and lets the VM's OpLocalGet → OpAssign
-// missing-frame fallback (X.A) or signal-aware OpAssign route the
+// missing-frame fallback or signal-aware OpAssign route the
 // access correctly at runtime. This trades a small amount of runtime
 // cost (one map lookup) for a much simpler lowerer.
 //
@@ -55,7 +55,7 @@ func (c *lowerCtx) lowerExpr(e ast.Expr) program.ExprID {
 	case *ast.CompositeLit:
 		return c.lowerCompositeLit(ex)
 	case *ast.FuncLit:
-		// Slice Y.G — closure lowering. Walks the body for captured
+		// Closure lowering. Walks the body for captured
 		// names, registers a synthetic FuncDef in prog.Funcs, and
 		// emits OpClosure. The captured frame is resolved by the VM
 		// at evaluation time so callers see Go's capture-by-reference
@@ -139,16 +139,15 @@ func (c *lowerCtx) lowerUnaryExpr(u *ast.UnaryExpr) program.ExprID {
 		argID := c.lowerExpr(u.X)
 		return c.addExpr(program.Expr{Op: program.OpNot, Operands: []program.ExprID{argID}})
 	case token.AND:
-		// Slice Y.E.3: `&x` (address-of). The VM has no pointer
+		// `&x` (address-of). The VM has no pointer
 		// concept — composite Values (struct/slice/map) are already
 		// reference-shared because Value.Fields/Items are Go reference
-		// types (Y.C / Y.D contract). For scalar `x`, taking the
+		// types. For scalar `x`, taking the
 		// address has no meaningful semantics in the supported subset.
 		// We honor the Go author's intent (pass by reference) by
 		// simply lowering to the underlying Value — host receivers and
 		// user functions both already propagate composite mutations
-		// through this path. Documented as ADR-style decision in
-		// Y.E's retrospective.
+		// through this path.
 		return c.lowerExpr(u.X)
 	default:
 		c.addIssue(u, fmt.Sprintf("unsupported unary operator %s", u.Op), escapeHatchSuggestion)
@@ -232,17 +231,17 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 			argID := c.lowerExpr(call.Args[0])
 			return c.addExpr(program.Expr{Op: program.OpToString, Operands: []program.ExprID{argID}})
 		case "make":
-			// Slice Y.E: `make(...)` allocates an empty collection. Routed
-			// BEFORE the user-fn registry probe per Y.D's retrospective
-			// handoff so a user-declared `make` can't accidentally shadow
+			// `make(...)` allocates an empty collection. Routed
+			// BEFORE the user-fn registry probe
+			// so a user-declared `make` can't accidentally shadow
 			// the builtin. The first arg is the collection type literal
 			// (a *ast.MapType or *ast.ArrayType); the rest are the
 			// optional length / capacity hints.
 			return c.lowerMakeCall(call)
 		default:
-			// Slice Y.D: route in-package calls into OpIndirectCall when
+			// Route in-package calls into OpIndirectCall when
 			// the name resolves through the user-function registry built
-			// by scanUserFuncs. Slice Y.G: ALSO route the call into
+			// by scanUserFuncs. ALSO route the call into
 			// OpIndirectCall when the identifier is a known closure-
 			// holding local (detected by the per-handler closureLocals
 			// pre-pass). The VM dispatches by name and prefers a
@@ -261,7 +260,7 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		}
 	}
 
-	// Slice Y.E.3: ArrayType "call" — Go's `[]T(x)` conversion syntax.
+	// ArrayType "call" — Go's `[]T(x)` conversion syntax.
 	// The canonical case from graph_surface.go is `[]rune(label)`, used
 	// to rune-count + truncate a label string. The lowerer treats it as
 	// a runtime string-to-rune-array conversion via OpToRunes; the VM
@@ -283,7 +282,7 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		c.addIssue(call, "method calls on non-package receivers are not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
 	}
-	// Slice Y.E: discriminate intrinsic vs host call by checking the
+	// Discriminate intrinsic vs host call by checking the
 	// receiver against the file's import set. Receivers that aren't
 	// imported packages (`c`, `ctx`, ...) route into OpHostCall;
 	// imported packages stay on the OpCall intrinsic path. This is

@@ -1,14 +1,10 @@
-// Slice Y.E.4 / Slice Y.G — graph_surface.go end-to-end lowering check.
+// graph_surface.go end-to-end lowering check.
 //
 // Lowers a real 450-line GoSX surface program and verifies the lowerer produces
-// a clean Program.
-//
-// Pre-Y.E:   40 issues
-// Post-Y.E:  1 issue (the *ast.FuncLit closure in Mount's StartLoop)
-// Post-Y.G:  0 issues (Y.G's FuncLit closure lowering closes the
-//            last residual; the entire Mount handler — props decode,
-//            initPositions seed, StartLoop with closure body — lowers
-//            cleanly).
+// a clean Program: 0 issues (FuncLit closure lowering closes the
+// last residual; the entire Mount handler — props decode,
+// initPositions seed, StartLoop with closure body — lowers
+// cleanly).
 //
 // THE FIXTURE IS VENDORED. Both tests below used to read
 // $HOME/work/hyphae/cmd/hypha-viz/graphsurface/graph_surface.go and skip when it
@@ -35,8 +31,8 @@ import (
 const vendoredGraphSurface = "testdata/graph_surface.go"
 
 // TestY_E_GraphSurfaceEndToEnd lowers the real graph_surface.go and
-// pins the post-Y.G issue count. The test is the canonical proof that
-// Y.E's surface coverage + Y.G's FuncLit lowering combine to give
+// pins the issue count at zero. The test is the canonical proof that
+// host-call surface coverage + FuncLit lowering combine to give
 // graph_surface.go a fully-supported lowering path.
 func TestY_E_GraphSurfaceEndToEnd(t *testing.T) {
 	path := graphSurfacePath(t)
@@ -48,7 +44,7 @@ func TestY_E_GraphSurfaceEndToEnd(t *testing.T) {
 	if prog == nil {
 		t.Fatal("LowerFile returned a nil Program — the lowerer should never drop the whole file")
 	}
-	// Issue count target: 0 (Y.G's FuncLit lowering closes the residual).
+	// Issue count target: 0 (FuncLit lowering closes the residual).
 	if lerr != nil {
 		t.Fatalf("LowerFile: expected 0 residual issues, got %d:\n%s",
 			lowerErrorIssueCount(lerr), lerr.Error())

@@ -1,4 +1,4 @@
-// Slice Y.B — multi-value assignment lowering.
+// Multi-value assignment lowering.
 //
 // This file holds the lowerMultiAssign dispatcher and its two
 // per-pattern helpers:
@@ -15,13 +15,11 @@
 //     assigning those locals to the LHS bindings in a second pass.
 //     This is what makes the canonical swap `a, b = b, a` correct.
 //
-// User-function multi-return (`a, b := f()`) is *not* handled here —
-// the supported subset has no user-defined function calls until
-// Slice Y.D adds OpIndirectCall + a per-surface function registry.
-// Multi-return intrinsics aren't in the X.B registry either, so this
-// path is currently unreachable for non-map Rhs. Y.B emits a clear
-// "cannot lower multi-value Rhs" issue for any non-map single-Rhs
-// case so the diagnostic points at the right follow-up slice.
+// User-function multi-return (`a, b := f()`) is handled below by
+// lowerUserFnMultiReturn when the callee is a registered multi-return
+// user function. Multi-return intrinsics aren't in the stdlib
+// intrinsic registry, so a non-map, non-user-function single Rhs
+// still reports a clear "cannot lower multi-value Rhs" diagnostic.
 
 package golower
 
@@ -47,12 +45,12 @@ func (c *lowerCtx) lowerMultiAssign(s *ast.AssignStmt) program.ExprID {
 		if idx, ok := s.Rhs[0].(*ast.IndexExpr); ok && len(s.Lhs) == 2 {
 			return c.lowerCommaOkMapIndex(s, idx)
 		}
-		// Slice Y.D: user-function multi-return — `a, b := f()`.
+		// User-function multi-return — `a, b := f()`.
 		// Resolve the call's callee through the user-function
 		// registry. If it's a registered multi-return user function,
 		// emit OpIndirectCall into a tmp ObjectVal carrier and bind
 		// each LHS via OpIndex against the `__ret_<i>` keys (reusing
-		// Y.B's bindFromTmp helper verbatim per Y.C's handoff note).
+		// bindFromTmp helper verbatim).
 		if call, ok := s.Rhs[0].(*ast.CallExpr); ok {
 			if id, idOK := call.Fun.(*ast.Ident); idOK {
 				if info, regOK := c.lookupUserFunc(id.Name); regOK && info.results == len(s.Lhs) {
@@ -60,7 +58,7 @@ func (c *lowerCtx) lowerMultiAssign(s *ast.AssignStmt) program.ExprID {
 				}
 			}
 		}
-		// Anything else (intrinsic multi-return is out of scope for Y.D)
+		// Anything else (intrinsic multi-return is out of scope)
 		// surfaces the legacy diagnostic so the author has a clear pointer.
 		c.addIssue(s, "multi-value assignment from a function call is not supported (use comma-ok map index, parallel assign, or a registered user function)", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpSeq})
@@ -194,12 +192,13 @@ func (c *lowerCtx) bindLHS(name string, valueID program.ExprID, tok token.Token)
 }
 
 // lhsTarget is the package-level helper that classifies an LHS slot
-// as (name, isBlank). Non-identifier LHSs (selectors, index exprs)
-// are not Y.B's scope — they show up in Y.C — so we treat them as
-// blank here and let the caller's per-statement diagnostic carry the
-// "left-hand side must be a simple identifier" issue from the
-// existing single-assign path. The caller is responsible for catching
-// non-ident LHS before reaching here when possible.
+// as (name, isBlank). Non-identifier LHSs (selectors, index exprs) are
+// out of scope here — they lower through the selector/indexed-set path
+// instead — so we treat them as blank here and let the caller's
+// per-statement diagnostic carry the "left-hand side must be a simple
+// identifier" issue from the existing single-assign path. The caller
+// is responsible for catching non-ident LHS before reaching here when
+// possible.
 func lhsTarget(e ast.Expr) (string, bool) {
 	id, ok := e.(*ast.Ident)
 	if !ok {
@@ -218,11 +217,9 @@ func (c *lowerCtx) freshLocal(kind string, pos token.Pos) string {
 	return fmt.Sprintf("__y_b_%s_%d", kind, int(pos))
 }
 
-// freshCallLocal mirrors freshLocal with Y.D's own prefix so the
-// retrospective-friendly bisect-on-tmp-name property survives: a tmp
-// named `__y_d_call_<pos>` is unambiguously a Y.D multi-return
-// carrier, while `__y_b_*` belongs to Y.B. Suggested by Y.C's handoff
-// notes for Y.D.
+// freshCallLocal mirrors freshLocal with its own prefix so a tmp
+// named `__y_d_call_<pos>` is unambiguously a multi-return call
+// carrier, distinct from the `__y_b_*` comma-ok lookup carriers.
 func (c *lowerCtx) freshCallLocal(pos token.Pos) string {
 	return fmt.Sprintf("__y_d_call_%d", int(pos))
 }
@@ -234,9 +231,9 @@ func (c *lowerCtx) freshCallLocal(pos token.Pos) string {
 //	a     := __tmp["__ret_0"]              // OpIndex read
 //	b     := __tmp["__ret_1"]              // OpIndex read
 //
-// Reuses Y.B's bindFromTmp helper directly — the key scheme is the
+// Reuses bindFromTmp directly — the key scheme is the
 // only thing that differs from comma-ok lookups. Blank-identifier
-// bindings (`_`) skip the per-LHS bind, matching Y.B's semantics.
+// bindings (`_`) skip the per-LHS bind, matching the same semantics.
 func (c *lowerCtx) lowerUserFnMultiReturn(s *ast.AssignStmt, call *ast.CallExpr, calleeName string) program.ExprID {
 	// Lower the call as a normal OpIndirectCall — same code path as a
 	// single-return user fn, but the VM materializes the multi-value

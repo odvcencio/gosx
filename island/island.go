@@ -128,7 +128,7 @@ type clientRuntimePlan struct {
 	// PreviewRelay is true when the page should emit the cross-frame relay
 	// script (gosx/relay.js) alongside the standard bootstrap. Driven by
 	// the process-level previewBootstrapEnabled flag — see
-	// island/preview_bootstrap.go and ADR 0009. Independent of Mode: a
+	// island/preview_bootstrap.go. Independent of Mode: a
 	// page may emit relay.js with mode="preview" (no islands, no engines)
 	// or with mode="full" (islands present AND preview enabled).
 	PreviewRelay bool
@@ -1015,10 +1015,10 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	var b strings.Builder
 	plan := r.clientRuntimePlan()
 	nonceAttr := cspNonceAttr(nonce)
-	// Preview-mode relay (ADR 0009) emits an additional script that wires
+	// Preview-mode relay emits an additional script that wires
 	// window.__gosx_relay_* before the bootstrap runs. Emitted FIRST so
 	// the relay's message listener is installed before any cross-frame
-	// signals arrive — see plan section C and client/js/relay.js.
+	// signals arrive — see client/js/relay.js.
 	if plan.PreviewRelay && r.relayPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), r.runtimeScriptAttrs(r.relayPath, nonce)))
 		b.WriteByte('\n')
@@ -1954,7 +1954,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	// cross-frame relay) get a dedicated "preview" mode. They emit
 	// wasm_exec + the tiny islands runtime + relay.js, but no manifest
 	// (no islands to hydrate yet — the storefront subscriber island is
-	// added by slice 6's downstream consumer).
+	// added by a later consumer).
 	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
 		mode = "preview"
 	}

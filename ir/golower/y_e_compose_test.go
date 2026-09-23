@@ -1,4 +1,4 @@
-// Slice Y.E compositional tests — exercise Y.A through Y.E features
+// Compositional tests — exercise multiple lowering features
 // together to catch interaction bugs that single-feature tests miss.
 
 package golower
@@ -11,8 +11,8 @@ import (
 
 // TestY_E_TypeColorPlusSetFillStyle reproduces the canonical
 // graph_surface.go composition: `c.SetFillStyle(typeColor(n.Type))`.
-// Exercises Y.E.3 (switch — typeColor uses one), Y.D (user-fn call),
-// and Y.E.2 (host call on the result).
+// Exercises switch lowering (typeColor uses one), a user-fn call,
+// and a host call on the result.
 func TestY_E_TypeColorPlusSetFillStyle(t *testing.T) {
 	src := []byte(`package handlers
 
@@ -133,11 +133,10 @@ func F(n int) float64 {
 	}
 }
 
-// TestY_E_StepLayoutKernel is the Y.E analog of Y.C's Tier-4 kernel
-// test: a stepwise distillation of graph_surface.go's stepLayout
-// integration loop. Exercises Y.A composite literals, Y.B comma-ok
-// map lookups, Y.C LHS index/field set, Y.D user-fn dispatch, AND
-// Y.E make() + host call.
+// TestY_E_StepLayoutKernel is a stepwise distillation of
+// graph_surface.go's stepLayout integration loop. Exercises composite
+// literals, comma-ok map lookups, LHS index/field set, user-fn
+// dispatch, AND make() + host call.
 func TestY_E_StepLayoutKernel(t *testing.T) {
 	src := []byte(`package handlers
 

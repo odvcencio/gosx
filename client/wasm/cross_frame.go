@@ -11,9 +11,7 @@ import (
 
 // registerCrossFrameRelay wires the bridge's cross-frame relay opt-in
 // (Bridge.EnableCrossFrameRelay) to the JS-side postMessage transport
-// installed by client/js/relay.js. See ADR 0009
-// (decisions/0009-iframe-transport-postmessage-relay.md) and plan section A
-// of plans/2026-05-26-iframe-cross-frame-signal-transport.md.
+// installed by client/js/relay.js.
 //
 // Wire contract:
 //   - __gosx_enable_cross_frame_relay(prefix, allowedOrigin): WASM-side

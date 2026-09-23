@@ -1,5 +1,5 @@
-// Slice Y.E failure-mode tests. Pin diagnostic strings for the
-// Y.E-introduced rejection paths so a future refactor that changes
+// Failure-mode tests. Pin diagnostic strings for the
+// rejection paths so a future refactor that changes
 // the wording fires a visible regression instead of silently swapping
 // out the author-facing message.
 

@@ -8,7 +8,7 @@ import (
 	"m31labs.dev/gosx/island/program"
 )
 
-// TestLowerTrivialFunction is the spec test from X.C.1: lowering
+// TestLowerTrivialFunction is the spec test: lowering
 // `func F() int { return 42 }` produces a Program whose single Handler
 // evaluates to IntVal(42).
 func TestLowerTrivialFunction(t *testing.T) {
