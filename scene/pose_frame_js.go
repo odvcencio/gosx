@@ -34,7 +34,9 @@ func DispatchPoseFrameAfterCommands(target string, beforeCommands []Command, fra
 	if target == "" {
 		return errors.New("scene pose frame target is empty")
 	}
-	data, err := EncodePoseFrame(frame)
+	encoder := poseEncoderPool.Get().(*PoseFrameEncoder)
+	defer poseEncoderPool.Put(encoder)
+	data, err := encoder.Encode(frame)
 	if err != nil {
 		return err
 	}
@@ -73,6 +75,7 @@ func DispatchPoseFrameAfterCommands(target string, beforeCommands []Command, fra
 }
 
 var (
+	poseEncoderPool   = sync.Pool{New: func() any { return new(PoseFrameEncoder) }}
 	poseRejectionOnce sync.Once
 	poseRejectionFunc js.Func
 )
