@@ -627,7 +627,13 @@ const budgets = [
   // per frame) added a small header-parsing helper to the same loader IIFE.
   // Measured: 1_649_209 / 451_571 / 362_775. Only gzip was within 13 bytes
   // of the prior hard limit; 436_000 restores real headroom.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 436_000, brotli: 346_700 },
+  // Scroll-driven camera scenes now track the display cadence during active
+  // input (scene.Props.ScrollFrameRate), and camera proximity reaches Selena
+  // materials on both render paths. Measured: 1_649_935 / 452_098 / 363_101.
+  // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
+  // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
+  // Gzip stays at 436_000: its hard limit already clears the new measurement.
+  { file: "bootstrap.js", raw: 1_584_500, gzip: 436_000, brotli: 346_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
