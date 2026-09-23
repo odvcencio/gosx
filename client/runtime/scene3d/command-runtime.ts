@@ -11,6 +11,8 @@
   if (typeof window === "undefined" || window.__gosx_scene3d_command_bridge) return;
   var revision = 0;
   var selector = 'script[type="application/json"][data-gosx-scene-commands]';
+  var poseFields = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "animation", "animationTime", "animationLoop"];
+  var poseQueues = new Map();
 
   function key(target, options) {
     if (options && typeof options.engineID === "string" && options.engineID.trim()) return options.engineID.trim();
@@ -29,6 +31,7 @@
     var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
     if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D pose frame must be an ArrayBuffer or Uint8Array");
     var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var decoder = new TextDecoder("utf-8", { fatal: true });
     var offset = 0;
     function need(size) {
       if (size > view.byteLength - offset) throw new RangeError("truncated Scene3D pose frame");
@@ -38,7 +41,7 @@
       var length = u16();
       if (!length) throw new TypeError("empty Scene3D pose ID");
       need(length);
-      var value = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset, offset + length));
+      var value = decoder.decode(bytes.subarray(offset, offset + length));
       offset += length;
       return value;
     }
@@ -134,6 +137,78 @@
 
   function dispatchPoseFrame(target, frame, options) {
     var opts = options || {};
+    var queueKey = key(target, opts) || target;
+    if (!queueKey) return Promise.reject(new Error("Scene3D pose frame target has no stable id"));
+    return new Promise(function(resolve, reject) {
+      var queue = poseQueues.get(queueKey);
+      if (!queue) {
+        queue = { running: false, pending: null, stats: null };
+        poseQueues.set(queueKey, queue);
+      }
+      if (queue.pending) {
+        var older = queue.pending.opts.beforeCommands;
+        var newer = opts.beforeCommands;
+        var oldMembership = null;
+        if (Array.isArray(older)) for (var i = older.length - 1; i >= 0; i--) {
+          if (older[i] && older[i].kind === 11) { oldMembership = older[i]; break; }
+        }
+        var hasNewMembership = Array.isArray(newer) && newer.some(function(command) { return command && command.kind === 11; });
+        if (oldMembership && !hasNewMembership) {
+          opts = Object.assign({}, opts, { beforeCommands: [oldMembership].concat(Array.isArray(newer) ? newer : []) });
+        }
+        poseStats(queue.pending.target, queue.pending.opts).superseded++;
+        queue.pending.resolve({ applied: false, binary: false, superseded: true });
+      }
+      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject };
+      if (!queue.running) runPoseQueue(queueKey, queue);
+    });
+  }
+
+  function poseStats(target, opts) {
+    var queue = poseQueues.get(key(target, opts) || target);
+    var rec = record(target, opts);
+    if (rec && rec.handle.__gosxPoseFrameStats) return rec.handle.__gosxPoseFrameStats;
+    var stats = queue && queue.stats || {
+      accepted: 0, plannerCallsSkipped: 0, fallback: 0, superseded: 0,
+      errors: 0, lastError: "", rejected: Object.create(null),
+    };
+    if (queue) queue.stats = stats;
+    if (rec) rec.handle.__gosxPoseFrameStats = stats;
+    return stats;
+  }
+
+  function runPoseQueue(queueKey, queue) {
+    var job = queue.pending;
+    if (!job) { queue.running = false; poseQueues.delete(queueKey); return; }
+    queue.pending = null;
+    queue.running = true;
+    var operation;
+    try {
+      operation = Array.isArray(job.opts.beforeCommands)
+        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() { return dispatchPoseFrameNow(job.target, job.frame, job.opts); })
+        : dispatchPoseFrameNow(job.target, job.frame, job.opts);
+    } catch (error) {
+      operation = Promise.reject(error);
+    }
+    Promise.resolve(operation).then(function(result) {
+      if (result && result.applied && result.binary === false) poseStats(job.target, job.opts).fallback++;
+      job.resolve(result);
+      runPoseQueue(queueKey, queue);
+    }, function(error) {
+      var stats = poseStats(job.target, job.opts);
+      stats.errors++;
+      stats.lastError = String(error && error.message || error);
+      var rec = record(job.target, job.opts);
+      var eventTarget = rec && rec.mount || window;
+      if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
+        try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:pose-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
+      }
+      job.reject(error);
+      runPoseQueue(queueKey, queue);
+    });
+  }
+
+  function dispatchPoseFrameNow(target, frame, opts) {
     function fallback(error) {
       if (!Array.isArray(opts.fallbackCommands)) throw error;
       return dispatchCommands(target, opts.fallbackCommands, opts).then(function(result) {
@@ -147,6 +222,7 @@
     function poll(resolve, reject) {
       var rec = record(target, opts);
       if (rec) {
+        poseStats(target, opts);
         if (typeof rec.handle.applyPoseFrame !== "function") return reject(new Error("Scene3D pose frames are unsupported by this mount"));
         return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
       }
@@ -158,7 +234,7 @@
   }
 
   function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle) {
-    var stats = handle.__gosxPoseFrameStats || (handle.__gosxPoseFrameStats = { accepted: 0, plannerCallsSkipped: 0, rejected: Object.create(null) });
+    var stats = handle.__gosxPoseFrameStats || (handle.__gosxPoseFrameStats = { accepted: 0, plannerCallsSkipped: 0, fallback: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null) });
     function reject(reason) {
       stats.rejected[reason] = (stats.rejected[reason] || 0) + 1;
       throw new Error("Scene3D pose frame rejected: " + reason);
@@ -166,25 +242,40 @@
     if (!Array.isArray(batches)) reject("invalid-frame");
     if (state._modelHydrationPromise || !state._hydratedModelRecords) reject("renderer-not-ready");
     var mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
-    var byID = new Map(mounted.map(function(batch) { return [batch.id, batch]; }));
-    var patches = [];
+    var targets = [];
     for (var batch of batches) {
-      var current = byID.get(batch.id);
+      var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
       if (!current || !Array.isArray(batch.instances) || current.instances.length !== batch.instances.length) reject("membership-changed");
-      var instances = new Map(current.instances.map(function(instance) { return [instance.id, instance]; }));
-      for (var pose of batch.instances) {
-        var instance = instances.get(pose.id);
-        if (!instance) reject("membership-changed");
-        patches.push({ instance: instance, pose: pose });
+      for (var index = 0; index < batch.instances.length; index++) {
+        if (current.instances[index].id !== batch.instances[index].id) reject("membership-order-changed");
+      }
+      targets.push(current);
+    }
+    // Reuse one flat rollback buffer across frames. No per-instance maps,
+    // patch objects, or snapshot arrays are created on the accepted path.
+    var previous = handle.__gosxPosePrevious || (handle.__gosxPosePrevious = []);
+    var offset = 0;
+    for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      for (var instanceIndex = 0; instanceIndex < batches[batchIndex].instances.length; instanceIndex++) {
+        var instance = targets[batchIndex].instances[instanceIndex];
+        var pose = batches[batchIndex].instances[instanceIndex];
+        for (var field of poseFields) {
+          previous[offset++] = instance[field];
+          instance[field] = pose[field];
+        }
       }
     }
-    var fields = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "animation", "animationTime", "animationLoop"];
-    var previous = patches.map(function(patch) { return fields.map(function(field) { return patch.instance[field]; }); });
-    for (var patch of patches) for (var field of fields) patch.instance[field] = patch.pose[field];
+    previous.length = offset;
     var retained = false;
     try { retained = updateRigidPoses(state); } catch (_error) { retained = false; }
     if (!retained) {
-      for (var i = 0; i < patches.length; i++) for (var j = 0; j < fields.length; j++) patches[i].instance[fields[j]] = previous[i][j];
+      offset = 0;
+      for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        for (var instanceIndex = 0; instanceIndex < batches[batchIndex].instances.length; instanceIndex++) {
+          var instance = targets[batchIndex].instances[instanceIndex];
+          for (var field of poseFields) instance[field] = previous[offset++];
+        }
+      }
       reject("retained-pose-unavailable");
     }
     stats.accepted++;

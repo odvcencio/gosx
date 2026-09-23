@@ -4,12 +4,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"unicode/utf8"
 )
 
 // PoseFrame carries pose updates for retained InstancedGLBMeshIR
 // batches, including their animation clip, time, and loop state. Membership,
 // appearance, and assets still use scene commands. IDs must match an already
-// mounted batch exactly. Send EncodePoseFrame's bytes to
+// mounted batch in the same instance order. ParentMatrix is unsupported; use
+// a JSON scene command when it changes. Send EncodePoseFrame's bytes to
 // window.__gosx.scene3d.dispatchPoseFrame(target, bytes, options); supply
 // options.fallbackCommands for the existing JSON command route when retained
 // application is unavailable.
@@ -30,13 +32,12 @@ func EncodePoseFrame(frame PoseFrame) ([]byte, error) {
 	if len(frame.Batches) > math.MaxUint16 {
 		return nil, errors.New("scene pose frame has too many batches")
 	}
-	out := make([]byte, 6)
-	copy(out, "GSP2")
 	clips := []string{""}
 	clipIndex := map[string]uint16{"": 0}
 	seenBatches := make(map[string]bool, len(frame.Batches))
+	var out []byte
 	appendID := func(id string) error {
-		if id == "" || len(id) > math.MaxUint16 {
+		if id == "" || len(id) > math.MaxUint16 || !utf8.ValidString(id) {
 			return errors.New("scene pose frame requires a bounded nonempty ID")
 		}
 		out = binary.LittleEndian.AppendUint16(out, uint16(len(id)))
@@ -58,6 +59,23 @@ func EncodePoseFrame(frame PoseFrame) ([]byte, error) {
 			clips = append(clips, instance.Animation)
 		}
 	}
+	// The wire size is known after the clip dictionary is collected. Reserve it
+	// once so dense crowds do not repeatedly grow/copy the output buffer.
+	capacity := uint64(8)
+	for _, clip := range clips[1:] {
+		capacity += uint64(2 + len(clip))
+	}
+	for _, batch := range frame.Batches {
+		capacity += uint64(4 + len(batch.ID))
+		for _, instance := range batch.Instances {
+			capacity += uint64(45 + len(instance.ID))
+		}
+	}
+	if capacity > uint64(^uint(0)>>1) {
+		return nil, errors.New("scene pose frame exceeds addressable size")
+	}
+	out = make([]byte, 6, int(capacity))
+	copy(out, "GSP2")
 	binary.LittleEndian.PutUint16(out[4:], uint16(len(clips)-1))
 	for _, clip := range clips[1:] {
 		if err := appendID(clip); err != nil {
@@ -79,6 +97,9 @@ func EncodePoseFrame(frame PoseFrame) ([]byte, error) {
 		out = binary.LittleEndian.AppendUint16(out, uint16(len(batch.Instances)))
 		seenInstances := make(map[string]bool, len(batch.Instances))
 		for _, instance := range batch.Instances {
+			if len(instance.ParentMatrix) != 0 {
+				return nil, errors.New("scene pose frame cannot encode parentMatrix; use JSON scene commands")
+			}
 			if seenInstances[instance.ID] {
 				return nil, errors.New("scene pose frame has duplicate instance ID")
 			}

@@ -2,6 +2,8 @@ package scene
 
 import (
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 )
@@ -28,6 +30,41 @@ func TestEncodePoseFrameCarriesAnimationAndTransforms(t *testing.T) {
 	}
 }
 
+func BenchmarkEncodeCrowdPoseFrame(b *testing.B) {
+	instances := make([]MeshInstanceIR, 500)
+	for i := range instances {
+		instances[i] = MeshInstanceIR{ID: fmt.Sprintf("actor-%d", i), X: float64(i), ScaleX: 1, ScaleY: 1, ScaleZ: 1, Animation: "Run", AnimationTime: .25, AnimationLoop: true}
+	}
+	frame := PoseFrame{Batches: []PoseBatch{{ID: "crowd", Instances: instances}}}
+	b.Run("binary", func(b *testing.B) {
+		b.ReportAllocs()
+		var size int
+		for i := 0; i < b.N; i++ {
+			data, err := EncodePoseFrame(frame)
+			if err != nil {
+				b.Fatal(err)
+			}
+			size = len(data)
+		}
+		b.SetBytes(int64(size))
+		b.ReportMetric(float64(size), "wire-B")
+	})
+	b.Run("json-command", func(b *testing.B) {
+		command := SetInstancedGLBMeshesCommand([]InstancedGLBMeshIR{{ID: "crowd", Src: "/crowd.glb", Instances: instances}})
+		b.ReportAllocs()
+		var size int
+		for i := 0; i < b.N; i++ {
+			data, err := json.Marshal(command)
+			if err != nil {
+				b.Fatal(err)
+			}
+			size = len(data)
+		}
+		b.SetBytes(int64(size))
+		b.ReportMetric(float64(size), "wire-B")
+	})
+}
+
 func TestEncodePoseFrameRejectsAmbiguousOrUnrepresentableInput(t *testing.T) {
 	for name, frame := range map[string]PoseFrame{
 		"duplicate batch":         {Batches: []PoseBatch{{ID: "a"}, {ID: "a"}}},
@@ -35,6 +72,7 @@ func TestEncodePoseFrameRejectsAmbiguousOrUnrepresentableInput(t *testing.T) {
 		"nonfinite":               {Batches: []PoseBatch{{ID: "a", Instances: []MeshInstanceIR{{ID: "x", X: math.NaN()}}}}},
 		"overflow":                {Batches: []PoseBatch{{ID: "a", Instances: []MeshInstanceIR{{ID: "x", X: math.MaxFloat64}}}}},
 		"negative animation time": {Batches: []PoseBatch{{ID: "a", Instances: []MeshInstanceIR{{ID: "x", AnimationTime: -1}}}}},
+		"parent matrix":           {Batches: []PoseBatch{{ID: "a", Instances: []MeshInstanceIR{{ID: "x", ParentMatrix: []float64{1}}}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := EncodePoseFrame(frame); err == nil {
