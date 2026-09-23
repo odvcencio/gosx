@@ -1,7 +1,7 @@
 {
   "scene3d/animation.ts": 89,
-  "scene3d/command-bridge.ts": 10,
-  "scene3d/command-runtime.ts": 20,
+  "scene3d/command-bridge.ts": 14,
+  "scene3d/command-runtime.ts": 46,
   "scene3d/compute.ts": 110,
   "scene3d/dom-regions.ts": 60,
   "scene3d/gltf.ts": 311,
@@ -12,7 +12,7 @@
   "scene3d/mount-telemetry.ts": 36,
   "scene3d/mount-viewport.ts": 32,
   "scene3d/mount-webgl.ts": 563,
-  "scene3d/mount.ts": 331,
+  "scene3d/mount.ts": 335,
   "scene3d/overlay-dom.ts": 133,
   "scene3d/overlays.ts": 9,
   "scene3d/webgl.ts": 1078,
