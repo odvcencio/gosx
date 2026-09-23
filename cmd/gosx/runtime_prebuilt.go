@@ -56,6 +56,49 @@ const (
 	runtimeManifestWASMExecName = "gosx-runtime-wasm_exec.js"
 )
 
+// knownPrebuiltRuntimeVariantFiles returns the fixed set of file names a
+// legitimate prebuilt-runtime release manifest can name for a "measured"
+// variant: exactly runtimeBuildTargets()'s own file field (runtimepaths.go),
+// the same literal names `gosx build-runtime` writes locally. A manifest
+// variant's File is otherwise untrusted input — fetched over the network
+// (resolvePrebuiltRuntime) or read back from an on-disk cache a manifest
+// also lives in (loadVerifiedPrebuiltRuntimeCache) — so it must never widen
+// beyond this fixed list just because a future variant might exist; add the
+// new variant to runtimeBuildTargets first.
+func knownPrebuiltRuntimeVariantFiles() map[string]bool {
+	targets := runtimeBuildTargets()
+	known := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		known[t.file] = true
+	}
+	return known
+}
+
+// validatePrebuiltRuntimeFileName rejects a manifest-supplied file name
+// before it is ever joined onto the prebuilt-runtime cache directory.
+// filepath.Join(dir, name) does not stop name from walking back out of dir
+// — a manifest naming "../../../../etc/cron.d/evil" (fetched from the
+// release host, or planted by anything with write access to the on-disk
+// cache the manifest itself lives in) would let resolvePrebuiltRuntime
+// write, or loadVerifiedPrebuiltRuntimeCache read, outside the cache
+// directory entirely. Two independent checks apply: name must carry no
+// path separator and no ".." segment (defense in depth, checked first so
+// the error names the actual problem), and name must be one of the fixed,
+// known variant file names (the actual allow-list) — never a name this
+// release's manifest merely claims is fine.
+func validatePrebuiltRuntimeFileName(name string) error {
+	if name == "" {
+		return fmt.Errorf("prebuilt runtime manifest names an empty file")
+	}
+	if name != filepath.Base(name) || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return fmt.Errorf("prebuilt runtime manifest names file %q: must be a bare file name with no path separator or \"..\" segment", name)
+	}
+	if !knownPrebuiltRuntimeVariantFiles()[name] {
+		return fmt.Errorf("prebuilt runtime manifest names file %q: not a known runtime variant file", name)
+	}
+	return nil
+}
+
 // maxRuntimeAssetBytes bounds a single fetched release asset. The largest
 // real artifact (the "full" runtime variant) is a few megabytes after
 // wasm-opt -Oz; this ceiling exists to stop a misbehaving or compromised
@@ -284,6 +327,9 @@ func resolvePrebuiltRuntime(ctx context.Context, cacheRoot string, fetcher runti
 		if v.File == "" || v.SHA256 == "" {
 			return prebuiltRuntimeBundle{}, fmt.Errorf("prebuilt runtime manifest for %s: variant %s is missing its file name or hash", version, v.ID)
 		}
+		if err := validatePrebuiltRuntimeFileName(v.File); err != nil {
+			return prebuiltRuntimeBundle{}, fmt.Errorf("prebuilt runtime manifest for %s, variant %s: %w", version, v.ID, err)
+		}
 		data, err := fetcher.FetchAsset(ctx, version, v.File)
 		if err != nil {
 			return prebuiltRuntimeBundle{}, fmt.Errorf("fetch prebuilt runtime %s (%s): %w", v.ID, v.File, err)
@@ -345,6 +391,9 @@ func loadVerifiedPrebuiltRuntimeCache(dir string) (prebuiltRuntimeBundle, bool) 
 			continue
 		}
 		measured++
+		if err := validatePrebuiltRuntimeFileName(v.File); err != nil {
+			return prebuiltRuntimeBundle{}, false
+		}
 		data, err := os.ReadFile(filepath.Join(dir, v.File))
 		if err != nil {
 			return prebuiltRuntimeBundle{}, false

@@ -225,6 +225,153 @@ func TestResolvePrebuiltRuntimePropagatesFetchError(t *testing.T) {
 	}
 }
 
+// TestValidatePrebuiltRuntimeFileNameRejectsUnsafeOrUnknownNames pins
+// validatePrebuiltRuntimeFileName's two independent checks: no path
+// separator or ".." segment (regardless of whether the result would
+// technically resolve inside the cache dir), and membership in the fixed
+// runtimeBuildTargets() file list. A manifest-supplied variant File is
+// untrusted input; either check failing must reject the name before it is
+// ever joined onto a directory on disk.
+func TestValidatePrebuiltRuntimeFileNameRejectsUnsafeOrUnknownNames(t *testing.T) {
+	cases := []struct {
+		name    string
+		file    string
+		wantErr bool
+	}{
+		{"known core variant", "gosx-runtime-core.wasm", false},
+		{"known full variant", "gosx-runtime.wasm", false},
+		{"known islands variant", "gosx-runtime-islands.wasm", false},
+		{"empty", "", true},
+		{"parent traversal", "../../../../etc/cron.d/evil", true},
+		{"embedded traversal", "gosx-runtime-core.wasm/../../evil", true},
+		{"unix path separator", "sub/gosx-runtime-core.wasm", true},
+		{"windows path separator", `sub\gosx-runtime-core.wasm`, true},
+		{"absolute path", "/etc/passwd", true},
+		{"bare dotdot", "..", true},
+		{"unknown but otherwise safe name", "gosx-runtime-unknown.wasm", true},
+		{"manifest asset name itself, not a variant", runtimeManifestAssetName, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validatePrebuiltRuntimeFileName(c.file)
+			if c.wantErr && err == nil {
+				t.Fatalf("validatePrebuiltRuntimeFileName(%q): expected an error, got nil", c.file)
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("validatePrebuiltRuntimeFileName(%q): unexpected error: %v", c.file, err)
+			}
+		})
+	}
+}
+
+// TestResolvePrebuiltRuntimeRejectsPathTraversalVariantFileName is a
+// regression test: resolvePrebuiltRuntime used to join a manifest's
+// variant.File onto the cache directory (both to fetch-and-write and, via
+// loadVerifiedPrebuiltRuntimeCache, to re-read) with no validation. A
+// manifest naming a variant's File with a ".." segment could make that join
+// escape the cache directory entirely — writing a fetched, attacker- (or
+// compromised-release-host-) controlled payload to an arbitrary path on
+// disk. This proves such a manifest is rejected outright, and that nothing
+// escapes the cache root in the process.
+func TestResolvePrebuiltRuntimeRejectsPathTraversalVariantFileName(t *testing.T) {
+	fetcher := buildFakeRuntimeRelease("v1.2.3")
+
+	var evidence ouroboros.RuntimeBuildEvidence
+	if err := json.Unmarshal(fetcher.assets["v1.2.3/"+runtimeManifestAssetName], &evidence); err != nil {
+		t.Fatal(err)
+	}
+	const escapePayload = "planted-by-a-malicious-or-compromised-release-host"
+	for i := range evidence.Variants {
+		if evidence.Variants[i].ID != "core" {
+			continue
+		}
+		evidence.Variants[i].File = "../../escaped-gosx-runtime-core.wasm"
+		evidence.Variants[i].SHA256 = sha256Hex([]byte(escapePayload))
+		evidence.Variants[i].Bytes = int64(len(escapePayload))
+	}
+	manifestData, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher.assets["v1.2.3/"+runtimeManifestAssetName] = manifestData
+	fetcher.assets["v1.2.3/../../escaped-gosx-runtime-core.wasm"] = []byte(escapePayload)
+
+	cacheRoot := t.TempDir()
+	outsideMarker := filepath.Join(filepath.Dir(cacheRoot), "escaped-gosx-runtime-core.wasm")
+	defer os.Remove(outsideMarker)
+
+	_, err = resolvePrebuiltRuntime(context.Background(), cacheRoot, fetcher, "v1.2.3")
+	if err == nil {
+		t.Fatal("expected a path-traversal variant file name to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not a known runtime variant file") && !strings.Contains(err.Error(), "path separator") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(outsideMarker); statErr == nil {
+		t.Fatal("path-traversal variant file name must not write outside the cache root")
+	}
+	if _, statErr := os.Stat(filepath.Join(cacheRoot, "v1.2.3", runtimeManifestAssetName)); statErr == nil {
+		t.Fatal("a rejected manifest must not publish a cache manifest")
+	}
+}
+
+// TestLoadVerifiedPrebuiltRuntimeCacheRejectsPathTraversalVariantFileName
+// covers the read-side counterpart: a cache directory whose on-disk
+// manifest.json has been tampered with (or was written by an older,
+// unvalidated version of resolvePrebuiltRuntime) to name a variant File
+// with a ".." segment must not be read via that traversal path either; the
+// cache entry is rejected as a miss, the same as any other corrupted entry.
+func TestLoadVerifiedPrebuiltRuntimeCacheRejectsPathTraversalVariantFileName(t *testing.T) {
+	fetcher := buildFakeRuntimeRelease("v1.2.3")
+	cacheRoot := t.TempDir()
+	if _, err := resolvePrebuiltRuntime(context.Background(), cacheRoot, fetcher, "v1.2.3"); err != nil {
+		t.Fatalf("initial resolve: %v", err)
+	}
+
+	dir := filepath.Join(cacheRoot, "v1.2.3")
+	manifestData, err := os.ReadFile(filepath.Join(dir, runtimeManifestAssetName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence ouroboros.RuntimeBuildEvidence
+	if err := json.Unmarshal(manifestData, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	// The planted "outside" file's bytes are made to match the tampered
+	// manifest's OWN recorded hash for the core variant, not the real core
+	// wasm bytes. This is deliberate: it isolates the file-name validation
+	// as the only thing standing between "cache hit" and "cache miss" here.
+	// Without it, verifyRuntimeAssetDigest's pre-existing hash check would
+	// independently reject a mismatched payload and this test would still
+	// pass even if the path-traversal validation this item adds were
+	// missing entirely — proving nothing about the fix.
+	outsideSecret := filepath.Join(filepath.Dir(dir), "outside-secret.txt")
+	outsideBytes := []byte("outside the version cache dir")
+	if err := os.WriteFile(outsideSecret, outsideBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outsideSecret)
+
+	for i := range evidence.Variants {
+		if evidence.Variants[i].ID == "core" {
+			evidence.Variants[i].File = "../outside-secret.txt"
+			evidence.Variants[i].SHA256 = sha256Hex(outsideBytes)
+			evidence.Variants[i].Bytes = int64(len(outsideBytes))
+		}
+	}
+	tampered, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, runtimeManifestAssetName), tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := loadVerifiedPrebuiltRuntimeCache(dir); ok {
+		t.Fatal("expected a path-traversal variant file name to make the cache entry a miss, even though the traversed file's hash matches what the tampered manifest claims")
+	}
+}
+
 func TestLooksLikeStableGoSXReleaseVersion(t *testing.T) {
 	cases := []struct {
 		version string
