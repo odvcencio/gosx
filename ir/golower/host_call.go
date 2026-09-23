@@ -45,11 +45,14 @@ import (
 	"m31labs.dev/gosx/island/program"
 )
 
-// scanImports populates ctx.imports with the source-level identifier
-// each import declaration introduces. The alias takes precedence over
-// the path-derived name when present.
+// scanImports populates ctx.imports, mapping the source-level identifier
+// each import declaration introduces to its canonical package name. The
+// alias takes precedence over the path-derived name for the map KEY (what
+// a call site writes); the map VALUE is always the path-derived canonical
+// name, alias or not, because the intrinsic table downstream is keyed by
+// canonical name (see the imports field doc in golower.go).
 func (c *lowerCtx) scanImports(file *ast.File) {
-	c.imports = make(map[string]bool, len(file.Imports))
+	c.imports = make(map[string]string, len(file.Imports))
 	for _, spec := range file.Imports {
 		if spec == nil || spec.Path == nil {
 			continue
@@ -58,13 +61,17 @@ func (c *lowerCtx) scanImports(file *ast.File) {
 		if name == "" {
 			continue
 		}
-		c.imports[name] = true
+		canonical := importCanonicalName(spec)
+		if canonical == "" {
+			canonical = name
+		}
+		c.imports[name] = canonical
 	}
 }
 
 // importLocalName returns the source-level identifier under which an
 // import is referenced. Honors the alias if present (`m "math"` →
-// "m") and falls back to the last path segment otherwise
+// "m") and falls back to the canonical path-derived name otherwise
 // (`"strings"` → "strings", `"m31labs.dev/gosx/engine/surface"` →
 // "surface").
 func importLocalName(spec *ast.ImportSpec) string {
@@ -77,6 +84,18 @@ func importLocalName(spec *ast.ImportSpec) string {
 		}
 		return spec.Name.Name
 	}
+	return importCanonicalName(spec)
+}
+
+// importCanonicalName returns the package name an import path implies,
+// ignoring any local alias (`m "math"` → "math", same as `"math"` with no
+// alias). This is the name knownIntrinsics keys its "pkg.Func" entries
+// with, so the lowerer resolves through this — not importLocalName — when
+// it builds a qualified intrinsic name. Without this distinction, a call
+// through an aliased import (`m.Sqrt(x)` after `import m "math"`) built
+// "m.Sqrt", which knownIntrinsics never contains, and the lowerer rejected
+// a perfectly ordinary Go import alias as an unsupported call.
+func importCanonicalName(spec *ast.ImportSpec) string {
 	raw, err := strconv.Unquote(spec.Path.Value)
 	if err != nil {
 		return ""
@@ -111,7 +130,22 @@ func (c *lowerCtx) isImportedPackage(name string) bool {
 	if c.imports == nil {
 		return false
 	}
-	return c.imports[name]
+	_, ok := c.imports[name]
+	return ok
+}
+
+// canonicalPackageName resolves the source-level identifier a call site
+// wrote (name, possibly an import alias) to the canonical package name
+// knownIntrinsics is keyed by. Callers that already confirmed
+// isImportedPackage(name) can treat the ok result as always true; it exists
+// so a caller that hasn't checked yet gets a safe zero value instead of a
+// silently wrong qualified name.
+func (c *lowerCtx) canonicalPackageName(name string) (string, bool) {
+	if c.imports == nil {
+		return "", false
+	}
+	canonical, ok := c.imports[name]
+	return canonical, ok
 }
 
 // lowerHostCall emits OpHostCall for a selector-style call where the

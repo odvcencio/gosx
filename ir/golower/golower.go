@@ -176,12 +176,19 @@ type lowerCtx struct {
 	// function" diagnostic.
 	funcs funcRegistry
 
-	// imports holds the source-level identifier of each imported
-	// package in the current file. Populated by
+	// imports maps the source-level identifier of each imported package
+	// in the current file to its canonical package name. Populated by
 	// scanImports so lowerCallExpr can tell `math.Sin(x)` (intrinsic
 	// dispatch through OpCall) apart from `c.MoveTo(x, y)` (host
-	// receiver dispatch through OpHostCall).
-	imports map[string]bool
+	// receiver dispatch through OpHostCall). The map's key is the local
+	// identifier a call site actually writes — the alias when the
+	// import declares one (`m "math"` → key "m") — and its value is
+	// always the canonical name (`m "math"` → value "math"), because
+	// knownIntrinsics in intrinsics_table.go is keyed by canonical
+	// package name, not by whatever alias one file happens to use.
+	// isImportedPackage answers membership; canonicalPackageName answers
+	// the value a caller needs to build a qualified intrinsic name.
+	imports map[string]string
 
 	// closureLocals holds the set of bare identifiers that the current
 	// handler body assigns a *ast.FuncLit value to. Used
