@@ -168,8 +168,40 @@ func (v *Value) dict() map[string]Value {
 	return *(*map[string]Value)(unsafe.Pointer(&p))
 }
 
-// truth returns the boolean payload.
-func (v *Value) truth() bool { return v.tag&tagTruthBit != 0 }
+// truth returns v's truthiness.
+//
+// tagTruthBit is set ONLY by BoolVal(true) — IntVal, FloatVal, StringVal
+// and a non-nil ArrayVal/ObjectVal never touch it, so a raw bit read
+// answered "false" for every nonzero int, every non-empty string, and
+// every non-empty array or map, not just an actual false bool. And, Or,
+// and Not (value.go) and evalUnaryOp's OpNot (vm.go) call truth()
+// directly, so `props.Count && <span/>` on a nonzero int prop, or `!name`
+// on a non-empty string prop, always evaluated as if the operand were
+// false — the GSX expression grammar has no static bool requirement the
+// way Go's own && does (see internal/strictcomponent/expression.go's
+// separate, narrower strict-component gate), so this path is reachable
+// from ordinary (non-strict) component markup. Route's own truthy()
+// (route/fileeval.go) already derives per-kind truthiness the same way;
+// this brings the VM's opcode-level operator to the same rule set: a real
+// bool reads its stored bit, every other kind derives the standard rule
+// (nonzero number, non-empty string/array/map, a bound closure is always
+// present). See TestValueTruthNonBoolKinds.
+func (v *Value) truth() bool {
+	switch v.tag & tagKindMask {
+	case uint8(kindString), uint8(kindArray):
+		return v.n != 0
+	case uint8(kindMap):
+		return len(v.dict()) != 0
+	case uint8(kindClosure):
+		return true
+	}
+	switch v.Type {
+	case program.TypeInt, program.TypeFloat:
+		return v.num != 0
+	default:
+		return v.tag&tagTruthBit != 0
+	}
+}
 
 // control returns the unwind sentinel v carries.
 func (v *Value) control() ControlSignal {
@@ -561,22 +593,41 @@ func (v Value) Neq(b Value) Value {
 }
 
 // Lt returns whether v < b.
+//
+// A plain v.num < b.num compares the STRING kind's num field too, which
+// Lt never writes (StringVal leaves it at its zero value) — so two
+// strings always compared 0 < 0 (false), regardless of their actual
+// text. `"apple" < "banana"` evaluated false. Eq already carries the
+// Type == TypeString branch this mirrors (see above); Lt/Gt/Lte/Gte
+// never picked it up.
 func (v Value) Lt(b Value) Value {
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() < b.text())
+	}
 	return BoolVal(v.num < b.num)
 }
 
-// Gt returns whether v > b.
+// Gt returns whether v > b. See Lt's doc comment for the string case.
 func (v Value) Gt(b Value) Value {
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() > b.text())
+	}
 	return BoolVal(v.num > b.num)
 }
 
-// Lte returns whether v <= b.
+// Lte returns whether v <= b. See Lt's doc comment for the string case.
 func (v Value) Lte(b Value) Value {
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() <= b.text())
+	}
 	return BoolVal(v.num <= b.num)
 }
 
-// Gte returns whether v >= b.
+// Gte returns whether v >= b. See Lt's doc comment for the string case.
 func (v Value) Gte(b Value) Value {
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() >= b.text())
+	}
 	return BoolVal(v.num >= b.num)
 }
 

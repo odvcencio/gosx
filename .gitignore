@@ -6,6 +6,7 @@ build/
 !/docs/docs-site-spec.md
 !/docs/scene3d-v1-support.md
 !/docs/stripe.md
+!/docs/expression-support-matrix.md
 /gosx
 node_modules/
 
