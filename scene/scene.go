@@ -179,16 +179,21 @@ type Props struct {
 	MaxFrameRate    float64 `json:"maxFrameRate,omitempty"`
 	MaxFPS          float64 `json:"maxFPS,omitempty"`
 	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
-	// FramePacing selects the render-loop pacing policy. The only
-	// recognized value is "vsync-divisor": the client measures the
-	// display's vsync interval and the recent render cost, then renders
-	// on every k-th vsync tick (k from 1 to 4, chosen so k vsync
-	// intervals cover the render cost with margin) instead of skipping
-	// ticks by a fixed millisecond threshold. This paces evenly across
-	// refresh rates: a fixed MaxFrameRate of 50 on a 100 Hz display
-	// yields an uneven 40-48 fps, while vsync-divisor yields an exact
-	// 50 fps (k=2). MaxFrameRate/MaxFPS/FrameIntervalMS, if also set,
-	// remain an upper bound on the paced rate. An empty value, or any
+	// FramePacing selects the render-loop pacing policy.
+	//
+	// The only recognized value is "vsync-divisor". The client measures
+	// the display's vsync interval and the recent render cost. It then
+	// renders on every k-th vsync tick, where k is an integer from 1 to
+	// 4. The client picks the smallest k for which k vsync intervals
+	// cover the render cost, with margin. This policy does not skip
+	// ticks by a fixed millisecond threshold.
+	//
+	// This paces evenly across refresh rates. A fixed MaxFrameRate of 50
+	// on a 100 Hz display yields an uneven 40 to 48 fps. The
+	// vsync-divisor policy yields an exact 50 fps, with k equal to 2.
+	//
+	// When MaxFrameRate, MaxFPS, or FrameIntervalMS is also set, it
+	// remains an upper bound on the paced rate. An empty value, or any
 	// other string, keeps the existing fixed-interval behavior.
 	FramePacing         string  `json:"framePacing,omitempty"`
 	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
