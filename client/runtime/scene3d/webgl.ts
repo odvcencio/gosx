@@ -5615,11 +5615,136 @@
     );
   }
 
+  // Per-context cache for WebGL capability constants that never change for
+  // the life of a context (MAX_TEXTURE_IMAGE_UNITS, MAX_VERTEX_ATTRIBS, and
+  // similar GL_MAX_* queries below). getParameter() is a synchronous round
+  // trip to the driver on some browsers/backends, and the PBR draw path
+  // re-queries the same constants on every draw call in dense scenes. Cache
+  // per WebGLRenderingContext/WebGL2RenderingContext instance and drop the
+  // entry from createScenePBRRenderer's dispose() (covers both context loss
+  // and normal renderer teardown), so a restored context re-queries fresh
+  // values instead of reusing stale ones.
+  var sceneGLConstantCache = new WeakMap();
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneCachedGLParameter(gl, pname) {
+    if (!gl) return undefined;
+    var cached = sceneGLConstantCache.get(gl);
+    if (cached && cached.has(pname)) {
+      return cached.get(pname);
+    }
+    var value;
+    try {
+      value = gl.getParameter(pname);
+    } catch (_error) {
+      return undefined;
+    }
+    if (!cached) {
+      cached = new Map();
+      sceneGLConstantCache.set(gl, cached);
+    }
+    cached.set(pname, value);
+    return value;
+  }
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneInvalidateGLConstantCache(gl) {
+    if (gl) {
+      sceneGLConstantCache.delete(gl);
+    }
+  }
+
+  // Per-distinct-string cache for sceneColorRGBA() results, consumed by
+  // sceneInstancedColorBuffer() (createScenePBRRenderer's instanced-mesh
+  // draw path, below). A hex/rgba() string is re-parsed through regex
+  // matching and parseInt on every call; an instanced mesh commonly reuses
+  // a small, fixed palette across hundreds of instances, so memoizing by
+  // the raw color value turns an O(instanceCount) parse into an O(distinct
+  // colors) parse per rebuild. sceneColorRGBA's result only depends on
+  // `value` here because every call below passes the same literal
+  // fallback; the loop only reads the returned array's components, so
+  // handing back the shared cached reference is safe. A color string
+  // always parses to the same RGBA, so this cache needs no invalidation
+  // (bounded defensively in case a caller streams unbounded distinct
+  // values instead of reusing a palette).
+  var sceneInstancedColorRGBACache = new Map();
+  var SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX = 512;
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneCachedInstancedColorRGBA(value, fallback) {
+    var cached = sceneInstancedColorRGBACache.get(value);
+    if (cached) {
+      return cached;
+    }
+    var rgba = sceneColorRGBA(value, fallback);
+    if (sceneInstancedColorRGBACache.size >= SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX) {
+      sceneInstancedColorRGBACache.clear();
+    }
+    sceneInstancedColorRGBACache.set(value, rgba);
+    return rgba;
+  }
+
+  // prepareRigidMeshBatches (createScenePBRRenderer's rigid-batch grouping
+  // path, below) groups rigid mesh records into shared-VBO batches keyed
+  // by everything that must match for a group to share one draw: material,
+  // vertex layout/revision, shadow flags, sidedness, view visibility and
+  // (for crowd-skinned rigids) the shared atlas. Building that key by
+  // joining an array into a string allocates on every one of these
+  // bundle-local mesh records, every frame, even though the record itself
+  // is rebuilt fresh each frame while the fields it is built from
+  // (materialIndex, vertexCount, geometryRevision, shadow/sidedness flags,
+  // the crowd atlas) usually do not change frame to frame for a given
+  // mesh. `resourceOwner` (set by appendSceneMeshObjectToBundle) is the one
+  // thing that IS stable across frames for the same logical mesh, so the
+  // memo is keyed by that owner rather than the ephemeral record.
+  var sceneRigidBatchKeyCache = new WeakMap();
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneRigidBatchKey(obj, visible) {
+    const atlasKey = obj._crowdSkin ? "crowd:" + obj._crowdSkin.atlas.id : "rigid";
+    const receiveShadow = obj.receiveShadow === true;
+    const castShadow = obj.castShadow === true;
+    const owner = obj.resourceOwner;
+    const cached = owner && (owner._rigidBatchKeyCache || sceneRigidBatchKeyCache.get(owner));
+    if (cached &&
+        cached.materialIndex === obj.materialIndex &&
+        cached.vertexCount === obj.vertexCount &&
+        cached.geometryRevision === obj.geometryRevision &&
+        cached.receiveShadow === receiveShadow &&
+        cached.castShadow === castShadow &&
+        cached.depthWrite === obj.depthWrite &&
+        cached.doubleSided === obj.doubleSided &&
+        cached.visible === visible &&
+        cached.atlasKey === atlasKey) {
+      return cached.key;
+    }
+    const key = [obj.materialIndex, obj.vertexCount, obj.geometryRevision,
+      receiveShadow, castShadow, obj.depthWrite,
+      obj.doubleSided, visible, atlasKey].join(":");
+    if (owner) {
+      const record = {
+        key: key,
+        materialIndex: obj.materialIndex,
+        vertexCount: obj.vertexCount,
+        geometryRevision: obj.geometryRevision,
+        receiveShadow: receiveShadow,
+        castShadow: castShadow,
+        depthWrite: obj.depthWrite,
+        doubleSided: obj.doubleSided,
+        visible: visible,
+        atlasKey: atlasKey,
+      };
+      if (Object.isExtensible(owner)) owner._rigidBatchKeyCache = record;
+      else sceneRigidBatchKeyCache.set(owner, record);
+    }
+    return key;
+  }
+
   function scenePBRHDRIBLAvailable(gl) {
     var maxUnits = 0;
     try {
       maxUnits = gl && typeof gl.getParameter === "function"
-        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        ? Math.floor(sceneNumber(sceneCachedGLParameter(gl, gl.MAX_TEXTURE_IMAGE_UNITS), 0))
         : 0;
     } catch (_error) {
       maxUnits = 0;
@@ -6706,7 +6831,7 @@
   function scenePBRMaxTextureUnits(gl) {
     try {
       var units = gl && typeof gl.getParameter === "function"
-        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        ? Math.floor(sceneNumber(sceneCachedGLParameter(gl, gl.MAX_TEXTURE_IMAGE_UNITS), 0))
         : 0;
       return units > 0 ? units : SCENE_TEXTURE_UNIT_DEFAULT_MAX;
     } catch (_error) {
@@ -7362,6 +7487,12 @@
       authoredDrawInstances: 0,
       authoredDrawCalls: 0,
     };
+    // Last string this renderer wrote per compute-particle-stats attribute,
+    // so an unchanged 0-valued scene stops re-calling setAttribute every
+    // frame. Renderer recreation rebuilds this cache from scratch.
+    var lastPublishedComputeParticleAttrs = Object.create(null);
+    // @ts-ignore TS7034 -- this mount can change on remount.
+    var lastPublishedComputeParticleMount = null;
 
     // webglRenderTruthStats accumulates OBSERVED GPU actions for one frame.
     // Every field counts something that either happened or provably did not;
@@ -7539,18 +7670,32 @@
       webglComputeParticleDrawStats.authoredDrawCalls = 0;
     }
 
+    // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+    function publishWebGLComputeParticleStatAttr(mount, name, value) {
+      // @ts-ignore TS7005 -- this mount can change on remount.
+      if (mount !== lastPublishedComputeParticleMount) {
+        lastPublishedComputeParticleMount = mount;
+        lastPublishedComputeParticleAttrs = Object.create(null);
+      }
+      if (lastPublishedComputeParticleAttrs[name] === value) {
+        return;
+      }
+      lastPublishedComputeParticleAttrs[name] = value;
+      mount.setAttribute(name, value);
+    }
+
     function publishWebGLComputeParticleDrawStats() {
       var mount = canvas && canvas.parentNode ? canvas.parentNode : null;
       if (!mount || typeof mount.setAttribute !== "function") {
         return;
       }
       mount.__gosxScene3DWebGLStats = Object.assign({}, webglComputeParticleDrawStats);
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-entries", String(webglComputeParticleDrawStats.drawEntries));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-instances", String(webglComputeParticleDrawStats.drawInstances));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-calls", String(webglComputeParticleDrawStats.drawCalls));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-entries", String(webglComputeParticleDrawStats.authoredDrawEntries));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-instances", String(webglComputeParticleDrawStats.authoredDrawInstances));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-calls", String(webglComputeParticleDrawStats.authoredDrawCalls));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-draw-entries", String(webglComputeParticleDrawStats.drawEntries));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-draw-instances", String(webglComputeParticleDrawStats.drawInstances));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-draw-calls", String(webglComputeParticleDrawStats.drawCalls));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-authored-draw-entries", String(webglComputeParticleDrawStats.authoredDrawEntries));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-authored-draw-instances", String(webglComputeParticleDrawStats.authoredDrawInstances));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-authored-draw-calls", String(webglComputeParticleDrawStats.authoredDrawCalls));
     }
 
     function ensureStaticArrayVBO(cache, typedArray) {
@@ -7637,7 +7782,7 @@
     }
 
     function sceneDisableUnownedVertexAttribArrays(allowed) {
-      var maxAttribs = Math.max(0, sceneNumber(gl.getParameter(gl.MAX_VERTEX_ATTRIBS), 0));
+      var maxAttribs = Math.max(0, sceneNumber(sceneCachedGLParameter(gl, gl.MAX_VERTEX_ATTRIBS), 0));
       for (var i = 0; i < maxAttribs; i++) {
         if (allowed && allowed[i]) {
           continue;
@@ -9042,9 +9187,7 @@
           groups = new Map();
           rigidBatchRecords.set(obj.vertices, groups);
         }
-        const key = [obj.materialIndex, obj.vertexCount, obj.geometryRevision,
-          obj.receiveShadow === true, obj.castShadow === true, obj.depthWrite,
-          obj.doubleSided, visible, obj._crowdSkin ? "crowd:" + obj._crowdSkin.atlas.id : "rigid"].join(":");
+        const key = sceneRigidBatchKey(obj, visible);
         let batch = groups.get(key);
         if (!batch) {
           batch = { id: "rigid-geometry-" + (++rigidBatchSequence), objects: [], transforms: null, count: 0, atlas: obj._crowdSkin ? obj._crowdSkin.atlas : null };
@@ -10081,7 +10224,7 @@
       if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
         mesh._cachedInstanceColors = new Float32Array(count * 4);
         for (var ci = 0; ci < count; ci++) {
-          var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+          var rgba = sceneCachedInstancedColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
           mesh._cachedInstanceColors[ci * 4] = rgba[0];
           mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
           mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
@@ -10316,6 +10459,9 @@
     }
 
     function dispose() {
+      // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
+      // dispose() first) and normal teardown alike.
+      sceneInvalidateGLConstantCache(gl);
       // The base warm record is consumed during construction. A crowd record
       // can remain unused when the requested rig is ineligible; keep that GL
       // ownership renderer-local and release it with the renderer.

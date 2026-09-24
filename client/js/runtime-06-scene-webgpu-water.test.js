@@ -1380,9 +1380,9 @@ test("Scene3D planner hashes inline mesh vertex payloads", () => {
   assert.match(planner, /function scenePlannerHashFloatArray/);
   assert.match(planner, /function scenePlannerHashMeshVertices/);
   assert.match(planner, /scenePlannerHashMeshVertices\(hash, object && object\.vertices\)/);
-  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.positions, 0\)/);
-  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.normals, 0\)/);
-  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.uvs, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(contentHash, vertices\.positions, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(contentHash, vertices\.normals, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(contentHash, vertices\.uvs, 0\)/);
 });
 
 test("Scene3D static GLB models can receive live motion patches", () => {

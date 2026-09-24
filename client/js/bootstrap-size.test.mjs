@@ -1140,7 +1140,8 @@ const budgets = [
   // adds the pacing governor and its telemetry to this chunk. Measured:
   // 591_040 / 165_443 / 136_793. Only brotli exceeded the prior hard limit
   // (by 293 bytes); bumped 130_000 -> 130_500 for headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 130_500 },
+  // Frame caching measures 592_372 raw and 137_360 brotli bytes.
+  { file: "bootstrap-feature-scene3d.js", raw: 564_200, gzip: 159_500, brotli: 130_900 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2064,9 +2065,10 @@ const routeBudgets = [
     // parity on this route. Measured: 1_537_833 / 415_835 / 351_088. Only
     // raw exceeded the prior hard limit; bumped 1_470_500 -> 1_473_000 for
     // headroom. Gzip and brotli headroom is unchanged.
-    raw: 1_473_000,
+    // Frame caching measures 1_539_831 raw and 351_792 brotli bytes.
+    raw: 1_475_000,
     gzip: 402_500,
-    brotli: 335_000,
+    brotli: 335_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
