@@ -292,7 +292,7 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205,
     "../runtime/scene3d/hydrate-input.ts": 89,
     "../runtime/scene3d/mount-webgl.ts": 5418,
-    "../runtime/scene3d/mount.ts": 3593
+    "../runtime/scene3d/mount.ts": 3815
   },
   "functionDefaults": {
     "lines": 200,
@@ -757,7 +757,7 @@
     {
       "source": "../runtime/scene3d/mount-telemetry.ts",
       "name": "mountSnapshot",
-      "lines": 118,
+      "lines": 125,
       "cyclomatic": 66,
       "cognitive": 81,
       "maxNesting": 4,
