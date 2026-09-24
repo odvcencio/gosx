@@ -3299,6 +3299,30 @@ function loadSceneAdaptiveQualityAPI() {
   return { api: context.adaptiveAPI, clock };
 }
 
+// loadSceneFramePacingAPI exposes mount.ts's sceneFramePacing* pure decision
+// helpers (the "vsync-divisor" adaptive frame pacing governor) for direct,
+// no-DOM unit testing. Every helper is a pure function of primitive
+// arguments with no external dependency (no sceneNumber/setAttrValue/
+// performance), so the loader needs no stub preamble -- it just isolates
+// the trailing section of mount.ts where they live and republishes them by
+// name, exactly like loadSceneAdaptiveQualityAPI does for the quality
+// ladder governor above.
+function loadSceneFramePacingAPI() {
+  const source = readSceneMountSrc();
+  const start = source.indexOf("function sceneFramePacingMedianOf3");
+  assert.notEqual(start, -1, "frame pacing helpers start anchor missing");
+  const context = {};
+  vm.runInNewContext(source.slice(start) + `
+    globalThis.framePacingAPI = {
+      sceneFramePacingMedianOf3, sceneFramePacingBlendVsync, sceneFramePacingBlendCost,
+      sceneFramePacingCandidateK, sceneFramePacingMinKForInterval,
+      sceneFramePacingObserveCandidate, sceneFramePacingCommitK,
+      sceneFramePacingObserveTickGate, sceneFramePacingAdvanceOnTick,
+    };
+  `, context, { filename: "scene-frame-pacing.js" });
+  return { api: context.framePacingAPI };
+}
+
 function loadSceneViewportAPI(options = {}) {
   const mountSource = readSceneMountSrc();
   const start = mountSource.indexOf("function sceneViewportDevicePixelRatio");
@@ -5760,6 +5784,7 @@ module.exports = {
   CUSTOM_POST_TIME_LAYOUT_FIXTURE,
   sceneCoreSourceRange,
   loadSceneAdaptiveQualityAPI,
+  loadSceneFramePacingAPI,
   loadSceneViewportAPI,
   resolveSceneViewportForTest,
   createAdaptiveQualityHarness,

@@ -175,10 +175,29 @@ type Props struct {
 	// idle MaxFrameRate while matching the display during active wheel or
 	// trackpad movement, then automatically returns to the idle cap after the
 	// input quiets. Zero preserves the authored idle cadence for back-compat.
-	ScrollFrameRate     float64 `json:"scrollFrameRate,omitempty"`
-	MaxFrameRate        float64 `json:"maxFrameRate,omitempty"`
-	MaxFPS              float64 `json:"maxFPS,omitempty"`
-	FrameIntervalMS     float64 `json:"frameIntervalMS,omitempty"`
+	ScrollFrameRate float64 `json:"scrollFrameRate,omitempty"`
+	MaxFrameRate    float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS          float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
+	// FramePacing selects the render-loop pacing policy.
+	//
+	// The only recognized value is "vsync-divisor". The client measures
+	// the display's vsync interval and the recent render cost. It then
+	// renders on every k-th vsync tick, where k is an integer. The
+	// client picks the smallest k from 1 to 4 for which k vsync
+	// intervals cover the render cost, with margin. This policy does
+	// not skip ticks by a fixed millisecond threshold.
+	//
+	// This paces evenly across refresh rates. A fixed MaxFrameRate of 50
+	// on a 100 Hz display yields an uneven 40 to 48 fps. The
+	// vsync-divisor policy yields an exact 50 fps, with k equal to 2.
+	//
+	// When MaxFrameRate, MaxFPS, or FrameIntervalMS is also set, it
+	// remains an upper bound on the paced rate: k grows past 4 when the
+	// authored cap needs a longer interval than four vsync ticks. An
+	// empty value, or any other string, keeps the existing
+	// fixed-interval behavior.
+	FramePacing         string  `json:"framePacing,omitempty"`
 	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
 	// Zero leaves the render target governed by the DPR cap alone.
@@ -1882,6 +1901,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
+	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
 	if p.MaxPixels > 0 {
 		out["maxPixels"] = p.MaxPixels

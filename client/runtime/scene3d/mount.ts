@@ -1346,6 +1346,39 @@
     let viewportDirty = true;
     let lastAnimationFrameAt = 0;
 
+    // Adaptive frame pacing ("vsync-divisor", opt-in via props.framePacing).
+    // See the sceneFramePacing* pure helpers defined after this factory
+    // closure for the actual decision math; everything here is mutable
+    // per-mount state plus the glue that feeds real rAF ticks and render
+    // costs into them. framePacingEnabled is resolved once at mount time
+    // from the authored prop and never changes for this mount's lifetime,
+    // so a scene that never sets the prop pays one string comparison and
+    // then never touches any of the rest -- scheduleNextAnimationFrame's
+    // existing fixed-interval gate below runs completely unchanged.
+    const framePacingMode = typeof (props && props.framePacing) === "string" ? props.framePacing.trim() : "";
+    const framePacingEnabled = framePacingMode === "vsync-divisor";
+    let framePacingTick1 = 0;
+    let framePacingTick2 = 0;
+    let framePacingTick3 = 0;
+    let framePacingVsyncMS = 0;
+    let framePacingCostMS = 0;
+    let framePacingActiveK = 1;
+    let framePacingPendingK = 1;
+    let framePacingPendingStreak = 0;
+    let framePacingTicksSinceRender = 0;
+
+    // publishSceneFramePacingState mirrors the governor's own state onto the
+    // mount as data-gosx-scene3d-frame-pacing* attributes -- the QA/telemetry
+    // surface window.__gosx_scene3d_telemetry reads (see mount-telemetry.ts).
+    // A disabled mount (the default) never calls this, so it never gains
+    // these attributes.
+    function publishSceneFramePacingState() {
+      setAttrValue(mount, sceneAttr("frame-pacing"), framePacingMode);
+      setAttrValue(mount, sceneAttr("frame-pacing-k"), String(framePacingActiveK));
+      setAttrValue(mount, sceneAttr("frame-pacing-vsync-ms"), framePacingVsyncMS > 0 ? framePacingVsyncMS.toFixed(2) : "");
+      setAttrValue(mount, sceneAttr("frame-pacing-cost-ms"), framePacingCostMS > 0 ? framePacingCostMS.toFixed(2) : "");
+    }
+
     function sceneAnimationFrameIntervalMS() {
       var interval = sceneNumber(props && props.frameIntervalMS, 0);
       if (!(interval > 0)) {
@@ -1388,6 +1421,41 @@
       }
       frameHandle = engineFrame(function(now) {
         frameHandle = null;
+        if (framePacingEnabled) {
+          var rawTickDeltaMS = lastAnimationFrameAt > 0 && typeof now === "number" ? Math.max(0, now - lastAnimationFrameAt) : 0;
+          if (typeof now === "number") {
+            lastAnimationFrameAt = now;
+          }
+          framePacingTick3 = framePacingTick2;
+          framePacingTick2 = framePacingTick1;
+          framePacingTick1 = rawTickDeltaMS;
+          var vsyncSampleMS = sceneFramePacingMedianOf3(framePacingTick1, framePacingTick2, framePacingTick3);
+          var advanced = sceneFramePacingAdvanceOnTick(
+            vsyncSampleMS,
+            framePacingVsyncMS,
+            framePacingCostMS,
+            framePacingActiveK,
+            framePacingPendingK,
+            framePacingPendingStreak,
+            framePacingTicksSinceRender,
+            sceneAnimationFrameIntervalMS()
+          );
+          framePacingVsyncMS = advanced.vsyncEstimateMS;
+          framePacingActiveK = advanced.activeK;
+          framePacingPendingK = advanced.pendingK;
+          framePacingPendingStreak = advanced.pendingStreak;
+          framePacingTicksSinceRender = advanced.ticksSinceRender;
+          publishSceneFramePacingState();
+          if (!advanced.shouldRender) {
+            scheduleNextAnimationFrame();
+            return;
+          }
+          var framePacingRenderStartMS = typeof performance !== "undefined" && performance.now ? performance.now() : now;
+          renderFrame(now, "frame-pacing");
+          var framePacingRenderEndMS = typeof performance !== "undefined" && performance.now ? performance.now() : framePacingRenderStartMS;
+          framePacingCostMS = sceneFramePacingBlendCost(framePacingCostMS, Math.max(0, framePacingRenderEndMS - framePacingRenderStartMS));
+          return;
+        }
         var interval = sceneAnimationFrameIntervalMS();
         if (interval > 0 && lastAnimationFrameAt > 0 && typeof now === "number" && now - lastAnimationFrameAt < interval - 0.75) {
           scheduleNextAnimationFrame();
@@ -3591,3 +3659,169 @@
     sceneState._modelOwner = null;
     return handle;
   });
+
+// -----------------------------------------------------------------------
+// Adaptive frame pacing ("vsync-divisor") — pure decision helpers.
+//
+// scheduleNextAnimationFrame's default gate skips a requestAnimationFrame
+// tick by comparing a fixed millisecond interval (from frameIntervalMS,
+// MaxFrameRate or MaxFPS) against the wall-clock gap since the last
+// rendered tick. A fixed interval cannot divide every display's vsync
+// cadence evenly: a 20ms cap on a 60Hz (16.7ms) display accepts only
+// every other tick (30fps, correct by chance), but on a 100Hz display it
+// accepts an uneven 40-48fps, and the reported 50Hz target is never hit
+// exactly.
+//
+// The functions below choose an integer tick divisor k instead: render on
+// every k-th requestAnimationFrame tick, using a tick COUNTER, not a
+// millisecond threshold, so the paced rate is an exact fraction of the
+// display's own refresh rate. The render-cost decision picks k from 1 to
+// 4 (see sceneFramePacingCandidateK). An authored frameIntervalMS/
+// MaxFrameRate/MaxFPS cap can require a larger k (see
+// sceneFramePacingMinKForInterval); the final k is the larger of the two,
+// since the pre-existing fixed-interval gate this feature replaces has no
+// upper bound on how rarely it renders either.
+//
+// They are pure and take only primitive arguments (each with a default,
+// so every parameter's type is inferred and the scene3d noImplicitAny
+// ratchet sees no new diagnostic), so a test can drive the decision
+// directly with a simulated rAF clock, without mounting a renderer.
+// scheduleNextAnimationFrame (above) is the only caller; it owns the
+// actual mutable state (see the framePacing* closure variables) and is
+// unreachable unless props.framePacing === "vsync-divisor", so a scene
+// that never sets that prop never executes any of this.
+
+// sceneFramePacingMedianOf3 is a robust median of the three most recent
+// raw requestAnimationFrame tick deltas (milliseconds). A single implausible
+// delta -- a dropped frame, a GC pause, or the one big gap a hidden tab
+// produces on resume -- is outvoted by the other two, so it never skews the
+// vsync estimate the way a plain average would.
+function sceneFramePacingMedianOf3(a = 0, b = 0, c = 0) {
+  var lo = Math.min(a, b, c);
+  var hi = Math.max(a, b, c);
+  return a + b + c - lo - hi;
+}
+
+// sceneFramePacingBlendVsync folds one new median-sampled tick delta into
+// the running vsync-interval estimate. The estimate snaps directly to the
+// first real sample (no data yet), then blends slowly afterward so a
+// sustained refresh-rate change (a window dragged to a different monitor)
+// still visibly re-estimates within a handful of ticks while single-tick
+// jitter barely moves it. A non-positive sample (not enough history yet,
+// see sceneFramePacingMedianOf3) leaves the estimate unchanged.
+function sceneFramePacingBlendVsync(estimateMS = 0, sampleMS = 0) {
+  if (!(sampleMS > 0)) return estimateMS;
+  if (!(estimateMS > 0)) return sampleMS;
+  return estimateMS * 0.85 + sampleMS * 0.15;
+}
+
+// sceneFramePacingBlendCost folds one measured renderFrame wall-clock
+// sample (milliseconds) into the running render-cost estimate (an EWMA).
+// Only a caller that actually rendered this tick has a sample to offer.
+function sceneFramePacingBlendCost(estimateMS = 0, sampleMS = 0) {
+  if (!(sampleMS >= 0)) return estimateMS;
+  if (!(estimateMS > 0)) return sampleMS;
+  return estimateMS * 0.75 + sampleMS * 0.25;
+}
+
+// sceneFramePacingCandidateK returns the smallest integer k in [1,4] such
+// that k display intervals cover the measured render cost with a 10%
+// margin (k * vsyncMS >= costMS * 1.1). Either measurement missing (not
+// yet warmed up) returns 1: render every tick until real data exists.
+function sceneFramePacingCandidateK(vsyncMS = 0, costMS = 0) {
+  if (!(vsyncMS > 0) || !(costMS > 0)) return 1;
+  var budget = costMS * 1.1;
+  if (vsyncMS >= budget) return 1;
+  if (vsyncMS * 2 >= budget) return 2;
+  if (vsyncMS * 3 >= budget) return 3;
+  return 4;
+}
+
+// sceneFramePacingMinKForInterval returns the smallest k whose resulting
+// frame interval (k display ticks) is at or above minIntervalMS -- the
+// floor that keeps the paced rate at or below an authored
+// frameIntervalMS/MaxFrameRate/MaxFPS cap (see sceneAnimationFrameIntervalMS).
+// Returns 1 when no such cap applies.
+//
+// Unlike sceneFramePacingCandidateK, this is NOT bounded to 4: the [1,4]
+// range in the spec covers the render-cost decision, not an authored cap.
+// The pre-existing fixed-interval gate this feature replaces has no such
+// bound either (a low MaxFrameRate can skip arbitrarily many ticks), so
+// capping this floor at 4 would let a scene render FASTER than its
+// authored maximum -- for example MaxFrameRate 10 on a 60 Hz display
+// needs six ticks per render; a k=4 cap would render at 15 fps instead.
+function sceneFramePacingMinKForInterval(vsyncMS = 0, minIntervalMS = 0) {
+  if (!(vsyncMS > 0) || !(minIntervalMS > 0)) return 1;
+  return Math.max(1, Math.ceil(minIntervalMS / vsyncMS));
+}
+
+// sceneFramePacingObserveCandidate tracks how many consecutive ticks the
+// raw candidate k (see sceneFramePacingCandidateK/MinKForInterval) has held
+// the SAME value. Any change resets the streak to 1, so a candidate that
+// alternates near a boundary (for example 1/2/1/2...) never accumulates
+// enough streak to commit -- see sceneFramePacingCommitK.
+function sceneFramePacingObserveCandidate(pendingK = 1, pendingStreak = 0, candidateK = 1) {
+  if (candidateK === pendingK) {
+    return { pendingK: pendingK, pendingStreak: pendingStreak + 1 };
+  }
+  return { pendingK: candidateK, pendingStreak: 1 };
+}
+
+// sceneFramePacingCommitK is the hysteresis gate: the active k only moves
+// to a new candidate once that candidate has been the stable raw proposal
+// for commitStreak consecutive ticks (default 12, about a fifth of a
+// second at 60Hz). This is what keeps a cost estimate that hovers exactly
+// on a k boundary from visibly flapping the paced frame rate.
+function sceneFramePacingCommitK(activeK = 1, pendingK = 1, pendingStreak = 0, commitStreak = 12) {
+  if (pendingK === activeK) return activeK;
+  return pendingStreak >= commitStreak ? pendingK : activeK;
+}
+
+// sceneFramePacingObserveTickGate is the TICK COUNTER render gate: it
+// counts real rAF ticks since the last render and fires once that count
+// reaches the active k, then resets to zero. Because the comparison always
+// uses the CURRENT k, a k change taking effect mid-count self-corrects on
+// the very next tick instead of needing a manual reset.
+function sceneFramePacingObserveTickGate(ticksSinceRender = 0, activeK = 1) {
+  var next = ticksSinceRender + 1;
+  if (next >= activeK) {
+    return { shouldRender: true, ticksSinceRender: 0 };
+  }
+  return { shouldRender: false, ticksSinceRender: next };
+}
+
+// sceneFramePacingAdvanceOnTick composes the helpers above into the one
+// call scheduleNextAnimationFrame's rAF callback makes per tick. Every
+// argument is the governor's OWN state going in (see the framePacing*
+// closure variables); the caller destructures every field of the return
+// value back into its own state. vsyncSampleMS is this tick's raw delta
+// already reduced by sceneFramePacingMedianOf3; minIntervalMS is
+// sceneAnimationFrameIntervalMS()'s result (0 when the scene authored no
+// frameIntervalMS/MaxFrameRate/MaxFPS cap).
+function sceneFramePacingAdvanceOnTick(
+  vsyncSampleMS = 0,
+  vsyncEstimateMS = 0,
+  costEstimateMS = 0,
+  activeK = 1,
+  pendingK = 1,
+  pendingStreak = 0,
+  ticksSinceRender = 0,
+  minIntervalMS = 0,
+  commitStreak = 12
+) {
+  var nextVsyncEstimateMS = sceneFramePacingBlendVsync(vsyncEstimateMS, vsyncSampleMS);
+  var costCandidateK = sceneFramePacingCandidateK(nextVsyncEstimateMS, costEstimateMS);
+  var boundCandidateK = sceneFramePacingMinKForInterval(nextVsyncEstimateMS, minIntervalMS);
+  var rawCandidateK = Math.max(costCandidateK, boundCandidateK);
+  var observed = sceneFramePacingObserveCandidate(pendingK, pendingStreak, rawCandidateK);
+  var nextActiveK = sceneFramePacingCommitK(activeK, observed.pendingK, observed.pendingStreak, commitStreak);
+  var gate = sceneFramePacingObserveTickGate(ticksSinceRender, nextActiveK);
+  return {
+    vsyncEstimateMS: nextVsyncEstimateMS,
+    activeK: nextActiveK,
+    pendingK: observed.pendingK,
+    pendingStreak: observed.pendingStreak,
+    ticksSinceRender: gate.ticksSinceRender,
+    shouldRender: gate.shouldRender,
+  };
+}
