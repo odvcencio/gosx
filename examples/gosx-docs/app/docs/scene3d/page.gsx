@@ -1986,13 +1986,9 @@ func Page() Node {
 					<span class="inline-code">Props.FramePacing</span>
 					— set to
 					<span class="inline-code">"vsync-divisor"</span>
-					to pace evenly across refresh rates. The client renders on
-					every k-th display tick, instead of skipping ticks by a
-					fixed millisecond interval. It picks the smallest k that
-					covers the recent render cost, so a scene at
+					to pace evenly across refresh rates. The client renders on every k-th display tick, instead of skipping ticks by a fixed millisecond interval. It picks the smallest k that covers the recent render cost, so a scene at
 					<span class="inline-code">MaxFrameRate</span>
-					50 on a 100 Hz display gets an exact 50 fps instead of an
-					uneven 40 to 48 fps.
+					50 on a 100 Hz display gets an exact 50 fps instead of an uneven 40 to 48 fps.
 				</li>
 			</ul>
 			<h3>Frame-time governor</h3>
