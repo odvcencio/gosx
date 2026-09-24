@@ -1,5 +1,90 @@
 # Changelog
 
+## v0.57.1 (2026-09-24)
+
+### Fixed: computed-pose morph priors and stale WebGPU output buffers
+
+- Computed-pose morphing now publishes the correct source arrays before
+  each blend, and reuses the existing morph record instead of replacing it
+  on every event.
+- The WebGPU renderer no longer reuses output buffers that belong to a
+  destroyed device, so a scene with computed morphs keeps a valid render
+  cache after a device change.
+
+### Fixed: WebGPU point-sprite flat interpolation
+
+- Mark the point-sprite `color`, `fogFactor`, `alpha`, and `pointSize`
+  varyings `@interpolate(flat)` in the WebGPU shader source. Perspective
+  interpolation of these per-point values produced wrong colors and sizes
+  at the fragment stage; `pointCoord` still interpolates normally.
+
+### Added: custom per-vertex float BufferAttributes for Selena shaders
+
+- Authored Selena shaders can now declare named custom BufferAttributes on
+  scene geometry. The Go scene package validates each stream's name, item
+  size, length, and values, and fails closed on any malformed stream
+  instead of drawing a partial mesh.
+- Both the WebGL2 and WebGPU Selena paths bind the validated streams. A
+  Selena material with an effectively identity model matrix can now reach
+  the retained draw path; other custom-shader materials keep the existing
+  world-baked fallback.
+- A stream named `__proto__` survives normalization: custom attribute
+  names route through a null-prototype map instead of a plain object.
+
+### Added: opt-in hub permessage-deflate compression
+
+- Add `Hub.EnableCompression` to negotiate permessage-deflate (RFC 7692) on
+  WebSocket upgrade, and a matching client-side `Options.EnableCompression`
+  for the native transport. Compression stays off by default, since it
+  trades CPU time for bandwidth on every message.
+- Add `Hub.CompressionLevel` to select the flate level from -2
+  (HuffmanOnly) to 9 (BestCompression). An out-of-range value falls back to
+  the default level and logs a warning instead of failing the connection.
+
+### Added: perspective spot-light shadows
+
+- WebGL2 and WebGPU now render and sample one perspective shadow map per
+  valid shadow-casting spot light. Both backends share two deterministic
+  authored-order shadow-light slots with directional lights.
+- Shadow projection validation fails closed for a non-finite input, a zero
+  direction, a half-angle at or above pi/2, or an ill-conditioned
+  projection, instead of producing an incorrect shadow.
+
+### Fixed: glTF material shading parity between WebGL2 and WebGPU
+
+- `metallicFactor` and `roughnessFactor` now default to the glTF spec
+  value of 1.0, not 0.0. The old default turned every asset that omitted
+  these factors into plastic.
+- `emissiveFactor` carries through as a color, not a scalar tinted by
+  albedo, so a red-only emissive on a blue surface glows red.
+- `normalTexture.scale` and `occlusionTexture.strength` now reach both
+  renderers; previously both fields were ignored.
+- The environment equirect map now decodes as sRGB instead of linear,
+  removing an ambient light level that was about 2.7 times too bright.
+- WebGL2 samples the environment map by mip level for diffuse and specular
+  reflection, so rough surfaces blur into the environment.
+- Exposure now applies exactly once. The WebGL2 shader previously applied
+  exposure again inside an active tone-mapping post-processing pass.
+- Add an opt-in rim-light term (`rimColor`, `rimPower`, `rimStrength`) to
+  `StandardMaterial`, off by default, on both renderers.
+
+### Added: adaptive vsync-divisor frame pacing
+
+- Add the `FramePacing` prop to `scene.Props`, with the recognized value
+  `"vsync-divisor"`. An empty or unknown value keeps the existing
+  fixed-interval pacing, so current scenes render unchanged.
+- A scene with `FramePacing: "vsync-divisor"` renders on every k-th display
+  tick instead of a millisecond threshold, so the paced rate is an exact
+  fraction of the display refresh rate. A fixed millisecond cap cannot
+  divide every refresh rate evenly; on a 100 Hz display, a 50 fps cap
+  produced an uneven 40 to 48 fps.
+- The governor picks an integer divisor from 1 to 4 from an estimated
+  render cost, and commits a new divisor only after a stable streak of 12
+  ticks, so the paced rate does not flap at a divisor boundary.
+- `MaxFrameRate`, `MaxFPS`, and `FrameIntervalMS` still bound the paced
+  rate from above; an authored cap raises the divisor when it needs a
+  larger one.
+
 ## v0.57.0 (2026-09-23)
 
 ### Breaking: turboquant v0.2.1 changes stored vector output; pre-upgrade values fail closed
