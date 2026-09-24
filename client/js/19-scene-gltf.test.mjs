@@ -772,6 +772,51 @@ test("gltf material without extensions keeps the base PBR mapping", () => {
   assert.equal(material.unlit, undefined);
 });
 
+test("omitted metallicFactor and roughnessFactor default to the spec value of 1.0", () => {
+  const { context } = createLoaderContext();
+  // pbrMetallicRoughness present but empty: an author who wants the fully
+  // rough, fully metallic default look omits both factors. The old fallback
+  // of 0.0 silently turned every such asset into plastic (metalness 0).
+  const empty = extractMaterial(context, { pbrMetallicRoughness: {} });
+  assert.equal(empty.roughness, 1.0);
+  assert.equal(empty.metalness, 1.0);
+
+  // No pbrMetallicRoughness block at all takes the same default path.
+  const none = extractMaterial(context, {});
+  assert.equal(none.roughness, 1.0);
+  assert.equal(none.metalness, 1.0);
+
+  // An explicit zero must still be preserved (never re-defaulted).
+  const zero = extractMaterial(context, {
+    pbrMetallicRoughness: { roughnessFactor: 0, metallicFactor: 0 },
+  });
+  assert.equal(zero.roughness, 0);
+  assert.equal(zero.metalness, 0);
+});
+
+test("normalTexture.scale and occlusionTexture.strength default to 1.0 and pass through", () => {
+  const { context } = createLoaderContext();
+  const defaults = extractMaterial(context, {
+    normalTexture: { index: 0 },
+    occlusionTexture: { index: 0 },
+  });
+  assert.equal(defaults.normalScale, 1.0);
+  assert.equal(defaults.occlusionStrength, 1.0);
+
+  const authored = extractMaterial(context, {
+    normalTexture: { index: 0, scale: 0.5 },
+    occlusionTexture: { index: 0, strength: 0.25 },
+  });
+  assert.equal(authored.normalScale, 0.5);
+  assert.equal(authored.occlusionStrength, 0.25);
+
+  // Materials with neither texture still get the neutral default so the
+  // renderer never uploads NaN/undefined uniforms.
+  const untextured = extractMaterial(context, {});
+  assert.equal(untextured.normalScale, 1.0);
+  assert.equal(untextured.occlusionStrength, 1.0);
+});
+
 test("glTF texture slots carry explicit color roles and transfer functions", () => {
   const { context } = createLoaderContext();
   const material = extractTexturedMaterial(context);
@@ -1002,16 +1047,46 @@ test("KHR_materials_anisotropy projects rotation onto the signed tangent axis", 
   assert.ok(Math.abs(between.anisotropy) < 1e-12, `expected 0, got ${between.anisotropy}`);
 });
 
-test("KHR_materials_emissive_strength scales the emissive factor above 1", () => {
+test("emissiveFactor maps to a colour, not a scalar dropped onto emissive", () => {
   const { context } = createLoaderContext();
+  // A red-only emissive on a material with no base colour texture must
+  // glow red, not the grey placeholder colour: emissiveColor carries the
+  // full triple, and emissive stays a pure strength multiplier (1 with no
+  // KHR_materials_emissive_strength extension).
   const base = extractMaterial(context, { emissiveFactor: [0.5, 0.25, 0] });
-  assert.equal(base.emissive, 0.5);
+  assert.deepEqual(base.emissiveColor, [0.5, 0.25, 0]);
+  assert.equal(base.emissive, 1);
 
+  // A material with no emissiveFactor at all still gets an explicit black
+  // triple (not undefined), so the renderer can tell "authored, zero" from
+  // "never set" without a truthiness check on a maybe-undefined field.
+  const none = extractMaterial(context, {});
+  assert.deepEqual(none.emissiveColor, [0, 0, 0]);
+  assert.equal(none.emissive, 1);
+});
+
+test("KHR_materials_emissive_strength sets the strength multiplier directly", () => {
+  const { context } = createLoaderContext();
+  // The strength extension no longer folds through max(emissiveFactor); it
+  // is carried as its own multiplier the shader applies to emissiveColor.
   const boosted = extractMaterial(context, {
     emissiveFactor: [0.5, 0.25, 0],
     extensions: { KHR_materials_emissive_strength: { emissiveStrength: 6 } },
   });
-  assert.equal(boosted.emissive, 3);
+  assert.deepEqual(boosted.emissiveColor, [0.5, 0.25, 0]);
+  assert.equal(boosted.emissive, 6);
+});
+
+test("emissiveFactor clamps malformed or out-of-range components independently", () => {
+  const { context } = createLoaderContext();
+  // A negative or non-finite component falls back to black in that channel
+  // alone; the other two valid channels still come through.
+  const clamped = extractMaterial(context, { emissiveFactor: [1.5, -1, "bad"] });
+  assert.deepEqual(clamped.emissiveColor, [1, 0, 0]);
+
+  // A malformed (too-short, non-array) factor falls back to black entirely.
+  assert.deepEqual(extractMaterial(context, { emissiveFactor: [0.2] }).emissiveColor, [0, 0, 0]);
+  assert.deepEqual(extractMaterial(context, { emissiveFactor: "red" }).emissiveColor, [0, 0, 0]);
 });
 
 test("KHR_materials_ior records the index of refraction", () => {

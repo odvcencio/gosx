@@ -911,10 +911,16 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
   assert.strictEqual(clean.data[42], -1, "stale cutoff must not survive a repack");
   assert.strictEqual(clean.data[41], 0);
   assert.strictEqual(clean.data[43], 0);
-  assert.strictEqual(clean.data.length, 52);
+  assert.strictEqual(clean.data.length, 64);
   for (let c = 0; c < 3; c++) assert.ok(close6(clean.data[44 + c], 0.04));
   assert.strictEqual(clean.data[47], 1);
   assert.strictEqual(clean.u[51], 0);
+  // Trailing glTF material-parity slots (52..63) reset to their neutral
+  // defaults on every repack, same as every other scratch-buffer field.
+  assert.strictEqual(clean.data[52], 1, "normalScale resets to 1");
+  assert.strictEqual(clean.data[53], 1, "occlusionStrength resets to 1");
+  assert.strictEqual(clean.u[54], 0, "hasEmissiveColor resets to unset");
+  assert.strictEqual(clean.data[59], 0, "rimStrength resets to off");
   const edge = pack("{ alphaCutoff: 1 }");
   assert.strictEqual(edge.data[41], 0);
   assert.strictEqual(edge.data[43], 0);
@@ -924,7 +930,7 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
     assert.ok(Number.isFinite(edge.data[48 + c]));
     assert.ok(Math.abs(edge.data[48 + c] - expectedLog) <= 1e-6);
   }
-  assert.strictEqual(edge.data.buffer.byteLength, 208);
+  assert.strictEqual(edge.data.buffer.byteLength, 256);
 });
 
 test("WebGPU fragment shaders pin coverage discard and corrected alpha selects", () => {
@@ -967,7 +973,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
   const { source, context } = setupWebGPURenderer();
   // The material buffer grew for the aligned vec3f plus the F90 scalar; the
   // earlier 176-byte layout must be gone.
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
 
@@ -975,7 +981,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
     "materialUniformData(" + literal + ", false, null, null)");
 
   const def = pack("{}");
-  assert.strictEqual(def.data.length, 52);
+  assert.strictEqual(def.data.length, 64);
   for (let c = 0; c < 3; c++) assert.ok(close6(def.data[44 + c], 0.04));
   assert.strictEqual(def.data[47], 1);
   // Finite pre-clamp log coefficients at 48..50, neutral loaded-color flag at 51.
@@ -1144,7 +1150,7 @@ function setupWebGPUMaterialBinding() {
 
 // Stubs only the GPU resource and texture-loader boundaries; the production
 // materialUniformData, createMaterialBindGroup and bind-group cache execute
-// for real against the real 208-byte shared buffer.
+// for real against the real 256-byte shared buffer.
 function makeGPUHarness(context, textureStates) {
   const calls = { loads: [], bindGroups: [], buffers: [] };
   context.GPUBufferUsage = { UNIFORM: 0x40, COPY_DST: 0x8 };

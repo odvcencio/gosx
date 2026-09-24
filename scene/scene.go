@@ -1517,6 +1517,19 @@ type StandardMaterial struct {
 	// presentation explicitly.
 	Wireframe   *bool
 	AlphaCutoff AlphaCutoff `json:"alphaCutoff,omitzero"`
+	// RimColor, RimPower and RimStrength add an optional fresnel-style
+	// glancing-angle highlight, additive on top of the lit surface. The term
+	// is off by default: RimStrength 0 (the zero value) disables it entirely,
+	// so existing materials render unchanged. RimColor defaults to white
+	// [1,1,1] when nil. RimPower controls the falloff exponent (higher values
+	// narrow the highlight toward the silhouette); the renderer floors it at
+	// 0.0001 to avoid a pow() domain error, so RimPower 0 (the zero value)
+	// still renders a very wide, nearly full-hemisphere highlight rather than
+	// a divide-by-zero — set an explicit RimPower (2 is a common choice) when
+	// enabling the term.
+	RimColor    *[3]float64
+	RimPower    float64
+	RimStrength float64
 }
 
 type quaternion struct {
@@ -4513,6 +4526,11 @@ func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial
 	}
 	record.Wireframe = standardMaterialWireframe(material.Wireframe)
 	record.AlphaCutoff = material.AlphaCutoff
+	if material.RimColor != nil {
+		record.RimColor = copySpecularColor(material.RimColor)
+	}
+	record.RimPower = material.RimPower
+	record.RimStrength = material.RimStrength
 }
 
 func applyMaterialStyleToObjectIR(record *ObjectIR, kind MaterialKind, style MaterialStyle) {

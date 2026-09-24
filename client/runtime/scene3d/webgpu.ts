@@ -179,10 +179,31 @@
     // (log2(iorF0) + log2(color)), with an exact-zero coefficient encoded
     // as the -1e30 sentinel so the shader can branch on it without any
     // epsilon substitution. The vec3f alignment lands at u32 indices
-    // 48..50 and the trailing hasSpecularColorMap flag at index 51,
-    // padding the struct to 208 bytes total.
+    // 48..50 and the trailing hasSpecularColorMap flag at index 51; this was
+    // the end of the struct at 208 bytes before the fields below extended it
+    // to 256 bytes.
       "    specularColorLog: vec3f,",
       "    hasSpecularColorMap: u32,",
+    // Trailing fields added for glTF material-shading parity with the WebGL2
+    // renderer: normalScale/occlusionStrength are the core glTF
+    // normalTexture.scale / occlusionTexture.strength factors; emissiveColor
+    // is the vec3f emissiveFactor (hasEmissiveColor distinguishes an
+    // authored [0,0,0] factor from "no factor set", the latter falling back
+    // to the pre-existing albedo-tinted glow for hand-authored materials);
+    // rimColor/rimPower/rimStrength are the optional rim-light term, off by
+    // default (rimStrength 0). u32 indices 52..55 fill one 16-byte block (no
+    // vec3f, so no extra alignment need); emissiveColor's vec3f then starts
+    // its own 16-byte-aligned block at index 56, same pattern as
+    // specularF0/specularF90 above; rimColor repeats the pattern at index
+    // 60, with index 63 left as reserved padding. Struct is 256 bytes total.
+    "    normalScale: f32,",
+    "    occlusionStrength: f32,",
+    "    hasEmissiveColor: u32,",
+    "    rimPower: f32,",
+    "    emissiveColor: vec3f,",
+    "    rimStrength: f32,",
+    "    rimColor: vec3f,",
+    "    _pad4: f32,",
     "};",
   ].join("\n");
 
@@ -1830,13 +1851,31 @@
     "",
     "    var ambientOcclusion = 1.0;",
     "    if (material.hasOcclusionMap != 0u) {",
-    "        ambientOcclusion = clamp(textureSample(occlusionTex, occlusionSamp, in.uv).r, 0.0, 1.0);",
+    // KHR occlusion contract: occludedColor = mix(color, color * sample,
+    // strength), matching the WebGL2 renderer.
+    "        let occlusionSample = clamp(textureSample(occlusionTex, occlusionSamp, in.uv).r, 0.0, 1.0);",
+    "        ambientOcclusion = mix(1.0, occlusionSample, clamp(material.occlusionStrength, 0.0, 1.0));",
     "    }",
     "",
-    "    var emissiveStrength = material.emissive;",
-    "    var emissiveColor = albedo;",
-    "    if (material.hasEmissiveMap != 0u) {",
+    // Emission: when the material carries an authored emissive colour
+    // factor (material.hasEmissiveColor — every glTF-imported material sets
+    // this, even to black) emission is emissiveFactor * emissiveTexture(if
+    // any), times the KHR_materials_emissive_strength multiplier
+    // (material.emissive) — NEVER albedo. Hand-authored materials that only
+    // set the scalar `emissive` glow knob keep their pre-existing
+    // albedo-tinted glow (hasEmissiveColor == 0u), matching the WebGL2
+    // renderer.
+    "    let emissiveStrength = material.emissive;",
+    "    var emissiveColor: vec3f;",
+    "    if (material.hasEmissiveColor != 0u) {",
+    "        emissiveColor = material.emissiveColor;",
+    "        if (material.hasEmissiveMap != 0u) {",
+    "            emissiveColor = emissiveColor * textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
+    "        }",
+    "    } else if (material.hasEmissiveMap != 0u) {",
     "        emissiveColor = textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
+    "    } else {",
+    "        emissiveColor = albedo;",
     "    }",
     "",
     // Unlit path: output albedo directly.
@@ -1853,7 +1892,8 @@
     "        let T = normalize(in.tangent);",
     "        let B = normalize(in.bitangent);",
     "        let TBN = mat3x3f(T, B, N);",
-    "        let mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
     "",
@@ -2008,6 +2048,14 @@
     "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
+    // NOTE: unlike the WebGL2 renderer, the WebGPU equirect environment
+    // texture is currently uploaded with a single mip level (WebGPU has no
+    // gl.generateMipmap equivalent; a downsample chain needs its own WGSL
+    // compute/render pipeline). textureSample here already resolves to that
+    // one level, so a roughness-driven textureSampleLevel would be a no-op
+    // that implies a blur this renderer cannot yet produce. Tracked as a
+    // follow-up: build the mip chain, then switch both samples below to
+    // textureSampleLevel exactly like the WebGL2 fix.
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
     "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
@@ -2029,6 +2077,14 @@
     "    let emission = emissiveColor * emissiveStrength;",
     "",
     "    var color = ambient + Lo + emission;",
+    "",
+    // Rim light: a fresnel-style glancing-angle highlight, off by default
+    // (material.rimStrength == 0 skips the pow()). Additive, matching the
+    // WebGL2 renderer.
+    "    if (material.rimStrength > 0.0001) {",
+    "        let rim = pow(clamp(1.0 - NoV, 0.0, 1.0), max(material.rimPower, 0.0001)) * material.rimStrength;",
+    "        color = color + material.rimColor * rim;",
+    "    }",
     "",
     "    let clearcoat = clamp(material.clearcoat, 0.0, 1.0);",
     "    if (clearcoat > 0.0001) {",
@@ -7257,11 +7313,14 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    // 208 bytes: the previous 192-byte MaterialUniforms layout plus the
-    // vec3f-aligned per-channel specular coefficient logs and the trailing
-    // hasSpecularColorMap flag. Only the material buffer grows; frame and
-    // shadow buffers are untouched.
-    var _materialUniformBuf = new ArrayBuffer(208);
+    // 256 bytes: the previous 208-byte MaterialUniforms layout (192 bytes
+    // plus the vec3f-aligned per-channel specular coefficient logs and the
+    // trailing hasSpecularColorMap flag) plus normalScale, occlusionStrength,
+    // emissiveColor/hasEmissiveColor and the optional rimColor/rimPower/
+    // rimStrength term — see WGSL_MATERIAL_STRUCT above for the exact field
+    // order and alignment. Only the material buffer grows; frame and shadow
+    // buffers are untouched.
+    var _materialUniformBuf = new ArrayBuffer(256);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -14092,7 +14151,12 @@
       }
       if (envMapResources.key !== url) {
         envMapResources.key = url;
-        envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "linear");
+        // The legacy equirect environment map is an ordinary sRGB-encoded
+        // PNG/JPEG, not a raw linear radiance buffer — see the matching fix
+        // in the WebGL2 renderer (scenePBRUploadEnvironmentMap). Loading it
+        // as "linear" skipped the rgba8unorm-srgb decode and left every
+        // sample ~2.2x too bright.
+        envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "srgb");
       }
       var record = envMapResources.record;
       envMapResources.active = Boolean(record && record.loaded && !record.failed);
@@ -14259,6 +14323,48 @@
       return out;
     }
 
+    // Whether the material carries a valid authored emissive colour factor:
+    // exactly three finite, non-negative components (the glTF emissiveFactor
+    // triple). Mirrors the WebGL2 renderer's scenePBRHasEmissiveColor. The
+    // gltf.ts loader always sets this, even to [0, 0, 0]; hand-authored
+    // materials that only set the scalar `emissive` glow knob never do,
+    // which keeps their pre-existing albedo-tinted glow in the shader.
+    function sceneWebGPUHasEmissiveColor(material) {
+      var color = material && material.emissiveColor;
+      if (!(color && typeof color.length === "number" && color.length === 3)) {
+        return false;
+      }
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function sceneWebGPUEmissiveColor(material) {
+      var mat = material || {};
+      return sceneWebGPUHasEmissiveColor(mat) ? mat.emissiveColor : [0, 0, 0];
+    }
+
+    // Rim highlight tint. Off by default (rimStrength 0 in materialUniformData).
+    // Mirrors scenePBRRimColor on the WebGL2 renderer.
+    function sceneWebGPURimColor(material) {
+      var color = material && material.rimColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      return valid ? color : [1, 1, 1];
+    }
+
     function materialUniformData(material, receiveShadow, modelMatrix) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
@@ -14334,6 +14440,23 @@
       f[49] = colorLogs[1];
       f[50] = colorLogs[2];
       u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
+      // Trailing fields (see WGSL_MATERIAL_STRUCT for exact layout): core
+      // glTF normal-scale/occlusion-strength factors, the emissive colour
+      // factor with its has-flag, and the optional rim-light term.
+      f[52] = sceneNumber(mat.normalScale, 1);
+      f[53] = clamp01(sceneNumber(mat.occlusionStrength, 1));
+      u[54] = sceneWebGPUHasEmissiveColor(mat) ? 1 : 0;
+      f[55] = Math.max(0.0001, sceneNumber(mat.rimPower, 2));
+      var emissiveColor = sceneWebGPUEmissiveColor(mat);
+      f[56] = emissiveColor[0];
+      f[57] = emissiveColor[1];
+      f[58] = emissiveColor[2];
+      f[59] = Math.max(0, sceneNumber(mat.rimStrength, 0));
+      var rimColor = sceneWebGPURimColor(mat);
+      f[60] = rimColor[0];
+      f[61] = rimColor[1];
+      f[62] = rimColor[2];
+      f[63] = 0;
       return { data: f, u: u };
     }
 
