@@ -2059,7 +2059,12 @@ const routeBudgets = [
     // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
     // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
     // 335_000 for headroom. Gzip headroom is unchanged.
-    raw: 1_470_500,
+    // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
+    // combines with the merged spot shadows and glTF material-shading
+    // parity on this route. Measured: 1_537_833 / 415_835 / 351_088. Only
+    // raw exceeded the prior hard limit; bumped 1_470_500 -> 1_473_000 for
+    // headroom. Gzip and brotli headroom is unchanged.
+    raw: 1_473_000,
     gzip: 402_500,
     brotli: 335_000,
   },
@@ -2204,10 +2209,12 @@ const routeBudgets = [
     // headroom.
     // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
     // combines with the merged spot shadows and glTF shading parity on
-    // this route. Caps re-measured from the fully merged source below.
+    // this route. Measured: 1_145_367 / 305_449 / 255_497. Only brotli
+    // exceeded the prior hard limit (by 347 bytes); bumped 243_000 ->
+    // 244_000 for headroom.
     raw: 1_093_500,
     gzip: 305_000,
-    brotli: 243_000,
+    brotli: 244_000,
   },
 
 ];
