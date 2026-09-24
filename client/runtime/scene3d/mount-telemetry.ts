@@ -201,6 +201,13 @@
         qualityDprCap: numAttr("quality-dpr-cap"),
         qualityPostfxSuppressed: boolAttr("quality-postfx-suppressed"),
         adaptiveQuality: attr("adaptive-quality"),
+        // framePacing* surfaces the vsync-divisor governor (opt-in via
+        // props.framePacing === "vsync-divisor"; see mount.ts's
+        // sceneFramePacing* helpers). Absent for every other scene.
+        framePacing: attr("frame-pacing"),
+        framePacingK: numAttr("frame-pacing-k"),
+        framePacingVsyncMs: numAttr("frame-pacing-vsync-ms"),
+        framePacingCostMs: numAttr("frame-pacing-cost-ms"),
         renderLoopReason: attr("render-loop-reason"),
         renderWatchdogReason: attr("render-watchdog-reason"),
         dropped: attr("dropped"),

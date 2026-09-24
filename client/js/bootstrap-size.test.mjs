@@ -648,10 +648,14 @@ const budgets = [
   // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
   // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
   // slots, the __proto__-safe normalized attribute map) combines with all
-  // of the above on this merge.
+  // three on this merge.
   // Perspective spot shadows (WebGL and WebGPU one-map slots, fail-closed
   // validation, retirement) combines with all of the above on this merge.
   // Caps re-measured from the merged source below.
+  // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
+  // adds the pacing governor and its telemetry to the same monolith, on
+  // top of glTF material-shading parity and the WebGPU material-uniform
+  // struct growth. Caps re-measured from the fully merged source below.
   { file: "bootstrap.js", raw: 1_655_000, gzip: 453_200, brotli: 364_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1137,12 +1141,9 @@ const budgets = [
   // Custom per-vertex float BufferAttributes (Selena retained-geometry
   // eligibility, WebGL2/WebGPU custom attribute binding) combines with the
   // above on this merge. Caps re-measured from the merged source below.
-  // GPU-driven crowd motion adds mount.ts's applyMotionFrame handle method
-  // and motionFrames telemetry field, plus command-bridge.ts's
-  // dispatchMotionFrame forwarding shim (the actual decode/apply/queue
-  // logic ships in the lazy bootstrap-feature-scene3d-command.js chunk).
-  // Measured: 590_843 / 165_076 / 136_730; all three caps raised with
-  // narrow rounding headroom.
+  // GPU-driven crowd motion adds motion-frame dispatch and telemetry. Frame
+  // pacing also adds its governor and telemetry. Measure the merged chunk
+  // before setting the final cap.
   { file: "bootstrap-feature-scene3d.js", raw: 591_000, gzip: 165_200, brotli: 136_800 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
@@ -2072,10 +2073,8 @@ const routeBudgets = [
     // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
     // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
     // 335_000 for headroom. Gzip headroom is unchanged.
-    // GPU-driven crowd motion carries the full cost on this route (it loads
-    // both backends): the new WebGL2 motion color/shadow shaders and batch
-    // state. Measured: 1_546_219 / 417_471 / 352_535; all three caps raised
-    // with narrow rounding headroom.
+    // GPU-driven crowd motion and adaptive frame pacing both add code to this
+    // route. Measure the merged route before setting the final cap.
     raw: 1_546_500,
     gzip: 417_600,
     brotli: 352_600,
@@ -2219,10 +2218,8 @@ const routeBudgets = [
     // above on this merge. Measured: 1_143_495 / 304_706 / 254_874. Only
     // gzip exceeded the prior hard limit; bumped 290_000 -> 290_500 for
     // headroom.
-    // GPU-driven crowd motion's command-bridge.ts forwarding shim and
-    // mount.ts handle growth (see the bootstrap-feature-scene3d.js note
-    // above) carry in full on this route. Measured: 1_144_799 / 304_981 /
-    // 255_258; all three caps raised with narrow rounding headroom.
+    // Motion-frame dispatch and adaptive frame pacing both add code to this
+    // route. Measure the merged route before setting the final cap.
     raw: 1_145_000,
     gzip: 305_100,
     brotli: 255_400,
