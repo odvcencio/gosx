@@ -3672,17 +3672,24 @@
 // accepts an uneven 40-48fps, and the reported 50Hz target is never hit
 // exactly.
 //
-// The functions below choose an integer tick divisor k (1 to 4) instead:
-// render on every k-th requestAnimationFrame tick, using a tick COUNTER,
-// not a millisecond threshold, so the paced rate is an exact fraction of
-// the display's own refresh rate. They are pure and take only primitive
-// arguments (each with a default, so every parameter's type is inferred
-// and the scene3d noImplicitAny ratchet sees no new diagnostic) so a test
-// can drive the decision directly with a simulated rAF clock, without
-// mounting a renderer. scheduleNextAnimationFrame (above) is the only
-// caller; it owns the actual mutable state (see the framePacing* closure
-// variables) and is unreachable unless props.framePacing === "vsync-divisor",
-// so a scene that never sets that prop never executes any of this.
+// The functions below choose an integer tick divisor k instead: render on
+// every k-th requestAnimationFrame tick, using a tick COUNTER, not a
+// millisecond threshold, so the paced rate is an exact fraction of the
+// display's own refresh rate. The render-cost decision picks k from 1 to
+// 4 (see sceneFramePacingCandidateK). An authored frameIntervalMS/
+// MaxFrameRate/MaxFPS cap can require a larger k (see
+// sceneFramePacingMinKForInterval); the final k is the larger of the two,
+// since the pre-existing fixed-interval gate this feature replaces has no
+// upper bound on how rarely it renders either.
+//
+// They are pure and take only primitive arguments (each with a default,
+// so every parameter's type is inferred and the scene3d noImplicitAny
+// ratchet sees no new diagnostic), so a test can drive the decision
+// directly with a simulated rAF clock, without mounting a renderer.
+// scheduleNextAnimationFrame (above) is the only caller; it owns the
+// actual mutable state (see the framePacing* closure variables) and is
+// unreachable unless props.framePacing === "vsync-divisor", so a scene
+// that never sets that prop never executes any of this.
 
 // sceneFramePacingMedianOf3 is a robust median of the three most recent
 // raw requestAnimationFrame tick deltas (milliseconds). A single implausible
@@ -3735,12 +3742,17 @@ function sceneFramePacingCandidateK(vsyncMS = 0, costMS = 0) {
 // floor that keeps the paced rate at or below an authored
 // frameIntervalMS/MaxFrameRate/MaxFPS cap (see sceneAnimationFrameIntervalMS).
 // Returns 1 when no such cap applies.
+//
+// Unlike sceneFramePacingCandidateK, this is NOT bounded to 4: the [1,4]
+// range in the spec covers the render-cost decision, not an authored cap.
+// The pre-existing fixed-interval gate this feature replaces has no such
+// bound either (a low MaxFrameRate can skip arbitrarily many ticks), so
+// capping this floor at 4 would let a scene render FASTER than its
+// authored maximum -- for example MaxFrameRate 10 on a 60 Hz display
+// needs six ticks per render; a k=4 cap would render at 15 fps instead.
 function sceneFramePacingMinKForInterval(vsyncMS = 0, minIntervalMS = 0) {
   if (!(vsyncMS > 0) || !(minIntervalMS > 0)) return 1;
-  if (vsyncMS >= minIntervalMS) return 1;
-  if (vsyncMS * 2 >= minIntervalMS) return 2;
-  if (vsyncMS * 3 >= minIntervalMS) return 3;
-  return 4;
+  return Math.max(1, Math.ceil(minIntervalMS / vsyncMS));
 }
 
 // sceneFramePacingObserveCandidate tracks how many consecutive ticks the

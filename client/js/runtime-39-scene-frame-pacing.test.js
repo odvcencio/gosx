@@ -186,6 +186,32 @@ test("with no authored cap, the same cheap render settles back at k=1", () => {
   assert.equal(state.activeK, 1);
 });
 
+test("a low authored cap raises k past 4 instead of exceeding the cap", () => {
+  // Regression: an earlier version capped the authored-interval floor at
+  // k=4 (the same range as the render-cost decision), so a 60 Hz display
+  // with MaxFrameRate 10 (needs 6 ticks per render) rendered every 4th
+  // tick instead -- 15 fps, 50% over the authored maximum.
+  const { api } = loadSceneFramePacingAPI();
+  const vsyncMS = 1000 / 60;
+  const minIntervalMS = 1000 / 10; // MaxFrameRate: 10.
+  assert.equal(api.sceneFramePacingMinKForInterval(vsyncMS, minIntervalMS), 6);
+  const { state } = runFramePacingTicks(
+    api, initialFramePacingState(), { refreshHz: 60, costMS: 5, minIntervalMS }, 60,
+  );
+  assert.equal(state.activeK, 6);
+  const tail = runFramePacingTicks(api, state, { refreshHz: 60, costMS: 5, minIntervalMS }, 60);
+  assert.equal(tail.renderedTicks, 10, "60 ticks at k=6 must render exactly 10 times");
+});
+
+test("sceneFramePacingMinKForInterval is never bounded to 4 the way the render-cost decision is", () => {
+  const { api } = loadSceneFramePacingAPI();
+  const vsyncMS = 1000 / 60;
+  // A pathologically low cap (MaxFrameRate 1) must still compute the
+  // exact divisor, not silently clamp to whatever the cost-based range
+  // supports.
+  assert.equal(api.sceneFramePacingMinKForInterval(vsyncMS, 1000 / 1), 60);
+});
+
 test("scheduleNextAnimationFrame's original fixed-interval gate is preserved verbatim", () => {
   const source = readSceneMountSrc();
   const originalGate = [

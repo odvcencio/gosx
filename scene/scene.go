@@ -183,18 +183,20 @@ type Props struct {
 	//
 	// The only recognized value is "vsync-divisor". The client measures
 	// the display's vsync interval and the recent render cost. It then
-	// renders on every k-th vsync tick, where k is an integer from 1 to
-	// 4. The client picks the smallest k for which k vsync intervals
-	// cover the render cost, with margin. This policy does not skip
-	// ticks by a fixed millisecond threshold.
+	// renders on every k-th vsync tick, where k is an integer. The
+	// client picks the smallest k from 1 to 4 for which k vsync
+	// intervals cover the render cost, with margin. This policy does
+	// not skip ticks by a fixed millisecond threshold.
 	//
 	// This paces evenly across refresh rates. A fixed MaxFrameRate of 50
 	// on a 100 Hz display yields an uneven 40 to 48 fps. The
 	// vsync-divisor policy yields an exact 50 fps, with k equal to 2.
 	//
 	// When MaxFrameRate, MaxFPS, or FrameIntervalMS is also set, it
-	// remains an upper bound on the paced rate. An empty value, or any
-	// other string, keeps the existing fixed-interval behavior.
+	// remains an upper bound on the paced rate: k grows past 4 when the
+	// authored cap needs a longer interval than four vsync ticks. An
+	// empty value, or any other string, keeps the existing
+	// fixed-interval behavior.
 	FramePacing         string  `json:"framePacing,omitempty"`
 	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
