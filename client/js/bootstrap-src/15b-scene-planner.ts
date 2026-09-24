@@ -1810,25 +1810,55 @@
     return hash;
   }
 
-  function scenePlannerHashMeshVertices(hash, vertices) {
-    scenePlannerTelemetryState.fullVertexHashScans += 1;
-    if (!vertices || typeof vertices !== "object") {
-      return scenePlannerHashNumber(hash, 0);
+  // Per-vertices-object memo of the content-only hash computed below,
+  // independent of any caller's rolling hash seed. normalizeSceneObject's
+  // sceneNormalizeMeshVertexDataCached (10-runtime-scene-core.ts) hands
+  // back the exact same normalized `vertices` object across ticks whenever
+  // the raw authored payload is unchanged, so most non-retained meshes
+  // present the same object reference frame after frame while only their
+  // transform or pose moves. Without this memo, scenePlannerHashMeshVertices
+  // re-walked every position/normal/UV float on every one of those frames,
+  // even though the geometry itself never changed.
+  //
+  // Only immutable, revisioned geometry promises unchanged content.
+  // Mutable arrays and dynamic geometry always need a fresh scan.
+
+  const sceneVertexContentHashCache = new WeakMap();
+  const SCENE_VERTEX_CONTENT_HASH_SEED = 2166136261 >>> 0;
+
+  function sceneVertexContentHash(vertices) {
+    const reusable = vertices.immutable === true && vertices.dynamic !== true &&
+      Number.isSafeInteger(vertices.revision) && vertices.revision >= 0;
+    const cached = reusable ? sceneVertexContentHashCache.get(vertices) : null;
+    if (cached && cached.revision === vertices.revision) {
+      return cached.value;
     }
-    hash = scenePlannerHashNumber(hash, sceneNumber(vertices.count, 0));
-    hash = scenePlannerHashFloatArray(hash, vertices.positions, 0);
-    hash = scenePlannerHashFloatArray(hash, vertices.normals, 0);
-    hash = scenePlannerHashFloatArray(hash, vertices.uvs, 0);
+    scenePlannerTelemetryState.fullVertexHashScans += 1;
+    let contentHash = SCENE_VERTEX_CONTENT_HASH_SEED;
+    contentHash = scenePlannerHashNumber(contentHash, sceneNumber(vertices.count, 0));
+    contentHash = scenePlannerHashFloatArray(contentHash, vertices.positions, 0);
+    contentHash = scenePlannerHashFloatArray(contentHash, vertices.normals, 0);
+    contentHash = scenePlannerHashFloatArray(contentHash, vertices.uvs, 0);
     // The authored index stream is part of the geometry identity: swapping
     // topology without touching attributes must still invalidate the hash.
     const indices = vertices.indices;
     if (indices instanceof Uint32Array && indices.length > 0) {
-      hash = scenePlannerHashNumber(hash, indices.length);
+      contentHash = scenePlannerHashNumber(contentHash, indices.length);
       for (let i = 0; i < indices.length; i += 1) {
-        hash = scenePlannerHashNumber(hash, indices[i]);
+        contentHash = scenePlannerHashNumber(contentHash, indices[i]);
       }
     } else {
-      hash = scenePlannerHashNumber(hash, 0);
+      contentHash = scenePlannerHashNumber(contentHash, 0);
+    }
+    if (reusable) {
+      sceneVertexContentHashCache.set(vertices, { revision: vertices.revision, value: contentHash });
+    }
+    return contentHash;
+  }
+
+  function scenePlannerHashMeshVertices(hash, vertices) {
+    if (!vertices || typeof vertices !== "object") {
+      return scenePlannerHashNumber(hash, 0);
     }
     // Custom attribute streams are deliberately NOT hashed per-value here.
     // sceneNormalizeCustomAttributes only accepts custom streams when the
@@ -1837,7 +1867,7 @@
     // Any change to a custom stream must therefore bump the revision, so
     // scanning every name/itemSize/data value here would duplicate identity
     // work already covered by the contract.
-    return hash;
+    return scenePlannerHashNumber(hash, sceneVertexContentHash(vertices));
   }
 
   function scenePlannerHashPointsEntry(hash, entry) {

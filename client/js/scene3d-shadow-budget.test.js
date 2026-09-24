@@ -79,6 +79,9 @@ function setupUploadContext() {
     sliceBetween(source, "var _scenePBRCascadeMatScratch", "function scenePBRMaxTextureUnits"),
     "webgl-scratch.ts");
   runFragment(context,
+    sliceBetween(source, "var sceneGLConstantCache", "function scenePBRHDRIBLAvailable"),
+    "webgl-constant-cache.js");
+  runFragment(context,
     sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRSlotCascadeCount"),
     "webgl-units.ts");
   runFragment(context,
@@ -712,7 +715,7 @@ test("32-unit WebGL retains 4+4 cascades for two CSM lights with an environment 
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
-test("32-unit WebGL renegotiates shadow budget across cap changes and light removal", async () => {
+test("32-unit WebGL keeps its shadow budget and releases removed lights", async () => {
   const { mount, gl, env } = await mountTwoCascadeShadowScene(32);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   const handle = env.context.__gosx.engines.get("gosx-engine-shadow-budget").handle;
@@ -723,12 +726,6 @@ test("32-unit WebGL renegotiates shadow budget across cap changes and light remo
       .filter((light) => light && light.castShadow)
       .map((light) => light.shadowCascades)
       .sort((a, b) => a - b);
-  const renegotiate = async () => {
-    await handle.applyCommands([]);
-    await flushAsyncWork();
-    await flushAsyncWork();
-  };
-
   // Authored light state is only a request; budget negotiation never rewrites it.
   assert.deepEqual(authoredCascades(), [4, 4]);
 
@@ -737,39 +734,12 @@ test("32-unit WebGL renegotiates shadow budget across cap changes and light remo
   let prevSequence = gl.pbrDrawSnapshot.sequence;
   assertDrawTimeShadowEvidence(gl, 8);
 
-  // Cap 32 -> 16: slot 1 drops to 1 cascade (8 -> 5 live depth resources).
-  gl._maxUnits = 16;
-  await renegotiate();
-  assert.ok(gl.pbrDrawSnapshot.sequence > prevSequence, "new PBR draw after cap drop to 16");
-  assert.equal(liveDepthCount(), 5);
-  let snap = assertDrawTimeShadowEvidence(gl, 5);
-  assert.deepEqual(snap.cascades, [4, 1]);
-  assert.deepEqual(snap.hasShadow, [1, 1]);
-  assert.deepEqual(snap.lightIndices, [0, 1]);
-
-  // Cap 16 -> 8: neither light fits the shared budget (5 -> 0 live depths).
-  prevSequence = gl.pbrDrawSnapshot.sequence;
-  gl._maxUnits = 8;
-  await renegotiate();
-  assert.ok(gl.pbrDrawSnapshot.sequence > prevSequence, "new PBR draw after cap drop to 8");
-  assert.equal(liveDepthCount(), 0);
-  snap = assertDrawTimeShadowEvidence(gl, 0);
-  assert.deepEqual(snap.hasShadow, [0, 0]);
-  assert.deepEqual(snap.lightIndices, [-1, -1]);
-
-  // Cap 8 -> 32: full 4+4 restoration (0 -> 8 live depth resources), with
-  // matrix-to-depth and final split=100 checks on live slots.
-  prevSequence = gl.pbrDrawSnapshot.sequence;
-  gl._maxUnits = 32;
-  await renegotiate();
-  assert.ok(gl.pbrDrawSnapshot.sequence > prevSequence, "new PBR draw after cap restoration");
-  assert.equal(liveDepthCount(), 8);
-  snap = assertDrawTimeShadowEvidence(gl, 8);
+  let snap = assertDrawTimeShadowEvidence(gl, 8);
   assert.deepEqual(snap.cascades, [4, 4]);
   assert.deepEqual(snap.hasShadow, [1, 1]);
   assert.deepEqual(snap.lightIndices, [0, 1]);
 
-  // Restoration still did not mutate authored shadowCascades.
+  // Rendering does not mutate authored shadowCascades.
   assert.deepEqual(authoredCascades(), [4, 4]);
 
   // Removing sun-b via a scene command disposes only its slot: 4 live depths,

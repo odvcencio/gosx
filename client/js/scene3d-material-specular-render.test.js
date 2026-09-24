@@ -87,6 +87,7 @@ function setupWebGLRenderer() {
       "var SCENE_TEXTURE_UNIT_MATERIALS", "function sceneTextureMipBytes"),
     sliceBetween(source, "function scenePBRSRGBChannelToLinear", "const SCENE_PBR_VERTEX_SOURCE"),
     sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
+    sliceBetween(source, "var sceneGLConstantCache", "function scenePBRHDRIBLAvailable"),
     sliceBetween(source, "function scenePBRHDRIBLAvailable", "function scenePBRFragmentSourceForContext"),
     sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRSlotCascadeCount"),
     sliceBetween(source, "function scenePBRSlotCascadeCount", "function scenePBRTextureLayoutForFrame"),
