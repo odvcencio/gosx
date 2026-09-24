@@ -2331,6 +2331,26 @@
     let lastAppliedGizmoMode = null;
     let applyingSignalGizmoMode = false;
 
+    // Per-mount memory of the last string this render loop itself wrote to
+    // a given `data-gosx-scene3d-*` telemetry attribute. setAttrValue()
+    // already skips the DOM write when the value is unchanged, but it still
+    // pays for an element.getAttribute() read and a string compare on every
+    // one of these calls, every frame, even while the scene is idle. Since
+    // this closure is the sole writer of the attribute names it uses this
+    // cache for, an in-memory compare is equivalent and cheaper. A remount
+    // creates a fresh closure (and therefore a fresh, empty cache), so the
+    // first publish after mount or remount always re-syncs the DOM.
+    const lastPublishedFrameAttrs = Object.create(null);
+
+    // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+    function publishSceneFrameAttr(name, value) {
+      if (lastPublishedFrameAttrs[name] === value) {
+        return;
+      }
+      lastPublishedFrameAttrs[name] = value;
+      setAttrValue(mount, name, value);
+    }
+
     // syncMountedSceneGizmoHelpers is the shared live-update pass for
     // TransformControls helper meshes (Mesh.GizmoHelper / gizmoHelper:true;
     // see scene.go's lowerTransformControls). Re-run after either the
@@ -2991,7 +3011,7 @@
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
-      setAttrValue(mount, "data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
+      publishSceneFrameAttr("data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
       const modelAnimationDelta = lastModelAnimationTimeSeconds == null
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
@@ -3115,15 +3135,15 @@
       // filtered bundle.points array both the WebGPU (16a-scene-webgpu.js
       // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
       // backends draw from, so this single attribute covers both.
-      setAttrValue(mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-reduced-instances",
+      publishSceneFrameAttr("data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-reduced-instances",
         String(Math.max(0, computeQualitySourceInstances - computeQualityActiveInstances)));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");

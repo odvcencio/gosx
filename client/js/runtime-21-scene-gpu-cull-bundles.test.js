@@ -1354,6 +1354,9 @@ test("cpu-cull S3-T5c: WebGL instanced draw disables stale unowned vertex attrib
       const n = Number(value);
       return Number.isFinite(n) ? n : fallback;
     },
+    sceneCachedGLParameter(gl, pname) {
+      return gl.getParameter(pname);
+    },
   };
   vm.runInNewContext(fnMatch[0] + "\nsceneDisableUnownedVertexAttribArrays({0:true,4:true,5:true,6:true,7:true});", context);
 

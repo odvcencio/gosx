@@ -702,6 +702,32 @@
     };
   }
 
+  // sceneNormalizeMeshVertexData re-walks positions/normals/uvs/tangents/
+  // joints/weights/indices/attributes on every call. normalizeSceneObject
+  // below calls it on every rehydration tick for every mesh object, even
+  // when the caller re-supplied the exact same vertices payload object it
+  // supplied last tick (the common case for a mesh whose geometry is not
+  // changing that frame, only its transform). Cache the normalized result
+  // per raw-payload identity so an unchanged reference skips the rework.
+  // Only immutable, revisioned payloads promise stable content. Mutable
+  // arrays must be normalized again even when their containing object is
+  // reused. A revision bump forces a fresh normalize.
+  const sceneMeshVertexDataCache = new WeakMap();
+
+  function sceneNormalizeMeshVertexDataCached(value) {
+    if (!value || typeof value !== "object" || value.dynamic === true ||
+        value.immutable !== true || !Number.isSafeInteger(value.revision) || value.revision < 0) {
+      return sceneNormalizeMeshVertexData(value);
+    }
+    const cached = sceneMeshVertexDataCache.get(value);
+    if (cached && cached.revision === value.revision) {
+      return cached.normalized;
+    }
+    const normalized = sceneNormalizeMeshVertexData(value);
+    sceneMeshVertexDataCache.set(value, { revision: value.revision, normalized });
+    return normalized;
+  }
+
   function sceneLineGeometryMetrics(points) {
     if (!Array.isArray(points) || points.length === 0) {
       return null;
@@ -739,7 +765,7 @@
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(object) ? object : {};
     const scaleSource = sceneIsPlainObject(item.scale) ? item.scale : (sceneIsPlainObject(current.scale) ? current.scale : null);
-    const vertices = sceneNormalizeMeshVertexData(item.vertices);
+    const vertices = sceneNormalizeMeshVertexDataCached(item.vertices);
     const kind = normalizeSceneKind(item.kind || current.kind);
     const size = sceneNumber(item.size, sceneNumber(current.size, 1.2));
     const points = kind === "lines"
@@ -4137,14 +4163,42 @@
     scenePublishWaterShaderSourceMap(state._waterShaderSourceByID);
   }
 
+  function sceneInstancedMeshID(entry, index) {
+    return entry && typeof entry.id === "string" && entry.id ? entry.id : ("scene-instanced-" + index);
+  }
+
   function applySceneInstancedMeshesCommand(state, data) {
     if (!state) return;
     const payload = sceneIsPlainObject(data) ? data : {};
     const rawMeshes = Array.isArray(data)
       ? data
       : (Array.isArray(payload.instancedMeshes) ? payload.instancedMeshes : []);
+    // Match each incoming entry back to its own previous-tick entry by ID
+    // (falling back to position), and thread that through as fallback
+    // instead of null. normalizeSceneInstancedMeshEntry only carries its
+    // cached Float32Array transforms/colors view forward when the fallback
+    // it receives is the entry's real predecessor — passing null forced a
+    // fresh Float32Array and VBO for every instanced mesh on every tick.
+    const currentMeshes = Array.isArray(state.instancedMeshes) ? state.instancedMeshes : [];
+    let currentByID = null;
     state.instancedMeshes = rawMeshes.map(function(entry, index) {
-      return normalizeSceneInstancedMeshEntry(entry, index, null);
+      const id = sceneInstancedMeshID(entry, index);
+      const explicitID = entry && typeof entry.id === "string" && entry.id;
+      const atIndex = currentMeshes[index];
+      let fallback = atIndex && sceneInstancedMeshID(atIndex, index) === id ? atIndex : null;
+      if (!fallback && explicitID) {
+        if (!currentByID) {
+          currentByID = new Map();
+          currentMeshes.forEach(function(current, currentIndex) {
+            if (current && typeof current === "object") {
+              currentByID.set(sceneInstancedMeshID(current, currentIndex), current);
+            }
+          });
+        }
+        fallback = currentByID.get(id) || null;
+      }
+      if (!fallback && !explicitID) fallback = atIndex || null;
+      return normalizeSceneInstancedMeshEntry(entry, index, fallback);
     });
   }
 
@@ -6173,7 +6227,7 @@
         kind: object.kind,
         pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
         materialIndex: materialIndex,
-        renderPass: sceneWorldObjectRenderPass(object, material),
+        renderPass: objectPassString,
         _renderPassDerived: (object && object._renderPassDerived) === true,
         texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
         static: false,
@@ -6207,7 +6261,7 @@
           kind: object.kind,
           pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
           materialIndex: materialIndex,
-          renderPass: sceneWorldObjectRenderPass(object, material),
+          renderPass: objectPassString,
           _renderPassDerived: (object && object._renderPassDerived) === true,
           texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
           static: Boolean(object.static),
@@ -6420,7 +6474,7 @@
       kind: object.kind,
       pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
       materialIndex: materialIndex,
-      renderPass: sceneWorldObjectRenderPass(object, material),
+      renderPass: objectPassString,
       _renderPassDerived: (object && object._renderPassDerived) === true,
       texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
       static: Boolean(object.static),
