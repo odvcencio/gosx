@@ -304,8 +304,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 11091,
-      "maxFileLines": 11091
+      "maxLines": 11236,
+      "maxFileLines": 11236
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -332,12 +332,12 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 11091,
+    "../runtime/scene3d/webgl.ts": 11236,
     "../runtime/scene3d/webgpu.ts": 19099,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205,
     "../runtime/scene3d/hydrate-input.ts": 89,
     "../runtime/scene3d/mount-webgl.ts": 5508,
-    "../runtime/scene3d/mount.ts": 3839
+    "../runtime/scene3d/mount.ts": 3859
   },
   "functionDefaults": {
     "lines": 200,
@@ -358,7 +358,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10043:5",
+      "name": "applyPointsAuthoredCustomUniforms@10185:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -376,10 +376,10 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7353:3",
-      "lines": 3383,
+      "name": "createScenePBRRenderer@7479:3",
+      "lines": 3401,
       "cyclomatic": 1014,
-      "cognitive": 1614,
+      "cognitive": 1611,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -421,7 +421,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10520:5",
+      "name": "drawInstancedMeshes@10662:5",
       "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -430,7 +430,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9612:5",
+      "name": "drawPBRObjectList@9754:5",
       "lines": 283,
       "cyclomatic": 82,
       "cognitive": 196,
@@ -439,7 +439,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10219:5",
+      "name": "drawPointsEntries@10361:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -448,16 +448,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9338:5",
-      "lines": 152,
-      "cyclomatic": 88,
-      "cognitive": 203,
+      "name": "prepareRigidMeshBatches@9484:5",
+      "lines": 148,
+      "cyclomatic": 86,
+      "cognitive": 198,
       "maxNesting": 7,
       "parameters": 1
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareScenePBRInitialPrograms@6515:3",
+      "name": "prepareScenePBRInitialPrograms@6641:3",
       "lines": 126,
       "cyclomatic": 49,
       "cognitive": 58,
@@ -466,7 +466,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@8507:5",
+      "name": "render@8653:5",
       "lines": 300,
       "cyclomatic": 81,
       "cognitive": 120,
@@ -484,7 +484,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7193:3",
+      "name": "scenePBRUploadEnvironmentMap@7319:3",
       "lines": 126,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -493,7 +493,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6720:3",
+      "name": "scenePBRUploadLights@6846:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -502,7 +502,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8312:5",
+      "name": "uploadCustomUniforms@8458:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -820,9 +820,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3383,
+      "lines": 3401,
       "cyclomatic": 1014,
-      "cognitive": 1614,
+      "cognitive": 1611,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -941,20 +941,20 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "raw": 843500,
-      "gzip": 235600,
-      "brotli": 196300,
-      "ledger": "The merged frame pacing and GPU crowd motion build measures 843353 raw, 235505 gzip, and 196195 Brotli bytes. These targets leave narrow rounding room."
+      "raw": 845500,
+      "gzip": 236500,
+      "brotli": 197200,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room."
     },
     "base+webgpu": {
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "raw": 990100,
-      "gzip": 262800,
-      "brotli": 218200,
-      "ledger": "The merged frame pacing and GPU crowd motion build measures 990003 raw, 262723 gzip, and 218079 Brotli bytes. These targets leave narrow rounding room."
+      "raw": 991100,
+      "gzip": 263200,
+      "brotli": 218700,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -963,10 +963,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 906300,
-      "gzip": 258600,
-      "brotli": 216700,
-      "ledger": "The merged frame pacing and GPU crowd motion build measures 906175 raw, 258480 gzip, and 216622 Brotli bytes. These targets leave narrow rounding room."
+      "raw": 908300,
+      "gzip": 259500,
+      "brotli": 217700,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room."
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -975,10 +975,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 1052900,
-      "gzip": 285800,
-      "brotli": 238600,
-      "ledger": "The merged frame pacing and GPU crowd motion build measures 1052825 raw, 285698 gzip, and 238506 Brotli bytes. These targets leave narrow rounding room."
+      "raw": 1053900,
+      "gzip": 286200,
+      "brotli": 239100,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room."
     }
   },
   "rendererABI": {

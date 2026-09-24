@@ -1017,10 +1017,10 @@ const budgets = [
   // GPU-driven crowd motion adds a second full color-pass and shadow-pass
   // vertex shader (motion-key interpolation plus in-shader clip-table
   // lookup), the clip-table/motion-record batching state, and the
-  // persistent-buffer upload path. The merged build measures 250_215 /
-  // 69_495 / 58_959;
+  // persistent-buffer upload path. The build with frame caching measures
+  // 251_292 / 70_024 / 59_410;
   // retain narrow rounding headroom so later growth remains visible.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 250_300, gzip: 69_600, brotli: 59_050 },
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 70_100, brotli: 59_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1143,9 +1143,9 @@ const budgets = [
   // eligibility, WebGL2/WebGPU custom attribute binding) combines with the
   // above on this merge. Caps re-measured from the merged source below.
   // GPU-driven crowd motion adds motion-frame dispatch and telemetry. Frame
-  // pacing also adds its governor and telemetry. The merged build measures
-  // 593_138 / 166_010 / 137_236.
-  { file: "bootstrap-feature-scene3d.js", raw: 593_200, gzip: 166_100, brotli: 137_300 },
+  // pacing also adds its governor and telemetry. The build with frame
+  // caching measures 594_098 / 166_371 / 137_740.
+  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 166_500, brotli: 137_850 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2077,10 +2077,11 @@ const routeBudgets = [
     // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
     // 335_000 for headroom. Gzip headroom is unchanged.
     // GPU-driven crowd motion and adaptive frame pacing both add code to this
-    // route. The merged build measures 1_549_224 / 418_646 / 353_151.
-    raw: 1_549_300,
-    gzip: 418_750,
-    brotli: 353_250,
+    // route. The build with frame caching measures 1_551_261 / 419_536 /
+    // 354_106.
+    raw: 1_551_400,
+    gzip: 419_650,
+    brotli: 354_200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2222,10 +2223,11 @@ const routeBudgets = [
     // gzip exceeded the prior hard limit; bumped 290_000 -> 290_500 for
     // headroom.
     // Motion-frame dispatch and adaptive frame pacing both add code to this
-    // route. The merged build measures 1_147_094 / 305_915 / 255_764.
-    raw: 1_147_200,
-    gzip: 306_000,
-    brotli: 255_850,
+    // route. The build with frame caching measures 1_148_054 / 306_276 /
+    // 256_268.
+    raw: 1_148_200,
+    gzip: 306_400,
+    brotli: 256_350,
   },
 
 ];
