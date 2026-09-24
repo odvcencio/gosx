@@ -161,6 +161,25 @@ func TestPropsLegacyPropsLowerScrollFrameRate(t *testing.T) {
 	}
 }
 
+func TestPropsLegacyPropsLowerFramePacing(t *testing.T) {
+	props := Props{
+		FramePacing:  "vsync-divisor",
+		MaxFrameRate: 50,
+	}
+	legacy := props.LegacyProps()
+	if got := legacy["framePacing"]; got != "vsync-divisor" {
+		t.Fatalf("framePacing = %#v, want vsync-divisor", got)
+	}
+	if got := legacy["maxFrameRate"]; got != float64(50) {
+		t.Fatalf("maxFrameRate = %#v, want 50", got)
+	}
+
+	empty := Props{}.LegacyProps()
+	if _, ok := empty["framePacing"]; ok {
+		t.Fatalf("framePacing = %#v, want absent when unset", empty["framePacing"])
+	}
+}
+
 func TestPropsSceneIRLowerNestedGraph(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
