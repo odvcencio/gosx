@@ -304,8 +304,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 11081,
-      "maxFileLines": 11081
+      "maxLines": 11091,
+      "maxFileLines": 11091
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -332,12 +332,12 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 11081,
+    "../runtime/scene3d/webgl.ts": 11091,
     "../runtime/scene3d/webgpu.ts": 19099,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205,
     "../runtime/scene3d/hydrate-input.ts": 89,
     "../runtime/scene3d/mount-webgl.ts": 5508,
-    "../runtime/scene3d/mount.ts": 3605
+    "../runtime/scene3d/mount.ts": 3839
   },
   "functionDefaults": {
     "lines": 200,
@@ -349,7 +349,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4902:14",
+      "name": "anonymous@4903:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -358,7 +358,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10033:5",
+      "name": "applyPointsAuthoredCustomUniforms@10043:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -367,7 +367,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3774:5",
+      "name": "applyWaterQualityProfile@3775:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -376,8 +376,8 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7351:3",
-      "lines": 3375,
+      "name": "createScenePBRRenderer@7353:3",
+      "lines": 3383,
       "cyclomatic": 1014,
       "cognitive": 1614,
       "maxNesting": 7,
@@ -385,7 +385,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4500:3",
+      "name": "createScenePostProcessor@4501:3",
       "lines": 550,
       "cyclomatic": 140,
       "cognitive": 200,
@@ -394,7 +394,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@3147:3",
+      "name": "createSceneWaterRendererWebGL@3148:3",
       "lines": 1287,
       "cyclomatic": 354,
       "cognitive": 437,
@@ -403,7 +403,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2373:3",
+      "name": "createSceneWaterSimWebGL@2374:3",
       "lines": 256,
       "cyclomatic": 78,
       "cognitive": 84,
@@ -412,7 +412,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3961:5",
+      "name": "drawFrame@3962:5",
       "lines": 398,
       "cyclomatic": 103,
       "cognitive": 126,
@@ -421,7 +421,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10510:5",
+      "name": "drawInstancedMeshes@10520:5",
       "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -430,7 +430,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9602:5",
+      "name": "drawPBRObjectList@9612:5",
       "lines": 283,
       "cyclomatic": 82,
       "cognitive": 196,
@@ -439,7 +439,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10209:5",
+      "name": "drawPointsEntries@10219:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -448,7 +448,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9328:5",
+      "name": "prepareRigidMeshBatches@9338:5",
       "lines": 152,
       "cyclomatic": 88,
       "cognitive": 203,
@@ -457,7 +457,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareScenePBRInitialPrograms@6513:3",
+      "name": "prepareScenePBRInitialPrograms@6515:3",
       "lines": 126,
       "cyclomatic": 49,
       "cognitive": 58,
@@ -466,7 +466,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "render@8497:5",
+      "name": "render@8507:5",
       "lines": 300,
       "cyclomatic": 81,
       "cognitive": 120,
@@ -475,7 +475,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3932:5",
+      "name": "renderMeshTextureTarget@3933:5",
       "lines": 28,
       "cyclomatic": 6,
       "cognitive": 5,
@@ -484,7 +484,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7191:3",
+      "name": "scenePBRUploadEnvironmentMap@7193:3",
       "lines": 126,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -493,7 +493,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6718:3",
+      "name": "scenePBRUploadLights@6720:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -502,7 +502,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8302:5",
+      "name": "uploadCustomUniforms@8312:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -511,7 +511,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3333:5",
+      "name": "waterShadowSignature@3334:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,
@@ -820,7 +820,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3375,
+      "lines": 3383,
       "cyclomatic": 1014,
       "cognitive": 1614,
       "maxNesting": 7,
@@ -941,20 +941,20 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "raw": 841500,
-      "gzip": 234800,
-      "brotli": 195700,
-      "ledger": "The GPU crowd motion path measures 841433 raw, 234745 gzip, and 195649 Brotli bytes. These targets leave narrow rounding room."
+      "raw": 843500,
+      "gzip": 235600,
+      "brotli": 196300,
+      "ledger": "The merged frame pacing and GPU crowd motion build measures 843353 raw, 235505 gzip, and 196195 Brotli bytes. These targets leave narrow rounding room."
     },
     "base+webgpu": {
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "raw": 988200,
-      "gzip": 262000,
-      "brotli": 217500,
-      "ledger": "The shared Scene3D changes measure 988130 raw, 261977 gzip, and 217474 Brotli bytes on the WebGPU route. These targets leave narrow rounding room."
+      "raw": 990100,
+      "gzip": 262800,
+      "brotli": 218200,
+      "ledger": "The merged frame pacing and GPU crowd motion build measures 990003 raw, 262723 gzip, and 218079 Brotli bytes. These targets leave narrow rounding room."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -963,10 +963,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 904300,
-      "gzip": 257800,
-      "brotli": 216100,
-      "ledger": "The full WebGL crowd route measures 904255 raw, 257720 gzip, and 216076 Brotli bytes. These targets leave narrow rounding room."
+      "raw": 906300,
+      "gzip": 258600,
+      "brotli": 216700,
+      "ledger": "The merged frame pacing and GPU crowd motion build measures 906175 raw, 258480 gzip, and 216622 Brotli bytes. These targets leave narrow rounding room."
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -975,10 +975,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 1051000,
-      "gzip": 285000,
-      "brotli": 238000,
-      "ledger": "The shared animation changes measure 1050952 raw, 284952 gzip, and 237901 Brotli bytes on the WebGPU route. These targets leave narrow rounding room."
+      "raw": 1052900,
+      "gzip": 285800,
+      "brotli": 238600,
+      "ledger": "The merged frame pacing and GPU crowd motion build measures 1052825 raw, 285698 gzip, and 238506 Brotli bytes. These targets leave narrow rounding room."
     }
   },
   "rendererABI": {
