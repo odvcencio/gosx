@@ -224,8 +224,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (sceneDoc && Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) {
       var pbrFactory = sceneWebGLRendererFactory();
       var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
-      if (!worldRenderer) {
+      if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
         renderer.dispose();
+        if (worldRenderer) worldRenderer.dispose();
         return null;
       }
       var waterRenderer = renderer;
@@ -236,18 +237,20 @@ function gosxConfigureSceneScript(script, role, src) {
         // @ts-ignore TS7006 -- the bundle builder ships this JavaScript signature as written.
         render: function(bundle, viewport, frameMeta) {
           var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-          // Water writes its surface depth first. The PBR pass then draws
-          // terrain and opaque HTML surfaces against that depth. Its post
-          // chain uses a separate target, so keep this path on the main one.
-          waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
-            compositeWorld: true, clearComposite: true, background: bundle.background,
-          }));
+          // Draw the world into the shared color and depth buffers first.
+          // The translucent tide then blends over distant geometry, while
+          // foreground geometry rejects it through the depth test. Keep the
+          // PBR post chain off because it uses a separate render target.
           worldRenderer.render(Object.assign({}, bundle, { postEffects: [] }), viewport,
-            { compositeOverWater: true });
+            Object.assign({}, frameMeta, { compositeOverWater: false }));
+          waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+            compositeWorld: true, clearComposite: false, background: bundle.background,
+          }));
+          worldRenderer.renderSurfaces(bundle);
           compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
           compositeMS = Math.max(0.01, compositeAtMS - started);
         },
-        // The water timer ends before the PBR pass, so its GPU value cannot
+        // The water timer covers only its pass, so its GPU value cannot
         // describe this frame. Report the measured full CPU composite span.
         pollPerformanceSample: function() {
           return compositeAtMS > 0 ? { durationMS: compositeMS, source: "cpu-water-world-composite", atMS: compositeAtMS } : null;

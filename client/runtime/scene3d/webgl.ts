@@ -4337,7 +4337,10 @@
       gl.bindVertexArray(emptyVAO);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.depthMask(false);
+      // In a shared world composite, the water is drawn after the opaque
+      // world. Save its depth so the later diegetic surface pass can reject
+      // panels behind the tide. Standalone water keeps its prior blend mode.
+      gl.depthMask(compositeWorld);
       sceneWaterRenderBindSamplers(gl, surfaceProgram, [
         { name: sceneWaterRenderStateUniform(surfaceDesc), target: gl.TEXTURE_2D, tex: stateTex },
         { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
@@ -8944,6 +8947,9 @@
         // Without this scope it re-drew each untextured mesh with the flat
         // world program on top of the correct draw, silently replacing an
         // authored Selena surface with its companion material's base color.
+        // PBR passes changed GL state without updating the legacy cache.
+        lineResources.stateCache.blendMode = "";
+        lineResources.stateCache.depthMode = "";
         renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
       }
 
@@ -11083,6 +11089,25 @@
       };
     }
 
+    // The shared water/world path draws world color first, then blends the
+    // tide, then redraws only world surfaces. Water depth keeps a panel behind
+    // the tide submerged while panels in front remain legible.
+    function renderSurfaces(bundle) {
+      if (!bundle || !lineResources || !Array.isArray(bundle.surfaces) || bundle.surfaces.length === 0) return;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      // The water renderer changed GL state outside the legacy surface cache.
+      lineResources.stateCache.blendMode = "";
+      lineResources.stateCache.depthMode = "";
+      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "opaque");
+      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "alpha");
+      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "additive");
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      lineResources.stateCache.blendMode = "";
+      lineResources.stateCache.depthMode = "";
+    }
+
     const rigidImportedBatchProgram = ensureInstancedProgram();
     const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
       rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
@@ -11099,6 +11124,7 @@
       // render() before this has ever run would silently skip drawing it.
       prepareCrowdMotionShaders,
       render: render,
+      renderSurfaces: renderSurfaces,
       dispose: dispose,
       diagnostics: diagnostics,
       type: "webgl-pbr",

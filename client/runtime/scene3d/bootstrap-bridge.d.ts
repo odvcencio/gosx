@@ -133,6 +133,7 @@ declare var onTextLayoutInvalidated: any;
 declare var prepareScene: any;
 declare var queueInputSignal: any;
 declare var renderSceneWebGLWorldBundle: any;
+declare var renderSceneWebGLSurfaces: any;
 declare var resolvePostFXFactor: any;
 declare var resolveShadowSize: any;
 declare var sceneAdvanceTransitions: any;
