@@ -640,17 +640,23 @@ const budgets = [
   // -> 350_000 for headroom.
   // Marking the point-sprite color/fog/alpha/size varyings @interpolate(flat)
   // combines with the above on merge.
-  // Perspective spot shadows (WebGL and WebGPU one-map slots, fail-closed
-  // validation, retirement) combines with both on this merge.
+  // glTF material-shading parity fixes (spec-default metallic/roughness,
+  // vec3 emissiveFactor, normal/occlusion factors, sRGB environment decode,
+  // roughness-LOD env sampling, single-application exposure, the optional
+  // rim term) plus the WebGPU material-uniform struct growth from 208 to
+  // 256 bytes combines with the above on merge.
   // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
   // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
   // slots, the __proto__-safe normalized attribute map) combines with all
-  // three on this merge. Caps re-measured from the merged source below.
+  // three on this merge.
+  // Perspective spot shadows (WebGL and WebGPU one-map slots, fail-closed
+  // validation, retirement) combines with all of the above on this merge.
+  // Caps re-measured from the merged source below.
   // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
-  // adds the pacing governor and its telemetry to the same monolith.
-  // Measured: 1_658_342 / 455_103 / 365_575. Only raw exceeded the prior
-  // hard limit; bumped raw 1_592_000 -> 1_594_000 for headroom.
-  { file: "bootstrap.js", raw: 1_594_000, gzip: 440_000, brotli: 351_000 },
+  // adds the pacing governor and its telemetry to the same monolith, on
+  // top of glTF material-shading parity and the WebGPU material-uniform
+  // struct growth. Caps re-measured from the fully merged source below.
+  { file: "bootstrap.js", raw: 1_655_000, gzip: 453_200, brotli: 364_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1872,17 +1878,21 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
     // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
     // restores real headroom.
+    // glTF material-shading parity fixes plus the WebGPU material-uniform
+    // struct growth (see the bootstrap.js note above) carried by
+    // bootstrap-feature-scene3d.js and bootstrap-feature-scene3d-webgl.js on
+    // this route. Measured: 1_134_981 / 316_709 / 268_296.
     // Perspective spot shadows add the WebGL one-map slot, fail-closed
     // validation, and retirement to bootstrap-feature-scene3d.js and
     // bootstrap-feature-scene3d-webgl.js, both carried by this route.
     // Measured: 1_134_321 / 317_007 / 268_471.
     // Custom per-vertex float BufferAttributes add WebGL2 Selena attribute
     // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
-    // Both combine on this merge; caps re-measured from the merged source
-    // below.
-    raw: 1_085_000,
-    gzip: 305_000,
-    brotli: 259_000,
+    // All three combine on this merge; caps re-measured from the merged
+    // source below.
+    raw: 1_136_000,
+    gzip: 317_000,
+    brotli: 268_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2030,6 +2040,11 @@ const routeBudgets = [
     // helper to the same loader IIFE. Measured: 1_524_567 / 411_507 /
     // 347_451. Gzip was within 77 bytes of the prior hard limit; 396_000
     // restores real headroom.
+    // glTF material-shading parity fixes plus the WebGPU material-uniform
+    // struct growth (see the bootstrap.js note above), carried in full by
+    // this route since it loads both backends. Measured:
+    // 1_529_592 / 412_738 / 348_560. Only gzip exceeds the prior envelope;
+    // 397_500 restores headroom. Raw and brotli caps stay put.
     // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
     // instance-stream forwarding method (see above) adds a few more.
     // Perspective spot shadows carry both backends' one-map slots and
@@ -2037,13 +2052,16 @@ const routeBudgets = [
     // 348_680. Gzip exceeded the prior hard limit; bumped 396_000 ->
     // 400_500. Raw and brotli headroom is unchanged.
     // Custom per-vertex float BufferAttributes carry both backends' custom
-    // attribute binding on this route, combining with the above on this
-    // merge. Measured: 1_531_610 / 414_123 / 349_595. All three exceeded
-    // the prior hard limit; bumped raw 1_465_500 -> 1_468_000, gzip
-    // 400_500 -> 402_000, and brotli 332_900 -> 334_000 for headroom.
-    raw: 1_468_000,
-    gzip: 402_000,
-    brotli: 334_000,
+    // attribute binding on this route, combining with all of the above on
+    // this merge.
+    // Perspective spot shadows carry both backends' one-map slots on this
+    // route, combining with all of the above on this merge. Measured:
+    // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
+    // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
+    // 335_000 for headroom. Gzip headroom is unchanged.
+    raw: 1_470_500,
+    gzip: 402_500,
+    brotli: 335_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2180,10 +2198,13 @@ const routeBudgets = [
     // (WebGPU side of both) combine on this merge. Measured:
     // 1_141_513 / 304_230 / 254_461. Only gzip exceeded the prior hard
     // limit; bumped 289_700 -> 290_000 for headroom.
+    // glTF material-shading parity fixes (WebGPU side) combine with the
+    // above on this merge. Measured: 1_143_495 / 304_706 / 254_874. Only
+    // gzip exceeded the prior hard limit; bumped 290_000 -> 290_500 for
+    // headroom.
     // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
-    // combines with the merged spot shadows on this route. Measured:
-    // 1_143_385 / 304_967 / 255_022. Only gzip exceeded the prior hard
-    // limit; bumped 290_000 -> 305_000 for headroom.
+    // combines with the merged spot shadows and glTF shading parity on
+    // this route. Caps re-measured from the fully merged source below.
     raw: 1_093_500,
     gzip: 305_000,
     brotli: 243_000,

@@ -185,6 +185,25 @@
     return [value[0], value[1], value[2]];
   }
 
+  // Read a top-level (non-extension) linear RGB colour triple straight off a
+  // material, such as emissiveFactor. Per spec every component is a finite
+  // number in [0, 1]; a malformed or partial component falls back to the
+  // matching component of `fallback` rather than rejecting the whole triple,
+  // so one bad channel in a hand-edited asset does not blank the other two.
+  // The result is always a fresh array.
+  function gltfColor3Property(value, fallback) {
+    var base = Array.isArray(fallback) ? fallback : [0, 0, 0];
+    if (!Array.isArray(value) || value.length < 3) {
+      return base.slice(0, 3);
+    }
+    var out = [];
+    for (var i = 0; i < 3; i++) {
+      var component = Number(value[i]);
+      out.push(isFinite(component) ? Math.max(0, Math.min(1, component)) : base[i]);
+    }
+    return out;
+  }
+
   // Compression extensions rewrite the bytes a bufferView or primitive points
   // at. The loader has no decoder for them, so reading the raw bytes would
   // build a corrupt mesh. Throw instead, with the extension named.
@@ -1654,15 +1673,22 @@
     return {
       kind: "standard",
       color: "#cccccc",
+      // glTF's default material (used when a primitive carries no material
+      // index) is metallicFactor 1.0, roughnessFactor 1.0 — see
+      // gltfExtractMaterial below for the same spec defaults on an authored
+      // material missing these factors.
       roughness: 1.0,
-      metalness: 0.0,
+      metalness: 1.0,
       opacity: 1.0,
-      emissive: 0,
+      emissive: 1.0,
+      emissiveColor: [0, 0, 0],
       texture: "",
       normalMap: "",
+      normalScale: 1.0,
       roughnessMap: "",
       metalnessMap: "",
       occlusionMap: "",
+      occlusionStrength: 1.0,
       emissiveMap: "",
       alphaMode: "OPAQUE",
       doubleSided: false,
@@ -1837,16 +1863,28 @@
     var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer) : "";
     var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer) : "";
 
-    var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
-    var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
-
-    // KHR_materials_emissive_strength scales the emissive factor above 1 so
-    // HDR emitters keep their intensity. The PBR shaders take an unclamped
-    // emissive scalar, so multiply straight through.
+    // emissiveFactor is a linear RGB colour, not a scalar — a red-only
+    // emissive on a blue albedo must glow red, never albedo-blue. Keep it as
+    // a vec3 (record.emissiveColor) and carry the KHR_materials_emissive_strength
+    // multiplier separately as record.emissive, so the shader computes
+    // emission = emissiveColor * emissive * emissiveTexture(if any) and never
+    // substitutes albedo for a missing emissive map.
+    var emissiveColor = gltfColor3Property(mat.emissiveFactor, [0, 0, 0]);
+    var emissiveStrength = 1;
     var emissiveExtension = gltfExtension(mat, "KHR_materials_emissive_strength");
     if (emissiveExtension) {
-      emissiveStrength *= gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
+      emissiveStrength = gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
     }
+
+    // normalTexture.scale and occlusionTexture.strength are core glTF
+    // fields (not extensions), each defaulting to 1.0 per spec and applying
+    // only when the matching map is present.
+    var normalScale = mat.normalTexture && typeof mat.normalTexture.scale === "number" && isFinite(mat.normalTexture.scale)
+      ? mat.normalTexture.scale
+      : 1.0;
+    var occlusionStrength = mat.occlusionTexture && typeof mat.occlusionTexture.strength === "number" && isFinite(mat.occlusionTexture.strength)
+      ? Math.max(0, Math.min(1, mat.occlusionTexture.strength))
+      : 1.0;
 
     var effectiveAlphaMode = mat.alphaMode || "OPAQUE";
     // OPAQUE (explicit or omitted) ignores baseColor alpha; BLEND, MASK and
@@ -1876,15 +1914,22 @@
     var record = {
       kind: "standard",
       color: gltfBaseColorToHex(baseColorFactor),
+      // Both factors default to 1.0 per the glTF spec (pbrMetallicRoughness
+      // omits either when the author wants the fully rough, fully metallic
+      // default look — NOT the JS-truthy 0.0 this used to fall back to,
+      // which silently turned every metal-less-authored asset into plastic).
       roughness: pbr.roughnessFactor != null ? pbr.roughnessFactor : 1.0,
-      metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.0,
+      metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 1.0,
       opacity: effectiveOpacity,
       emissive: emissiveStrength,
+      emissiveColor: emissiveColor,
       texture: baseColorURL,
       normalMap: normalURL,
+      normalScale: normalScale,
       roughnessMap: metallicRoughnessURL,
       metalnessMap: metallicRoughnessURL,
       occlusionMap: occlusionURL,
+      occlusionStrength: occlusionStrength,
       emissiveMap: emissiveURL,
       alphaMode: effectiveAlphaMode,
       doubleSided: mat.doubleSided || false,
