@@ -993,3 +993,294 @@
     }
     return output;
   }
+
+  // ---------------------------------------------------------------------------
+  // GPU-driven crowd motion — per-instance motion keys and animation state the
+  // vertex shader evaluates from a single scene-clock uniform (uNow), instead
+  // of the CPU recomputing a transform matrix and atlas pose rows for every
+  // instance on every rendered frame. See scene/motion_frame.go (MotionFrame /
+  // GSP3) for the wire format and command-runtime.ts for the decode/apply
+  // path. webgl.ts's SCENE_CROWD_SKIN_MOTION_GLSL mirrors every function below
+  // line for line; a change to one requires the other, and
+  // scene3d-crowd-motion.test.mjs pins the two together.
+  // ---------------------------------------------------------------------------
+
+  // uNow uses the SAME clock as every other Scene3D auto-uniform
+  // (performance.now() / 1000 -- see webgl.ts's sceneSelenaFrameTime), so a
+  // MotionFrame's TPrev/TNext/ClipStartTime are timestamps on that clock, not
+  // a caller-defined epoch.
+  //
+  // Past TNext the shader keeps extrapolating at the prev->next velocity for
+  // this many seconds before holding at the extrapolated endpoint. This
+  // bridges one or two missed/late network snapshots at a 10-20Hz snapshot
+  // rate (50-100ms apart) without letting a stalled sender run an instance
+  // away indefinitely.
+  const SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS = 0.25;
+
+  // sceneCrowdMotionClipTable builds (and caches on the atlas) a small
+  // per-clip table a GPU-motion crowd batch uploads as a texture: one RGBA
+  // texel per clip, (startRow, segments, duration, 0). Row 0 is a reserved
+  // "no clip" sentinel (duration 0), matching wire clip index 0 in GSP2/GSP3
+  // (the empty-string dictionary entry) -- a caller with no animation gets
+  // clip row 0 and the shader's bind-pose fallback, with no lookup miss.
+  // Built once per atlas: an atlas's clip set never changes after
+  // sceneBuildCrowdAtlas returns it, so later calls return the cached table.
+  // @ts-ignore TS7006 -- untyped like every sibling function in this file's
+  // crowd/animation surface (see scene3d/noimplicitany-baseline.json).
+  // the expect-error form would report this directive unused under
+  // tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent
+  // either way.
+  function sceneCrowdMotionClipTable(atlas) {
+    let table = atlas.motionClipTable;
+    if (table) return table;
+    const names = Array.from(atlas.clips.keys());
+    const count = names.length + 1;
+    const data = new Float32Array(count * 4);
+    const index = new Map();
+    for (let i = 0; i < names.length; i++) {
+      const clip = atlas.clips.get(names[i]);
+      const row = i + 1;
+      data[row * 4] = clip.start;
+      data[row * 4 + 1] = clip.segments;
+      data[row * 4 + 2] = clip.duration;
+      index.set(names[i], row);
+    }
+    table = { count, data, index };
+    atlas.motionClipTable = table;
+    return table;
+  }
+
+  // sceneCrowdMotionClipIndex resolves a wire clip name to its atlas-local
+  // clip-table row, building the table on first use. An unknown clip name
+  // warns once (reusing atlas.missingClips, the same one-time-warn set
+  // sceneCrowdPoseRows uses) and resolves to the reserved "no clip" row, so a
+  // single bad name degrades that instance to a bind pose rather than
+  // rejecting the whole frame.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionClipIndex(atlas, name) {
+    if (!name) return 0;
+    const table = sceneCrowdMotionClipTable(atlas);
+    const row = table.index.get(name);
+    if (row !== undefined) return row;
+    if (!atlas.missingClips.has(name)) { atlas.missingClips.add(name); console.warn("[gosx] crowd motion clip not found:", name); }
+    return 0;
+  }
+
+  // sceneCrowdMotionPoseRows is the JS mirror of
+  // SCENE_CROWD_SKIN_MOTION_GLSL's gosxCrowdMotionPoseRows in webgl.ts: given
+  // a clip table, a resolved clip-table row, and the animation state, it
+  // derives the same two atlas rows and blend fraction sceneCrowdPoseRows
+  // computes from an explicit animationTime -- except elapsed clip time comes
+  // from (now - clipStartTime) * playbackRate rather than being handed in
+  // directly. Kept in lockstep with the GLSL by scene3d-crowd-motion.test.mjs.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionPoseRows(clipTable, clipRow, clipStartTime, loop, rate, now, out) {
+    out = out || new Float32Array(3);
+    const row = Math.max(0, Math.min(clipTable.count - 1, Math.floor(clipRow) || 0));
+    const data = clipTable.data;
+    const start = data[row * 4], segments = data[row * 4 + 1], duration = data[row * 4 + 2];
+    let elapsed = (now - clipStartTime) * rate;
+    if (!Number.isFinite(elapsed) || elapsed < 0) elapsed = 0;
+    const t = duration > 0 ? (loop ? elapsed % duration : Math.min(elapsed, duration)) : 0;
+    const frame = duration > 0 ? t / duration * segments : 0;
+    const a = Math.min(segments, Math.floor(frame));
+    out[0] = start + a;
+    out[1] = start + Math.min(segments, a + 1);
+    out[2] = frame - a;
+    return out;
+  }
+
+  // sceneCrowdMotionAngleLerp is the JS mirror of
+  // SCENE_CROWD_SKIN_MOTION_GLSL's gosxWrapAngleLerp: it interpolates an
+  // angle (radians) from a to b along the SHORTER arc, so a character
+  // spinning from a yaw of +3.0 to -3.0 rad turns through PI (a hair past
+  // "straight around"), never the long way through 0.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionAngleLerp(a, b, t) {
+    const twoPi = Math.PI * 2;
+    let d = b - a;
+    d = d - twoPi * Math.floor((d + Math.PI) / twoPi);
+    return a + d * t;
+  }
+
+  // sceneCrowdMotionInterpolationFactor is the JS mirror of
+  // SCENE_CROWD_SKIN_MOTION_GLSL's gosxMotionModel's `t` computation: 0 at or
+  // before tPrev, linear across [tPrev, tNext), and past tNext an
+  // extrapolated factor capped at extrapolationSeconds past tNext (then
+  // held, since a factor computed once at the cap stays constant while `now`
+  // keeps advancing beyond it -- callers must recompute per frame, and this
+  // function is pure, so "held" here means the CALLER keeps passing a `now`
+  // that yields the same capped factor). tNext <= tPrev (a single known
+  // sample, prev===next) is degenerate but SAFE: mix()/
+  // sceneCrowdMotionAngleLerp with equal prev/next endpoints return that
+  // same value for ANY finite t, however large.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionInterpolationFactor(now, tPrev, tNext, extrapolationSeconds) {
+    const span = Math.max(tNext - tPrev, 1e-6);
+    if (now <= tPrev) return 0;
+    if (now < tNext) return (now - tPrev) / span;
+    return 1 + Math.min(now - tNext, extrapolationSeconds) / span;
+  }
+
+  // sceneCrowdMotionComposeInto builds the SAME column-major TRS matrix
+  // sceneObjectModelMatrix's no-parent branch (10-runtime-scene-core.ts) and
+  // 11-scene-math.ts's sceneEulerMatrixInto both build (Rz*Ry*Rx, each
+  // column scaled by the matching scale component, translation in column 3)
+  // -- the identical formula webgl.ts's gosxMotionModel GLSL also uses. It
+  // is inlined here, not called from 11-scene-math.ts, because the
+  // animation feature chunk (bootstrap-feature-scene3d-animation.js) does
+  // not bundle that file: `go run . -closure` (make test-js) fails the
+  // build if this chunk reads an identifier nothing it bundles declares.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionComposeInto(out, rx, ry, rz, sx, sy, sz, x, y, z) {
+    const cx = Math.cos(rx), sinx = Math.sin(rx);
+    const cy = Math.cos(ry), siny = Math.sin(ry);
+    const cz = Math.cos(rz), sinz = Math.sin(rz);
+    out[0] = cy * cz * sx; out[1] = cy * sinz * sx; out[2] = -siny * sx; out[3] = 0;
+    out[4] = (sinx * siny * cz - cx * sinz) * sy; out[5] = (sinx * siny * sinz + cx * cz) * sy; out[6] = sinx * cy * sy; out[7] = 0;
+    out[8] = (cx * siny * cz + sinx * sinz) * sz; out[9] = (cx * siny * sinz - sinx * cz) * sz; out[10] = cx * cy * sz; out[11] = 0;
+    out[12] = x; out[13] = y; out[14] = z; out[15] = 1;
+    return out;
+  }
+
+  // SCENE_CROWD_MOTION_* name the SCENE_CROWD_MOTION_RECORD_FLOATS float32
+  // slots of one instance's GPU-motion record: webgl.ts's crowdMotion
+  // instance-buffer stride, and the layout applyMountedMotionFrame in
+  // command-runtime.ts writes through sceneCrowdMotionWriteRecord. Named
+  // offsets, not magic numbers, at every read and write site.
+  const SCENE_CROWD_MOTION_RECORD_FLOATS = 24;
+  const SCENE_CROWD_MOTION_CLIP_LIMIT = 32;
+  const SCENE_CROWD_MOTION_PREV_POS = 0, SCENE_CROWD_MOTION_PREV_ROT = 3, SCENE_CROWD_MOTION_PREV_SCALE = 6, SCENE_CROWD_MOTION_TPREV = 9;
+  const SCENE_CROWD_MOTION_NEXT_POS = 10, SCENE_CROWD_MOTION_NEXT_ROT = 13, SCENE_CROWD_MOTION_NEXT_SCALE = 16, SCENE_CROWD_MOTION_TNEXT = 19;
+  const SCENE_CROWD_MOTION_CLIP_ROW = 20, SCENE_CROWD_MOTION_CLIP_START = 21, SCENE_CROWD_MOTION_LOOP = 22, SCENE_CROWD_MOTION_RATE = 23;
+
+  // sceneCrowdMotionTransformInto is the JS mirror of
+  // SCENE_CROWD_SKIN_MOTION_GLSL's gosxMotionModel: it interpolates position,
+  // per-axis rotation (shortest arc), and scale between an instance record's
+  // prev/next keys at `now`, then composes the same TRS matrix
+  // sceneObjectModelMatrix would build for that instant. `record` is one
+  // instance's SCENE_CROWD_MOTION_RECORD_FLOATS-length Float32Array.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionTransformInto(out, record, now, extrapolationSeconds) {
+    const tPrev = record[SCENE_CROWD_MOTION_TPREV], tNext = record[SCENE_CROWD_MOTION_TNEXT];
+    const t = sceneCrowdMotionInterpolationFactor(now, tPrev, tNext, extrapolationSeconds);
+    const pp = SCENE_CROWD_MOTION_PREV_POS, np = SCENE_CROWD_MOTION_NEXT_POS;
+    const pr = SCENE_CROWD_MOTION_PREV_ROT, nr = SCENE_CROWD_MOTION_NEXT_ROT;
+    const ps = SCENE_CROWD_MOTION_PREV_SCALE, ns = SCENE_CROWD_MOTION_NEXT_SCALE;
+    const x = record[pp] + (record[np] - record[pp]) * t;
+    const y = record[pp + 1] + (record[np + 1] - record[pp + 1]) * t;
+    const z = record[pp + 2] + (record[np + 2] - record[pp + 2]) * t;
+    const rx = sceneCrowdMotionAngleLerp(record[pr], record[nr], t);
+    const ry = sceneCrowdMotionAngleLerp(record[pr + 1], record[nr + 1], t);
+    const rz = sceneCrowdMotionAngleLerp(record[pr + 2], record[nr + 2], t);
+    const sx = record[ps] + (record[ns] - record[ps]) * t;
+    const sy = record[ps + 1] + (record[ns + 1] - record[ps + 1]) * t;
+    const sz = record[ps + 2] + (record[ns + 2] - record[ps + 2]) * t;
+    return sceneCrowdMotionComposeInto(out, rx, ry, rz, sx, sy, sz, x, y, z);
+  }
+
+  // sceneCrowdMotionPoseRowsFromRecord reads the animation-state slots
+  // straight out of an instance record -- the same slots
+  // SCENE_CROWD_SKIN_MOTION_GLSL's a_animState attribute carries -- so a
+  // caller (a test, or a CPU fallback) never duplicates the field layout.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionPoseRowsFromRecord(clipTable, record, now, out) {
+    return sceneCrowdMotionPoseRows(
+      clipTable, record[SCENE_CROWD_MOTION_CLIP_ROW], record[SCENE_CROWD_MOTION_CLIP_START],
+      record[SCENE_CROWD_MOTION_LOOP] > 0.5, record[SCENE_CROWD_MOTION_RATE], now, out);
+  }
+
+  // sceneCrowdMotionWriteRecord fills `record` (a caller-owned, reused
+  // Float32Array(SCENE_CROWD_MOTION_RECORD_FLOATS)) from one decoded GSP3
+  // instance (see command-runtime.ts's decodeMotionFrame) and its resolved
+  // atlas-local clip row. Pure and allocation-free on the hot (snapshot-rate)
+  // path: applyMountedMotionFrame owns and reuses `record` across snapshots.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionWriteRecord(record, instance, clipRow) {
+    record[SCENE_CROWD_MOTION_PREV_POS] = instance.prevX;
+    record[SCENE_CROWD_MOTION_PREV_POS + 1] = instance.prevY;
+    record[SCENE_CROWD_MOTION_PREV_POS + 2] = instance.prevZ;
+    record[SCENE_CROWD_MOTION_PREV_ROT] = instance.prevRotationX;
+    record[SCENE_CROWD_MOTION_PREV_ROT + 1] = instance.prevRotationY;
+    record[SCENE_CROWD_MOTION_PREV_ROT + 2] = instance.prevRotationZ;
+    record[SCENE_CROWD_MOTION_PREV_SCALE] = instance.prevScaleX;
+    record[SCENE_CROWD_MOTION_PREV_SCALE + 1] = instance.prevScaleY;
+    record[SCENE_CROWD_MOTION_PREV_SCALE + 2] = instance.prevScaleZ;
+    record[SCENE_CROWD_MOTION_TPREV] = instance.tPrev;
+    record[SCENE_CROWD_MOTION_NEXT_POS] = instance.nextX;
+    record[SCENE_CROWD_MOTION_NEXT_POS + 1] = instance.nextY;
+    record[SCENE_CROWD_MOTION_NEXT_POS + 2] = instance.nextZ;
+    record[SCENE_CROWD_MOTION_NEXT_ROT] = instance.nextRotationX;
+    record[SCENE_CROWD_MOTION_NEXT_ROT + 1] = instance.nextRotationY;
+    record[SCENE_CROWD_MOTION_NEXT_ROT + 2] = instance.nextRotationZ;
+    record[SCENE_CROWD_MOTION_NEXT_SCALE] = instance.nextScaleX;
+    record[SCENE_CROWD_MOTION_NEXT_SCALE + 1] = instance.nextScaleY;
+    record[SCENE_CROWD_MOTION_NEXT_SCALE + 2] = instance.nextScaleZ;
+    record[SCENE_CROWD_MOTION_TNEXT] = instance.tNext;
+    record[SCENE_CROWD_MOTION_CLIP_ROW] = clipRow;
+    record[SCENE_CROWD_MOTION_CLIP_START] = instance.clipStartTime;
+    record[SCENE_CROWD_MOTION_LOOP] = instance.animationLoop ? 1 : 0;
+    record[SCENE_CROWD_MOTION_RATE] = instance.playbackRate;
+    return record;
+  }
+
+  // sceneCrowdMotionLocalRadius returns a radius, centered on the model's
+  // local origin, that contains localBounds (a primitive's bind-pose bounds
+  // from sceneCrowdPrimitiveBounds, or the union of all of a model's
+  // primitives) REGARDLESS of how that shape is rotated. Used to turn a
+  // local AABB into a rotation-agnostic sweep radius for
+  // sceneCrowdMotionSweptBoundsInto: an exact rotated AABB would need to
+  // transform all eight corners by each candidate rotation, but the caller
+  // needs a bound that stays valid across every rotation the GPU motion path
+  // can interpolate through, not just the two sampled endpoints.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionLocalRadius(localBounds) {
+    const cx = Math.max(Math.abs(localBounds.minX), Math.abs(localBounds.maxX));
+    const cy = Math.max(Math.abs(localBounds.minY), Math.abs(localBounds.maxY));
+    const cz = Math.max(Math.abs(localBounds.minZ), Math.abs(localBounds.maxZ));
+    return Math.sqrt(cx * cx + cy * cy + cz * cz);
+  }
+
+  // sceneCrowdMotionSweptBoundsInto expands `bounds` (an object with
+  // minX/minY/minZ/maxX/maxY/maxZ) to cover every world position and
+  // orientation an instance's GPU motion interpolation (and brief
+  // extrapolation past TNext) can produce, so a caller that culls or fits a
+  // shadow frustum against `bounds` never clips a moving crowd instance
+  // mid-interpolation. `localRadius` is
+  // sceneCrowdMotionLocalRadius(primitive.bounds) for this instance's
+  // geometry, precomputed once per instance. Conservative by construction:
+  // it puts a sphere around the previous, next, and final extrapolated
+  // positions. Its radius covers the largest scale at all three positions.
+  // The extrapolation endpoint uses the same cap as the shader -- see
+  // SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS. Position,
+  // rotation (any axis, any angle -- a sphere is rotation-invariant), and
+  // scale are all covered; this is deliberately a superset of the sampled
+  // transforms' exact bounds, not a tight fit.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneCrowdMotionSweptBoundsInto(bounds, record, localRadius) {
+    const tPrev = record[SCENE_CROWD_MOTION_TPREV], tNext = record[SCENE_CROWD_MOTION_TNEXT];
+    const span = Math.max(tNext - tPrev, 1e-6);
+    const overshoot = SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS / span;
+    const ps = SCENE_CROWD_MOTION_PREV_SCALE, ns = SCENE_CROWD_MOTION_NEXT_SCALE;
+    let maxScale = 0;
+    for (let i = 0; i < 3; i++) {
+      const previous = record[ps + i], next = record[ns + i];
+      maxScale = Math.max(maxScale, Math.abs(previous), Math.abs(next), Math.abs(next + (next - previous) * overshoot));
+    }
+    const radius = localRadius * maxScale;
+    const pp = SCENE_CROWD_MOTION_PREV_POS, np = SCENE_CROWD_MOTION_NEXT_POS;
+    const px = record[pp], py = record[pp + 1], pz = record[pp + 2];
+    const nx = record[np], ny = record[np + 1], nz = record[np + 2];
+    const ex = nx + (nx - px) * overshoot;
+    const ey = ny + (ny - py) * overshoot;
+    const ez = nz + (nz - pz) * overshoot;
+    const minX = Math.min(px, nx, ex) - radius, maxX = Math.max(px, nx, ex) + radius;
+    const minY = Math.min(py, ny, ey) - radius, maxY = Math.max(py, ny, ey) + radius;
+    const minZ = Math.min(pz, nz, ez) - radius, maxZ = Math.max(pz, nz, ez) + radius;
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(minZ) ||
+        !Number.isFinite(maxX) || !Number.isFinite(maxY) || !Number.isFinite(maxZ)) throw new Error("nonfinite crowd bound");
+    bounds.minX = Math.min(bounds.minX, minX); bounds.maxX = Math.max(bounds.maxX, maxX);
+    bounds.minY = Math.min(bounds.minY, minY); bounds.maxY = Math.max(bounds.maxY, maxY);
+    bounds.minZ = Math.min(bounds.minZ, minZ); bounds.maxZ = Math.max(bounds.maxZ, maxZ);
+    return bounds;
+  }

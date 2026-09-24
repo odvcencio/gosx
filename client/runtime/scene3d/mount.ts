@@ -3454,6 +3454,16 @@
         return applyMountedSceneCommands(commands, "commands");
       },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
+      // applyMotionFrame: the GSP3 sibling of applyPoseFrame above -- see
+      // command-runtime.ts's "GPU-driven crowd motion" section and
+      // sceneUpdateRigidInstanceMotion's doc comment (mount-webgl.ts) for
+      // the full design. A mount whose backend has no GPU-motion crowd path
+      // (see prepareCrowdMotionShaders) rejects every frame through the
+      // same "retained-motion-unavailable" path applyMountedMotionFrame
+      // reports, so a caller's options.fallbackPoseFrame/fallbackCommands
+      // still render that crowd.
+      // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+      applyMotionFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedMotionFrame(sceneState, batches, sceneUpdateRigidInstanceMotion, scheduleRender, handle); },
       // applyInstanceStream: opt-in fast path; the bridge (instance-stream-
       // bridge.ts) lazy-loads the chunk on first use, queues an in-flight
       // frame, and reports a load failure -- never a silent drop.
@@ -3471,6 +3481,8 @@
           lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
           rendererStats: renderer && typeof renderer.getStats === "function" ? renderer.getStats() : null,
           poseFrames: handle.__gosxPoseFrameStats || null,
+          // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+          motionFrames: handle.__gosxMotionFrameStats || null,
         };
       },
       setCamera(camera) {

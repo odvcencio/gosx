@@ -6203,12 +6203,14 @@
     // plausible without paying per-vertex lighting cost nothing displays.
     if (object._crowdSkin) {
       const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
-      const bounds = sceneTransformMeshBounds(object._crowdSkin.bounds, modelMatrix);
+      const motion = object._crowdMotion;
+      const bounds = motion ? motion.bounds : sceneTransformMeshBounds(object._crowdSkin.bounds, modelMatrix);
       const depth = sceneBoundsDepthMetrics(bounds, camera, object);
       const meshRecord = { id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
         static: false, castShadow: Boolean(object.castShadow), receiveShadow: Boolean(object.receiveShadow),
         depthWrite: object.depthWrite, bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
         viewCulled: false, doubleSided: Boolean(object.doubleSided), skin: null, _crowdSkin: object._crowdSkin,
+        _crowdMotion: motion || null,
         vertices, directVertices: true, retainedGeometry: true, resourceOwner: object, geometryRevision: 0,
         modelMatrix, vertexOffset: 0, vertexCount: vertices.count };
       sceneStampRetainedMeshCSSInput(meshRecord, object);
