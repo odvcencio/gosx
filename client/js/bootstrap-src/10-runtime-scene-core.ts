@@ -2900,6 +2900,7 @@
       rotationY: sceneNumber(raw.rotationY, sceneNumber(base.rotationY, 0)),
       rotationZ: sceneNumber(raw.rotationZ, sceneNumber(base.rotationZ, 0)),
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
+      portraitFOV: sceneNumber(raw.portraitFOV, sceneNumber(base.portraitFOV, 0)),
       left: sceneNumber(raw.left, sceneNumber(base.left, 0)),
       right: sceneNumber(raw.right, sceneNumber(base.right, 0)),
       top: sceneNumber(raw.top, sceneNumber(base.top, 0)),
@@ -2908,6 +2909,14 @@
       near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
       far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
     };
+  }
+
+  // Keep authored desktop composition while widening the vertical view on portrait screens.
+  function sceneViewportCamera(camera, sourceCamera, viewport) {
+    const portraitFOV = sceneNumber(sourceCamera && sourceCamera.portraitFOV, 0);
+    return portraitFOV > 0 && viewport.cssWidth < viewport.cssHeight
+      ? Object.assign({}, camera, { fov: Math.min(120, Math.max(1, portraitFOV)) })
+      : camera;
   }
 
   function normalizeSceneTextureDescriptor(raw, fallback) {

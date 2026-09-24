@@ -206,6 +206,7 @@ declare var sceneQualityLadder: any;
 declare var sceneQuatToEulerXYZ: any;
 declare var sceneRehydrateModelsAfterCommand: any;
 declare var sceneRenderCamera: any;
+declare var sceneViewportCamera: any;
 declare var sceneResolveMaterialUniforms: any;
 declare var sceneRotatePoint: any;
 declare var sceneSelenaMaterialValue: any;

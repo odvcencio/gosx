@@ -37,7 +37,7 @@ func BlackglassCoastProgram(viewID, periodID string) scene.Props {
 		ControlTarget: target, ControlMinDistance: 6, ControlMaxDistance: 48,
 		MaxFPS: 60, MaxDevicePixelRatio: 1.5, MaxPixels: blackglassCoastMaxPixels,
 		AdaptiveQuality: scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 18, AdaptivePostFX: scene.Bool(true),
-		Camera: scene.PerspectiveCamera{Position: camera, FOV: 50, Near: 0.1, Far: 150},
+		Camera: scene.PerspectiveCamera{Position: camera, FOV: 50, PortraitFOV: 80, Near: 0.1, Far: 150},
 		Environment: scene.Environment{
 			AmbientColor: period.Ambient, AmbientIntensity: period.AmbientPower,
 			IBL: blackglassPeriodIBL(period.ID), EnvironmentMap: "/env/blackglass/" + period.ID + ".hdr", EnvIntensity: 0.6,

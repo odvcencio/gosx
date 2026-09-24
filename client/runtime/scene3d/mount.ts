@@ -2428,12 +2428,12 @@
       scheduleRender("signal-gizmo-mode");
     }
 
-	    function currentMountedSceneCamera(sourceCamera) {
-	      return sceneRenderCamera(sceneCurrentControlCamera(
-	        sceneControlHandle && sceneControlHandle.controller,
-	        sourceCamera || readSceneSourceCamera(),
-	        sceneState._scrollCamera,
-	      ));
+    function currentMountedSceneCamera(sourceCamera) {
+      return sceneRenderCamera(sceneViewportCamera(sceneCurrentControlCamera(
+        sceneControlHandle && sceneControlHandle.controller,
+        sourceCamera || readSceneSourceCamera(),
+        sceneState._scrollCamera,
+      ), sceneState.camera, viewport));
     }
 
     function currentMountedSceneOrbitState() {
@@ -3090,7 +3090,7 @@
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
-      const activeCamera = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
       const pointQualityGroups = sceneQualityLadderAdmittedGroups(adaptiveQuality);
       const pointBudgetScale = sceneQualityLadderPointBudgetScale(adaptiveQuality);

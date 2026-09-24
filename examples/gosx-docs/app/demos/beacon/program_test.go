@@ -42,6 +42,10 @@ func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
 	if props.MaxFPS != 60 || props.MaxDevicePixelRatio != 1.5 || props.MaxPixels != blackglassCoastMaxPixels {
 		t.Errorf("render budget = fps %.0f, dpr %.1f, pixels %d", props.MaxFPS, props.MaxDevicePixelRatio, props.MaxPixels)
 	}
+	payload, err := json.Marshal(props)
+	if err != nil || props.Camera.FOV != 50 || props.Camera.PortraitFOV != 80 || !strings.Contains(string(payload), `"portraitFOV":80`) {
+		t.Fatalf("coast must preserve its portrait framing in the browser contract: %s, %v", payload, err)
+	}
 	if props.Stats == nil || !*props.Stats {
 		t.Error("live renderer telemetry must be enabled")
 	}

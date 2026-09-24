@@ -107,6 +107,8 @@
   var sceneOrthographicBounds = sceneApi.sceneOrthographicBounds;
   var buildSceneWorldDrawPlan = sceneApi.buildSceneWorldDrawPlan;
   var createSceneWorldDrawScratch = sceneApi.createSceneWorldDrawScratch;
+  var createSceneThickLineScratch = sceneApi.createSceneThickLineScratch;
+  var expandSceneThickLineIntoScratch = sceneApi.expandSceneThickLineIntoScratch;
   var compareSceneWorldPassEntries = sceneApi.compareSceneWorldPassEntries;
   var sceneWorldObjectRenderPass = sceneApi.sceneWorldObjectRenderPass;
   var sceneWorldObjectRenderable = sceneApi.sceneWorldObjectRenderable;

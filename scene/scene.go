@@ -45,6 +45,7 @@ type PerspectiveCamera struct {
 	Position     Vector3
 	Rotation     Euler
 	FOV          float64
+	PortraitFOV  float64 // optional vertical field of view for portrait viewports
 	Near         float64
 	Far          float64
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
@@ -2137,6 +2138,9 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 	if c.FOV != 0 {
 		out["fov"] = c.FOV
 	}
+	if c.PortraitFOV != 0 {
+		out["portraitFOV"] = c.PortraitFOV
+	}
 	if c.Near != 0 {
 		out["near"] = c.Near
 	}
@@ -2150,7 +2154,7 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 }
 
 func (c PerspectiveCamera) isZero() bool {
-	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
+	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.PortraitFOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
 }
 
 func (c OrthographicCamera) legacyProps() map[string]any {

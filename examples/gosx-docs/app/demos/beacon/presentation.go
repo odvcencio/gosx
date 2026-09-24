@@ -55,7 +55,8 @@ func blackglassViewPose(contract BlackglassCoastContract, raw string) (scene.Vec
 	beacon, _ := contract.Marker("cinematic-beacon")
 	switch blackglassViewID(raw) {
 	case "arrival":
-		return contract.Local(scene.Vec3(arrival.Position.X-2.7, 3.4, arrival.Position.Z+6)), contract.Local(scene.Vec3(-1.3, 2.1, 10))
+		// Leave room for the stele and harbor plaque in a portrait viewport.
+		return contract.Local(scene.Vec3(arrival.Position.X-2.7, 3.4, arrival.Position.Z+10)), contract.Local(scene.Vec3(-1.3, 2.1, 10))
 	case "beacon":
 		return contract.Local(scene.Vec3(beacon.Position.X+7.8, 6.3, beacon.Position.Z+11.5)), contract.Local(scene.Vec3(8.3, 4.0, -3.6))
 	default:
