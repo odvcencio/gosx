@@ -1010,7 +1010,12 @@ const budgets = [
   // geometry, conservative animated bounds, and a skinned shadow path. The
   // v0.56.5 release build measures 235_455 / 65_712 / 55_866; retain narrow
   // rounding headroom so later growth remains visible.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 235_600, gzip: 65_800, brotli: 56_000 },
+  // GPU-driven crowd motion adds a second full color-pass and shadow-pass
+  // vertex shader (motion-key interpolation plus in-shader clip-table
+  // lookup), the clip-table/motion-record batching state, and the
+  // persistent-buffer upload path. Measured: 249_505 / 69_254 / 58_849;
+  // retain narrow rounding headroom so later growth remains visible.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 249_600, gzip: 69_300, brotli: 58_900 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1132,7 +1137,13 @@ const budgets = [
   // Custom per-vertex float BufferAttributes (Selena retained-geometry
   // eligibility, WebGL2/WebGPU custom attribute binding) combines with the
   // above on this merge. Caps re-measured from the merged source below.
-  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 130_000 },
+  // GPU-driven crowd motion adds mount.ts's applyMotionFrame handle method
+  // and motionFrames telemetry field, plus command-bridge.ts's
+  // dispatchMotionFrame forwarding shim (the actual decode/apply/queue
+  // logic ships in the lazy bootstrap-feature-scene3d-command.js chunk).
+  // Measured: 590_843 / 165_076 / 136_730; all three caps raised with
+  // narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 591_000, gzip: 165_200, brotli: 136_800 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1150,7 +1161,13 @@ const budgets = [
   // GSP2 decoding, validation, and retained pose application are loaded only
   // for command users. The bounded per-target queue and async error telemetry
   // measure 8_135 / 2_972 / 2_661 after generation.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 8_200, gzip: 3_000, brotli: 2_700 },
+  // GSP3 (GPU-driven crowd motion) adds its own decoder, per-target queue,
+  // fallback-to-PoseFrame-then-JSON-commands chain, and retained-motion
+  // application, doubling this chunk: the two wire formats and their queues
+  // are independent, so nothing here is shared/deduplicated with GSP2's own
+  // copy of the same shape. Measured: 13_839 / 3_606 / 3_158; all three caps
+  // raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 13_900, gzip: 3_700, brotli: 3_250 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
@@ -1365,7 +1382,11 @@ const budgets = [
   // v0.56.5 adds explicit animation name/time/loop commands and the shared
   // crowd-pose runtime. Measured 13_925 / 5_491 / 4_911, with narrow rounding
   // headroom.
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 14_000, gzip: 5_550, brotli: 5_000 },
+  // GPU-driven crowd motion adds the clip-table builder, the shader-mirror
+  // pose-rows/angle-lerp/interpolation-factor/TRS-compose functions, and the
+  // GSP3 record read/write helpers. Measured: 16_950 / 6_714 / 5_955; all
+  // three caps raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 17_050, gzip: 6_800, brotli: 6_050 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
@@ -2051,9 +2072,13 @@ const routeBudgets = [
     // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
     // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
     // 335_000 for headroom. Gzip headroom is unchanged.
-    raw: 1_470_500,
-    gzip: 402_500,
-    brotli: 335_000,
+    // GPU-driven crowd motion carries the full cost on this route (it loads
+    // both backends): the new WebGL2 motion color/shadow shaders and batch
+    // state. Measured: 1_546_219 / 417_471 / 352_535; all three caps raised
+    // with narrow rounding headroom.
+    raw: 1_546_500,
+    gzip: 417_600,
+    brotli: 352_600,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2194,9 +2219,13 @@ const routeBudgets = [
     // above on this merge. Measured: 1_143_495 / 304_706 / 254_874. Only
     // gzip exceeded the prior hard limit; bumped 290_000 -> 290_500 for
     // headroom.
-    raw: 1_093_500,
-    gzip: 290_500,
-    brotli: 243_000,
+    // GPU-driven crowd motion's command-bridge.ts forwarding shim and
+    // mount.ts handle growth (see the bootstrap-feature-scene3d.js note
+    // above) carry in full on this route. Measured: 1_144_799 / 304_981 /
+    // 255_258; all three caps raised with narrow rounding headroom.
+    raw: 1_145_000,
+    gzip: 305_100,
+    brotli: 255_400,
   },
 
 ];

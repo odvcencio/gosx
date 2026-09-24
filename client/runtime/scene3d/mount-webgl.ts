@@ -4082,9 +4082,91 @@ function gosxConfigureSceneScript(script, role, src) {
       for (const object of patch.staged.objects) {
         object.parentMatrix = patch.matrix;
         if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
+        if (object._crowdMotion) delete object._crowdMotion;
       }
       patch.staged.model = patch.model;
       patch.staged.rigidInstanceModel = patch.model;
+    }
+    return true;
+  }
+
+  // sceneUpdateRigidInstanceMotion applies a decoded GSP3 MotionFrame (see
+  // command-runtime.ts's decodeMotionFrame/applyMountedMotionFrame) to the
+  // retained crowd render objects a MotionBatch's instances name. Unlike
+  // sceneUpdateRigidInstancePoses, it never rebuilds a CPU-side transform
+  // matrix or atlas pose row: it writes the instance's motion key and
+  // animation state straight into object._crowdMotion.record, and the GPU
+  // vertex shader (SCENE_CROWD_SKIN_MOTION_GLSL) derives the transform and
+  // pose from that record and the per-frame u_now uniform. Because of that,
+  // this function needs no positional re-derivation from state.models the
+  // way sceneUpdateRigidInstancePoses does: an instance ID resolves straight
+  // to its hydrated render objects through
+  // state._hydratedModelRecords.rigidInstancesByID.
+  //
+  // A qualifying object must already carry _crowdSkin -- the SAME crowd
+  // hydration PoseFrame/legacy playback uses (see sceneStageModelHydration's
+  // "crowd" branch) -- so a MotionFrame targets an actor that was declared
+  // with an initial animation, exactly like PoseFrame requires. _crowdMotion
+  // is created lazily, on an object's FIRST motion frame, reusing that same
+  // atlas: hydration does not need to know in advance which driving channel
+  // (PoseFrame or MotionFrame) an actor will use.
+  //
+  // Fails closed (returns false, no partial writes) when: the hydration
+  // cache is not ready, an instance ID has no crowd-skinned hydration, or
+  // the WebGL crowd renderer has no prepareCrowdMotionShaders (any other
+  // backend, or WebGL before its first crowd draw ever ran) -- see
+  // scene/motion_frame.go's DispatchMotionFrame doc comment for how a caller
+  // routes around that with options.fallbackPoseFrame or
+  // options.fallbackCommands.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneUpdateRigidInstanceMotion(state, batches) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const memberships = records && records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const api = typeof window !== "undefined" ? window.__gosx_scene3d_animation_api : null;
+    if (!cache || !memberships || !api || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    if (!state._crowdRenderer || typeof state._crowdRenderer.prepareCrowdMotionShaders !== "function") return false;
+    const resolved = [];
+    for (const batch of batches) {
+      for (const instance of batch.instances) {
+        // InstancedGLB expansion stores hydrated models under batch/id.
+        const membership = memberships.get(batch.id + "/" + instance.id);
+        const staged = membership && membership.staged === cache.get(membership.key) ? membership.staged : null;
+        // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+        const skinned = staged ? staged.objects.filter(function(object) { return Boolean(object._crowdSkin); }) : null;
+        if (!skinned || !skinned.length) return false;
+        for (const object of skinned) {
+          if (api.crowdMotionClipTable(object._crowdSkin.atlas).count > api.crowdMotionMaxClips) return false;
+        }
+        resolved.push({ skinned, instance });
+      }
+    }
+    try {
+      state._crowdRenderer.prepareCrowdMotionShaders();
+    } catch (_error) {
+      return false;
+    }
+    for (const entry of resolved) {
+      for (const object of entry.skinned) {
+        if (!object._crowdMotion) {
+          object._crowdMotion = {
+            atlas: object._crowdSkin.atlas,
+            clipTable: api.crowdMotionClipTable(object._crowdSkin.atlas),
+            record: new Float32Array(api.crowdMotionRecordFloats),
+            localRadius: api.crowdMotionLocalRadius(object._crowdSkin.bounds),
+            bounds: { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity },
+            dirty: true,
+          };
+        }
+        const motion = object._crowdMotion;
+        const clipRow = api.crowdMotionClipIndex(motion.atlas, entry.instance.animation);
+        api.crowdMotionWriteRecord(motion.record, entry.instance, clipRow);
+        const bounds = motion.bounds;
+        bounds.minX = bounds.minY = bounds.minZ = Infinity;
+        bounds.maxX = bounds.maxY = bounds.maxZ = -Infinity;
+        api.crowdMotionSweptBoundsInto(bounds, motion.record, motion.localRadius);
+        motion.dirty = true;
+      }
     }
     return true;
   }

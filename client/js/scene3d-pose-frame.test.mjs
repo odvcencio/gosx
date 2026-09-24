@@ -193,10 +193,11 @@ test("retained pose application reaches the existing crowd animation rows", () =
   vm.runInContext(rendererSource.slice(start, end), context);
   const atlas = { clips: new Map([["run", { start: 1, duration: 1, segments: 4 }]]), missingClips: new Set() };
   const rows = new Float32Array(3);
-  const object = { _crowdSkin: { atlas, rows, poseRows(_atlas, pose, out) { out[0] = pose.animation === "run" ? 1 + pose.animationTime * 4 : 0; out[1] = pose.animationLoop ? 1 : 0; return out; } } };
+  const object = { _crowdMotion: { record: new Float32Array(24) }, _crowdSkin: { atlas, rows, poseRows(_atlas, pose, out) { out[0] = pose.animation === "run" ? 1 + pose.animationTime * 4 : 0; out[1] = pose.animationLoop ? 1 : 0; return out; } } };
   const staged = { objects: [object] };
   const state = { instancedGLBMeshes: [{ id: "heroes", instances: [{ id: "hero", x: 0, animation: "idle", animationTime: 0, animationLoop: false }] }], _hydratedModelRecords: { modelCount: 1, rigidInstances: new Map([["hero", staged]]) } };
   bridge.applyMountedPoseFrame(state, bridge.decodePoseFrame(frame()), context.sceneUpdateRigidInstancePoses, () => {}, {});
   assert.equal(object.parentMatrix[12], 1.5);
+  assert.equal(object._crowdMotion, undefined, 'pose fallback returns the object to the legacy crowd shader');
   assert.deepEqual(Array.from(rows.slice(0, 2)), [2, 1]);
 });

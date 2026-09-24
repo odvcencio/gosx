@@ -941,6 +941,107 @@
     .replace("a_instanceMatrix * vec4(a_position", "crowdModel * vec4(a_position")
     .replace("mat3(a_instanceMatrix)", "mat3(crowdModel)");
 
+  // --- GPU-driven crowd motion (color pass) ---
+  //
+  // The CPU-computed `a_instanceMatrix` (per-instance transform) and `a_pose`
+  // (precomputed atlas rows) of SCENE_PBR_CROWD_VERTEX_SOURCE are replaced by
+  // a motion KEY (a previous and a next transform with scene-clock
+  // timestamps) and animation STATE (a clip row, its start time, loop flag,
+  // and playback rate). The vertex shader derives both the transform and the
+  // atlas rows from a single per-frame `u_now` uniform, so steady-state
+  // frames (no new MotionFrame) upload nothing per instance -- see
+  // uploadCrowdMotionRecords. animation.ts's sceneCrowdMotion* functions
+  // mirror every line of SCENE_CROWD_SKIN_MOTION_GLSL below in JS, and
+  // scene3d-crowd-motion.test.mjs pins the two together; a change to one
+  // requires the other.
+  //
+  // Attribute layout (beyond a_position/a_normal/a_uv/a_tangent/a_joints/
+  // a_weights, unchanged from the legacy crowd shader):
+  //   a_motionPrevPos/Rot/Scale (vec3 each) then a_tPrev (float), then
+  //     a_motionNextPos/Rot/Scale (vec3 each) then a_tNext (float) --
+  //     mirroring MeshInstanceIR's X/Y/Z + Rotation*/Scale* fields, once per
+  //     key, each key followed immediately by its own timestamp. This
+  //     matches the field order MotionInstanceIR (scene/motion_frame.go)
+  //     and object._crowdMotion.record (animation.ts) both use, so decoding
+  //     a wire instance into the per-instance buffer is a straight
+  //     sequential copy at every layer -- tPrev/tNext are two float
+  //     attributes rather than one vec2 for exactly this reason.
+  //   a_animState (vec4: clip row, clip start time, loop flag, playback
+  //     rate) -- the clip row indexes u_crowdClipTable, NOT the wire
+  //     dictionary index (see sceneCrowdMotionClipIndex).
+  //
+  // The clip table (start row, segments, duration per clip) is a small
+  // uniform array, not a texture: a crowd asset has a handful of named
+  // clips, not the thousands of atlas rows the joint palette needs, and a
+  // uniform array needs no texture-unit budget, capability check, or
+  // upload/cache bookkeeping -- one gl.uniform4fv call per bound batch (see
+  // bindCrowdMotionBatch) is enough. SCENE_CROWD_MOTION_MAX_CLIPS bounds it
+  // well under GLSL ES 3.00's guaranteed minimum 256 vertex uniform vec4s;
+  // an atlas with more clips than this fails closed (see
+  // bindCrowdMotionBatch), not silently truncated.
+  const SCENE_CROWD_MOTION_MAX_CLIPS = 32;
+  const SCENE_CROWD_MOTION_ATTRIBUTES_GLSL = [
+    "in vec4 a_joints; in vec4 a_weights;",
+    "in vec3 a_motionPrevPos; in vec3 a_motionPrevRot; in vec3 a_motionPrevScale; in float a_tPrev;",
+    "in vec3 a_motionNextPos; in vec3 a_motionNextRot; in vec3 a_motionNextScale; in float a_tNext;",
+    "in vec4 a_animState;",
+    "uniform highp sampler2D u_crowdAtlas;",
+    "uniform vec4 u_crowdClipTable[" + SCENE_CROWD_MOTION_MAX_CLIPS + "];",
+    "uniform float u_now;",
+    "uniform float u_motionExtrapolationSeconds;",
+  ].join("\n");
+
+  // Functions only -- no declarations -- so both the color and shadow motion
+  // shaders can share this block after each declares
+  // SCENE_CROWD_MOTION_ATTRIBUTES_GLSL for itself.
+  const SCENE_CROWD_SKIN_MOTION_GLSL = [
+    "const float GOSX_TWO_PI=6.283185307179586;const float GOSX_PI=3.141592653589793;",
+    "float gosxWrapAngleLerp(float a,float b,float t){float d=b-a;d=d-GOSX_TWO_PI*floor((d+GOSX_PI)/GOSX_TWO_PI);return a+d*t;}",
+    "float gosxMotionFactor(){float tPrev=a_tPrev,tNext=a_tNext;float span=max(tNext-tPrev,1e-6);if(u_now<=tPrev)return 0.0;if(u_now<tNext)return(u_now-tPrev)/span;return 1.0+min(u_now-tNext,u_motionExtrapolationSeconds)/span;}",
+    "mat4 gosxMotionModel(){float t=gosxMotionFactor();vec3 pos=mix(a_motionPrevPos,a_motionNextPos,t);vec3 rot=vec3(gosxWrapAngleLerp(a_motionPrevRot.x,a_motionNextRot.x,t),gosxWrapAngleLerp(a_motionPrevRot.y,a_motionNextRot.y,t),gosxWrapAngleLerp(a_motionPrevRot.z,a_motionNextRot.z,t));vec3 scale=mix(a_motionPrevScale,a_motionNextScale,t);float cx=cos(rot.x),sx=sin(rot.x),cy=cos(rot.y),sy=sin(rot.y),cz=cos(rot.z),sz=sin(rot.z);mat4 m;m[0]=vec4(cy*cz*scale.x,cy*sz*scale.x,-sy*scale.x,0.0);m[1]=vec4((sx*sy*cz-cx*sz)*scale.y,(sx*sy*sz+cx*cz)*scale.y,sx*cy*scale.y,0.0);m[2]=vec4((cx*sy*cz+sx*sz)*scale.z,(cx*sy*sz-sx*cz)*scale.z,cx*cy*scale.z,0.0);m[3]=vec4(pos,1.0);return m;}",
+    "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
+    "vec3 gosxCrowdMotionPoseRows(){int clipRow=clamp(int(a_animState.x),0," + (SCENE_CROWD_MOTION_MAX_CLIPS - 1) + ");vec4 clip=u_crowdClipTable[clipRow];float duration=clip.z;float elapsed=(u_now-a_animState.y)*a_animState.w;if(!(elapsed>=0.0))elapsed=0.0;float t=duration>0.0?(a_animState.z>0.5?mod(elapsed,duration):min(elapsed,duration)):0.0;float segments=clip.y;float frame=duration>0.0?t/duration*segments:0.0;float a=min(segments,floor(frame));return vec3(clip.x+a,clip.x+min(segments,a+1.0),frame-a);}",
+    "mat4 gosxCrowdSkinFromPose(vec3 pose){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(pose.y));m+=(a*(1.0-pose.z)+b*pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
+  ].join("\n");
+
+  const SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "flat out vec4 v_instanceColor;",
+    "",
+    SCENE_GLSL_AFFINE_NORMAL,
+    SCENE_CROWD_SKIN_MOTION_GLSL,
+    "",
+    "void main() {",
+    "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+    "    vec4 worldPos = crowdModel * vec4(a_position, 1.0);",
+    "    v_worldPosition = worldPos.xyz;",
+    "mat3 m=mat3(crowdModel);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
+    "    v_uv = a_uv;",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
+    "    v_tangent = T;",
+    "    v_instanceColor = vec4(1.0);",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
+    "}",
+  ].join("\n");
+
   // --- Skinned PBR Vertex Shader ---
   //
   // Variant of the PBR vertex shader with skeletal animation (vertex skinning).
@@ -1551,6 +1652,65 @@
         crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
         lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+      },
+    };
+  }
+
+  // Compile the GPU-motion crowd shadow depth shader: color-pass parity, so
+  // a moving/animated crowd's shadow tracks the SAME interpolated
+  // motion+animation state the color pass draws, not a stale CPU pose. A
+  // dedicated function rather than a third createSceneShadowProgram mode:
+  // the attribute/uniform set has no overlap with that function's existing
+  // instanced/crowd branches (no a_instanceMatrix, no a_pose), so sharing it
+  // would add branches without sharing any code.
+  // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
+  function createSceneShadowMotionProgram(gl) {
+    var source = [
+      "#version 300 es",
+      "precision highp float;",
+      "precision highp int;",
+      "in vec3 a_position;",
+      SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
+      "uniform mat4 u_lightViewProjection;",
+      SCENE_CROWD_SKIN_MOTION_GLSL,
+      "void main() {",
+      "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+      "    gl_Position = u_lightViewProjection * (crowdModel * vec4(a_position, 1.0));",
+      "}",
+    ].join("\n");
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Crowd motion shadow shader");
+    if (!program) return null;
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: {
+        position: gl.getAttribLocation(program, "a_position"),
+        joints: gl.getAttribLocation(program, "a_joints"),
+        weights: gl.getAttribLocation(program, "a_weights"),
+        motionPrevPos: gl.getAttribLocation(program, "a_motionPrevPos"),
+        motionPrevRot: gl.getAttribLocation(program, "a_motionPrevRot"),
+        motionPrevScale: gl.getAttribLocation(program, "a_motionPrevScale"),
+        tPrev: gl.getAttribLocation(program, "a_tPrev"),
+        motionNextPos: gl.getAttribLocation(program, "a_motionNextPos"),
+        motionNextRot: gl.getAttribLocation(program, "a_motionNextRot"),
+        motionNextScale: gl.getAttribLocation(program, "a_motionNextScale"),
+        tNext: gl.getAttribLocation(program, "a_tNext"),
+        animState: gl.getAttribLocation(program, "a_animState"),
+      },
+      uniforms: {
+        crowdAtlas: gl.getUniformLocation(program, "u_crowdAtlas"),
+        crowdClipTable: gl.getUniformLocation(program, "u_crowdClipTable"),
+        now: gl.getUniformLocation(program, "u_now"),
+        motionExtrapolationSeconds: gl.getUniformLocation(program, "u_motionExtrapolationSeconds"),
+        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
       },
     };
   }
@@ -6166,6 +6326,55 @@
     };
   }
 
+  // Compile the GPU-motion crowd color-pass shader (see
+  // SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE's doc comment). No
+  // KHR_parallel_shader_compile pre-warm slot: this path is newer than the
+  // pre-warm plumbing's fixed base/crowd slots, so it always compiles
+  // synchronously on first use, exactly like the legacy crowd program did
+  // before that optimization existed -- a one-time first-use cost, not a
+  // per-frame one.
+  // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
+  function createScenePBRCrowdMotionProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Crowd motion PBR shader");
+    if (!program) return null;
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+      joints: gl.getAttribLocation(program, "a_joints"),
+      weights: gl.getAttribLocation(program, "a_weights"),
+      motionPrevPos: gl.getAttribLocation(program, "a_motionPrevPos"),
+      motionPrevRot: gl.getAttribLocation(program, "a_motionPrevRot"),
+      motionPrevScale: gl.getAttribLocation(program, "a_motionPrevScale"),
+      tPrev: gl.getAttribLocation(program, "a_tPrev"),
+      motionNextPos: gl.getAttribLocation(program, "a_motionNextPos"),
+      motionNextRot: gl.getAttribLocation(program, "a_motionNextRot"),
+      motionNextScale: gl.getAttribLocation(program, "a_motionNextScale"),
+      tNext: gl.getAttribLocation(program, "a_tNext"),
+      animState: gl.getAttribLocation(program, "a_animState"),
+    };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    /* @ts-expect-error TS2339 -- see above */ uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
+    /* @ts-expect-error TS2339 -- see above */ uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
+    /* @ts-expect-error TS2339 -- see above */ uniforms.now = gl.getUniformLocation(program, "u_now");
+    uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
   // Initial WebGL2 programs are submitted together while model assets are
   // already hydrating. KHR_parallel_shader_compile lets the driver work
   // without a synchronous LINK_STATUS fence on the main thread. The existing
@@ -7297,9 +7506,12 @@
       for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
       crowdAtlasTextures.clear();
       crowdPaletteBytes = 0;
-      for (const cp of [crowdProgram, crowdShadowProgram]) if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+      for (const cp of [crowdProgram, crowdShadowProgram, crowdMotionProgram, crowdMotionShadowProgram]) {
+        if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+      }
       crowdProgram = crowdShadowProgram = null;
       crowdCapabilities = crowdCapabilityError = null;
+      crowdMotionProgram = crowdMotionShadowProgram = crowdMotionShaderError = null;
     }
     function bindCrowdBatch(batch, ip, allowed) {
       if (!batch.atlas) return;
@@ -7318,6 +7530,164 @@
     function finishCrowdBatch(batch, ip) {
       if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
     }
+
+    // --- GPU-driven crowd motion batch binding ---
+    //
+    // Reuses prepareCrowdAtlas for the joint palette texture (identical
+    // format to the legacy crowd path); the clip table is a small uniform
+    // array (see SCENE_CROWD_MOTION_ATTRIBUTES_GLSL's doc comment), so it
+    // needs no texture-unit budget or cache of its own -- just one
+    // gl.uniform4fv call per bound batch.
+    //
+    // SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS and
+    // SCENE_CROWD_MOTION_RECORD_FLOATS mirror the same-named constants in
+    // animation.ts (a JS-side module this chunk cannot import directly --
+    // see that file's "GPU-driven crowd motion" section for why the two
+    // chunks share no module graph). scene3d-crowd-motion-glsl-constants.
+    // test.mjs asserts the literals stay equal.
+    const SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS = 0.25;
+    const SCENE_CROWD_MOTION_RECORD_FLOATS = 24;
+    // JSON.parse returns the null value with a dynamic type. This keeps the
+    // source parseable by the JavaScript-only Scene3D test harness.
+    let crowdMotionProgram = JSON.parse("null"), crowdMotionShadowProgram = JSON.parse("null"), crowdMotionShaderError = JSON.parse("null");
+    let crowdMotionNow = 0;
+    function prepareCrowdMotionShaders() {
+      if (crowdMotionProgram && crowdMotionShadowProgram) return true;
+      if (crowdMotionShaderError) throw crowdMotionShaderError;
+      try {
+        if (!crowdMotionProgram) crowdMotionProgram = createScenePBRCrowdMotionProgram(gl);
+        if (!crowdMotionShadowProgram) crowdMotionShadowProgram = createSceneShadowMotionProgram(gl);
+        if (!crowdMotionProgram || !crowdMotionShadowProgram) throw new Error("crowd motion shader unavailable");
+      } catch (error) {
+        crowdMotionShaderError = error;
+        crowdMotionProgram = crowdMotionShadowProgram = null;
+        throw error;
+      }
+      return true;
+    }
+    // setCrowdMotionNow is called once per render() (see render()'s top),
+    // not per batch or per instance -- the entire point of the GPU-motion
+    // path is that advancing time costs one uniform write regardless of how
+    // many crowd instances are on screen.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function setCrowdMotionNow(now) { crowdMotionNow = now; }
+
+    // prepareCrowdMotionRecords grows batch.motion to fit batch.count
+    // (geometric growth/shrink, matching the legacy transforms/poses buffers
+    // above), then copies each instance's _crowdMotion.record into its slot
+    // ONLY when that instance was marked dirty since the last call (a new
+    // MotionFrame touched it) or the batch's membership/order changed (a
+    // JSON scene command added, removed, or reordered an instance --
+    // MotionFrame application itself always rejects a membership change, so
+    // this is the only other way batch.objects can differ between calls).
+    // Dirty flags persist until the next GPU upload. They let a later bind
+    // upload only changed instance ranges, even if several snapshots arrive
+    // before rendering. batch._motionGeneration advances only on a copy.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function prepareCrowdMotionRecords(batch) {
+      prepareCrowdAtlas(batch.atlas);
+      const stride = SCENE_CROWD_MOTION_RECORD_FLOATS;
+      const needed = batch.count * stride;
+      let resync = false;
+      if (!batch.motion || batch.motion.length < needed || batch.motion.length > Math.max(stride * 8, needed * 4)) {
+        let capacity = stride * 8;
+        while (capacity < needed) capacity *= 2;
+        batch.motion = new Float32Array(capacity);
+        batch._motionDirtyFlags = new Uint8Array(capacity / stride);
+        resync = true;
+      }
+      if (!resync && (!batch._motionMembers || batch._motionMembers.length !== batch.count)) resync = true;
+      if (!resync) for (let i = 0; i < batch.count; i++) if (batch._motionMembers[i] !== batch.objects[i]) { resync = true; break; }
+      let touched = resync;
+      if (resync) batch._motionDirtyFlags.fill(1, 0, batch.count);
+      for (let i = 0; i < batch.count; i++) {
+        const motion = batch.objects[i]._crowdMotion;
+        if (resync || motion.dirty) {
+          batch.motion.set(motion.record, i * stride);
+          batch._motionDirtyFlags[i] = 1;
+          motion.dirty = false;
+          touched = true;
+        }
+      }
+      if (touched) {
+        batch._motionGeneration = (batch._motionGeneration || 0) + 1;
+        batch._motionMembers = batch.objects.slice();
+      }
+    }
+
+    // A steady-state bind only touches the stream's retirement epoch. Changed
+    // instances form contiguous dirty runs. Keep at most 16 upload calls; for
+    // more scattered changes, one covering range costs less CPU call time.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function crowdMotionStreamBuffer(batch) {
+      const retained = touchInstancedStream(batch, 0, "motion");
+      if (batch._motionUploadedGeneration !== batch._motionGeneration || !retained) {
+        const ranges = batch._motionDirtyRanges || (batch._motionDirtyRanges = []);
+        ranges.length = 0;
+        const flags = batch._motionDirtyFlags;
+        for (let i = 0; i < batch.count; i++) {
+          if (!flags[i]) continue;
+          const start = i;
+          while (i + 1 < batch.count && flags[i + 1]) i++;
+          ranges.push(start * SCENE_CROWD_MOTION_RECORD_FLOATS, (i + 1) * SCENE_CROWD_MOTION_RECORD_FLOATS);
+        }
+        if (!retained && !ranges.length) ranges.push(0, batch.count * SCENE_CROWD_MOTION_RECORD_FLOATS);
+        if (ranges.length > 32) {
+          ranges[1] = ranges[ranges.length - 1];
+          ranges.length = 2;
+        }
+        batch._motionBuffer = uploadInstancedStream(batch, 0, "motion", batch.motion,
+          batch.count * SCENE_CROWD_MOTION_RECORD_FLOATS, ranges);
+        batch._motionUploadedGeneration = batch._motionGeneration;
+        flags.fill(0, 0, batch.count);
+      }
+      return retained || batch._motionBuffer;
+    }
+
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function bindCrowdMotionBatch(batch, ip, allowed) {
+      if (!batch.atlas) return;
+      if (batch.clipTable.count > SCENE_CROWD_MOTION_MAX_CLIPS) {
+        throw new Error("crowd motion clip table budget exceeded: " + batch.clipTable.count + " > " + SCENE_CROWD_MOTION_MAX_CLIPS);
+      }
+      const record = prepareCrowdAtlas(batch.atlas);
+      gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
+      gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
+      gl.uniform4fv(ip.uniforms.crowdClipTable, batch.clipTable.data);
+      gl.uniform1f(ip.uniforms.now, crowdMotionNow);
+      gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
+      const obj = batch.objects[0];
+      for (const name of ["joints", "weights"]) {
+        const location = ip.attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
+      const buffer = crowdMotionStreamBuffer(batch);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      const stride = SCENE_CROWD_MOTION_RECORD_FLOATS * 4;
+      // [name, components, byteOffset] -- byte offsets match
+      // animation.ts's SCENE_CROWD_MOTION_* record layout exactly (four
+      // bytes per float32).
+      const layout = [
+        ["motionPrevPos", 3, 0], ["motionPrevRot", 3, 12], ["motionPrevScale", 3, 24], ["tPrev", 1, 36],
+        ["motionNextPos", 3, 40], ["motionNextRot", 3, 52], ["motionNextScale", 3, 64], ["tNext", 1, 76],
+        ["animState", 4, 80],
+      ];
+      for (const [name, components, byteOffset] of layout) {
+        const location = ip.attributes[name]; allowed[location] = true;
+        gl.enableVertexAttribArray(location);
+        gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, byteOffset);
+        gl.vertexAttribDivisor(location, 1);
+      }
+    }
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function finishCrowdMotionBatch(batch, ip) {
+      if (!batch.atlas) return;
+      for (const name of ["motionPrevPos", "motionPrevRot", "motionPrevScale", "tPrev", "motionNextPos", "motionNextRot", "motionNextScale", "tNext", "animState"]) {
+        gl.vertexAttribDivisor(ip.attributes[name], 0);
+        gl.disableVertexAttribArray(ip.attributes[name]);
+      }
+    }
+
     const rigidBatchRecords = new Map();
     const rigidObjectBatches = new Map();
     const prebuiltRigidBatchRecords = new Map();
@@ -7571,7 +7941,8 @@
       return Math.floor(data.length / components);
     }
 
-    function uploadInstancedStream(mesh, index, slot, data, activeLength) {
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function uploadInstancedStream(mesh, index, slot, data, activeLength, dirtyRanges = null) {
       // Commands replace JS arrays frequently. Their identity is not a GPU
       // lifetime: own mutable streams by batch ID, with frame retirement.
       const key = mesh.id ? "id:" + mesh.id : "index:" + index;
@@ -7588,10 +7959,18 @@
       }
       stream.epoch = instancedStreamEpoch;
       gl.bindBuffer(gl.ARRAY_BUFFER, stream.buffer);
-      if (stream.bytes !== data.byteLength) {
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      const resized = stream.bytes !== data.byteLength;
+      if (resized) {
+        gl.bufferData(gl.ARRAY_BUFFER, dirtyRanges ? data.byteLength : data, gl.DYNAMIC_DRAW);
         stream.bytes = data.byteLength;
-      } else {
+      }
+      if (dirtyRanges) {
+        for (let i = 0; i < dirtyRanges.length; i += 2) {
+          const start = Math.max(0, Math.min(data.length, dirtyRanges[i]));
+          const end = Math.max(start, Math.min(data.length, dirtyRanges[i + 1]));
+          if (end > start) gl.bufferSubData(gl.ARRAY_BUFFER, start * data.BYTES_PER_ELEMENT, data.subarray(start, end));
+        }
+      } else if (!resized) {
         const length = Number.isFinite(activeLength)
           ? Math.max(0, Math.min(data.length, Math.floor(activeLength)))
           : data.length;
@@ -7603,7 +7982,11 @@
     function touchInstancedStream(mesh, index, slot) {
       const key = mesh.id ? "id:" + mesh.id : "index:" + index;
       const record = instancedStreamRecords.get(key);
-      if (record && record[slot]) record[slot].epoch = instancedStreamEpoch;
+      if (record && record[slot]) {
+        record[slot].epoch = instancedStreamEpoch;
+        return record[slot].buffer;
+      }
+      return null;
     }
 
     function retireInstancedStreams() {
@@ -8187,6 +8570,10 @@
       sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
       prepareRigidMeshBatches(bundle);
       sceneSelenaFrameTime = performance.now() / 1000; sceneSelenaFrameProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before any Selena mesh draw
+      // GPU-motion crowd instances interpolate/animate from this SAME clock
+      // (see SCENE_CROWD_MOTION_ATTRIBUTES_GLSL's doc comment): one uniform
+      // write per render(), never per instance.
+      setCrowdMotionNow(sceneSelenaFrameTime);
 
       // --- Shadow Pass ---
       // Identify shadow-casting directional and spot lights (max 2 authored-
@@ -9044,10 +9431,17 @@
         }
         const key = [obj.materialIndex, obj.vertexCount, obj.geometryRevision,
           obj.receiveShadow === true, obj.castShadow === true, obj.depthWrite,
-          obj.doubleSided, visible, obj._crowdSkin ? "crowd:" + obj._crowdSkin.atlas.id : "rigid"].join(":");
+          obj.doubleSided, visible,
+          obj._crowdMotion ? "crowd-motion:" + obj._crowdMotion.atlas.id :
+          obj._crowdSkin ? "crowd:" + obj._crowdSkin.atlas.id : "rigid"].join(":");
         let batch = groups.get(key);
         if (!batch) {
-          batch = { id: "rigid-geometry-" + (++rigidBatchSequence), objects: [], transforms: null, count: 0, atlas: obj._crowdSkin ? obj._crowdSkin.atlas : null };
+          batch = {
+            id: "rigid-geometry-" + (++rigidBatchSequence), objects: [], transforms: null, count: 0,
+            atlas: obj._crowdMotion ? obj._crowdMotion.atlas : (obj._crowdSkin ? obj._crowdSkin.atlas : null),
+            motion: obj._crowdMotion ? new Float32Array(0) : null,
+            clipTable: obj._crowdMotion ? obj._crowdMotion.clipTable : null,
+          };
           groups.set(key, batch);
         }
         batch.objects.push(obj);
@@ -9062,6 +9456,13 @@
           }
           if (batch.count < 2 && !batch.atlas) {
             batch.transforms = null;
+            continue;
+          }
+          if (batch.motion) {
+            // GPU-motion crowd batch: no CPU transform/pose math here at all,
+            // and prepareCrowdMotionRecords re-copies/re-uploads only when an
+            // instance's motion state actually changed since the last frame.
+            prepareCrowdMotionRecords(batch);
             continue;
           }
           const needed = batch.count * 16;
@@ -9124,28 +9525,34 @@
         }
       }
       if (obj !== batch.objects[0]) return true;
-      const ip = batch.atlas ? crowdShadowProgram : rigidShadowProgram;
+      if (batch.motion) prepareCrowdMotionShaders();
+      const ip = batch.motion ? crowdMotionShadowProgram : batch.atlas ? crowdShadowProgram : rigidShadowProgram;
       gl.useProgram(ip.program);
       gl.uniformMatrix4fv(ip.uniforms.lightViewProjection, false, lightMatrix);
       const allowed = {};
       allowed[ip.attributes.position] = true;
-      for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
-      bindCrowdBatch(batch, ip, allowed);
+      if (batch.motion) {
+        bindCrowdMotionBatch(batch, ip, allowed);
+      } else {
+        for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
+        bindCrowdBatch(batch, ip, allowed);
+      }
       sceneDisableUnownedVertexAttribArrays(allowed);
       bindScenePBRDirectAttribute(obj, "positions", ip.attributes.position, 3,
         scenePBRDirectAttribute(obj.vertices, "positions", obj.vertexCount, 3));
-      bindRigidBatchMatrices(batch, ip.attributes);
+      if (!batch.motion) bindRigidBatchMatrices(batch, ip.attributes);
       drawRigidBatchGeometry(batch);
       rigidFrameShadowDraws++;
-      finishRigidBatchMatrices(ip.attributes);
-      finishCrowdBatch(batch, ip);
+      if (!batch.motion) finishRigidBatchMatrices(ip.attributes);
+      if (batch.motion) finishCrowdMotionBatch(batch, ip); else finishCrowdBatch(batch, ip);
       gl.useProgram(shadowProgram.program);
       return true;
     }
 
     function drawRigidPBRBatch(batch, bundle, mat, uploadFrameUniforms) {
-      const ip = batch.atlas ? crowdProgram : ensureInstancedProgram();
-      if (!ip || ip.attributes.instanceMatrix < 0) return false;
+      if (batch.motion) prepareCrowdMotionShaders();
+      const ip = batch.motion ? crowdMotionProgram : batch.atlas ? crowdProgram : ensureInstancedProgram();
+      if (!ip || !batch.motion && ip.attributes.instanceMatrix < 0) return false;
       const obj = batch.objects[0];
       gl.useProgram(ip.program);
       uploadFrameUniforms(ip.uniforms);
@@ -9170,16 +9577,20 @@
           if (size === 4) gl.vertexAttrib4f(location, fallback[0], fallback[1], fallback[2], fallback[3]);
         }
       }
-      for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
-      bindCrowdBatch(batch, ip, allowed);
+      if (batch.motion) {
+        bindCrowdMotionBatch(batch, ip, allowed);
+      } else {
+        for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
+        bindCrowdBatch(batch, ip, allowed);
+      }
       sceneDisableUnownedVertexAttribArrays(allowed);
-      bindRigidBatchMatrices(batch, ip.attributes);
+      if (!batch.motion) bindRigidBatchMatrices(batch, ip.attributes);
       drawRigidBatchGeometry(batch);
       rigidFrameDraws++;
       rigidFrameInstances += batch.count;
       webglRenderTruthStats.meshDrawn += batch.count;
-      finishRigidBatchMatrices(ip.attributes);
-      finishCrowdBatch(batch, ip);
+      if (!batch.motion) finishRigidBatchMatrices(ip.attributes);
+      if (batch.motion) finishCrowdMotionBatch(batch, ip); else finishCrowdBatch(batch, ip);
       gl.depthMask(true);
       gl.useProgram(program);
       return true;
@@ -9228,8 +9639,8 @@
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
         const rigidBatch = rigidObjectBatches.get(obj);
-        const rigidProgram = rigidBatch ? (rigidBatch.atlas ? crowdProgram : rigidBatch.count > 1 ? ensureInstancedProgram() : null) : null;
-        if (rigidProgram && rigidProgram.attributes.instanceMatrix >= 0) {
+        const rigidProgram = rigidBatch ? (rigidBatch.motion ? crowdMotionProgram : rigidBatch.atlas ? crowdProgram : rigidBatch.count > 1 ? ensureInstancedProgram() : null) : null;
+        if (rigidProgram && (rigidBatch.motion || rigidProgram.attributes.instanceMatrix >= 0)) {
           if (obj !== rigidBatch.objects[0]) continue;
           if (drawRigidPBRBatch(rigidBatch, bundle, mat, uploadFrameUniformsForProgram)) {
             currentProgram = program;
@@ -10528,6 +10939,12 @@
       supportsRetainedGeometry: true,
       supportsRigidImportedBatches,
       prepareCrowdAtlas,
+      // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
+      // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
+      // crowdMotionProgram directly (see drawPBRObjectList's rigidProgram
+      // selection), so a page whose first crowd-motion batch reaches
+      // render() before this has ever run would silently skip drawing it.
+      prepareCrowdMotionShaders,
       render: render,
       dispose: dispose,
       diagnostics: diagnostics,
