@@ -235,6 +235,9 @@ require m31labs.dev/gosx v0.31.4
 use ./app
 use ./gosx
 `)
+	// The test must select its own workspace when the caller runs with
+	// GOWORK=off, as the repository's isolated worktree checks do.
+	t.Setenv("GOWORK", filepath.Join(root, "go.work"))
 
 	version, localReplace, ok := resolveProjectGoSXVersion(appDir)
 	if !ok || !localReplace || version != "" {

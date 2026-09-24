@@ -62,6 +62,14 @@ HTML into a bounded writable `emptyDir` mounted at `/opt/gosx-docs/static`, so
 the default ISR store can refresh an artifact without making the rest of the
 image writable.
 
+For an image-only rollout, build `Dockerfile.runtime` with
+`GOSX_DOCS_IMAGE_REVISION` and `GOSX_DOCS_IMAGE_BUILT_AT` build arguments from
+the production bundle. Its entrypoint sets those values for the server, even
+when the existing Deployment still has the previous release's environment
+values. Pin the pushed image by registry digest and verify `/api/site` against
+the new identity. The normal deploy script still updates the Deployment
+template identity as described above.
+
 To validate an existing deployment without changing it:
 
 ```sh

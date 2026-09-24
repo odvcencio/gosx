@@ -742,6 +742,7 @@ type WaterSystemIR struct {
 	PoolWidth                   float64                          `json:"poolWidth,omitempty"`
 	PoolHeight                  float64                          `json:"poolHeight,omitempty"`
 	PoolLength                  float64                          `json:"poolLength,omitempty"`
+	RenderPool                  *bool                            `json:"renderPool,omitempty"`
 	CornerRadius                float64                          `json:"cornerRadius,omitempty"`
 	WaveSpeed                   float64                          `json:"waveSpeed,omitempty"`
 	Damping                     float64                          `json:"damping,omitempty"`
@@ -2638,6 +2639,7 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setNumeric(record, "poolWidth", item.PoolWidth)
 	setNumeric(record, "poolHeight", item.PoolHeight)
 	setNumeric(record, "poolLength", item.PoolLength)
+	setBool(record, "renderPool", item.RenderPool)
 	setNumeric(record, "cornerRadius", item.CornerRadius)
 	setNumeric(record, "waveSpeed", item.WaveSpeed)
 	setNumeric(record, "damping", item.Damping)

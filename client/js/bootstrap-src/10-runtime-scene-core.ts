@@ -2373,6 +2373,7 @@
       poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
       poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),
       poolLength: Math.max(0.001, sceneNumber(item.poolLength, sceneNumber(current.poolLength, 1))),
+      renderPool: sceneBool(Object.prototype.hasOwnProperty.call(item, "renderPool") ? item.renderPool : current.renderPool, true),
       cornerRadius: Math.max(0, sceneNumber(item.cornerRadius, sceneNumber(current.cornerRadius, 0))),
       waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 1)),
       damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.995)),

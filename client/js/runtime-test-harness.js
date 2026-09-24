@@ -3296,7 +3296,7 @@ function loadSceneAdaptiveQualityAPI() {
       sceneSyncStatusBindings,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
-  return { api: context.adaptiveAPI, clock };
+  return { api: context.adaptiveAPI, clock, context };
 }
 
 // loadSceneFramePacingAPI exposes mount.ts's sceneFramePacing* pure decision

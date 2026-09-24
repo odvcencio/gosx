@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "source": "ember-hour.hdr",
+  "sourceFormat": "radiance",
+  "sourceWidth": 128,
+  "sourceHeight": 64,
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "specularUri": "ember-hour.ibl.ktx2",
+  "specularSize": 32,
+  "specularMipLevels": 6,
+  "specularSamples": 32,
+  "irradianceUri": "ember-hour.irradiance.ktx2",
+  "irradianceSize": 8,
+  "format": "rgba16f",
+  "roughnessPerLevel": [
+    0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      1.906468108374818,
+      0.9869642064348322,
+      0.8245686212875071
+    ],
+    [
+      -0.3226993321346363,
+      -0.0954121183851055,
+      0.030569317159106886
+    ],
+    [
+      0.19758901154532973,
+      0.09455500260319016,
+      0.0490183391181154
+    ],
+    [
+      0.027209933003009362,
+      0.013015081503077964,
+      0.006744574021101145
+    ],
+    [
+      0.008848457431882097,
+      0.004233244741543765,
+      0.0021878876164189705
+    ],
+    [
+      0.06423361863941729,
+      0.03072397340884708,
+      0.01591817026983644
+    ],
+    [
+      0.317891857962377,
+      0.13643949661395624,
+      0.04948531983358033
+    ],
+    [
+      0.053924488710682436,
+      0.025800037202056245,
+      0.01337828224588119
+    ],
+    [
+      0.16649144168429209,
+      0.05244711992904971,
+      -0.009637983479000686
+    ]
+  ],
+  "ibl": {
+    "schemaVersion": 1,
+    "source": "ember-hour.hdr",
+    "radiance": {
+      "uri": "ember-hour.ibl.ktx2",
+      "role": "environment-radiance",
+      "colorSpace": "linear",
+      "channels": "rgba",
+      "view": "cube",
+      "format": "rgba16f",
+      "mipLevels": 6,
+      "width": 32,
+      "height": 32,
+      "faces": 6
+    },
+    "irradiance": {
+      "uri": "ember-hour.irradiance.ktx2",
+      "role": "environment-irradiance",
+      "colorSpace": "linear",
+      "channels": "rgba",
+      "view": "cube",
+      "format": "rgba16f",
+      "mipLevels": 1,
+      "width": 8,
+      "height": 8,
+      "faces": 6
+    },
+    "brdfLUT": {
+      "uri": "ember-hour.brdf-lut.ktx2",
+      "role": "brdf-lut",
+      "colorSpace": "linear",
+      "channels": "rg",
+      "view": "2d",
+      "format": "rg16f",
+      "mipLevels": 1,
+      "width": 64,
+      "height": 64,
+      "faces": 1
+    },
+    "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+    "roughnessPerLevel": [
+      0,
+      0.2,
+      0.4,
+      0.6,
+      0.8,
+      1
+    ],
+    "sphericalHarmonics": [
+      [
+        1.906468108374818,
+        0.9869642064348322,
+        0.8245686212875071
+      ],
+      [
+        -0.3226993321346363,
+        -0.0954121183851055,
+        0.030569317159106886
+      ],
+      [
+        0.19758901154532973,
+        0.09455500260319016,
+        0.0490183391181154
+      ],
+      [
+        0.027209933003009362,
+        0.013015081503077964,
+        0.006744574021101145
+      ],
+      [
+        0.008848457431882097,
+        0.004233244741543765,
+        0.0021878876164189705
+      ],
+      [
+        0.06423361863941729,
+        0.03072397340884708,
+        0.01591817026983644
+      ],
+      [
+        0.317891857962377,
+        0.13643949661395624,
+        0.04948531983358033
+      ],
+      [
+        0.053924488710682436,
+        0.025800037202056245,
+        0.01337828224588119
+      ],
+      [
+        0.16649144168429209,
+        0.05244711992904971,
+        -0.009637983479000686
+      ]
+    ]
+  },
+  "consumer": {
+    "ready": true,
+    "brdfModelAuthority": "assetpipe/ibl.BRDFModel; the sidecar field and the GoSXiblModel container key are copies"
+  }
+}

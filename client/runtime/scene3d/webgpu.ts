@@ -3307,6 +3307,7 @@
       view: placeholderTex.createView({ dimension: cube ? "cube" : "2d" }),
       src: key,
       descriptor: descriptor,
+      colorSpace: "",
       loaded: false,
       pending: true,
       failed: false,
@@ -3348,27 +3349,41 @@
           format: descriptor.colorSpace === "srgb" ? "rgba8unorm-srgb" : "rgba8unorm",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         });
-        // Use createImageBitmap for copyExternalImageToTexture.
-        if (typeof createImageBitmap === "function") {
+        // Chromium rejects an ImageBitmap made from an SVG foreignObject.
+        // Drawing the Image to a canvas gives WebGPU a readable upload source.
+        var isHTMLTexture = key.indexOf("data:image/svg+xml") === 0 && key.indexOf("foreignObject") >= 0;
+        var htmlCanvas = null;
+        if (isHTMLTexture && typeof document !== "undefined" && document.createElement) {
+          htmlCanvas = document.createElement("canvas");
+          htmlCanvas.width = w; htmlCanvas.height = h;
+          var htmlContext = htmlCanvas.getContext("2d");
+          if (htmlContext) htmlContext.drawImage(image, 0, 0);
+        }
+        if (htmlCanvas && htmlContext) {
+          var imagePromise = Promise.resolve(htmlCanvas);
+        } else if (typeof createImageBitmap === "function") {
           /* @ts-expect-error TS2345 -- premultiplyAlpha widens to string through the ternary; the runtime value is always the literal "none" */ var bitmapOptions = needsUnpremultipliedAlpha ? { premultiplyAlpha: "none" } : undefined;
-          createImageBitmap(image, bitmapOptions).then(function(bitmap) {
+          imagePromise = createImageBitmap(image, bitmapOptions);
+        }
+        if (imagePromise) {
+          imagePromise.then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
-              if (bitmap && typeof bitmap.close === "function") bitmap.close();
+              if (typeof ImageBitmap !== "undefined" && bitmap instanceof ImageBitmap) bitmap.close();
               return;
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              needsUnpremultipliedAlpha ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
+              needsUnpremultipliedAlpha || isHTMLTexture ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();
             record.texture = tex;
-            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.view = tex.createView();
+            record.view = tex.createView();
             record.colorSpace = descriptor.colorSpace === "srgb" ? "srgb" : "linear";
             record.loaded = true;
             record.pending = false;
-            if (bitmap && typeof bitmap.close === "function") bitmap.close();
+            if (typeof ImageBitmap !== "undefined" && bitmap instanceof ImageBitmap) bitmap.close();
             wgpuNotifyTextureSettled(record);
           }).catch(function() {
             tex.destroy();
@@ -18547,7 +18562,9 @@
         }
       }
 
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
+      // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
+      var waterDrawnBeforeAlpha = false;
+      // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.opaque.length > 0) {
@@ -18567,6 +18584,15 @@
           drawThickWorldLineEntries(mainPass, thickLineRecord, "opaque", frameBindGroup);
         } else if (worldLineEntries.length > 0) {
           drawWorldLineEntries(mainPass, worldLineEntries, "opaque", frameBindGroup);
+        }
+
+        // The water surface writes depth before translucent world surfaces.
+        // A stele in front of the tide must remain visible after its HTML
+        // texture is composited, while rocks behind the tide stay occluded.
+        if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+          Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
+          Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
+          waterDrawnBeforeAlpha = true;
         }
 
         // Alpha pass.
@@ -18610,7 +18636,7 @@
         }
       }
 
-      if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+      if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
         Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
         Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
       }

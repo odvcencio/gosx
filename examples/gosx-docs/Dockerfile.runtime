@@ -9,14 +9,23 @@ RUN groupadd --gid 10001 app \
 
 WORKDIR /opt/gosx-docs
 COPY --chown=10001:10001 dist/ ./
+COPY --chown=10001:10001 container-entrypoint.sh ./container-entrypoint.sh
 
-RUN chmod 0555 ./run.sh ./server/app
+RUN chmod 0555 ./run.sh ./server/app ./container-entrypoint.sh
 
 ENV PORT=8080
 ENV GOSX_APP_ROOT=/opt/gosx-docs
+
+# An image-only Deployment update can retain older pod environment values.
+# Supplying these immutable build arguments makes the image report its own
+# revision and build time. The standard deploy path can leave them empty.
+ARG GOSX_DOCS_IMAGE_REVISION=
+ARG GOSX_DOCS_IMAGE_BUILT_AT=
+ENV GOSX_DOCS_IMAGE_REVISION=${GOSX_DOCS_IMAGE_REVISION}
+ENV GOSX_DOCS_IMAGE_BUILT_AT=${GOSX_DOCS_IMAGE_BUILT_AT}
 
 USER 10001:10001
 
 EXPOSE 8080
 
-CMD ["./run.sh"]
+CMD ["./container-entrypoint.sh"]
