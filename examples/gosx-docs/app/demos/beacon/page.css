@@ -173,8 +173,9 @@
 .beacon__facts summary { cursor: pointer; color: #e6c793; }
 .beacon__facts p { margin: 5px 0 0; }
 
-/* These rules are also used by the Scene3D HTML texture rasterizer. */
-.beacon__canvas [data-gosx-scene-html-texture-mirror="true"] {
+/* Keep the accessibility source offscreen while its world texture uploads.
+   The rasterizer copies it into an isolated SVG at its authored size. */
+.beacon__canvas [data-gosx-scene-html-mode="texture"] {
 	left: -10000px !important;
 	top: -10000px !important;
 }
