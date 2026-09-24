@@ -646,7 +646,11 @@ const budgets = [
   // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
   // slots, the __proto__-safe normalized attribute map) combines with all
   // three on this merge. Caps re-measured from the merged source below.
-  { file: "bootstrap.js", raw: 1_592_000, gzip: 440_000, brotli: 351_000 },
+  // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
+  // adds the pacing governor and its telemetry to the same monolith.
+  // Measured: 1_658_342 / 455_103 / 365_575. Only raw exceeded the prior
+  // hard limit; bumped raw 1_592_000 -> 1_594_000 for headroom.
+  { file: "bootstrap.js", raw: 1_594_000, gzip: 440_000, brotli: 351_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1126,7 +1130,11 @@ const budgets = [
   // Custom per-vertex float BufferAttributes (Selena retained-geometry
   // eligibility, WebGL2/WebGPU custom attribute binding) combines with the
   // above on this merge. Caps re-measured from the merged source below.
-  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 130_000 },
+  // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
+  // adds the pacing governor and its telemetry to this chunk. Measured:
+  // 591_040 / 165_443 / 136_793. Only brotli exceeded the prior hard limit
+  // (by 293 bytes); bumped 130_000 -> 130_500 for headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 564_000, gzip: 159_500, brotli: 130_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2172,8 +2180,12 @@ const routeBudgets = [
     // (WebGPU side of both) combine on this merge. Measured:
     // 1_141_513 / 304_230 / 254_461. Only gzip exceeded the prior hard
     // limit; bumped 289_700 -> 290_000 for headroom.
+    // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
+    // combines with the merged spot shadows on this route. Measured:
+    // 1_143_385 / 304_967 / 255_022. Only gzip exceeded the prior hard
+    // limit; bumped 290_000 -> 305_000 for headroom.
     raw: 1_093_500,
-    gzip: 290_000,
+    gzip: 305_000,
     brotli: 243_000,
   },
 
