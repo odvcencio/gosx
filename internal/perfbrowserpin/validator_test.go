@@ -73,7 +73,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name:   "timeout prefix",
-			mutate: replace("    timeout-minutes: 30", "    timeout-minutes: 300"),
+			mutate: replace("    timeout-minutes: 45", "    timeout-minutes: 300"),
 			want:   "browser-tests job.timeout-minutes",
 		},
 		{

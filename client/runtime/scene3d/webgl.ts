@@ -4245,9 +4245,16 @@
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.CULL_FACE);
-      var bg = sceneWaterRenderHexColor(liveEntry.deepColor, [0.03, 0.08, 0.12]);
-      gl.clearColor(bg[0] * 0.4, bg[1] * 0.4, bg[2] * 0.4, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      var compositeWorld = frameMeta && frameMeta.compositeWorld === true;
+      if (!compositeWorld || frameMeta.clearComposite === true) {
+        var bg = compositeWorld
+          ? sceneWaterRenderHexColor(frameMeta.background, [0.03, 0.08, 0.12])
+          : sceneWaterRenderHexColor(liveEntry.deepColor, [0.03, 0.08, 0.12]);
+        gl.clearColor(compositeWorld ? bg[0] : bg[0] * 0.4,
+          compositeWorld ? bg[1] : bg[1] * 0.4,
+          compositeWorld ? bg[2] : bg[2] * 0.4, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      }
 
       // ---- 1. pool ----
       // The pool quads carry inward-facing normals (jeantimex-style tank: the
@@ -4256,27 +4263,26 @@
       // puts the caustic pattern on the FLOOR (not the outer walls) and lets the
       // submerged object + its floor shadow read. Restored to no-cull afterward so
       // the analytic object + double-sided surface keep their existing behavior.
-      gl.enable(gl.CULL_FACE);
-      gl.cullFace(gl.FRONT);
-      gl.useProgram(poolProgram);
-      gl.bindVertexArray(emptyVAO);
-      sceneWaterRenderBindSamplers(gl, poolProgram, [
-        { name: sceneWaterRenderStateUniform(poolDesc), target: gl.TEXTURE_2D, tex: stateTex },
-        { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
-        { name: "causticTexture", target: gl.TEXTURE_2D, tex: causticTex },
-        { name: "shadowTexture", target: gl.TEXTURE_2D, tex: shadowTex },
-      ]);
-      sceneWaterRenderSetUniforms(gl, poolProgram, poolDesc, {
-        mvp: mvp, normalMatrix: identity3,
-        poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
-        lightDir: liveLightDir,
-        // Rounded-corner pool: pool.sel's own params, picked up by name via
-        // the descriptor-driven applicator above (see livePoolShapeRounded /
-        // livePoolCornerRadius / livePoolRounded derivation near liveEntry).
-        cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded ? 1 : 0,
-      });
-      gl.drawArrays(gl.TRIANGLES, 0, livePoolVertexCount);
-      gl.disable(gl.CULL_FACE);
+      if (!compositeWorld && liveEntry.renderPool !== false) {
+        gl.enable(gl.CULL_FACE);
+        gl.cullFace(gl.FRONT);
+        gl.useProgram(poolProgram);
+        gl.bindVertexArray(emptyVAO);
+        sceneWaterRenderBindSamplers(gl, poolProgram, [
+          { name: sceneWaterRenderStateUniform(poolDesc), target: gl.TEXTURE_2D, tex: stateTex },
+          { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
+          { name: "causticTexture", target: gl.TEXTURE_2D, tex: causticTex },
+          { name: "shadowTexture", target: gl.TEXTURE_2D, tex: shadowTex },
+        ]);
+        sceneWaterRenderSetUniforms(gl, poolProgram, poolDesc, {
+          mvp: mvp, normalMatrix: identity3,
+          poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+          lightDir: liveLightDir,
+          cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded ? 1 : 0,
+        });
+        gl.drawArrays(gl.TRIANGLES, 0, livePoolVertexCount);
+        gl.disable(gl.CULL_FACE);
+      }
 
       // ---- 2. object ----
       // MESH objects (duck / torus): draw the live world-space mesh directly with
@@ -4331,7 +4337,10 @@
       gl.bindVertexArray(emptyVAO);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.depthMask(false);
+      // In a shared world composite, the water is drawn after the opaque
+      // world. Save its depth so the later diegetic surface pass can reject
+      // panels behind the tide. Standalone water keeps its prior blend mode.
+      gl.depthMask(compositeWorld);
       sceneWaterRenderBindSamplers(gl, surfaceProgram, [
         { name: sceneWaterRenderStateUniform(surfaceDesc), target: gl.TEXTURE_2D, tex: stateTex },
         { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
@@ -8650,7 +8659,7 @@
       return _drawListResult;
     }
 
-    function render(bundle, viewport) {
+    function render(bundle, viewport, frameMeta) {
       if (!bundle) {
         return;
       }
@@ -8859,9 +8868,11 @@
       // Clear — "transparent" clears to fully transparent for alpha compositing.
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
       const bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
-      gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
-      gl.clearDepth(1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      if (!frameMeta || frameMeta.compositeOverWater !== true) {
+        gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
+        gl.clearDepth(1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      }
 
       // Camera matrices were already computed above the shadow pass so CSM
       // could build per-cascade frusta; `cam`, `viewMatrix`, `projMatrix`,
@@ -8936,6 +8947,9 @@
         // Without this scope it re-drew each untextured mesh with the flat
         // world program on top of the correct draw, silently replacing an
         // authored Selena surface with its companion material's base color.
+        // PBR passes changed GL state without updating the legacy cache.
+        lineResources.stateCache.blendMode = "";
+        lineResources.stateCache.depthMode = "";
         renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
       }
 
@@ -11075,6 +11089,25 @@
       };
     }
 
+    // The shared water/world path draws world color first, then blends the
+    // tide, then redraws only world surfaces. Water depth keeps a panel behind
+    // the tide submerged while panels in front remain legible.
+    function renderSurfaces(bundle) {
+      if (!bundle || !lineResources || !Array.isArray(bundle.surfaces) || bundle.surfaces.length === 0) return;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      // The water renderer changed GL state outside the legacy surface cache.
+      lineResources.stateCache.blendMode = "";
+      lineResources.stateCache.depthMode = "";
+      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "opaque");
+      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "alpha");
+      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "additive");
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      lineResources.stateCache.blendMode = "";
+      lineResources.stateCache.depthMode = "";
+    }
+
     const rigidImportedBatchProgram = ensureInstancedProgram();
     const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
       rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
@@ -11091,6 +11124,7 @@
       // render() before this has ever run would silently skip drawing it.
       prepareCrowdMotionShaders,
       render: render,
+      renderSurfaces: renderSurfaces,
       dispose: dispose,
       diagnostics: diagnostics,
       type: "webgl-pbr",

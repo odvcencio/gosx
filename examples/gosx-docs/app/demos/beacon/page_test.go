@@ -55,9 +55,11 @@ func TestBeaconPublishesTheCuratedOrbitInteractionContract(t *testing.T) {
 	for _, marker := range []string{
 		"Drag or swipe to orbit",
 		"scroll or pinch to zoom",
-		"arrows explore",
-		"+/− zoom",
-		"Home restores the opening view",
+		"Use the arrow keys to explore",
+		"Use + or − to zoom",
+		"Press Home to restore this view",
+		`aria-label="Camera view"`,
+		`aria-label="Light period"`,
 	} {
 		if !strings.Contains(page, marker) {
 			t.Errorf("public interaction guidance missing %q", marker)
@@ -68,7 +70,7 @@ func TestBeaconPublishesTheCuratedOrbitInteractionContract(t *testing.T) {
 	if props.Controls != scene.ControlOrbit || props.AutoRotate == nil || *props.AutoRotate {
 		t.Fatalf("Beacon interaction must remain user-directed orbit: controls=%q autoRotate=%v", props.Controls, props.AutoRotate)
 	}
-	if props.ControlMinDistance != 9 || props.ControlMaxDistance != 42 {
-		t.Fatalf("Beacon orbit bounds = %.1f..%.1f, want 9..42", props.ControlMinDistance, props.ControlMaxDistance)
+	if props.ControlMinDistance != 6 || props.ControlMaxDistance != 48 {
+		t.Fatalf("Beacon orbit bounds = %.1f..%.1f, want 6..48", props.ControlMinDistance, props.ControlMaxDistance)
 	}
 }

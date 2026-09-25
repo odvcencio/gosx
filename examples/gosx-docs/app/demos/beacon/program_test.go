@@ -1,12 +1,16 @@
 package docs
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/scene"
-	"m31labs.dev/gosx/scene/geom"
-	"m31labs.dev/gosx/scene/preview"
+	"m31labs.dev/gosx/scene/capability"
 )
 
 func TestBlackglassCoastRuntimeContractMatchesStudioWorldSemantics(t *testing.T) {
@@ -38,6 +42,10 @@ func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
 	if props.MaxFPS != 60 || props.MaxDevicePixelRatio != 1.5 || props.MaxPixels != blackglassCoastMaxPixels {
 		t.Errorf("render budget = fps %.0f, dpr %.1f, pixels %d", props.MaxFPS, props.MaxDevicePixelRatio, props.MaxPixels)
 	}
+	payload, err := json.Marshal(props)
+	if err != nil || props.Camera.FOV != 50 || props.Camera.PortraitFOV != 80 || !strings.Contains(string(payload), `"portraitFOV":80`) {
+		t.Fatalf("coast must preserve its portrait framing in the browser contract: %s, %v", payload, err)
+	}
 	if props.Stats == nil || !*props.Stats {
 		t.Error("live renderer telemetry must be enabled")
 	}
@@ -47,47 +55,96 @@ func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
 	if props.PostFX.MaxPixels != scene.PostFXMaxPixels540p || props.Shadows.MaxPixels != scene.ShadowMaxPixels512 {
 		t.Errorf("postfx/shadow caps = %d/%d", props.PostFX.MaxPixels, props.Shadows.MaxPixels)
 	}
-	water, ok := props.Graph.Nodes[3].(scene.WaterSystem)
+	water, ok := props.Graph.Nodes[4].(scene.WaterSystem)
 	if !ok {
-		t.Fatalf("node 3 = %T, want WaterSystem", props.Graph.Nodes[3])
+		t.Fatalf("node 4 = %T, want WaterSystem", props.Graph.Nodes[4])
 	}
 	contract := BlackglassCoastRuntimeContract()
-	if water.ID != contract.Water.ID || water.PoolWidth != contract.Water.Size.X || water.PoolLength != contract.Water.Size.Z || water.InteractionProfile != contract.Water.RuntimeProfile {
-		t.Fatalf("WaterSystem is not bound to Studio contract: %#v", water)
+	if water.ID != contract.Water.ID || water.PoolWidth != contract.Water.Size.X/2 || water.PoolLength != contract.Water.Size.Z/2 || water.InteractionProfile != contract.Water.RuntimeProfile {
+		t.Fatalf("WaterSystem zone mismatch: id=%q width=%.1f length=%.1f profile=%q", water.ID, water.PoolWidth, water.PoolLength, water.InteractionProfile)
 	}
 	if water.Resolution != 128 || water.SurfaceResolution != 96 || water.ObjectTexturePixelBudget > 786432 {
 		t.Fatalf("unexpected water budget: %#v", water)
 	}
 	ir := props.SceneIR()
-	if len(ir.WaterSystems) != 1 || ir.WaterSystems[0].ID != contract.Water.ID || len(ir.InstancedMeshes) != 1 || ir.InstancedMeshes[0].Count != 12 {
-		t.Fatalf("lowered world lost water or instancing: water=%#v instances=%#v", ir.WaterSystems, ir.InstancedMeshes)
+	if len(ir.WaterSystems) != 1 || ir.WaterSystems[0].ID != contract.Water.ID || len(ir.Models) != 4 || len(ir.HTML) != 3 || len(ir.ComputeParticles) != 1 {
+		t.Fatalf("lowered world lost authored layers: water=%d models=%d surfaces=%d particles=%d", len(ir.WaterSystems), len(ir.Models), len(ir.HTML), len(ir.ComputeParticles))
+	}
+	if ir.BackendCaps == nil || !reflect.DeepEqual(ir.BackendCaps.Capable, []capability.Backend{capability.BackendWebGPU, capability.BackendWebGL}) {
+		t.Fatalf("renderer honesty verdict = %#v, want WebGPU and WebGL2", ir.BackendCaps)
+	}
+	if !reflect.DeepEqual(ir.BackendCaps.Degraded[capability.BackendWebGL], []capability.Feature{capability.FeatureIBL, capability.FeatureComputeParts}) {
+		t.Fatalf("WebGL2 must report IBL device limits and its CPU particle mirror: %#v", ir.BackendCaps.Degraded)
+	}
+	if water.RenderPool == nil || *water.RenderPool || water.WaveSpeed > 1 || water.SurfaceSelenaWGSL == "" || water.SurfaceFragmentGLES == "" {
+		t.Fatal("cove must keep the stable Selena water surface without a tank")
 	}
 }
 
-func TestBlackglassCoastExpandedGeometryStaysWithinDeclaredBudget(t *testing.T) {
-	props := BlackglassBeaconProgram()
-	result, err := preview.Render(props, preview.Options{
-		Width: 320, Height: 180, Background: props.Background, DisableShadows: true, DisablePostFX: true,
-	})
-	if err != nil {
-		t.Fatalf("lower renderer-facing coast geometry: %v", err)
-	}
-	expandedVertices := 0
-	for _, mesh := range result.Bundle.InstancedMeshes {
-		vertices := geom.DrawVertexCount(geom.Params{
-			Kind: mesh.Kind, Size: mesh.Size, Width: mesh.Width, Height: mesh.Height, Depth: mesh.Depth,
-			Radius: mesh.Radius, RadiusTop: mesh.RadiusTop, RadiusBottom: mesh.RadiusBottom, Tube: mesh.Tube,
-			Segments: mesh.Segments, RadialSegments: mesh.RadialSegments, TubularSegments: mesh.TubularSegments,
-		})
-		if vertices <= 0 || mesh.InstanceCount <= 0 {
-			t.Fatalf("mesh %q has an invalid renderer-facing count: vertices=%d instances=%d", mesh.ID, vertices, mesh.InstanceCount)
+func TestBlackglassCoastIBLAssets(t *testing.T) {
+	var totalBytes int64
+	for _, period := range []string{"daybreak", "high-sun", "ember-hour"} {
+		value := BlackglassCoastProgram("overlook", period).SceneIR().Environment.IBL
+		if value.SchemaVersion != 1 || value.BRDFModel == "" || len(value.RoughnessPerLevel) != 6 {
+			t.Fatalf("%s IBL metadata is incomplete", period)
 		}
-		// Instancing uploads one expanded geometry and reuses it for every
-		// transform, so the upload budget counts the mesh once.
-		expandedVertices += vertices
+		for _, descriptor := range []scene.TextureDescriptor{value.Radiance, value.Irradiance, value.BRDFLUT} {
+			if !strings.HasPrefix(descriptor.URI, "/env/blackglass/") || descriptor.Format == "" {
+				t.Fatalf("%s IBL product is not served: %#v", period, descriptor)
+			}
+			path := filepath.Join("..", "..", "..", "public", strings.TrimPrefix(descriptor.URI, "/"))
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("%s IBL product %s: %v", period, descriptor.URI, err)
+			}
+			totalBytes += info.Size()
+		}
 	}
-	if expandedVertices <= 0 || expandedVertices > blackglassCoastExpandedVertexBudget {
-		t.Fatalf("expanded renderer-facing vertices = %d, budget = %d", expandedVertices, blackglassCoastExpandedVertexBudget)
+	if totalBytes > 400*1024 {
+		t.Fatalf("IBL products use %d bytes, budget 400 KiB", totalBytes)
+	}
+}
+
+func TestBlackglassCoastModelAssetsStayWithinDeclaredBudget(t *testing.T) {
+	var totalBytes, expandedVertices int
+	for _, model := range BlackglassBeaconProgram().SceneIR().Models {
+		path := filepath.Join("..", "..", "..", "public", strings.TrimPrefix(model.Src, "/"))
+		blob, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read model %q: %v", model.Src, err)
+		}
+		if len(blob) < 20 || string(blob[:4]) != "glTF" || binary.LittleEndian.Uint32(blob[4:8]) != 2 {
+			t.Fatalf("model %q is not GLB 2.0", model.Src)
+		}
+		jsonBytes := int(binary.LittleEndian.Uint32(blob[12:16]))
+		if jsonBytes <= 0 || 20+jsonBytes > len(blob) || string(blob[16:20]) != "JSON" {
+			t.Fatalf("model %q has an invalid GLB JSON chunk", model.Src)
+		}
+		var gltf struct {
+			Accessors []struct {
+				Count int `json:"count"`
+			} `json:"accessors"`
+			Meshes []struct {
+				Primitives []struct {
+					Indices int `json:"indices"`
+				} `json:"primitives"`
+			} `json:"meshes"`
+		}
+		if err := json.Unmarshal(blob[20:20+jsonBytes], &gltf); err != nil {
+			t.Fatalf("decode model %q: %v", model.Src, err)
+		}
+		for _, mesh := range gltf.Meshes {
+			for _, primitive := range mesh.Primitives {
+				if primitive.Indices < 0 || primitive.Indices >= len(gltf.Accessors) {
+					t.Fatalf("model %q has invalid index accessor %d", model.Src, primitive.Indices)
+				}
+				expandedVertices += gltf.Accessors[primitive.Indices].Count
+			}
+		}
+		totalBytes += len(blob)
+	}
+	if totalBytes == 0 || totalBytes > 400*1024 || expandedVertices == 0 || expandedVertices > blackglassCoastExpandedVertexBudget {
+		t.Fatalf("model assets = %d bytes, %d expanded vertices; budgets 400 KiB and %d vertices", totalBytes, expandedVertices, blackglassCoastExpandedVertexBudget)
 	}
 }
 
@@ -96,7 +153,7 @@ func TestBlackglassCoastHasAStableWorldAndNoAutonomousMotion(t *testing.T) {
 	if props.AutoRotate == nil || *props.AutoRotate || props.FillHeight == nil || !*props.FillHeight {
 		t.Fatal("coast must be fill-height without autonomous camera motion")
 	}
-	want := []string{"coast-sun", "coast-sky", "beacon-fire", "blackglass-cove", "coast-sand", "coast-cliff-west", "coast-cliff-east", "coast-cliff-overlook", "coast-basalt-scatter", "ruin-arch-left", "ruin-arch-right", "ruin-arch-lintel", "beacon-plinth", "blackglass-beacon", "beacon-lens", "arrival-marker"}
+	want := []string{"coast-sun", "coast-sky", "beacon-fire", "beacon-terrace-light", "blackglass-cove", "shore", "basalt", "ruins", "beacon", "beacon-lens", "beacon-ember-plume", "arrival-stele", "keeper-ledger", "harbor-plaque"}
 	got := make([]string, 0, len(props.Graph.Nodes))
 	for _, node := range props.Graph.Nodes {
 		switch value := node.(type) {
@@ -106,17 +163,26 @@ func TestBlackglassCoastHasAStableWorldAndNoAutonomousMotion(t *testing.T) {
 			got = append(got, value.ID)
 		case scene.PointLight:
 			got = append(got, value.ID)
+		case scene.SpotLight:
+			got = append(got, value.ID)
 		case scene.WaterSystem:
+			got = append(got, value.ID)
+		case scene.Model:
 			got = append(got, value.ID)
 		case scene.Mesh:
 			got = append(got, value.ID)
 			if value.Spin != (scene.Euler{}) || value.Drift != (scene.Vector3{}) {
 				t.Errorf("mesh %q has autonomous motion", value.ID)
 			}
-		case scene.InstancedMesh:
+		case scene.ComputeParticles:
 			got = append(got, value.ID)
-			if value.Count != 12 || len(value.Positions) != value.Count || len(value.Scales) != value.Count {
-				t.Errorf("instanced basalt batch is incoherent: %#v", value)
+			if value.Count != blackglassEmberPlumeCount {
+				t.Errorf("ember count = %d, want %d", value.Count, blackglassEmberPlumeCount)
+			}
+		case scene.HTML:
+			got = append(got, value.ID)
+			if value.Mode != scene.HTMLTexture || value.Fallback == "" {
+				t.Errorf("world surface %q lacks texture mode or fallback", value.ID)
 			}
 		}
 	}

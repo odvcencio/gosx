@@ -217,12 +217,70 @@ function gosxConfigureSceneScript(script, role, src) {
       return null;
     }
     if (!renderer) return null;
+    // The dedicated water renderer draws a tank and its surface. A coast with
+    // authored models also needs the PBR world in the same depth buffer.
+    // Render both passes into the same depth buffer.
+    var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    if (sceneDoc && Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) {
+      var pbrFactory = sceneWebGLRendererFactory();
+      var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
+      if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
+        renderer.dispose();
+        if (worldRenderer) worldRenderer.dispose();
+        return null;
+      }
+      var waterRenderer = renderer;
+      var compositeMS = 0;
+      var compositeAtMS = 0;
+      renderer = Object.assign({}, waterRenderer, {
+        isWaterWorldComposite: true,
+        // @ts-ignore TS7006 -- the bundle builder ships this JavaScript signature as written.
+        render: function(bundle, viewport, frameMeta) {
+          var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+          // Draw the world into the shared color and depth buffers first.
+          // The translucent tide then blends over distant geometry, while
+          // foreground geometry rejects it through the depth test. Keep the
+          // PBR post chain off because it uses a separate render target.
+          worldRenderer.render(Object.assign({}, bundle, { postEffects: [] }), viewport,
+            Object.assign({}, frameMeta, { compositeOverWater: false }));
+          waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+            compositeWorld: true, clearComposite: false, background: bundle.background,
+          }));
+          worldRenderer.renderSurfaces(bundle);
+          compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+          compositeMS = Math.max(0.01, compositeAtMS - started);
+        },
+        // The water timer covers only its pass, so its GPU value cannot
+        // describe this frame. Report the measured full CPU composite span.
+        pollPerformanceSample: function() {
+          return compositeAtMS > 0 ? { durationMS: compositeMS, source: "cpu-water-world-composite", atMS: compositeAtMS } : null;
+        },
+        getPerformanceTimingStatus: function() {
+          return { available: false, active: false, pending: false };
+        },
+        diagnostics: function() {
+          var world = typeof worldRenderer.diagnostics === "function" ? worldRenderer.diagnostics() : {};
+          return Object.assign({}, typeof waterRenderer.diagnostics === "function" ? waterRenderer.diagnostics() : {}, {
+            world: world, ibl: world.ibl || null,
+            compositeCPUFrameMS: compositeMS,
+          });
+        },
+        resize: function(viewport) {
+          if (typeof worldRenderer.resize === "function") worldRenderer.resize(viewport);
+          if (typeof waterRenderer.resize === "function") waterRenderer.resize(viewport);
+        },
+        dispose: function() {
+          waterRenderer.dispose();
+          worldRenderer.dispose();
+        },
+      });
+    }
     try {
       if (typeof window !== "undefined") {
         window.__gosx_scene3d_webgl_water = true;
       }
     } catch (_e) {}
-    return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: [] };
+    return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: renderer.isWaterWorldComposite ? ["postfx"] : [] };
   }
 
   // sceneWaterWebGLAutoResult is the real A3 capability-gate selection: for a
@@ -247,7 +305,12 @@ function gosxConfigureSceneScript(script, role, src) {
     if (verdict.backend === "webgpu" && webgpuAvail) return null;
     // Only intercept when WebGL2 is the active backend for this water scene.
     if (verdict.backend !== "webgl") return null;
-    return createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable") || {
+    var result = createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable");
+    if (result) {
+      result.degraded = (verdict.degraded || []).concat(result.degraded || []);
+      return result;
+    }
+    return {
       renderer: null,
       fallbackReason: verdict.fallbackReason || "webgpu-unavailable",
       unsupportedReason: "water-webgl2-unavailable",
@@ -289,7 +352,8 @@ function gosxConfigureSceneScript(script, role, src) {
       }
       if (verdict.backend === "webgl" || (verdict.backend === "webgpu" && !webgpuAvail)) {
         const fallback = verdict.backend === "webgpu" ? "webgpu-unavailable" : (verdict.fallbackReason || "");
-        return createSceneWebGLResult(canvas, props, capability, fallback);
+        const result = createSceneWebGLResult(canvas, props, capability, fallback);
+        return result ? Object.assign({}, result, { degraded: verdict.degraded || [] }) : null;
       }
       if (verdict.backend === "canvas2d") {
         if (sceneRequiresWebGL(props)) { return null; }
@@ -394,7 +458,7 @@ function gosxConfigureSceneScript(script, role, src) {
         return {
           renderer,
           fallbackReason,
-          degraded: verdict && renderer.kind === "webgpu" ? (verdict.degraded || []) : [],
+          degraded: verdict ? (verdict.degraded || []) : [],
         };
       }
     }
@@ -4908,6 +4972,9 @@ function gosxConfigureSceneScript(script, role, src) {
     // data-gosx-scene3d-dropped lists features skipped per the backendCaps degraded verdict.
     setAttrValue(mount, "data-gosx-scene3d-dropped",
       Array.isArray(degraded) && degraded.length > 0 ? degraded.join(",") : "");
+    if (Array.isArray(degraded) && degraded.indexOf("postfx") >= 0) {
+      setAttrValue(mount, "data-gosx-scene3d-postfx", "dropped");
+    }
     const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
       ? renderer.diagnostics()
       : null;
@@ -5092,7 +5159,20 @@ function gosxConfigureSceneScript(script, role, src) {
       } else {
         continue;
       }
-      if (output.textContent !== value) output.textContent = value;
+      if (output.textContent !== value) {
+        output.textContent = value;
+        // A texture-mode HTML surface holds a raster of this DOM mirror.
+        // Status changes must invalidate that raster, or its renderer and
+        // quality text remains frozen at the first frame.
+        let parent = output.parentNode;
+        while (parent && (!parent.hasAttribute || !parent.hasAttribute("data-gosx-scene-html"))) {
+          parent = parent.parentNode;
+        }
+        if (parent && typeof window !== "undefined" && window.__gosx_scene3d_html &&
+            typeof window.__gosx_scene3d_html.invalidate === "function") {
+          window.__gosx_scene3d_html.invalidate(parent.getAttribute("data-gosx-scene-html"));
+        }
+      }
     }
   }
 

@@ -95,6 +95,7 @@ type IRCamera struct {
 	RotationY    float64 `json:"rotationY,omitempty"`
 	RotationZ    float64 `json:"rotationZ,omitempty"`
 	FOV          float64 `json:"fov,omitempty"`
+	PortraitFOV  float64 `json:"portraitFOV,omitempty"`
 	Left         float64 `json:"left,omitempty"`
 	Right        float64 `json:"right,omitempty"`
 	Top          float64 `json:"top,omitempty"`
@@ -898,6 +899,7 @@ func cameraToIR(camera PerspectiveCamera) IRCamera {
 		RotationY:    camera.Rotation.Y,
 		RotationZ:    camera.Rotation.Z,
 		FOV:          camera.FOV,
+		PortraitFOV:  camera.PortraitFOV,
 		Near:         camera.Near,
 		Far:          camera.Far,
 		TransitionMS: camera.TransitionMS,

@@ -45,6 +45,7 @@ type PerspectiveCamera struct {
 	Position     Vector3
 	Rotation     Euler
 	FOV          float64
+	PortraitFOV  float64 // optional vertical field of view for portrait viewports
 	Near         float64
 	Far          float64
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
@@ -700,22 +701,25 @@ type WaterSystem struct {
 	PoolWidth             float64
 	PoolHeight            float64
 	PoolLength            float64
-	CornerRadius          float64
-	WaveSpeed             float64
-	Damping               float64
-	NormalScale           float64
-	SeedDrops             int
-	DropRadius            float64
-	DropStrength          float64
-	DropEventID           int
-	DropX                 float64
-	DropZ                 float64
-	DropEventRadius       float64
-	DropEventStrength     float64
-	TileTexture           string
-	CubeMap               string
-	ShallowColor          string
-	DeepColor             string
+	// RenderPool controls the visible basin. A coastal water volume can use
+	// the live surface without drawing the tank walls over surrounding meshes.
+	RenderPool        *bool
+	CornerRadius      float64
+	WaveSpeed         float64
+	Damping           float64
+	NormalScale       float64
+	SeedDrops         int
+	DropRadius        float64
+	DropStrength      float64
+	DropEventID       int
+	DropX             float64
+	DropZ             float64
+	DropEventRadius   float64
+	DropEventStrength float64
+	TileTexture       string
+	CubeMap           string
+	ShallowColor      string
+	DeepColor         string
 	// AboveWaterColor is a linear HDR absorption tint. Components may exceed
 	// one, unlike the display-referred ShallowColor fallback.
 	AboveWaterColor             Vector3
@@ -2134,6 +2138,9 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 	if c.FOV != 0 {
 		out["fov"] = c.FOV
 	}
+	if c.PortraitFOV != 0 {
+		out["portraitFOV"] = c.PortraitFOV
+	}
 	if c.Near != 0 {
 		out["near"] = c.Near
 	}
@@ -2147,7 +2154,7 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 }
 
 func (c PerspectiveCamera) isZero() bool {
-	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
+	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.PortraitFOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
 }
 
 func (c OrthographicCamera) legacyProps() map[string]any {
@@ -3288,6 +3295,7 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		PoolWidth:                    poolWidth,
 		PoolHeight:                   poolHeight,
 		PoolLength:                   poolLength,
+		RenderPool:                   w.RenderPool,
 		CornerRadius:                 w.CornerRadius,
 		WaveSpeed:                    waveSpeed,
 		Damping:                      damping,

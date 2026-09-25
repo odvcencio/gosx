@@ -944,11 +944,13 @@
     const avail = availability && typeof availability === "object" ? availability : {};
     const webgpuAvail = Boolean(avail.webgpu);
     const webglAvail = avail.webgl !== false;
-    if (prefs && (prefs.requireWebGL || prefs.forceWebGL)) { return { backend: "webgl", fallbackReason: "", degraded: [] }; }
+    const declaredDegraded = backendCaps && backendCaps.degraded && typeof backendCaps.degraded === "object" ? backendCaps.degraded : {};
+    const webglDegraded = Array.isArray(declaredDegraded.webgl) ? declaredDegraded.webgl.map(String) : [];
+    if (prefs && (prefs.requireWebGL || prefs.forceWebGL)) { return { backend: "webgl", fallbackReason: "", degraded: webglDegraded }; }
     if (prefs && prefs.preferCanvas) { return { backend: "canvas2d", fallbackReason: "", degraded: [] }; }
     if (!backendCaps || !Array.isArray(backendCaps.capable)) { return null; }
     const capable = backendCaps.capable;
-    const degraded = backendCaps.degraded && typeof backendCaps.degraded === "object" ? backendCaps.degraded : {};
+    const degraded = declaredDegraded;
     const reasons = Array.isArray(backendCaps.reasons) ? backendCaps.reasons : [];
     let exclusionReason = "";
     for (let k = 0; k < reasons.length; k += 1) {
@@ -964,7 +966,7 @@
       if (b === "webgl" || b === "webgl2") {
         if (webglAvail) {
           const skipped = capable.slice(0, i).some(function(c) { return String(c).toLowerCase() === "webgpu"; });
-          return { backend: "webgl", fallbackReason: skipped ? "webgpu-unavailable" : exclusionReason, degraded: [] };
+          return { backend: "webgl", fallbackReason: skipped ? "webgpu-unavailable" : exclusionReason, degraded: webglDegraded };
         }
         continue;
       }
