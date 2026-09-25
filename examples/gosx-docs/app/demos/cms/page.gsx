@@ -2,14 +2,17 @@ package docs
 
 func Page() Node {
 	return <form class="cms-demo" id="cms-content-form" method="post" action={actionPath("publish")}>
-		<h1 class="visually-hidden">CMS Editor</h1>
 		<input type="hidden" name="csrf_token" value={csrf.token} />
 		<input type="hidden" name="block_count" id="cms-block-count" value={len(data.blocks)} />
 		<script src="/cms-client.js" defer></script>
 		<header class="cms-header">
 			<div class="cms-header__brand">
-				<span class="cms-header__logo">CMS Editor</span>
-				<span class="cms-header__badge">Server Action</span>
+				<p class="cms-header__eyebrow">Content studio / server action</p>
+				<h1 class="cms-header__logo">Build a page.</h1>
+				<p class="cms-header__purpose">
+					Add blocks, edit the draft, and publish a validated snapshot.
+				</p>
+				<a class="cms-header__preview-link" href="#cms-preview-canvas">See the live preview ↓</a>
 			</div>
 			<div class="cms-header__actions">
 				<span class="cms-header__unsaved" id="cms-unsaved-badge" role="status" aria-live="polite" hidden>
@@ -38,7 +41,7 @@ func Page() Node {
 		<div class="cms-workspace">
 			<aside class="cms-palette" aria-label="Block types">
 				<h2 class="cms-panel-label">Blocks</h2>
-				<p class="cms-palette__hint">Click a block to add it to the draft</p>
+				<p class="cms-palette__hint">Choose a block to add it to your page.</p>
 				<div class="cms-palette__list" id="cms-palette-list">
 					<button
 						type="button"
@@ -78,7 +81,7 @@ func Page() Node {
 					</button>
 				</div>
 			</aside>
-			<main class="cms-editor" aria-label="Block editor">
+			<section class="cms-editor" aria-label="Block editor">
 				<h2 class="cms-panel-label">Draft editor</h2>
 				<div class="cms-block-list" id="cms-block-list">
 					<Each of={data.blocks} as="block" index="i">
@@ -174,7 +177,7 @@ func Page() Node {
 						</article>
 					</Each>
 				</div>
-			</main>
+			</section>
 			<aside class="cms-preview" aria-label="Live preview">
 				<h2 class="cms-panel-label">Live preview</h2>
 				<div class="cms-preview__canvas" id="cms-preview-canvas">

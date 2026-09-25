@@ -43,6 +43,7 @@
     cursorLayer = document.getElementById("collab-cursors");
     shell       = document.querySelector(".collab");
     if (!textarea || !preview) return;
+    if (shell) shell.addEventListener("click", onViewClick);
     currentVersion = Number(shell && shell.getAttribute("data-initial-version")) || 0;
 
     measureMetrics();
@@ -73,6 +74,16 @@
     // Local edits reshuffle line/row layout — keep remote markers honest.
     repositionAllCursors();
     scheduleCursorSend();
+  }
+
+  function onViewClick(event) {
+    var button = event.target.closest("[data-collab-view]");
+    if (!button || !shell || !shell.contains(button)) return;
+    var view = button.getAttribute("data-collab-view");
+    shell.setAttribute("data-view", view);
+    shell.querySelectorAll("[data-collab-view]").forEach(function (item) {
+      item.setAttribute("aria-pressed", item === button ? "true" : "false");
+    });
   }
 
   function sendEdit() {
@@ -419,6 +430,7 @@
     clearTimeout(statusDotFlashTimer);
     clearTimeout(resizeTimer);
     window.removeEventListener("resize", onWindowResize);
+    if (shell) shell.removeEventListener("click", onViewClick);
     document.removeEventListener("gosx:hub:event", onHubEvent);
   }
 
