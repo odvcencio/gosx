@@ -1345,6 +1345,7 @@
     // explicitly schedules a refresh.
     let viewportDirty = true;
     let lastAnimationFrameAt = 0;
+    let animationIntervalMS = 0;
 
     // Adaptive frame pacing ("vsync-divisor", opt-in via props.framePacing).
     // See the sceneFramePacing* pure helpers defined after this factory
@@ -1354,7 +1355,7 @@
     // from the authored prop and never changes for this mount's lifetime,
     // so a scene that never sets the prop pays one string comparison and
     // then never touches any of the rest -- scheduleNextAnimationFrame's
-    // existing fixed-interval gate below runs completely unchanged.
+    // default frame-cap gate below handles the clock phase.
     const framePacingMode = typeof (props && props.framePacing) === "string" ? props.framePacing.trim() : "";
     const framePacingEnabled = framePacingMode === "vsync-divisor";
     let framePacingTick1 = 0;
@@ -1457,12 +1458,17 @@
           return;
         }
         var interval = sceneAnimationFrameIntervalMS();
-        if (interval > 0 && lastAnimationFrameAt > 0 && typeof now === "number" && now - lastAnimationFrameAt < interval - 0.75) {
+        // Keep the fractional display tick after a capped frame. Resetting
+        // the clock to `now` turns a 60 FPS cap on a 100 Hz display into 50 FPS.
+        // A changed cap starts a new phase; it must not inherit old time debt.
+        var gate = sceneAnimationFrameGate(now, lastAnimationFrameAt, interval, animationIntervalMS);
+        animationIntervalMS = interval;
+        if (!gate.shouldRender) {
           scheduleNextAnimationFrame();
           return;
         }
         if (typeof now === "number") {
-          lastAnimationFrameAt = now;
+          lastAnimationFrameAt = gate.atMS;
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
         renderFrame(now);
       });
@@ -3692,36 +3698,27 @@
     return handle;
   });
 
+// Advance the capped animation clock by whole target intervals. The display
+// can present only on rAF ticks, so a non-divisor rate alternates tick counts.
+// Missed intervals are discarded in one step; there is no catch-up draw loop.
+// The tolerance matches the existing gate and absorbs sub-ms rAF jitter.
+function sceneAnimationFrameGate(now = 0, previous = 0, interval = 0, previousInterval = 0) {
+  var elapsed = now - previous;
+  if (!Number.isFinite(now) || !(interval > 0) || !(previous > 0) ||
+      interval !== previousInterval || elapsed < 0 || elapsed > interval * 4) {
+    return { shouldRender: true, atMS: Number.isFinite(now) ? now : 0 };
+  }
+  if (elapsed < interval - 0.75) return { shouldRender: false, atMS: previous };
+  return { shouldRender: true, atMS: previous + Math.floor((elapsed + 0.75) / interval) * interval };
+}
+
 // -----------------------------------------------------------------------
 // Adaptive frame pacing ("vsync-divisor") — pure decision helpers.
-//
-// scheduleNextAnimationFrame's default gate skips a requestAnimationFrame
-// tick by comparing a fixed millisecond interval (from frameIntervalMS,
-// MaxFrameRate or MaxFPS) against the wall-clock gap since the last
-// rendered tick. A fixed interval cannot divide every display's vsync
-// cadence evenly: a 20ms cap on a 60Hz (16.7ms) display accepts only
-// every other tick (30fps, correct by chance), but on a 100Hz display it
-// accepts an uneven 40-48fps, and the reported 50Hz target is never hit
-// exactly.
-//
-// The functions below choose an integer tick divisor k instead: render on
-// every k-th requestAnimationFrame tick, using a tick COUNTER, not a
-// millisecond threshold, so the paced rate is an exact fraction of the
-// display's own refresh rate. The render-cost decision picks k from 1 to
-// 4 (see sceneFramePacingCandidateK). An authored frameIntervalMS/
-// MaxFrameRate/MaxFPS cap can require a larger k (see
-// sceneFramePacingMinKForInterval); the final k is the larger of the two,
-// since the pre-existing fixed-interval gate this feature replaces has no
-// upper bound on how rarely it renders either.
-//
-// They are pure and take only primitive arguments (each with a default,
-// so every parameter's type is inferred and the scene3d noImplicitAny
-// ratchet sees no new diagnostic), so a test can drive the decision
-// directly with a simulated rAF clock, without mounting a renderer.
-// scheduleNextAnimationFrame (above) is the only caller; it owns the
-// actual mutable state (see the framePacing* closure variables) and is
-// unreachable unless props.framePacing === "vsync-divisor", so a scene
-// that never sets that prop never executes any of this.
+// This opt-in policy chooses an integer display-tick divisor for even pacing.
+// The default cap above preserves time remainder for rates such as 60/100 Hz.
+// The divisor policy instead favors uniform presentation intervals and may
+// run below the cap. Render cost selects k in [1,4]; an authored cap can
+// require a larger divisor. The mount owns all mutable state.
 
 // sceneFramePacingMedianOf3 is a robust median of the three most recent
 // raw requestAnimationFrame tick deltas (milliseconds). A single implausible
