@@ -125,6 +125,12 @@
   --code-punctuation: rgba(255, 255, 255, 0.50);
 }
 
+/* Demo routes use their variable font in the shared site header as well. */
+html[data-gosx-document-path^="/demos"] body {
+  --font-display: "Manrope Demo", sans-serif;
+  --font-body: "Manrope Demo", sans-serif;
+}
+
 /* ------------------------------------------------------------
    Light mode overrides
    ------------------------------------------------------------ */

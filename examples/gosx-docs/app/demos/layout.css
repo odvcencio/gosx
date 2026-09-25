@@ -13,8 +13,8 @@
    ------------------------------------------------------------ */
 
 .demos-shell {
-	--font-display: "Manrope Demo", "Inter", sans-serif;
-	--font-body: "Inter", sans-serif;
+	--font-display: "Manrope Demo", sans-serif;
+	--font-body: "Manrope Demo", sans-serif;
 	--font-mono: "JetBrains Mono", monospace;
 	--type-xs: 0.75rem;
 	--type-sm: 0.875rem;
