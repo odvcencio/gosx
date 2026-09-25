@@ -188,7 +188,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 				"RequiredCapabilities",
 				"scene.RequireWebGPU",
 				"environment-map",
-				"Prepared split-sum IBL is faithful on WebGPU",
+				"Prepared split-sum IBL is supported on both GPU backends",
 			},
 			forbidden: []string{
 				"environment map degrades on WebGPU",
