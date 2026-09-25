@@ -13,10 +13,10 @@ func Page() Node {
 				<p class="orrery__eyebrow">Declarative choreography · Scene3D</p>
 				<h1>
 					Lodestar Meridian
-					<span>a clockwork star-system engine</span>
+					<span>A clockwork sky</span>
 				</h1>
 				<p class="orrery__copy">
-					A levitating lodestone heart, three glass armatures, and three planets riding keyframed circles — every moving part is declared as Scene3D animation data and played by the shared GoSX scene runtime, with no page-authored animation code and zero assets.
+					Follow three planets around a levitating heart. Pause the clock to inspect any moment.
 				</p>
 			</header>
 			<div class="orrery__canvas">
@@ -53,20 +53,23 @@ func Page() Node {
 							<output data-gosx-scene3d-status="quality">measuring…</output>
 						</p>
 					</div>
-					<ul class="orrery__budgets" aria-label="Declared rendering and animation budgets">
-						<li>17 stable nodes</li>
-						<li>4 animation channels in 1 clip</li>
-						<li>2 material key tracks</li>
-						<li>220 seeded stars</li>
-						<li>≤25k expanded vertices</li>
-						<li>60 frames per second (FPS) cap</li>
-						<li>device pixel ratio (DPR) ≤ 1.5</li>
-						<li>720p render · 540p post FX</li>
-						<li>512px shadow</li>
-					</ul>
-					<p class="orrery__motion-note">
-						This scene animates continuously by design. Pause or resume the clockwork with the control below — the runtime freezes the scene clock exactly and continues from the same pose. Under the reduced-motion preference, GoSX suppresses this canvas's animation loop entirely and renders the composed opening pose as a still.
-					</p>
+					<details class="orrery__technical">
+						<summary>Motion and render notes</summary>
+						<ul class="orrery__budgets" aria-label="Declared rendering and animation budgets">
+							<li>17 stable nodes</li>
+							<li>4 animation channels in 1 clip</li>
+							<li>2 material key tracks</li>
+							<li>220 seeded stars</li>
+							<li>≤25k expanded vertices</li>
+							<li>60 frames per second (FPS) cap</li>
+							<li>device pixel ratio (DPR) ≤ 1.5</li>
+							<li>720p render · 540p post FX</li>
+							<li>512px shadow</li>
+						</ul>
+						<p class="orrery__motion-note">
+							This scene animates continuously by design. Pause or resume the clockwork with the control below — the runtime freezes the scene clock exactly and continues from the same pose. Under the reduced-motion preference, GoSX suppresses this canvas's animation loop entirely and renders the composed opening pose as a still.
+						</p>
+					</details>
 					<button type="button" class="orrery__pause" data-gosx-scene3d-animation-toggle aria-pressed="false">
 						<span class="orrery__pause-label orrery__pause-label-pause">Pause the clockwork</span>
 						<span class="orrery__pause-label orrery__pause-label-play">Resume the clockwork</span>

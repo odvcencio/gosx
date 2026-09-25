@@ -17,7 +17,7 @@
   isolation: isolate;
 }
 
-main.water-demo {
+section.water-demo {
   flex: 0 0 calc(100svh - var(--water-demo-chrome-offset)) !important;
   height: calc(100svh - var(--water-demo-chrome-offset)) !important;
 }
@@ -548,4 +548,21 @@ main.water-demo {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.water-demo { --water-demo-chrome-offset: calc(var(--demo-site-nav-offset) + 3.5rem); }
+.water-demo__intro { top: var(--space-xl); left: var(--space-xl); width: min(31rem, calc(100vw - 9rem)); }
+.water-demo__intro h1 { font-size: clamp(var(--type-2xl), 3.5vw, var(--type-3xl)); line-height: 1; }
+.water-demo__lede { max-width: 30rem; font-size: var(--type-base); line-height: 1.6; }
+.water-demo__proofs span { border-radius: var(--radius-pill); backdrop-filter: none; }
+.water-demo__quality { margin-top: var(--space-md); border-radius: var(--radius-pill); backdrop-filter: none; }
+.water-demo__quality a { min-height: 2.25rem; }
+.water-demo__gesture { color: var(--color-text-secondary); font: 600 var(--type-xs)/1.4 var(--font-body); letter-spacing: 0; }
+.water-demo__help, .water-demo__controls { backdrop-filter: none; }
+@media (max-width: 720px) {
+  .water-demo__intro { top: var(--space-sm); left: var(--space-sm); width: calc(100vw - 6.75rem); }
+  .water-demo__intro h1 { font-size: var(--type-xl); }
+  .water-demo__quality { margin-top: var(--space-xs); }
+  .water-demo__quality a { min-height: 2.5rem; }
+  .water-demo__gesture { max-width: calc(100vw - 2 * var(--space-sm)); }
 }

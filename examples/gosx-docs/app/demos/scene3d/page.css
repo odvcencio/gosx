@@ -26,6 +26,18 @@
   height: 100%;
 }
 
+/* Give the runtime mount a definite size. Its inline canvas height is auto,
+   so an auto-sized wrapper otherwise feeds an ever-growing resize loop. */
+.scene3d-showcase__canvas > div {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden;
+}
+.scene3d-showcase__canvas canvas { height: 100% !important; }
+.scene3d-showcase__canvas [data-gosx-scene3d-stats] { display: none; }
+
 /* Overlay — bottom-left teaching layer; its compact bounds leave the scene interactive. */
 .scene3d-showcase__overlay {
   position: absolute;
@@ -42,6 +54,7 @@
   border-radius: 0.5rem;
   box-shadow: 0 1rem 3rem var(--color-backdrop);
 }
+.scene3d-showcase__overlay { top: var(--space-lg); bottom: auto; width: min(25rem, calc(100% - 2 * var(--space-lg))); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-canvas) 94%, transparent); }
 
 .scene3d-showcase__eyebrow {
   margin: 0;
@@ -107,6 +120,9 @@
 .scene3d-showcase__runtime output {
   color: var(--demo-accent);
 }
+.scene3d-showcase__runtime { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--space-xs); }
+.scene3d-showcase__runtime output[data-gosx-scene3d-status="fallback"] { grid-column: 1 / -1; color: var(--color-text-secondary); }
+.scene3d-showcase__runtime output[hidden] { display: none; }
 
 .scene3d-showcase__proof {
   padding-top: var(--space-xs);
@@ -153,15 +169,22 @@
 
 /* Responsive — smaller overlay on narrow viewports */
 @media (max-width: 700px) {
+  .scene3d-showcase { display: flex; flex-direction: column; min-height: 0; overflow: visible; }
+  .scene3d-showcase__canvas { position: relative; inset: auto; flex: none; height: 22rem; overflow: hidden; }
   .scene3d-showcase__overlay {
-    right: var(--space-md);
-    bottom: var(--space-md);
-    left: var(--space-md);
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    width: auto;
     max-width: none;
-    padding: var(--space-sm);
+    padding: var(--space-md);
+    border: 0;
+    border-top: 1px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: none;
   }
-
-  .scene3d-showcase__proof ul { display: none; }
 }
 
 /* Reduced-motion: honour system preference (AutoRotate is purely JS-side) */

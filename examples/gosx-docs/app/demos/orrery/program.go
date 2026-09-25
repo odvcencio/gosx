@@ -59,9 +59,9 @@ func LodestarMeridianProgram() scene.Props {
 		ControlTarget:      scene.Vec3(0, 2.0, 0), ControlMinDistance: 6.5, ControlMaxDistance: 20,
 		MaxFPS: 60, MaxDevicePixelRatio: 1.5, MaxPixels: orreryMaxPixels,
 		AdaptiveQuality: scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 18, AdaptivePostFX: scene.Bool(true),
-		Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 3.6, 11.4), FOV: 42, Near: 0.1, Far: 90},
+		Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 3.4, 9.8), FOV: 45, Near: 0.1, Far: 90},
 		Environment: scene.Environment{
-			AmbientColor: "#1c1830", AmbientIntensity: 0.5,
+			AmbientColor: "#8b899c", AmbientIntensity: 0.38,
 			FogColor: "#03030a", FogDensity: 0.026,
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels540p, Effects: []scene.PostEffect{

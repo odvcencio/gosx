@@ -310,3 +310,33 @@
 		animation-duration: 0s;
 	}
 }
+
+.orrery { gap: var(--space-lg); padding: var(--space-xl); }
+.orrery__intro { border-left-width: 2px; padding-left: var(--space-lg); }
+.orrery h1 { font-size: clamp(var(--type-2xl), 3.2vw, var(--type-3xl)); letter-spacing: -0.05em; }
+.orrery h1 span { margin-top: var(--space-xs); font-size: var(--type-base); font-weight: 500; }
+.orrery__copy { max-width: 34rem; font-size: var(--type-base); line-height: 1.6; }
+.orrery__canvas { border-radius: var(--radius-md); box-shadow: var(--elevation-panel); }
+.orrery__canvas > div { width: 100% !important; height: 100% !important; }
+.orrery__canvas canvas { height: 100% !important; }
+.orrery__canvas [data-gosx-scene3d-stats] { display: none; }
+.orrery__overlay { gap: var(--space-xl); padding: var(--space-lg); border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); }
+.orrery__phases { gap: var(--space-md) var(--space-lg); }
+.orrery__phases li { padding-left: var(--space-md); border-left: 1px solid var(--color-border-strong); font-size: var(--type-sm); line-height: 1.55; }
+.orrery__phase-time { margin-bottom: var(--space-xs); font-weight: 700; }
+.orrery__pause { min-height: 2.75rem; padding-inline: var(--space-md); border-left-width: 1px; border-radius: var(--radius-pill); font-weight: 700; transition: background var(--duration-fast) var(--ease-out); }
+.orrery__pause:hover { background: color-mix(in srgb, var(--demo-accent) 14%, var(--color-canvas)); }
+.orrery__technical { margin: 0 0 var(--space-sm); border-top: 1px solid var(--color-border); }
+.orrery__technical summary { min-height: 2.5rem; align-content: center; color: var(--demo-accent); font: 700 var(--type-xs)/1.4 var(--font-body); cursor: pointer; }
+.orrery__technical[open] { padding-bottom: var(--space-sm); }
+@media (max-width: 900px) {
+	.orrery { padding: var(--space-md); }
+	.orrery__intro { grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); padding-left: var(--space-md); }
+	.orrery h1 { font-size: var(--type-xl); }
+	.orrery__copy { font-size: var(--type-sm); }
+	.orrery__canvas { aspect-ratio: 4 / 3; }
+	.orrery__overlay { gap: var(--space-lg); padding: var(--space-md); }
+	.orrery__phases { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.orrery__phases li { font-size: var(--type-xs); }
+}
+@media (max-width: 520px) { .orrery__phases { grid-template-columns: minmax(0, 1fr); } }

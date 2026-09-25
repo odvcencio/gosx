@@ -366,8 +366,9 @@ func TestScene3DDemoCinematicShape(t *testing.T) {
 		t.Error("scene3d/page.gsx missing aria-label — accessibility required")
 	}
 	for _, proof := range []string{
-		"Typed Go → SceneIR → browser GPU",
-		"data-gosx-scene3d-renderer",
+		"Material study / Scene3D",
+		"data-gosx-scene3d-status-scope",
+		`data-gosx-scene3d-status="renderer"`,
 		"What GoSX owns",
 		"View the typed scene source",
 	} {

@@ -315,7 +315,6 @@ func TestBespokeDemoScriptDebtDoesNotGrow(t *testing.T) {
 		"fluid/page.gsx":         true,
 		"livesim/page.gsx":       true,
 		"playground/page.gsx":    true,
-		"scene3d/page.gsx":       true,
 		"scene3d-bench/page.gsx": true,
 	}
 	root := repoPath(t, "examples/gosx-docs/app/demos")
