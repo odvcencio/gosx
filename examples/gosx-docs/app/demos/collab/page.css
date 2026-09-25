@@ -375,3 +375,53 @@
     transition: none;
   }
 }
+
+/* Shared writing desk */
+.collab { min-height: max(42rem, calc(100vh - 12rem)); height: auto; gap: var(--space-sm); padding: var(--space-md); font-family: var(--font-body); background: var(--demo-bg); }
+.collab__header { align-items: end; gap: var(--space-md); padding: 0 0 var(--space-md); }
+.collab__heading { min-width: 0; }
+.collab__eyebrow { margin: 0 0 var(--space-xs); color: var(--demo-accent); font: 700 0.68rem/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.collab__title { margin: 0; font: 700 clamp(2.3rem, 4vw, 4rem)/1.05 var(--font-display); letter-spacing: -0.055em; text-transform: none; }
+.collab__heading > p:last-child { max-width: 34rem; margin: var(--space-xs) 0 0; color: var(--color-text-secondary); font-size: 0.94rem; line-height: 1.5; }
+.collab__session { display: grid; justify-items: end; gap: var(--space-xs); padding-bottom: 0.2rem; }
+.collab__status { flex-wrap: wrap; justify-content: flex-end; padding: 0.5rem 0.75rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-pill); font-size: 0.7rem; }
+.collab__self { font-size: 0.72rem; }
+.collab__mobile-tabs { display: none; }
+.collab__body { gap: var(--space-sm); min-height: 30rem; background: transparent; }
+.collab__pane { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.collab__pane-label { margin: 0; padding: var(--space-sm) var(--space-md); color: var(--demo-muted); font: 700 0.7rem/1.4 var(--font-mono); }
+.collab__source { padding: var(--space-md); color: var(--demo-fg); background: var(--color-surface); font-size: 0.84rem; line-height: 1.65; }
+.collab__source::selection { background: color-mix(in srgb, var(--demo-accent) 30%, transparent); }
+.collab__source:focus-visible { outline: 2px solid var(--demo-accent); outline-offset: -3px; }
+.collab__pane--preview { background: #eae2d5; border-color: #d2c4af; }
+.collab__pane--preview .collab__pane-label { color: #6f6456; border-color: #d2c4af; }
+.collab__preview { padding: var(--space-lg); color: #24323a; background: #f7f1e8; font: 0.96rem/1.68 var(--font-body); }
+.collab__preview h1,
+.collab__preview h2,
+.collab__preview h3,
+.collab__preview h4,
+.collab__preview strong { color: #172831; }
+.collab__preview h1 { font: 700 clamp(1.8rem, 2.5vw, 2.7rem)/1.12 var(--font-display); letter-spacing: -0.05em; }
+.collab__preview h2 { font: 700 1.25rem/1.3 var(--font-display); }
+.collab__preview blockquote { color: #5f5549; border-color: #a76024; }
+.collab__preview code { color: #804315; background: #eee1d0; }
+.collab__preview pre { background: #eee1d0; border-color: #cfbda6; }
+.collab__preview pre code { color: #172831; }
+.collab__preview a { color: #854715; }
+.collab__footer { padding: var(--space-xs) 0 0; color: var(--demo-muted); font: 0.74rem/1.5 var(--font-body); }
+
+@media (max-width: 900px) {
+  .collab { min-height: 0; height: auto; padding: var(--space-sm); }
+  .collab__header { display: block; }
+  .collab__session { justify-items: start; margin-top: var(--space-sm); }
+  .collab__status { justify-content: flex-start; }
+  .collab__mobile-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); }
+  .collab__mobile-tabs button { min-height: 2.75rem; color: var(--demo-muted); background: var(--color-surface); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); font: 700 0.82rem var(--font-body); cursor: pointer; }
+  .collab__mobile-tabs button[aria-pressed="true"] { color: var(--demo-bg); background: var(--demo-accent); border-color: var(--demo-accent); }
+  .collab__mobile-tabs button:focus-visible { outline: 2px solid var(--demo-accent); outline-offset: 2px; }
+  .collab__body { display: block; min-height: 26rem; }
+  .collab__pane { min-height: 26rem; height: min(54vh, 36rem); }
+  .collab[data-view="write"] .collab__pane--preview,
+  .collab[data-view="preview"] .collab__pane--editor { display: none; }
+  .collab__source { font-size: 0.8rem; }
+}

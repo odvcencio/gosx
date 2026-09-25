@@ -3,18 +3,16 @@ package playground
 func Page() Node {
 	return <section class="play" data-compile-url={actionPath("compile")} data-csrf-token={csrf.token}>
 		<header class="play__header">
+			<p class="play__eyebrow">Build / browser islands</p>
 			<h1 class="play__title">GoSX Playground</h1>
 			<p class="play__subtitle">
-				Edit a constrained island component on the left. GoSX compiles its browser program and hydrates the preview on the right.
+				Edit the source. The browser preview recompiles as you type.
 			</p>
-			<p class="play__subtitle">
-				For strict typed server components, use the project-aware CLI and read the
-				<a href="/docs/components" data-gosx-link="true">Components guide</a>
-				.
-			</p>
+			<a class="play__guide" href="/docs/components" data-gosx-link="true">Read the components guide ↗</a>
 		</header>
 		<div class="play__body">
 			<div class="play__editor">
+				<h2 class="play__pane-title">Source / .gsx</h2>
 				<div class="play__editor-top">
 					<label class="play__preset-label" for="play-preset-select">Preset</label>
 					<select
@@ -50,6 +48,7 @@ func Page() Node {
 				<div class="play__errors" aria-live="polite"></div>
 			</div>
 			<div class="play__preview">
+				<h2 class="play__pane-title">Live preview</h2>
 				<div class="play__preview-frame">{data.preview}</div>
 				<div class="play__preview-status" aria-live="polite">Preview updates as you type</div>
 			</div>
