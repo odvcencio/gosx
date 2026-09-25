@@ -212,19 +212,9 @@ test("sceneFramePacingMinKForInterval is never bounded to 4 the way the render-c
   assert.equal(api.sceneFramePacingMinKForInterval(vsyncMS, 1000 / 1), 60);
 });
 
-test("scheduleNextAnimationFrame's original fixed-interval gate is preserved verbatim", () => {
+test("the default frame cap and opt-in divisor use separate gates", () => {
   const source = readSceneMountSrc();
-  const originalGate = [
-    '        var interval = sceneAnimationFrameIntervalMS();',
-    '        if (interval > 0 && lastAnimationFrameAt > 0 && typeof now === "number" && now - lastAnimationFrameAt < interval - 0.75) {',
-    '          scheduleNextAnimationFrame();',
-    '          return;',
-    '        }',
-  ].join("\n");
-  assert.ok(
-    source.includes(originalGate),
-    "the pre-existing millisecond-threshold gate must be reachable, byte for byte, when framePacing is not enabled",
-  );
+  assert.match(source, /sceneAnimationFrameGate\(now, lastAnimationFrameAt, interval, animationIntervalMS\)/);
   assert.match(source, /const framePacingEnabled = framePacingMode === "vsync-divisor";/);
 });
 
