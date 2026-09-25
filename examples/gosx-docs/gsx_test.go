@@ -418,6 +418,14 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 		t.Fatalf("read scene3d-bench/page.gsx: %v", err)
 	}
 	gsxSrc := string(gsxSource)
+	clientSource, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "public", "scene3d-bench-client.js"))
+	if err != nil {
+		t.Fatalf("read scene3d-bench-client.js: %v", err)
+	}
+	clientSrc := string(clientSource)
+	if !strings.Contains(gsxSrc, `src="/scene3d-bench-client.js"`) {
+		t.Error("scene3d-bench/page.gsx must load the benchmark client")
+	}
 
 	// New class names must be in place.
 	if !strings.Contains(gsxSrc, "scene3d-bench__overlay") {
@@ -435,26 +443,29 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 	}
 
 	// Functional substrate: perf gate flag must still be set.
-	if !strings.Contains(gsxSrc, "__gosx_scene3d_perf = true") {
-		t.Error("scene3d-bench/page.gsx missing __gosx_scene3d_perf = true — perf gate must remain")
+	if !strings.Contains(clientSrc, "__gosx_scene3d_perf = true") {
+		t.Error("scene3d-bench-client.js missing __gosx_scene3d_perf = true — perf gate must remain")
 	}
 
 	// Functional substrate: PerformanceObserver must still be attached.
-	if !strings.Contains(gsxSrc, "PerformanceObserver") {
-		t.Error("scene3d-bench/page.gsx missing PerformanceObserver — observer must remain")
+	if !strings.Contains(clientSrc, "PerformanceObserver") {
+		t.Error("scene3d-bench-client.js missing PerformanceObserver — observer must remain")
 	}
 
 	for _, honestMetric := range []string{
 		"CPU submit · current",
 		"rAF cadence",
-		"It does not claim GPU completion time",
-		`data-gosx-scene3d-renderer`,
-		`schema: "gosx.scene3d-bench.v1"`,
-		"copy JSON",
-		"download",
+		"It does not include GPU completion",
+		"Copy JSON",
+		"Download",
 	} {
 		if !strings.Contains(gsxSrc, honestMetric) {
 			t.Errorf("scene3d-bench/page.gsx missing honest measurement contract %q", honestMetric)
+		}
+	}
+	for _, clientMetric := range []string{`data-gosx-scene3d-renderer`, `schema: "gosx.scene3d-bench.v1"`} {
+		if !strings.Contains(clientSrc, clientMetric) {
+			t.Errorf("scene3d-bench-client.js missing honest measurement contract %q", clientMetric)
 		}
 	}
 	if strings.Contains(gsxSrc, `id="bench3d-overlay" aria-live`) {
