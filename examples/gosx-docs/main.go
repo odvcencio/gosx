@@ -79,8 +79,10 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
-		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		if ctx.Request == nil || ctx.Request.URL == nil || !strings.HasPrefix(ctx.Request.URL.Path, "/demos") {
+			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
+			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		}
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.SetLanguage("en")
 		return server.HTMLDocument(ctx.Document("GoSX", body))

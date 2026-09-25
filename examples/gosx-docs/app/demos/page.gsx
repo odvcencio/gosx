@@ -3,23 +3,26 @@ package docs
 func Page() Node {
 	return <section class="demos-landing" aria-labelledby="demos-landing-title">
 		<header class="demos-landing__header">
-			<p class="demos-landing__eyebrow">GoSX field notes · live in the browser</p>
-			<h1 id="demos-landing-title" class="demos-landing__title">The framework is the demo.</h1>
+			<p class="demos-landing__eyebrow">
+				The GoSX demo studio
+				<span>/ 12 working studies</span>
+			</p>
+			<h1 id="demos-landing-title" class="demos-landing__title">Build something you can feel.</h1>
 			<p class="demos-landing__desc">
-				Typed servers, realtime systems, simulations, and GPU scenes—each route is a working proof with its source and limitations in reach.
+				Explore scenes, simulations, and interfaces built with GoSX. Turn a world, change a system, or open the source behind it.
 			</p>
 			<ul class="demos-landing__facts" aria-label="Showcase principles">
 				<li>
-					<strong>Typed</strong>
-					<span>Go to the browser</span>
+					<strong>12</strong>
+					<span>Working demos</span>
 				</li>
 				<li>
-					<strong>Native</strong>
-					<span>SSR, hubs, and GPU</span>
+					<strong>Go</strong>
+					<span>Source included</span>
 				</li>
 				<li>
-					<strong>Honest</strong>
-					<span>Fallbacks stay visible</span>
+					<strong>Live</strong>
+					<span>Browser interaction</span>
 				</li>
 			</ul>
 		</header>
@@ -28,32 +31,19 @@ func Page() Node {
 			aria-labelledby="demos-showreel-title"
 			aria-describedby="demos-showreel-description"
 		>
-			<div
-				class="demos-showreel__canvas"
-				role="group"
-				aria-label="Interactive Scene3D orbital sculpture. Drag to orbit and scroll or pinch to zoom."
-			>
-				<Scene3D {...data.showreel} />
+			<div class="demos-showreel__art" aria-hidden="true">
+				<span></span>
 			</div>
+			<div class="demos-showreel__poster" role="img" aria-label="Illustration of an orbital sculpture"></div>
 			<div class="demos-showreel__overlay">
-				<p class="demos-showreel__kicker">Scene3D · index study 01</p>
-				<h2 id="demos-showreel-title" class="demos-showreel__title">Geometry, authored in Go.</h2>
+				<p class="demos-showreel__kicker">Featured study / Scene3D</p>
+				<h2 id="demos-showreel-title" class="demos-showreel__title">A scene you can turn.</h2>
 				<p id="demos-showreel-description" class="demos-showreel__body">
-					One bounded scene. Ten stable nodes. Procedural geometry only—no fetched models or textures.
-				</p>
-				<p class="demos-showreel__status">
-					<span class="demos-showreel__status-dot" aria-hidden="true"></span>
-					<span>
-						<strong>Backend selected per mount</strong>
-						· WebGPU → WebGL2 → Canvas2D / unsupported
-					</span>
-				</p>
-				<p class="demos-showreel__controls">
-					Drag to orbit · scroll or pinch to zoom
+					An orbital sculpture made from typed Go scene data. Follow the light around its form.
 				</p>
 				<div class="demos-showreel__actions">
-					<a class="demos-button demos-button--primary" href="/demos/scene3d" data-gosx-link="true">
-						Enter Geometry Zoo
+					<a class="demos-button demos-button--primary" href="/demos/showreel" data-gosx-link="true">
+						Turn the sculpture
 						<span aria-hidden="true">↗</span>
 					</a>
 					<a
@@ -71,11 +61,11 @@ func Page() Node {
 		<section class="demos-featured" aria-labelledby="demos-featured-title">
 			<header class="demos-section-heading">
 				<div>
-					<p class="demos-section-heading__eyebrow">Four ways into Scene3D</p>
-					<h2 id="demos-featured-title">Choose your depth.</h2>
+					<p class="demos-section-heading__eyebrow">Start here</p>
+					<h2 id="demos-featured-title">Four ways in.</h2>
 				</div>
 				<p>
-					Rendering craft, simulation, gameplay, and measurement—without hiding which layer owns the work.
+					Explore a world, shape water, play a game, or measure the renderer.
 				</p>
 			</header>
 			<div class="demos-featured__list">
@@ -122,8 +112,8 @@ func Page() Node {
 		<section class="demos-more" aria-labelledby="demos-more-title">
 			<header class="demos-section-heading demos-section-heading--compact">
 				<div>
-					<p class="demos-section-heading__eyebrow">More working proofs</p>
-					<h2 id="demos-more-title">Beyond the canvas.</h2>
+					<p class="demos-section-heading__eyebrow">Keep exploring</p>
+					<h2 id="demos-more-title">The rest of the studio.</h2>
 				</div>
 			</header>
 			<ul class="demos-more__list" role="list">

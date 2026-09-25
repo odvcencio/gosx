@@ -12,7 +12,6 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
-					"showreel":   DemoShowreelProgram(),
 					"showcase":   ShowcaseDemos(),
 					"additional": AdditionalDemos(),
 				}, nil

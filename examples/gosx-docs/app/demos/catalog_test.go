@@ -159,7 +159,7 @@ func TestDemoLayoutRendersMobileDockWithCompleteCatalog(t *testing.T) {
 			switch {
 			case node.Data == "nav" && attrs["id"] == "demo-dock":
 				hasDock = attrs["aria-label"] == "Demos"
-			case node.Data == "button" && contains(classes, "demos-topbar__menu"):
+			case node.Data == "summary" && contains(classes, "demos-topbar__menu"):
 				hasMobileMenu = attrs["aria-controls"] == "demo-dock" &&
 					attrs["data-gosx-toggle-target"] == ".demos-body" &&
 					attrs["data-gosx-toggle-attribute"] == "data-dock-open"
