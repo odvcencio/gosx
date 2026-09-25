@@ -143,19 +143,13 @@ var Matrix = map[Feature]map[Backend]bool{
 	// validation failure degrades per frame with a recorded render-truth reason
 	// rather than silently shading wrong, so the cell is unconditionally true.
 	//
-	// WebGL2 holds the same three samplers (u_iblIrradiance, u_iblRadiance,
-	// u_iblBRDFLUT, behind #if GOSX_HDR_IBL) and the same runtime asset path
-	// (scenePBRUploadEnvironmentMap), but scenePBRHDRIBLAvailable gates the
-	// whole branch on MAX_TEXTURE_IMAGE_UNITS >= 20. A Matrix cell answers an
-	// unconditional question — "does this backend shade IBL for every
-	// authoring scene" — and a device below the gate does not, regardless of
-	// what the shader compiles. See assetpipe/ibl/contract.go:38-46 for the
-	// gate's rationale and PR-8 (ibl_test.go) for the SH9 irradiance fallback
-	// that keeps sub-20-unit devices from losing ambient light entirely.
+	// WebGL2 uses one depth-array sampler per shadow light. All eight material
+	// maps, two four-cascade lights, the legacy environment map, and all three
+	// IBL products fit in the core minimum of 16 fragment samplers.
 	//
 	// The ad hoc (1.0 - roughness * 0.65) legacy equirect-tap response —
 	// unrelated to this row — lives under FeatureEnvironmentMap below.
-	FeatureIBL: {BackendWebGPU: true, BackendWebGL: false},
+	FeatureIBL: {BackendWebGPU: true, BackendWebGL: true},
 	// environment-map: does the backend READ Environment.EnvMap at all.
 	//
 	// This row exists because the ibl row above reads as parity and is not.

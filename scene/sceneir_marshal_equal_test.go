@@ -59,6 +59,7 @@ import (
 // `"wireframe":false` contract. That is the deliberate byte delta: typed PBR
 // primitives become filled surfaces while raw SceneIR that omits the field
 // keeps the browser runtime's historical compatibility default.
+// Regenerated for WebGL2 IBL support: remove the ibl degradation from GPU scenes.
 const sceneIRGoldenPath = "testdata/sceneir_marshal_golden.json"
 
 // sceneIRGoldenCases is the number of generated scenes in the corpus.

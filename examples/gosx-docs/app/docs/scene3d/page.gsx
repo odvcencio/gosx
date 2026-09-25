@@ -264,7 +264,7 @@ func Page() Node {
 						<tr>
 							<th scope="row">ibl</th>
 							<td>yes</td>
-							<td>no</td>
+							<td>yes</td>
 							<td>no</td>
 							<td>no</td>
 						</tr>
@@ -307,7 +307,7 @@ func Page() Node {
 				</table>
 			</div>
 			<p>
-				Read the table plainly. The legacy environment-map path is present on both GPU backends. Prepared split-sum IBL is faithful on WebGPU, while the WebGL2 path is capability-gated and therefore remains a degradation in the unconditional matrix. Compute particles degrade to a CPU mirror on WebGL2. Dashed-line styling is not faithful on either GPU backend; Canvas2D is the backend that implements the dash pattern. Skinning, water simulation, and GPU picking exclude Canvas2D.
+				Read the table plainly. The legacy environment-map path is present on both GPU backends. Prepared split-sum IBL is supported on both GPU backends. WebGL2 stores shadow cascades in depth texture arrays so that the PBR shader fits the minimum 16 fragment texture units. Compute particles degrade to a CPU mirror on WebGL2. Dashed-line styling is not faithful on either GPU backend; Canvas2D is the backend that implements the dash pattern. Skinning, water simulation, and GPU picking exclude Canvas2D.
 			</p>
 			<h3>Gate a scene to WebGPU on purpose</h3>
 			<p>

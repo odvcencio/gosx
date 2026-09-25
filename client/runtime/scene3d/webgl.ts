@@ -170,15 +170,8 @@
     "uniform float u_envIntensity;",
     "uniform float u_envRotation;",
     "",
-    // Shadow maps (max 2 directional lights × up to 4 cascades each).
-    // CSM: the renderer picks a cascade per fragment via view-space depth
-    // against u_shadowCascadeSplits*[]. When u_shadowCascades* == 1 the
-    // extra cascade samplers are bound to the same texture as cascade 0 and
-    // the first branch always wins, matching the pre-CSM single-map path.
-    "uniform sampler2D u_shadowMap0_0;",
-    "uniform sampler2D u_shadowMap0_1;",
-    "uniform sampler2D u_shadowMap0_2;",
-    "uniform sampler2D u_shadowMap0_3;",
+    // Two lights, each with up to four depth-array cascade layers.
+    "uniform highp sampler2DArray u_shadowMap0;",
     "uniform mat4 u_lightSpaceMatrices0[4];",
     "uniform float u_shadowCascadeSplits0[4];",
     "uniform int u_shadowCascades0;",
@@ -186,10 +179,7 @@
     "uniform float u_shadowBias0;",
     "uniform float u_shadowSoftness0;",
     "",
-    "uniform sampler2D u_shadowMap1_0;",
-    "uniform sampler2D u_shadowMap1_1;",
-    "uniform sampler2D u_shadowMap1_2;",
-    "uniform sampler2D u_shadowMap1_3;",
+    "uniform highp sampler2DArray u_shadowMap1;",
     "uniform mat4 u_lightSpaceMatrices1[4];",
     "uniform float u_shadowCascadeSplits1[4];",
     "uniform int u_shadowCascades1;",
@@ -240,7 +230,7 @@
     // penumbra from the receiver-to-blocker distance, and then PCF with a
     // filter radius scaled to the penumbra. When softness is 0 we skip the
     // extra samples and just return a hard comparison.
-    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
+    "float shadowFactor(highp sampler2DArray shadowMap, int layer, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    if (lightSpacePos.w <= 0.0) return 1.0;",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
@@ -254,7 +244,7 @@
     "",
     // Hard-shadow fast path.
     "    if (softness <= 0.0001) {",
-    "        float depth = texture(shadowMap, projCoords.xy).r;",
+    "        float depth = texture(shadowMap, vec3(projCoords.xy, float(layer))).r;",
     "        return (receiverDepth - bias > depth) ? 0.0 : 1.0;",
     "    }",
     "",
@@ -267,7 +257,7 @@
     "    float blockerCount = 0.0;",
     "    for (int i = 0; i < 8; i++) {",
     "        vec2 offset = kPoissonDisk8[i] * texelSize * blockerRadius;",
-    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        float d = texture(shadowMap, vec3(projCoords.xy + offset, float(layer))).r;",
     "        if (receiverDepth - bias > d) {",
     "            blockerDepthSum += d;",
     "            blockerCount += 1.0;",
@@ -291,7 +281,7 @@
     "    float shadow = 0.0;",
     "    for (int i = 0; i < 8; i++) {",
     "        vec2 offset = kPoissonDisk8[i] * texelSize * filterRadius;",
-    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        float d = texture(shadowMap, vec3(projCoords.xy + offset, float(layer))).r;",
     "        shadow += (receiverDepth - bias > d) ? 0.0 : 1.0;",
     "    }",
     "    return shadow / 8.0;",
@@ -299,19 +289,15 @@
     "",
     // Cascaded-shadow dispatchers for up to 4 cascades per slot.
     // View-space positive depth is compared against u_shadowCascadeSplits*[c],
-    // where split[c] is the far plane of cascade c. Sampler selection is
-    // unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of
-    // sampler arrays; mat4 and float arrays are indexed normally.
+    // where split[c] is the far plane of cascade c. The array layer may
+    // vary per fragment; the sampler itself is fixed for each light.
     "float shadowFactorSlot0(float viewDepth) {",
     "    int c = 0;",
     "    if (u_shadowCascades0 >= 2 && viewDepth >= u_shadowCascadeSplits0[0]) c = 1;",
     "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
     "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices0[c];",
-    "    if (c == 1) return shadowFactor(u_shadowMap0_1, ls, u_shadowBias0, u_shadowSoftness0);",
-    "    if (c == 2) return shadowFactor(u_shadowMap0_2, ls, u_shadowBias0, u_shadowSoftness0);",
-    "    if (c == 3) return shadowFactor(u_shadowMap0_3, ls, u_shadowBias0, u_shadowSoftness0);",
-    "    return shadowFactor(u_shadowMap0_0, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0, u_shadowSoftness0);",
     "}",
     "",
     "float shadowFactorSlot1(float viewDepth) {",
@@ -320,10 +306,7 @@
     "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
     "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices1[c];",
-    "    if (c == 1) return shadowFactor(u_shadowMap1_1, ls, u_shadowBias1, u_shadowSoftness1);",
-    "    if (c == 2) return shadowFactor(u_shadowMap1_2, ls, u_shadowBias1, u_shadowSoftness1);",
-    "    if (c == 3) return shadowFactor(u_shadowMap1_3, ls, u_shadowBias1, u_shadowSoftness1);",
-    "    return shadowFactor(u_shadowMap1_0, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1, u_shadowSoftness1);",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -1106,71 +1089,54 @@
 
   // --- Matrix Helpers ---
 
-  // Create a framebuffer with a depth-only texture for shadow mapping.
-  function createSceneShadowResources(gl, size) {
-    const framebuffer = gl.createFramebuffer();
-    const depthTexture = gl.createTexture();
-
-    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24,
-      size, size, 0,
-      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0
-    );
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-    return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
-  }
-
-  // Create a shadow slot with N cascades. Each cascade gets its own
-  // framebuffer+depth-texture pair. Cascade-specific matrices and view-space
-  // far plane (splitFar) are filled in by computeShadowSlotCascadeMatrices().
+  // Each light owns one depth array. A framebuffer selects one cascade layer.
+  // Eight cascades therefore need two samplers, not eight.
   function createSceneShadowSlot(gl, size, numCascades) {
     var n = Math.max(1, Math.min(4, numCascades | 0));
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.DEPTH_COMPONENT24, size, size, n, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     var cascades = [];
     for (var i = 0; i < n; i++) {
-      var res = createSceneShadowResources(gl, size);
-      cascades.push({
-        framebuffer: res.framebuffer,
-        depthTexture: res.depthTexture,
-        size: size,
-        cascadeIndex: i,
-        splitNear: 0,
-        splitFar: 0,
-        lightMatrix: null,
-        _lastPassHash: null,
-      });
+      var framebuffer = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, texture, 0, i);
+      gl.drawBuffers([gl.NONE]);
+      gl.readBuffer(gl.NONE);
+      cascades.push({ framebuffer: framebuffer, depthTexture: texture, size: size,
+        cascadeIndex: i, splitNear: 0, splitFar: 0, lightMatrix: null, _lastPassHash: null });
     }
-    return {
-      size: size,
-      numCascades: n,
-      cascades: cascades,
-    };
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { size: size, numCascades: n, depthTexture: texture, cascades: cascades };
   }
 
-  // Release GPU resources for a shadow slot (all cascades). Safe to pass null.
   function disposeShadowSlot(gl, slot) {
     if (!slot) return;
-    if (Array.isArray(slot.cascades)) {
-      for (var i = 0; i < slot.cascades.length; i++) {
-        var c = slot.cascades[i];
-        if (c && c.framebuffer) gl.deleteFramebuffer(c.framebuffer);
-        if (c && c.depthTexture) gl.deleteTexture(c.depthTexture);
-      }
-    } else {
-      // Legacy single-cascade slot shape.
-      if (slot.framebuffer) gl.deleteFramebuffer(slot.framebuffer);
-      if (slot.depthTexture) gl.deleteTexture(slot.depthTexture);
+    for (var i = 0; i < slot.cascades.length; i++) {
+      gl.deleteFramebuffer(slot.cascades[i].framebuffer);
     }
+    gl.deleteTexture(slot.depthTexture);
+  }
+
+  // Inactive sampler arrays still need a distinct, complete texture target.
+  // The renderer's texture cache owns and disposes this one-pixel placeholder.
+  function scenePBRPlaceholderShadow(gl, textureCache) {
+    var key = "\u0000gosx-shadow-placeholder-array";
+    var record = textureCache.get(key);
+    if (record) return record.texture;
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.DEPTH_COMPONENT24, 1, 1, 1, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, new Uint32Array([0xffffffff]));
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    textureCache.set(key, { texture: texture, placeholder: true, loaded: true });
+    return texture;
   }
 
   // Compute per-cascade light-space matrices and split-far view-space depths
@@ -5618,10 +5584,7 @@
       envIntensity: gl.getUniformLocation(program, "u_envIntensity"),
       envRotation: gl.getUniformLocation(program, "u_envRotation"),
 
-      shadowMap0_0: gl.getUniformLocation(program, "u_shadowMap0_0"),
-      shadowMap0_1: gl.getUniformLocation(program, "u_shadowMap0_1"),
-      shadowMap0_2: gl.getUniformLocation(program, "u_shadowMap0_2"),
-      shadowMap0_3: gl.getUniformLocation(program, "u_shadowMap0_3"),
+      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
       lightSpaceMatrices0: gl.getUniformLocation(program, "u_lightSpaceMatrices0"),
       shadowCascadeSplits0: gl.getUniformLocation(program, "u_shadowCascadeSplits0"),
       shadowCascades0: gl.getUniformLocation(program, "u_shadowCascades0"),
@@ -5630,10 +5593,7 @@
       shadowSoftness0: gl.getUniformLocation(program, "u_shadowSoftness0"),
       shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
 
-      shadowMap1_0: gl.getUniformLocation(program, "u_shadowMap1_0"),
-      shadowMap1_1: gl.getUniformLocation(program, "u_shadowMap1_1"),
-      shadowMap1_2: gl.getUniformLocation(program, "u_shadowMap1_2"),
-      shadowMap1_3: gl.getUniformLocation(program, "u_shadowMap1_3"),
+      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
       lightSpaceMatrices1: gl.getUniformLocation(program, "u_lightSpaceMatrices1"),
       shadowCascadeSplits1: gl.getUniformLocation(program, "u_shadowCascadeSplits1"),
       shadowCascades1: gl.getUniformLocation(program, "u_shadowCascades1"),
@@ -5919,8 +5879,8 @@
     } catch (_error) {
       maxUnits = 0;
     }
-    // 8 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
-    return maxUnits >= 20;
+    // 8 material + 2 depth arrays + legacy env + 3 IBL = 14 samplers.
+    return maxUnits >= 16;
   }
 
   function scenePBRFragmentSourceForContext(gl, source) {
@@ -7066,121 +7026,40 @@
     );
   }
 
-  function scenePBRSlotCascadeCount(slot, lightIndex) {
-    if (!slot || lightIndex < 0) {
-      return 0;
-    }
-    return Math.max(1, Math.min(4, slot.numCascades | 0));
-  }
-
-  function scenePBRShadowTextureCount(shadowSlots, shadowLightIndices) {
-    var slots = Array.isArray(shadowSlots) ? shadowSlots : [];
-    var indices = Array.isArray(shadowLightIndices) ? shadowLightIndices : [];
-    var count = 0;
-    for (var i = 0; i < slots.length; i++) {
-      count += scenePBRSlotCascadeCount(slots[i], indices[i]);
-    }
-    return count;
-  }
-
   function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment, maxUnits) {
-    var shadowCount = scenePBRShadowTextureCount(shadowSlots, shadowLightIndices);
-    if (scenePBREnvironmentHasMap(environment)) {
-      // Keep the legacy two-shadow reservation for non-shadowed env-map scenes
-      // while still moving IBL after all active CSM cascades.
-      shadowCount = Math.max(2, shadowCount);
-    }
-    var options = {
-      shadowCount: shadowCount,
-      ibl: scenePBREnvironmentHasMap(environment),
-    };
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (maxUnits != null) {
-      options.maxUnits = maxUnits;
-    }
-    return sceneAllocateTextureUnits(options);
+    // Reserve array and cube units even while their feature is inactive.
+    // Active sampler types must not alias material sampler2D units.
+    return sceneAllocateTextureUnits({ shadowCount: 2, ibl: true,
+      maxUnits: maxUnits == null ? SCENE_TEXTURE_UNIT_DEFAULT_MAX : maxUnits });
   }
 
-  // Negotiate effective per-light cascade counts against the real shared
-  // texture-unit budget BEFORE any slot is created, matrix fit, or depth
-  // pass. Fair baseline: when the budget covers at least one cascade per
-  // eligible light, each light gets one, then remaining units fill the first
-  // (priority) light up to its request. A reduced count is refit across the
-  // FULL camera range by computeShadowSlotCascadeMatrices, so far coverage
-  // is never truncated. Authored lights are never modified.
+  // The sampler budget limits LIGHTS; layers no longer consume texture units.
   function scenePBRNegotiateShadowCascades(requestedPerLight, environment, maxUnits) {
     var requested = Array.isArray(requestedPerLight) ? requestedPerLight : [];
+    var layout = scenePBRTextureLayoutForFrame([], [], environment, maxUnits);
     var counts = [];
-    var wants = [];
-    var totalRequested = 0;
     for (var i = 0; i < requested.length; i++) {
-      var want = Math.max(1, Math.min(4, requested[i] | 0));
-      counts.push(want);
-      wants.push(want);
-      totalRequested += want;
-    }
-    if (totalRequested === 0) {
-      return counts;
-    }
-    var placeholderSlots = [];
-    var placeholderIndices = [];
-    for (var j = 0; j < counts.length; j++) {
-      placeholderSlots.push({ numCascades: counts[j], cascades: [] });
-      placeholderIndices.push(j);
-    }
-    var layout = scenePBRTextureLayoutForFrame(
-      placeholderSlots, placeholderIndices, environment, maxUnits);
-    var budget = layout && Array.isArray(layout.shadows) ? layout.shadows.length : 0;
-    if (budget >= counts.length) {
-      // Reserve one cascade per eligible light, then fill first priority.
-      for (var k = 0; k < counts.length; k++) {
-        counts[k] = 1;
-      }
-      var remaining = budget - counts.length;
-      for (var p = 0; p < counts.length && remaining > 0; p++) {
-        // Fill from the pre-clamped per-light requests.
-        var extra = Math.min(Math.min(wants[p], 4) - counts[p], remaining);
-        if (extra > 0) {
-          counts[p] += extra;
-          remaining -= extra;
-        }
-      }
-    } else {
-      // Budget cannot cover one cascade per light: grant one cascade to
-      // earlier (priority) lights while units remain; later lights get 0
-      // (upload disables slots with 0 effective cascades rather than
-      // advertising a count it cannot bind).
-      for (var z = 0; z < counts.length; z++) {
-        counts[z] = z < budget ? 1 : 0;
-      }
+      counts.push(i < layout.shadows.length ? Math.max(1, Math.min(4, requested[i] | 0)) : 0);
     }
     return counts;
   }
 
-  // Upload cascaded-shadow uniforms for both slots to the given program's
-  // uniforms. `shadowSlots[s]` is either null (no shadow light in slot s)
-  // or an object produced by createSceneShadowSlot with up to 4 cascades.
-  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment) {
+  // Upload both array samplers before any draw, including inactive slots.
+  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment, textureCache) {
     var lightArray = Array.isArray(lights) ? lights : [];
-    // Allocate only the negotiated cascade counts, while reserving IBL after
-    // the cascades when an envMap is present. Slot offsets are packed, not
-    // hard-coded to 4-wide blocks: units start at 8, so two single-cascade
-    // lights use units 8/9 and one 4-cascade CSM light uses 8/9/10/11.
     var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment,
       scenePBRMaxTextureUnits(gl));
-    var shadowUnits = layout.shadows;
-
-    var unitBase = 0;
-    uploadCascadedSlot(gl, uniforms, 0, shadowSlots[0], shadowLightIndices[0],
-      lightArray, shadowUnits, unitBase);
-    unitBase += scenePBRSlotCascadeCount(shadowSlots[0], shadowLightIndices[0]);
-    uploadCascadedSlot(gl, uniforms, 1, shadowSlots[1], shadowLightIndices[1],
-      lightArray, shadowUnits, unitBase);
+    var placeholder = scenePBRPlaceholderShadow(gl, textureCache);
+    for (var i = 0; i < 2; i++) {
+      var slot = shadowSlots[i];
+      var texture = slot ? slot.depthTexture : placeholder;
+      scenePBRBindTexture(gl, layout.shadows[i], texture, gl.TEXTURE_2D_ARRAY);
+      gl.uniform1i(uniforms["shadowMap" + i], layout.shadows[i]);
+      uploadCascadedSlot(gl, uniforms, i, slot, shadowLightIndices[i], lightArray, layout.shadows, i);
+    }
   }
 
   function uploadCascadedSlot(gl, uniforms, slotIndex, slot, lightIndex, lightArray, shadowUnits, unitBase) {
-    var samplerKeys = slotIndex === 0
-      ? ["shadowMap0_0", "shadowMap0_1", "shadowMap0_2", "shadowMap0_3"]
-      : ["shadowMap1_0", "shadowMap1_1", "shadowMap1_2", "shadowMap1_3"];
     var matricesKey = slotIndex === 0 ? "lightSpaceMatrices0" : "lightSpaceMatrices1";
     var splitsKey = slotIndex === 0 ? "shadowCascadeSplits0" : "shadowCascadeSplits1";
     var cascadesKey = slotIndex === 0 ? "shadowCascades0" : "shadowCascades1";
@@ -7193,45 +7072,14 @@
     var numCascades = slot ? Math.max(0, Math.min(4, slot.numCascades | 0)) : 0;
     var primaryUnit = numCascades > 0 && shadowUnits.length > base ? shadowUnits[base] : null;
 
-    // Absent light, no budgeted unit, or a stale slot whose cascade count
-    // exceeds its remaining units: disable the WHOLE slot
-    // (has=0, index -1, cascade count 0) instead of truncating old fitted
-    // splits — truncation would lose far coverage while still advertising
-    // shadows. Never bind any texture here; a disabled slot must not steal
-    // another slot's unit.
-    if (!slot || lightIndex < 0 || numCascades <= 0 || primaryUnit == null ||
-        base + numCascades > shadowUnits.length) {
+    if (!slot || lightIndex < 0 || numCascades <= 0 || primaryUnit == null) {
       gl.uniform1i(uniforms[hasKey], 0);
       gl.uniform1f(uniforms[softKey], 0);
       gl.uniform1i(uniforms[indexKey], -1);
       gl.uniform1i(uniforms[cascadesKey], 0);
-      // Reset ALL unused 2D sampler uniforms: an unused 2D sampler points at
-      // material unit 0, which is always safe, and setting a sampler uniform
-      // binds no texture.
-      for (var di = 0; di < 4; di++) {
-        gl.uniform1i(uniforms[samplerKeys[di]], 0);
-      }
       return;
     }
-
     var light = lightArray[lightIndex] || {};
-
-    // Bind each ACTIVE cascade exactly once to its unique negotiated unit —
-    // negotiation guarantees every rendered cascade owns a unit, so there is
-    // no fallback re-bind of one texture over another's unit.
-    for (var ci = 0; ci < numCascades; ci++) {
-      var unit = shadowUnits.length > base + ci ? shadowUnits[base + ci] : null;
-      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (unit == null) break;
-      scenePBRBindTexture(gl, unit, slot.cascades[ci].depthTexture);
-      gl.uniform1i(uniforms[samplerKeys[ci]], unit);
-    }
-
-    // Alias unused samplers to cascade 0's unit WITHOUT re-binding (that
-    // texture is already bound there); the shader never selects them because
-    // u_shadowCascades matches the effective count.
-    for (var ai = numCascades; ai < 4; ai++) {
-      gl.uniform1i(uniforms[samplerKeys[ai]], primaryUnit);
-    }
     // Pack matrices and splits. Matrix array = 4*16 = 64 floats; cascades
     // beyond numCascades are filled with cascade 0's matrix as a safe
     // fallback (shader never selects them when numCascades is set correctly,
@@ -7332,6 +7180,7 @@
     var hdrIBLAvailable = scenePBRHDRIBLAvailable(gl);
     var maxUnits = scenePBRMaxTextureUnits(gl);
     var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env, maxUnits);
+    var unit = layout && layout.ibl ? layout.ibl.brdfLUT : null;
     // An active samplerCube may not alias a sampler2D unit in WebGL even when
     // a branch flag is false. Assign both cube samplers to a real black cube
     // on a dedicated unit before considering authored products.
@@ -7352,6 +7201,8 @@
       reason: "",
       radianceMipLevels: 0,
     };
+    gl.uniform1i(uniforms.envMap, Number(unit));
+    gl.uniform1i(uniforms.iblBRDFLUT, Number(unit));
     gl.uniform1i(uniforms.hasIBL, 0);
     gl.uniform1f(uniforms.iblRadianceMaxLod, 0);
 
@@ -7362,7 +7213,7 @@
       var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
       if (!hdrIBLAvailable) {
         iblStatus.state = "unsupported";
-        iblStatus.reason = "fragment-texture-units<20";
+        iblStatus.reason = "fragment-texture-units<16";
       } else if (!radianceDescriptor || !irradianceDescriptor || !brdfDescriptor) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "descriptor-role-color-view-format";
@@ -7424,13 +7275,11 @@
       return;
     }
 
-    var unit = layout && layout.ibl ? layout.ibl.irradiance : null;
     // The legacy equirect environment map is an ordinary photographic/baked
     // PNG or JPEG — sRGB-encoded, same as a base-color texture — not a raw
     // linear radiance buffer. Loading it as "linear" skipped the SRGB8_ALPHA8
     // decode and left every sample ~2.2x too bright (linear-space math
-    // applied to still-gamma-encoded texels), which the diffuse and specular
-    // sums below both further scale up. True HDR sources (.hdr) are
+    // applied to gamma-encoded texels). True HDR sources (.hdr) are
     // unaffected: scenePBRLoadTexture routes them through the Radiance HDR
     // path before this colour-space argument is even consulted.
     var record = scenePBRLoadTexture(gl, envMap, textureCache, null, "environment-radiance", "srgb");
@@ -7444,7 +7293,6 @@
     // Mip count the loader generated for this equirect (see scenePBRLoadTexture:
     // generateMipmap runs unconditionally on the 2D image-load path). The
     // shader uses the top LOD as a cheap diffuse-irradiance stand-in and
-    // walks the chain by roughness for the specular reflection.
     var envMaxLod = available && record.width && record.height
       ? Math.max(0, Math.floor(Math.log2(Math.max(record.width, record.height))))
       : 0;
@@ -8915,7 +8763,7 @@
       scenePBRUploadEnvironmentMap(gl, uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
 
       // Upload shadow map uniforms through the shared Scene3D texture-unit allocator.
-      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
 
       // Draw opaque pass.
       applyBlendMode(gl, "opaque");
@@ -9783,7 +9631,7 @@
 
         scenePBRUploadLights(gl, targetUniforms, bundle.lights, bundle.environment, _frameLightsHash);
         scenePBRUploadEnvironmentMap(gl, targetUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
-        scenePBRUploadShadowUniforms(gl, targetUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+        scenePBRUploadShadowUniforms(gl, targetUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
       }
 
       for (var i = 0; i < objectList.length; i++) {
@@ -10701,7 +10549,7 @@
 
       scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
       scenePBRUploadEnvironmentMap(gl, ip.uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
-      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
 
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 

@@ -89,9 +89,8 @@ function setupWebGLRenderer() {
     sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
     sliceBetween(source, "var sceneGLConstantCache", "function scenePBRHDRIBLAvailable"),
     sliceBetween(source, "function scenePBRHDRIBLAvailable", "function scenePBRFragmentSourceForContext"),
-    sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRSlotCascadeCount"),
-    sliceBetween(source, "function scenePBRSlotCascadeCount", "function scenePBRTextureLayoutForFrame"),
-    sliceBetween(source, "function scenePBRTextureLayoutForFrame", "// Upload cascaded-shadow uniforms"),
+    sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRTextureLayoutForFrame"),
+    sliceBetween(source, "function scenePBRTextureLayoutForFrame", "// Upload both array samplers"),
     sliceBetween(source, "function uploadCustomUniforms", "function uploadMaterial"),
     sliceBetween(source, "function uploadMaterial", "function applyBlendMode"),
     [
@@ -530,34 +529,20 @@ test("WebGL guarded max-texture-unit query falls back conservatively", () => {
     "scenePBRMaxTextureUnits({ MAX_TEXTURE_IMAGE_UNITS: 34930, getParameter() { throw new Error('lost'); } })"), 16);
 });
 
-test("WebGL frame layout threads real GL unit limits", () => {
+test("WebGL frame layout fits both shadow arrays and IBL at 16 units", () => {
   const { context } = setupWebGLRenderer();
-  const call = (maxUnits) => callIn(context,
-    "scenePBRTextureLayoutForFrame(" +
-    "[{ numCascades: 4, cascades: [{}, {}, {}, {}] }, { numCascades: 4, cascades: [{}, {}, {}, {}] }], [0, 1], " +
-    "{ ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } }, " + maxUnits + ")");
-  // A 32-unit GL retains 8 cascades plus the three IBL units.
-  const wide = call(32);
-  assert.deepEqual(Array.from(wide.shadows), [8, 9, 10, 11, 12, 13, 14, 15]);
-  assert.deepEqual({ ...wide.ibl }, { irradiance: 16, radiance: 17, brdfLUT: 18 });
-  assert.equal(wide.warnings.length, 0);
-  // A 16-unit GL keeps the supported non-HDR path with a boundary warning.
-  const tight = call(16);
-  // A 16-unit GL keeps the supported non-HDR path with a boundary warning:
-  // only 5 shadow slots fit after the 8 material units, leaving 3 for IBL.
-  assert.deepEqual(Array.from(tight.shadows), [8, 9, 10, 11, 12]);
-  assert.deepEqual({ ...tight.ibl }, { irradiance: 13, radiance: 14, brdfLUT: 15 });
-  assert.equal(tight.warnings.length > 0, true);
+  for (const max of [16, 32]) {
+    const layout = callIn(context, `scenePBRTextureLayoutForFrame([], [], { ibl: {} }, ${max})`);
+    assert.deepEqual(Array.from(layout.shadows), [8, 9]);
+    assert.deepEqual({ ...layout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+    assert.equal(layout.warnings.length, 0);
+  }
 });
 
-test("WebGL HDR IBL guard needs 20 sampler units", () => {
+test("WebGL HDR IBL fits the core sampler minimum", () => {
   const { context } = setupWebGLRenderer();
-  const source = readSceneRendererBackendSrc("webgl");
-  assert.match(source, /fragment-texture-units<20/);
-  assert.doesNotMatch(source, /fragment-texture-units<19/);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), false);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(19))"), false);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(20))"), true);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(15))"), false);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), true);
   assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(32))"), true);
 });
 

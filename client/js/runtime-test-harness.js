@@ -290,6 +290,8 @@ class FakeWebGLContext {
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
     this.TEXTURE_2D = 0x0DE1;
+    this.TEXTURE_2D_ARRAY = 0x8C1A;
+    this.NONE = 0;
     this.TEXTURE0 = 0x84C0;
     this.TEXTURE_MIN_FILTER = 0x2801;
     this.TEXTURE_MAG_FILTER = 0x2800;
@@ -491,6 +493,16 @@ class FakeWebGLContext {
   framebufferTexture2D(target, attachment, textarget, texture, level) {
     this.ops.push(["framebufferTexture2D", target, attachment, textarget, texture && texture.id, level]);
   }
+
+  framebufferTextureLayer(target, attachment, texture, level, layer) {
+    this.ops.push(["framebufferTextureLayer", target, attachment, texture && texture.id, level, layer]);
+  }
+
+  texImage3D(target, level, format, width, height, layers) {
+    this.ops.push(["texImage3D", target, level, format, width, height, layers]);
+  }
+
+  readBuffer(value) { this.ops.push(["readBuffer", value]); }
 
   activeTexture(unit) {
     this.ops.push(["activeTexture", unit]);
