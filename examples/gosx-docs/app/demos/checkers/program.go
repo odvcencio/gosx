@@ -114,6 +114,14 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 			CastShadow:    true,
 			ReceiveShadow: true,
 		},
+		scene.Mesh{
+			ID:            "checkers-board-face",
+			Geometry:      scene.CylinderGeometry{RadiusTop: 3.78, RadiusBottom: 3.78, Height: 0.025, Segments: 48},
+			Material:      scene.StandardMaterial{Color: boardFaceColor(value), Roughness: 0.78, Metalness: 0.03, Opacity: scene.Float(0.5), BlendMode: scene.BlendAlpha},
+			Position:      scene.Vec3(0, -0.04, 0),
+			Pickable:      scene.Bool(false),
+			ReceiveShadow: true,
+		},
 	}
 	graph = append(graph, boardDetailNodes(value)...)
 	graph = append(graph, socketInstances(holes))
@@ -205,6 +213,21 @@ func boardAccentPalette(family string) (accent, glow string) {
 		return "#446da9", "#91c9e8"
 	default:
 		return "#b98b52", "#7bd1af"
+	}
+}
+
+func boardFaceColor(family string) string {
+	switch checkermaterials.Family(family) {
+	case checkermaterials.ImperialJade:
+		return "#79a38a"
+	case checkermaterials.BrushedSteel:
+		return "#a9bac0"
+	case checkermaterials.MidnightLacquer:
+		return "#51606b"
+	case checkermaterials.MoonPorcelain:
+		return "#d7dfe0"
+	default:
+		return "#d8aa7d"
 	}
 }
 

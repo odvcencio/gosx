@@ -26,20 +26,32 @@ func HTMLSurfaceProgram() scene.Props {
 		},
 		Environment: scene.Environment{
 			AmbientColor:     "#1a2635",
-			AmbientIntensity: 0.6,
+			AmbientIntensity: 0.38,
 		},
 		Graph: scene.NewGraph(
 			scene.DirectionalLight{
 				ID:        "key",
 				Color:     "#ffffff",
-				Intensity: 1.1,
+				Intensity: 0.72,
 				Direction: scene.Vector3{X: -0.4, Y: -0.8, Z: -0.5},
 			},
 			scene.Mesh{
 				ID:       "floor",
-				Geometry: scene.BoxGeometry{Width: 14, Height: 0.08, Depth: 14},
-				Position: scene.Vector3{X: 0, Y: -1.35, Z: 0},
-				Material: scene.StandardMaterial{Color: "#141d2a", Roughness: 0.85, Metalness: 0.05},
+				Geometry: scene.BoxGeometry{Width: 8, Height: 0.18, Depth: 5},
+				Position: scene.Vector3{X: 0, Y: -1.47, Z: 0},
+				Material: scene.StandardMaterial{Color: "#2a3d46", Roughness: 0.85, Metalness: 0.05},
+			},
+			scene.Mesh{
+				ID:       "left-plinth",
+				Geometry: scene.BoxGeometry{Width: 2.35, Height: 0.42, Depth: 0.75},
+				Position: scene.Vector3{X: -1.5, Y: -1.17, Z: -0.25},
+				Material: scene.StandardMaterial{Color: "#8e5a35", Roughness: 0.72, Metalness: 0.05},
+			},
+			scene.Mesh{
+				ID:       "right-plinth",
+				Geometry: scene.BoxGeometry{Width: 2.35, Height: 0.42, Depth: 0.75},
+				Position: scene.Vector3{X: 1.5, Y: -1.17, Z: -0.45},
+				Material: scene.StandardMaterial{Color: "#8e5a35", Roughness: 0.72, Metalness: 0.05},
 			},
 			scene.Mesh{
 				ID:       "pillar",
