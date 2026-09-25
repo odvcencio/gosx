@@ -8,7 +8,7 @@
   var EVENT_CURSOR = "presence:cursor";
   var EVENT_LEAVE = "presence:leave";
 
-  var canvas, ctx, hudFrame, hudCount, hudState, hudRender, hudViewers, spawnButton, burstButton;
+  var canvas, stage, ctx, hudFrame, hudCount, hudState, hudRender, hudViewers, spawnButton, burstButton;
   var latestState = null;
   var previousState = null;
   var receivedAt = 0;
@@ -46,6 +46,7 @@
   function mount() {
     canvas = document.getElementById("livesim-canvas");
     if (!canvas) return;
+    stage = document.getElementById("livesim-stage");
     ctx = canvas.getContext("2d");
     hudFrame = document.getElementById("livesim-frame");
     hudCount = document.getElementById("livesim-count");
@@ -107,6 +108,7 @@
     receivedAt = performance.now();
     if (hudFrame) hudFrame.textContent = String(detail.data.frame || state.frame || 0);
     if (hudCount) hudCount.textContent = String((state.circles || []).length);
+    if (stage) stage.setAttribute("data-has-circles", (state.circles || []).length ? "true" : "false");
     if (hudViewers) hudViewers.textContent = String(state.viewers != null ? state.viewers : 1);
     if (hudState) hudState.textContent = "live";
 

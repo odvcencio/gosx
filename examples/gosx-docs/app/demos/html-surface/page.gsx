@@ -3,32 +3,40 @@ package docs
 func Page() Node {
 	return <section class="html-surface" aria-label="HTML surfaces textured onto 3D geometry" role="region">
 		<div class="html-surface__canvas">
+			<div class="html-surface__poster" aria-hidden="true">
+				<div>
+					<span>01 / STATUS</span>
+					<strong>Coolant loop</strong>
+					<em>Nominal</em>
+				</div>
+				<div>
+					<span>02 / ANGLED</span>
+					<strong>In the scene</strong>
+					<em>HTML + CSS</em>
+				</div>
+			</div>
 			<Scene3D {...data.scene} />
 		</div>
 		<div class="html-surface__overlay">
-			<p class="html-surface__eyebrow">
-				Real HTML. Real CSS. On a surface in the scene.
-			</p>
-			<h1 class="html-surface__title">Diegetic panels</h1>
+			<p class="html-surface__eyebrow">Scene study / HTML textures</p>
+			<h1 class="html-surface__title">Interfaces with depth.</h1>
 			<p class="html-surface__tagline">
-				Each panel is a quad in the scene graph. The browser lays out the page markup and rasterizes it at device resolution. Orbit the scene: the panels rotate with it, occlude behind geometry, and stay legible off-axis.
+				These panels start as HTML and CSS. Drag to orbit: each one turns with the scene and passes behind objects.
 			</p>
 			<details class="html-surface__proof">
-				<summary>
-					How this differs from a document object model (DOM) overlay
-				</summary>
+				<summary>How the panels work</summary>
 				<ul>
 					<li>
-						The panel has a world transform. Rotation.X = -Pi/2 stands it up; Rotation.Y turns it away from the camera.
+						Each panel has a position and rotation in the 3D scene.
 					</li>
 					<li>
-						Depth is real. The right-hand panel goes behind the pillar when you orbit past it.
+						The right panel passes behind the pillar as you orbit.
 					</li>
 					<li>
-						The markup is rasterized with the page's own stylesheets and webfonts, so a component renders the same on a page and on a panel.
+						The browser renders the markup, styles, and font into a texture.
 					</li>
 					<li>
-						The DOM mirror stays in the accessibility tree but stops painting, so nothing draws twice.
+						A hidden document mirror keeps the content available to assistive technology.
 					</li>
 				</ul>
 			</details>
