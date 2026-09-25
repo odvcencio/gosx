@@ -17,22 +17,35 @@ func Layout() Node {
 				<span class="demos-topbar__sep" aria-hidden="true">/</span>
 				<a href="/demos" class="demos-topbar__section" data-gosx-link="true">Demos</a>
 			</span>
-			<button
-				class="demos-topbar__menu"
-				type="button"
-				aria-label="Toggle demos menu"
-				aria-controls="demo-dock"
-				aria-expanded="false"
-				data-gosx-toggle-target=".demos-body"
-				data-gosx-toggle-attribute="data-dock-open"
-			>
-				<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
-				<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
-				<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
-			</button>
+			<span class="demos-topbar__edition">
+				Interactive field guide
+				<span aria-hidden="true">·</span>
+				12 studies
+			</span>
+			<details class="demos-topbar__menu-wrap">
+				<summary
+					class="demos-topbar__menu"
+					aria-label="Browse demos"
+					aria-controls="demo-dock"
+					data-gosx-toggle-target=".demos-body"
+					data-gosx-toggle-attribute="data-dock-open"
+				>
+					<span class="demos-topbar__menu-label">Browse demos</span>
+					<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
+					<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
+					<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
+				</summary>
+			</details>
 		</header>
 		<div class="demos-body">
 			<nav id="demo-dock" class="demo-dock" aria-label="Demos">
+				<div class="demo-dock__header">
+					<p>Explore the demos</p>
+					<a class="demo-dock__overview" href="/demos" data-gosx-link="true">
+						All studies
+						<span aria-hidden="true">↗</span>
+					</a>
+				</div>
 				<ul class="demo-dock__list" role="list">
 					<Each of={Demos()} as="demo">
 						<li class="demo-dock__item" role="listitem">

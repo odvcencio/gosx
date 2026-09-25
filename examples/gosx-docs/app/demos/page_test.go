@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func TestDemosIndexRendersOneAccessibleScene3DShowreel(t *testing.T) {
+func TestDemosIndexLinksToAccessibleScene3DShowreel(t *testing.T) {
 	page := readDemoSource(t, "examples/gosx-docs/app/demos/page.gsx")
-	if got := strings.Count(page, "<Scene3D "); got != 1 {
-		t.Fatalf("demos index Scene3D component count = %d, want 1", got)
+	if strings.Contains(page, "<Scene3D ") {
+		t.Fatal("demos index must defer the Scene3D mount to its own route")
 	}
 	if strings.Contains(page, "<main") {
 		t.Error("demos index must not nest a main landmark inside the application main")
@@ -20,10 +20,8 @@ func TestDemosIndexRendersOneAccessibleScene3DShowreel(t *testing.T) {
 		`id="demos-landing-title"`,
 		`aria-labelledby="demos-showreel-title"`,
 		`aria-describedby="demos-showreel-description"`,
-		`aria-label="Interactive Scene3D orbital sculpture.`,
-		`Backend selected per mount`,
-		`WebGPU → WebGL2 → Canvas2D / unsupported`,
-		`Drag to orbit`,
+		`aria-label="Illustration of an orbital sculpture"`,
+		`href="/demos/showreel"`,
 		`data.showcase`,
 		`data.additional`,
 		`demoSourceURL(demo.SourcePath)`,
@@ -40,6 +38,10 @@ func TestDemosIndexRendersOneAccessibleScene3DShowreel(t *testing.T) {
 	}
 	if strings.Contains(page, `target="_blank" data-gosx-link="true"`) {
 		t.Error("external source links must not be intercepted by managed navigation")
+	}
+	showreel := readDemoSource(t, "examples/gosx-docs/app/demos/showreel/page.gsx")
+	if !strings.Contains(showreel, "<Scene3D {...data.scene} />") || !strings.Contains(showreel, `aria-label="Interactive orbital sculpture.`) {
+		t.Error("dedicated showreel route must mount an accessible Scene3D")
 	}
 }
 

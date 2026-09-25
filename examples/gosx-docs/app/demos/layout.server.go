@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 
+	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/route"
 )
 
@@ -16,6 +17,9 @@ func init() {
 }
 
 func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) route.FileTemplateBindings {
+	if ctx != nil {
+		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Manrope-Variable-Latin.woff2" as="font" type="font/woff2" crossorigin>`))
+	}
 	current, hasCurrent := currentDemoForLayout(ctx, page)
 	values := map[string]any{
 		"currentDemoSlug":        "",

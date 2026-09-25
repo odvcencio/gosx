@@ -487,7 +487,7 @@ func TestDemosIndexUsesSharedCatalogHierarchy(t *testing.T) {
 		t.Fatal("app/demos/page.gsx has no components (bare-fragment form breaks route resolution)")
 	}
 
-	// 2. The shared catalog must contain all nine demo slugs, while the loader
+	// 2. The shared catalog must contain the demo slugs, while the loader
 	// consumes its promoted and additional views rather than maintaining
 	// another roster.
 	serverSource, err := os.ReadFile(serverPath)
@@ -508,13 +508,19 @@ func TestDemosIndexUsesSharedCatalogHierarchy(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		`"showreel":   DemoShowreelProgram()`,
 		`"showcase":   ShowcaseDemos()`,
 		`"additional": AdditionalDemos()`,
 	} {
 		if !strings.Contains(serverSrc, required) {
 			t.Errorf("app/demos/page.server.go missing shared showcase data %q", required)
 		}
+	}
+	showreelSource, err := os.ReadFile(filepath.Join(demosDir, "showreel", "page.server.go"))
+	if err != nil {
+		t.Fatalf("read showreel route: %v", err)
+	}
+	if !strings.Contains(string(showreelSource), `"scene": demos.DemoShowreelProgram()`) {
+		t.Error("dedicated showreel route must load the shared scene")
 	}
 
 	// 3. Must use RegisterStaticDocsPage.

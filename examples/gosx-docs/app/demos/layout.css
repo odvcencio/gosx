@@ -1,40 +1,48 @@
-/* ============================================================
-   Demos editorial shell
-   layout.css — sidecar for demos/layout.gsx
-   Linear/Vercel/Stripe-inspired: restrained, generous whitespace,
-   one accent-color slot per demo, humanist sans typography.
-   ============================================================ */
+/* Demo studio: shared presentation tokens and components. */
+
+@font-face {
+  font-family: "Manrope Demo";
+  src: url("/fonts/Manrope-Variable-Latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: optional;
+}
 
 /* ------------------------------------------------------------
    Design tokens — scoped to .demos-shell
    ------------------------------------------------------------ */
 
 .demos-shell {
-	--font-display: "Space Grotesk", sans-serif;
+	--font-display: "Manrope Demo", "Inter", sans-serif;
 	--font-body: "Inter", sans-serif;
 	--font-mono: "JetBrains Mono", monospace;
 	--type-xs: 0.75rem;
 	--type-sm: 0.875rem;
 	--type-base: 1rem;
-	--type-lg: 1.25rem;
-	--type-xl: 1.5625rem;
-	--type-2xl: 1.953rem;
-	--type-3xl: clamp(2.25rem, 1.9rem + 1.5vw, 3.052rem);
-	--color-canvas: #0b0b0d;
-	--color-surface: #151519;
-	--color-surface-raised: #1d1d22;
-	--color-text: #f5f5ef;
-	--color-text-secondary: #c7c7c2;
-	--color-text-muted: #9a9a9a;
-	--color-accent: #69e3c7;
-	--color-border: rgba(255, 255, 255, 0.08);
-	--color-border-strong: rgba(255, 255, 255, 0.16);
-	--color-backdrop: rgba(0, 0, 0, 0.64);
-	--duration-fast: 150ms;
-	--duration-standard: 200ms;
-	--duration-reveal: 300ms;
+	--type-lg: 1.125rem;
+	--type-xl: 1.5rem;
+	--type-2xl: 2.125rem;
+	--type-3xl: clamp(2.75rem, 2.1rem + 2.4vw, 4.25rem);
+	--type-hero: clamp(3.4rem, 2.2rem + 4.8vw, 6.25rem);
+	--color-canvas: #101820;
+	--color-surface: #19242e;
+	--color-surface-raised: #24333e;
+	--color-text: #f7f4ed;
+	--color-text-secondary: #d6d9d7;
+	--color-text-muted: #a9b5bd;
+	--color-accent: #f6ba77;
+	--color-border: rgba(226, 235, 235, 0.13);
+	--color-border-strong: rgba(226, 235, 235, 0.25);
+	--color-backdrop: rgba(7, 16, 23, 0.78);
+	--color-stage: #0c1720;
+	--color-stage-text: #f7f4ed;
+	--color-stage-muted: #b6c5ca;
+	--color-stage-accent: #f6ba77;
+	--duration-fast: 140ms;
+	--duration-standard: 240ms;
+	--duration-reveal: 420ms;
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-	--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+	--ease-spring: cubic-bezier(0.22, 1.2, 0.36, 1);
 	--space-xs: clamp(0.5rem, 0.45rem + 0.2vw, 0.75rem);
 	--space-sm: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
 	--space-md: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
@@ -42,27 +50,22 @@
 	--space-xl: clamp(2rem, 1.7rem + 1.25vw, 3rem);
 	--space-2xl: clamp(3rem, 2.5rem + 2vw, 4rem);
 	--space-3xl: clamp(4rem, 3rem + 4vw, 6rem);
-  --demo-site-nav-offset: 61px;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.5rem;
+  --radius-pill: 100vmax;
+  --elevation-panel: 0 1.5rem 5rem rgba(5, 13, 18, 0.26);
+  --elevation-popover: 0 2.5rem 6rem rgba(5, 13, 18, 0.48);
+  --demo-site-nav-offset: 89px;
   --demo-bg: var(--color-canvas);
   --demo-fg: var(--color-text);
   --demo-muted: var(--color-text-muted);
   --demo-hair: var(--color-border);
   --demo-hair-strong: var(--color-border-strong);
-  --demo-accent: #9fffa5;
-
-  /* Per-demo accent palette — active link metadata is projected by GoSX. */
-  --demo-accent-playground: #9fffa5;
-  --demo-accent-fluid:      #7aa2ff;
-  --demo-accent-water:      #69e3c7;
-  --demo-accent-livesim:    #f59e0b;
-  --demo-accent-cms:        #ec4899;
-  --demo-accent-scene3d:    #5fb4ff;
-  --demo-accent-scene3d-bench: #cbd5e1;
-  --demo-accent-collab:     #d9f99d;
-
+  --demo-accent: var(--color-accent);
   font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 16px;
+  line-height: 1.6;
   color: var(--demo-fg);
   background: var(--demo-bg);
   min-height: calc(100vh - var(--demo-site-nav-offset));
@@ -71,15 +74,48 @@
   flex-direction: column;
 }
 
-/* Per-demo accent override via the runtime-managed navigation context. */
-.demos-shell[data-demo-slug="playground"] { --demo-accent: #9fffa5; }
-.demos-shell[data-demo-slug="fluid"]      { --demo-accent: #7aa2ff; }
-.demos-shell[data-demo-slug="water"]      { --demo-accent: #69e3c7; }
-.demos-shell[data-demo-slug="livesim"]    { --demo-accent: #f59e0b; }
-.demos-shell[data-demo-slug="cms"]        { --demo-accent: #ec4899; }
-.demos-shell[data-demo-slug="scene3d"]    { --demo-accent: #5fb4ff; }
-.demos-shell[data-demo-slug="scene3d-bench"] { --demo-accent: #cbd5e1; }
-.demos-shell[data-demo-slug="collab"]    { --demo-accent: #d9f99d; }
+@media (prefers-color-scheme: light) {
+  .demos-shell {
+    --color-canvas: #f6f4ef;
+    --color-surface: #ffffff;
+    --color-surface-raised: #eae9e3;
+    --color-text: #14212a;
+    --color-text-secondary: #35454e;
+    --color-text-muted: #586a72;
+    --color-accent: #965112;
+    --color-border: rgba(21, 43, 53, 0.14);
+    --color-border-strong: rgba(21, 43, 53, 0.27);
+    --color-backdrop: rgba(15, 29, 37, 0.56);
+    --elevation-panel: 0 1.5rem 5rem rgba(36, 45, 43, 0.11);
+  }
+
+  /* These stages use light particles, optical overlays, or dark scene panels.
+     Keep their surrounding controls in the same dark viewing environment. */
+  .demos-shell:is(
+    [data-demo-slug="beacon"],
+    [data-demo-slug="checkers"],
+    [data-demo-slug="fluid"],
+    [data-demo-slug="html-surface"],
+    [data-demo-slug="livesim"],
+    [data-demo-slug="orrery"],
+    [data-demo-slug="scene3d"],
+    [data-demo-slug="scene3d-bench"],
+    [data-demo-slug="water"]
+  ) {
+    --color-canvas: #101820;
+    --color-surface: #19242e;
+    --color-surface-raised: #24333e;
+    --color-text: #f7f4ed;
+    --color-text-secondary: #d6d9d7;
+    --color-text-muted: #a9b5bd;
+    --color-accent: #f6ba77;
+    --color-border: rgba(226, 235, 235, 0.13);
+    --color-border-strong: rgba(226, 235, 235, 0.25);
+    --color-backdrop: rgba(7, 16, 23, 0.78);
+    --elevation-panel: 0 1.5rem 5rem rgba(5, 13, 18, 0.26);
+    color-scheme: dark;
+  }
+}
 
 /* ------------------------------------------------------------
    Top bar — thin context strip
@@ -520,6 +556,7 @@
 }
 
 @media (max-width: 900px) {
+  .demos-shell { --demo-site-nav-offset: 69px; }
   .demos-topbar__menu {
     display: flex;
   }
@@ -565,4 +602,213 @@
   .demo-meta__pill {
     transition: none;
   }
+}
+
+/* Shared pieces used by each study. A demo may change placement while these
+   classes keep the same type, spacing, contrast, and interaction feedback. */
+.demos-shell :is(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
+.demo-frame {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--demo-fg);
+  background: var(--color-surface);
+  border: 1px solid var(--demo-hair);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-panel);
+}
+
+.demo-panel {
+  color: var(--demo-fg);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  border: 1px solid var(--demo-hair-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elevation-panel);
+  backdrop-filter: blur(20px);
+}
+
+.demo-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--demo-hair);
+  border-radius: var(--radius-md);
+}
+
+.demo-stat {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 6rem;
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-left: 1px solid var(--demo-hair);
+}
+
+.demo-stat dt,
+.demo-stat__label {
+  color: var(--demo-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.demo-stat dd,
+.demo-stat__value {
+  margin: 0;
+  color: var(--demo-fg);
+  font-size: var(--type-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-code-panel {
+  overflow: auto;
+  color: var(--color-text-secondary);
+  background: var(--color-canvas);
+  border: 1px solid var(--demo-hair);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1.7;
+}
+
+.demo-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 2.75rem;
+  padding: 0.7rem 1.15rem;
+  color: var(--color-canvas);
+  background: var(--demo-accent);
+  border: 1px solid var(--demo-accent);
+  border-radius: var(--radius-pill);
+  font: 700 var(--type-sm)/1.25 var(--font-body);
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform var(--duration-standard) var(--ease-out), box-shadow var(--duration-standard) var(--ease-out);
+}
+
+.demo-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--demo-accent) 25%, transparent);
+}
+
+.demo-action:active { transform: translateY(0); }
+.demo-action--quiet {
+  color: var(--demo-fg);
+  background: var(--color-surface);
+  border-color: var(--demo-hair-strong);
+}
+
+.demos-topbar {
+  height: 3.5rem;
+  padding-inline: var(--space-lg);
+  background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
+}
+
+.demos-topbar__crumb {
+  gap: 0.65rem;
+  font-size: var(--type-sm);
+}
+
+.demos-topbar__section { color: var(--demo-fg); font-weight: 700; }
+.demos-topbar__edition {
+  color: var(--demo-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.demos-topbar__edition span { padding-inline: 0.35rem; color: var(--demo-accent); }
+.demos-topbar__menu-label { display: none; }
+
+.demos-body { grid-template-columns: 14.75rem minmax(0, 1fr); }
+.demo-dock { background: var(--color-canvas); }
+.demo-dock__header {
+  padding: var(--space-lg) var(--space-md) var(--space-md);
+  border-bottom: 1px solid var(--demo-hair);
+}
+.demo-dock__header p {
+  margin: 0 0 0.35rem;
+  color: var(--demo-muted);
+  font: 500 var(--type-xs)/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.demo-dock__overview {
+  display: flex;
+  justify-content: space-between;
+  color: var(--demo-fg);
+  font-size: var(--type-base);
+  font-weight: 750;
+  text-decoration: none;
+}
+.demo-dock__overview span { color: var(--demo-accent); }
+.demo-dock__list { padding: var(--space-sm) 0; counter-reset: study; }
+.demo-dock__item { padding-inline: 0.5rem; counter-increment: study; }
+.demo-dock__link { gap: 0.65rem; padding: 0.75rem 0.6rem; border-radius: var(--radius-sm); }
+.demo-dock__dot {
+  width: 1.25rem;
+  height: auto;
+  color: var(--demo-muted);
+  background: none;
+  border-radius: 0;
+  opacity: 1;
+  font: 500 0.65rem/1.5 var(--font-mono);
+}
+.demo-dock__dot::before { content: counter(study, decimal-leading-zero); }
+.demo-dock__title { font-size: 0.82rem; font-weight: 700; }
+.demo-dock__tag { font-size: 0.68rem; }
+.demo-dock__chip { display: none; }
+.demo-dock__item[aria-current="page"] > .demo-dock__link,
+.demo-dock__link[aria-current="page"] {
+  background: color-mix(in srgb, var(--demo-accent) 11%, var(--color-surface));
+  box-shadow: inset 2px 0 var(--demo-accent);
+}
+.demo-dock__item[aria-current="page"] .demo-dock__dot,
+.demo-dock__link[aria-current="page"] .demo-dock__dot { color: var(--demo-accent); }
+.demo-meta { justify-content: flex-end; padding: 0.55rem var(--space-lg); background: var(--color-canvas); }
+.demo-meta__pill { min-height: 2.25rem; padding-inline: 0.9rem; font-size: var(--type-xs); border-radius: var(--radius-pill); }
+.demo-details { background: var(--color-surface); box-shadow: var(--elevation-popover); }
+
+/* The index is its own catalogue; the rail serves the individual studies. */
+.demos-shell[data-demo-slug=""] .demos-body { grid-template-columns: minmax(0, 1fr); }
+.demos-shell[data-demo-slug=""] .demo-dock,
+.demos-shell[data-demo-slug=""] .demo-meta { display: none; }
+.demos-shell[data-demo-slug=""] .demos-body[data-dock-open] .demo-dock { display: block; }
+.demos-shell[data-demo-slug=""]:has(.demos-topbar__menu-wrap[open]) .demo-dock { display: block; transform: translateX(0); }
+.demos-shell:has(.demos-topbar__menu-wrap[open]) .demo-dock { transform: translateX(0); }
+.demos-topbar__menu { list-style: none; cursor: pointer; }
+.demos-topbar__menu::-webkit-details-marker { display: none; }
+
+.site-shell:has(.demos-shell) > .pill-nav {
+  background: rgba(12, 23, 32, 0.96);
+  border-bottom-color: rgba(226, 235, 235, 0.13);
+}
+
+@media (max-width: 900px) {
+  .demos-body { grid-template-columns: minmax(0, 1fr); }
+  .demos-topbar { padding-inline: var(--space-md); }
+  .demos-topbar__edition { display: none; }
+  .demos-topbar__menu { display: inline-flex; flex-direction: row; gap: 0.3rem; padding: 0.45rem 0.75rem; border: 1px solid var(--demo-hair-strong); border-radius: var(--radius-pill); }
+  .demos-topbar__menu-label { display: inline; margin-right: 0.3rem; font: 700 var(--type-xs)/1.2 var(--font-body); }
+  .demos-topbar__menu-bar { display: none; }
+  .demo-dock { top: calc(var(--demo-site-nav-offset) + 3.5rem); width: min(20rem, 88vw); box-shadow: var(--elevation-popover); }
+  .demo-meta { padding-inline: var(--space-md); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-action { transition: none; }
+  .demo-action:hover { transform: none; }
 }

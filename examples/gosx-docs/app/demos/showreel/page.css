@@ -1,0 +1,36 @@
+.orbital-study {
+  position: relative;
+  min-height: calc(100svh - var(--demo-site-nav-offset) - 3.5rem);
+  overflow: hidden;
+  background: radial-gradient(circle at 64% 40%, #263f48, #0c1720 65%);
+  color: #f5eee3;
+}
+.orbital-study__scene { position: absolute; inset: 0; }
+.orbital-study__scene > *, .orbital-study__scene canvas { width: 100%; height: 100%; }
+.orbital-study__scene canvas { display: block; touch-action: none; }
+.orbital-study__intro {
+  position: absolute;
+  left: var(--space-xl);
+  bottom: var(--space-xl);
+  width: min(29rem, calc(100% - 2 * var(--space-xl)));
+  box-sizing: border-box;
+  padding: var(--space-lg);
+  border: 1px solid rgba(245, 238, 227, 0.16);
+  border-radius: var(--radius-md);
+  background: rgba(12, 23, 32, 0.89);
+  box-shadow: var(--elevation-panel);
+  pointer-events: none;
+}
+.orbital-study__eyebrow, .orbital-study__hint {
+  color: #f6ba77;
+  font: 700 var(--type-xs)/1.5 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.orbital-study h1 { margin: var(--space-xs) 0; font: 800 var(--type-2xl)/1.05 var(--font-display); letter-spacing: -0.04em; }
+.orbital-study p { line-height: 1.55; }
+.orbital-study__intro > a { display: inline-flex; min-height: 2.5rem; align-items: center; color: #f6ba77; pointer-events: auto; }
+@media (max-width: 700px) {
+  .orbital-study__intro { left: var(--space-md); right: var(--space-md); bottom: var(--space-md); width: auto; padding: var(--space-md); }
+  .orbital-study h1 { font-size: var(--type-xl); }
+}
