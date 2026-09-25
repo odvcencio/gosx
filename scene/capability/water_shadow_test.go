@@ -144,26 +144,14 @@ func TestWaterSimAndTexturePassStayTrueOnWebGL(t *testing.T) {
 	}
 }
 
-// TestIBLTruthMatchesRuntimeConsumers pins the split capability cell: WebGPU
-// consumes the prefiltered products unconditionally, WebGL2 consumes the same
-// products but only above the 20-fragment-texture-unit gate.
-//
-// Both renderers consume assetpipe's radiance cube, irradiance cube and
-// split-sum BRDF LUT. WebGPU has no texture-unit budget to negotiate — RGBA16F
-// cube sampling is unconditional in core WebGPU — so its cell is true. WebGL2
-// must compile a bounded legacy variant on the spec-minimum 16-fragment-sampler
-// devices because the full material + CSM + IBL layout needs 20, so its cell
-// stays false: claiming the feature at the matrix level would hide that
-// deterministic degradation. See ibl_test.go for the same reasoning read as
-// two independent corroboration tests.
+// TestIBLTruthMatchesRuntimeConsumers pins split-sum IBL on both backends.
 func TestIBLTruthMatchesRuntimeConsumers(t *testing.T) {
 	if !Matrix[FeatureIBL][BackendWebGPU] {
 		t.Error("the ibl cell for webgpu must be true: syncEnvironmentIBL consumes the prefiltered " +
 			"products unconditionally, with no texture-unit budget to negotiate")
 	}
-	if Matrix[FeatureIBL][BackendWebGL] {
-		t.Error("the ibl cell for webgl must stay false: the consumer only activates at " +
-			">= 20 fragment texture units")
+	if !Matrix[FeatureIBL][BackendWebGL] {
+		t.Error("WebGL2 IBL fits the core minimum with depth-array shadows")
 	}
 
 	webgl := readRenderer(t, webglWaterShadowPath)
@@ -195,9 +183,8 @@ func TestIBLTruthMatchesRuntimeConsumers(t *testing.T) {
 		}
 	}
 
-	// This explicit resource gate is why FeatureIBL stays false despite the real
-	// capable-device path above. Keep the matrix and diagnostic coupled.
-	for _, marker := range []string{"maxUnits >= 20", "fragment-texture-units<20"} {
+	// The gate now matches the core minimum.
+	for _, marker := range []string{"maxUnits >= 16", "fragment-texture-units<16"} {
 		if !strings.Contains(webgl, marker) {
 			t.Errorf("expected staged WebGL2 IBL resource gate %q", marker)
 		}

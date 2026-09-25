@@ -73,8 +73,8 @@ func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
 	if ir.BackendCaps == nil || !reflect.DeepEqual(ir.BackendCaps.Capable, []capability.Backend{capability.BackendWebGPU, capability.BackendWebGL}) {
 		t.Fatalf("renderer honesty verdict = %#v, want WebGPU and WebGL2", ir.BackendCaps)
 	}
-	if !reflect.DeepEqual(ir.BackendCaps.Degraded[capability.BackendWebGL], []capability.Feature{capability.FeatureIBL, capability.FeatureComputeParts}) {
-		t.Fatalf("WebGL2 must report IBL device limits and its CPU particle mirror: %#v", ir.BackendCaps.Degraded)
+	if !reflect.DeepEqual(ir.BackendCaps.Degraded[capability.BackendWebGL], []capability.Feature{capability.FeatureComputeParts}) {
+		t.Fatalf("WebGL2 must support IBL and report its CPU particle mirror: %#v", ir.BackendCaps.Degraded)
 	}
 	if water.RenderPool == nil || *water.RenderPool || water.WaveSpeed > 1 || water.SurfaceSelenaWGSL == "" || water.SurfaceFragmentGLES == "" {
 		t.Fatal("cove must keep the stable Selena water surface without a tank")

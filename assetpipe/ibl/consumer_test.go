@@ -40,7 +40,7 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 			t.Errorf("the WebGL IBL consumer is missing %q in %s", marker, webglRendererPath)
 		}
 	}
-	for _, marker := range []string{"maxUnits >= 20", "fragment-texture-units<20"} {
+	for _, marker := range []string{"maxUnits >= 16", "fragment-texture-units<16"} {
 		if !strings.Contains(source, marker) {
 			t.Errorf("the WebGL staged capability gate is missing %q", marker)
 		}
@@ -190,6 +190,6 @@ func TestIBLMatrixCellsAreRecorded(t *testing.T) {
 	}
 	t.Logf("capability.Matrix[ibl] = webgpu:%v webgl:%v", row[capability.BackendWebGPU], row[capability.BackendWebGL])
 	if row[capability.BackendWebGL] {
-		t.Log("the WebGL cell is true; verify the 18-unit staged gate has become universal before keeping it")
+		t.Log("the WebGL cell is true; depth arrays allow IBL at the core 16-unit minimum")
 	}
 }

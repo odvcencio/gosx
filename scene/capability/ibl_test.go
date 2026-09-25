@@ -1,7 +1,6 @@
 package capability
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -39,44 +38,16 @@ func TestWebGPUConsumesIBLProducts(t *testing.T) {
 		"budget to negotiate, so the cell is unconditionally true.")
 }
 
-// TestWebGL2GatesIBLOnTwentyUnits corroborates the false WebGL2 cell WITH
-// the evidence that the consumer exists and stays gated, not evidence that it
-// is missing. A cell answers an unconditional question; scenePBRHDRIBLAvailable
-// answers a conditional one, and the two must not be conflated.
-func TestWebGL2GatesIBLOnTwentyUnits(t *testing.T) {
+// TestWebGL2ConsumesIBLAtTheCoreMinimum ties the capability to the depth-array
+// implementation. Browser tests also link and draw this shader on 16-unit GL.
+func TestWebGL2ConsumesIBLAtTheCoreMinimum(t *testing.T) {
 	webgl := readRenderer(t, webglRendererPath)
-	missingConsumer := missingSymbols(webglRendererPath, webgl,
-		"u_iblIrradiance", "u_iblRadiance", "u_iblBRDFLUT", "GOSX_HDR_IBL",
-	)
-	if len(missingConsumer) > 0 {
-		t.Fatalf("WebGL2 IBL consumer symbols are missing, so the gate below cannot be read as "+
-			"'consumer exists, cell stays false, reason is the unit gate': %v", missingConsumer)
-	}
-	missingGate := missingSymbols(webglRendererPath, webgl,
-		"maxUnits >= 20", "scenePBRHDRIBLAvailable",
-	)
-	if len(missingGate) > 0 {
-		t.Fatalf("the 20 fragment-texture-unit gate moved or was renamed; update this test and the "+
-			"Matrix[ibl][webgl] prose together: %v", missingGate)
-	}
-	if Matrix[FeatureIBL][BackendWebGL] {
-		t.Fatal("Matrix[ibl][webgl] is true, but the WebGL2 consumer only activates at " +
-			">= 20 fragment texture units (scenePBRHDRIBLAvailable). An unconditional cell " +
-			"must answer for the minimum spec device, so it must stay false. Either the gate " +
-			"was removed (flip the cell) or this cell was flipped by mistake (flip it back).")
-	}
-}
-
-// TestWebGL2IBLGateHasSHFallbackReason pins the diagnostics reason string a
-// gated device must report once the SH9 irradiance fallback lands (PR-8). It
-// stays a refutedBy read — the fallback is not required to exist yet — so
-// this test only fails if the reason string appears with a different spelling
-// than the one PR-8 is committed to.
-func TestWebGL2IBLGateHasSHFallbackReason(t *testing.T) {
-	webgl := strings.ToLower(readRenderer(t, webglRendererPath))
-	if strings.Contains(webgl, "sh-irradiance") && !strings.Contains(webgl, "fragment-texture-units<20 -> sh-irradiance") {
-		t.Fatal(`found a "sh-irradiance" reason string that does not match the pinned spelling ` +
-			`"fragment-texture-units<20 -> sh-irradiance"; keep the diagnostics reason stable so a ` +
-			`caller can match on it`)
-	}
+	evidenceFor(t, FeatureIBL, BackendWebGL).
+		needs(webglRendererPath, webgl,
+			"uniform highp sampler2DArray u_shadowMap0;",
+			"uniform highp sampler2DArray u_shadowMap1;",
+			"gl.framebufferTextureLayer", "gl.texImage3D",
+			"maxUnits >= 16", "textureLod(u_iblRadiance",
+			"u_iblIrradiance", "u_iblBRDFLUT").
+		assertAgrees("Two depth arrays preserve four cascades per light and fit IBL at the WebGL2 core minimum.")
 }

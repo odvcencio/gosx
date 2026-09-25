@@ -36,10 +36,9 @@ type ConsumerRequirement struct {
 // ConsumerRequirements lists everything a correct image-based-lighting consumer
 // needs for the products this package bakes.
 //
-// The IR carrier and both renderer consumers are present. WebGL2 activates the
-// full path when at least 18 fragment texture units are available and reports a
-// deterministic degradation otherwise; the unconditional FeatureIBL matrix
-// cell therefore remains false even though the consumer pieces below exist.
+// The IR carrier and both renderer consumers are present. WebGL2 stores
+// cascades in depth texture arrays, so all IBL products fit alongside eight
+// material maps and two shadow lights on a 16-fragment-sampler device.
 //
 // The build side is complete: the specular cubemap, the diffuse irradiance
 // cubemap, the spherical-harmonic sidecar, and the split-sum lookup table all
