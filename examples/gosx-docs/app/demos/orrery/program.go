@@ -52,7 +52,7 @@ func LodestarMeridianProgram() scene.Props {
 		Width: 1280, Height: 720,
 		Label:      "Lodestar Meridian — clockwork star-system engine",
 		AriaLabel:  "Lodestar Meridian, a clockwork orrery with a glowing heart, three spinning armatures, three orbiting planets, and a transit moon that triggers a flare",
-		Background: "#010104", Controls: "orbit", AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
+		Background: "#050d18", Controls: "orbit", AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
 		PreferWebGPU: scene.Bool(true), CanvasAlpha: scene.Bool(false),
 		UnsupportedMessage: "Interactive 3D is unavailable in this browser. The Lodestar Meridian explanation and source links remain available beside the canvas.",
 		Stats:              scene.Bool(true),
@@ -61,13 +61,13 @@ func LodestarMeridianProgram() scene.Props {
 		AdaptiveQuality: scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 18, AdaptivePostFX: scene.Bool(true),
 		Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 3.4, 9.8), FOV: 45, Near: 0.1, Far: 90},
 		Environment: scene.Environment{
-			AmbientColor: "#8b899c", AmbientIntensity: 0.38,
-			FogColor: "#03030a", FogDensity: 0.026,
+			AmbientColor: "#adc5cf", AmbientIntensity: 0.68,
+			FogColor: "#050d18", FogDensity: 0.012,
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels540p, Effects: []scene.PostEffect{
-			scene.Bloom{Threshold: 0.72, Strength: 0.55, Radius: 8, Scale: 0.35},
-			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.12},
-			scene.Vignette{Intensity: 0.4},
+			scene.Bloom{Threshold: 0.8, Strength: 0.42, Radius: 8, Scale: 0.35},
+			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.18},
+			scene.Vignette{Intensity: 0.16},
 			scene.FXAA{},
 		}},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels512},
@@ -80,25 +80,25 @@ func LodestarMeridianProgram() scene.Props {
 // so reordering this list would silently retarget the choreography. The
 // builder resolves indices by stable node ID instead of hardcoding numbers.
 func orreryNodes() []scene.Node {
-	iron := scene.StandardMaterial{Color: "#15151a", Roughness: 0.38, Metalness: 0.55, Clearcoat: 0.5, Wireframe: scene.Bool(false)}
-	brass := scene.StandardMaterial{Color: "#b08d4f", Roughness: 0.34, Metalness: 0.92, Clearcoat: 0.35, Wireframe: scene.Bool(false)}
-	glassArmature := scene.StandardMaterial{Color: "#413a5c", Roughness: 0.28, Metalness: 0.74, Clearcoat: 0.58, Wireframe: scene.Bool(false)}
-	copper := scene.StandardMaterial{Color: "#c98a5a", Roughness: 0.36, Metalness: 0.85, Clearcoat: 0.4, Wireframe: scene.Bool(false)}
+	iron := scene.StandardMaterial{Color: "#35434e", Roughness: 0.5, Metalness: 0.32, Clearcoat: 0.2, Wireframe: scene.Bool(false)}
+	brass := scene.StandardMaterial{Color: "#d8ae70", Roughness: 0.42, Metalness: 0.38, Clearcoat: 0.28, Wireframe: scene.Bool(false)}
+	glassArmature := scene.StandardMaterial{Color: "#828bb7", Roughness: 0.38, Metalness: 0.3, Clearcoat: 0.42, Wireframe: scene.Bool(false)}
+	copper := scene.StandardMaterial{Color: "#cf825b", Roughness: 0.42, Metalness: 0.4, Clearcoat: 0.28, Wireframe: scene.Bool(false)}
 	porcelain := scene.StandardMaterial{Color: "#e8e6df", Roughness: 0.5, Metalness: 0.05, Clearcoat: 0.3, Wireframe: scene.Bool(false)}
 	verdigris := scene.StandardMaterial{Color: "#5da58f", Roughness: 0.55, Metalness: 0.35, Clearcoat: 0.3, Wireframe: scene.Bool(false)}
 	darkmoon := scene.StandardMaterial{Color: "#101014", Roughness: 0.8, Metalness: 0.2, Wireframe: scene.Bool(false)}
 
 	nodes := []scene.Node{
 		scene.DirectionalLight{
-			ID: "orrery-key", Color: "#cdd7ff", Intensity: 1.15,
+			ID: "orrery-key", Color: "#fff1db", Intensity: 2.1,
 			Direction: scene.Vec3(-0.5, -1, -0.42), CastShadow: true, ShadowBias: -0.001, ShadowSize: 512,
 		},
 		scene.PointLight{
-			ID: "orrery-heart-light", Color: "#c9bcfd", Intensity: 2.9,
-			Position: scene.Vec3(0, orreryHeartY, 0), Range: 13, Decay: 2,
+			ID: "orrery-heart-light", Color: "#ccb9ff", Intensity: 4.1,
+			Position: scene.Vec3(0, orreryHeartY, 0), Range: 16, Decay: 2,
 		},
 		scene.HemisphereLight{
-			ID: "orrery-horizon", SkyColor: "#2b2547", GroundColor: "#0b0b0d", Intensity: 0.4,
+			ID: "orrery-horizon", SkyColor: "#6680a0", GroundColor: "#28313b", Intensity: 0.8,
 		},
 
 		// Observatory dais: two stepped iron tiers carrying the engraved
@@ -125,7 +125,7 @@ func orreryNodes() []scene.Node {
 		scene.Mesh{
 			ID:            "orrery-heart",
 			Geometry:      scene.SphereGeometry{Radius: 0.62, Segments: 22},
-			Material:      scene.StandardMaterial{Color: "#2a2340", Roughness: 0.3, Metalness: 0.4, Clearcoat: 0.5, Emissive: 0.12, Wireframe: scene.Bool(false)},
+			Material:      scene.StandardMaterial{Color: "#8773bf", Roughness: 0.38, Metalness: 0.22, Clearcoat: 0.45, Emissive: 0.35, Wireframe: scene.Bool(false)},
 			Position:      scene.Vec3(0, orreryHeartY, 0),
 			CastShadow:    true,
 			MaterialAnims: []scene.MaterialUniformAnim{orreryHeartEmissiveAnim()},
@@ -133,7 +133,7 @@ func orreryNodes() []scene.Node {
 		scene.Mesh{
 			ID:       "orrery-heart-halo",
 			Geometry: scene.TorusGeometry{Radius: 0.95, Tube: 0.035, RadialSegments: 8, TubularSegments: 56},
-			Material: scene.StandardMaterial{Color: "#17131f", Roughness: 0.3, Metalness: 0.5, Emissive: 0.06, Wireframe: scene.Bool(false)},
+			Material: scene.StandardMaterial{Color: "#554d7d", Roughness: 0.42, Metalness: 0.2, Emissive: 0.24, Wireframe: scene.Bool(false)},
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/2.6, 0.2, 0),
 			CastShadow:    true,
 			MaterialAnims: []scene.MaterialUniformAnim{orreryHaloEmissiveAnim()},
