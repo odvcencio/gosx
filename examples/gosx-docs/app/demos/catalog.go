@@ -26,6 +26,15 @@ type DemoDefinition struct {
 
 var demoCatalog = []DemoDefinition{
 	{
+		Slug: "showreel", Title: "Orbital sculpture", Tag: "interactive scene study",
+		Promise: "Turn a composed sculpture built from typed Go scene data.",
+		Lesson:  "Scene3D renders a small, asset-free graph of geometry, lighting, materials, and post effects.",
+		Accent:  "#f6ba77", Facets: []string{"Scene3D", "PBR", "PostFX"},
+		SourcePath: "examples/gosx-docs/app/demos/showreel.go", Packages: []string{"scene", "route"},
+		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations: "The scene is still until you orbit it. WebGPU needs browser and hardware support; WebGL2 is the fallback.",
+	},
+	{
 		Slug: "checkers", Title: "Chinese Checkers", Tag: "playable Go strategy table",
 		Promise: "Play a revisioned two-seat match on a complete 121-hole Scene3D table with animated hop paths, four CPU difficulty tiers, and three selectable Selena material families.",
 		Lesson:  "GoSX keeps legality, replay, and CPU search in deterministic Go; a Hub owns turns, Selena owns optics, Arbiter-ready policies bound search posture, and optional Elio hints retain a Go CPU fallback.",

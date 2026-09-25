@@ -2,7 +2,13 @@ package fluid
 
 func Page() Node {
 	return <section class="fluid" aria-label="Server-streamed velocity field">
-		<h1 class="visually-hidden">Velocity Field</h1>
+		<header class="fluid__intro">
+			<p>Simulation / Live stream</p>
+			<h1>Velocity Field</h1>
+			<span>
+				Watch particles trace a field computed on the server. Drag across the canvas to bend their path.
+			</span>
+		</header>
 		<div class="fluid__frame">
 			<canvas
 				id="fluid-canvas"
@@ -12,7 +18,7 @@ func Page() Node {
 				aria-label="particle flow canvas"
 			></canvas>
 			<div class="fluid__hud">
-				<div class="fluid__hud-title">VELOCITY FIELD</div>
+				<div class="fluid__hud-title">Live telemetry</div>
 				<div class="fluid__stat">
 					<span class="fluid__stat-label">STATE</span>
 					<b class="fluid__stat-value" id="fluid-state" role="status">connecting…</b>
@@ -56,7 +62,7 @@ func Page() Node {
 		</div>
 		<footer class="fluid__footer">
 			<span>
-				GoSX Field → 6-bit keyframes/deltas → Hub at 20 Hz · browser decodes one slice and renders particles · drag inside the canvas for a visual-only nudge (client-side presentation effect, does not touch the server field)
+				The server sends a compact field at 20 Hz. Your drag changes only this browser's particle view.
 			</span>
 		</footer>
 		<script src="/fluid-client.js" defer></script>

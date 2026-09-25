@@ -62,7 +62,7 @@ func blackglassViewPose(contract BlackglassCoastContract, raw string) (scene.Vec
 	default:
 		// The Studio opening marker is an overlook anchor. Step back along the
 		// shelf so the foreground rock frames the cove instead of filling it.
-		return contract.Local(scene.Vec3(opening.Position.X-4, opening.Position.Y+1.8, opening.Position.Z+1)), contract.Local(scene.Vec3(-3, 1.7, -4))
+		return contract.Local(scene.Vec3(opening.Position.X-4, opening.Position.Y+1.8, opening.Position.Z+1)), contract.Local(scene.Vec3(1, 1.7, -4))
 	}
 }
 

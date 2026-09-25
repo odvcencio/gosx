@@ -265,3 +265,61 @@
 		animation-duration: 0s;
 	}
 }
+
+/* The coast is the hero; the controls read as one compact field instrument. */
+.beacon { background: #10232b; }
+.beacon__canvas [data-gosx-scene3d-stats] { display: none; }
+.beacon__intro {
+	top: var(--space-lg);
+	left: var(--space-lg);
+	width: min(27rem, calc(100% - 2 * var(--space-lg)));
+	box-sizing: border-box;
+	padding: var(--space-lg);
+	border: 1px solid rgba(245, 238, 227, 0.22);
+	border-radius: var(--radius-md);
+	background: rgba(11, 27, 34, 0.88);
+	box-shadow: var(--elevation-panel);
+	backdrop-filter: none;
+}
+.beacon__eyebrow { color: #efc486; font-size: var(--type-xs); letter-spacing: 0.09em; }
+.beacon h1 { margin: var(--space-xs) 0; font-size: clamp(2.25rem, 3.4vw, 3.6rem); line-height: 1.02; }
+.beacon__copy { max-width: 34ch; color: #d6dfdc; font-size: var(--type-sm); line-height: 1.6; }
+.beacon__telemetry { margin-top: var(--space-md); padding-top: var(--space-sm); font-size: var(--type-xs); }
+.beacon__dock {
+	right: var(--space-lg);
+	bottom: var(--space-lg);
+	width: min(42rem, calc(100% - 2 * var(--space-lg)));
+	box-sizing: border-box;
+	padding: var(--space-md);
+	border: 1px solid rgba(245, 238, 227, 0.25);
+	border-radius: var(--radius-md);
+	background: rgba(11, 27, 34, 0.94);
+	box-shadow: var(--elevation-panel);
+	backdrop-filter: none;
+}
+.beacon__dock-row { gap: var(--space-md); }
+.beacon__dock-group { flex: 1 1 15rem; }
+.beacon__dock-group p { margin-bottom: var(--space-xs); color: #efc486; font-size: var(--type-xs); }
+.beacon__dock nav { gap: 0.35rem; }
+.beacon__dock a {
+	min-height: 2.2rem;
+	box-sizing: border-box;
+	padding: 0.55rem 0.7rem;
+	border-radius: var(--radius-sm);
+	font: 700 var(--type-xs)/1.25 var(--font-body);
+	transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.beacon__controls, .beacon__facts { font-size: var(--type-xs); line-height: 1.5; }
+.beacon__controls { margin-top: var(--space-sm); }
+.beacon__facts summary { min-height: 2rem; align-content: center; }
+@media (max-width: 700px) {
+	.beacon__intro { top: var(--space-sm); left: var(--space-sm); width: calc(100% - 2 * var(--space-sm)); padding: var(--space-md); }
+	.beacon h1 { font-size: var(--type-xl); }
+	.beacon__copy { font-size: var(--type-sm); }
+	.beacon__telemetry { margin-top: var(--space-sm); padding-top: var(--space-xs); }
+	.beacon__dock { right: var(--space-sm); bottom: var(--space-sm); left: var(--space-sm); width: auto; max-height: 42%; padding: var(--space-sm); }
+	.beacon__dock-row { gap: var(--space-sm); }
+	.beacon__dock-group { flex: 1 1 100%; }
+	.beacon__dock a { min-height: 2rem; padding: 0.4rem 0.55rem; }
+	.beacon__controls, .beacon__facts { display: none; }
+}

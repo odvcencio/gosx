@@ -100,6 +100,7 @@
     [data-demo-slug="orrery"],
     [data-demo-slug="scene3d"],
     [data-demo-slug="scene3d-bench"],
+	[data-demo-slug="showreel"],
     [data-demo-slug="water"]
   ) {
     --color-canvas: #101820;
@@ -390,6 +391,8 @@
   flex: 1;
   min-height: 0;
 }
+
+.demo-viewport > .orbital-study { flex: 0 0 auto; }
 
 /* ------------------------------------------------------------
    Meta footer — three pill buttons at bottom of viewport

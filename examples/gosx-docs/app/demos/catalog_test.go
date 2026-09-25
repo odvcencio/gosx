@@ -15,8 +15,11 @@ import (
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 12 {
-		t.Fatalf("Demos() length = %d, want 12", len(Demos()))
+	if len(Demos()) != 13 {
+		t.Fatalf("Demos() length = %d, want 13", len(Demos()))
+	}
+	if _, ok := FindDemo("showreel"); !ok {
+		t.Fatal("the showreel route must have catalog metadata for the dock and details panel")
 	}
 	seen := make(map[string]bool, len(Demos()))
 	validStatus := map[string]bool{"featured": true, "live": true, "lab": true, "prototype": true}
@@ -315,7 +318,6 @@ func TestBespokeDemoScriptDebtDoesNotGrow(t *testing.T) {
 		"fluid/page.gsx":         true,
 		"livesim/page.gsx":       true,
 		"playground/page.gsx":    true,
-		"scene3d/page.gsx":       true,
 		"scene3d-bench/page.gsx": true,
 	}
 	root := repoPath(t, "examples/gosx-docs/app/demos")

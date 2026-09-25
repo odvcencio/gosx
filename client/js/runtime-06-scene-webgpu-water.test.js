@@ -838,12 +838,12 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   assert.match(waterPage, /Water, in motion\./);
   assert.match(waterPage, /jeantimex\/threejs-water/);
   assert.match(waterPage, /Press SPACEBAR to pause and unpause/);
-  assert.match(waterPage, /controlTargetY=\{-0\.5\}/);
+  assert.match(waterPage, /controlTargetY=\{0\}/);
   // gosx fmt renders the <Camera> tag with one attribute per line, so match
   // the camera-position contract per attribute rather than as a single line.
-  assert.match(waterPage, /x=\{1\.38\}/);
-  assert.match(waterPage, /y=\{1\.52\}/);
-  assert.match(waterPage, /z=\{2\.87\}/);
+  assert.match(waterPage, /x=\{1\.55\}/);
+  assert.match(waterPage, /y=\{2\.8\}/);
+  assert.match(waterPage, /z=\{2\.1\}/);
   assert.match(waterPage, /interactionProfile="water-object-drop-orbit"/);
   assert.match(waterPage, /interactionTarget="water-main"/);
   assert.match(waterPage, /interactionObject="Sphere"/);

@@ -28,7 +28,7 @@ func Page() Node {
 			</p>
 			<h1>Blackglass Coast</h1>
 			<p class="beacon__copy">
-				Explore a volcanic cove. A live tide flows between basalt shelves. A ruined arch marks the shore. The beacon burns above the far terrace.
+				Orbit a volcanic shore. Change the light, follow the beacon, and tap the tide.
 			</p>
 			<div class="beacon__telemetry" aria-live="polite">
 				<p>
