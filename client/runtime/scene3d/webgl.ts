@@ -1971,6 +1971,57 @@
 
   // Create an offscreen framebuffer with HDR color texture and optional depth texture.
   // Uses RGBA16F when EXT_color_buffer_float is available, RGBA8 otherwise.
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function sceneWebGLRenderTarget(canvas, frameMeta) {
+    return frameMeta && frameMeta.renderTarget || {
+      framebuffer: null, width: canvas.width || 1, height: canvas.height || 1, linear: false,
+    };
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRHasComposite(frameMeta) {
+    return Boolean(frameMeta && typeof frameMeta.compositeBeforePost === "function");
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRHasFrameData(mesh, points, instances, lines, frameMeta) {
+    return mesh || points || instances || lines || scenePBRHasComposite(frameMeta);
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRCompositePass(gl, frameMeta, target) {
+    if (scenePBRHasComposite(frameMeta)) frameMeta.compositeBeforePost(target);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRLineBundle(bundle, target, frameMeta) {
+    return Object.assign({}, bundle, {
+      outputLinear: target.linear,
+      surfaces: scenePBRHasComposite(frameMeta) ? [] : bundle.surfaces,
+    });
+  }
+
+  // The tide writes depth before these surfaces. A submerged panel stays hidden.
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function renderScenePBRSurfaces(gl, bundle, canvas, resources, target) {
+    if (!bundle || !resources || !Array.isArray(bundle.surfaces) || bundle.surfaces.length === 0) return;
+    target = target || sceneWebGLRenderTarget(canvas, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.viewport(0, 0, target.width, target.height);
+    resources.stateCache.blendMode = "";
+    resources.stateCache.depthMode = "";
+    var surfaceBundle = Object.assign({}, bundle, { outputLinear: target.linear });
+    renderSceneWebGLSurfaces(gl, surfaceBundle, target, resources, "opaque");
+    renderSceneWebGLSurfaces(gl, surfaceBundle, target, resources, "alpha");
+    renderSceneWebGLSurfaces(gl, surfaceBundle, target, resources, "additive");
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+    resources.stateCache.blendMode = "";
+    resources.stateCache.depthMode = "";
+  }
+
   function createScenePostFBO(gl, width, height, depthTexture) {
     var hdrSupported = Boolean(gl.getExtension("EXT_color_buffer_float"));
     var internalFormat = hdrSupported ? gl.RGBA16F : gl.RGBA8;
@@ -3927,9 +3978,9 @@
 
     function drawFrame(frameMeta) {
       if (disposed) return;
-      var width = canvas.width || 1;
-      var height = canvas.height || 1;
-      var aspect = width / Math.max(1, height);
+      var target = sceneWebGLRenderTarget(canvas, frameMeta);
+      var width = target.width, height = target.height;
+      var aspect = canvas.width / Math.max(1, canvas.height);
       var liveEntry = (lastBundle && Array.isArray(lastBundle.waterSystems) && lastBundle.waterSystems[0]) || entry;
       applyWaterQualityProfile(frameMeta);
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
@@ -4204,7 +4255,7 @@
         meshTextureReady = objectTextureSlotsReady[0] && objectTextureSlotsReady[1] && objectTextureSlotsReady[2];
       }
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
       gl.viewport(0, 0, width, height);
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
@@ -4853,7 +4904,7 @@
 	        clearPostTextureBindings();
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
 	        return {
-            width: sw,
+            framebuffer: sceneFBO.fbo, width: sw,
             height: sh,
             factor: factor,
             hdrSupported: sceneFBO.hdrSupported,
@@ -8556,7 +8607,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta)) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -8686,7 +8737,6 @@
 
       // --- Main Render Pass ---
 
-      // Determine if post-processing is active for this frame.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var usePostProcessing = postEffects.length > 0;
@@ -8697,6 +8747,7 @@
       // the main gl.viewport call must use render dims, not canvas dims.
       var renderW = canvas.width;
       var renderH = canvas.height;
+      var renderTarget = sceneWebGLRenderTarget(canvas, null);
 
       if (usePostProcessing) {
         if (!postProcessor) {
@@ -8708,6 +8759,7 @@
         var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
         renderW = scaled.width;
         renderH = scaled.height;
+        renderTarget = Object.assign({}, scaled, { linear: true });
       }
 
       // Resize viewport to the render target (scaled when postfx caps are active).
@@ -8798,7 +8850,7 @@
         // PBR passes changed GL state without updating the legacy cache.
         lineResources.stateCache.blendMode = "";
         lineResources.stateCache.depthMode = "";
-        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
+        renderSceneWebGLWorldBundle(gl, scenePBRLineBundle(bundle, renderTarget, frameMeta), renderTarget, lineResources, { meshObjects: false });
       }
 
       // Draw points entries (after meshes, before post-processing).
@@ -8810,9 +8862,8 @@
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
-      // Restore state.
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
+      // Complete the shared scene target before any post effect reads it.
+      scenePBRCompositePass(gl, frameMeta, renderTarget);
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
@@ -10937,23 +10988,9 @@
       };
     }
 
-    // The shared water/world path draws world color first, then blends the
-    // tide, then redraws only world surfaces. Water depth keeps a panel behind
-    // the tide submerged while panels in front remain legible.
-    function renderSurfaces(bundle) {
-      if (!bundle || !lineResources || !Array.isArray(bundle.surfaces) || bundle.surfaces.length === 0) return;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      // The water renderer changed GL state outside the legacy surface cache.
-      lineResources.stateCache.blendMode = "";
-      lineResources.stateCache.depthMode = "";
-      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "opaque");
-      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "alpha");
-      renderSceneWebGLSurfaces(gl, bundle, canvas, lineResources, "additive");
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
-      lineResources.stateCache.blendMode = "";
-      lineResources.stateCache.depthMode = "";
+    // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+    function renderSurfaces(bundle, target) {
+      renderScenePBRSurfaces(gl, bundle, canvas, lineResources, target);
     }
 
     const rigidImportedBatchProgram = ensureInstancedProgram();

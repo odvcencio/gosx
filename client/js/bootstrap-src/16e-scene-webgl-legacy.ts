@@ -111,6 +111,7 @@
       surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
       surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
       surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
+      surfaceOutputLinearLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_outputLinear") : null,
       floatType: typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406,
       arrayBuffer: typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892,
       staticDraw: typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4,
@@ -498,6 +499,7 @@
   function applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources) {
     const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
     const camera = sceneRenderCamera(bundle && bundle.camera);
+    gl.uniform1i(resources.surfaceOutputLinearLocation, bundle && bundle.outputLinear ? 1 : 0);
     if (typeof gl.uniform4f === "function" && resources.surfaceCameraLocation) {
       gl.uniform4f(resources.surfaceCameraLocation, camera.x, camera.y, camera.z, camera.fov);
     }
@@ -1211,9 +1213,12 @@
       "uniform sampler2D u_texture;",
       "uniform vec4 u_tint;",
       "uniform float u_emissive;",
+      "uniform bool u_outputLinear;",
       "void main() {",
       "  vec4 sampleColor = texture2D(u_texture, v_uv);",
       "  vec3 rgb = sampleColor.rgb * u_tint.rgb;",
+      // HTML rasters use RGBA8 sRGB bytes. Decode before the linear post chain.
+      "  if (u_outputLinear) rgb = mix(rgb / 12.92, pow((rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), rgb));",
       "  rgb *= 1.0 + max(u_emissive, 0.0) * 0.5;",
       "  gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(sampleColor.a * u_tint.a, 0.0, 1.0));",
       "}",

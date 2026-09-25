@@ -195,10 +195,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  // createSceneWaterWebGLResult builds the WebGL2 water runtime for a water
-  // scene. It is the single construction point shared by (a) the real A3
-  // capability-gate fallback (WebGPU unavailable / lost) and (b) the
-  // device-loss recovery path.
+  // Build water after capability fallback or device loss.
   function createSceneWaterWebGLResult(canvas, props, capability, fallbackReason) {
     var waterFactory = sceneWaterWebGLRendererFactory();
     if (!waterFactory) return null;
@@ -217,9 +214,7 @@ function gosxConfigureSceneScript(script, role, src) {
       return null;
     }
     if (!renderer) return null;
-    // The dedicated water renderer draws a tank and its surface. A coast with
-    // authored models also needs the PBR world in the same depth buffer.
-    // Render both passes into the same depth buffer.
+    // Water and authored models share color and depth before post processing.
     var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
     if (sceneDoc && Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) {
       var pbrFactory = sceneWebGLRendererFactory();
@@ -237,21 +232,23 @@ function gosxConfigureSceneScript(script, role, src) {
         // @ts-ignore TS7006 -- the bundle builder ships this JavaScript signature as written.
         render: function(bundle, viewport, frameMeta) {
           var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-          // Draw the world into the shared color and depth buffers first.
-          // The translucent tide then blends over distant geometry, while
-          // foreground geometry rejects it through the depth test. Keep the
-          // PBR post chain off because it uses a separate render target.
-          worldRenderer.render(Object.assign({}, bundle, { postEffects: [] }), viewport,
-            Object.assign({}, frameMeta, { compositeOverWater: false }));
-          waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
-            compositeWorld: true, clearComposite: false, background: bundle.background,
+          // The world owns the color/depth target and runs post effects once,
+          // after water and world surfaces have used that same target.
+          worldRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+            compositeOverWater: false,
+            // @ts-ignore TS7006 -- raw-source mount tests parse this signature as JavaScript.
+            compositeBeforePost: function(target) {
+              waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+                compositeWorld: true, clearComposite: false, background: bundle.background,
+                renderTarget: target,
+              }));
+              worldRenderer.renderSurfaces(bundle, target);
+            },
           }));
-          worldRenderer.renderSurfaces(bundle);
           compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
           compositeMS = Math.max(0.01, compositeAtMS - started);
         },
-        // The water timer covers only its pass, so its GPU value cannot
-        // describe this frame. Report the measured full CPU composite span.
+        // Report the full CPU composite; the water GPU timer covers one pass.
         pollPerformanceSample: function() {
           return compositeAtMS > 0 ? { durationMS: compositeMS, source: "cpu-water-world-composite", atMS: compositeAtMS } : null;
         },
@@ -280,7 +277,8 @@ function gosxConfigureSceneScript(script, role, src) {
         window.__gosx_scene3d_webgl_water = true;
       }
     } catch (_e) {}
-    return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: renderer.isWaterWorldComposite ? ["postfx"] : [] };
+    // @ts-ignore TS7018 -- an empty degradation list has no inferred element type.
+    return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: [] };
   }
 
   // sceneWaterWebGLAutoResult is the real A3 capability-gate selection: for a
