@@ -5,7 +5,7 @@ func Page() Node {
 		<header class="demos-landing__header">
 			<p class="demos-landing__eyebrow">
 				The GoSX demo studio
-				<span>/ 12 working studies</span>
+				<span>/ 13 working studies</span>
 			</p>
 			<h1 id="demos-landing-title" class="demos-landing__title">Build something you can feel.</h1>
 			<p class="demos-landing__desc">
@@ -13,7 +13,7 @@ func Page() Node {
 			</p>
 			<ul class="demos-landing__facts" aria-label="Showcase principles">
 				<li>
-					<strong>12</strong>
+					<strong>13</strong>
 					<span>Working demos</span>
 				</li>
 				<li>

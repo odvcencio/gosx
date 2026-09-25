@@ -20,7 +20,7 @@ func Layout() Node {
 			<span class="demos-topbar__edition">
 				Interactive field guide
 				<span aria-hidden="true">·</span>
-				12 studies
+				13 studies
 			</span>
 			<details class="demos-topbar__menu-wrap">
 				<summary

@@ -1,6 +1,7 @@
 .orbital-study {
   position: relative;
-  min-height: calc(100svh - var(--demo-site-nav-offset) - 3.5rem);
+  height: max(34rem, calc(100svh - var(--demo-site-nav-offset) - 7rem));
+  min-height: 0;
   overflow: hidden;
   background: radial-gradient(circle at 64% 40%, #263f48, #0c1720 65%);
   color: #f5eee3;
