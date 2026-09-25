@@ -538,9 +538,9 @@
 .play__preview-frame { display: grid; place-items: center; min-height: 20rem; padding: var(--space-lg); color: #f7f2e8; background: #10212b; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .play__preview-frame [data-gosx-island] { color: #f7f2e8; }
 .play__preview-frame [data-gosx-island] > div { justify-content: center; gap: var(--space-sm); font: 700 1.65rem/1.2 var(--font-display); }
-.play__preview-frame [data-gosx-island] button { min-width: 2.75rem; min-height: 2.75rem; color: var(--demo-accent); background: color-mix(in srgb, var(--demo-accent) 12%, transparent); border-color: color-mix(in srgb, var(--demo-accent) 35%, transparent); border-radius: var(--radius-sm); font: 700 1rem var(--font-mono); }
-.play__preview-frame [data-gosx-island] button:hover { background: color-mix(in srgb, var(--demo-accent) 24%, transparent); }
-.play__preview-frame [data-gosx-island] button:focus-visible { outline: 2px solid var(--demo-accent); outline-offset: 2px; }
+.play__preview-frame [data-gosx-island] button { min-width: 2.75rem; min-height: 2.75rem; color: var(--color-stage-accent); background: color-mix(in srgb, var(--color-stage-accent) 12%, transparent); border-color: color-mix(in srgb, var(--color-stage-accent) 35%, transparent); border-radius: var(--radius-sm); font: 700 1rem var(--font-mono); }
+.play__preview-frame [data-gosx-island] button:hover { background: color-mix(in srgb, var(--color-stage-accent) 24%, transparent); }
+.play__preview-frame [data-gosx-island] button:focus-visible { outline: 2px solid var(--color-stage-accent); outline-offset: 2px; }
 .play__preview-status { color: var(--demo-muted); font: 0.75rem/1.4 var(--font-body); }
 .play[data-playground-state="compiling"] .play__preview-frame::after { background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--demo-accent) 16%, transparent) 50%, transparent 70%); background-size: 200% 100%; }
 .play__compiler { background: var(--color-surface); border-color: var(--color-border); border-radius: var(--radius-md); }
