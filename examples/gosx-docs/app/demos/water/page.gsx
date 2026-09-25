@@ -18,7 +18,7 @@ func Page() Node {
 			controls="orbit"
 			capabilityTier={data.diagCapabilityTier}
 			controlTargetX={0}
-			controlTargetY={-0.5}
+			controlTargetY={0}
 			controlTargetZ={0}
 			controlRotateMode="pixel-degrees"
 			controlRotateDirection="grab"
@@ -37,7 +37,7 @@ func Page() Node {
 			antialias={data.diagAntialias}
 			canvasAlpha={false}
 		>
-			<Camera x={1.38} y={1.52} z={2.87} fov={42} near={0.01} far={100} />
+			<Camera x={1.55} y={2.8} z={2.1} fov={38} near={0.01} far={100} />
 			<Environment
 				ambientColor="#a8cfda"
 				ambientIntensity={0.16}
