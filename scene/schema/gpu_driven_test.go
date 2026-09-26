@@ -99,19 +99,22 @@ func TestValidateJSONAcceptsLoweredGPUDriven(t *testing.T) {
 
 func TestJSONSchemaIncludesGPUDriven(t *testing.T) {
 	var doc struct {
-		Properties map[string]struct {
-			Type       string `json:"type"`
-			Properties map[string]struct {
-				Type string `json:"type"`
-			} `json:"properties"`
-		} `json:"properties"`
+		Properties map[string]json.RawMessage `json:"properties"`
 	}
 	if err := json.Unmarshal(JSONSchema(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	mode, ok := doc.Properties["gpuDriven"]
-	if !ok || mode.Type != "object" {
-		t.Fatalf("schema gpuDriven = %+v, want an object property", mode)
+	var mode struct {
+		Type       []string `json:"type"`
+		Properties map[string]struct {
+			Type string `json:"type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Properties["gpuDriven"], &mode); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(mode.Type, ",") != "object,null" {
+		t.Fatalf("schema gpuDriven type = %v, want object and null", mode.Type)
 	}
 	for _, key := range []string{"occlusion", "shadowCulling"} {
 		if mode.Properties[key].Type != "boolean" {

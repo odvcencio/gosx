@@ -71,7 +71,7 @@
       "minimum": 0
     },
     "gpuDriven": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": true,
       "properties": {
         "occlusion": { "type": "boolean" },
