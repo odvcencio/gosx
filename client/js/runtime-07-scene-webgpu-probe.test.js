@@ -472,7 +472,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
   assert.equal(diagnostics.retryCount, 1);
   assert.match(diagnostics.warnings[0], /external Instance/);
   assert.equal(diagnostics.adapterInfo.vendor, "retry-vendor");
-  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.deepEqual(Array.from(diagnostics.requestedFeatures), ["timestamp-query"]);
   assert.equal(diagnostics.deviceFeatures.length, 0);
 });
 
