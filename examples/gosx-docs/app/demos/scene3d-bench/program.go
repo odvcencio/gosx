@@ -35,6 +35,10 @@ func BenchScene(workload string) scene.Props {
 		return BenchMeshSwarmScene()
 	case "particles-storm":
 		return BenchParticlesStormScene()
+	case "gpu-driven":
+		return BenchGPUDrivenScene()
+	case "instanced-classic":
+		return BenchInstancedClassicScene()
 	case "mixed":
 		fallthrough
 	default:
