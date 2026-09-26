@@ -1741,8 +1741,9 @@ const routeBudgets = [
     // baseline accidentally described a dual-backend-era payload; use rounded
     // current-route baselines and let the shared policy govern future growth.
     raw: 1_250_000,
-    gzip: 335_000,
-    brotli: 282_000,
+    // Full-frame GPU timing adds 256 gzip bytes and 384 Brotli bytes after the G01 cache merge.
+    gzip: 335_256,
+    brotli: 282_384,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",

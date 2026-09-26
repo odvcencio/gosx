@@ -99,3 +99,30 @@ lanes are green, budget changes are backed by measurements, and real WebGPU
 hardware evidence exists for the release-pinned corpus. Passing the manifest
 shape test alone proves that the contract is coherent; it does not certify the
 blocked cases.
+
+## Frame completion timing
+
+`window.__gosx_scene3d_debug.inspect(surfaceID).frameTiming` gives a snapshot
+for the selected surface. Get IDs from `listSurfaces()`. Reading the snapshot
+does not consume the sample used by adaptive quality.
+
+- `gpuMS` is elapsed GPU time for the complete frame. WebGPU uses standard
+  timestamp writes before and after the frame encoder. WebGL uses
+  `EXT_disjoint_timer_query_webgl2` around the full render call. Both include
+  water, world geometry, and post effects. They exclude display scanout and
+  asset uploads that occur outside the frame.
+- `source` is `gpu-timestamp`, `webgl-timer`, or `none`. `scope` is `frame`.
+  `frameSeq` identifies the measured frame; asynchronous readback can lag the
+  current frame. `atMS` is the time when the result was read.
+- `status` is `measured`, `pending`, `unavailable`, `stale`, `disjoint`,
+  `failed`, or `disposed`. Only `measured` has a numeric `gpuMS`. A result is
+  stale one second after readback. Missing hardware timers do not produce a
+  CPU estimate in `gpuMS`.
+- `cpuSubmitMS` measures the CPU render call. `frameIntervalMS` measures the
+  time between render calls. `submitAtMS` identifies the latest CPU sample.
+  These values are separate from GPU time and can refer to a later frame.
+
+Each backend uses at most three frame queries. A full ring skips a timing
+sample without delaying rendering. Readback never waits inside the render
+call. WebGL discards all pending results after a disjoint event. A device or
+context loss invalidates GPU samples. Renderer replacement starts a new ring.

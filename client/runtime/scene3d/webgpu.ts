@@ -1,3 +1,20 @@
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneLatestGPUCompletion(previous, next) {
+    return previous && previous.frameSeq > next.frameSeq ? previous : next;
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneWebGPUCompletionSnapshot(status, sample, disposed, lost) {
+    var state = "measured";
+    if (!sample) state = "pending";
+    else if (performance.now() - sample.atMS > 1000) state = "stale";
+    if (!status.available) state = "unavailable";
+    if (status.failed || lost) state = "failed";
+    if (disposed) state = "disposed";
+    return Object.assign({ status: state, source: "gpu-timestamp", scope: "frame",
+      gpuMS: null, frameSeq: 0, atMS: 0 }, state === "measured" ? sample : {});
+  }
+
   // webgpu.ts — WebGPU rendering backend for GoSX Scene3D.
   // @ts-check
   //
@@ -6675,14 +6692,13 @@
     var webGPUFrameSeq = 0;
     var gpuTiming = null;
     var gpuTimingFailed = false;
-    // A device may advertise timestamp-query while its command encoder does
-    // not expose the encoder-level timestamp operations used by this ring.
-    // Keep feature discovery separate from an actually encodable timer so
-    // adaptive quality can fall back to display-frame timing instead of
-    // waiting forever on a query that can never be written.
+    // Standard pass timestamp writes bracket all commands in the frame encoder.
     var gpuTimingEncodingAvailable = null;
     var failedGPUTimings = [];
     var lastGPUPerformanceSample = null;
+    // @ts-ignore TS7034 -- readback initializes the frame sample asynchronously.
+    var lastGPUCompletionSample = null;
+    var gpuTimingDisposed = false;
     var gpuTimingFrameSeq = 0;
     var deferredWaterTextureRetirements = [];
     var deferredWaterSystemRetirements = [];
@@ -6726,6 +6742,7 @@
     var webGPUBundleCache = null;
 
     function ensureGPUTiming() {
+      if (gpuTimingDisposed) return false;
       if (gpuTiming !== null) return gpuTiming;
       gpuTiming = false;
       var candidateQuerySet = null;
@@ -6758,7 +6775,6 @@
         gpuTiming = {
           querySet: candidateQuerySet,
           slots: slots,
-          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         gpuTimingEncodingAvailable = null;
         gpuTimingFailed = false;
@@ -6798,6 +6814,7 @@
       if (!timing || timing === false) return;
       if (gpuTiming === timing) gpuTiming = false;
       gpuTimingFailed = true;
+      lastGPUCompletionSample = null;
       failedGPUTimings.push({ timing: timing, retireAfterFrame: gpuTimingFrameSeq + 3 });
       lastGPUPerformanceSample = null;
       if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
@@ -6832,19 +6849,23 @@
       if (!timing) return;
       for (var i = 0; i < timing.slots.length; i++) {
         var slot = timing.slots[i];
-        if (!slot.pending || slot.mapping || gpuTimingFrameSeq - slot.frameSeq < 2) continue;
+        if (!slot.pending || slot.mapping) continue;
         if (!slot.readback || typeof slot.readback.mapAsync !== "function") continue;
         slot.mapping = true;
         (function(activeTiming, activeSlot) {
           activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
             if (!activeSlot.readback || typeof activeSlot.readback.getMappedRange !== "function") return;
             var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-            if (gpuTiming === activeTiming && values.length >= 2 && values[1] >= values[0]) {
+            if (gpuTiming === activeTiming && values.length >= 2 && values[1] > values[0]) {
               lastGPUPerformanceSample = {
                 source: "gpu-timestamp",
-                gpuMS: Number(values[1] - values[0]) * activeTiming.timestampPeriodNS / 1000000,
+                scope: "frame",
+                frameSeq: activeSlot.frameSeq,
+                gpuMS: Number(values[1] - values[0]) / 1000000,
                 atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
               };
+              // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
+              lastGPUCompletionSample = sceneLatestGPUCompletion(lastGPUCompletionSample, lastGPUPerformanceSample);
               if (telemetryMount) {
                 telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPerformanceSample.gpuMS.toFixed(3));
                 telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured");
@@ -6856,6 +6877,7 @@
           }).catch(function() {
             activeSlot.pending = false;
             activeSlot.mapping = false;
+            if (gpuTiming === activeTiming) disableGPUTiming(activeTiming);
           });
         })(timing, slot);
         break;
@@ -6866,7 +6888,7 @@
       pollGPUTimingReadback();
       var timing = ensureGPUTiming();
       if (!timing || !encoder) return null;
-      if (typeof encoder.writeTimestamp !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
+      if (typeof encoder.beginComputePass !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
         gpuTimingEncodingAvailable = false;
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
         return null;
@@ -6877,7 +6899,9 @@
         var slot = timing.slots[slotIndex];
         if (!slot || slot.pending || slot.mapping) continue;
         try {
-          encoder.writeTimestamp(timing.querySet, slotIndex * 2);
+          encoder.beginComputePass({ label: "gosx-frame-timer-start", timestampWrites: {
+            querySet: timing.querySet, beginningOfPassWriteIndex: slotIndex * 2,
+          } }).end();
           gpuTimingEncodingAvailable = true;
           return { timing: timing, slot: slot, slotIndex: slotIndex };
         } catch (_timestampBeginError) {
@@ -6891,7 +6915,9 @@
     function endGPUFrameTiming(encoder, token) {
       if (!token) return;
       try {
-        encoder.writeTimestamp(token.timing.querySet, token.slotIndex * 2 + 1);
+        encoder.beginComputePass({ label: "gosx-frame-timer-end", timestampWrites: {
+          querySet: token.timing.querySet, endOfPassWriteIndex: token.slotIndex * 2 + 1,
+        } }).end();
         encoder.resolveQuerySet(token.timing.querySet, token.slotIndex * 2, 2, token.slot.resolve, 0);
         encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, 16);
         token.slot.pending = true;
@@ -6903,22 +6929,9 @@
       }
     }
 
-    // -----------------------------------------------------------------------
-    // Per-pass GPU timing
-    // -----------------------------------------------------------------------
-    //
-    // The frame timer above uses encoder.writeTimestamp. That call is NOT part
-    // of the WebGPU standard: it needed the timestamp-query-inside-passes
-    // feature, and Chromium removed it. On such an implementation
-    // gpuTimingEncodingAvailable goes false and the page gets no GPU time at
-    // all, so adaptive quality falls back to display-frame timing.
-    //
-    // The standard path is timestampWrites on the render-pass descriptor. It
-    // also gives something the frame timer never could: a time per pass. Four
-    // stamps per frame — shadow begin, shadow end, main begin, main end — yield
-    // the shadow cost, the main cost, and a whole-scene GPU time that works
-    // where writeTimestamp does not.
-    //
+    // Per-pass GPU timing.
+    // These optional pass counters describe shadow and main draws only.
+    // The frame timer also includes compute, water, picking and post effects.
     // Slot layout, per ring entry:
     //   0 shadow begin   1 shadow end   2 main begin   3 main end
     var SCENE_WEBGPU_PASS_STAMPS = 4;
@@ -6961,7 +6974,6 @@
         gpuPassTiming = {
           querySet: querySet,
           slots: slots,
-          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "pending");
       } catch (_passTimingError) {
@@ -7056,7 +7068,7 @@
           activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
             if (activeSlot.readback && typeof activeSlot.readback.getMappedRange === "function") {
               var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-              recordGPUPassSample(activeTiming, activeSlot, values);
+              recordGPUPassSample(activeSlot, values);
               activeSlot.readback.unmap();
             }
             activeSlot.pending = false;
@@ -7073,11 +7085,11 @@
     // recordGPUPassSample turns four raw timestamps into milliseconds. A zero or
     // decreasing pair means the implementation did not write that stamp, so the
     // reading is dropped rather than published as 0.
-    function recordGPUPassSample(timing, slot, values) {
+    function recordGPUPassSample(slot, values) {
       if (!values || values.length < SCENE_WEBGPU_PASS_STAMPS) return;
       var toMS = function(begin, end) {
         if (end <= begin) return -1;
-        return Number(end - begin) * timing.timestampPeriodNS / 1000000;
+        return Number(end - begin) / 1000000;
       };
       var shadowMS = slot.hasShadow ? toMS(values[0], values[1]) : 0;
       var mainMS = toMS(values[2], values[3]);
@@ -7099,37 +7111,14 @@
         telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-scene-ms", lastGPUPassSample.sceneMS.toFixed(3));
         telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
       }
-      // Feed the shared performance sample only when the non-standard
-      // encoder-level timer is unavailable. Where both work, the frame timer
-      // keeps ownership so its existing budget assertions stay comparable.
-      if (gpuTimingEncodingAvailable === false || gpuTiming === false) {
-        lastGPUPerformanceSample = {
-          source: "gpu-pass-timestamp",
-          gpuMS: lastGPUPassSample.sceneMS,
-          atMS: lastGPUPassSample.atMS,
-        };
-        if (telemetryMount) {
-          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPassSample.sceneMS.toFixed(3));
-          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured-pass");
-        }
-      }
+
     }
 
     function destroyGPUPassTimingResources() {
       var timing = gpuPassTiming;
       gpuPassTiming = null;
       gpuPassTimingSlot = null;
-      if (!timing || timing === false) return;
-      destroyRendererGPUResource(timing.querySet);
-      for (var i = 0; i < timing.slots.length; i++) {
-        var slot = timing.slots[i];
-        if (!slot) continue;
-        try {
-          if (slot.readback && slot.mapping && typeof slot.readback.unmap === "function") slot.readback.unmap();
-        } catch (_unmapError) {}
-        destroyRendererGPUResource(slot.resolve);
-        destroyRendererGPUResource(slot.readback);
-      }
+      destroyGPUTimingResources(timing);
     }
 
     function pollPerformanceSample() {
@@ -7138,6 +7127,12 @@
       var sample = lastGPUPerformanceSample;
       lastGPUPerformanceSample = null;
       return sample;
+    }
+
+    function getFrameTiming() {
+      pollGPUTimingReadback();
+      // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
+      return sceneWebGPUCompletionSnapshot(getPerformanceTimingStatus(), lastGPUCompletionSample, gpuTimingDisposed, lastDeviceLostInfo);
     }
 
     function getPerformanceTimingStatus() {
@@ -18725,8 +18720,8 @@
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       device.queue.submit([encoder.finish()]);
-      // Start the pick map AFTER submit. mapAsync resolves on a later task, so
-      // this adds no wait to the frame.
+      pollGPUTimingReadback();
+      // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
       webGPUSweepRetainedMeshBuffers();
       Object.assign(frameStats, webGPURetainedMeshFrameStats());
@@ -18754,6 +18749,8 @@
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
 
+      gpuTimingDisposed = true;
+      lastGPUCompletionSample = null;
       try { destroyGPUTimingResources(gpuTiming); } catch (_err) {}
       try { destroyGPUPassTimingResources(); } catch (_err) {}
       if (webGPUBundleCache) {
@@ -19100,6 +19097,7 @@
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,
+      getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
       render: render,
       dispose: dispose,

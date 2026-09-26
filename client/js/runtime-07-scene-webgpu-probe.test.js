@@ -352,25 +352,11 @@ test("Scene3D WebGPU probe keeps optional features opt-in for headless devices",
 
   assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
 
-  // The rule this test pins has TWO halves, and they differ by kind.
-  //
-  // A PERFORMANCE feature stays opt-in. timestamp-query, subgroups and
-  // shader-f16 make an already-correct frame faster or better measured, so a
-  // page that did not ask keeps a lean device and none are requested.
-  //
-  // A BLOCK-TEXTURE feature is NOT optional in the same sense. It is a
-  // prerequisite for content the SERVER may ship: the asset pipeline emits
-  // block-compressed KTX2 variants and the client selects one from the device
-  // token set. A feature cannot be added after requestDevice, so a device
-  // created without texture-compression-bc on a bc-capable adapter throws on
-  // every block upload. Requesting a feature the adapter already reports costs
-  // nothing when the page never uploads a block texture.
-  //
-  // So the descriptor now exists and carries exactly the compression features
-  // the adapter offers, and nothing else.
+  // Compression features permit uploaded assets. The timer permits frame
+  // telemetry on non-adaptive scenes. Other performance features stay opt-in.
   const requested = Array.from((requestedDescriptor && requestedDescriptor.requiredFeatures) || []);
-  assert.deepEqual(requested, ["texture-compression-bc"],
-    "a non-adaptive page must request the adapter's block-texture features and no performance features");
+  assert.deepEqual(requested, ["texture-compression-bc", "timestamp-query"],
+    "non-adaptive scenes can measure complete GPU frames");
 
   const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
   assert.equal(diagnostics.ready, true);
@@ -379,9 +365,9 @@ test("Scene3D WebGPU probe keeps optional features opt-in for headless devices",
   // so its arrays carry the sandbox Array.prototype and deepEqual reports
   // "same structure but not reference-equal" against a literal built here.
   const reported = Array.from(diagnostics.requestedFeatures);
-  assert.deepEqual(reported, ["texture-compression-bc"]);
+  assert.deepEqual(reported, ["texture-compression-bc", "timestamp-query"]);
   // The performance features stay off, which is the half that must not regress.
-  for (const perf of ["timestamp-query", "subgroups", "shader-f16", "indirect-first-instance"]) {
+  for (const perf of ["subgroups", "shader-f16", "indirect-first-instance"]) {
     assert.equal(reported.includes(perf), false,
       perf + " is a performance feature and must stay opt-in");
     assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:" + perf), false);
@@ -422,7 +408,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
     },
     requestDevice: async (descriptor) => {
       deviceRequests++;
-      assert.equal(descriptor, undefined);
+      assert.deepEqual(Array.from(descriptor.requiredFeatures), ["timestamp-query"]);
       throw new Error("A valid external Instance reference no longer exists.");
     },
   };
@@ -436,7 +422,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
     },
     requestDevice: async (descriptor) => {
       deviceRequests++;
-      assert.equal(descriptor, undefined);
+      assert.equal(descriptor, undefined, "retry keeps the default descriptor");
       return {
         lost: new Promise(() => {}),
         features: new Set(),
@@ -486,7 +472,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
   assert.equal(diagnostics.retryCount, 1);
   assert.match(diagnostics.warnings[0], /external Instance/);
   assert.equal(diagnostics.adapterInfo.vendor, "retry-vendor");
-  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.deepEqual(Array.from(diagnostics.requestedFeatures), ["timestamp-query"]);
   assert.equal(diagnostics.deviceFeatures.length, 0);
 });
 
