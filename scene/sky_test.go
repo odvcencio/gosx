@@ -91,32 +91,26 @@ func TestSkyLowersIntoCanonicalIR(t *testing.T) {
 	}
 }
 
-// TestCollectFeaturesRaisesSkyEnvironmentOnlyForEnvironmentMode proves
-// collectFeatures raises sky-environment for Sky.Mode == "environment" and
-// nothing for a gradient-only or absent sky, matching the row's doc comment:
-// gradient draws everywhere and earns no Matrix row.
-func TestCollectFeaturesRaisesSkyEnvironmentOnlyForEnvironmentMode(t *testing.T) {
-	t.Run("environment mode raises the feature", func(t *testing.T) {
-		props := Props{Environment: Environment{Sky: &Sky{Mode: "environment", HorizonColor: "#fff"}}}
-		got := featureSet(collectFeatures(props.SceneIR()))
-		if !got[capability.FeatureSkyEnvironment] {
-			t.Error("expected FeatureSkyEnvironment; not present")
-		}
-	})
-
-	t.Run("gradient mode raises nothing", func(t *testing.T) {
-		props := Props{Environment: Environment{Sky: &Sky{Mode: "gradient", TopColor: "#fff"}}}
-		got := featureSet(collectFeatures(props.SceneIR()))
-		if got[capability.FeatureSkyEnvironment] {
-			t.Error("gradient sky must not raise FeatureSkyEnvironment; it draws on every backend")
-		}
-	})
-
-	t.Run("no sky raises nothing", func(t *testing.T) {
-		props := Props{Environment: Environment{AmbientColor: "#fff"}}
-		got := featureSet(collectFeatures(props.SceneIR()))
-		if got[capability.FeatureSkyEnvironment] {
-			t.Error("a scene with no authored Sky must not raise FeatureSkyEnvironment")
-		}
-	})
+func TestSkyFeaturesMatchMode(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sky     *Sky
+		feature capability.Feature
+	}{
+		{"environment", &Sky{Mode: " ENVIRONMENT "}, capability.FeatureSkyEnvironment},
+		{"gradient", &Sky{Mode: "gradient"}, capability.FeatureSkyGradient},
+		{"implicit gradient", &Sky{TopColor: "#fff"}, capability.FeatureSkyGradient},
+		{"invalid", &Sky{Mode: "invalid"}, ""},
+		{"absent", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			props := Props{Environment: Environment{Sky: tc.sky}}
+			got := featureSet(collectFeatures(props.SceneIR()))
+			for _, f := range []capability.Feature{capability.FeatureSkyEnvironment, capability.FeatureSkyGradient} {
+				if got[f] != (tc.feature == f) {
+					t.Fatalf("feature %s = %v, want %v", f, got[f], tc.feature == f)
+				}
+			}
+		})
+	}
 }

@@ -1745,8 +1745,11 @@ const routeBudgets = [
     // 1_305_322 / 351_407 / 296_071. Gzip target 335_000 -> 335_100 is the
     // smallest 100-byte step that clears the hard limit.
     raw: 1_250_000,
-    gzip: 335_100,
-    brotli: 282_000,
+    // Full-frame GPU timing adds 256 gzip bytes and 384 Brotli bytes after the G01 cache merge.
+    // HDR presentation adds 128 gzip bytes; measured route: 351,690 bytes.
+    // Opt-in sky: measured route 353,377 gzip / 297,877 Brotli bytes.
+    gzip: 337_152,
+    brotli: 283_904,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
