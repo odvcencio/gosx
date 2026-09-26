@@ -252,6 +252,10 @@ type Props struct {
 	// window.__gosx.audio.registerManifest — see the Audio type
 	// (scene/audio.go) for the two-engine (gosxAudio/arcadeAudio) model.
 	Audio *Audio
+	// GPUDriven opts the scene into GPU-driven instancing on the WebGPU
+	// backend. Nil (the default) keeps the classic instanced path. See the
+	// GPUDriven type (scene/gpu_driven.go).
+	GPUDriven *GPUDriven
 }
 
 // Compression configures scalar quantization for Scene3D vertex data.
