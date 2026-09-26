@@ -515,6 +515,12 @@
     return Math.min(65535 * 64, Math.floor(binding / SCENE_GPU_DRIVEN_INSTANCE_BYTES));
   }
 
+  // sceneGPUDrivenInstanceCapacity keeps buffer growth within the admission
+  // limit used by selectOwned, so the full instance buffer remains bindable.
+  function sceneGPUDrivenInstanceCapacity(instances, limits) {
+    return Math.min(sceneGPUDrivenMaxInstances(limits), Math.max(64, Math.ceil(instances * 1.25)));
+  }
+
   // createSceneGPUDrivenHost makes the per-renderer host. hooks carries the
   // renderer's own factories, shader sources and instanced-mesh helpers, so
   // the host builds pipelines that match the renderer's without reading its
@@ -697,7 +703,7 @@
       var U = GPUBufferUsage;
       var grew = false;
       if (instances > capacityInstances) {
-        capacityInstances = Math.max(64, Math.ceil(instances * 1.25));
+        capacityInstances = sceneGPUDrivenInstanceCapacity(instances, device.limits || {});
         replaceBuffer("instances", capacityInstances * SCENE_GPU_DRIVEN_INSTANCE_BYTES, U.STORAGE | U.COPY_DST);
         replaceBuffer("visible", capacityInstances * 16, U.STORAGE | U.VERTEX);
         replaceBuffer("visibility", capacityInstances * 4, U.STORAGE | U.COPY_DST);
@@ -1260,6 +1266,7 @@
       sceneGPUDrivenFrustumPlanes,
       sceneGPUDrivenPackView,
       sceneGPUDrivenMaxInstances,
+      sceneGPUDrivenInstanceCapacity,
       sceneGPUDrivenPBRVertexWGSL,
       sceneGPUDrivenShadowVertexWGSL,
       SCENE_GPU_DRIVEN_CULL_WGSL,

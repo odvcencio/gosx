@@ -38,6 +38,12 @@ test("gpu-driven: pure helpers match appendix B", async () => {
   assert.equal(api.sceneGPUDrivenHiZLevels(1, 1).levels.length, 1);
   assert.equal(api.sceneGPUDrivenMaxInstances({}), 1398101);
   assert.equal(api.sceneGPUDrivenMaxInstances({ maxStorageBufferBindingSize: 1 << 30 }), 4194240);
+  const maxDefaultInstances = api.sceneGPUDrivenMaxInstances({});
+  const maxDefaultCapacity = api.sceneGPUDrivenInstanceCapacity(maxDefaultInstances, {});
+  assert.equal(maxDefaultCapacity, maxDefaultInstances);
+  assert.ok(maxDefaultCapacity * 96 <= 128 * 1024 * 1024);
+  assert.equal(api.sceneGPUDrivenInstanceCapacity(10, {}), 64);
+  assert.equal(api.sceneGPUDrivenInstanceCapacity(42, { maxStorageBufferBindingSize: 4096 }), 42);
   assert.equal(api.sceneGPUDrivenConfig(null), null);
   assert.deepEqual(JSON.parse(JSON.stringify(api.sceneGPUDrivenConfig({}))), { occlusion: false, shadowCulling: true });
   assert.equal(api.sceneGPUDrivenMeshEligible({ id: "a", transforms: new Array(32) }, 2), true);
