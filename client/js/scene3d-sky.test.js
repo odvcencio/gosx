@@ -83,6 +83,8 @@ test("WebGL draws sky-only frames and restores the flat background after removal
   h.renderer.render(bundle, { width: 320, height: 180 });
   assert.equal(mount.getAttribute("data-gosx-scene3d-sky"), "none");
   assert.deepEqual(h.warnLog, []);
+  assert.ok(gl.ops.some(op => op[0] === "samplerParameteri" && op[2] === gl.TEXTURE_MIN_FILTER && op[3] === gl.LINEAR_MIPMAP_LINEAR),
+    "image skies use the requested mip level without changing the shared texture");
   assert.deepEqual(gl.ops.filter(op => op[0] === "bindSampler").at(-1), ["bindSampler", 0, null]);
   assert.equal(enabled.has(gl.CULL_FACE), true, "sky restores culling for world geometry");
   h.renderer.dispose();

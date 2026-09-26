@@ -5328,6 +5328,7 @@
       descriptor: descriptor,
       target: target,
       loaded: false,
+      levels: 1,
       failed: false,
       generation: textureMap._gosxGeneration || null,
       disposed: false,
@@ -5379,6 +5380,7 @@
         gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
         if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
           gl.generateMipmap(gl.TEXTURE_2D);
+          record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -7409,7 +7411,7 @@
     var imageUniform = gl.getUniformLocation(program.program, "u_skyImage");
     var cubeUniform = gl.getUniformLocation(program.program, "u_skyCube");
     var imageSampler = gl.createSampler();
-    gl.samplerParameteri(imageSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.samplerParameteri(imageSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);

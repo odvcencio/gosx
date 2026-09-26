@@ -277,8 +277,15 @@ func Page() Node {
 						</tr>
 						<tr>
 							<th scope="row">sky-environment</th>
+							<td>yes</td>
+							<td>yes</td>
 							<td>no</td>
 							<td>no</td>
+						</tr>
+						<tr>
+							<th scope="row">sky-gradient</th>
+							<td>yes</td>
+							<td>yes</td>
 							<td>no</td>
 							<td>no</td>
 						</tr>
