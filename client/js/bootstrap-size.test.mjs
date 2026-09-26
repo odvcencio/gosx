@@ -656,7 +656,10 @@ const budgets = [
   // adds the pacing governor and its telemetry to the same monolith, on
   // top of glTF material-shading parity and the WebGPU material-uniform
   // struct growth. Caps re-measured from the fully merged source below.
-  { file: "bootstrap.js", raw: 1_655_000, gzip: 453_200, brotli: 364_200 },
+  // The GPU-driven host and Elio kernels now ship inline after compute.ts.
+  // Measured: 1_714_205 / 470_954 / 378_609. Gzip target 453_200 -> 454_600,
+  // the smallest 100-byte step that clears the hard limit; raw and brotli stay.
+  { file: "bootstrap.js", raw: 1_655_000, gzip: 454_600, brotli: 364_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1151,7 +1154,10 @@ const budgets = [
   // The mount fetches it when the scene declares a compute particle system or
   // an instanced mesh, and the island renderer advertises its URL only then.
   // Measured: 31_046 / 9_174 / 8_281.
-  { file: "bootstrap-feature-scene3d-compute.js", raw: 32_000, gzip: 9_500, brotli: 8_600 },
+  // GPU-driven instancing host, Elio cull and Hi-Z kernels, and seed shaders.
+  // Measured: 61_083 / 17_800 / 16_038. Targets 32_000 / 9_500 / 8_600 ->
+  // 61_100 / 17_800 / 16_100, rounded up to the next 100 bytes.
+  { file: "bootstrap-feature-scene3d-compute.js", raw: 61_100, gzip: 17_800, brotli: 16_100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount
   // fetches it before it builds the scene state, and only for a scene that
