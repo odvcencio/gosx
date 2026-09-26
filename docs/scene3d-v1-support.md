@@ -99,3 +99,44 @@ lanes are green, budget changes are backed by measurements, and real WebGPU
 hardware evidence exists for the release-pinned corpus. Passing the manifest
 shape test alone proves that the contract is coherent; it does not certify the
 blocked cases.
+
+## Frame completion timing
+
+`window.__gosx_scene3d_debug.inspect(surfaceID).frameTiming` gives a snapshot
+for the selected surface. Get IDs from `listSurfaces()`. Reading the snapshot
+does not consume the sample used by adaptive quality.
+
+- `gpuMS` is elapsed GPU time for the complete frame. WebGPU uses standard
+  timestamp writes before and after the frame encoder. WebGL uses
+  `EXT_disjoint_timer_query_webgl2` around the full render call. Both include
+  water, world geometry, and post effects. They exclude display scanout and
+  asset uploads that occur outside the frame.
+- `source` is `gpu-timestamp`, `webgl-timer`, or `none`. `scope` is `frame`.
+  `frameSeq` identifies the measured frame; asynchronous readback can lag the
+  current frame. `atMS` is the time when the result was read.
+- `status` is `measured`, `pending`, `unavailable`, `stale`, `disjoint`,
+  `failed`, or `disposed`. Only `measured` has a numeric `gpuMS`. A result is
+  stale one second after readback. Missing hardware timers do not produce a
+  CPU estimate in `gpuMS`.
+- `cpuSubmitMS` measures the CPU render call. `frameIntervalMS` measures the
+  time between render calls. `submitAtMS` identifies the latest CPU sample.
+  These values are separate from GPU time and can refer to a later frame.
+
+Each backend uses at most three frame queries. A full ring skips a timing
+sample without delaying rendering. Readback never waits inside the render
+call. WebGL discards all pending results after a disjoint event. A device or
+context loss invalidates GPU samples. Renderer replacement starts a new ring.
+
+### HDR post processing
+
+When a WebGPU scene has post effects, the scene, auxiliary, bloom, and MSAA color targets use `rgba16float`. The canvas keeps its preferred presentation format. The final blit converts the last post target to that format. Resize and post-effect changes rebuild targets and pipelines with matching formats.
+
+The tone-map effect applies the same display transfer as WebGL. Linear, ACES, and Reinhard modes apply gamma 2.2 after the curve. Filmic already includes its output response and gets no second transfer. Put bloom before tone mapping to select radiance above one. An explicit tone-map effect remains required; an identity or custom-only chain does not gain an implicit curve. Custom shader color conventions remain the author’s responsibility.
+
+### Browser sky
+
+WebGPU and WebGL2 draw `Environment.Sky` behind the scene. Gradient stops are sRGB colors, blended in linear light by the world-space view direction. Camera translation does not move the sky. A sky by itself does not replace default environment lighting. Nil sky keeps the existing clear color.
+
+Environment mode uses the IBL radiance cube when it is ready, then the legacy environment image. `EnvRotation` turns the sky around world Y. `Sky.Intensity` scales linear radiance; zero means one. `Sky.Blur` selects the available radiance mip range. WebGL2 generates mips for legacy images. WebGPU legacy images currently have one mip and stay sharp. Pending, failed, or absent maps use `HorizonColor`. The mount reports `data-gosx-scene3d-sky`: `none`, `gradient`, `environment-cube`, `environment-map`, `environment-pending`, or `environment-unavailable`. A shader setup failure reports `unavailable` on WebGL2. Canvas2D retains its flat background fallback.
+
+Sky draws share the scene target and post chain. They do not write depth. A water scene with a sky uses the world composite even when it has no imported models.

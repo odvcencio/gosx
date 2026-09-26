@@ -158,15 +158,12 @@
         out.push(WEBGPU_BLOCK_TEXTURE_FEATURES[block]);
       }
     }
-    var requestAllOptional = sceneWebGPUOptionalFeaturesRequestedFromManifest();
-    var requestAdaptiveTiming = sceneWebGPUAdaptiveTimingRequestedFromManifest();
-    if (!requestAllOptional && !requestAdaptiveTiming) {
-      return out;
-    }
+    // Frame telemetry is available on every scene when the adapter has a timer.
+    if (sceneWebGPUFeatureSupported(adapter, "timestamp-query")) out.push("timestamp-query");
+    if (!sceneWebGPUOptionalFeaturesRequestedFromManifest()) return out;
     for (var i = 0; i < WEBGPU_OPTIONAL_FEATURES.length; i++) {
       var feature = WEBGPU_OPTIONAL_FEATURES[i];
       if (out.indexOf(feature) >= 0) continue;
-      if (!requestAllOptional && feature !== "timestamp-query") continue;
       if (!sceneWebGPUFeatureSupported(adapter, feature)) continue;
       if (feature === "texture-compression-bc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-bc")) continue;
       if (feature === "texture-compression-astc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-astc")) continue;
@@ -174,25 +171,6 @@
       out.push(feature);
     }
     return out;
-  }
-
-  function sceneWebGPUAdaptiveTimingRequestedFromManifest() {
-    var manifest = sceneWebGPUManifest();
-    var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
-    for (var i = 0; i < engines.length; i++) {
-      var entry = engines[i];
-      if (!entry || entry.component !== "GoSXScene3D") continue;
-      var props = entry.props && typeof entry.props === "object" ? entry.props : {};
-      var adaptive = props.adaptiveQuality != null
-        ? props.adaptiveQuality
-        : (props.adaptivePerformance != null ? props.adaptivePerformance : props.dynamicQuality);
-      if (adaptive && typeof adaptive === "object") {
-        if (adaptive.enabled !== false) return true;
-      } else if (sceneWebGPUTruthy(adaptive)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   function sceneWebGPUOptionalFeaturesRequestedFromManifest() {

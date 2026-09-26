@@ -268,3 +268,18 @@
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
     return mountSnapshot(mount, null);
   };
+
+// @ts-ignore TS7006 -- runtime source fixtures use JavaScript signatures.
+function sceneRenderWithTiming(renderer, bundle, viewport, meta, timing) {
+  const start = performance.now();
+  timing.frameIntervalMS = timing.submitAtMS > 0 ? start - timing.submitAtMS : 0;
+  timing.submitAtMS = start;
+  try { renderer.render(bundle, viewport, meta); }
+  finally { timing.cpuSubmitMS = performance.now() - start; }
+}
+
+// @ts-ignore TS7006 -- runtime source fixtures use JavaScript signatures.
+function sceneRendererFrameTiming(renderer, timing) {
+  return Object.assign({ status: "unavailable", source: "none", scope: "frame", gpuMS: null },
+    renderer && typeof renderer.getFrameTiming === "function" ? renderer.getFrameTiming() : {}, timing);
+}
