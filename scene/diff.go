@@ -280,6 +280,14 @@ var sceneIRFieldPolicies = map[string]sceneIRFieldPolicy{
 			"kind resizes it.",
 		changed: func(previous, next *SceneIR) bool { return previous.ShadowMaxPixels != next.ShadowMaxPixels },
 	},
+	"GPUDriven": {
+		policy: sceneIRRemount,
+		reason: "A WebGPU renderer mode the client reads from the scene at mount. No command kind " +
+			"carries it.",
+		changed: func(previous, next *SceneIR) bool {
+			return !sceneRecordJSONEqual(previous.GPUDriven, next.GPUDriven)
+		},
+	},
 	"QualityLadder": {
 		policy: sceneIRRemount,
 		reason: "The client quality governor reads the ladder at mount. No command kind replaces it.",

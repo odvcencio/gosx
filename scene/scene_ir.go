@@ -65,6 +65,9 @@ type SceneIR struct {
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
+	// GPUDriven: see Props.GPUDriven (scene/gpu_driven.go). Nil when the scene
+	// does not opt in, so the wire carries nothing.
+	GPUDriven *GPUDrivenIR `json:"gpuDriven,omitempty"`
 	// QualityLadder / QualityStartRung: see Props.QualityLadder and
 	// Props.QualityStartRung (scene/quality_ladder.go). Omitted (nil/zero)
 	// when no ladder is authored — the client governor's legacy dprCap-tier
@@ -1113,6 +1116,7 @@ func (p Props) SceneIR() SceneIR {
 		ir.PostFXMaxPixels = p.PostFX.resolveMaxPixels()
 	}
 	ir.ShadowMaxPixels = p.Shadows.resolveMaxPixels()
+	ir.GPUDriven = p.GPUDriven.sceneIR()
 	ir.QualityLadder = qualityLadderSceneIR(p.QualityLadder)
 	if len(ir.QualityLadder) > 0 {
 		ir.QualityStartRung = resolveQualityStartRung(p.QualityLadder, p.QualityStartRung)
@@ -1918,6 +1922,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if ir.ShadowMaxPixels != 0 {
 		out["shadowMaxPixels"] = ir.ShadowMaxPixels
+	}
+	if ir.GPUDriven != nil {
+		out["gpuDriven"] = ir.GPUDriven.legacyProps()
 	}
 	if len(ir.QualityLadder) > 0 {
 		rungs := make([]map[string]any, 0, len(ir.QualityLadder))
