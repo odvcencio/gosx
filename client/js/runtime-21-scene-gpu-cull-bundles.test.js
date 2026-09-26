@@ -329,7 +329,7 @@ test("gpu pass timing: a device without timestamp-query reports the timer as una
   assert.equal(stamped.length, 0, "no pass may carry timestampWrites without the feature");
 });
 
-test("gpu pass timing: the pass timer feeds the shared sample when writeTimestamp is absent", async () => {
+test("gpu frame timing: standard timestamps cover the frame when writeTimestamp is absent", async () => {
   // This is the Chromium case: timestamp-query is present, encoder.writeTimestamp
   // is not. Before the pass timer the page got no GPU time at all.
   const harness = await createBoardWebGPUHarness({
@@ -359,8 +359,8 @@ test("gpu pass timing: the pass timer feeds the shared sample when writeTimestam
   }
   const mount = harness.mount;
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing"), "measured");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured-pass",
-    "the whole-scene span must stand in for the missing frame timer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured",
+    "the standard frame timer includes passes after the main draw");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-ms"), "4.000");
 });
 

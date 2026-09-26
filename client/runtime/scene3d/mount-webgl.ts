@@ -248,13 +248,10 @@ function gosxConfigureSceneScript(script, role, src) {
           compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
           compositeMS = Math.max(0.01, compositeAtMS - started);
         },
-        // Report the full CPU composite; the water GPU timer covers one pass.
-        pollPerformanceSample: function() {
-          return compositeAtMS > 0 ? { durationMS: compositeMS, source: "cpu-water-world-composite", atMS: compositeAtMS } : null;
-        },
-        getPerformanceTimingStatus: function() {
-          return { available: false, active: false, pending: false };
-        },
+        // The world timer encloses water, surfaces, and the post chain.
+        pollPerformanceSample: worldRenderer.pollPerformanceSample,
+        getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
+        getFrameTiming: worldRenderer.getFrameTiming,
         diagnostics: function() {
           var world = typeof worldRenderer.diagnostics === "function" ? worldRenderer.diagnostics() : {};
           return Object.assign({}, typeof waterRenderer.diagnostics === "function" ? waterRenderer.diagnostics() : {}, {
