@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"m31labs.dev/gosx/scene"
@@ -58,6 +59,7 @@ type Document struct {
 	PostEffects        []json.RawMessage          `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                        `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                        `json:"shadowMaxPixels,omitempty"`
+	GPUDriven          json.RawMessage            `json:"gpuDriven,omitempty"`
 	BackendCaps        *capability.BackendCaps    `json:"backendCaps,omitempty"`
 }
 
@@ -107,6 +109,42 @@ func validateParentMatricesRawDocument(report *Report, data []byte) {
 	}
 }
 
+// validateGPUDriven checks the optional gpuDriven renderer mode. The runtime
+// reads two booleans. A value of the wrong type is an error, because the
+// author asked for a mode that will not engage as written. An unknown key is
+// a warning, and so is a mode on a scene with no instanced mesh, because the
+// mode has nothing to act on there.
+func validateGPUDriven(report *Report, raw json.RawMessage, instancedMeshes int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		report.add(Error, "scene.gpu_driven.invalid", "gpuDriven must be an object", "gpuDriven", "", nil)
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "occlusion", "shadowCulling":
+			var value *bool
+			if json.Unmarshal(fields[key], &value) != nil || value == nil {
+				report.add(Error, "scene.gpu_driven.invalid_flag", "gpuDriven."+key+" must be a boolean", "gpuDriven."+key, "", nil)
+			}
+		default:
+			report.add(Warn, "scene.gpu_driven.unknown_field", "gpuDriven field is not recognized", "gpuDriven."+key, "", map[string]any{"field": key})
+		}
+	}
+	if instancedMeshes == 0 {
+		report.add(Warn, "scene.gpu_driven.no_instanced_meshes", "gpuDriven has no effect: the scene declares no instancedMeshes", "gpuDriven", "", nil)
+	}
+}
+
 func validateParentMatrixRaw(report *Report, record json.RawMessage, path, fallbackID string) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(record, &fields) != nil {
@@ -153,6 +191,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	if doc.ShadowMaxPixels < 0 {
 		report.add(Error, "scene.shadow.invalid_max_pixels", "shadowMaxPixels must not be negative", "shadowMaxPixels", "", nil)
 	}
+	validateGPUDriven(report, doc.GPUDriven, len(doc.InstancedMeshes))
 
 	ids := map[string]string{}
 	targetIDs := map[string]struct{}{}

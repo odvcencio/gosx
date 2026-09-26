@@ -70,6 +70,14 @@
       "type": "integer",
       "minimum": 0
     },
+    "gpuDriven": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "occlusion": { "type": "boolean" },
+        "shadowCulling": { "type": "boolean" }
+      }
+    },
     "backendCaps": {
       "type": "object",
       "properties": {
