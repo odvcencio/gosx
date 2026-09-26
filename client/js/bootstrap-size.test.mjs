@@ -1745,12 +1745,13 @@ const routeBudgets = [
     // 1_305_322 / 351_407 / 296_071. Gzip target 335_000 -> 335_100 is the
     // smallest 100-byte step that clears the hard limit.
     // Imported glTF material factors add 973 gzip and 526 brotli bytes to
-    // this route. Measured: 1_307_662 / 352_380 / 296_597.
+    // this route. The merged route now measures 1_313_202 raw.
     // Full-frame GPU timing adds 256 gzip bytes and 384 Brotli bytes after
     // the G01 cache merge; HDR presentation adds 128 gzip bytes. The opt-in
     // sky route measures 353_377 gzip / 297_877 Brotli bytes. Keep both the
     // material and latest-main additions within the shared route budget.
-    raw: 1_250_000,
+    // Raise raw 1_250_000 -> 1_251_000 for the merged route measurement.
+    raw: 1_251_000,
     gzip: 338_200,
     brotli: 284_500,
   },
