@@ -199,6 +199,57 @@ test("normalizeSceneObject carries authored ior through material normalization",
     "var(--glass-ior)");
 });
 
+test("normalizeSceneObject and material profiles preserve imported PBR factors", () => {
+  const context = createSceneCoreContext();
+  const result = callIn(context,
+    '(() => {' +
+      'const authoredColor = [0.8, 0.15, 0.05];' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: {' +
+        ' emissive: 4, emissiveColor: authoredColor, normalScale: 0, occlusionStrength: 0' +
+      '} }, 0, null);' +
+      'authoredColor[0] = 7;' +
+      'const normalizedColorWasCopied = object.emissiveColor[0] === 0.8;' +
+      'const first = sceneObjectMaterialProfile(object);' +
+      'const firstColor = first.emissiveColor.slice();' +
+      'object.emissiveColor[0] = 0.6;' +
+      'object.emissive = 2;' +
+      'object.normalScale = 0.5;' +
+      'object.occlusionStrength = 0.25;' +
+      'const second = sceneObjectMaterialProfile(object);' +
+      'return {' +
+        'normalizedColorWasCopied,' +
+        'profileColorWasCopied: firstColor[0] === 0.8,' +
+        'cacheInvalidated: first !== second && first.key !== second.key,' +
+        'secondColor: second.emissiveColor[0],' +
+        'secondEmissive: second.emissive,' +
+        'secondNormalScale: second.normalScale,' +
+        'secondOcclusionStrength: second.occlusionStrength' +
+      '};' +
+    '})()');
+  assert.strictEqual(result.normalizedColorWasCopied, true);
+  assert.strictEqual(result.profileColorWasCopied, true);
+  assert.strictEqual(result.cacheInvalidated, true);
+  assert.strictEqual(result.secondColor, 0.6);
+  assert.strictEqual(result.secondEmissive, 2);
+  assert.strictEqual(result.secondNormalScale, 0.5);
+  assert.strictEqual(result.secondOcclusionStrength, 0.25);
+
+  const keyOf = (fields) => callIn(context,
+    "sceneObjectMaterialProfile(Object.assign({ materialKind: 'standard' }, " + fields + ")).key");
+  const base = keyOf("{}");
+  assert.notStrictEqual(keyOf("{ emissiveColor: [0, 0, 0] }"), base,
+    "authored black differs from an absent emissive color");
+  assert.notStrictEqual(keyOf("{ emissiveColor: [0.8, 0.15, 0.05] }"), base);
+  assert.notStrictEqual(keyOf("{ emissive: 4 }"), keyOf("{ emissive: 4.0001 }"));
+  assert.notStrictEqual(keyOf("{ normalScale: 0.1231 }"), keyOf("{ normalScale: 0.1232 }"));
+  assert.notStrictEqual(keyOf("{ occlusionStrength: 0.5001 }"), keyOf("{ occlusionStrength: 0.5002 }"));
+
+  const legacy = callIn(context,
+    'sceneObjectMaterialProfile({ materialKind: "standard", emissive: 1 })');
+  assert.strictEqual(legacy.emissiveColor, undefined,
+    "legacy scalar emission keeps the shader's albedo-tinted behavior");
+});
+
 test("named material resolution and record updates preserve ior", () => {
   const context = createSceneCoreContext();
 
@@ -239,6 +290,53 @@ test("normalizeSceneModel stores glTF model ior overrides on materialOverride", 
   // A model without any override carries no materialOverride bag at all.
   assert.strictEqual(
     callIn(context, 'normalizeSceneModel({ id: "glb", src: "model.glb" }, 0).materialOverride'), null);
+});
+
+test("model, named-material, and instanced GLB paths retain imported PBR factors", () => {
+  const context = createSceneCoreContext();
+  const model = callIn(context,
+    'normalizeSceneModel({ id: "actor", src: "actor.glb", material: {' +
+      ' emissive: 4, emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0' +
+    '} }, 0)');
+  assert.strictEqual(model.materialOverride.emissive, 4);
+  assert.strictEqual(model.materialOverride.normalScale, 0);
+  assert.strictEqual(model.materialOverride.occlusionStrength, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(model.materialOverride.emissiveColor)), [0.8, 0.15, 0.05]);
+
+  const material = callIn(context,
+    'normalizeSceneMaterialRecord({ name: "paint", emissive: 4, emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0 }, 0, null)');
+  const object = callIn(context, 'sceneApplyNamedMaterialToObject({ emissiveColor: [0, 0, 0] }, ' +
+    'normalizeSceneMaterialRecord({ name: "paint", emissive: 4, emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0 }, 0, null))');
+  assert.strictEqual(material.emissive, 4);
+  assert.strictEqual(material.normalScale, 0);
+  assert.strictEqual(material.occlusionStrength, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(object.emissiveColor)), [0.8, 0.15, 0.05]);
+  assert.strictEqual(object.normalScale, 0);
+  assert.strictEqual(object.occlusionStrength, 0);
+  assert.notStrictEqual(object.emissiveColor, material.emissiveColor,
+    "named material application snapshots its colour array");
+
+  const batch = callIn(context,
+    'normalizeSceneInstancedGLBMeshEntry({ src: "actors.glb", emissive: 4, ' +
+      'emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0, instances: [{ id: "a" }] }, 0, null)');
+  const batchModel = callIn(context, 'sceneInstancedGLBMeshToModels(' +
+    'normalizeSceneInstancedGLBMeshEntry({ src: "actors.glb", emissive: 4, ' +
+      'emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0, instances: [{ id: "a" }] }, 0, null), 0)[0]');
+  assert.strictEqual(batch.emissive, 4);
+  assert.strictEqual(batch.normalScale, 0);
+  assert.strictEqual(batch.occlusionStrength, 0);
+  assert.strictEqual(batchModel.materialOverride.emissive, 4);
+  assert.strictEqual(batchModel.materialOverride.normalScale, 0);
+  assert.strictEqual(batchModel.materialOverride.occlusionStrength, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(batchModel.materialOverride.emissiveColor)), [0.8, 0.15, 0.05]);
+
+  const instancedMesh = callIn(context,
+    'normalizeSceneInstancedMeshEntry({ kind: "cube", emissive: 4, ' +
+      'emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0 }, 0, null)');
+  assert.strictEqual(instancedMesh.emissive, 4);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(instancedMesh.emissiveColor)), [0.8, 0.15, 0.05]);
+  assert.strictEqual(instancedMesh.normalScale, 0);
+  assert.strictEqual(instancedMesh.occlusionStrength, 0);
 });
 
 test("instanced GLB batching carries authored ior and preserves genuinely absent ior", () => {
