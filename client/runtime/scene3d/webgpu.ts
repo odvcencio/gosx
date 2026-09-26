@@ -6664,6 +6664,8 @@
     var waterSystems = new Map();
     var waterSystemRetireSerial = 0;
     var instancedCullSystems = new Map(); // meshId → { system, signature }
+    var instancedCacheOwners = new Map(); // meshId → owner of that mesh's cached GPU buffers and bind groups
+    var instancedCacheOwnerEpoch = 0;
     var lastComputeParticleTimeSeconds = null;
     var lastWaterTimeSeconds = null;
     var waterClockAPI = (typeof window !== "undefined" && window.__gosx_scene3d_api)
@@ -16112,12 +16114,44 @@
       return wgpuCachedTrackedBuffer(geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
     }
 
+    // webGPUInstancedCacheOwner returns the object that owns one instanced
+    // mesh's cached GPU buffers and bind groups. The render bundle hands the
+    // renderer a fresh shallow copy of every instanced mesh each frame, so
+    // caching on that copy created a uniform buffer and a bind group per mesh
+    // per frame and kept render bundles from replaying. Key by mesh id.
+    function webGPUInstancedCacheOwner(meshId = "") {
+      if (!meshId) return null;
+      var owner = instancedCacheOwners.get(meshId);
+      if (!owner) {
+        owner = { meshId: meshId, seenEpoch: 0 };
+        instancedCacheOwners.set(meshId, owner);
+      }
+      owner.seenEpoch = instancedCacheOwnerEpoch;
+      return owner;
+    }
+
+    // webGPUSweepInstancedCacheOwners frees the cached buffers of instanced
+    // meshes that have not drawn for 120 rendered frames.
+    function webGPUSweepInstancedCacheOwners() {
+      instancedCacheOwners.forEach(function(owner, meshId) {
+        if (instancedCacheOwnerEpoch - owner.seenEpoch <= 120) return;
+        var slots = ["_gosxWGPUInstanceTransformBuffer", "_gosxWGPUInstanceColorBuffer", "_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"];
+        for (var i = 0; i < slots.length; i++) {
+          var buffer = owner[slots[i]];
+          if (!buffer) continue;
+          pointsEntryGPUBuffers.delete(buffer);
+          destroyRendererGPUResource(buffer);
+        }
+        instancedCacheOwners.delete(meshId);
+      });
+    }
+
     function ensureInstancedTransformGPUBuffer(mesh, data) {
-      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+      return wgpuCachedTrackedBuffer(webGPUInstancedCacheOwner(mesh && mesh.id) || mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
 
     function ensureInstancedColorGPUBuffer(mesh, data) {
-      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+      return wgpuCachedTrackedBuffer(webGPUInstancedCacheOwner(mesh && mesh.id) || mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
 
     function buildInstancedDrawList(bundle, materials) {
@@ -16152,7 +16186,7 @@
         if (!geom || geom.vertexCount <= 0) continue;
 
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var mat = instancedMeshMaterial(mesh, materials);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, mesh));
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh));
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
@@ -18067,6 +18101,8 @@
         hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
       }
       webGPUBeginRetainedMeshFrame(bundle);
+      instancedCacheOwnerEpoch += 1;
+      webGPUSweepInstancedCacheOwners();
       if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData) {
         webGPUSweepRetainedMeshBuffers();
         return;
@@ -18789,6 +18825,7 @@
         }
       }
       instancedCullSystems.clear();
+      instancedCacheOwners.clear();
       waterRenderPipelineCache.clear();
       pointsAuthoredPipelineCache.clear();
       pointsAuthoredLayerFailed.clear();
