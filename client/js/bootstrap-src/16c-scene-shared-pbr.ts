@@ -41,6 +41,29 @@
 
   var SCENE_POST_FXAA = "fxaa";
 
+  // Shared sky layout: camera basis, linear gradient stops, and sampling controls.
+  function sceneSkyUniformData(out, environment, view, camera, aspect, linear) {
+    var sky = environment.sky;
+    var spread = camera.kind === "orthographic" || camera.mode === "ortho2d"
+      ? 0 : Math.tan(sceneNumber(camera.fov, 60) * Math.PI / 360);
+    out.set([view[0], view[4], view[8], spread * aspect,
+      view[1], view[5], view[9], spread,
+      -view[2], -view[6], -view[10], sceneNumber(environment.envRotation, 0)]);
+    var horizon = sceneColorRGBA(sky.horizonColor, [0.5, 0.6, 0.7, 1]);
+    var colors = [sceneColorRGBA(sky.topColor, horizon), horizon, sceneColorRGBA(sky.bottomColor, horizon)];
+    for (var stop = 0; stop < 3; stop++) {
+      for (var channel = 0; channel < 3; channel++) {
+        var c = colors[stop][channel];
+        out[12 + stop * 4 + channel] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      }
+    }
+    out[15] = Math.max(0, sceneNumber(sky.intensity, 1) || 1);
+    out[19] = 0; // Backend supplies the available mip count.
+    out[23] = sky.mode === "environment" ? 3 : 0; // Horizon fallback until a texture is ready.
+    out[24] = linear ? 1 : 0;
+    return out;
+  }
+
   // --- Camera matrices ---
 
   // Build a 4x4 view matrix from camera position and Euler rotation.

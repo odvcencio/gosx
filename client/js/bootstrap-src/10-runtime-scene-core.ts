@@ -2978,6 +2978,18 @@
     return out.radiance || out.irradiance || out.brdfLUT || out.source ? out : null;
   }
 
+  function normalizeSceneSky(raw) {
+    if (!sceneIsPlainObject(raw)) return null;
+    const color = key => typeof raw[key] === "string" ? raw[key].trim() : "";
+    const topColor = color("topColor"), horizonColor = color("horizonColor"), bottomColor = color("bottomColor");
+    const mode = typeof raw.mode === "string" && raw.mode.trim()
+      ? raw.mode.trim().toLowerCase() : (topColor || horizonColor || bottomColor ? "gradient" : "");
+    if (mode !== "gradient" && mode !== "environment") return null;
+    return { mode, topColor, horizonColor, bottomColor,
+      blur: Math.max(0, Math.min(1, sceneNumber(raw.blur, 0))),
+      intensity: Math.max(0, sceneNumber(raw.intensity, 1) || 1) };
+  }
+
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
@@ -2991,6 +3003,7 @@
       groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
       envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
+      sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
@@ -3040,6 +3053,7 @@
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
         envMap: typeof environment.envMap === "string" ? environment.envMap : "",
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
+        sky: normalizeSceneSky(environment.sky),
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
@@ -6985,6 +6999,7 @@
     createSceneWebGLRenderer: typeof createSceneWebGLRenderer === "function" ? createSceneWebGLRenderer : undefined,
     engineFrame,
     normalizeSceneEnvironment,
+    sceneSkyUniformData: typeof sceneSkyUniformData === "function" ? sceneSkyUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
     normalizeSceneLabel,

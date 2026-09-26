@@ -3251,6 +3251,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureIBL,
 	capability.FeatureEnvironmentMap,
 	capability.FeatureSkyEnvironment,
+	capability.FeatureSkyGradient,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3345,11 +3346,11 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 		seen[capability.FeatureIBL] = true
 	}
 
-	// sky-environment: the environment mode of an authored Sky. Gradient sky
-	// (the default and the degrade target) draws on every backend and raises
-	// nothing; see the row's doc comment in capability.go.
 	if skyRaisesEnvironmentFeature(ir.Environment.Sky) {
 		seen[capability.FeatureSkyEnvironment] = true
+	}
+	if skyRaisesGradientFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyGradient] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

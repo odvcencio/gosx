@@ -7378,6 +7378,80 @@
     );
   }
 
+  const SCENE_SKY_FRAGMENT = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv; out vec4 fragColor;",
+    "uniform vec4 u_sky[7]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
+    "void main() {",
+    "  vec2 ndc = v_uv*2.-1.;",
+    "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w);",
+    "  vec3 color = mix(u_sky[4].xyz, ray.y >= 0. ? u_sky[3].xyz : u_sky[5].xyz, abs(ray.y));",
+    "  float c = cos(u_sky[2].w), s = sin(u_sky[2].w);",
+    "  vec3 d = vec3(ray.x*c+ray.z*s, ray.y, -ray.x*s+ray.z*c);",
+    "  if (u_sky[5].w == 1.) {",
+    "    vec2 uv = vec2(atan(d.z,d.x)/6.28318530718+.5, asin(clamp(d.y,-1.,1.))/3.14159265359+.5);",
+    "    color = textureLod(u_skyImage, uv, u_sky[4].w).rgb;",
+    "  } else if (u_sky[5].w == 2.) { color = textureLod(u_skyCube,d,u_sky[4].w).rgb;",
+    "  } else if (u_sky[5].w == 3.) { color = u_sky[4].xyz; }",
+    "  color = max(color*u_sky[3].w,vec3(0));",
+    "  if (u_sky[6].x == 0.) { color = mix(1.055*pow(color,vec3(1./2.4))-.055,color*12.92,lessThanEqual(color,vec3(.0031308))); }",
+    "  fragColor = vec4(color,1);",
+    "}",
+  ].join("\n");
+
+  // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
+  function createSceneSkyWebGLRenderer(gl, textureCache, imagePlaceholder) {
+    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT);
+    if (!program) return null;
+    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(28);
+    var uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
+    var imageUniform = gl.getUniformLocation(program.program, "u_skyImage");
+    var cubeUniform = gl.getUniformLocation(program.program, "u_skyCube");
+    var imageSampler = gl.createSampler();
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return {
+      // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
+      draw: function(opts) {
+        var env = opts.environment, sky = env.sky;
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        var image = { texture: imagePlaceholder }, cube = scenePBRPlaceholderCube(gl, textureCache);
+        var state = "gradient";
+        if (sky.mode === "environment") {
+          var desc = env.ibl && env.ibl.radiance;
+          var record = desc && desc.view === "cube" && desc.uri
+            ? scenePBRLoadTexture(gl, desc.uri, textureCache, desc, "environment-radiance", "linear") : null;
+          if (record && record.loaded && !record.failed) { cube = record; data[23] = 2; state = "environment-cube"; }
+          else {
+            record = env.envMap ? scenePBRLoadTexture(gl, env.envMap, textureCache, null, "environment-radiance", "srgb") : record;
+            if (record && record.loaded && !record.failed) { image = record; data[23] = 1; state = "environment-map"; }
+            else state = record && !record.failed ? "environment-pending" : "environment-unavailable";
+          }
+          data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
+        }
+        var cull = gl.isEnabled(gl.CULL_FACE);
+        gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+        gl.useProgram(program.program); gl.uniform4fv(uniforms, data);
+        scenePBRBindTexture(gl, 0, image.texture, gl.TEXTURE_2D); gl.uniform1i(imageUniform, 0);
+        scenePBRBindTexture(gl, 1, cube.texture, gl.TEXTURE_CUBE_MAP); gl.uniform1i(cubeUniform, 1);
+        gl.bindSampler(0, imageSampler);
+        drawSceneFullscreenQuad(gl, quad.vao);
+        gl.bindSampler(0, null);
+        gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+        if (cull) gl.enable(gl.CULL_FACE);
+        return state;
+      },
+      dispose: function() {
+        gl.deleteSampler(imageSampler);
+        gl.deleteVertexArray(quad.vao); gl.deleteBuffer(quad.vbo);
+        gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader);
+      },
+    };
+  }
+
   function createScenePBRRenderer(gl, canvas) {
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -7410,6 +7484,8 @@
 
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor = null;
+    // @ts-ignore TS7018 -- lazily allocated backend sky resources.
+    var skyResources = { renderer: null };
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
     // Light matrices now live on the per-cascade objects in shadowSlots[s];
@@ -8601,7 +8677,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta)) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -8767,6 +8843,14 @@
         gl.clearDepth(1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       }
+
+      var skyState = "none";
+      if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
+        if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
+        skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
+          camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
+      }
+      if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
       // could build per-cascade frusta; `cam`, `viewMatrix`, `projMatrix`,
@@ -10776,6 +10860,8 @@
     }
 
     function dispose() {
+      if (skyResources.renderer) skyResources.renderer.dispose();
+      skyResources.renderer = null;
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
       // dispose() first) and normal teardown alike.
       sceneInvalidateGLConstantCache(gl);

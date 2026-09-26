@@ -166,6 +166,7 @@
   var SCENE_POST_CUSTOM_POST = sceneApi.SCENE_POST_CUSTOM_POST || "customPost";
   var SCENE_POST_FXAA = sceneApi.SCENE_POST_FXAA || "fxaa";
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
+  var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;

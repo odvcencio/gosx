@@ -2950,7 +2950,7 @@
     // points path draws from state, not the bundle lists).
     function sceneFrameHasContent(bundle) {
       if (bundle) {
-        if (Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
+        if ((bundle.environment && bundle.environment.sky) || Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
           return true;
         }
         if ((Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0)

@@ -6347,6 +6347,92 @@
     return out;
   }
 
+  var WGSL_SCENE_SKY = [
+    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f };",
+    "@group(0) @binding(0) var<uniform> sky: Sky;",
+    "@group(0) @binding(1) var skySampler: sampler;",
+    "@group(0) @binding(2) var skyImage: texture_2d<f32>;",
+    "@group(0) @binding(3) var skyCube: texture_cube<f32>;",
+    "struct SkyVertex { @builtin(position) position: vec4f, @location(0) ndc: vec2f };",
+    "@vertex fn vertexMain(@builtin(vertex_index) i: u32) -> SkyVertex {",
+    "  var p = array<vec2f, 3>(vec2f(-1,-1), vec2f(3,-1), vec2f(-1,3));",
+    "  var out: SkyVertex; out.position = vec4f(p[i], 1, 1); out.ndc = p[i]; return out;",
+    "}",
+    "@fragment fn fragmentMain(in: SkyVertex) -> @location(0) vec4f {",
+    "  let ray = normalize(sky.forward.xyz + sky.right.xyz * in.ndc.x * sky.right.w + sky.up.xyz * in.ndc.y * sky.up.w);",
+    "  var color = mix(sky.horizon.xyz, select(sky.bottom.xyz, sky.top.xyz, ray.y >= 0), abs(ray.y));",
+    "  let c = cos(sky.forward.w); let s = sin(sky.forward.w);",
+    "  let d = vec3f(ray.x*c + ray.z*s, ray.y, -ray.x*s + ray.z*c);",
+    "  if (sky.bottom.w == 1) {",
+    "    let uv = vec2f(atan2(d.z,d.x)/6.28318530718+0.5, asin(clamp(d.y,-1.0,1.0))/3.14159265359+0.5);",
+    "    color = textureSampleLevel(skyImage, skySampler, uv, sky.horizon.w).rgb;",
+    "  } else if (sky.bottom.w == 2) { color = textureSampleLevel(skyCube, skySampler, d, sky.horizon.w).rgb;",
+    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; }",
+    "  color = max(color * sky.top.w, vec3f(0));",
+    "  if (sky.output.x == 0) { color = select(1.055*pow(color,vec3f(1.0/2.4))-0.055, color*12.92, color <= vec3f(0.0031308)); }",
+    "  return vec4f(color, 1);",
+    "}",
+  ].join("\n");
+
+  // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
+  function wgpuCreateSkyRenderer(device, textureCache, imagePlaceholder, cubePlaceholder) {
+    var data = new Float32Array(28);
+    var uniform = device.createBuffer({ label: "gosx-sky", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    var sampler = device.createSampler({ addressModeU: "repeat", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
+    var layout = device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
+    ] });
+    var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY });
+    var pipelines = new Map();
+    // @ts-ignore TS7018 -- bind-group identities become available on the first draw.
+    var cached = { group: null, image: null, cube: null };
+    return {
+      // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
+      draw: function(pass, opts) {
+        var env = opts.environment, sky = env.sky;
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        var image = imagePlaceholder, cube = cubePlaceholder, state = "gradient";
+        if (sky.mode === "environment") {
+          var desc = env.ibl && env.ibl.radiance;
+          var record = desc && desc.view === "cube" && desc.uri
+            ? wgpuLoadTexture(device, desc.uri, textureCache, desc, "environment-radiance", "linear") : null;
+          if (record && record.loaded && !record.failed) { cube = record.view; data[23] = 2; state = "environment-cube"; }
+          else {
+            record = env.envMap ? wgpuLoadTexture(device, env.envMap, textureCache, null, "environment-radiance", "srgb") : record;
+            if (record && record.loaded && !record.failed) { image = record.view; data[23] = 1; state = "environment-map"; }
+            else state = record && !record.failed ? "environment-pending" : "environment-unavailable";
+          }
+          data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
+        }
+        device.queue.writeBuffer(uniform, 0, data);
+        var key = opts.format + ":" + opts.samples;
+        var pipeline = pipelines.get(key);
+        if (!pipeline) {
+          pipeline = device.createRenderPipeline({ label: "gosx-sky", layout: pipelineLayout,
+            vertex: { module: module, entryPoint: "vertexMain" },
+            fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format }] },
+            primitive: { topology: "triangle-list" }, multisample: { count: opts.samples },
+            depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" } });
+          pipelines.set(key, pipeline);
+        }
+        if (!cached.group || image !== cached.image || cube !== cached.cube) {
+          cached.group = device.createBindGroup({ layout: layout, entries: [
+            { binding: 0, resource: { buffer: uniform } }, { binding: 1, resource: sampler },
+            { binding: 2, resource: image }, { binding: 3, resource: cube },
+          ] });
+          cached.image = image; cached.cube = cube;
+        }
+        pass.setPipeline(pipeline); pass.setBindGroup(0, cached.group); pass.draw(3);
+        return state;
+      },
+      dispose: function() { uniform.destroy(); pipelines.clear(); cached.group = null; },
+    };
+  }
+
   function createSceneWebGPURenderer(canvas, options) {
     function sceneWebGPUFactoryFailure(reason) {
       var text = String(reason || "unknown");
@@ -7284,6 +7370,8 @@
 
     // Post-processor.
     var postProcessor = null;
+    // @ts-ignore TS7018 -- lazily allocated backend sky resources.
+    var skyResources = { renderer: null };
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -18102,7 +18190,7 @@
       webGPUBeginRetainedMeshFrame(bundle);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return;
       }
@@ -18352,6 +18440,14 @@
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
+      var skyState = "none";
+      if (bundle.environment && bundle.environment.sky) {
+        if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
+        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix,
+          camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
+      }
+      if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
+
 
       var instancedDrawList = hasInstancedData
         ? buildInstancedDrawList(bundle, materials)
@@ -18753,6 +18849,8 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
+      if (skyResources.renderer) skyResources.renderer.dispose();
+      skyResources.renderer = null;
 
       gpuTimingDisposed = true;
       lastGPUCompletionSample = null;

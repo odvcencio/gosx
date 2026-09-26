@@ -132,3 +132,11 @@ context loss invalidates GPU samples. Renderer replacement starts a new ring.
 When a WebGPU scene has post effects, the scene, auxiliary, bloom, and MSAA color targets use `rgba16float`. The canvas keeps its preferred presentation format. The final blit converts the last post target to that format. Resize and post-effect changes rebuild targets and pipelines with matching formats.
 
 The tone-map effect applies the same display transfer as WebGL. Linear, ACES, and Reinhard modes apply gamma 2.2 after the curve. Filmic already includes its output response and gets no second transfer. Put bloom before tone mapping to select radiance above one. An explicit tone-map effect remains required; an identity or custom-only chain does not gain an implicit curve. Custom shader color conventions remain the author’s responsibility.
+
+### Browser sky
+
+WebGPU and WebGL2 draw `Environment.Sky` behind the scene. Gradient stops are sRGB colors, blended in linear light by the world-space view direction. Camera translation does not move the sky. A sky by itself does not replace default environment lighting. Nil sky keeps the existing clear color.
+
+Environment mode uses the IBL radiance cube when it is ready, then the legacy environment image. `EnvRotation` turns the sky around world Y. `Sky.Intensity` scales linear radiance; zero means one. `Sky.Blur` selects the available radiance mip range. Legacy images with one mip stay sharp. Pending, failed, or absent maps use `HorizonColor`. The mount reports `data-gosx-scene3d-sky`: `none`, `gradient`, `environment-cube`, `environment-map`, `environment-pending`, or `environment-unavailable`. A shader setup failure reports `unavailable` on WebGL2. Canvas2D retains its flat background fallback.
+
+Sky draws share the scene target and post chain. They do not write depth. A water scene with a sky uses the world composite even when it has no imported models.

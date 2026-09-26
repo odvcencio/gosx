@@ -84,6 +84,7 @@
   var scenePBRProjectionMatrix = sceneApi.scenePBRProjectionMatrix;
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
+  var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;

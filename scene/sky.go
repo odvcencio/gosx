@@ -35,7 +35,7 @@ func normalizeSky(s *Sky) *Sky {
 		return nil
 	}
 	out := Sky{
-		Mode:         strings.TrimSpace(s.Mode),
+		Mode:         strings.ToLower(strings.TrimSpace(s.Mode)),
 		TopColor:     strings.TrimSpace(s.TopColor),
 		HorizonColor: strings.TrimSpace(s.HorizonColor),
 		BottomColor:  strings.TrimSpace(s.BottomColor),
@@ -49,11 +49,12 @@ func normalizeSky(s *Sky) *Sky {
 	return &out
 }
 
-// skyRaisesEnvironmentFeature reports whether a lowered Sky authors the
-// environment mode, the only mode a capability row tracks. Gradient sky draws
-// on every backend including Canvas2D, so it earns no Matrix row (an absent
-// feature is supported everywhere, per the Matrix contract in
-// scene/capability/capability.go).
+// skyRaisesEnvironmentFeature reports an authored environment sky.
 func skyRaisesEnvironmentFeature(s *Sky) bool {
 	return s != nil && s.Mode == "environment"
+}
+
+func skyRaisesGradientFeature(s *Sky) bool {
+	return s != nil && (s.Mode == "gradient" || (s.Mode == "" &&
+		(s.TopColor != "" || s.HorizonColor != "" || s.BottomColor != "")))
 }
