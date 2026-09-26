@@ -22,6 +22,8 @@ func Page() Node {
 					<a href="?workload=particles">Particles</a>
 					<a href="?workload=mesh-swarm">Mesh swarm</a>
 					<a href="?workload=particles-storm">Particle storm</a>
+					<a href="?workload=gpu-driven">GPU-driven city</a>
+					<a href="?workload=instanced-classic">Classic city</a>
 					<a href="?workload=mixed">Mixed</a>
 				</nav>
 				<div class="scene3d-bench__row">
