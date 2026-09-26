@@ -1740,13 +1740,17 @@ const routeBudgets = [
     // v0.55.0 route audit: 1_245_867 / 333_157 / 281_573. The previous
     // baseline accidentally described a dual-backend-era payload; use rounded
     // current-route baselines and let the shared policy govern future growth.
-    // Imported glTF material factors add 961 gzip and 299 brotli bytes to
-    // this route. Measured: 1_307_421 / 352_288 / 296_372; raw stays within
-    // its existing hard limit. Bump only gzip 335_000 -> 336_000 and brotli
-    // 282_000 -> 282_500, retaining narrow headroom.
+    // GPU-driven instancing config carries the mode through scene state and
+    // both mount paths, after the instanced cache-owner fix. Measured:
+    // 1_305_322 / 351_407 / 296_071. Gzip target 335_000 -> 335_100 is the
+    // smallest 100-byte step that clears the hard limit.
+    // Imported glTF material factors add 973 gzip and 526 brotli bytes to
+    // this route. Measured: 1_307_662 / 352_380 / 296_597; raw stays within
+    // its existing hard limit. Bump only gzip 335_100 -> 336_500 and brotli
+    // 282_000 -> 283_000, retaining narrow headroom.
     raw: 1_250_000,
-    gzip: 336_000,
-    brotli: 282_500,
+    gzip: 336_500,
+    brotli: 283_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",

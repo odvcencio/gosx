@@ -189,6 +189,9 @@
     }
     entry._instanceStreamBuffer.set(frame.data.subarray(0, floatsNeeded));
     revisions.set(frame.batchId, frame.revision);
+    // The buffer above keeps its identity across frames, so stamp the entry:
+    // indirect-instancing.ts re-uploads a batch's instance records when this changes.
+    entry._instanceStreamRevision = frame.revision;
     scheduleRender("instance-stream");
     return { applied: true, revision: frame.revision };
   }
