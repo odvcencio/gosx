@@ -42,5 +42,6 @@ var corroborationIndex = map[Feature]corroborationEntry{
 	FeatureRectAreaLight:             {"lights_test.go", "FeatureRectAreaLight"},
 	FeatureRectAreaSpecular:          {"lights_test.go", "FeatureRectAreaSpecular"},
 	FeatureLightProbeSH:              {"lights_test.go", "FeatureLightProbeSH"},
+	FeatureSkyGradient:               {"sky_test.go", "FeatureSkyGradient"},
 	FeatureSkyEnvironment:            {"sky_test.go", "FeatureSkyEnvironment"},
 }

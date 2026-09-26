@@ -216,7 +216,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!renderer) return null;
     // Water and authored models share color and depth before post processing.
     var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
-    if (sceneDoc && Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) {
+    var environment = sceneDoc && sceneDoc.environment || props && props.environment;
+    if (sceneDoc && ((Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) || (environment && environment.sky))) {
       var pbrFactory = sceneWebGLRendererFactory();
       var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
       if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
