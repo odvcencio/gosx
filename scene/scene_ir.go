@@ -134,6 +134,9 @@ type InstancedGLBMeshIR struct {
 	Texture            string      `json:"texture,omitempty"`
 	Opacity            *float64    `json:"opacity,omitempty"`
 	Emissive           *float64    `json:"emissive,omitempty"`
+	EmissiveColor      *[3]float64 `json:"emissiveColor,omitempty"`
+	NormalScale        *float64    `json:"normalScale,omitempty"`
+	OcclusionStrength  *float64    `json:"occlusionStrength,omitempty"`
 	AlphaCutoff        AlphaCutoff `json:"alphaCutoff,omitzero"`
 	BlendMode          string      `json:"blendMode,omitempty"`
 	Roughness          float64     `json:"roughness,omitempty"`
@@ -184,36 +187,39 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID                 string   `json:"id"`
-	Kind               string   `json:"kind"`
-	Size               float64  `json:"size,omitempty"`
-	Width              float64  `json:"width,omitempty"`
-	Height             float64  `json:"height,omitempty"`
-	Depth              float64  `json:"depth,omitempty"`
-	Radius             float64  `json:"radius,omitempty"`
-	Segments           int      `json:"segments,omitempty"`
-	LineSegments       [][2]int `json:"lineSegments,omitempty"`
-	LineWidth          float64  `json:"lineWidth,omitempty"`
-	RadiusTop          float64  `json:"radiusTop,omitempty"`
-	RadiusBottom       float64  `json:"radiusBottom,omitempty"`
-	Tube               float64  `json:"tube,omitempty"`
-	RadialSegments     int      `json:"radialSegments,omitempty"`
-	TubularSegments    int      `json:"tubularSegments,omitempty"`
-	MaterialKind       string   `json:"materialKind,omitempty"`
-	Color              string   `json:"color,omitempty"`
-	Texture            string   `json:"texture,omitempty"`
-	Opacity            *float64 `json:"opacity,omitempty"`
-	Emissive           *float64 `json:"emissive,omitempty"`
-	BlendMode          string   `json:"blendMode,omitempty"`
-	RenderPass         string   `json:"renderPass,omitempty"`
-	Wireframe          *bool    `json:"wireframe,omitempty"`
-	LineDash           *bool    `json:"lineDash,omitempty"`
-	DashSize           float64  `json:"dashSize,omitempty"`
-	GapSize            float64  `json:"gapSize,omitempty"`
-	CustomVertex       string   `json:"customVertex,omitempty"`
-	CustomFragment     string   `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string   `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string   `json:"customFragmentWGSL,omitempty"`
+	ID                 string      `json:"id"`
+	Kind               string      `json:"kind"`
+	Size               float64     `json:"size,omitempty"`
+	Width              float64     `json:"width,omitempty"`
+	Height             float64     `json:"height,omitempty"`
+	Depth              float64     `json:"depth,omitempty"`
+	Radius             float64     `json:"radius,omitempty"`
+	Segments           int         `json:"segments,omitempty"`
+	LineSegments       [][2]int    `json:"lineSegments,omitempty"`
+	LineWidth          float64     `json:"lineWidth,omitempty"`
+	RadiusTop          float64     `json:"radiusTop,omitempty"`
+	RadiusBottom       float64     `json:"radiusBottom,omitempty"`
+	Tube               float64     `json:"tube,omitempty"`
+	RadialSegments     int         `json:"radialSegments,omitempty"`
+	TubularSegments    int         `json:"tubularSegments,omitempty"`
+	MaterialKind       string      `json:"materialKind,omitempty"`
+	Color              string      `json:"color,omitempty"`
+	Texture            string      `json:"texture,omitempty"`
+	Opacity            *float64    `json:"opacity,omitempty"`
+	Emissive           *float64    `json:"emissive,omitempty"`
+	EmissiveColor      *[3]float64 `json:"emissiveColor,omitempty"`
+	NormalScale        *float64    `json:"normalScale,omitempty"`
+	OcclusionStrength  *float64    `json:"occlusionStrength,omitempty"`
+	BlendMode          string      `json:"blendMode,omitempty"`
+	RenderPass         string      `json:"renderPass,omitempty"`
+	Wireframe          *bool       `json:"wireframe,omitempty"`
+	LineDash           *bool       `json:"lineDash,omitempty"`
+	DashSize           float64     `json:"dashSize,omitempty"`
+	GapSize            float64     `json:"gapSize,omitempty"`
+	CustomVertex       string      `json:"customVertex,omitempty"`
+	CustomFragment     string      `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string      `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string      `json:"customFragmentWGSL,omitempty"`
 	// *Ref fields replace their counterparts when hoisted into SceneIR.ShaderLib.
 	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
 	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
@@ -635,6 +641,9 @@ type InstancedMeshIR struct {
 	Texture              string                     `json:"texture,omitempty"`
 	Opacity              *float64                   `json:"opacity,omitempty"`
 	Emissive             *float64                   `json:"emissive,omitempty"`
+	EmissiveColor        *[3]float64                `json:"emissiveColor,omitempty"`
+	NormalScale          *float64                   `json:"normalScale,omitempty"`
+	OcclusionStrength    *float64                   `json:"occlusionStrength,omitempty"`
 	BlendMode            string                     `json:"blendMode,omitempty"`
 	RenderPass           string                     `json:"renderPass,omitempty"`
 	Wireframe            *bool                      `json:"wireframe,omitempty"`
@@ -2014,6 +2023,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
+	setColor3Ptr(record, "emissiveColor", item.EmissiveColor)
+	setNumericPtr(record, "normalScale", item.NormalScale)
+	setNumericPtr(record, "occlusionStrength", item.OcclusionStrength)
 	setString(record, "blendMode", item.BlendMode)
 	setString(record, "renderPass", item.RenderPass)
 	if item.Wireframe != nil {
@@ -2373,6 +2385,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
+	setColor3Ptr(record, "emissiveColor", item.EmissiveColor)
+	setNumericPtr(record, "normalScale", item.NormalScale)
+	setNumericPtr(record, "occlusionStrength", item.OcclusionStrength)
 	setString(record, "blendMode", item.BlendMode)
 	setString(record, "renderPass", item.RenderPass)
 	setBool(record, "wireframe", item.Wireframe)
@@ -2457,6 +2472,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
+	setColor3Ptr(record, "emissiveColor", item.EmissiveColor)
+	setNumericPtr(record, "normalScale", item.NormalScale)
+	setNumericPtr(record, "occlusionStrength", item.OcclusionStrength)
 	setString(record, "blendMode", item.BlendMode)
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)

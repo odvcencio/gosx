@@ -1531,6 +1531,12 @@ type StandardMaterial struct {
 	SpecularIntensity *float64
 	SpecularColor     *[3]float64
 	IOR               *float64
+	// EmissiveColor is the optional glTF emissiveFactor linear RGB triple.
+	// Nil keeps the legacy scalar-emission shader behavior; an explicit black
+	// value stays present and disables that fallback.
+	EmissiveColor     *[3]float64
+	NormalScale       *float64
+	OcclusionStrength *float64
 	NormalMap         string
 	RoughnessMap      string
 	MetalnessMap      string
@@ -3042,6 +3048,15 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if sc, ok := specularColorFromAny(materialProps["specularColor"]); ok {
 			record.SpecularColor = &sc
 		}
+		if ec, ok := specularColorFromAny(materialProps["emissiveColor"]); ok {
+			record.EmissiveColor = &ec
+		}
+		if normalScale, ok := mapFloat64OK(materialProps["normalScale"]); ok {
+			record.NormalScale = Float(normalScale)
+		}
+		if occlusionStrength, ok := mapFloat64OK(materialProps["occlusionStrength"]); ok {
+			record.OcclusionStrength = Float(occlusionStrength)
+		}
 		if normalMap, ok := mapStringValue(materialProps["normalMap"]); ok {
 			record.NormalMap = normalMap
 		}
@@ -3574,6 +3589,9 @@ func applyMaterialToInstancedGLBIR(record *InstancedGLBMeshIR, material Material
 	record.Texture = object.Texture
 	record.Opacity = object.Opacity
 	record.Emissive = object.Emissive
+	record.EmissiveColor = object.EmissiveColor
+	record.NormalScale = object.NormalScale
+	record.OcclusionStrength = object.OcclusionStrength
 	record.AlphaCutoff = object.AlphaCutoff
 	record.BlendMode = object.BlendMode
 	record.Roughness = object.Roughness
@@ -4122,6 +4140,15 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if sc, ok := specularColorFromAny(props["specularColor"]); ok {
 		record.SpecularColor = &sc
 	}
+	if ec, ok := specularColorFromAny(props["emissiveColor"]); ok {
+		record.EmissiveColor = &ec
+	}
+	if normalScale, ok := mapFloat64OK(props["normalScale"]); ok {
+		record.NormalScale = Float(normalScale)
+	}
+	if occlusionStrength, ok := mapFloat64OK(props["occlusionStrength"]); ok {
+		record.OcclusionStrength = Float(occlusionStrength)
+	}
 	if normalMap, ok := mapStringValue(props["normalMap"]); ok {
 		record.NormalMap = normalMap
 	}
@@ -4496,6 +4523,11 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		if m.Emissive != 0 {
 			record.Emissive = Float(m.Emissive)
 		}
+		if m.EmissiveColor != nil {
+			record.EmissiveColor = copySpecularColor(m.EmissiveColor)
+		}
+		record.NormalScale = m.NormalScale
+		record.OcclusionStrength = m.OcclusionStrength
 		if m.Opacity != nil {
 			record.Opacity = m.Opacity
 		}
@@ -4542,6 +4574,11 @@ func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial
 	if material.SpecularColor != nil {
 		record.SpecularColor = copySpecularColor(material.SpecularColor)
 	}
+	if material.EmissiveColor != nil {
+		record.EmissiveColor = copySpecularColor(material.EmissiveColor)
+	}
+	record.NormalScale = material.NormalScale
+	record.OcclusionStrength = material.OcclusionStrength
 	record.NormalMap = strings.TrimSpace(material.NormalMap)
 	record.RoughnessMap = strings.TrimSpace(material.RoughnessMap)
 	record.MetalnessMap = strings.TrimSpace(material.MetalnessMap)
@@ -4656,6 +4693,9 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumericPtr(out, "ior", m.IOR)
 	setNumericPtr(out, "specularIntensity", m.SpecularIntensity)
 	setColor3Ptr(out, "specularColor", m.SpecularColor)
+	setColor3Ptr(out, "emissiveColor", m.EmissiveColor)
+	setNumericPtr(out, "normalScale", m.NormalScale)
+	setNumericPtr(out, "occlusionStrength", m.OcclusionStrength)
 	setString(out, "normalMap", m.NormalMap)
 	setString(out, "roughnessMap", m.RoughnessMap)
 	setString(out, "metalnessMap", m.MetalnessMap)

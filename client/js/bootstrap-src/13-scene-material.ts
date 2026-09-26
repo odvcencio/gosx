@@ -390,6 +390,21 @@
     return [1, 1, 1];
   }
 
+  // glTF emissiveFactor is an optional linear RGB triple. Keep absence
+  // distinct from authored black so the PBR shader only uses its legacy
+  // albedo-tinted emission fallback for materials that never supplied a
+  // colour factor. Return a fresh array to keep profile snapshots isolated.
+  function sceneCopyFiniteRGB(value, fallback) {
+    const copy = function(source) {
+      if (!source || typeof source.length !== "number" || source.length !== 3) return null;
+      const result = [source[0], source[1], source[2]];
+      return result.every(function(component) {
+        return typeof component === "number" && Number.isFinite(component) && component >= 0;
+      }) ? result : null;
+    };
+    return copy(value) || copy(fallback) || undefined;
+  }
+
   // Scene/glTF-authored alpha cutoff:
   // finite numbers >= 0 are valid with no upper clamp — 0 and values above
   // 1 included; nonempty numeric strings are accepted. An explicit null
@@ -635,7 +650,7 @@
   const sceneSharedMaterialProfiles = new Map();
   const sceneObjectMaterialInputKeys = [
     "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
-    "emissive", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
+    "emissive", "emissiveColor", "normalScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
     "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineDash",
     "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
     "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout",
@@ -712,7 +727,10 @@
         opacity,
         maskOpaque,
       ),
-      emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+      emissive: sceneNonnegativeNumberOrCSSVar(object && object.emissive, sceneDefaultMaterialEmissive(kind)),
+      emissiveColor: sceneCopyFiniteRGB(object && object.emissiveColor, undefined),
+      normalScale: sceneNumber(object && object.normalScale, 1),
+      occlusionStrength: clamp01(sceneNumber(object && object.occlusionStrength, 1)),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
       ior: sceneNormalizeMaterialIor(object && object.ior, 1.5),
@@ -801,7 +819,13 @@
       // otherwise-identical profiles must never share a cached material.
       String(profile && profile._blendModeDerived === true),
       String(profile && profile._renderPassDerived === true),
-      sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+      sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : String(sceneFiniteNonnegative(profile && profile.emissive, 0)),
+      JSON.stringify(sceneCopyFiniteRGB(profile && profile.emissiveColor, undefined)),
+      // These factors reach PBR uniforms directly. Keep their full numeric
+      // precision in identity so nearby authored values cannot share a
+      // profile or reuse stale uniforms.
+      String(sceneNumber(profile && profile.normalScale, 1)),
+      String(clamp01(sceneNumber(profile && profile.occlusionStrength, 1))),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
       // Authored ior keys at full precision — no toFixed quantization — so
@@ -921,7 +945,7 @@
     if (!material || typeof material !== "object") {
       return 0;
     }
-    return clamp01(sceneNumber(material.emissive, 0));
+    return sceneFiniteNonnegative(material.emissive, 0);
   }
 
   function sceneMaterialRenderPass(material) {
