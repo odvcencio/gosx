@@ -2781,6 +2781,9 @@
     "    } else {",
     "        color = aces(color);",
     "    }",
+    "    if (mode != 3) {",
+    "        color = pow(max(color, vec3f(0.0)), vec3f(1.0 / 2.2));",
+    "    }",
     "    return vec4f(color, 1.0);",
     "}",
   ].join("\n");
@@ -2832,13 +2835,9 @@
   // GoSX is weakest, and it lands hardest on a shader that is a weighted average
   // of many texture taps.
   //
-  // Where it is SAFE here, and why. Every post target this renderer allocates
-  // uses targetFormat — the preferred canvas format, an 8-bit UNORM. See
-  // ensureFBOs and ensureBloomPingPong. So every value a post shader samples is
-  // already quantized to 8 bits in [0, 1]. An f16 carries an 11-bit significand,
-  // which strictly exceeds that, and the blur weights sum to 1, so the
-  // accumulator never leaves [0, 1] either. Half precision cannot lose a bit the
-  // target could have stored.
+  // The post textures use RGBA16float. Blur and FXAA use bounded weights,
+  // while tone mapping, bright extraction, and depth reconstruction stay f32.
+  // Tests cover HDR inputs through the half and full precision variants.
   //
   // Where it is NOT safe, and why these shaders stay f32:
   //
@@ -4179,7 +4178,8 @@
   // That crash sat undiscovered because the customPost case was unreachable:
   // normalizeScenePostEffect lowercased the kind, so this pass never ran and
   // never reached the uniform upload on the frame after its pipeline resolved.
-  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError, packSelenaUniforms) {
+  function wgpuCreatePostProcessor(device, presentationFormat, onAllocationError, packSelenaUniforms) {
+    var targetFormat = "rgba16float";
     // Resolve the precision variant once per post processor, not per frame.
     var postPrecisionMode = sceneWebGPUPostPrecisionMode(device);
     var postUsesF16 = postPrecisionMode === "f16";
@@ -4412,7 +4412,7 @@
       if (pipelines[name]) return pipelines[name];
       var fragModule = device.createShaderModule({ label: "post-" + name, code: fragmentSource });
       var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, targetFormat);
+      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, name === "present" ? presentationFormat : targetFormat);
       pipelines[name] = pipeline;
       return pipeline;
     }
@@ -4544,7 +4544,7 @@
     return {
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
-        return { colorView: sceneTexView, depthView: depthTexView };
+        return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
       apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
@@ -4552,6 +4552,7 @@
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+        var presentPipeline = getPipeline("present", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
         // postChain is the per-effect render-truth record. Built ONLY when the
         // diagnostics tier is on, so production pays one boolean read.
         //
@@ -4573,16 +4574,16 @@
           postDOMRegionBoundedSkips: 0,
           postDOMRegionBoundedPixels: 0,
           postPrecision: postPrecisionMode,
+          postColorFormat: targetFormat,
           postChain: postChain,
         };
         activePostChain = postChain;
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
-          var isLast = (i === effects.length - 1);
-          var outputView = isLast ? finalView : (currentTexView === sceneTexView ? auxTexView : sceneTexView);
-          var passW = isLast ? canvasW : scaledW;
-          var passH = isLast ? canvasH : scaledH;
+          var outputView = currentTexView === sceneTexView ? auxTexView : sceneTexView;
+          var passW = scaledW;
+          var passH = scaledH;
           activePostIndex = i;
 
           switch (effect.kind) {
@@ -4854,7 +4855,7 @@
             { binding: 0, resource: currentTexView },
             { binding: 1, resource: linearSampler },
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ ]);
-          fullscreenPass(encoder, blitPipeline, blitBG, finalView);
+          fullscreenPass(encoder, presentPipeline, blitBG, finalView);
         }
         activePostChain = null;
         return stats;
@@ -6431,7 +6432,8 @@
     // initFailed remains for runtime device-loss recovery.
     var initFailed = false;
     var initError = "";
-    var targetFormat = navigator.gpu.getPreferredCanvasFormat();
+    var presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+    var targetFormat = presentationFormat;
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
     var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
     var activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
@@ -6476,7 +6478,7 @@
     function sceneWebGPUCanvasConfiguration() {
       var config = {
         device: device,
-        format: targetFormat,
+        format: presentationFormat,
         alphaMode: activePresentation.alphaMode,
         colorSpace: activePresentation.colorSpace,
       };
@@ -6495,7 +6497,7 @@
       return [
         canvas ? canvas.width : 0,
         canvas ? canvas.height : 0,
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ targetFormat,
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ presentationFormat,
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ p.alphaMode,
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ p.colorSpace,
         p.toneMappingMode || "",
@@ -7159,6 +7161,7 @@
     var mainMSAAWidth = 0;
     var mainMSAAHeight = 0;
     var mainMSAASampleCount = 1;
+    var mainMSAAFormat = "";
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
@@ -7984,7 +7987,7 @@
         mainMSAATexture &&
         mainMSAAWidth === width &&
         mainMSAAHeight === height &&
-        mainMSAASampleCount === sampleCount
+        mainMSAASampleCount === sampleCount && mainMSAAFormat === targetFormat
       ) {
         return mainMSAAView;
       }
@@ -7999,6 +8002,7 @@
       mainMSAAWidth = width;
       mainMSAAHeight = height;
       mainMSAASampleCount = sampleCount;
+      mainMSAAFormat = targetFormat;
       return mainMSAAView;
     }
 
@@ -18129,6 +18133,7 @@
       // forever with a poisoned post-FX target.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
+      targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
@@ -18294,7 +18299,7 @@
 
       if (usePostProcessing) {
         if (!postProcessor) {
-          postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
+          postProcessor = wgpuCreatePostProcessor(device, presentationFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
             return sceneSelenaUniformData(material, owner, renderContext, selenaFrame);
           });
         }

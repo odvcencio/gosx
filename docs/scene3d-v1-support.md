@@ -126,3 +126,9 @@ Each backend uses at most three frame queries. A full ring skips a timing
 sample without delaying rendering. Readback never waits inside the render
 call. WebGL discards all pending results after a disjoint event. A device or
 context loss invalidates GPU samples. Renderer replacement starts a new ring.
+
+### HDR post processing
+
+When a WebGPU scene has post effects, the scene, auxiliary, bloom, and MSAA color targets use `rgba16float`. The canvas keeps its preferred presentation format. The final blit converts the last post target to that format. Resize and post-effect changes rebuild targets and pipelines with matching formats.
+
+The tone-map effect applies the same display transfer as WebGL. Linear, ACES, and Reinhard modes apply gamma 2.2 after the curve. Filmic already includes its output response and gets no second transfer. Put bloom before tone mapping to select radiance above one. An explicit tone-map effect remains required; an identity or custom-only chain does not gain an implicit curve. Custom shader color conventions remain the author’s responsibility.
