@@ -1742,7 +1742,8 @@ const routeBudgets = [
     // current-route baselines and let the shared policy govern future growth.
     raw: 1_250_000,
     // Full-frame GPU timing adds 256 gzip bytes and 384 Brotli bytes after the G01 cache merge.
-    gzip: 335_256,
+    // HDR presentation adds 128 gzip bytes; measured route: 351,690 bytes.
+    gzip: 335_384,
     brotli: 282_384,
   },
   {
