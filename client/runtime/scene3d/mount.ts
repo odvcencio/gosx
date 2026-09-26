@@ -1795,7 +1795,7 @@
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
-      renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(null));
+      sceneRenderWithTiming(renderer, latestBundle, viewport, createSceneRenderFrameMeta(null), renderTiming);
       recordSceneWaterFrame(mount, latestBundle);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
@@ -2496,6 +2496,7 @@
 	      publishMountedSceneCamera(nextCamera, reason || "camera");
 	      return true;
 	    }
+    const renderTiming = { cpuSubmitMS: 0, frameIntervalMS: 0, submitAtMS: 0 };
     function buildSceneDebugSnapshot(mode) {
       const rendererKind = renderer && renderer.kind ? renderer.kind : "";
       const rendererDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
@@ -2509,6 +2510,7 @@
         engineID: String(ctx.id || ""),
         component: String(ctx.component || ""),
         renderer: rendererKind,
+        frameTiming: sceneRendererFrameTiming(renderer, renderTiming),
         fallbackReason: sceneDebugAttr(mount, sceneAttr("renderer-fallback")),
         ready: sceneDebugAttr(mount, readyAttr) === "true",
         active: sceneDebugAttr(mount, sceneAttr("active")) !== "false",
@@ -3046,7 +3048,7 @@
             return;
           }
           syncSceneNodeSentinels(effectiveBundle);
-          renderer.render(effectiveBundle, viewport, createSceneRenderFrameMeta(now));
+          sceneRenderWithTiming(renderer, effectiveBundle, viewport, createSceneRenderFrameMeta(now), renderTiming);
           recordSceneWaterFrame(mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -3162,7 +3164,7 @@
         return;
       }
       syncSceneNodeSentinels(latestBundle);
-      renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(now));
+      sceneRenderWithTiming(renderer, latestBundle, viewport, createSceneRenderFrameMeta(now), renderTiming);
       recordSceneWaterFrame(mount, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);

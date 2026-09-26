@@ -1745,7 +1745,8 @@ const routeBudgets = [
     // 1_305_322 / 351_407 / 296_071. Gzip target 335_000 -> 335_100 is the
     // smallest 100-byte step that clears the hard limit.
     raw: 1_250_000,
-    gzip: 335_100,
+    // Full-frame GPU timing adds 256 bytes to the reviewed gzip target.
+    gzip: 335_256,
     brotli: 282_000,
   },
   {

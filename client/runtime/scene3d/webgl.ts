@@ -1,3 +1,106 @@
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneWebGLTimerSampleIsNew(ns, frameSeq, latest) {
+    return Number.isFinite(ns) && ns > 0 && (!latest || frameSeq > latest.frameSeq);
+  }
+
+  // One elapsed query covers the complete frame, including composite callbacks.
+  // Results are read only after availability; this path never waits on the GPU.
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function createSceneWebGLFrameTimer(gl) {
+    const clock = () => performance.now();
+    let extension = null;
+    let status = "unavailable";
+    let frameSeq = 0;
+    let latest = null;
+    let pendingSample = null;
+    let active = null;
+    const slots = [];
+    function clear() {
+      for (const slot of slots) if (slot.query) gl.deleteQuery(slot.query);
+      slots.length = 0;
+      latest = pendingSample = active = null;
+    }
+    function fail() { clear(); status = "failed"; extension = null; }
+    try {
+      extension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+      if (extension && typeof gl.createQuery === "function") {
+        for (let i = 0; i < 3; i++) {
+          const query = gl.createQuery();
+          if (!query) throw new Error("timer query allocation failed");
+          slots.push({ query, pending: false, frameSeq: 0 });
+        }
+        status = "pending";
+      } else extension = null;
+    } catch (_) { fail(); }
+    function poll() {
+      if (!extension || active) return;
+      try {
+        if (gl.isContextLost && gl.isContextLost()) { fail(); return; }
+        if (gl.getParameter(extension.GPU_DISJOINT_EXT)) {
+          // Every outstanding result is invalid after a clock discontinuity.
+          latest = pendingSample = null;
+          status = "disjoint";
+          for (const slot of slots) {
+            gl.deleteQuery(slot.query);
+            slot.query = gl.createQuery();
+            slot.pending = false;
+            if (!slot.query) throw new Error("timer query allocation failed");
+          }
+          return;
+        }
+        for (const slot of slots) {
+          if (!slot.pending || !gl.getQueryParameter(slot.query, gl.QUERY_RESULT_AVAILABLE)) continue;
+          const ns = Number(gl.getQueryParameter(slot.query, gl.QUERY_RESULT));
+          slot.pending = false;
+          if (sceneWebGLTimerSampleIsNew(ns, slot.frameSeq, latest)) {
+            latest = { source: "webgl-timer", scope: "frame", gpuMS: ns / 1e6,
+              frameSeq: slot.frameSeq, atMS: clock() };
+            pendingSample = latest;
+            status = "measured";
+          }
+        }
+      } catch (_) { fail(); }
+    }
+    return {
+      begin() {
+        frameSeq++;
+        poll();
+        if (!extension || active) return null;
+        // Composite water uses the world's query; elapsed queries cannot nest.
+        if (typeof gl.getQuery === "function" && gl.getQuery(extension.TIME_ELAPSED_EXT, gl.CURRENT_QUERY)) return null;
+        const slot = slots.find(s => !s.pending);
+        if (!slot) return null;
+        try {
+          gl.beginQuery(extension.TIME_ELAPSED_EXT, slot.query);
+          slot.frameSeq = frameSeq;
+          active = slot;
+          return slot;
+        } catch (_) { fail(); return null; }
+      },
+      end(slot) {
+        if (!slot || active !== slot || !extension) return;
+        try {
+          gl.endQuery(extension.TIME_ELAPSED_EXT);
+          slot.pending = true;
+          active = null;
+        } catch (_) { fail(); }
+      },
+      poll,
+      sample() { poll(); const sample = pendingSample; pendingSample = null; return sample; },
+      snapshot() {
+        poll();
+        const state = latest && clock() - latest.atMS > 1000 ? "stale" : status;
+        return Object.assign({ status: state, source: "webgl-timer", scope: "frame",
+          gpuMS: null, frameSeq: 0, atMS: 0 }, state === "measured" ? latest : {});
+      },
+      timingStatus() {
+        return { available: !!extension, active: !!extension,
+          pending: !!active || slots.some(s => s.pending), failed: status === "failed", source: "webgl-timer" };
+      },
+      dispose() { clear(); extension = null; status = "disposed"; },
+    };
+  }
+
   // webgl.ts — PBR WebGL2 rendering backend for GoSX Scene3D.
   // @ts-check
   //
@@ -3625,133 +3728,23 @@
       shadow: { desired: 0, failures: 0, nextFrame: 0, pending: false },
       object: { desired: 0, failures: 0, nextFrame: 0, pending: false },
     };
-    var timerExtension = null;
-    var timerQueries = [];
-    var timerQueryCursor = 0;
-    var timerQueryActive = null;
-    var pendingPerformanceSample = null;
+    var frameTimer = createSceneWebGLFrameTimer(gl);
     var lastPerformanceSample = null;
-
-    try {
-      timerExtension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
-      if (timerExtension && typeof gl.createQuery === "function" &&
-          typeof gl.getQueryParameter === "function") {
-        for (var timerIndex = 0; timerIndex < 3; timerIndex++) {
-          timerQueries.push({ query: gl.createQuery(), pending: false, atMS: 0 });
-        }
-        if (timerQueries.some(function(record) { return !record.query; })) {
-          disposeWaterTimerQueries();
-        }
-      } else {
-        timerExtension = null;
-      }
-    } catch (timerInitError) {
-      timerExtension = null;
-      timerQueries.length = 0;
-    }
-
-    function disposeWaterTimerQueries() {
-      if (typeof gl.deleteQuery === "function") {
-        timerQueries.forEach(function(record) {
-          if (record && record.query) gl.deleteQuery(record.query);
-        });
-      }
-      timerQueries.length = 0;
-      timerExtension = null;
-      timerQueryActive = null;
-      pendingPerformanceSample = null;
-    }
-
-    function resetWaterTimerRing() {
-      if (!timerExtension || typeof gl.createQuery !== "function") return;
-      timerQueries.forEach(function(record) {
-        if (record.query && typeof gl.deleteQuery === "function") gl.deleteQuery(record.query);
-        record.query = gl.createQuery();
-        record.pending = false;
-        record.atMS = 0;
-      });
-      if (timerQueries.some(function(record) { return !record.query; })) {
-        disposeWaterTimerQueries();
-        return;
-      }
-      timerQueryCursor = 0;
-      timerQueryActive = null;
-    }
-
+    function disposeWaterTimerQueries() { frameTimer.dispose(); }
     function pollWaterTimerQueries() {
-      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return;
-      try {
-        if (gl.getParameter(timerExtension.GPU_DISJOINT_EXT)) {
-          resetWaterTimerRing();
-          pendingPerformanceSample = null;
-          return;
-        }
-        for (var i = 0; i < timerQueries.length; i++) {
-          var record = timerQueries[i];
-          if (!record.pending || !gl.getQueryParameter(record.query, gl.QUERY_RESULT_AVAILABLE)) continue;
-          var elapsedNS = Number(gl.getQueryParameter(record.query, gl.QUERY_RESULT));
-          record.pending = false;
-          if (Number.isFinite(elapsedNS) && elapsedNS >= 0) {
-            pendingPerformanceSample = {
-              source: "webgl-timer",
-              gpuMS: elapsedNS / 1000000,
-              atMS: record.atMS,
-            };
-            lastPerformanceSample = pendingPerformanceSample;
-          }
-        }
-      } catch (timerPollError) {
-        disposeWaterTimerQueries();
-      }
+      var sample = frameTimer.snapshot();
+      lastPerformanceSample = sample.status === "measured" ? sample : null;
     }
-
-    function beginWaterTimerQuery(nowMS) {
-      pollWaterTimerQueries();
-      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return null;
-      var record = timerQueries[timerQueryCursor];
-      if (!record || record.pending) return null;
-      try {
-        gl.beginQuery(timerExtension.TIME_ELAPSED_EXT, record.query);
-        record.atMS = nowMS;
-        timerQueryActive = record;
-        timerQueryCursor = (timerQueryCursor + 1) % timerQueries.length;
-        return record;
-      } catch (timerBeginError) {
-        disposeWaterTimerQueries();
-        return null;
-      }
-    }
-
-    function endWaterTimerQuery(record) {
-      if (!record || timerQueryActive !== record || !timerExtension) return;
-      try {
-        gl.endQuery(timerExtension.TIME_ELAPSED_EXT);
-        record.pending = true;
-        timerQueryActive = null;
-      } catch (timerEndError) {
-        disposeWaterTimerQueries();
-      }
-    }
-
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+    function beginWaterTimerQuery(_nowMS) { return frameTimer.begin(); }
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+    function endWaterTimerQuery(record) { frameTimer.end(record); }
     function pollPerformanceSample() {
-      pollWaterTimerQueries();
-      var sample = pendingPerformanceSample;
-      pendingPerformanceSample = null;
+      var sample = frameTimer.sample();
+      if (sample) lastPerformanceSample = sample;
       return sample;
     }
-
-    function getPerformanceTimingStatus() {
-      var available = Boolean(timerExtension && timerQueries.length === 3);
-      var pending = Boolean(timerQueryActive) || timerQueries.some(function(record) {
-        return Boolean(record && record.pending);
-      });
-      return {
-        available: available,
-        active: available,
-        pending: pending,
-        source: "webgl-timer",
-      };
-    }
+    function getPerformanceTimingStatus() { return frameTimer.timingStatus(); }
 
     function selectWaterSurfaceGrid(requested) {
       return cachedWaterSurfaceGrid(requested);
@@ -4509,6 +4502,7 @@
       },
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,
+      getFrameTiming: frameTimer.snapshot,
       setLifecycle: setLifecycle,
       dispose: dispose,
       resize: function() {},
@@ -10997,6 +10991,7 @@
     const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
       rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
 
+    var frameTimer = createSceneWebGLFrameTimer(gl);
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
@@ -11008,9 +11003,17 @@
       // selection), so a page whose first crowd-motion batch reaches
       // render() before this has ever run would silently skip drawing it.
       prepareCrowdMotionShaders,
-      render: render,
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+      render: function(bundle, viewport, frameMeta) {
+        var token = frameTimer.begin();
+        try { return render(bundle, viewport, frameMeta); }
+        finally { frameTimer.end(token); }
+      },
+      getFrameTiming: frameTimer.snapshot,
+      pollPerformanceSample: frameTimer.sample,
+      getPerformanceTimingStatus: frameTimer.timingStatus,
       renderSurfaces: renderSurfaces,
-      dispose: dispose,
+      dispose: function() { frameTimer.dispose(); dispose(); },
       diagnostics: diagnostics,
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
