@@ -181,6 +181,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
+			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
 			sourceFile("bootstrap-src/18-scene-canvas.ts"),
 			// 19a-scene-ktx2.ts holds the browser KTX2 reader and the block
@@ -519,6 +520,7 @@ var outputs = []output{
 		sources: []source{
 			sourceFile("bootstrap-src/26k-feature-scene3d-compute-prefix.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
+			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.ts"),
 		},
 	},
