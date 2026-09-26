@@ -3037,7 +3037,7 @@
             runtimeBundle,
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
-          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources;
+          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
@@ -3133,7 +3133,7 @@
           meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
         },
       );
-      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
+      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups

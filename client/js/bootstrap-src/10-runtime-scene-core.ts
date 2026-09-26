@@ -2854,6 +2854,24 @@
     return out;
   }
 
+  // sceneGPUDrivenMode normalizes the optional GPU-driven instancing mode:
+  // scene.gpuDriven (lowered from Go Props.GPUDriven) or a directly authored
+  // top-level gpuDriven prop. It returns null when the scene does not opt in.
+  // Only the WebGPU renderer reads it (client/runtime/scene3d/indirect-instancing.ts).
+  function sceneGPUDrivenMode(props) {
+    const scene = sceneProps(props);
+    const raw = scene && sceneIsPlainObject(scene.gpuDriven)
+      ? scene.gpuDriven
+      : (props && sceneIsPlainObject(props.gpuDriven) ? props.gpuDriven : null);
+    if (!raw) {
+      return null;
+    }
+    return {
+      occlusion: sceneBool(raw.occlusion, false),
+      shadowCulling: sceneBool(raw.shadowCulling, true),
+    };
+  }
+
   function sceneCamera(props) {
     const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
     return normalizeSceneCamera(raw, {
@@ -3116,6 +3134,7 @@
       capability: capability || null,
       postEffects: deferPostFX ? [] : postEffects,
       postFXMaxPixels: postFXMaxPixels,
+      gpuDriven: sceneGPUDrivenMode(props),
       _deferredPostEffects: deferPostFX ? postEffects : null,
       _adaptiveSourcePostEffects: postEffects,
       _transitions: [],

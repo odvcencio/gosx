@@ -1740,8 +1740,12 @@ const routeBudgets = [
     // v0.55.0 route audit: 1_245_867 / 333_157 / 281_573. The previous
     // baseline accidentally described a dual-backend-era payload; use rounded
     // current-route baselines and let the shared policy govern future growth.
+    // GPU-driven instancing config carries the mode through scene state and
+    // both mount paths, after the instanced cache-owner fix. Measured:
+    // 1_305_322 / 351_407 / 296_071. Gzip target 335_000 -> 335_100 is the
+    // smallest 100-byte step that clears the hard limit.
     raw: 1_250_000,
-    gzip: 335_000,
+    gzip: 335_100,
     brotli: 282_000,
   },
   {
