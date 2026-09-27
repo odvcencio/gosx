@@ -45,11 +45,12 @@ func TestTabletopSeedSceneArtContract(t *testing.T) {
 			}
 			if strings.HasSuffix(item.ID, "-contact-shadow") {
 				material, materialOK := item.Material.(scene.FlatMaterial)
-				geometry, disc := item.Geometry.(scene.CylinderGeometry)
-				if materialOK && disc && geometry.Height == tabletopContactPad && material.Color == "#211713" && material.Texture == "" && material.Opacity == nil && material.BlendMode == "" {
+				geometry, disc := item.Geometry.(scene.BufferGeometry)
+				softOpacity := materialOK && material.Opacity != nil && math.Abs(*material.Opacity-0.65) < 0.001
+				if materialOK && disc && len(geometry.Indices) == 192 && material.Color == "#211713" && softOpacity && material.BlendMode == scene.BlendAlpha {
 					contactShadowCount++
 				} else {
-					t.Errorf("%s must use a dark primitive contact pad", item.ID)
+					t.Errorf("%s must use a soft dark contact disc", item.ID)
 				}
 			}
 			if item.ID == "tabletop-studio-backdrop" {

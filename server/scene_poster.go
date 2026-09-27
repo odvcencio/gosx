@@ -40,6 +40,8 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -158,9 +160,30 @@ func ScenePosterPreload(cfg ScenePosterConfig) gosx.Node {
 		gosx.Attr("rel", "preload"),
 		gosx.Attr("as", "image"),
 		gosx.Attr("href", AssetURL(cfg.URL)),
-		gosx.Attr("type", "image/png"),
+		gosx.Attr("type", scenePosterMediaType(cfg.URL)),
 		gosx.Attr("fetchpriority", "high"),
 	))
+}
+
+func scenePosterMediaType(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "image/png"
+	}
+	switch strings.ToLower(path.Ext(parsed.Path)) {
+	case ".avif":
+		return "image/avif"
+	case ".gif":
+		return "image/gif"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".svg":
+		return "image/svg+xml"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "image/png"
+	}
 }
 
 // ScenePosterCachePolicy returns the caching rules for a poster response.

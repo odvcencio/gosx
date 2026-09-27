@@ -102,6 +102,15 @@ func TestScenePosterPreloadStartsTheFetchEarly(t *testing.T) {
 	}
 }
 
+func TestScenePosterPreloadUsesThePosterMediaType(t *testing.T) {
+	cfg := posterConfig()
+	cfg.URL = "/posters/hero.webp?rev=1"
+	html := gosx.RenderHTML(ScenePosterPreload(cfg))
+	if !strings.Contains(html, `type="image/webp"`) {
+		t.Fatalf("WebP poster preload has the wrong media type:\n%s", html)
+	}
+}
+
 func TestScenePosterCacheHeaders(t *testing.T) {
 	immutable := http.Header{}
 	WriteScenePosterHeaders(immutable, "abc123", true)
