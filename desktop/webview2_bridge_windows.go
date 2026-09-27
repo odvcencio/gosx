@@ -17,18 +17,27 @@ import (
 const (
 	// ICoreWebView2 additions.
 	webViewGetSettings                         = 3
+	webViewAddProcessFailed                    = 25
+	webViewRemoveProcessFailed                 = 26
 	webViewAddScriptToExecuteOnDocumentCreated = 27
 	webViewExecuteScript                       = 29
+	webViewReload                              = 31
 	webViewPostWebMessageAsString              = 33
 	webViewAddWebMessageReceived               = 34
 	webViewRemoveWebMessageReceived            = 35
 	webViewOpenDevToolsWindow                  = 51
+	webViewAddFullscreenChanged                = 52
+	webViewRemoveFullscreenChanged             = 53
+	webViewGetContainsFullscreenElement        = 54
 
 	// ICoreWebView2Settings.
-	settingsPutIsScriptEnabled               = 4
-	settingsPutIsWebMessageEnabled           = 6
-	settingsPutAreDevToolsEnabled            = 12
-	settingsPutAreDefaultContextMenusEnabled = 14
+	settingsPutIsScriptEnabled                  = 4
+	settingsPutIsWebMessageEnabled              = 6
+	settingsPutIsStatusBarEnabled               = 10
+	settingsPutAreDevToolsEnabled               = 12
+	settingsPutAreDefaultContextMenusEnabled    = 14
+	settingsPutIsZoomControlEnabled             = 18
+	settingsPutAreBrowserAcceleratorKeysEnabled = 24
 
 	// ICoreWebView2WebMessageReceivedEventArgs.
 	webMessageArgsTryGetAsString = 5
@@ -39,6 +48,10 @@ var procCoTaskMemFree = modOle32.NewProc("CoTaskMemFree")
 // coreWebView2Settings wraps ICoreWebView2Settings, obtained via
 // coreWebView2.getSettings().
 type coreWebView2Settings struct {
+	vtbl uintptr
+}
+
+type coreWebView2Settings3 struct {
 	vtbl uintptr
 }
 
@@ -66,6 +79,37 @@ func (w *coreWebView2) getSettings() (*coreWebView2Settings, error) {
 
 // setBool invokes a setter at the given vtbl index with a BOOL argument.
 func (s *coreWebView2Settings) setBool(index uintptr, op string, value bool) error {
+	var v uintptr
+	if value {
+		v = 1
+	}
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(s), index),
+		uintptr(unsafe.Pointer(s)),
+		v,
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: op, Code: hr}
+	}
+	return nil
+}
+
+func (s *coreWebView2Settings) setBrowserAcceleratorKeysEnabled(enabled bool) error {
+	iidSettings3 := comGUID{
+		Data1: 0xfdb5ab74, Data2: 0xaf33, Data3: 0x4854,
+		Data4: [8]byte{0x84, 0xf0, 0x0a, 0x63, 0x1d, 0xeb, 0x5e, 0xba},
+	}
+	queried, err := queryCOMInterface(unsafe.Pointer(s), iidSettings3)
+	if err != nil {
+		return err
+	}
+	defer comRelease(queried)
+	settings := (*coreWebView2Settings3)(queried)
+	return settings.setBool(settingsPutAreBrowserAcceleratorKeysEnabled,
+		"Settings3.put_AreBrowserAcceleratorKeysEnabled", enabled)
+}
+
+func (s *coreWebView2Settings3) setBool(index uintptr, op string, value bool) error {
 	var v uintptr
 	if value {
 		v = 1
@@ -153,6 +197,75 @@ func (w *coreWebView2) openDevToolsWindow() error {
 	)
 	if failedHRESULT(hr) {
 		return hresultError{Op: "ICoreWebView2.OpenDevToolsWindow", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) reload() error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewReload),
+		uintptr(unsafe.Pointer(w)),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.Reload", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) containsFullScreenElement() (bool, error) {
+	var contains int32
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewGetContainsFullscreenElement),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(&contains)),
+	)
+	if failedHRESULT(hr) {
+		return false, hresultError{Op: "ICoreWebView2.get_ContainsFullScreenElement", Code: hr}
+	}
+	return contains != 0, nil
+}
+
+func (w *coreWebView2) addProcessFailed(handler *processFailedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddProcessFailed),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_ProcessFailed", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeProcessFailed(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveProcessFailed),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_ProcessFailed", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) addFullscreenChanged(handler *containsFullScreenElementChangedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddFullscreenChanged),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_ContainsFullScreenElementChanged", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeFullscreenChanged(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveFullscreenChanged),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_ContainsFullScreenElementChanged", Code: hr}
 	}
 	return nil
 }

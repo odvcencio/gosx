@@ -39,6 +39,49 @@ func TestNormalizeOptionsRejectsNUL(t *testing.T) {
 	}
 }
 
+func TestNormalizeOptionsKeepsWebView2ShippingOptions(t *testing.T) {
+	options, err := normalizeOptions(Options{
+		BrowserExecutableFolder:    `C:\runtime\fixed`,
+		AdditionalBrowserArguments: "--mute-audio --autoplay-policy=no-user-gesture-required",
+	})
+	if err != nil {
+		t.Fatalf("normalize options: %v", err)
+	}
+	if options.BrowserExecutableFolder != `C:\runtime\fixed` {
+		t.Fatalf("browser executable folder = %q", options.BrowserExecutableFolder)
+	}
+	if options.AdditionalBrowserArguments != "--mute-audio --autoplay-policy=no-user-gesture-required" {
+		t.Fatalf("additional browser arguments = %q", options.AdditionalBrowserArguments)
+	}
+}
+
+func TestNormalizeOptionsRejectsNULInWebView2Options(t *testing.T) {
+	for name, options := range map[string]Options{
+		"browser executable folder":    {BrowserExecutableFolder: "bad\x00folder"},
+		"additional browser arguments": {AdditionalBrowserArguments: "--flag\x00value"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := normalizeOptions(options); !errors.Is(err, ErrInvalidOptions) {
+				t.Fatalf("error = %v, want ErrInvalidOptions", err)
+			}
+		})
+	}
+}
+
+func TestDesktopWebView2AvailabilityErrorsAreDistinctAndWrapped(t *testing.T) {
+	loaderErr := webView2LoaderUnavailable(errors.New("loader not found"))
+	if !errors.Is(loaderErr, ErrWebView2LoaderUnavailable) || !errors.Is(loaderErr, ErrWebView2Unavailable) {
+		t.Fatalf("loader error = %v, want loader and general WebView2 sentinels", loaderErr)
+	}
+	runtimeErr := webView2RuntimeUnavailable(errors.New("no runtime"))
+	if !errors.Is(runtimeErr, ErrWebView2RuntimeUnavailable) || !errors.Is(runtimeErr, ErrWebView2Unavailable) {
+		t.Fatalf("runtime error = %v, want runtime and general WebView2 sentinels", runtimeErr)
+	}
+	if errors.Is(loaderErr, ErrWebView2RuntimeUnavailable) || errors.Is(runtimeErr, ErrWebView2LoaderUnavailable) {
+		t.Fatalf("loader and runtime errors must remain distinct: loader=%v runtime=%v", loaderErr, runtimeErr)
+	}
+}
+
 func TestNormalizeOptionsRejectsURLAndHTML(t *testing.T) {
 	_, err := normalizeOptions(Options{URL: "https://example.test", HTML: "<h1>ok</h1>"})
 	if !errors.Is(err, ErrInvalidOptions) {
@@ -82,6 +125,17 @@ func TestDevToolsEnabled(t *testing.T) {
 		if got := devToolsEnabled(tc.opts); got != tc.want {
 			t.Fatalf("%s: devToolsEnabled = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestDesktopAppReloadDelegatesToPlatform(t *testing.T) {
+	impl := &recordingPlatformApp{}
+	app := &App{impl: impl}
+	if err := app.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if impl.reloads != 1 {
+		t.Fatalf("reload calls = %d, want 1", impl.reloads)
 	}
 }
 
@@ -133,10 +187,12 @@ func TestRunUnsupportedPlatform(t *testing.T) {
 type recordingPlatformApp struct {
 	title     string
 	clipboard string
+	reloads   int
 }
 
 func (a *recordingPlatformApp) Run() error                                       { return nil }
 func (a *recordingPlatformApp) Close() error                                     { return nil }
+func (a *recordingPlatformApp) Reload() error                                    { a.reloads++; return nil }
 func (a *recordingPlatformApp) Navigate(string) error                            { return nil }
 func (a *recordingPlatformApp) SetHTML(string) error                             { return nil }
 func (a *recordingPlatformApp) PostMessage(string) error                         { return nil }
