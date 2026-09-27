@@ -379,7 +379,7 @@
   cursor: pointer;
 }
 
-html[data-gosx-document="true"] .docs-content .code-sample__copy {
+:global(html[data-gosx-document="true"] .docs-content .code-sample__copy) {
   display: inline-flex;
 }
 

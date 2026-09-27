@@ -257,6 +257,7 @@ func TestDocsContrastStylesCoverSharedCodeAndLiveControls(t *testing.T) {
 	}
 	assertDocsContract(t, string(css), []string{
 		".docs-content .code-sample__gutter",
+		`:global(html[data-gosx-document="true"] .docs-content .code-sample__copy)`,
 		"color: var(--text-secondary);",
 		".docs-content button[type=\"submit\"]",
 		".docs-live-example button:not(.code-sample__copy)",
