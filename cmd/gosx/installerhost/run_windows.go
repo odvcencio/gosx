@@ -38,15 +38,6 @@ type installOverrides struct {
 	uninstallParentPID uint32
 }
 
-type installationRecord struct {
-	Config        PackageConfig `json:"config"`
-	InstallRoot   string        `json:"install_root"`
-	StartMenu     string        `json:"start_menu"`
-	UninstallKey  string        `json:"uninstall_key"`
-	DesktopLink   string        `json:"desktop_link,omitempty"`
-	DataDirectory string        `json:"data_directory"`
-}
-
 type verifiedPayload struct {
 	archive   *zip.Reader
 	config    PackageConfig
@@ -54,13 +45,23 @@ type verifiedPayload struct {
 }
 
 func Run() {
+	run("", os.Args[1:])
+}
+
+// RunForAppID runs a standalone, package-specific uninstaller. The packager
+// binds this value into the uninstaller binary so its install record cannot
+// authorize removal of another app's directory.
+func RunForAppID(appID string) {
+	run(appID, os.Args[1:])
+}
+
+func run(expectedAppID string, args []string) {
 	runtime.LockOSThread()
-	args := os.Args[1:]
-	code := runInstaller(args)
+	code := runInstaller(args, expectedAppID)
 	os.Exit(code)
 }
 
-func runInstaller(args []string) int {
+func runInstaller(args []string, expectedAppID string) int {
 	silent, uninstall, worker, deleteData, err := parseInstallerArgs(args)
 	if err != nil {
 		installerError("Installer arguments are invalid", err, false)
@@ -80,7 +81,7 @@ func runInstaller(args []string) int {
 					return 1
 				}
 			}
-			err = runUninstaller(silent, deleteData, overrides)
+			err = runUninstaller(silent, deleteData, overrides, expectedAppID)
 		} else {
 			err = startUninstallWorker(args, overrides)
 		}
@@ -388,20 +389,22 @@ func installPayload(payload *verifiedPayload, overrides installOverrides, silent
 	if registryKey == "" {
 		registryKey = "GoSX_" + strings.NewReplacer(".", "_", "-", "_").Replace(config.AppID)
 	}
-	if info, err := os.Stat(installRoot); err == nil && info.IsDir() {
-		if oldConfig, loadErr := readInstalledConfig(installRoot); loadErr == nil {
-			cmp, compareErr := CompareInstallerVersions(config.Version, oldConfig.Version)
-			if compareErr != nil {
-				return compareErr
+	oldRecord, err := inspectInstallRootForUpgrade(installRoot, config.AppID)
+	if err != nil {
+		return err
+	}
+	if oldRecord.Config.AppID != "" {
+		cmp, compareErr := CompareInstallerVersions(config.Version, oldRecord.Config.Version)
+		if compareErr != nil {
+			return compareErr
+		}
+		if cmp < 0 {
+			message := fmt.Sprintf("An older version (%s) is already installed. Install version %s anyway?", oldRecord.Config.Version, config.Version)
+			if silent {
+				return fmt.Errorf("cannot downgrade to %s in silent mode", config.Version)
 			}
-			if cmp < 0 {
-				message := fmt.Sprintf("An older version (%s) is already installed. Install version %s anyway?", oldConfig.Version, config.Version)
-				if silent {
-					return fmt.Errorf("cannot downgrade to %s in silent mode", config.Version)
-				}
-				if !askYesNo("Install older version?", message, false) {
-					return errInstallerCancelled
-				}
+			if !askYesNo("Install older version?", message, false) {
+				return errInstallerCancelled
 			}
 		}
 	}
@@ -476,11 +479,16 @@ func installPayload(payload *verifiedPayload, overrides installOverrides, silent
 		return err
 	}
 	oldMoved := false
-	if _, err := os.Stat(installRoot); err == nil {
+	if _, err := inspectInstallRootForUpgrade(installRoot, config.AppID); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(installRoot); err == nil {
 		if err := os.Rename(installRoot, backupRoot); err != nil {
 			return fmt.Errorf("move current install aside: %w", err)
 		}
 		oldMoved = true
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect current install folder %q: %w", installRoot, err)
 	}
 	if err := os.Rename(stageRoot, installRoot); err != nil {
 		if oldMoved {
@@ -648,19 +656,10 @@ func closeRunningApp(hostPath string, silent bool) error {
 	}
 }
 
-func readInstalledConfig(root string) (PackageConfig, error) {
-	data, err := os.ReadFile(filepath.Join(root, "install.json"))
-	if err != nil {
-		return PackageConfig{}, err
+func runUninstaller(silent, deleteData bool, overrides installOverrides, expectedAppID string) error {
+	if strings.TrimSpace(expectedAppID) == "" {
+		return fmt.Errorf("this uninstaller is not bound to an app ID")
 	}
-	var record installationRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return PackageConfig{}, err
-	}
-	return record.Config, nil
-}
-
-func runUninstaller(silent, deleteData bool, overrides installOverrides) error {
 	root := overrides.installRoot
 	if root == "" {
 		root = overrides.uninstallRoot
@@ -672,18 +671,18 @@ func runUninstaller(silent, deleteData bool, overrides installOverrides) error {
 			return err
 		}
 	}
-	recordPath := filepath.Join(root, "install.json")
-	data, err := os.ReadFile(recordPath)
-	if err != nil {
-		return fmt.Errorf("read installation record: %w", err)
+	protectedRoots := make([]string, 0, 2)
+	if userProfile, err := os.UserHomeDir(); err == nil && userProfile != "" {
+		protectedRoots = append(protectedRoots, userProfile)
 	}
-	var record installationRecord
-	if err := json.Unmarshal(data, &record); err != nil {
+	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+		protectedRoots = append(protectedRoots, filepath.Join(localAppData, "Programs"))
+	}
+	record, err := readRemovableInstallRecord(root, expectedAppID, protectedRoots)
+	if err != nil {
 		return err
 	}
-	if overrides.installRoot != "" {
-		record.InstallRoot = overrides.installRoot
-	}
+	record.InstallRoot = root
 	if overrides.startMenu != "" {
 		record.StartMenu = overrides.startMenu
 	}
