@@ -28,6 +28,7 @@ import sys
 port = int(sys.argv[1])
 probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     probe.bind(("0.0.0.0", port))
 except OSError as error:
     raise SystemExit(f"ERROR: 127.0.0.1:{port} is not free: {error}")
@@ -76,11 +77,22 @@ cleanup() {
   if [[ -f "$windows_root/.wb-rel-installer-test" ]]; then
     remove_windows_root || true
   fi
-  rm -rf "$build_dir"
+  python3 - "$build_dir" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+shutil.rmtree(Path(sys.argv[1]), ignore_errors=True)
+PY
 }
 trap cleanup EXIT
 
 head_sha="$(git -C "$repo_root" rev-parse HEAD)"
+fixture_host="$(ip -4 -o addr show dev eth0 | awk '{ split($4, parts, "/"); print parts[1]; exit }')"
+if [[ -z "$fixture_host" ]]; then
+  echo 'ERROR: could not determine the WSL IPv4 address for the Windows loopback relay.' >&2
+  exit 1
+fi
 check_port_free 8210 > "$run_dir/port-8210.txt"
 check_port_free 8211 > "$run_dir/port-8211.txt"
 
@@ -126,7 +138,8 @@ set +e
 (cd /mnt/c/Temp && "$powerShell" -NoProfile -ExecutionPolicy Bypass \
   -File 'C:\Temp\wb-rel-installer\windows-update-check-smoke.ps1' \
   -Client 'C:\Temp\wb-rel-installer\update-check-smoke.exe' \
-  -PublicKey "$public_key") > "$windows_log" 2>&1
+  -PublicKey "$public_key" \
+  -FixtureHost "$fixture_host") > "$windows_log" 2>&1
 windows_status=$?
 set -e
 
@@ -141,6 +154,8 @@ windows_exit=$windows_status
 update_fixture=http://127.0.0.1:8210
 fixture_bind=0.0.0.0:8210 (WSL Windows localhost forwarding; client connects to 127.0.0.1)
 offline_probe=http://127.0.0.1:8211 (free and not bound)
+fixture_host=$fixture_host
+windows_ipv4_loopback=127.0.0.1:8210 (temporary in-process relay to the WSL fixture when WSL forwards only on IPv6)
 public_key_sha256=$(sha256sum "$public_key_file" | awk '{print $1}')
 manifest_sha256=$(sha256sum "$manifest_file" | awk '{print $1}')
 signature_sha256=$(sha256sum "$signature_file" | awk '{print $1}')
@@ -159,6 +174,7 @@ rg -q 'PASS: second check on the same state file skipped within 24 hours' "$wind
 rg -q 'PASS: same version reported up-to-date' "$windows_log"
 rg -q 'PASS: invalid detached signature rejected' "$windows_log"
 rg -q 'PASS: offline state skipped without a request' "$windows_log"
+rg -q 'PASS: native Windows IPv4 loopback reaches the WSL fixture|PASS: temporary IPv4 loopback relay reached the WSL fixture at ' "$windows_log"
 rg -q 'PASS: no test-only HKCU Uninstall keys were created' "$windows_log"
 rg -q 'PASS: Windows update-check matrix completed in ' "$windows_log"
 [[ "$(rg -c 'GET /new/latest.json$' "$run_dir/server.log")" -eq 1 ]]

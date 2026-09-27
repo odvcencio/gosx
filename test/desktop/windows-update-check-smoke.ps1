@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Client,
-    [Parameter(Mandatory = $true)][string]$PublicKey
+    [Parameter(Mandatory = $true)][string]$PublicKey,
+    [Parameter(Mandatory = $true)][string]$FixtureHost
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,6 +9,81 @@ $testRoot = 'C:\Temp\wb-rel-installer'
 $uninstallKeyNames = @('GoSXTest-WBInstaller', 'GoSXTest-WBUpdateCheck')
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $processes = New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
+$loopbackProxy = $null
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+
+public sealed class WslUpdateLoopbackProxy : IDisposable {
+    private readonly TcpListener listener;
+    private readonly CancellationTokenSource stop = new CancellationTokenSource();
+    private readonly Task acceptTask;
+    private readonly System.Collections.Generic.List<Task> relayTasks = new System.Collections.Generic.List<Task>();
+    private readonly string fixtureHost;
+    private readonly int fixturePort;
+
+    public WslUpdateLoopbackProxy(string host, int port) {
+        fixtureHost = host;
+        fixturePort = port;
+        listener = new TcpListener(IPAddress.Loopback, port);
+        listener.Start();
+        acceptTask = Task.Run((Func<Task>)AcceptLoop);
+    }
+
+    private async Task AcceptLoop() {
+        while (!stop.IsCancellationRequested) {
+            TcpClient client = null;
+            try {
+                client = await listener.AcceptTcpClientAsync().ConfigureAwait(false);
+            } catch (ObjectDisposedException) {
+                if (stop.IsCancellationRequested) break;
+                throw;
+            } catch (SocketException) {
+                if (stop.IsCancellationRequested) break;
+                throw;
+            }
+            if (client != null) {
+                TcpClient accepted = client;
+                Task relay = Task.Run(() => Relay(accepted, stop.Token));
+                lock (relayTasks) { relayTasks.Add(relay); }
+            }
+        }
+    }
+
+    private async Task Relay(TcpClient client, CancellationToken token) {
+        using (client)
+        using (var upstream = new TcpClient())
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(token)) {
+            try {
+                await upstream.ConnectAsync(fixtureHost, fixturePort).ConfigureAwait(false);
+                NetworkStream clientStream = client.GetStream();
+                NetworkStream upstreamStream = upstream.GetStream();
+                Task toFixture = clientStream.CopyToAsync(upstreamStream, 81920, linked.Token);
+                Task toClient = upstreamStream.CopyToAsync(clientStream, 81920, linked.Token);
+                await Task.WhenAll(toFixture, toClient).ConfigureAwait(false);
+            } catch (OperationCanceledException) {
+            } catch (ObjectDisposedException) {
+            } catch (SocketException) {
+            } catch (System.IO.IOException) {
+            }
+        }
+    }
+
+    public void Dispose() {
+        stop.Cancel();
+        listener.Stop();
+        try { acceptTask.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        Task[] active;
+        lock (relayTasks) { active = relayTasks.ToArray(); }
+        try { Task.WaitAll(active, TimeSpan.FromSeconds(2)); } catch { }
+        stop.Dispose();
+    }
+}
+'@
 
 function Assert-WithinLimit {
     if ($stopwatch.Elapsed.TotalSeconds -ge 170) {
@@ -21,6 +97,11 @@ function Assert-TestEnvironment {
         throw "Update test executable is outside the reserved test root: $Client"
     }
     if (-not (Test-Path -LiteralPath $Client -PathType Leaf)) { throw "Update test executable is missing: $Client" }
+    $fixtureAddress = $null
+    if (-not [System.Net.IPAddress]::TryParse($FixtureHost, [ref]$fixtureAddress) -or
+        $fixtureAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw "WSL fixture host is not an IPv4 address: $FixtureHost"
+    }
     Assert-TestUninstallKeysAbsent
 }
 
@@ -38,6 +119,7 @@ function Quote-Argument([string]$Value) {
 
 function Invoke-Client([string]$Case, [string]$Manifest, [string]$StateFile, [bool]$Online) {
     Assert-WithinLimit
+    $onlineFlag = '-online=' + $Online.ToString().ToLowerInvariant()
     $arguments = @(
         '-manifest', $Manifest,
         '-app', 'wb.test',
@@ -45,10 +127,10 @@ function Invoke-Client([string]$Case, [string]$Manifest, [string]$StateFile, [bo
         '-version', '1.0.0',
         '-public-key', $PublicKey,
         '-state-file', $StateFile,
-        '-enabled', 'true',
-        '-startup-complete', 'true',
-        '-online', $Online.ToString().ToLowerInvariant(),
-        '-allow-loopback-http-for-tests', 'true'
+        '-enabled=true',
+        '-startup-complete=true',
+        $onlineFlag,
+        '-allow-loopback-http-for-tests=true'
     )
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Client
@@ -78,8 +160,50 @@ function Invoke-Client([string]$Case, [string]$Manifest, [string]$StateFile, [bo
     catch { throw "Update client $Case did not return JSON: $stdout; $stderr" }
 }
 
+function Test-NativeIPv4LoopbackForwarding {
+    $request = [System.Net.HttpWebRequest]::Create('http://127.0.0.1:8210/health')
+    $request.Timeout = 1200
+    $request.ReadWriteTimeout = 1200
+    $request.KeepAlive = $false
+    try {
+        $response = $request.GetResponse()
+        try { return $response.StatusCode -eq [System.Net.HttpStatusCode]::NoContent }
+        finally { $response.Close() }
+    } catch [System.Net.WebException] {
+        if ($_.Exception.Status -eq [System.Net.WebExceptionStatus]::ConnectFailure -or
+            $_.Exception.Status -eq [System.Net.WebExceptionStatus]::Timeout) {
+            return $false
+        }
+        throw
+    }
+}
+
+function Start-FixtureIPv4Loopback {
+    if (Test-NativeIPv4LoopbackForwarding) {
+        Write-Host 'PASS: native Windows IPv4 loopback reaches the WSL fixture.'
+        return $null
+    }
+    $probe = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 8210)
+    try { $probe.Start() }
+    catch { throw 'IPv4 loopback port 8210 is occupied; refusing to replace its listener.' }
+    finally { $probe.Stop() }
+
+    $proxy = New-Object WslUpdateLoopbackProxy($FixtureHost, 8210)
+    $until = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        if (Test-NativeIPv4LoopbackForwarding) {
+            Write-Host "PASS: temporary IPv4 loopback relay reached the WSL fixture at ${FixtureHost}:8210."
+            return $proxy
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $until)
+    $proxy.Dispose()
+    throw "Temporary IPv4 loopback relay could not reach the WSL fixture at ${FixtureHost}:8210."
+}
+
 try {
     Assert-TestEnvironment
+    $loopbackProxy = Start-FixtureIPv4Loopback
     $stateRoot = Join-Path $testRoot 'update-check-state'
     New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
 
@@ -112,7 +236,7 @@ try {
     Write-Host 'PASS: invalid detached signature rejected.'
 
     $offline = Invoke-Client 'offline' 'http://127.0.0.1:8211/offline/latest.json' (Join-Path $stateRoot 'offline.json') $false
-    if ($offline.error -or $offline.status -ne 'skipped-offline') {
+    if ($offline.error -or $offline.status -ne 'skipped-offline' -or $offline.online -ne $false) {
         throw "Offline check attempted a request or returned the wrong status: $($offline | ConvertTo-Json -Compress)"
     }
     Write-Host 'PASS: offline state skipped without a request.'
@@ -136,5 +260,6 @@ finally {
         }
         finally { $process.Dispose() }
     }
+    if ($null -ne $loopbackProxy) { $loopbackProxy.Dispose() }
     Assert-TestUninstallKeysAbsent
 }

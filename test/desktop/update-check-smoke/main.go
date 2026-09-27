@@ -17,6 +17,7 @@ import (
 
 type report struct {
 	Status       desktop.SignedUpdateStatus `json:"status"`
+	Online       bool                       `json:"online"`
 	CheckedAt    string                     `json:"checked_at,omitempty"`
 	NextCheckAt  string                     `json:"next_check_at,omitempty"`
 	Version      string                     `json:"version,omitempty"`
@@ -54,7 +55,7 @@ func main() {
 	defer cancel()
 	result, checkErr := desktop.CheckSignedUpdate(ctx, options)
 	output := report{
-		Status: result.Status, Version: result.Version, Released: result.Released,
+		Status: result.Status, Online: options.Online, Version: result.Version, Released: result.Released,
 		Notes: result.Notes, DownloadPage: result.DownloadPage,
 	}
 	if !result.CheckedAt.IsZero() {
