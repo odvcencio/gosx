@@ -35,8 +35,8 @@ func Page() Node {
 				<img
 					src="/docs/tutorial/step-01.jpg"
 					alt="The first app page showing Hello from Go and a visitor count."
-					width="1000"
-					height="620"
+					width="1440"
+					height="900"
 				></img>
 				<figcaption>
 					Step 1: Go data rendered in server HTML.
@@ -51,11 +51,17 @@ func Page() Node {
 				<code>app/page.gsx</code>
 				. The counter is a strict island; its button updates without a page request.
 			</p>
-			<h3><code>app/counter_props.go</code></h3>
+			<h3>
+				<code>app/counter_props.go</code>
+			</h3>
 			{CodeBlock("go", data.sample003)}
-			<h3><code>app/page.server.go</code></h3>
+			<h3>
+				<code>app/page.server.go</code>
+			</h3>
 			{CodeBlock("go", data.sample004)}
-			<h3><code>app/page.gsx</code></h3>
+			<h3>
+				<code>app/page.gsx</code>
+			</h3>
 			{CodeBlock("gosx", data.sample005)}
 			<p class="tutorial-result">
 				You should see a counter that starts at zero. Select “Add one” to increment it.
@@ -64,8 +70,8 @@ func Page() Node {
 				<img
 					src="/docs/tutorial/step-02.jpg"
 					alt="The page-data example with an interactive counter displaying one."
-					width="1000"
-					height="620"
+					width="1440"
+					height="900"
 				></img>
 				<figcaption>
 					Step 2: the counter responds in the browser.
@@ -103,8 +109,8 @@ func Page() Node {
 				<img
 					src="/docs/tutorial/step-03.jpg"
 					alt="A page showing the live open-tab count after two tabs connect."
-					width="1000"
-					height="620"
+					width="1440"
+					height="900"
 				></img>
 				<figcaption>
 					Step 3: both tabs share the hub presence count.
@@ -134,8 +140,8 @@ func Page() Node {
 				<img
 					src="/docs/tutorial/step-04.jpg"
 					alt="The final app with its counter, live tab count, and one lit gold sphere."
-					width="1000"
-					height="620"
+					width="1440"
+					height="900"
 				></img>
 				<figcaption>
 					Step 4: the app combines server data, an island, a hub, and Scene3D.

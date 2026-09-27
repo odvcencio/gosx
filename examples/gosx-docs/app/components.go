@@ -46,6 +46,18 @@ func CodeBlock(lang, source string) gosx.Node {
 	normalized := highlight.NormalizeLanguage(lang)
 	source = normalizeCodeBlockSource(lang, source)
 	lineCount := highlight.LineCount(source)
+	var bodyChildren []any
+	if normalized != "bash" && normalized != "shell" {
+		bodyChildren = append(bodyChildren, gosx.El("pre", gosx.Attrs(
+			gosx.Attr("class", "code-sample__gutter"),
+			gosx.Attr("aria-hidden", "true"),
+		), gosx.Text(highlight.LineNumbers(lineCount))))
+	}
+	bodyChildren = append(bodyChildren, gosx.El("pre", gosx.Attrs(
+		gosx.Attr("class", "code-block"),
+	),
+		gosx.El("code", gosx.Attrs(gosx.Attr("data-lang", normalized)), gosx.RawHTML(highlight.HTML(normalized, source))),
+	))
 	return gosx.El("figure", gosx.Attrs(
 		gosx.Attr("class", "code-sample"),
 		gosx.Attr("data-gosx-copy-scope", ""),
@@ -60,6 +72,7 @@ func CodeBlock(lang, source string) gosx.Node {
 					gosx.Attr("class", "code-sample__copy"),
 					gosx.Attr("data-gosx-copy-button", ""),
 					gosx.Attr("data-gosx-copy-label", "Copy"),
+					gosx.Attr("hidden", ""),
 				), gosx.Text("Copy")),
 				gosx.El("span", gosx.Attrs(
 					gosx.Attr("class", "code-sample__copy-status"),
@@ -69,15 +82,7 @@ func CodeBlock(lang, source string) gosx.Node {
 				)),
 			),
 		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "code-sample__body")),
-			gosx.El("pre", gosx.Attrs(
-				gosx.Attr("class", "code-sample__gutter"),
-				gosx.Attr("aria-hidden", "true"),
-			), gosx.Text(highlight.LineNumbers(lineCount))),
-			gosx.El("pre", gosx.Attrs(gosx.Attr("class", "code-block")),
-				gosx.El("code", gosx.Attrs(gosx.Attr("data-lang", normalized)), gosx.RawHTML(highlight.HTML(normalized, source))),
-			),
-		),
+		gosx.El("div", append([]any{gosx.Attrs(gosx.Attr("class", "code-sample__body"))}, bodyChildren...)...),
 	)
 }
 

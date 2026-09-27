@@ -1,0 +1,9 @@
+cfg := engine.Config{
+	Name:         "SearchWorker",
+	Kind:         engine.KindWorker,
+	Runtime:      engine.RuntimeNone,
+	Capabilities: []engine.Capability{engine.CapWorker, engine.CapFetch},
+}
+if err := cfg.Validate(); err != nil {
+	return err
+}

@@ -108,6 +108,41 @@ func Page() Node {
 				package directly:
 			</p>
 			{CodeBlock("go", data.sample002)}
+			<section class="docs-live-example debug-scene-report" aria-label="Live CPU reference render report">
+				<p class="debug-scene-report__label">Live CPU reference check</p>
+				<h3>Render evidence from Go</h3>
+				<p>
+					The page loader builds this sphere with the same Go preview and harness APIs shown above. It checks that pixels reached the frame before a browser or GPU is involved.
+				</p>
+				<p class="debug-scene-report__status">{data.debugReport.status}</p>
+				<dl>
+					<div>
+						<dt>Renderer</dt>
+						<dd>{data.debugReport.backend}</dd>
+					</div>
+					<div>
+						<dt>Objects and lights</dt>
+						<dd>
+							{data.debugReport.objects}
+							objects ·
+							{data.debugReport.lights}
+							lights
+						</dd>
+					</div>
+					<div>
+						<dt>Pixel coverage</dt>
+						<dd>{data.debugReport.coverage}</dd>
+					</div>
+					<div>
+						<dt>Visible bounds</dt>
+						<dd>{data.debugReport.visibleBounds}</dd>
+					</div>
+					<div>
+						<dt>Unique colors</dt>
+						<dd>{data.debugReport.uniqueColors}</dd>
+					</div>
+				</dl>
+			</section>
 			<p>
 				A
 				<span class="inline-code">Report</span>

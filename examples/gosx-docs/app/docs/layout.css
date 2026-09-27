@@ -66,9 +66,9 @@
 }
 
 .docs-guide-index small {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .docs-guide-index:hover,
@@ -90,12 +90,10 @@
 
 .docs-guide-group h2 {
   margin: 0 0 var(--space-xs);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  font-weight: 400;
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .docs-guide-link {
@@ -146,11 +144,10 @@
 
 .docs-page-toc > p {
   margin: 0 0 var(--space-xs);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .toc-link {
@@ -325,9 +322,9 @@
 }
 
 .docs-tag {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   background: var(--surface);
   border: 1px solid var(--border);
   padding: 0.15em 0.5em;
@@ -350,10 +347,8 @@
 }
 
 .docs-header__live-kicker {
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+  font-family: var(--font-body);
+  color: var(--text-secondary);
 }
 
 .docs-header__live:hover,
@@ -478,7 +473,7 @@
   color: var(--text-secondary);
   background: var(--surface);
   border: 1px solid var(--border);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
   line-height: var(--lh-body);
   text-overflow: ellipsis;
@@ -508,10 +503,8 @@
 .prose .doc-scene__eyebrow {
   margin: 0 0 var(--space-xs);
   color: var(--accent);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
 }
 
 .prose .doc-scene__title {
@@ -543,11 +536,10 @@
 }
 
 .doc-scene__facts dt {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .doc-scene__facts dd {
@@ -649,11 +641,9 @@
 
 .docs-footer__link::before {
   display: block;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: var(--ls-label);
+  font-family: var(--font-body);
+  font-size: var(--text-small);
+  color: var(--text-secondary);
   margin-bottom: 0.35rem;
 }
 

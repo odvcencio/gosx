@@ -22,10 +22,8 @@
 .prose .docs-directory__eyebrow {
   margin: 0 0 var(--space-xs);
   color: var(--accent);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
 }
 
 .prose .docs-search h2,
@@ -113,8 +111,8 @@
 
 .prose .docs-search__hint {
   margin: 0;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
 }
 
@@ -135,7 +133,7 @@
 
 .docs-search__clear {
   flex: 0 0 auto;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
 }
 
@@ -161,8 +159,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
 }
 
@@ -184,8 +182,8 @@
 
 .docs-result__provenance {
   margin-top: var(--space-sm);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
 }
 

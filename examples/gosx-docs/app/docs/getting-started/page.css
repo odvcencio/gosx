@@ -18,6 +18,8 @@
 
 .quickstart__commands .code-sample {
   margin: 0 0 var(--space-xs);
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .quickstart__commands .code-sample__head {
@@ -31,8 +33,9 @@
 }
 
 .quickstart__commands .code-block {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
 }
 
 .quickstart__preview {
@@ -42,7 +45,7 @@
 .quickstart__preview img {
   display: block;
   width: 100%;
-  height: clamp(10rem, 22vw, 13rem);
+  height: auto;
   object-fit: cover;
   object-position: top;
   border: 1px solid var(--border);
@@ -70,7 +73,7 @@
 
 @media (max-width: 48rem) {
   .quickstart__grid {
-    grid-template-columns: minmax(0, 1fr) minmax(6.5rem, 7.5rem);
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-sm);
   }
 

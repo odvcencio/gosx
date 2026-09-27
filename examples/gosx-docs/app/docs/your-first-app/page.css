@@ -16,7 +16,7 @@
 .first-app-tutorial .tutorial-step h3 {
   margin: var(--space-lg) 0 var(--space-xs);
   color: var(--text-secondary);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
   font-weight: 500;
 }

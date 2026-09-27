@@ -4,7 +4,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/buildmanifest"
 	docsamples "m31labs.dev/gosx/examples/gosx-docs/samples"
@@ -71,6 +75,7 @@ func TestFirstAppTutorialBuildsAndServesEveryStep(t *testing.T) {
 			t.Errorf("scaffolded quickstart response is missing %q", expected)
 		}
 	}
+	captureTutorialScreenshot(t, quickstartURL, "quickstart-app.jpg")
 	_ = quickstartProcess.Process.Kill()
 	_ = quickstartProcess.Wait()
 
@@ -159,6 +164,7 @@ func TestFirstAppTutorialBuildsAndServesEveryStep(t *testing.T) {
 					t.Errorf("HTTP output for %s is missing %q", step.name, expected)
 				}
 			}
+			captureTutorialScreenshot(t, baseURL, "step-"+strings.SplitN(step.name, "-", 2)[0]+".jpg")
 			manifest, err := buildmanifest.Load(filepath.Join(appDir, "dist", "build.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -197,6 +203,54 @@ func TestFirstAppTutorialBuildsAndServesEveryStep(t *testing.T) {
 				waitTutorialHTTPContains(t, baseURL, &logs, "Open tabs: 1")
 			}
 		})
+	}
+}
+
+func captureTutorialScreenshot(t *testing.T, pageURL, filename string) {
+	t.Helper()
+	outputDir := os.Getenv("GOSX_DOCS_TUTORIAL_SCREENSHOTS")
+	if outputDir == "" {
+		return
+	}
+	if strings.HasPrefix(filename, "step-") {
+		outputDir = filepath.Join(outputDir, "tutorial")
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("create tutorial screenshot directory: %v", err)
+	}
+	allocatorOptions := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("mute-audio", true),
+		chromedp.Flag("no-sandbox", true),
+	)
+	allocator, cancelAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	defer cancelAllocator()
+	ctx, cancel := chromedp.NewContext(allocator)
+	defer cancel()
+	var screenshot []byte
+	if err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1440, 900),
+		chromedp.Navigate(pageURL),
+		chromedp.WaitReady("body", chromedp.ByQuery),
+		chromedp.Sleep(500*time.Millisecond),
+		chromedp.CaptureScreenshot(&screenshot),
+	); err != nil {
+		t.Fatalf("capture tutorial screenshot for %s: %v", pageURL, err)
+	}
+	image, err := png.Decode(bytes.NewReader(screenshot))
+	if err != nil {
+		t.Fatalf("decode tutorial screenshot for %s: %v", pageURL, err)
+	}
+	file, err := os.Create(filepath.Join(outputDir, filename))
+	if err != nil {
+		t.Fatalf("create tutorial screenshot %s: %v", filename, err)
+	}
+	if err := jpeg.Encode(file, image, &jpeg.Options{Quality: 94}); err != nil {
+		_ = file.Close()
+		t.Fatalf("encode tutorial screenshot %s: %v", filename, err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close tutorial screenshot %s: %v", filename, err)
 	}
 }
 

@@ -10,24 +10,29 @@ type CounterProps struct {
 component Counter(props: CounterProps) {
 	count := signal.New(props.Initial)
 	increment := func() { count.Set(count.Get() + 1) }
-	return <section>
-		<button onClick={increment}>Add one: {count.Get()}</button>
+	return <section class="card">
+		<button class="button primary" onClick={increment}>Add one: {count.Get()}</button>
 	</section>
 }
 
 func Page() Node {
-	return <main>
+	return <main class="shell">
+		<span class="eyebrow">Your first GoSX app</span>
 		<h1>{data.greeting}</h1>
 		<p>Today’s visitors: {data.visitors}</p>
 		<Counter {...data.counterProps} />
-		<div
+		<section class="card"
 			data-gosx-region="true"
 			data-gosx-region-url="/api/open-tabs"
 			data-gosx-region-field="html"
 			data-gosx-region-signal="$tutorial.openTabs"
 		>
 			<p>Open tabs: {data.openTabs}</p>
-		</div>
-		<Scene3D {...data.scene} />
+		</section>
+		<section class="card tutorial-scene-card" aria-labelledby="tutorial-scene-title">
+			<h2 id="tutorial-scene-title">A shaded sphere in Scene3D</h2>
+			<p>This scene is described with typed Go data and rendered by the browser.</p>
+			<Scene3D class="tutorial-scene" {...data.scene} />
+		</section>
 	</main>
 }

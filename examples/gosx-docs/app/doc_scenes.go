@@ -68,25 +68,7 @@ type docSceneSpec struct {
 	Links           [][2]int
 }
 
-var docSceneSpecs = []docSceneSpec{
-	{
-		Route:           "/docs/engines",
-		Slug:            "engines",
-		Eyebrow:         "Managed compute surfaces",
-		Title:           "One engine contract selects the browser capability it needs.",
-		Summary:         "A typed engine descriptor branches into canvas, GPU, and worker surfaces without giving them DOM ownership.",
-		InteractionHint: "Pointer interaction only: drag around the capability fanout; wheel or pinch to zoom.",
-		DemoHref:        "/demos/scene3d",
-		DemoLabel:       "Open the Scene3D engine showcase",
-		Anchors: []docSceneAnchor{
-			{ID: "descriptor", Position: scene.Vec3(-2.5, 0, 0), Shape: docSceneCylinder, Accent: true},
-			{ID: "canvas", Position: scene.Vec3(1, 1.3, 0.5), Shape: docSceneBox},
-			{ID: "gpu", Position: scene.Vec3(1, 0, -0.5), Shape: docSceneTorus, Accent: true},
-			{ID: "worker", Position: scene.Vec3(1, -1.3, 0.5), Shape: docScenePyramid},
-		},
-		Links: [][2]int{{0, 1}, {0, 2}, {0, 3}},
-	},
-}
+var docSceneSpecs = []docSceneSpec{}
 
 // DocSceneFeatureForRoute returns a fresh deterministic feature for a selected
 // conceptual docs route. Other routes deliberately return false so they stay

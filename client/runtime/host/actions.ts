@@ -507,6 +507,9 @@
 
   function refreshBindings() {
     if (typeof document.querySelectorAll !== "function") return;
+    document.querySelectorAll("[data-gosx-copy-button][hidden]").forEach(function (button) {
+      button.removeAttribute("hidden");
+    });
     document.querySelectorAll("[data-gosx-bind-source]").forEach(bindSource);
   }
 

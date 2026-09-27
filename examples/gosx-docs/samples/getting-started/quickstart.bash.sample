@@ -1,1 +1,3 @@
 go install m31labs.dev/gosx/cmd/gosx@latest
+gosx init my-app
+cd my-app && gosx dev

@@ -4,7 +4,7 @@ return gosx.El("main",
 		func() (gosx.Node, error) {
 			items, err := loadActivity(ctx.Request.Context())
 			if err != nil {
-				return nil, err
+				return gosx.Node{}, err
 			}
 			return ActivityList(items), nil
 		},

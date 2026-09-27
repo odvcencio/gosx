@@ -18,6 +18,11 @@ func Page() Node {
 				<ui.StatCard Value="glTF 2.0" Label="the focused model-loader contract" />
 				<ui.StatCard Value="Per route" Label="manifest-backed byte accounting" />
 			</div>
+			<p class="vs-live-link">
+				<a href="/docs/scene3d#scene3d-demo" data-gosx-link="true">
+					Open the live GoSX scene used in this comparison.
+				</a>
+			</p>
 		</section>
 		<section id="overlap">
 			<h2>The Overlap Is Asymmetric</h2>

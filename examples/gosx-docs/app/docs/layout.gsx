@@ -67,7 +67,6 @@ func Layout() Node {
 				</aside>
 				<article id="docs-content" class="docs-content prose" tabindex="-1">
 					<header class="docs-header">
-						<p class="docs-header__eyebrow kicker">GoSX Docs</p>
 						<h1 class="docs-header__title">{data.title}</h1>
 						<p class="docs-header__description">{data.description}</p>
 						<div class="docs-header__tags">

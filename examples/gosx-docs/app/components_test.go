@@ -101,6 +101,7 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 	for _, want := range []string{
 		`data-gosx-copy-scope=""`,
 		`data-gosx-copy-button=""`,
+		`hidden=""`,
 		`data-gosx-copy-status=""`,
 		`aria-live="polite"`,
 		`fmt`,
@@ -109,5 +110,14 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("CodeBlock output is missing %q: %s", want, rendered)
 		}
+	}
+}
+
+func TestShellCodeBlockOmitsLineNumberGutter(t *testing.T) {
+	t.Parallel()
+
+	rendered := gosx.RenderHTML(CodeBlock("bash", "go install example.com/tool@latest"))
+	if strings.Contains(rendered, `class="code-sample__gutter"`) {
+		t.Fatalf("shell code block rendered a line-number gutter: %s", rendered)
 	}
 }

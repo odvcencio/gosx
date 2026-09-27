@@ -7,15 +7,13 @@ func Page() Node {
 				<div class="quickstart__commands">
 					<h2 id="quickstart-heading">Start in three commands</h2>
 					{CodeBlock("bash", data.sample001)}
-					{CodeBlock("bash", data.sample002)}
-					{CodeBlock("bash", data.sample003)}
 				</div>
 				<figure class="quickstart__preview">
 					<img
 						src="/docs/quickstart-app.jpg"
 						alt="The scaffolded GoSX app with a welcome page and starter form."
-						width={900}
-						height={560}
+						width={1440}
+						height={900}
 					></img>
 					<figcaption>
 						After it starts, open
@@ -76,13 +74,13 @@ func Page() Node {
 				<code>public/</code>
 				.
 			</p>
-			{CodeBlock("text", data.sample004)}
+			{CodeBlock("text", data.sample002)}
 			<p>
 				Use
 				<code>gosx dev</code>
 				while editing. It watches the project and refreshes connected browser tabs after a successful rebuild.
 			</p>
-			{CodeBlock("bash", data.sample005)}
+			{CodeBlock("bash", data.sample003)}
 		</section>
 	</div>
 }

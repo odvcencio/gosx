@@ -115,8 +115,9 @@ func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
 		{"debugging-scene3d", "debugging-scene3d/code-001.bash.sample"},
 		{"deployment", "deployment/sampleBuildModes.bash.sample"},
 		{"engines", "engines/mountSample.go.sample"},
+		{"engines", "engines/liveConfig.go.sample"},
 		{"forms", "forms/code-001.gsx.sample"},
-		{"getting-started", "getting-started/quickstart-install.bash.sample"},
+		{"getting-started", "getting-started/quickstart.bash.sample"},
 		{"hubs", "hubs/hubSample.go.sample"},
 		{"images", "images/imageSample.go.sample"},
 		{"islands", "islands/counterSample.gosx.sample"},
@@ -277,7 +278,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 	}{
 		{
 			page:     "getting-started",
-			required: []string{"gosx init my-app", "Go 1.26", "75 seconds", "quickstart-app.jpg", "quickstart-install.bash.sample", "quickstart-init.bash.sample", "quickstart-run.bash.sample"},
+			required: []string{"gosx init my-app", "Go 1.26", "75 seconds", "quickstart-app.jpg", "quickstart.bash.sample"},
 			forbidden: []string{
 				"gosx --version",
 				"produces a deployable binary with everything included",

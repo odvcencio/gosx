@@ -2,28 +2,35 @@ package docs
 
 func Page() Node {
 	return <article class="prose">
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
-			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
-			</div>
+		<section class="docs-live-example engine-live" aria-labelledby="engine-live-heading">
+			<p class="eyebrow">Working Go example</p>
+			<h2 id="engine-live-heading">Validate a worker engine</h2>
+			<p>
+				The route loader builds this descriptor with Go, validates it, and renders the accepted values here. A worker has no DOM mount.
+			</p>
+			<dl class="engine-live__facts">
+				<div>
+					<dt>Name</dt>
+					<dd>{data.engineExample.name}</dd>
+				</div>
+				<div>
+					<dt>Kind</dt>
+					<dd>{data.engineExample.kind}</dd>
+				</div>
+				<div>
+					<dt>Runtime</dt>
+					<dd>{data.engineExample.runtime}</dd>
+				</div>
+				<div>
+					<dt>Capabilities</dt>
+					<dd>{data.engineExample.capabilities}</dd>
+				</div>
+				<div>
+					<dt>Validation</dt>
+					<dd role="status">{data.engineExample.status}</dd>
+				</div>
+			</dl>
+			{CodeBlock("go", data.engineSample)}
 		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Unrestricted client computation</span>

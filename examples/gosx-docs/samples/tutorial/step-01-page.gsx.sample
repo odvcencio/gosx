@@ -1,7 +1,8 @@
 package app
 
 func Page() Node {
-	return <main>
+	return <main class="shell">
+		<span class="eyebrow">Server data</span>
 		<h1>{data.greeting}</h1>
 		<p>Today’s visitors: {data.visitors}</p>
 	</main>

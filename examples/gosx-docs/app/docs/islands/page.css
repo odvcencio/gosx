@@ -21,10 +21,8 @@
 
 .islands-arch__col strong {
   display: block;
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
   color: var(--accent);
   margin-bottom: var(--space-xs);
 }

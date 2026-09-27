@@ -11,7 +11,7 @@
   color: var(--text-secondary);
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
 }
 
@@ -33,10 +33,8 @@
 
 .site-guide__proofs article > span {
   color: var(--accent);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
 }
 
 .site-guide__proofs article h3 {

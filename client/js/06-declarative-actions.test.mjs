@@ -323,6 +323,14 @@ test("data-gosx-copy-button copies code and announces the result", async () => {
   assert.equal(status.textContent, "Copied code to the clipboard.");
 });
 
+test("data-gosx-copy-button is hidden until the actions runtime initializes", () => {
+  const button = makeEl({ "data-gosx-copy-button": "", hidden: "" }, { tag: "button" });
+  assert.equal(button.hasAttribute("hidden"), true, "server-rendered controls stay hidden without JavaScript");
+
+  runModule({ queryAll: { "[data-gosx-copy-button][hidden]": [button] } });
+  assert.equal(button.hasAttribute("hidden"), false, "the runtime reveals controls it can handle");
+});
+
 test("data-gosx-copy-button falls back to a temporary textarea", async () => {
   const code = { textContent: "fmt.Println(\"Hello, GoSX\")" };
   const status = { textContent: "" };

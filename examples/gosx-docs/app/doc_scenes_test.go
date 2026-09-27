@@ -20,9 +20,7 @@ import (
 )
 
 func TestDocSceneFeatureRouteSelection(t *testing.T) {
-	expected := []string{
-		"/docs/engines",
-	}
+	expected := []string{}
 	if len(docSceneSpecs) != len(expected) {
 		t.Fatalf("selected route count = %d, want %d", len(docSceneSpecs), len(expected))
 	}
@@ -43,7 +41,7 @@ func TestDocSceneFeatureRouteSelection(t *testing.T) {
 			t.Errorf("selected route %q does not disclose its pointer-only controls: %q", routePath, feature.InteractionHint)
 		}
 	}
-	for _, routePath := range []string{"/docs/getting-started", "/docs/auth", "/docs/forms", "/docs/images", "/docs/scene3d", "/demos"} {
+	for _, routePath := range []string{"/docs/getting-started", "/docs/auth", "/docs/forms", "/docs/images", "/docs/engines", "/docs/scene3d", "/demos"} {
 		if _, ok := DocSceneFeatureForRoute(routePath); ok {
 			t.Fatalf("non-conceptual route %q unexpectedly selected a docs scene", routePath)
 		}
@@ -167,8 +165,8 @@ func TestWithDocSceneFeaturePreservesMapLoaderDataAndBindsOnce(t *testing.T) {
 	if bindings.Values["existing"] != "kept" {
 		t.Fatalf("scene bindings replaced existing bindings: %#v", bindings.Values)
 	}
-	if bound, ok := bindings.Values[docSceneBindingKey].(DocSceneFeature); !ok || bound.Route != page.RoutePath {
-		t.Fatalf("scene binding = %#v", bindings.Values[docSceneBindingKey])
+	if _, exists := bindings.Values[docSceneBindingKey]; exists {
+		t.Fatalf("non-3D engine guide retained the generic scene binding: %#v", bindings.Values[docSceneBindingKey])
 	}
 }
 
@@ -191,8 +189,8 @@ func TestWithDocSceneFeaturePreservesNonMapAndUnselectedData(t *testing.T) {
 	if data != original {
 		t.Fatalf("selected non-map loader data changed identity: got %T %#v", data, data)
 	}
-	if _, ok := wrapped.Bindings(&route.RouteContext{}, selected, data).Values[docSceneBindingKey].(DocSceneFeature); !ok {
-		t.Fatal("selected non-map data did not receive the independent scene binding")
+	if _, exists := wrapped.Bindings(&route.RouteContext{}, selected, data).Values[docSceneBindingKey]; exists {
+		t.Fatal("non-3D engine guide received the generic scene binding")
 	}
 
 	unselected := route.FilePage{RoutePath: "/docs/forms"}
@@ -267,7 +265,7 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 			t.Errorf("selected route %q Scene3D node count = %d, want 1", spec.Route, count)
 		}
 	}
-	for _, slug := range []string{"compiler", "deployment", "hubs", "islands", "motion", "routing", "runtime", "signals", "streaming", "getting-started"} {
+	for _, slug := range []string{"compiler", "deployment", "engines", "hubs", "islands", "motion", "routing", "runtime", "signals", "streaming", "getting-started"} {
 		path := filepath.Join("docs", slug, "page.gsx")
 		source, err := os.ReadFile(path)
 		if err != nil {
@@ -309,7 +307,7 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 }
 
 func TestDocsLayoutAndSceneStagesCompileAndStayFormatted(t *testing.T) {
-	paths := []string{filepath.Join("docs", "layout.gsx"), filepath.Join("docs", "getting-started", "page.gsx")}
+	paths := []string{filepath.Join("docs", "layout.gsx"), filepath.Join("docs", "getting-started", "page.gsx"), filepath.Join("docs", "engines", "page.gsx")}
 	for _, spec := range docSceneSpecs {
 		paths = append(paths, filepath.Join("docs", spec.Slug, "page.gsx"))
 	}

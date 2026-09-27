@@ -5,10 +5,8 @@
 .typed-proof__kicker {
   margin: 0 0 var(--space-sm);
   color: var(--accent);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
 }
 
 .typed-proof h2 {
@@ -32,14 +30,14 @@
 }
 
 .typed-proof__row span {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
   font-size: var(--text-small);
 }
 
 .typed-proof__row strong {
   color: var(--text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
   font-weight: 400;
 }
