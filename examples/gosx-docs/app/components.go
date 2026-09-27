@@ -72,7 +72,6 @@ func CodeBlock(lang, source string) gosx.Node {
 					gosx.Attr("class", "code-sample__copy"),
 					gosx.Attr("data-gosx-copy-button", ""),
 					gosx.Attr("data-gosx-copy-label", "Copy"),
-					gosx.Attr("hidden", ""),
 				), gosx.Text("Copy")),
 				gosx.El("span", gosx.Attrs(
 					gosx.Attr("class", "code-sample__copy-status"),

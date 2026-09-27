@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -101,7 +102,6 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 	for _, want := range []string{
 		`data-gosx-copy-scope=""`,
 		`data-gosx-copy-button=""`,
-		`hidden=""`,
 		`data-gosx-copy-status=""`,
 		`aria-live="polite"`,
 		`fmt`,
@@ -110,6 +110,20 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("CodeBlock output is missing %q: %s", want, rendered)
 		}
+	}
+}
+
+func TestCopyControlTracksBrowserScriptingState(t *testing.T) {
+	css, err := os.ReadFile("docs/layout.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styles := string(css)
+	if !strings.Contains(styles, ".code-sample__copy {\n  display: none;") {
+		t.Fatal("copy control must stay hidden before JavaScript initializes")
+	}
+	if !strings.Contains(styles, "@media (scripting: enabled) {\n  .docs-content .code-sample__copy {\n    display: inline-flex;") {
+		t.Fatal("copy control must become visible only when browser scripting is enabled")
 	}
 }
 

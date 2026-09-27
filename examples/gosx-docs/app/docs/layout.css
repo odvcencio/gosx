@@ -364,6 +364,7 @@
 }
 
 .code-sample__copy {
+  display: none;
   min-width: 4.5rem;
   padding: 0.25rem 0.65rem;
   border: 1px solid var(--border-hover);
@@ -372,6 +373,12 @@
   background: var(--surface);
   font: 500 var(--text-small)/1.4 var(--font-body);
   cursor: pointer;
+}
+
+@media (scripting: enabled) {
+  .docs-content .code-sample__copy {
+    display: inline-flex;
+  }
 }
 
 .code-sample__copy:hover,
