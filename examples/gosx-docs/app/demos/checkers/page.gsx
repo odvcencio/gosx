@@ -3,10 +3,7 @@ package checkers
 func Page() Node {
 	return <section class="checkers-showcase chinese-checkers" aria-labelledby="checkers-title" data-checkers-root>
 		<header class="checkers-showcase__intro">
-			<p class="checkers-showcase__eyebrow">
-				Board / 01
-				<span>Live match</span>
-			</p>
+			<p class="checkers-showcase__eyebrow">Board 01 · live match</p>
 			<h1 id="checkers-title">Chinese Checkers</h1>
 			<p>
 				Choose a piece, then move to a highlighted space. The Go Hub checks each move and plays the next turn.
@@ -23,11 +20,9 @@ func Page() Node {
 				decoding="async"
 				fetchpriority="high"
 			 />
-			<Scene3D {...data.scene} />
+			<Scene3D {...data.scene} stats={false} />
 			<p class="checkers-showcase__render-note">
-				Pure-Go native preview ·
-				<a href="/checkers-native-telemetry.json">inspect telemetry</a>
-				· live Scene3D when available
+				Go rendered preview · Scene3D when available
 			</p>
 		</div>
 		<section class="checkers-showcase__dashboard" aria-label="Match controls and live search statistics">

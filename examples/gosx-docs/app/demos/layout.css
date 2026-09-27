@@ -652,3 +652,89 @@
 
   .demos-shell[data-demo-slug=""] .demo-dock { display: none; }
 }
+
+/* Explanatory labels use the same body face as the rest of the site. */
+.demos-shell :is(.demos-topbar__edition, .demo-dock__header p, .demo-details__eyebrow, .demo-details__facts dt),
+.demos-shell .demo-viewport :is(
+  .scene3d-bench__heading > p,
+  [class$="__eyebrow"],
+  [class$="__kicker"],
+  [class$="__badge"],
+  [class$="__label"],
+  [class$="__pane-label"],
+  [class$="__pane-title"],
+  [class$="__stat-label"],
+  [class$="__status"],
+  [class$="__phase-time"],
+  [class$="__hint"],
+  [class$="__controls"],
+  [class$="__gesture"],
+  [class$="__runtime"],
+  [class$="__quality"],
+  [class$="__technical"],
+  [class$="-label"],
+  .fluid__intro > p,
+  .beacon__dock,
+  .beacon__dock-group > p,
+  .beacon__dock a,
+  .beacon__facts,
+  .water-demo__quality > span,
+  .water-demo__quality a,
+  .water-demo__proofs span,
+  .water-demo__help-toggle,
+  .html-surface__poster span,
+  .html-surface__poster em,
+  .diegetic-panel__eyebrow,
+  .checkers-showcase__render-note,
+  .checkers-showcase__search dt,
+  .orrery__technical summary,
+  .cms-editor-block__type,
+  .cms-field > span,
+  .cms-field legend
+) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.demos-shell .demo-viewport [class$="__title"] {
+  text-transform: none;
+}
+
+.demo-dock__dot {
+  font-family: var(--font-body);
+}
+
+.demos-shell .demo-dock__tag,
+.demos-shell .demo-dock__chip {
+  display: none;
+}
+
+.demos-shell .demo-viewport .livesim__badge,
+.demos-shell .demo-viewport [class$="__badge"],
+.demos-shell .demo-viewport :is([class$="__status"], [class*="__status "], [class*="__status--"]),
+.demos-shell .demo-viewport .water-demo__proofs span {
+  padding-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.demos-shell .demo-viewport .checkers-showcase__render-note {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Keep renderer diagnostics out of the public demo chrome. */
+.demos-shell [data-gosx-scene3d-stats],
+.demos-shell [data-gosx-scene3d-inspector],
+.demos-shell [data-gosx-scene3d-status],
+.demos-shell .scene3d-bench__overlay {
+  display: none !important;
+}
+
+.demos-shell .visually-hidden[data-gosx-scene3d-status] {
+  display: inline !important;
+}

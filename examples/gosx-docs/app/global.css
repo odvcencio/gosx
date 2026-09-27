@@ -577,3 +577,56 @@ button:active, .btn:active, [type="submit"]:active {
     transform: none;
   }
 }
+
+/* Interface labels use the shared body face; mono stays with technical values. */
+.code-sample__label,
+.stat-card__label {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.docs-section .docs-grid :is(
+  .docs-guide-index small,
+  .docs-guide-group h2,
+  .docs-page-toc > p,
+  .docs-header__live-kicker,
+  .doc-scene__eyebrow,
+  .doc-scene__fallback,
+  .doc-scene__facts dt,
+  .docs-search__eyebrow,
+  .docs-directory__eyebrow,
+  .docs-search__hint,
+  .docs-search__clear,
+  .docs-result__meta,
+  .docs-result__provenance,
+  .typed-proof__kicker,
+  .typed-proof__row span,
+  .site-guide__flow span,
+  .site-guide__proofs article > span,
+  .engines-cap-group__title,
+  .islands-arch__col strong
+) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.docs-section .docs-grid .docs-tag {
+  padding-inline: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-family: var(--font-body);
+}
+
+.docs-section .docs-grid .docs-footer__link::before {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.docs-section .docs-grid .doc-scene__mount[data-gosx-scene3d-renderer]::after {
+  display: none;
+}

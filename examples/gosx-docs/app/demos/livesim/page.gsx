@@ -4,13 +4,13 @@ func Page() Node {
 	return <section class="livesim" aria-label="Live 2D physics sandbox">
 		<header class="livesim__heading">
 			<div>
-				<p class="livesim__eyebrow">Live study / shared simulation</p>
+				<p class="livesim__eyebrow">A shared simulation</p>
 				<h1>Live Physics</h1>
 				<p>
 					Drop a circle into a shared world. Each tab sees the same server simulation.
 				</p>
 			</div>
-			<span class="livesim__badge">20 updates / second</span>
+			<span class="livesim__badge">20 updates per second</span>
 		</header>
 		<div class="livesim__frame">
 			<div class="livesim__stage" id="livesim-stage" data-has-circles="false">
@@ -28,7 +28,6 @@ func Page() Node {
 					<strong>Your world starts here</strong>
 					<small>Tap or click to drop a circle</small>
 				</div>
-				<p class="livesim__stage-note">LIVE / GO HUB</p>
 			</div>
 			<aside class="livesim__hud" aria-label="Simulation controls and statistics">
 				<h2>World status</h2>

@@ -3,7 +3,7 @@ package fluid
 func Page() Node {
 	return <section class="fluid" aria-label="Server-streamed velocity field">
 		<header class="fluid__intro">
-			<p>Simulation / Live stream</p>
+			<p>A live field streamed from Go</p>
 			<h1>Velocity Field</h1>
 			<span>
 				Watch particles trace a field computed on the server. Drag across the canvas to bend their path.
@@ -18,44 +18,44 @@ func Page() Node {
 				aria-label="particle flow canvas"
 			></canvas>
 			<div class="fluid__hud">
-				<div class="fluid__hud-title">Live telemetry</div>
+				<div class="fluid__hud-title">Field details</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">STATE</span>
+					<span class="fluid__stat-label">State</span>
 					<b class="fluid__stat-value" id="fluid-state" role="status">connecting…</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">GRID</span>
+					<span class="fluid__stat-label">Grid size</span>
 					<b class="fluid__stat-value" id="fluid-grid">
 						{data.gridN}
 						³
 					</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">BITS</span>
+					<span class="fluid__stat-label">Bits per value</span>
 					<b class="fluid__stat-value" id="fluid-bits">{data.bitWidth}</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">TICK</span>
+					<span class="fluid__stat-label">Tick</span>
 					<b class="fluid__stat-value" id="fluid-tick">—</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">WIRE</span>
+					<span class="fluid__stat-label">Wire size</span>
 					<b class="fluid__stat-value" id="fluid-wire">—</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">COMPRESSION</span>
+					<span class="fluid__stat-label">Compression</span>
 					<b class="fluid__stat-value" id="fluid-compression">—</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">FRAME</span>
+					<span class="fluid__stat-label">Frame</span>
 					<b class="fluid__stat-value" id="fluid-frame-kind">waiting</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">RATE</span>
+					<span class="fluid__stat-label">Rate</span>
 					<b class="fluid__stat-value" id="fluid-rate">—</b>
 				</div>
 				<div class="fluid__stat">
-					<span class="fluid__stat-label">PARTICLES</span>
+					<span class="fluid__stat-label">Particles</span>
 					<b class="fluid__stat-value" id="fluid-particles">0</b>
 				</div>
 			</div>

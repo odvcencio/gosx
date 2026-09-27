@@ -7,11 +7,10 @@ func Page() Node {
 		role="region"
 		data-view={data.view}
 		data-period={data.period}
-		data-gosx-scene3d-status-scope
 		data-gosx-scene3d-control-scope
 	>
 		<div class="beacon__canvas">
-			<Scene3D {...data.scene} />
+			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<form
 			class="beacon__ripple-control"
@@ -21,7 +20,7 @@ func Page() Node {
 		></form>
 		<header class="beacon__intro">
 			<p class="beacon__eyebrow">
-				Studio world ·
+				A view of the coast ·
 				{data.viewName}
 				·
 				{data.periodName}
@@ -30,17 +29,6 @@ func Page() Node {
 			<p class="beacon__copy">
 				Orbit a volcanic shore. Change the light, follow the beacon, and tap the tide.
 			</p>
-			<div class="beacon__telemetry" aria-live="polite">
-				<p>
-					<span>Renderer</span>
-					<output data-gosx-scene3d-status="renderer">starting…</output>
-					<output data-gosx-scene3d-status="fallback" hidden></output>
-				</p>
-				<p>
-					<span>Quality</span>
-					<output data-gosx-scene3d-status="quality">measuring…</output>
-				</p>
-			</div>
 		</header>
 		<aside class="beacon__dock" aria-label="Coast controls">
 			<div class="beacon__dock-row">

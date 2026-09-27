@@ -7,7 +7,9 @@ func Page() Node {
 		<script src="/cms-client.js" defer></script>
 		<header class="cms-header">
 			<div class="cms-header__brand">
-				<p class="cms-header__eyebrow">Content studio / server action</p>
+				<p class="cms-header__eyebrow">
+					A content editor powered by a server action
+				</p>
 				<h1 class="cms-header__logo">Build a page.</h1>
 				<p class="cms-header__purpose">
 					Add blocks, edit the draft, and publish a validated snapshot.

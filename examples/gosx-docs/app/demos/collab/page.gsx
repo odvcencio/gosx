@@ -9,7 +9,7 @@ func Page() Node {
 	>
 		<header class="collab__header">
 			<div class="collab__heading">
-				<p class="collab__eyebrow">Live study / Hub sync</p>
+				<p class="collab__eyebrow">Shared editing over a GoSX Hub</p>
 				<h1 class="collab__title">Write together.</h1>
 				<p>
 					Open this page in another tab. Edits, presence, and cursors move between them.

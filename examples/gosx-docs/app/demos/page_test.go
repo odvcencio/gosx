@@ -40,8 +40,37 @@ func TestDemosIndexLinksToAccessibleScene3DShowreel(t *testing.T) {
 		t.Error("external source links must not be intercepted by managed navigation")
 	}
 	showreel := readDemoSource(t, "examples/gosx-docs/app/demos/showreel/page.gsx")
-	if !strings.Contains(showreel, "<Scene3D {...data.scene} />") || !strings.Contains(showreel, `aria-label="Interactive orbital sculpture.`) {
+	if !strings.Contains(showreel, "<Scene3D {...data.scene} stats={false} />") || !strings.Contains(showreel, `aria-label="Interactive orbital sculpture.`) {
 		t.Error("dedicated showreel route must mount an accessible Scene3D")
+	}
+}
+
+func TestPublicDemoSceneMountsDisableRuntimeStats(t *testing.T) {
+	for _, relative := range []string{
+		"examples/gosx-docs/app/demos/beacon/page.gsx",
+		"examples/gosx-docs/app/demos/checkers/page.gsx",
+		"examples/gosx-docs/app/demos/html-surface/page.gsx",
+		"examples/gosx-docs/app/demos/orrery/page.gsx",
+		"examples/gosx-docs/app/demos/scene3d/page.gsx",
+		"examples/gosx-docs/app/demos/showreel/page.gsx",
+		"examples/gosx-docs/app/demos/water/page.gsx",
+	} {
+		page := readDemoSource(t, relative)
+		for at := 0; ; {
+			mount := strings.Index(page[at:], "<Scene3D")
+			if mount < 0 {
+				break
+			}
+			mount += at
+			end := strings.Index(page[mount:], ">")
+			if end < 0 {
+				t.Fatalf("unterminated Scene3D mount in %s", relative)
+			}
+			if !strings.Contains(page[mount:mount+end], "stats={false}") {
+				t.Errorf("Scene3D stats must be disabled in %s", relative)
+			}
+			at = mount + end + 1
+		}
 	}
 }
 
@@ -81,6 +110,22 @@ func TestWaterDemoUsesOnlyTheSharedSiteHeaderOffset(t *testing.T) {
 	}
 }
 
+func TestDemoChromeQuietensStatusAndTechnicalLabels(t *testing.T) {
+	css := readDemoSource(t, "examples/gosx-docs/app/demos/layout.css")
+	for _, required := range []string{
+		".demo-dock__dot {\n  font-family: var(--font-body);",
+		".demos-shell .demo-dock__tag,\n.demos-shell .demo-dock__chip",
+		".html-surface__poster em",
+		"[class$=\"__status\"], [class*=\"__status \"], [class*=\"__status--\"]",
+		"[data-gosx-scene3d-stats]",
+		"[data-gosx-scene3d-inspector]",
+		"[data-gosx-scene3d-status]",
+	} {
+		if !strings.Contains(css, required) {
+			t.Errorf("demo shell CSS missing quiet chrome rule %q", required)
+		}
+	}
+}
 func TestScene3DShowcaseCSSHasNoOrphanedTail(t *testing.T) {
 	css := readDemoSource(t, "examples/gosx-docs/app/demos/scene3d/page.css")
 	if !strings.HasSuffix(strings.TrimSpace(css), "}") {

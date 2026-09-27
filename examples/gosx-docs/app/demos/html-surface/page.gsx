@@ -5,20 +5,20 @@ func Page() Node {
 		<div class="html-surface__canvas">
 			<div class="html-surface__poster" aria-hidden="true">
 				<div>
-					<span>01 / STATUS</span>
+					<span>01 · Status</span>
 					<strong>Coolant loop</strong>
 					<em>Nominal</em>
 				</div>
 				<div>
-					<span>02 / ANGLED</span>
+					<span>02 · Angled</span>
 					<strong>In the scene</strong>
 					<em>HTML + CSS</em>
 				</div>
 			</div>
-			<Scene3D {...data.scene} />
+			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<div class="html-surface__overlay">
-			<p class="html-surface__eyebrow">Scene study / HTML textures</p>
+			<p class="html-surface__eyebrow">A scene textured with HTML</p>
 			<h1 class="html-surface__title">Interfaces with depth.</h1>
 			<p class="html-surface__tagline">
 				These panels start as HTML and CSS. Drag to orbit: each one turns with the scene and passes behind objects.

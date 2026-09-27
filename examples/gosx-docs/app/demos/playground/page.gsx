@@ -3,7 +3,7 @@ package playground
 func Page() Node {
 	return <section class="play" data-compile-url={actionPath("compile")} data-csrf-token={csrf.token}>
 		<header class="play__header">
-			<p class="play__eyebrow">Build / browser islands</p>
+			<p class="play__eyebrow">Compile a component in the browser</p>
 			<h1 class="play__title">GoSX Playground</h1>
 			<p class="play__subtitle">
 				Edit the source. The browser preview recompiles as you type.
@@ -12,7 +12,10 @@ func Page() Node {
 		</header>
 		<div class="play__body">
 			<div class="play__editor">
-				<h2 class="play__pane-title">Source / .gsx</h2>
+				<h2 class="play__pane-title">
+					Source
+					<code>.gsx</code>
+				</h2>
 				<div class="play__editor-top">
 					<label class="play__preset-label" for="play-preset-select">Preset</label>
 					<select

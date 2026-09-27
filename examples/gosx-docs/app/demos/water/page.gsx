@@ -36,6 +36,7 @@ func Page() Node {
 			msaaSamples={data.diagMsaa}
 			antialias={data.diagAntialias}
 			canvasAlpha={false}
+			stats={false}
 		>
 			<Camera x={1.55} y={2.8} z={2.1} fov={38} near={0.01} far={100} />
 			<Environment
@@ -252,7 +253,7 @@ func Page() Node {
 			<div class="water-demo__proofs" aria-label="Rendered water features">
 				<span>Dielectric Fresnel</span>
 				<span>Depth absorption</span>
-				<span>Native GPU</span>
+				<span>WebGPU or WebGL2</span>
 			</div>
 			<nav class="water-demo__quality" aria-label="Rendering quality">
 				<span>Quality</span>
@@ -271,9 +272,9 @@ func Page() Node {
 			aria-label="Water demo reference"
 		>
 			<p class="water-demo__eyebrow">Behind the surface</p>
-			<h2>One solver. Two native renderers.</h2>
+			<h2>One water system, two backends.</h2>
 			<p class="water-demo__help-summary">
-				The same typed WaterSystem and Selena materials compile for WebGPU and WebGL2, with honest backend and diagnostic telemetry on the mount.
+				The typed WaterSystem and Selena materials run on the backend selected by this scene's capability verdict.
 			</p>
 			<h2>Interactions</h2>
 			<ul>

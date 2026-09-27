@@ -1,16 +1,10 @@
 package docs
 
 func Page() Node {
-	return <section
-		class="orrery"
-		aria-label="Lodestar Meridian"
-		role="region"
-		data-gosx-scene3d-status-scope
-		data-gosx-scene3d-control-scope
-	>
+	return <section class="orrery" aria-label="Lodestar Meridian" role="region" data-gosx-scene3d-control-scope>
 		<div class="orrery__layout">
 			<header class="orrery__intro">
-				<p class="orrery__eyebrow">Declarative choreography · Scene3D</p>
+				<p class="orrery__eyebrow">A Scene3D animation study</p>
 				<h1>
 					Lodestar Meridian
 					<span>A clockwork sky</span>
@@ -20,7 +14,7 @@ func Page() Node {
 				</p>
 			</header>
 			<div class="orrery__canvas">
-				<Scene3D {...data.scene} />
+				<Scene3D {...data.scene} stats={false} />
 			</div>
 			<div class="orrery__overlay">
 				<ol class="orrery__phases" aria-label="Demonstration cycle phases">
@@ -42,17 +36,6 @@ func Page() Node {
 					</li>
 				</ol>
 				<div class="orrery__details">
-					<div class="orrery__telemetry" aria-live="polite">
-						<p class="orrery__runtime">
-							<span>Renderer</span>
-							<output data-gosx-scene3d-status="renderer">starting…</output>
-							<output data-gosx-scene3d-status="fallback" hidden></output>
-						</p>
-						<p class="orrery__quality">
-							<span>Quality</span>
-							<output data-gosx-scene3d-status="quality">measuring…</output>
-						</p>
-					</div>
 					<details class="orrery__technical">
 						<summary>Motion and render notes</summary>
 						<ul class="orrery__budgets" aria-label="Declared rendering and animation budgets">
