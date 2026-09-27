@@ -879,6 +879,23 @@ func Page() Node {
 				<span class="inline-code">CullRadius</span>
 				and the WebGPU runtime runs a compute pass to cull instances before drawing. The fields are additive: leave them empty and the payload is byte-identical to a plain instanced mesh. Culling is WebGPU only, and the verdict says so.
 			</p>
+			<h3>GPU-driven instancing</h3>
+			<p>
+				Set
+				<span class="inline-code">Props.GPUDriven</span>
+				and the WebGPU renderer takes over every opaque
+				<span class="inline-code">InstancedMesh</span>
+				without an authored cull kernel. One compute dispatch culls every instance of those meshes against the camera, and one more per shadow light culls the casters. Each mesh then draws with one indirect draw that reads its instance records from a storage buffer, so per-instance colors survive the cull.
+			</p>
+			{CodeBlock("go", docsapp.DocSample("scene3d/gpu-driven.go.sample"))}
+			<p>
+				<span class="inline-code">Occlusion</span>
+				adds two-phase hierarchical-Z occlusion culling. The main pass first draws what was visible last frame, builds a depth pyramid from that depth, then culls again and draws only what just became visible. It never drops a visible instance, and it costs one extra compute pass and one extra render pass per frame. It pays off when large occluders hide many instances.
+				<span class="inline-code">ShadowCulling</span>
+				defaults to true. The mode changes no pixels, so WebGL, Canvas, and the headless renderer ignore it. The mount publishes
+				<span class="inline-code">data-gosx-scene3d-webgpu-gpu-driven-*</span>
+				attributes: whether the path is active and why, owned meshes and instances, and the survivors of the last frame. The GPU-driven city workload on the Scene3D Bench compares it with the classic path. Transforms are detected by array identity, so replace the transforms array, or stream them with the instance stream, rather than editing one in place.
+			</p>
 			<h3>Instanced glTF</h3>
 			<p>
 				<span class="inline-code">scene.InstancedGLBMesh</span>
