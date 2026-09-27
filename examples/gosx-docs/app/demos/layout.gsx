@@ -118,6 +118,14 @@ func Layout() Node {
 				<span aria-hidden="true">↗</span>
 			</a>
 			<code class="demo-details__path" data-gosx-bind-text="data-demo-source-path">{currentDemoSourcePath}</code>
+			<details class="demo-details__sources">
+				<summary>All source files</summary>
+				<ul>
+					<Each of={currentDemoSourcePaths} as="sourcePath">
+						<li><a class="demo-details__source-link" href={demoSourceURL(sourcePath)} target="_blank" rel="noopener noreferrer">{sourcePath}</a></li>
+					</Each>
+				</ul>
+			</details>
 		</aside>
 	</div>
 }

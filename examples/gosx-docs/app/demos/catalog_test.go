@@ -273,6 +273,7 @@ func TestDemoLayoutDirectLoadsRenderCurrentProofMetadata(t *testing.T) {
 
 			currentHrefs := []string{}
 			currentManaged := []string{}
+			sourceLinks := map[string]string{}
 			facts := map[string]string{}
 			var shellSlug, title, lesson, sourceHref, sourcePath string
 			var visit func(*html.Node)
@@ -294,6 +295,8 @@ func TestDemoLayoutDirectLoadsRenderCurrentProofMetadata(t *testing.T) {
 						facts[attrs["data-gosx-bind-text"]] = normalizedNodeText(node)
 					case node.Data == "a" && contains(classes, "demo-details__source"):
 						sourceHref = attrs["href"]
+					case node.Data == "a" && contains(classes, "demo-details__source-link"):
+						sourceLinks[normalizedNodeText(node)] = attrs["href"]
 					case node.Data == "code" && contains(classes, "demo-details__path"):
 						sourcePath = normalizedNodeText(node)
 					}
@@ -329,6 +332,14 @@ func TestDemoLayoutDirectLoadsRenderCurrentProofMetadata(t *testing.T) {
 			}
 			if sourceHref != demoSourceURL(want.SourcePath) || sourcePath != want.SourcePath {
 				t.Errorf("server-rendered source = (%q, %q), want (%q, %q)", sourceHref, sourcePath, demoSourceURL(want.SourcePath), want.SourcePath)
+			}
+			if len(sourceLinks) != len(want.SourcePaths) {
+				t.Errorf("server-rendered source links = %d, want %d", len(sourceLinks), len(want.SourcePaths))
+			}
+			for _, source := range want.SourcePaths {
+				if got := sourceLinks[source]; got != demoSourceURL(source) {
+					t.Errorf("source link %q = %q, want %q", source, got, demoSourceURL(source))
+				}
 			}
 		})
 	}

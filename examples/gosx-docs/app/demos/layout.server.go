@@ -27,6 +27,7 @@ func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) rou
 		"currentDemoLimitations": "—",
 		"currentDemoSourceURL":   nil,
 		"currentDemoSourcePath":  "",
+		"currentDemoSourcePaths": []string{},
 	}
 	if hasCurrent {
 		values["currentDemoSlug"] = current.Slug
@@ -38,6 +39,7 @@ func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) rou
 		values["currentDemoLimitations"] = current.Limitations
 		values["currentDemoSourceURL"] = demoSourceURL(current.SourcePath)
 		values["currentDemoSourcePath"] = current.SourcePath
+		values["currentDemoSourcePaths"] = current.SourcePaths
 	}
 
 	return route.FileTemplateBindings{
