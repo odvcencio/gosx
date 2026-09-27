@@ -6,7 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount.ts"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount-viewport.ts"), "utf8");
+const mountSource = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount.ts"), "utf8");
 
 function extractFunction(name, nextName) {
   let start = source.indexOf(`function ${name}(`);
@@ -123,6 +124,14 @@ function sceneIdleGate(options = {}) {
   return { gate, mount, window, motion, connection, document, events, observer: TestIntersectionObserver };
 }
 
+test("the Scene3D factory applies declarative start policy before creating scene state", () => {
+  const gate = mountSource.indexOf("if (!(await sceneRunStartPolicy(mount, props, ctx))) return {};");
+  const sceneState = mountSource.indexOf("const runtimeScene =", gate);
+  assert.notEqual(gate, -1);
+  assert.ok(sceneState > gate);
+  assert.match(source, /async function sceneRunStartPolicy\(/);
+});
+
 test("the home start gate waits for idle, viewport, visible tab, motion, and Save-Data checks", async () => {
   const gate = sceneIdleGate({ reducedMotion: true, saveData: true });
   let settled = false;
@@ -181,13 +190,27 @@ test("a timed-out idle callback keeps the poster until the browser grants an idl
 });
 
 test("a hardware WebGPU adapter allows startup even when WebGL is software", async () => {
+  let adapterCalls = 0;
   const get = await sceneStartBackend({
-    navigator: { gpu: { requestAdapter: async () => ({ info: { vendor: "NVIDIA", device: "RTX 5070 Ti" } }) } },
+    navigator: { gpu: { requestAdapter: async () => { adapterCalls += 1; return { info: { vendor: "NVIDIA", device: "RTX 5070 Ti" } }; } } },
     webgl: { available: true, software: true },
   });
   const result = await get({});
   assert.equal(result.hardware, true);
   assert.equal(result.softwareWebGL, true);
+  assert.equal(adapterCalls, 1);
+});
+
+test("hardware WebGL skips the duplicate WebGPU adapter preflight", async () => {
+  let adapterCalls = 0;
+  const get = await sceneStartBackend({
+    navigator: { gpu: { requestAdapter: async () => { adapterCalls += 1; return null; } } },
+    webgl: { available: true, software: false },
+  });
+  const result = await get({});
+  assert.equal(result.hardware, true);
+  assert.equal(result.softwareWebGL, false);
+  assert.equal(adapterCalls, 0);
 });
 
 test("forced software WebGL waits for manual start", async () => {
@@ -229,7 +252,7 @@ test("software WebGL exposes and consumes the matching manual-start control", as
     setAttribute(name) { noteAttributes.add(name); },
   };
   const sourceStart = source.indexOf("function sceneWaitForManualStart(");
-  const sourceEnd = source.indexOf("\n// Advance the capped animation clock", sourceStart);
+  const sourceEnd = source.indexOf("\n  async function sceneRunStartPolicy", sourceStart);
   assert.notEqual(sourceStart, -1);
   assert.notEqual(sourceEnd, -1);
   const helper = stripRuntimeTypes(source.slice(sourceStart, sourceEnd).trim());

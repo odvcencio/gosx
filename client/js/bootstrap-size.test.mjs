@@ -682,7 +682,11 @@ const budgets = [
   // Brotli 366_300 -> 366_800.
   // Responsive Scene3D fill sizing adds 340 raw bytes. Measured after the fix:
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
-  { file: "bootstrap.js", raw: 1_667_400, gzip: 461_000, brotli: 366_800 },
+  // Declarative Scene3D start policies gate startup on idle, visibility,
+  // backend and user preferences. Measured: 1_738_257 / 478_833 / 384_182.
+  // Raise raw 1_667_400 -> 1_673_000, gzip 461_000 -> 462_500, and Brotli
+  // 366_800 -> 368_000 to clear the hard limits with narrow headroom.
+  { file: "bootstrap.js", raw: 1_673_000, gzip: 462_500, brotli: 368_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1789,9 +1793,12 @@ const routeBudgets = [
     // Responsive fill sizing measures this route at 1_316_603 raw and 355_507
     // gzip. Raise gzip by the smallest 100-byte step needed; raw and Brotli
     // remain within the existing main budgets.
-    raw: 1_254_000,
-    gzip: 339_200,
-    brotli: 284_900,
+    // Scene3D start-policy support adds 5,367 raw bytes to this route.
+    // Measured: 1_321_970 / 356_984 / 300_245. Raise raw 1_254_000 ->
+    // 1_259_500, gzip 339_200 -> 340_700, and Brotli 284_900 -> 286_100.
+    raw: 1_259_500,
+    gzip: 340_700,
+    brotli: 286_100,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
