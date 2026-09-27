@@ -22,6 +22,7 @@ function stripRuntimeTypes(value) {
     .replaceAll("mount: HTMLElement", "mount")
     .replaceAll("isCurrent: () => boolean", "isCurrent")
     .replaceAll("props: Record<string, any>", "props")
+    .replaceAll("deadline?: IdleDeadline", "deadline")
     .replaceAll("): Promise<boolean> {", ") {")
     .replaceAll("): Promise<{ softwareWebGL: boolean; hardware: boolean }> {", ") {")
     .replaceAll("Promise<boolean>", "Promise")
@@ -84,7 +85,7 @@ function sceneIdleGate(options = {}) {
     matchMedia() { return motion; },
     addEventListener(type, callback) { events.set(`window:${type}`, callback); },
     removeEventListener(type) { events.delete(`window:${type}`); },
-    requestIdleCallback(callback) { window.idleCallback = callback; },
+    requestIdleCallback(callback) { window.idleCallback = callback; window.idleRequests = (window.idleRequests || 0) + 1; },
   };
   const mount = {
     id: "home-scene",
@@ -127,7 +128,7 @@ test("the home start gate waits for idle, viewport, visible tab, motion, and Sav
   let settled = false;
   const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
 
-  gate.window.idleCallback();
+  gate.window.idleCallback({ didTimeout: false });
   gate.observer.last.trigger(true);
   gate.connection.saveData = false;
   gate.events.get("connection:change")();
@@ -144,7 +145,7 @@ test("the home start gate rejects an offscreen scene", async () => {
   const gate = sceneIdleGate({ offscreen: true });
   let settled = false;
   const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
-  gate.window.idleCallback();
+  gate.window.idleCallback({ didTimeout: false });
   gate.observer.last.trigger(false);
   await Promise.resolve();
   assert.equal(settled, false);
@@ -156,12 +157,26 @@ test("the home start gate waits while its tab is hidden", async () => {
   const gate = sceneIdleGate({ visibilityState: "hidden" });
   let settled = false;
   const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
-  gate.window.idleCallback();
+  gate.window.idleCallback({ didTimeout: false });
   gate.observer.last.trigger(true);
   await Promise.resolve();
   assert.equal(settled, false);
   gate.document.visibilityState = "visible";
   gate.events.get("document:visibilitychange")();
+  assert.equal(await result, true);
+});
+
+test("a timed-out idle callback keeps the poster until the browser grants an idle slice", async () => {
+  const gate = sceneIdleGate();
+  let settled = false;
+  const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
+
+  gate.window.idleCallback({ didTimeout: true });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(gate.window.idleRequests, 2, "a timed-out callback must request another idle slice");
+
+  gate.window.idleCallback({ didTimeout: false });
   assert.equal(await result, true);
 });
 

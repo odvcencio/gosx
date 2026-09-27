@@ -3838,7 +3838,17 @@
         mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
       }
       if (typeof window.requestIdleCallback === "function") {
-        window.requestIdleCallback(function() { idle = true; check(); }, { timeout: 2000 });
+        const markIdle = function(deadline?: IdleDeadline): void {
+          // A timeout means the browser forced this callback while busy. Keep
+          // the poster until it grants a real idle slice.
+          if (deadline && deadline.didTimeout) {
+            window.requestIdleCallback(markIdle, { timeout: 2000 });
+            return;
+          }
+          idle = true;
+          check();
+        };
+        window.requestIdleCallback(markIdle, { timeout: 2000 });
       } else {
         idleTimer = setTimeout(function() { idle = true; check(); }, 1000);
       }
