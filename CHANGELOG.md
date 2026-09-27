@@ -11,7 +11,9 @@
   current install, creates a per-user Start menu shortcut and HKCU Uninstall
   entry, and preserves the old version if extraction fails. The uninstaller
   asks before deleting the app-selected data directory; it keeps player data
-  by default.
+  by default. Setup refuses to replace non-empty folders without a matching
+  app ID record, and each packaged uninstaller only removes its matching
+  install folder outside protected roots.
 - The packager downloads Microsoft's Evergreen WebView2 bootstrapper when no
   local path is configured and records the downloaded file's SHA-256. Code
   signing remains a command-template step and unsigned builds say so in

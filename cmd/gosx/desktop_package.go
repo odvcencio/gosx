@@ -199,8 +199,8 @@ func packageDesktopRelease(options desktopPackageFlags) error {
 		return err
 	}
 	uninstallerPath := filepath.Join(workDir, "uninstaller.exe")
-	if err := packageDesktopCopyFile(stubPath, uninstallerPath); err != nil {
-		return fmt.Errorf("prepare standalone uninstaller: %w", err)
+	if err := buildWindowsUninstaller(uninstallerPath, config.AppID); err != nil {
+		return fmt.Errorf("build standalone uninstaller: %w", err)
 	}
 	if strings.TrimSpace(options.signCommand) != "" {
 		if err := runSignTemplate(options.signCommand, uninstallerPath, uninstallerPath, filepath.Join(workDir, "uninstaller-signed.exe")); err != nil {
@@ -492,6 +492,15 @@ func retryableNetworkError(err error) bool {
 }
 
 func buildWindowsInstallerHost(output string) error {
+	return buildWindowsInstallerBinary(output, "package main\n\nimport \"gosx-installer-host/installerhost\"\n\nfunc main() {\n\tinstallerhost.Run()\n}\n")
+}
+
+func buildWindowsUninstaller(output, appID string) error {
+	mainSource := "package main\n\nimport \"gosx-installer-host/installerhost\"\n\nfunc main() {\n\tinstallerhost.RunForAppID(" + strconv.Quote(appID) + ")\n}\n"
+	return buildWindowsInstallerBinary(output, mainSource)
+}
+
+func buildWindowsInstallerBinary(output, mainSource string) error {
 	workDir, err := os.MkdirTemp("", "gosx-windows-installer-build-")
 	if err != nil {
 		return err
@@ -522,7 +531,6 @@ func buildWindowsInstallerHost(output string) error {
 	if err := os.WriteFile(filepath.Join(workDir, "go.mod"), []byte(goMod), 0644); err != nil {
 		return err
 	}
-	mainSource := "package main\n\nimport \"gosx-installer-host/installerhost\"\n\nfunc main() {\n\tinstallerhost.Run()\n}\n"
 	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte(mainSource), 0644); err != nil {
 		return err
 	}

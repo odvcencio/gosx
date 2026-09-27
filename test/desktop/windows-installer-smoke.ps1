@@ -228,12 +228,68 @@ function Invoke-DowngradePrompt {
     Write-Host 'PASS: lower version asked first; declining kept version 2.'
 }
 
+function Assert-UnownedInstallFolderIsKept {
+    Trace 'reject an unrelated non-empty install folder'
+    New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+    $sentinel = Join-Path $installRoot 'unrelated.txt'
+    Set-Content -LiteralPath $sentinel -Value 'keep this unrelated folder'
+    $exitCode = Invoke-SilentSetup $SetupV1
+    if ($exitCode -eq 0) { throw 'Setup accepted a non-empty folder without a GoSX install record.' }
+    $diagnostic = Join-Path $workDir 'installer-error.log'
+    if (-not (Test-Path -LiteralPath $diagnostic)) { throw 'Rejected setup did not write its test diagnostic.' }
+    $detail = (Get-Content -LiteralPath $diagnostic -Raw).Trim()
+    if ($detail -notlike "*$installRoot*" -or $detail -notlike '*not a valid GoSX install*') {
+        throw "Rejected setup did not name the unowned folder: $detail"
+    }
+    if (-not (Test-Path -LiteralPath $sentinel)) { throw 'Rejected setup removed an unrelated file.' }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($registryPath)
+    if ($null -ne $key) { $key.Close(); throw 'Rejected setup created an HKCU Uninstall key.' }
+    Write-Host 'PASS: setup refused an unrelated folder and preserved its file.'
+    Remove-Item -LiteralPath $installRoot -Recurse -Force
+}
+
+function Assert-UninstallerRejectsWrongAppID {
+    Trace 'reject an install record for a different app ID'
+    $recordPath = Join-Path $installRoot 'install.json'
+    $original = [System.IO.File]::ReadAllBytes($recordPath)
+    try {
+        $recordText = [System.Text.Encoding]::UTF8.GetString($original)
+        $wrongRecordText = $recordText.Replace('"app_id": "dev.gosx.wbinstaller.smoke"', '"app_id": "dev.gosx.other.app"')
+        if ($wrongRecordText -ceq $recordText) { throw 'Could not change the app ID in install.json for the refusal check.' }
+        [System.IO.File]::WriteAllText($recordPath, $wrongRecordText, (New-Object System.Text.UTF8Encoding($false)))
+        Remove-Item -LiteralPath (Join-Path $workDir 'installer-error.log') -Force -ErrorAction SilentlyContinue
+        $args = @('--uninstall', '/S', '--test-install-root', $installRoot, '--test-start-menu', $startMenu,
+            '--test-uninstall-key', $uninstallKeyName, '--test-work-dir', $workDir)
+        $parent = Start-Process -FilePath (Join-Path $installRoot 'uninstall.exe') -ArgumentList $args -PassThru
+        [void]$processIds.Add($parent.Id)
+        if ((Wait-TestProcess $parent) -ne 0) { throw 'Uninstaller launcher returned a failure for the mismatch check.' }
+        $until = [DateTime]::UtcNow.AddSeconds(15)
+        $diagnostic = Join-Path $workDir 'installer-error.log'
+        while (-not (Test-Path -LiteralPath $diagnostic) -and [DateTime]::UtcNow -lt $until) {
+            Assert-WithinLimit
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not (Test-Path -LiteralPath $diagnostic)) { throw 'Uninstaller did not report the app ID mismatch.' }
+        $detail = (Get-Content -LiteralPath $diagnostic -Raw).Trim()
+        if ($detail -notlike '*does not match*') { throw "Uninstaller reported an unexpected error: $detail" }
+        if (-not (Test-Path -LiteralPath (Join-Path $installRoot 'wb-smoke.exe'))) {
+            throw 'Uninstaller removed the app after the app ID mismatch.'
+        }
+        Assert-Equal (Get-RegisteredVersion) '1.0.0' 'Mismatched uninstaller removed or changed the install'
+        Write-Host 'PASS: app-specific uninstaller refused a different app ID and kept the install.'
+    }
+    finally {
+        [System.IO.File]::WriteAllBytes($recordPath, $original)
+    }
+}
+
 try {
     Assert-TestInstallOverrides
     if (-not (Test-Path -LiteralPath $SetupV1) -or -not (Test-Path -LiteralPath $SetupV2)) {
         throw 'Setup input files are missing.'
     }
     Remove-Item -LiteralPath $installRoot, $startMenu, $workDir, $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-UnownedInstallFolderIsKept
 
     Trace 'install version 1'
     $exitCode = Invoke-SilentSetup $SetupV1
@@ -256,6 +312,7 @@ try {
     }
     $uninstall.Close()
     Write-Host 'PASS: per-user install, Start menu shortcut and HKCU Uninstall metadata.'
+    Assert-UninstallerRejectsWrongAppID
 
     Trace 'launch version 1'
     $app = Start-TestHost '1.0.0'
@@ -327,4 +384,13 @@ finally {
         $key.Close()
         [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($registryPath, $false)
     }
+    foreach ($path in @($installRoot, $startMenu, $workDir, $dataDir)) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($path in @($installRoot, $startMenu, $workDir, $dataDir)) {
+        if (Test-Path -LiteralPath $path) { throw "Windows smoke cleanup left $path." }
+    }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($registryPath)
+    if ($null -ne $key) { $key.Close(); throw 'Windows smoke cleanup left its HKCU Uninstall key.' }
+    Write-Host 'PASS: Windows smoke cleanup removed test install, shortcuts, data and HKCU key.'
 }

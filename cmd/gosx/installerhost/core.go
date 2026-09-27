@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,15 @@ type PackageMetadata struct {
 	GeneratedAt        string `json:"generated_at"`
 }
 
+type installationRecord struct {
+	Config        PackageConfig `json:"config"`
+	InstallRoot   string        `json:"install_root"`
+	StartMenu     string        `json:"start_menu"`
+	UninstallKey  string        `json:"uninstall_key"`
+	DesktopLink   string        `json:"desktop_link,omitempty"`
+	DataDirectory string        `json:"data_directory"`
+}
+
 func (config PackageConfig) IconPath(root string) string {
 	if config.Icon == "" {
 		return filepath.Join(root, config.HostExe)
@@ -128,6 +138,139 @@ func ValidatePackageConfig(config PackageConfig) error {
 		return fmt.Errorf("config update_public_key must be a base64 or hex Ed25519 public key")
 	}
 	return nil
+}
+
+// inspectInstallRootForUpgrade permits a missing or empty destination and
+// returns the record for an existing install owned by appID. A non-empty
+// directory is never treated as an install unless its record matches both the
+// app ID and the directory being upgraded.
+func inspectInstallRootForUpgrade(root, appID string) (installationRecord, error) {
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return installationRecord{}, nil
+	}
+	if err != nil {
+		return installationRecord{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return installationRecord{}, fmt.Errorf("install folder %q is a symbolic link", root)
+	}
+	if !info.IsDir() {
+		return installationRecord{}, fmt.Errorf("install folder %q exists and is not a directory", root)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return installationRecord{}, fmt.Errorf("inspect install folder %q: %w", root, err)
+	}
+	if len(entries) == 0 {
+		return installationRecord{}, nil
+	}
+	record, err := readMatchingInstallRecord(root, appID)
+	if err != nil {
+		return installationRecord{}, fmt.Errorf("install folder %q is not a valid GoSX install for app %q: %w", root, appID, err)
+	}
+	return record, nil
+}
+
+func readMatchingInstallRecord(root, appID string) (installationRecord, error) {
+	if strings.TrimSpace(appID) == "" {
+		return installationRecord{}, fmt.Errorf("expected app ID is empty")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "install.json"))
+	if err != nil {
+		return installationRecord{}, fmt.Errorf("read install.json: %w", err)
+	}
+	var record installationRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return installationRecord{}, fmt.Errorf("decode install.json: %w", err)
+	}
+	if record.Config.AppID != appID {
+		return installationRecord{}, fmt.Errorf("install.json app ID %q does not match %q", record.Config.AppID, appID)
+	}
+	if !sameInstallPath(record.InstallRoot, root) {
+		return installationRecord{}, fmt.Errorf("install.json root %q does not match this folder", record.InstallRoot)
+	}
+	return record, nil
+}
+
+func readRemovableInstallRecord(root, appID string, protectedRoots []string) (installationRecord, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return installationRecord{}, fmt.Errorf("inspect install folder %q: %w", root, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return installationRecord{}, fmt.Errorf("refuse to remove install folder %q: it is not a regular directory", root)
+	}
+	if isFilesystemRoot(root) {
+		return installationRecord{}, fmt.Errorf("refuse to remove install folder %q: it is a drive root", root)
+	}
+	for _, protectedRoot := range protectedRoots {
+		if protectedRoot != "" && sameInstallPath(root, protectedRoot) {
+			return installationRecord{}, fmt.Errorf("refuse to remove install folder %q: it is a protected system folder", root)
+		}
+	}
+	record, err := readMatchingInstallRecord(root, appID)
+	if err != nil {
+		return installationRecord{}, fmt.Errorf("refuse to remove install folder %q: %w", root, err)
+	}
+	return record, nil
+}
+
+func sameInstallPath(a, b string) bool {
+	cleanA, windowsA, errA := canonicalInstallPath(a)
+	cleanB, windowsB, errB := canonicalInstallPath(b)
+	if errA != nil || errB != nil || windowsA != windowsB {
+		return false
+	}
+	if windowsA {
+		return strings.EqualFold(cleanA, cleanB)
+	}
+	return cleanA == cleanB
+}
+
+func isFilesystemRoot(value string) bool {
+	clean, windowsPath, err := canonicalInstallPath(value)
+	if err != nil {
+		return false
+	}
+	if windowsPath {
+		if len(clean) == 3 && clean[1] == ':' && clean[2] == '/' {
+			return true
+		}
+		if strings.HasPrefix(clean, "//") {
+			parts := strings.Split(strings.Trim(clean, "/"), "/")
+			return len(parts) == 2
+		}
+		return false
+	}
+	return clean == string(filepath.Separator)
+}
+
+func canonicalInstallPath(value string) (string, bool, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", false, fmt.Errorf("path is empty")
+	}
+	slash := strings.ReplaceAll(value, `\`, "/")
+	if len(slash) >= 3 && isASCIILetter(slash[0]) && slash[1] == ':' && slash[2] == '/' {
+		drive := strings.ToUpper(slash[:1]) + ":"
+		return drive + path.Clean("/"+strings.TrimLeft(slash[2:], "/")), true, nil
+	}
+	if strings.HasPrefix(slash, "//") {
+		clean := path.Clean("/" + strings.TrimLeft(slash, "/"))
+		return "//" + strings.TrimPrefix(clean, "/"), true, nil
+	}
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", false, err
+	}
+	if runtime.GOOS == "windows" {
+		return strings.ReplaceAll(filepath.Clean(absolute), `\`, "/"), true, nil
+	}
+	return filepath.Clean(absolute), false, nil
+}
+
+func isASCIILetter(value byte) bool {
+	return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
 }
 
 func CompareInstallerVersions(a, b string) (int, error) {

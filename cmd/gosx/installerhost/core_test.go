@@ -149,6 +149,103 @@ func TestValidatePackageConfigRequiresEd25519KeyAndInstallMetadata(t *testing.T)
 	}
 }
 
+func TestInspectInstallRootForUpgradeRefusesUnownedNonEmptyFolder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Example Game")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(root, "user-file.txt")
+	if err := os.WriteFile(sentinel, []byte("keep me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := inspectInstallRootForUpgrade(root, "com.example.game")
+	if err == nil || !strings.Contains(err.Error(), root) || !strings.Contains(err.Error(), "not a valid GoSX install") {
+		t.Fatalf("inspectInstallRootForUpgrade error = %v; want a clear error naming %q", err, root)
+	}
+	if data, readErr := os.ReadFile(sentinel); readErr != nil || string(data) != "keep me" {
+		t.Fatalf("unowned file changed after rejected upgrade: data=%q err=%v", data, readErr)
+	}
+}
+
+func TestInspectInstallRootForUpgradeRequiresMatchingAppIDAndRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Example Game")
+	writeTestInstallRecord(t, root, "com.other.game")
+	if _, err := inspectInstallRootForUpgrade(root, "com.example.game"); err == nil || !strings.Contains(err.Error(), "app ID") {
+		t.Fatalf("mismatched app ID error = %v; want a clear rejection", err)
+	}
+	writeTestInstallRecord(t, root, "com.example.game")
+	record, err := inspectInstallRootForUpgrade(root, "com.example.game")
+	if err != nil {
+		t.Fatalf("matching install record rejected: %v", err)
+	}
+	if record.Config.AppID != "com.example.game" {
+		t.Fatalf("record app ID = %q; want com.example.game", record.Config.AppID)
+	}
+}
+
+func TestReadRemovableInstallRecordRefusesMissingOrMismatchedRecord(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		recordApp   string
+		writeRecord bool
+	}{
+		{name: "missing"},
+		{name: "different app", recordApp: "com.other.game", writeRecord: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "Example Game")
+			if err := os.MkdirAll(root, 0755); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := filepath.Join(root, "keep.txt")
+			if err := os.WriteFile(sentinel, []byte("keep me"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if test.writeRecord {
+				writeTestInstallRecord(t, root, test.recordApp)
+			}
+			if _, err := readRemovableInstallRecord(root, "com.example.game", nil); err == nil {
+				t.Fatal("readRemovableInstallRecord accepted an unowned directory")
+			}
+			if data, err := os.ReadFile(sentinel); err != nil || string(data) != "keep me" {
+				t.Fatalf("unowned directory changed after rejected uninstall: data=%q err=%v", data, err)
+			}
+		})
+	}
+}
+
+func TestReadRemovableInstallRecordProtectsCriticalDirectories(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "profile")
+	writeTestInstallRecord(t, root, "com.example.game")
+	if _, err := readRemovableInstallRecord(root, "com.example.game", []string{root}); err == nil || !strings.Contains(err.Error(), "protected") {
+		t.Fatalf("protected directory error = %v; want refusal", err)
+	}
+	if !isFilesystemRoot("/") || !isFilesystemRoot(`C:\`) || !isFilesystemRoot(`\\server\share`) {
+		t.Fatal("filesystem roots must be protected")
+	}
+	if isFilesystemRoot(`C:\Games`) || isFilesystemRoot(`\\server\share\Game`) {
+		t.Fatal("non-root install directory was classified as a filesystem root")
+	}
+}
+
+func writeTestInstallRecord(t *testing.T, root, appID string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	record := installationRecord{
+		Config:      PackageConfig{AppID: appID, Version: "1.0.0"},
+		InstallRoot: root,
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "install.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMakePortableZipContainsHashesAndRejectsSymlinks(t *testing.T) {
 	stage := t.TempDir()
 	if err := os.Mkdir(filepath.Join(stage, "assets"), 0755); err != nil {
