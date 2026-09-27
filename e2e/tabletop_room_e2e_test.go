@@ -154,7 +154,10 @@ func saveTabletopEvidenceFrame(t *testing.T, page *browserPage, name string) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("create tabletop evidence directory: %v", err)
 	}
-	data := page.screenshotElement(t, ".tabletop__stage")
+	// Include the live object count below the rendered stage so each frame
+	// carries a visible receipt of the shared edit, even when a placed model
+	// overlaps another object from this camera angle.
+	data := page.screenshotElement(t, ".tabletop__scene-panel")
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
 		t.Fatalf("write tabletop evidence frame %s: %v", name, err)
 	}
