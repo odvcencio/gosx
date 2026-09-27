@@ -1,3 +1,0 @@
-gosx init my-app
-cd my-app
-go run .

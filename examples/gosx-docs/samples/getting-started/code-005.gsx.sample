@@ -1,8 +1,0 @@
-// app/page.gsx
-package app
-
-func Page() Node {
-	return <div>
-		<h1>{data.greeting}</h1>
-	</div>
-}

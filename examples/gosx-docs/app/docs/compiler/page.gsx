@@ -1,34 +1,29 @@
 package docs
 
+func CompilerExample() Node {
+	return <div class="compiler-example-output">
+		<strong>Typed component</strong>
+		<p>
+			This line is rendered on the server from a GoSX component.
+		</p>
+	</div>
+}
+
 func Page() Node {
 	return <article class="prose">
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
-			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
-			</div>
+		<section class="docs-live-example" aria-label="Compiled component output">
+			<p class="eyebrow">Compiled output</p>
+			<CompilerExample />
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/compiler/page.gsx"
+				rel="noopener"
+			>View the component source</a>
+			<a href="/demos/playground" data-gosx-link="true">Open the compiler playground</a>
 		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Language pipeline</span>
 			<p class="lede">
-				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary and are the only spelling GoSX teaches. The legacy Go-function form still parses for existing code, engines, and loader-bound routes. Strict islands use the supported client-VM subset and fail closed outside it.
+				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary and are the spelling GoSX teaches. The legacy Go-function form still parses for existing code, engines, and loader-bound routes. Strict islands use the supported client-VM subset and fail closed outside it.
 			</p>
 		</div>
 		<h2 id="source-model">GSX source model</h2>
@@ -46,7 +41,7 @@ func Page() Node {
 		<p>
 			The two spellings lower into the same component and node representation. Existing legacy source remains valid, but new code should declare
 			<span class="inline-code">component Name(props: Type)</span>
-			instead. Calls stay within one declaration style in v0.39, keeping dynamic legacy attributes from bypassing strict Go prop checks.
+			instead. Strict callers use named fields checked against the Go props type. A legacy caller may pass one typed spread source, which the renderer checks at that boundary.
 		</p>
 		<h2 id="strict-validation">Strict validation</h2>
 		<p>
@@ -63,7 +58,7 @@ func Page() Node {
 			<span class="inline-code">int64</span>
 			range, a finite ungrouped decimal float, or one direct, parity-safe built-in scalar field on props. Nested selectors, indexing, calls, unary and binary operators, local declarations, ordinary
 			<span class="inline-code">if</span>
-			statements, helper or package calls, and cross-file component calls are rejected for strict server components in v0.39.
+			statements, helper or package calls, and cross-file component calls are rejected for strict server components. See the Components guide for supported typed composition.
 		</p>
 		<section class="callout">
 			<strong>Fail closed by design</strong>
