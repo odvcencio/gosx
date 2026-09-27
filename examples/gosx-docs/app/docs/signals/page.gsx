@@ -1,29 +1,43 @@
 package docs
 
+import (
+	"m31labs.dev/gosx/signal"
+)
+
+type LiveSignalsProps struct {
+	Initial int
+}
+
+//gosx:island
+component ReactiveExample(props: LiveSignalsProps) {
+	count := signal.New(props.Initial)
+	doubled := signal.Derive(func() int { return count.Get() * 2 })
+	increment := func() { count.Set(count.Get() + 1) }
+	return <section>
+		<button onClick={increment}>
+			Count:
+			{count.Get()}
+		</button>
+		<p>
+			Doubled:
+			{doubled.Get()}
+		</p>
+	</section>
+}
+
 func Page() Node {
 	return <article class="prose">
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
-			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
-			</div>
+		<section class="docs-live-example" aria-label="Reactive signal example">
+			<p class="eyebrow">Working signals</p>
+			<ReactiveExample {...data.liveSignalsProps} />
+			<p>
+				Change the source value. The derived value updates from the same signal graph.
+			</p>
+			{CodeBlock("gosx", data.liveExampleSample)}
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/signals/page.gsx"
+				rel="noopener"
+			>View the signal source</a>
 		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Reactive values</span>

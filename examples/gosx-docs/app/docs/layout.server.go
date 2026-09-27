@@ -3,14 +3,19 @@ package docs
 import (
 	"log"
 
+	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	demoscatalog "m31labs.dev/gosx/examples/gosx-docs/app/demos"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			if ctx != nil {
+				ctx.AddHead(server.LifecycleScript("/docs/copy-controls.js", gosx.Attrs(gosx.BoolAttr("defer"))))
+			}
 			currentPath := page.RoutePath
 			if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
 				currentPath = ctx.Request.URL.Path

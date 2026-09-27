@@ -1,0 +1,14 @@
+package docs
+
+import "m31labs.dev/gosx/signal"
+
+type LiveCounterProps struct {
+	Initial int
+}
+
+//gosx:island
+component LiveCounter(props: LiveCounterProps) {
+	count := signal.New(props.Initial)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <button onClick={increment}>Island count: {count.Get()}</button>
+}

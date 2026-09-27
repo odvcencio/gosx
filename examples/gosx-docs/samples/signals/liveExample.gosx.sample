@@ -1,0 +1,18 @@
+package docs
+
+import "m31labs.dev/gosx/signal"
+
+type LiveSignalsProps struct {
+	Initial int
+}
+
+//gosx:island
+component ReactiveExample(props: LiveSignalsProps) {
+	count := signal.New(props.Initial)
+	doubled := signal.Derive(func() int { return count.Get() * 2 })
+	increment := func() { count.Set(count.Get() + 1) }
+	return <section>
+		<button onClick={increment}>Count: {count.Get()}</button>
+		<p>Doubled: {doubled.Get()}</p>
+	</section>
+}

@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"m31labs.dev/gosx/engine"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
@@ -8,6 +9,14 @@ import (
 func init() {
 	docsapp.RegisterDocsPage("Engines", "Managed worker, surface, and video mounts with explicit browser capabilities.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			workerConfig := engine.Config{
+				Name:         "IndexWorker",
+				Kind:         engine.KindWorker,
+				Capabilities: []engine.Capability{engine.CapWorker},
+			}
+			if err := workerConfig.Validate(); err != nil {
+				return nil, err
+			}
 			return map[string]any{
 				"mode":        "",
 				"title":       "Engines",
@@ -31,6 +40,8 @@ func init() {
 				"webgpuSample":     docsapp.DocSample("engines/webgpuSample.go.sample"),
 				"wasmConfigSample": docsapp.DocSample("engines/wasmConfigSample.go.sample"),
 				"wasmModuleSample": docsapp.DocSample("engines/wasmModuleSample.go.sample"),
+				"liveWorkerStatus": "IndexWorker config passed engine.Config.Validate.",
+				"liveWorkerSample": docsapp.DocSample("engines/liveWorker.go.sample"),
 			}, nil
 		},
 	})

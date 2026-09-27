@@ -1,0 +1,8 @@
+config := engine.Config{
+	Name:         "IndexWorker",
+	Kind:         engine.KindWorker,
+	Capabilities: []engine.Capability{engine.CapWorker},
+}
+if err := config.Validate(); err != nil {
+	return nil, err
+}

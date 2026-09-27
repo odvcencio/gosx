@@ -1,8 +1,11 @@
 package docs
 
 import (
+	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/textlayout"
 )
 
 func init() {
@@ -25,6 +28,17 @@ func init() {
 				"nativeSample":   docsapp.DocSample("text-layout/nativeSample.go.sample"),
 				"lowLevelSample": docsapp.DocSample("text-layout/lowLevelSample.go.sample"),
 			}, nil
+		},
+		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			var textExample gosx.Node = gosx.Text("")
+			if ctx != nil {
+				textExample = ctx.Runtime().TextBlock(server.TextBlockProps{
+					Tag: "p", Text: "A Go-authored line plan stays readable before browser measurement.",
+					Font: "400 16px Inter", Lang: "en", MaxWidth: 420, LineHeight: 24,
+					MaxLines: 2, Overflow: textlayout.OverflowEllipsis,
+				})
+			}
+			return route.FileTemplateBindings{Values: map[string]any{"textLayoutExample": textExample}}
 		},
 	})
 }

@@ -172,10 +172,10 @@ jobs:
   # every production-build assertion and the standalone CLI build gate. A cold
   # merged-main run reached Go's default 10-minute package timeout in the final
   # generated-docs fixture, so the suite has a 15-minute Go timeout inside this
-  # 20-minute job ceiling.
+  # 50-minute job ceiling.
   go-cli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 50
 
     steps:
       - name: Check out repository
@@ -203,8 +203,14 @@ jobs:
       - name: Documentation example tests
         run: GOWORK=off nice -n 10 go test ./examples/gosx-docs/...
 
+      - name: Build and serve each first-app tutorial step
+        run: GOWORK=off nice -n 10 go test -tags docs_tutorial -run '^TestFirstAppTutorialBuildsAndServesEveryStep$' -timeout 40m ./examples/gosx-docs
+
       - name: Build CLI
         run: make build-cli
+
+      - name: Compile documentation site pages and server
+        run: GOWORK=off nice -n 10 ./gosx build --dev ./examples/gosx-docs
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle

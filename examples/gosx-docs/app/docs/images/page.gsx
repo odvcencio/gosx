@@ -33,6 +33,10 @@ func Page() Node {
 				<span class="inline-code">server.Image</span>
 				. The source is a checked-in PNG rendered by the GoSX native scene harness.
 			</p>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/images/page.server.go"
+				rel="noopener"
+			>View the image helper source</a>
 		</div>
 		<h2 id="builtin">The &lt;Image&gt; builtin</h2>
 		<p>
