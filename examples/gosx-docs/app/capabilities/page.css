@@ -1,0 +1,218 @@
+.capabilities-page {
+  max-width: 76rem;
+  margin-inline: auto;
+  padding: var(--space-2xl) var(--space-lg) var(--space-3xl);
+  color: var(--text-primary);
+}
+
+.capabilities-header {
+  max-width: 54rem;
+  margin-bottom: var(--space-xl);
+}
+
+.capabilities-eyebrow {
+  margin: 0 0 var(--space-sm);
+  color: var(--accent);
+  font-size: var(--text-small);
+}
+
+.capabilities-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-h2);
+  line-height: var(--lh-headline);
+  letter-spacing: var(--ls-headline);
+}
+
+.capabilities-header > p:not(.capabilities-eyebrow) {
+  max-width: 46rem;
+  margin: var(--space-md) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  line-height: var(--lh-prose);
+}
+
+.capabilities-source {
+  font-size: var(--text-small) !important;
+}
+
+.capabilities-page a {
+  color: var(--accent);
+  text-underline-offset: 0.18em;
+}
+
+.capabilities-page a:focus-visible,
+.capabilities-table-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.capabilities-browser {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  max-width: 43rem;
+  margin-bottom: var(--space-lg);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.capabilities-browser__mark {
+  width: 6rem;
+  height: 4rem;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: var(--code-bg);
+  border-radius: 0.5rem;
+}
+
+.capabilities-browser__scene {
+  display: block;
+  width: 6rem;
+  height: 4rem;
+}
+
+.capabilities-browser h2 {
+  margin: 0 0 var(--space-xs);
+  font-family: var(--font-display);
+  font-size: var(--text-h3);
+}
+
+.capabilities-browser p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: var(--lh-body);
+}
+
+.capabilities-browser output {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.capabilities-browser__note {
+  margin-top: var(--space-xs) !important;
+  font-size: var(--text-small);
+}
+
+.capabilities-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.capabilities-table {
+  width: 100%;
+  min-width: 70rem;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.capabilities-table caption {
+  padding: var(--space-md);
+  color: var(--text-secondary);
+  line-height: var(--lh-body);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.capabilities-table th,
+.capabilities-table td {
+  padding: var(--space-md);
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.capabilities-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--text-primary);
+  background: #111315;
+  font-size: var(--text-small);
+}
+
+.capabilities-table tbody th {
+  width: 13rem;
+  font-weight: 600;
+}
+
+.capabilities-table tbody th small {
+  display: block;
+  min-height: 1.3em;
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  font-weight: 400;
+}
+
+.capabilities-table td {
+  width: 17rem;
+  color: var(--text-secondary);
+  line-height: var(--lh-body);
+}
+
+.capabilities-table td strong {
+  color: var(--text-primary);
+}
+
+.capabilities-table td p {
+  margin: var(--space-xs) 0;
+}
+
+.capabilities-table td a {
+  display: inline-block;
+  font-size: var(--text-small);
+}
+
+.capabilities-browser-cell__answer {
+  display: none;
+}
+
+.capabilities-browser-cell__waiting {
+  color: var(--text-muted);
+}
+
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgpu"]) .capabilities-browser-cell__waiting,
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgl"]) .capabilities-browser-cell__waiting,
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="canvas2d"]) .capabilities-browser-cell__waiting {
+  display: none;
+}
+
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgpu"]) .capabilities-browser-cell__answer--webgpu,
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgl"]) .capabilities-browser-cell__answer--webgl,
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="canvas2d"]) .capabilities-browser-cell__answer--canvas2d {
+  display: block;
+}
+
+@media (max-width: 48rem) {
+  .capabilities-page {
+    padding: var(--space-xl) var(--space-md) var(--space-2xl);
+  }
+
+  .capabilities-browser {
+    align-items: flex-start;
+  }
+
+  .capabilities-browser__mark {
+    width: 3.5rem;
+    height: 3.5rem;
+  }
+
+  .capabilities-browser__scene {
+    width: 3.5rem;
+    height: 3.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capabilities-page *,
+  .capabilities-page *::before,
+  .capabilities-page *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
