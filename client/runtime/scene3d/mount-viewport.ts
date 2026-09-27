@@ -35,18 +35,29 @@
       const measuredCanvasWidth = sceneNumber(canvasRect && canvasRect.width, 0);
       const measuredMountWidth = sceneNumber(mountRect && mountRect.width, 0);
       const measuredCanvasHeight = sceneNumber(canvasRect && canvasRect.height, 0);
-      const measuredMountHeight = sceneNumber(mountRect && mountRect.height, 0);
+      let measuredMountHeight = sceneNumber(mountRect && mountRect.height, 0);
+      const mountClientHeight = sceneNumber(mount && mount.clientHeight, 0);
+      if (mountClientHeight > 0 && typeof window !== "undefined" && window && typeof window.getComputedStyle === "function") {
+        let mountStyle = null;
+        try {
+          mountStyle = window.getComputedStyle(mount);
+        } catch (_error) {}
+        const paddingTop = Math.max(0, sceneNumber(parseFloat(mountStyle && mountStyle.paddingTop), 0));
+        const paddingBottom = Math.max(0, sceneNumber(parseFloat(mountStyle && mountStyle.paddingBottom), 0));
+        // clientHeight excludes borders; subtract padding to match the content box
+        // used by the canvas's width:100% sizing.
+        measuredMountHeight = Math.max(0, mountClientHeight - paddingTop - paddingBottom);
+      }
       if (measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)) {
         cssWidth = measuredCanvasWidth;
       } else if (measuredMountWidth > 0) {
         cssWidth = measuredMountWidth;
       }
-      // A fill-bound scene is constrained by its mount, not by the canvas's
-      // replaced-element aspect ratio. applySceneViewport intentionally gives
-      // responsive canvases height:auto, so feeding canvasRect.height back
-      // into the next viewport pass can grow the canvas on every resize when
-      // its intrinsic ratio is stale. Prefer the mount's layout height and
-      // use the canvas only when the mount has not acquired a real box yet.
+      // A fill-bound scene uses the mount's content-box height, not the
+      // canvas's replaced-element aspect ratio. The canvas is block-level and
+      // the label layer is absolute, so a content-sized mount feeds back only
+      // the canvas height and cannot add line-box, padding, or overlay height.
+      // Use the canvas only when the mount has not acquired a real box yet.
       const measuredHeight = useMeasuredHeight && measuredMountHeight > 0
         ? measuredMountHeight
         : measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)
@@ -147,6 +158,7 @@
       const canvasRect = typeof canvas.getBoundingClientRect === "function" ? canvas.getBoundingClientRect() : null;
       const left = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.left, 0) - sceneNumber(mountRect.left, 0)) : 0;
       const top = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.top, 0) - sceneNumber(mountRect.top, 0)) : 0;
+      labelLayer.style.position = "absolute";
       labelLayer.style.left = left + "px";
       labelLayer.style.top = top + "px";
       labelLayer.style.right = "auto";
@@ -160,6 +172,10 @@
     } else {
       canvas.style.width = "100%";
       canvas.style.height = "auto";
+      // A responsive Scene3D canvas is a block so it does not add an inline
+      // baseline gap to a content-sized mount. The label layer is an absolute
+      // overlay above, so neither child can add another viewport height.
+      canvas.style.display = "block";
     }
     return viewport;
   }

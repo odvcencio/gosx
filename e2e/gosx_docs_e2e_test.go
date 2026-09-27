@@ -86,6 +86,81 @@ func TestDocsSiteServes(t *testing.T) {
 	}
 }
 
+func TestDocsHomeSceneCanvasesStayBounded(t *testing.T) {
+	chrome := e2eChromePath(t)
+	var app *docsApp
+	if baseURL := os.Getenv("GOSX_E2E_BASE_URL"); baseURL != "" {
+		if err := waitForHealthy(baseURL+"/readyz", 45*time.Second); err != nil {
+			t.Fatalf("provided docs app is not ready: %v", err)
+		}
+		app = &docsApp{baseURL: baseURL, logs: &logBuffer{}}
+	} else {
+		app = startProductionDocsApp(t)
+	}
+	page := newBrowserPage(t, chrome, map[string]any{"mute-audio": true}, 1440, 900, "", 45*time.Second)
+	if err := chromedp.Run(page.ctx, chromedp.EmulateViewport(1440, 900)); err != nil {
+		t.Fatalf("emulate 1440x900 viewport: %v", err)
+	}
+	if status := page.navigate(t, app.baseURL+"/"); status < 200 || status > 299 {
+		t.Fatalf("homepage returned %d\n\nLogs:\n%s", status, app.logs.String())
+	}
+	page.waitFor(t, `document.querySelectorAll("canvas").length > 0`, 20*time.Second, "homepage canvases")
+
+	type canvasSize struct {
+		Index  int     `json:"index"`
+		Width  float64 `json:"width"`
+		Height float64 `json:"height"`
+	}
+	type sample struct {
+		ElapsedMS      float64      `json:"elapsedMs"`
+		ViewportHeight float64      `json:"viewportHeight"`
+		Canvases       []canvasSize `json:"canvases"`
+	}
+	var samples []sample
+	page.eval(t, `(async () => {
+	  const samples = [];
+	  const started = performance.now();
+	  do {
+	    samples.push({
+	      elapsedMs: performance.now() - started,
+	      viewportHeight: window.innerHeight,
+	      canvases: Array.from(document.querySelectorAll("canvas")).map((canvas, index) => {
+	        const rect = canvas.getBoundingClientRect();
+	        return { index, width: rect.width, height: rect.height };
+	      }),
+	    });
+	    await new Promise((resolve) => setTimeout(resolve, 100));
+	  } while (performance.now() - started < 3000);
+	  return samples;
+	})()`, &samples)
+	if len(samples) < 2 {
+		t.Fatalf("collected %d canvas samples over 3 seconds", len(samples))
+	}
+	if len(samples[0].Canvases) == 0 {
+		t.Fatal("homepage had no canvases during the 3-second sample window")
+	}
+	initialHeights := make(map[int]float64, len(samples[0].Canvases))
+	for _, canvas := range samples[0].Canvases {
+		initialHeights[canvas.Index] = canvas.Height
+	}
+	for _, point := range samples {
+		if len(point.Canvases) != len(initialHeights) {
+			t.Errorf("canvas count changed at %.0f ms: got %d, want %d", point.ElapsedMS, len(point.Canvases), len(initialHeights))
+		}
+		for _, canvas := range point.Canvases {
+			if canvas.Height > point.ViewportHeight+1 {
+				t.Errorf("canvas %d reached %.1fpx at %.0fms in a %.1fpx viewport", canvas.Index, canvas.Height, point.ElapsedMS, point.ViewportHeight)
+			}
+			if initial, ok := initialHeights[canvas.Index]; ok && canvas.Height > initial+1 {
+				t.Errorf("canvas %d grew from %.1fpx to %.1fpx over the 3-second window", canvas.Index, initial, canvas.Height)
+			}
+		}
+	}
+	if len(page.PageErrors()) > 0 {
+		t.Fatalf("homepage raised page errors: %v\nconsole:\n%s", page.PageErrors(), page.Console())
+	}
+}
+
 func TestDocsMobileNavigationWorksWithoutDisclosureRuntime(t *testing.T) {
 	chrome := e2eChromePath(t)
 	app := startDocsApp(t, docsBaseURL())

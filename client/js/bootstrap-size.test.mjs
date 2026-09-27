@@ -680,7 +680,9 @@ const budgets = [
   // 383_092. Raise only the reviewed targets needed to retain the governed
   // hard limit: raw 1_665_800 -> 1_667_100, gzip 460_600 -> 461_000, and
   // Brotli 366_300 -> 366_800.
-  { file: "bootstrap.js", raw: 1_667_100, gzip: 461_000, brotli: 366_800 },
+  // Responsive Scene3D fill sizing adds 340 raw bytes. Measured after the fix:
+  // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
+  { file: "bootstrap.js", raw: 1_667_400, gzip: 461_000, brotli: 366_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1784,8 +1786,11 @@ const routeBudgets = [
     // Declarative copy controls increase this route by 1,276 raw, 406 gzip,
     // and 255 Brotli bytes. The merged route measures 1_316_263 / 355_418 /
     // 299_112. Raise raw to 1_254_000, gzip to 339_100, and Brotli to 284_900.
+    // Responsive fill sizing measures this route at 1_316_603 raw and 355_507
+    // gzip. Raise gzip by the smallest 100-byte step needed; raw and Brotli
+    // remain within the existing main budgets.
     raw: 1_254_000,
-    gzip: 339_100,
+    gzip: 339_200,
     brotli: 284_900,
   },
   {
