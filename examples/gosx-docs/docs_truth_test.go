@@ -258,9 +258,11 @@ func TestDocsContrastStylesCoverSharedCodeAndLiveControls(t *testing.T) {
 	assertDocsContract(t, string(css), []string{
 		".docs-content .code-sample__gutter",
 		"color: var(--text-secondary);",
+		".docs-content button[type=\"submit\"]",
 		".docs-live-example button:not(.code-sample__copy)",
-		"color: var(--color-canvas);",
-		"background: var(--accent);",
+		"-webkit-appearance: none;",
+		"color: var(--color-canvas, #070809);",
+		"background: var(--accent, #d4af37);",
 	}, []string{})
 }
 

@@ -113,17 +113,17 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 	}
 }
 
-func TestCopyControlTracksRuntimeReadyState(t *testing.T) {
+func TestCopyControlStartsHiddenUntilRuntimeLoadsDocument(t *testing.T) {
 	css, err := os.ReadFile("docs/layout.css")
 	if err != nil {
 		t.Fatal(err)
 	}
 	styles := string(css)
 	if !strings.Contains(styles, ".code-sample__copy {\n  display: none;") {
-		t.Fatal("copy control must stay hidden before JavaScript initializes")
+		t.Fatal("copy control must stay hidden before the GoSX document runtime loads")
 	}
-	if !strings.Contains(styles, `html[data-gosx-runtime-ready="true"] .docs-content .code-sample__copy {`) || !strings.Contains(styles, "  display: inline-flex;") {
-		t.Fatal("copy control must become visible only after the browser runtime reports ready")
+	if !strings.Contains(styles, `html[data-gosx-document="true"] .docs-content .code-sample__copy {`) || !strings.Contains(styles, "  display: inline-flex;") {
+		t.Fatal("copy control must become visible after the GoSX document runtime loads")
 	}
 }
 
