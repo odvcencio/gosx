@@ -162,6 +162,10 @@ function runModule(options = {}) {
       },
       querySelectorAll: (sel) => options.queryAll && sel in options.queryAll ? options.queryAll[sel] : [],
       activeElement: options.activeElement || null,
+      body: options.body || null,
+      documentElement: options.documentElement || null,
+      createElement: options.createElement,
+      execCommand: options.execCommand,
     },
     window: {
       __gosx: Object.assign(
@@ -180,6 +184,7 @@ function runModule(options = {}) {
       ...(options.replaceRuntimeContent ? {
         __gosx_replace_runtime_content: options.replaceRuntimeContent,
       } : {}),
+      ...(options.clipboard ? { navigator: { clipboard: { writeText: options.clipboard } } } : {}),
     },
   };
   class CustomEvent {
@@ -287,6 +292,94 @@ test("data-gosx-toggle-target owns attribute and aria state without page JS", ()
   fire(listeners.click, trigger);
   assert.equal(drawer.hasAttribute("data-open"), false);
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
+});
+
+test("data-gosx-copy-button copies code and announces the result", async () => {
+  const copied = [];
+  const code = { textContent: "fmt.Println(\"Hello, GoSX\")" };
+  const status = { textContent: "" };
+  const button = makeEl({
+    "data-gosx-copy-button": "",
+    "data-gosx-copy-label": "Copy",
+  }, { tag: "button" });
+  const scope = makeEl({ "data-gosx-copy-scope": "" }, {
+    children: [button],
+    querySelector: (selector) => selector === "pre code" ? code : status,
+  });
+  const { listeners } = runModule({
+    clipboard: (text) => {
+      copied.push(text);
+      return Promise.resolve();
+    },
+  });
+
+  const prevented = fire(listeners.click, button);
+  assert.equal(prevented, true);
+  assert.equal(button.disabled, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(copied, [code.textContent]);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, "Copied");
+  assert.equal(status.textContent, "Copied code to the clipboard.");
+});
+
+test("data-gosx-copy-button falls back to a temporary textarea", async () => {
+  const code = { textContent: "fmt.Println(\"Hello, GoSX\")" };
+  const status = { textContent: "" };
+  const button = makeEl({ "data-gosx-copy-button": "" }, { tag: "button" });
+  makeEl({ "data-gosx-copy-scope": "" }, {
+    children: [button],
+    querySelector: (selector) => selector === "pre code" ? code : status,
+  });
+  let field;
+  let removed = false;
+  const { listeners } = runModule({
+    body: { appendChild: (next) => { field = next; } },
+    createElement: (name) => {
+      assert.equal(name, "textarea");
+      return {
+        style: {},
+        value: "",
+        setAttribute() {},
+        select() {},
+        remove() { removed = true; },
+      };
+    },
+    execCommand: (command) => command === "copy",
+  });
+
+  fire(listeners.click, button);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(field.value, code.textContent);
+  assert.equal(removed, true);
+  assert.equal(button.textContent, "Copied");
+  assert.equal(status.textContent, "Copied code to the clipboard.");
+});
+
+test("data-gosx-copy-button reports a failed fallback accurately", async () => {
+  const code = { textContent: "fmt.Println(\"Hello, GoSX\")" };
+  const status = { textContent: "" };
+  const button = makeEl({ "data-gosx-copy-button": "" }, { tag: "button" });
+  makeEl({ "data-gosx-copy-scope": "" }, {
+    children: [button],
+    querySelector: (selector) => selector === "pre code" ? code : status,
+  });
+  const { listeners } = runModule({
+    body: { appendChild() {} },
+    createElement: () => ({
+      style: {},
+      value: "",
+      setAttribute() {},
+      select() {},
+      remove() {},
+    }),
+    execCommand: () => false,
+  });
+
+  fire(listeners.click, button);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(button.textContent, "Try again");
+  assert.equal(status.textContent, "Copy failed. Select the code and copy it manually.");
 });
 
 test("navigation context binding projects selected source data declaratively", () => {

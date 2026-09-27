@@ -675,7 +675,12 @@ const budgets = [
   // Measured: 1_731_259 / 476_950 / 382_656. Targets raw 1_664_200 ->
   // 1_665_800, gzip 460_000 -> 460_600 and brotli 366_000 -> 366_300, the
   // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_665_800, gzip: 460_600, brotli: 366_300 },
+  // Declarative code-copy controls add 1,276 raw, 368 gzip, and 436 Brotli
+  // bytes on the merged GPU-driven base. Measured: 1_732_535 / 477_318 /
+  // 383_092. Raise only the reviewed targets needed to retain the governed
+  // hard limit: raw 1_665_800 -> 1_667_100, gzip 460_600 -> 461_000, and
+  // Brotli 366_300 -> 366_800.
+  { file: "bootstrap.js", raw: 1_667_100, gzip: 461_000, brotli: 366_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1776,10 +1781,12 @@ const routeBudgets = [
     // Measured: 1_314_987 / 355_012 / 298_857. Targets raw 1_251_000 ->
     // 1_252_500, gzip 338_200 -> 338_700 and brotli 284_500 -> 284_700, the
     // smallest 100-byte steps that clear the hard limits.
-    // Raise raw 1_250_000 -> 1_251_000 for the merged route measurement.
-    raw: 1_252_500,
-    gzip: 338_700,
-    brotli: 284_700,
+    // Declarative copy controls increase this route by 1,276 raw, 406 gzip,
+    // and 255 Brotli bytes. The merged route measures 1_316_263 / 355_418 /
+    // 299_112. Raise raw to 1_254_000, gzip to 339_100, and Brotli to 284_900.
+    raw: 1_254_000,
+    gzip: 339_100,
+    brotli: 284_900,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
