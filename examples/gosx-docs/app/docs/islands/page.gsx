@@ -1,29 +1,27 @@
 package docs
 
+import "m31labs.dev/gosx/signal"
+
+
+type LiveCounterProps struct {
+	Initial int
+}
+
+//gosx:island
+component LiveCounter(props: LiveCounterProps) {
+	count := signal.New(props.Initial)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <button onClick={increment}>Island count: {count.Get()}</button>
+}
+
 func Page() Node {
 	return <article class="prose">
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
-			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
-			</div>
+		<section class="docs-live-example" aria-label="Interactive counter island">
+			<p class="eyebrow">Working island</p>
+			<LiveCounter {...data.liveCounterProps} />
+			<p>The button is server-rendered first, then hydrated as a small strict island.</p>
+			{CodeBlock("gosx", data.liveCounterSample)}
+			<a href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/islands/page.gsx" rel="noopener">View the island source</a>
 		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Selective interaction</span>

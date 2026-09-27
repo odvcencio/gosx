@@ -52,6 +52,14 @@ var docsCatalog = []DocSection{
 				Keywords:    []string{"install", "quickstart", "init", "setup", "project"},
 			},
 			{
+				Title:       "Your first GoSX app",
+				Href:        "/docs/your-first-app",
+				Description: "Add server data, an island, a realtime hub, and a lit Scene3D in four short steps.",
+				Section:     "start",
+				Source:      "examples/gosx-docs/app/docs/your-first-app/page.gsx",
+				Keywords:    []string{"tutorial", "server data", "counter", "hub", "scene3d", "first app"},
+			},
+			{
 				Title:       "Typed component proof",
 				Href:        "/docs/typed-live",
 				Description: "The production-rendered strict component route behind this site.",

@@ -4,32 +4,14 @@ import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 
 func Page() Node {
 	return <div>
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
-			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
-			</div>
+		<section class="docs-live-example" aria-label="Managed navigation example">
+			<p class="eyebrow">Managed navigation</p>
+			<p>These links are ordinary anchors first. GoSX fetches and swaps the server-rendered page while preserving the document runtime.</p>
+			<nav aria-label="Runtime example pages">
+				<a href="/docs/islands" data-gosx-link="true" data-gosx-prefetch="render">Open the Islands guide</a>
+				<a href="/docs/your-first-app" data-gosx-link="true">Open the first-app tutorial</a>
+			</nav>
+			<a href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/runtime/page.gsx" rel="noopener">View the navigation link source</a>
 		</section>
 		<section id="client-navigation">
 			<h2>Opt-in client navigation</h2>

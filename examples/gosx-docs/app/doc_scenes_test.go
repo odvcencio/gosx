@@ -21,17 +21,7 @@ import (
 
 func TestDocSceneFeatureRouteSelection(t *testing.T) {
 	expected := []string{
-		"/docs/getting-started",
-		"/docs/compiler",
-		"/docs/routing",
-		"/docs/runtime",
-		"/docs/streaming",
-		"/docs/islands",
-		"/docs/signals",
-		"/docs/hubs",
 		"/docs/engines",
-		"/docs/motion",
-		"/docs/deployment",
 	}
 	if len(docSceneSpecs) != len(expected) {
 		t.Fatalf("selected route count = %d, want %d", len(docSceneSpecs), len(expected))
@@ -53,7 +43,7 @@ func TestDocSceneFeatureRouteSelection(t *testing.T) {
 			t.Errorf("selected route %q does not disclose its pointer-only controls: %q", routePath, feature.InteractionHint)
 		}
 	}
-	for _, routePath := range []string{"/docs/auth", "/docs/forms", "/docs/images", "/docs/scene3d", "/demos"} {
+	for _, routePath := range []string{"/docs/getting-started", "/docs/auth", "/docs/forms", "/docs/images", "/docs/scene3d", "/demos"} {
 		if _, ok := DocSceneFeatureForRoute(routePath); ok {
 			t.Fatalf("non-conceptual route %q unexpectedly selected a docs scene", routePath)
 		}
@@ -140,7 +130,7 @@ func TestDocSceneFactoriesStayDeterministicAndWithinBudget(t *testing.T) {
 }
 
 func TestWithDocSceneFeaturePreservesMapLoaderDataAndBindsOnce(t *testing.T) {
-	original := map[string]any{"title": "Runtime", "count": 3}
+	original := map[string]any{"title": "Engines", "count": 3}
 	bindingCalls := 0
 	wrapped := withDocSceneFeature(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
@@ -153,7 +143,7 @@ func TestWithDocSceneFeaturePreservesMapLoaderDataAndBindsOnce(t *testing.T) {
 			}
 		},
 	})
-	page := route.FilePage{RoutePath: "/docs/runtime"}
+	page := route.FilePage{RoutePath: "/docs/engines"}
 	data, err := wrapped.Load(&route.RouteContext{}, page)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +183,7 @@ func TestWithDocSceneFeaturePreservesNonMapAndUnselectedData(t *testing.T) {
 		},
 	})
 
-	selected := route.FilePage{RoutePath: "/docs/runtime"}
+	selected := route.FilePage{RoutePath: "/docs/engines"}
 	data, err := wrapped.Load(&route.RouteContext{}, selected)
 	if err != nil {
 		t.Fatal(err)
@@ -277,6 +267,20 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 			t.Errorf("selected route %q Scene3D node count = %d, want 1", spec.Route, count)
 		}
 	}
+	for _, slug := range []string{"compiler", "deployment", "hubs", "islands", "motion", "routing", "runtime", "signals", "streaming", "getting-started"} {
+		path := filepath.Join("docs", slug, "page.gsx")
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read payload-free route %q: %v", slug, err)
+		}
+		if bytes.Contains(source, []byte(`class="doc-scene"`)) {
+			t.Errorf("/docs/%s still renders the generic Scene3D banner", slug)
+		}
+		program := compileDocSceneSource(t, path)
+		if count := countIRTag(program, "Scene3D"); count != 0 {
+			t.Errorf("/docs/%s Scene3D node count = %d, want 0", slug, count)
+		}
+	}
 	for _, path := range []string{
 		filepath.Join("docs", "layout.gsx"),
 		filepath.Join("docs", "auth", "page.gsx"),
@@ -305,7 +309,7 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 }
 
 func TestDocsLayoutAndSceneStagesCompileAndStayFormatted(t *testing.T) {
-	paths := []string{filepath.Join("docs", "layout.gsx")}
+	paths := []string{filepath.Join("docs", "layout.gsx"), filepath.Join("docs", "getting-started", "page.gsx")}
 	for _, spec := range docSceneSpecs {
 		paths = append(paths, filepath.Join("docs", spec.Slug, "page.gsx"))
 	}

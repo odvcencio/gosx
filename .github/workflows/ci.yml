@@ -175,7 +175,7 @@ jobs:
   # 20-minute job ceiling.
   go-cli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -202,6 +202,9 @@ jobs:
 
       - name: Documentation example tests
         run: GOWORK=off nice -n 10 go test ./examples/gosx-docs/...
+
+      - name: Build and serve each first-app tutorial step
+        run: GOWORK=off nice -n 10 go test -tags docs_tutorial -run '^TestFirstAppTutorialBuildsAndServesEveryStep$' -timeout 40m ./examples/gosx-docs
 
       - name: Build CLI
         run: make build-cli

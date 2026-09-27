@@ -4,6 +4,20 @@ import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 
 func Page() Node {
 	return <div>
+		<section class="docs-live-example" aria-label="Validated server form">
+			<p class="eyebrow">Try server validation</p>
+			<form method="post" action={actionPath("subscribe")} data-gosx-managed>
+				<input type="hidden" name="csrf_token" value={csrf.token} />
+				<label>
+					<span>Email address</span>
+					<input name="email" type="email" value={actions.subscribe.values.email} placeholder="you@example.com" />
+				</label>
+				<p role="alert">{actions.subscribe.fieldErrors.email}</p>
+				<p role="status">{action.message}</p>
+				<button type="submit">Subscribe</button>
+			</form>
+			<a href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/forms/page.server.go" rel="noopener">View the validating action</a>
+		</section>
 		<section id="html-forms" class="docs-section-block">
 			<h2>HTML Forms</h2>
 			<p>

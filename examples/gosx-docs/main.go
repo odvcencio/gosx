@@ -14,6 +14,7 @@ import (
 	"m31labs.dev/gosx/auth"
 	"m31labs.dev/gosx/env"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
 	checkers "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
@@ -122,6 +123,11 @@ func main() {
 		})
 	})
 	app.SetPublicDir(filepath.Join(root, "public"))
+	app.API("GET /api/docs-hubs/open-tabs", func(ctx *server.Context) (any, error) {
+		return map[string]any{
+			"html": fmt.Sprintf("<h2>Open guide tabs: %d</h2>", docshubs.ExampleHub.Presence().Count()),
+		}, nil
+	})
 	mountSiteDocuments(app, root)
 	configureProductionReadiness(app)
 	if publicAuthDemos {
@@ -136,6 +142,7 @@ func main() {
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
+	app.Mount("/docs/hubs/ws", docshubs.ExampleHub)
 	rootHandler, err := router.BuildChecked()
 	if err != nil {
 		log.Fatal(err)

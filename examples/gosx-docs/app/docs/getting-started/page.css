@@ -1,0 +1,79 @@
+.quickstart {
+  margin: 0 0 var(--space-xl);
+}
+
+.quickstart__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(15rem, 0.9fr);
+  align-items: start;
+  gap: var(--space-md);
+}
+
+.prose .quickstart__commands h2 {
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+  border: 0;
+  font-size: var(--text-h3);
+}
+
+.quickstart__commands .code-sample {
+  margin: 0 0 var(--space-xs);
+}
+
+.quickstart__commands .code-sample__head {
+  padding: 0.3rem var(--space-xs);
+}
+
+.quickstart__commands .code-sample__body pre {
+  padding: 0.35rem var(--space-xs);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.quickstart__commands .code-block {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quickstart__preview {
+  margin: 0;
+}
+
+.quickstart__preview img {
+  display: block;
+  width: 100%;
+  height: clamp(10rem, 22vw, 13rem);
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--border);
+}
+
+.quickstart__preview figcaption {
+  margin-top: var(--space-xs);
+  color: var(--text-primary);
+  font-size: var(--text-small);
+  line-height: var(--lh-body);
+}
+
+.quickstart__tutorial {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-primary);
+}
+
+.quickstart__tutorial a {
+  font-weight: 600;
+}
+
+.getting-started .docs-section-block h2:first-child {
+  margin-top: var(--space-xl);
+}
+
+@media (max-width: 48rem) {
+  .quickstart__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quickstart__preview img {
+    height: 10rem;
+  }
+}

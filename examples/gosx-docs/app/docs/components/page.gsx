@@ -2,6 +2,12 @@ package docs
 
 func Page() Node {
 	return <article class="prose">
+		<section class="docs-live-example" aria-label="Strict component route example">
+			<p class="eyebrow">Working typed component</p>
+			<p>The route below is rendered by a strict component with typed Go props.</p>
+			<a href="/docs/typed-live" data-gosx-link="true">Open the strict component route</a>
+			<a href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/typed-live/page.gsx" rel="noopener">View the example source</a>
+		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Authoring model</span>
 			<p class="lede">

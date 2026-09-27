@@ -114,17 +114,20 @@ func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
 		{"deployment", "deployment/sampleBuildModes.bash.sample"},
 		{"engines", "engines/mountSample.go.sample"},
 		{"forms", "forms/code-001.gsx.sample"},
-		{"getting-started", "getting-started/code-001.bash.sample"},
+		{"getting-started", "getting-started/quickstart-install.bash.sample"},
 		{"hubs", "hubs/hubSample.go.sample"},
 		{"images", "images/imageSample.go.sample"},
 		{"islands", "islands/counterSample.gosx.sample"},
+		{"islands", "islands/liveCounter.gosx.sample"},
 		{"motion", "motion/motionSample.go.sample"},
 		{"routing", "routing/treeSample.text.sample"},
 		{"runtime", "runtime/code-001.gosx.sample"},
 		{"scene3d", "scene3d/code-001.go.sample"},
 		{"signals", "signals/basicSample.go.sample"},
+		{"signals", "signals/liveExample.gosx.sample"},
 		{"streaming", "streaming/deferSample.go.sample"},
 		{"text-layout", "text-layout/blockSample.go.sample"},
+		{"your-first-app", "tutorial/step-01-page-server.go.sample"},
 	}
 	for _, test := range tests {
 		test := test
@@ -133,6 +136,51 @@ func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
 			assertDocsContract(t, body, []string{test.required}, []string{"CodeBlock(\"go\", `"})
 		})
 	}
+}
+
+func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	tests := []struct {
+		page      string
+		required  []string
+		forbidden []string
+	}{
+		{page: "getting-started", required: []string{"gosx init my-app", "quickstart-app.jpg", "75 seconds"}, forbidden: []string{"doc-scene", "remains necessary today only for loader-bound routes, islands, and engines"}},
+		{page: "your-first-app", required: []string{"Step 1 · Server data", "Step 2 · Island", "Step 3 · Hub", "shared signal updates the count", "Step 4 · Scene3D", "step-04.jpg"}, forbidden: []string{"doc-scene", "three.js", "refresh binding reruns"}},
+		{page: "compiler", required: []string{"CompilerExample", "Typed component", "Compiled output"}, forbidden: []string{"doc-scene", "Calls stay within one declaration style in v0.39"}},
+		{page: "components", required: []string{"Working typed component", "/docs/typed-live", "View the example source"}, forbidden: []string{"doc-scene"}},
+		{page: "deployment", required: []string{"data.buildInfo.frameworkVersion", "/api/site", "docs-live-example"}, forbidden: []string{"doc-scene"}},
+		{page: "auth", required: []string{"Live session-backed action", "View the session action source"}, forbidden: []string{"doc-scene"}},
+		{page: "forms", required: []string{`actionPath("subscribe")`, "actions.subscribe.fieldErrors.email", "ctx.ValidationFailure"}, forbidden: []string{"doc-scene"}},
+		{page: "hubs", required: []string{"ExampleHub", "docs-guide-presence", "ctx.Hub.Broadcast", "data.openTabs", "data-gosx-region-signal", "$docs.guidePresence"}, forbidden: []string{"doc-scene", "Refresh: true"}},
+		{page: "images", required: []string{"data.liveImage", "server.Image", "View the image helper source"}, forbidden: []string{"doc-scene"}},
+		{page: "islands", required: []string{"LiveCounter", "signal.New(props.Initial)", "data.liveCounterProps"}, forbidden: []string{"doc-scene", "Strict islands are not supported yet"}},
+		{page: "motion", required: []string{"ctx.Runtime().Motion", "MotionPresetSlideUp", "motionExample"}, forbidden: []string{"doc-scene"}},
+		{page: "routing", required: []string{"routing/examples/hello-world"}, forbidden: []string{"doc-scene", "not part of v0.39"}},
+		{page: "runtime", required: []string{`data-gosx-link="true"`, `data-gosx-prefetch="render"`}, forbidden: []string{"doc-scene"}},
+		{page: "signals", required: []string{"ReactiveExample", "signal.Derive", "doubled.Get()"}, forbidden: []string{"doc-scene"}},
+		{page: "streaming", required: []string{"Live deferred response", "ctx.DeferWithOptions", "streamDemo"}, forbidden: []string{"doc-scene"}},
+		{page: "text-layout", required: []string{"textLayoutExample", "TextBlockProps", "View the Go TextBlock source"}, forbidden: []string{"doc-scene"}},
+		{page: "typed-live", required: []string{"strict typed component", "Read this route's source"}, forbidden: []string{"v0.39 strict component"}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.page, func(t *testing.T) {
+			body := readDocsPagePair(t, root, test.page)
+			assertDocsContract(t, body, test.required, test.forbidden)
+		})
+	}
+
+	routingExample := filepath.Join(root, "routing", "examples", "[slug]")
+	page, err := os.ReadFile(filepath.Join(routingExample, "page.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDocsContract(t, string(page), []string{"params.slug"}, nil)
 }
 
 func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
@@ -146,11 +194,18 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 	}{
 		{
 			page:     "getting-started",
-			required: []string{"gosx version"},
+			required: []string{"gosx init my-app", "Go 1.26", "75 seconds", "quickstart-app.jpg", "quickstart-install.bash.sample", "quickstart-init.bash.sample", "quickstart-run.bash.sample"},
 			forbidden: []string{
 				"gosx --version",
 				"produces a deployable binary with everything included",
+				"It remains necessary today only for loader-bound routes, islands, and engines.",
+				"doc-scene",
 			},
+		},
+		{
+			page:      "your-first-app",
+			required:  []string{"Step 1 · Server data", "Step 2 · Island", "step-02-counter-props.go.sample", "step-02-page-server.go.sample", "Step 3 · Hub", "Step 4 · Scene3D", "step-04-page-server.go.sample", "step-04.jpg"},
+			forbidden: []string{"doc-scene", "three.js"},
 		},
 		{
 			page: "components",

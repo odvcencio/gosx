@@ -1,0 +1,8 @@
+package app
+
+func Page() Node {
+	return <main>
+		<h1>{data.greeting}</h1>
+		<p>Today’s visitors: {data.visitors}</p>
+	</main>
+}

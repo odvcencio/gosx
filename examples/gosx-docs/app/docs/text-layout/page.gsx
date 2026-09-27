@@ -2,6 +2,12 @@ package docs
 
 func Page() Node {
 	return <article class="prose">
+		<section class="docs-live-example" aria-label="Rendered TextBlock example">
+			<p class="eyebrow">Live TextBlock output</p>
+			{ textLayoutExample }
+			<p>The Go loader creates this server-rendered block with a two-line limit.</p>
+			<a href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/text-layout/page.server.go" rel="noopener">View the Go TextBlock source</a>
+		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Measured line planning</span>
 			<p class="lede">

@@ -15,7 +15,7 @@ component ContractRow(props: ContractRowProps) {
 component Page() {
 	return <article className="typed-proof">
 		<p className="typed-proof__kicker">
-			Rendered by the v0.39 strict component path
+			Rendered by a strict typed component
 		</p>
 		<h2>This page is the example.</h2>
 		<p>
