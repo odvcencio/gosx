@@ -42,6 +42,7 @@ type Options struct {
 	HTML           string
 	Debug          bool
 	UserDataDir    string
+	MuteAudio      bool
 	SingleInstance bool
 	DPIAwareness   DPIAwareness
 	Accessibility  AccessibilityOptions

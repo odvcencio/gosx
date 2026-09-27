@@ -409,6 +409,9 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	url := a.options.URL
 	bootstrap := a.pendingBootstrap
 	a.mu.Unlock()
+	if a.options.MuteAudio {
+		bootstrap = muteMediaAudioScript + bootstrap
+	}
 
 	if bootstrap != "" {
 		if err := webview.addScriptToExecuteOnDocumentCreated(bootstrap); err != nil {

@@ -37,9 +37,14 @@ type DesktopRunOptions struct {
 	NativeBridge   bool
 	SingleInstance bool
 	NativeSmoke    bool
+	MuteAudio      bool
 }
 
 func cmdDesktop() {
+	if len(os.Args) > 2 && os.Args[2] == "package" {
+		cmdDesktopPackage()
+		return
+	}
 	var options DesktopRunOptions
 	fs := flag.NewFlagSet("desktop", flag.ExitOnError)
 	fs.SetOutput(os.Stderr)
@@ -58,6 +63,7 @@ func cmdDesktop() {
 	fs.BoolVar(&options.NativeBridge, "native-bridge", false, "enable built-in desktop native APIs on window.gosxDesktop")
 	fs.BoolVar(&options.SingleInstance, "single-instance", false, "forward later launches to the first instance")
 	fs.BoolVar(&options.NativeSmoke, "native-smoke", false, "enable tray, notification, menu, and file-drop smoke hooks")
+	fs.BoolVar(&options.MuteAudio, "mute-audio", false, "mute HTML audio and video in the desktop window")
 	parseArgs, devAlias := desktopArgsBeforeParse(os.Args[2:])
 	if err := fs.Parse(parseArgs); err != nil {
 		os.Exit(2)
@@ -209,6 +215,7 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 		DevTools:         options.DevTools,
 		NativeBridge:     options.NativeBridge,
 		UserDataDir:      options.UserDataDir,
+		MuteAudio:        options.MuteAudio,
 		SingleInstance:   options.SingleInstance,
 		OnSecondInstance: desktopSecondInstanceCallback(getDesktopApp),
 	}
@@ -336,6 +343,7 @@ func runDesktopHost(options DesktopRunOptions) error {
 		DevTools:         options.DevTools,
 		NativeBridge:     options.NativeBridge || bundleRoot != "",
 		UserDataDir:      options.UserDataDir,
+		MuteAudio:        options.MuteAudio,
 		SingleInstance:   options.SingleInstance,
 		OnSecondInstance: desktopSecondInstanceCallback(getApp),
 	}

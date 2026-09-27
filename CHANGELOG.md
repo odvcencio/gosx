@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added: per-user Windows desktop installer and packager
+
+- Add `gosx desktop package` to build a GUI Setup executable, a portable ZIP,
+  per-file SHA-256 manifest, direct-download update manifest and package
+  metadata from Linux without cgo or a third-party installer toolchain.
+- Setup verifies its payload before extraction, stages upgrades beside the
+  current install, creates a per-user Start menu shortcut and HKCU Uninstall
+  entry, and preserves the old version if extraction fails. The uninstaller
+  asks before deleting the app-selected data directory; it keeps player data
+  by default.
+- The packager downloads Microsoft's Evergreen WebView2 bootstrapper when no
+  local path is configured and records the downloaded file's SHA-256. Code
+  signing remains a command-template step and unsigned builds say so in
+  `package-metadata.json`.
+- Add `desktop.Options.MuteAudio` and `gosx desktop --mute-audio` for Windows
+  smoke apps that should mute HTML audio and video.
+
 ### Fixed: Windows WebView2 shuts down before the desktop app closes
 
 - Retain the environment and controller references returned to asynchronous

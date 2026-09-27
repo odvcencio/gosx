@@ -905,6 +905,37 @@ manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
 `dist/app.appinstaller` for AppInstaller-based updates.
 
+For a direct Windows download, stage the app's `.exe`, `WebView2Loader.dll`,
+assets and other runtime files, then package them from Linux:
+
+```sh
+gosx desktop package --input dist/windows --config release/desktop.json --output dist/download
+```
+
+The JSON config supplies `app_id`, `name`, `publisher`, `version`, `icon`,
+`host_exe`, `data_dir`, `update_public_key`, `channel`, `released`, `notes`, and
+`download_page`. `data_dir` must be the player's app-selected data folder; the
+installer never stores player data in its install root. Set
+`webview2_bootstrapper` to a local Microsoft Evergreen bootstrapper when you
+have one, or omit it to download the Microsoft bootstrapper during packaging.
+The packager records its SHA-256 in `package-metadata.json` and bundles it in
+Setup for offline use after download.
+
+The output contains a per-user Setup executable, a portable ZIP, `latest.json`,
+`SHA256SUMS`, and `package-metadata.json`. Setup verifies each payload file
+before extraction, uses `%LOCALAPPDATA%\Programs\<App>` by default, and asks
+before replacing an install with a lower version. It needs no administrator
+rights. The uninstaller asks whether to remove `data_dir`; its default is to
+keep player data. For unsigned builds, metadata records `unsigned`. Use
+`--sign-cmd` to sign each app PE before packaging and Setup after the payload is
+appended. The command template accepts `{input}`, `{output}`, and `{file}`. Use
+`--manifest-key <file>` or `--manifest-sign-cmd <template>` to sign `latest.json`.
+
+Use `gosx desktop package` for a direct-download app with an ordinary per-user
+installer and publisher-hosted `latest.json` manifest. Use `gosx build --msix`
+and `--appinstaller <uri>` when the app distributes MSIX packages through the
+Windows App Installer feed. These are separate delivery and update paths.
+
 ### Bundle boundary and mutable state
 
 The production build is a clean-room staging boundary. It validates the
