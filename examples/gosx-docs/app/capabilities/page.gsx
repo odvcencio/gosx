@@ -8,6 +8,7 @@ func Page() Node {
 			<p>GoSX computes a backend verdict per scene in Go. The browser obeys it. A scene never silently drops a feature.</p>
 			<p>Rows come from Matrix and LightKindFeatures. Each backend cell links to its renderer implementation.</p>
 			<p><a href="https://github.com/odvcencio/gosx/blob/main/scene/capability/capability.go">Read the Go capability matrix and light-kind mapping</a></p>
+			<p><a href="/performance/">Read measured performance receipts</a></p>
 		</header>
 		<section class="capabilities-browser" data-gosx-scene3d-status-scope aria-label="Browser backend probe">
 			<div class="capabilities-browser__mark" aria-hidden="true">
