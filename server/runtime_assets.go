@@ -252,7 +252,7 @@ func setRuntimeContentType(h http.Header, fsPath string) {
 		h.Set("Content-Type", "text/css; charset=utf-8")
 	case ".json":
 		h.Set("Content-Type", "application/json; charset=utf-8")
-	case ".gxi", ".bin":
+	case ".bin":
 		h.Set("Content-Type", "application/octet-stream")
 	}
 }

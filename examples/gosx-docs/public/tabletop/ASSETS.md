@@ -11,3 +11,5 @@ The shared tabletop demo uses the CC0 assets below. Poly Haven publishes them un
 Run `GOWORK=off go run scripts/generate-tabletop-assets.go` from the repository root to regenerate the model, texture variants, environment maps, and locally authored studio gradient. The builder optimizes the 1K plant model, creates KTX2 and PNG texture variants, and bakes the HDRI with GoSX assetpipe. The source HDRI is not served to visitors. The vase, book stack, candle, and sphere are typed Scene3D mesh groups, so the still life needs one model download.
 
 The builder writes `studio-sweep.png` locally for the camera-facing studio gradient.
+
+`tabletop-home-poster.webp` is a capture of the authored Scene3D still life; it has no separate source asset.
