@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +40,16 @@ func TestDemoCatalogContracts(t *testing.T) {
 		}
 		if demo.Summary == "" || demo.PosterPath != "/demos/posters/"+demo.Slug+".webp" {
 			t.Errorf("demo %q lacks its gallery summary or poster path", demo.Slug)
+		}
+		posterPath := repoPath(t, "examples/gosx-docs/public"+demo.PosterPath)
+		poster, err := os.Stat(posterPath)
+		if err != nil {
+			t.Errorf("demo %q poster %q: %v", demo.Slug, demo.PosterPath, err)
+		} else if poster.Size() == 0 || poster.Size() > 60*1024 {
+			t.Errorf("demo %q poster size = %d bytes, want 1–61440", demo.Slug, poster.Size())
+		}
+		if content, readErr := os.ReadFile(posterPath); readErr == nil && (len(content) < 12 || !bytes.Equal(content[:4], []byte("RIFF")) || !bytes.Equal(content[8:12], []byte("WEBP"))) {
+			t.Errorf("demo %q poster is not a WebP image", demo.Slug)
 		}
 		if len(demo.SourcePaths) == 0 || !contains(demo.SourcePaths, demo.SourcePath) {
 			t.Errorf("demo %q source links must include its primary source %q", demo.Slug, demo.SourcePath)
