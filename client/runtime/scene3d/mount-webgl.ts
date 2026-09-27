@@ -5121,7 +5121,6 @@ function gosxConfigureSceneScript(script, role, src) {
       return (dash ? " " : "") + letter.toUpperCase();
     });
   }
-
   // Declarative status bindings keep Scene3D diagnostics visible without
   // requiring demo-specific scripts or CSS parent selectors. A status scope
   // owns one scene mount and any number of renderer/fallback/quality outputs.
@@ -5136,6 +5135,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const backend = mount.getAttribute("data-gosx-scene3d-renderer") || "starting";
     const fallback = mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "";
     const quality = mount.getAttribute("data-gosx-scene3d-quality-active") || "measuring";
+    const frameP95 = Number(mount.getAttribute("data-gosx-scene3d-quality-p95-ms"));
     for (let i = 0; i < bindings.length; i++) {
       const output = bindings[i];
       const kind = output.getAttribute("data-gosx-scene3d-status") || "";
@@ -5152,6 +5152,10 @@ function gosxConfigureSceneScript(script, role, src) {
         value = quality === "measuring" ? "measuring…" : sceneStatusBindingLabel(quality);
         output.hidden = false;
         setAttrValue(output, "data-state", quality);
+      } else if (kind === "frame-p95") {
+        value = Number.isFinite(frameP95) && frameP95 > 0 ? frameP95.toFixed(1) + " ms" : "measuring…";
+        output.hidden = false;
+        setAttrValue(output, "data-state", value === "measuring…" ? "measuring" : "ready");
       } else {
         continue;
       }

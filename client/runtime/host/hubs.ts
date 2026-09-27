@@ -56,6 +56,52 @@
     }
   }
 
+  function hubMonotonicNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  }
+
+  function sendHubRoundTrip(record) {
+    const config = record.roundTripConfig;
+    if (!config || !record.socket || record.socket.readyState !== 1) return;
+    record.roundTripSequence++;
+    record.roundTripSentAt = hubMonotonicNow();
+    record.socket.send(JSON.stringify({ event: config.pingEvent, data: { sequence: record.roundTripSequence } }));
+  }
+
+  function startHubRoundTrip(record) {
+    stopHubRoundTrip(record);
+    const config = record.entry && record.entry.roundTrip;
+    if (!config || !config.signal) return;
+    record.roundTripConfig = config;
+    record.roundTripSequence = 0;
+    sendHubRoundTrip(record);
+    record.roundTripTimer = setInterval(function() { sendHubRoundTrip(record); }, config.intervalMs);
+  }
+
+  function stopHubRoundTrip(record) {
+    if (!record) return;
+    if (record.roundTripTimer != null) {
+      clearInterval(record.roundTripTimer);
+      record.roundTripTimer = null;
+    }
+    record.roundTripSentAt = 0;
+  }
+
+  function observeHubRoundTrip(record, message) {
+    const config = record && record.roundTripConfig;
+    if (!config || !message || message.event !== config.pongEvent || !record.roundTripSentAt) return false;
+    const sequence = Number(message.data && message.data.sequence);
+    if (!Number.isSafeInteger(sequence) || sequence !== record.roundTripSequence) return false;
+    const elapsed = Math.max(0, hubMonotonicNow() - record.roundTripSentAt);
+    record.roundTripSentAt = 0;
+    try {
+      setSharedSignalJSON(config.signal, JSON.stringify(Math.round(elapsed * 100) / 100));
+    } catch (_e) {}
+    return true;
+  }
+
   function applyHubBinding(record, binding, message) {
     const entry = record.entry;
     if (binding && binding.direction === "out") return;
@@ -72,7 +118,65 @@
         console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
       }
     }
+    if (binding.sceneCommands) {
+      dispatchHubSceneCommands(record, binding, message.data);
+    }
     if (binding.refresh) scheduleHubRefresh(record, binding);
+  }
+
+  function dispatchHubSceneCommands(record, binding, data) {
+    const mountID = String(binding && binding.sceneMountId || "").trim();
+    if (!mountID || !data || typeof data !== "object") return;
+    const revision = Number(data.revision);
+    if (!Number.isSafeInteger(revision) || revision <= 0 || !Array.isArray(data.commands)) return;
+    record.lastSceneCommandRevision = record.lastSceneCommandRevision || new Map();
+    const lastRevision = record.lastSceneCommandRevision.get(mountID) || 0;
+    if (revision <= lastRevision) return;
+    record.lastSceneCommandRevision.set(mountID, revision);
+    const mount = document.getElementById(mountID);
+    const detail = { revision: revision, commands: data.commands };
+    if (mount && mount.getAttribute("data-gosx-scene3d-command-ready") === "true") {
+      emitHubSceneCommands(mount, detail);
+      return;
+    }
+
+    // Hub sockets can open before the Scene3D renderer has finished loading.
+    // Keep only the newest revision per mount, then apply it as soon as the
+    // renderer sets its command-ready attribute. A snapshot is a full diff
+    // from the initial scene, so older queued batches are unnecessary.
+    record.pendingSceneCommands = record.pendingSceneCommands || new Map();
+    record.pendingSceneCommands.set(mountID, detail);
+    watchHubSceneCommandMount(record, mountID);
+  }
+
+  function watchHubSceneCommandMount(record, mountID) {
+    if (typeof MutationObserver !== "function" || !document.documentElement) return;
+    record.sceneCommandObservers = record.sceneCommandObservers || new Map();
+    if (record.sceneCommandObservers.has(mountID)) return;
+    const observer = new MutationObserver(function() {
+      const mount = document.getElementById(mountID);
+      if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return;
+      observer.disconnect();
+      record.sceneCommandObservers.delete(mountID);
+      const detail = record.pendingSceneCommands && record.pendingSceneCommands.get(mountID);
+      if (record.pendingSceneCommands) record.pendingSceneCommands.delete(mountID);
+      if (detail) emitHubSceneCommands(mount, detail);
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-gosx-scene3d-command-ready"],
+      childList: true,
+      subtree: true,
+    });
+    record.sceneCommandObservers.set(mountID, observer);
+  }
+
+  function emitHubSceneCommands(mount, detail) {
+    if (!mount || typeof mount.dispatchEvent !== "function") return;
+    const event = typeof CustomEvent === "function"
+      ? new CustomEvent("gosx:scene3d:commands", { detail: detail })
+      : { type: "gosx:scene3d:commands", detail: detail };
+    mount.dispatchEvent(event);
   }
 
   function hubNavigationFetchEpoch(navigation) {
@@ -337,7 +441,7 @@
     if (!bindings || !bindings.length) return;
     for (let bi = 0; bi < bindings.length; bi++) {
       const b = bindings[bi];
-      if (!b || b.direction !== "out" || !b.signal || !b.event) continue;
+      if (!b || b.direction !== "out" || !b.event || (!b.signal && !b.sceneInput)) continue;
       (function(binding) {
         let lastSentAt = 0;
         let debounceTimer = null;
@@ -364,8 +468,28 @@
             sendValue(value);
           }
         };
-        const unsub = gosxSubscribeSharedSignal(binding.signal, fn, { immediate: false });
-        record.outputUnsubscribers.push(unsub);
+        if (binding.signal) {
+          const unsub = gosxSubscribeSharedSignal(binding.signal, fn, { immediate: false });
+          record.outputUnsubscribers.push(unsub);
+        }
+        if (binding.sceneInput) {
+          const mountID = String(binding.sceneMountId || "").trim();
+          if (!mountID || typeof document.addEventListener !== "function") return;
+          const onSceneInput = function(event) {
+            const mount = document.getElementById(mountID);
+            if (!mount || event.target !== mount) return;
+            const detail = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+            if (!detail) return;
+            if (binding.sceneInput !== "all" && detail.kind !== binding.sceneInput) return;
+            const payload = Object.assign({}, detail);
+            if (binding.sceneInputKind) payload.kind = binding.sceneInputKind;
+            fn(payload);
+          };
+          document.addEventListener("gosx:scene3d:input", onSceneInput);
+          record.outputUnsubscribers.push(function() {
+            document.removeEventListener("gosx:scene3d:input", onSceneInput);
+          });
+        }
       })(b);
     }
   }
@@ -389,6 +513,7 @@
         record.inputController.flush();
       }
       bindHubOutputs(record);
+      startHubRoundTrip(record);
     };
     socket.onmessage = function(evt) {
       const decoded = decodeHubMessage(entry, evt.data);
@@ -402,6 +527,7 @@
     };
 
     socket.onclose = function() {
+      stopHubRoundTrip(record);
       scheduleHubReconnect(record);
     };
 
@@ -413,6 +539,7 @@
   function dispatchHubMessage(record, message) {
     if (!message) return;
     const entry = record.entry;
+    observeHubRoundTrip(record, message);
     applyHubBindings(record, message);
     if (record.inputController && typeof record.inputController.onMessage === "function") {
       try {
