@@ -209,6 +209,9 @@ jobs:
       - name: Build CLI
         run: make build-cli
 
+      - name: Compile documentation site pages and server
+        run: GOWORK=off nice -n 10 ./gosx build --dev ./examples/gosx-docs
+
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
   # staleness gate), and both need a Go toolchain. The unit tests matter here
