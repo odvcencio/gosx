@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -21,7 +22,7 @@ const (
 	webViewPostWebMessageAsString              = 33
 	webViewAddWebMessageReceived               = 34
 	webViewRemoveWebMessageReceived            = 35
-	webViewOpenDevToolsWindow                  = 44
+	webViewOpenDevToolsWindow                  = 51
 
 	// ICoreWebView2Settings.
 	settingsPutIsScriptEnabled               = 4
@@ -52,6 +53,9 @@ func (w *coreWebView2) getSettings() (*coreWebView2Settings, error) {
 		uintptr(unsafe.Pointer(&settings)),
 	)
 	if failedHRESULT(hr) {
+		if settings != nil {
+			comRelease(unsafe.Pointer(settings))
+		}
 		return nil, hresultError{Op: "ICoreWebView2.get_Settings", Code: hr}
 	}
 	if settings == nil {
@@ -207,20 +211,17 @@ var webMessageReceivedHandlerVtblInstance = webMessageReceivedHandlerVtbl{
 }
 
 func newWebMessageReceivedHandler(app *windowsApp) *webMessageReceivedHandler {
-	return &webMessageReceivedHandler{
+	handler := &webMessageReceivedHandler{
 		vtbl: &webMessageReceivedHandlerVtblInstance,
 		refs: 1,
 		app:  app,
 	}
+	rootCOMHandler(uintptr(unsafe.Pointer(handler)), handler)
+	return handler
 }
 
-func webMessageReceivedQueryInterface(this, _, ppv uintptr) uintptr {
-	if ppv == 0 {
-		return ePointer
-	}
-	*(*uintptr)(unsafe.Pointer(ppv)) = this
-	webMessageReceivedAddRef(this)
-	return sOK
+func webMessageReceivedQueryInterface(this, iid, ppv uintptr) uintptr {
+	return queryInterfaceHandler(this, iid, ppv, iidWebMessageReceivedEventHandler, webMessageReceivedAddRef)
 }
 
 func webMessageReceivedAddRef(this uintptr) uintptr {
@@ -230,7 +231,12 @@ func webMessageReceivedAddRef(this uintptr) uintptr {
 
 func webMessageReceivedRelease(this uintptr) uintptr {
 	h := (*webMessageReceivedHandler)(unsafe.Pointer(this))
-	return uintptr(atomic.AddUint32(&h.refs, ^uint32(0)))
+	refs := atomic.AddUint32(&h.refs, ^uint32(0))
+	if refs == 0 {
+		unrootCOMHandler(this)
+	}
+	runtime.KeepAlive(h)
+	return uintptr(refs)
 }
 
 // webMessageReceivedInvoke is the single entry point WebView2 hits for
@@ -253,9 +259,8 @@ func webMessageReceivedInvoke(this, sender, args uintptr) uintptr {
 }
 
 // addWebMessageReceived registers a handler for chrome.webview.postMessage
-// calls from JS. Returns a u64 event-registration token; for the desktop
-// app we don't currently unregister (handler lives as long as the webview).
-func (w *coreWebView2) addWebMessageReceived(handler *webMessageReceivedHandler) error {
+// calls from JS. Returns the event-registration token used during teardown.
+func (w *coreWebView2) addWebMessageReceived(handler *webMessageReceivedHandler) (int64, error) {
 	var token int64
 	hr, _, _ := syscall.SyscallN(
 		comMethod(unsafe.Pointer(w), webViewAddWebMessageReceived),
@@ -264,7 +269,19 @@ func (w *coreWebView2) addWebMessageReceived(handler *webMessageReceivedHandler)
 		uintptr(unsafe.Pointer(&token)),
 	)
 	if failedHRESULT(hr) {
-		return hresultError{Op: "ICoreWebView2.add_WebMessageReceived", Code: hr}
+		return 0, hresultError{Op: "ICoreWebView2.add_WebMessageReceived", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeWebMessageReceived(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveWebMessageReceived),
+		uintptr(unsafe.Pointer(w)),
+		uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_WebMessageReceived", Code: hr}
 	}
 	return nil
 }

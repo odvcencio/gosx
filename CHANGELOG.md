@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: Windows WebView2 shuts down before the desktop app closes
+
+- Retain the environment and controller references returned to asynchronous
+  WebView2 callbacks, then release each owned reference during failure cleanup
+  or normal window teardown. Keep event handlers alive for their registered
+  lifetime and unregister them before closing the controller.
+- The Go COM handlers now accept only `IUnknown` and their own WebView2 handler
+  interface IDs. Unsupported queries clear the output pointer and return
+  `E_NOINTERFACE`.
+- Add `make test-desktop-windows-smoke` for a WSL-to-Windows runtime check of
+  WebGL2, `chrome.webview`, the native bridge, WebView2 process lifetime, and
+  clean window shutdown.
+
 ### Added: GPU-driven instancing for the WebGPU renderer
 
 - `scene.Props.GPUDriven` hands every opaque `InstancedMesh` without an
