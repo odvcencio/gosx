@@ -185,6 +185,33 @@
   min-width: 0;
 }
 
+/* Code panels stay dark in both guide themes, so their controls need code-panel
+   colors instead of the surrounding page's light or dark text tokens. */
+.docs-content .code-sample__label,
+.docs-content .code-sample__copy {
+  color: var(--code-property);
+}
+
+.docs-content .code-sample__copy {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(232, 232, 232, 0.55);
+}
+
+.docs-content .code-sample__copy:hover,
+.docs-content .code-sample__copy:focus-visible {
+  color: var(--code-function);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--code-function);
+}
+
+.docs-content .code-sample__copy:focus-visible {
+  outline-color: var(--code-function);
+}
+
+.docs-content .code-sample__copy-status {
+  color: var(--code-text);
+}
+
 /* ------------------------------------------------------------
    Prose typography
    ------------------------------------------------------------ */
