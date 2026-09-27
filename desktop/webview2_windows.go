@@ -4,15 +4,19 @@ package desktop
 
 import (
 	"fmt"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
 
 const (
-	sOK      = uintptr(0)
-	ePointer = uintptr(0x80004003)
+	sOK          = uintptr(0)
+	ePointer     = uintptr(0x80004003)
+	eNoInterface = uintptr(0x80004002)
 
+	iUnknownAddRef  = 1
 	iUnknownRelease = 2
 
 	environmentCreateController = 3
@@ -31,6 +35,16 @@ var (
 
 	procCreateCoreWebView2EnvironmentWithOptions = modWebView2.NewProc("CreateCoreWebView2EnvironmentWithOptions")
 )
+
+var comHandlerRoots sync.Map
+
+func rootCOMHandler(ptr uintptr, handler any) {
+	comHandlerRoots.Store(ptr, handler)
+}
+
+func unrootCOMHandler(ptr uintptr) {
+	comHandlerRoots.Delete(ptr)
+}
 
 type coreWebView2Environment struct {
 	vtbl uintptr
@@ -99,11 +113,15 @@ func failedHRESULT(hr uintptr) bool {
 }
 
 func newEnvironmentCompletedHandler(app *windowsApp) *environmentCompletedHandler {
-	return &environmentCompletedHandler{vtbl: &environmentHandlerVtbl, refs: 1, app: app}
+	handler := &environmentCompletedHandler{vtbl: &environmentHandlerVtbl, refs: 1, app: app}
+	rootCOMHandler(uintptr(unsafe.Pointer(handler)), handler)
+	return handler
 }
 
 func newControllerCompletedHandler(app *windowsApp) *controllerCompletedHandler {
-	return &controllerCompletedHandler{vtbl: &controllerHandlerVtbl, refs: 1, app: app}
+	handler := &controllerCompletedHandler{vtbl: &controllerHandlerVtbl, refs: 1, app: app}
+	rootCOMHandler(uintptr(unsafe.Pointer(handler)), handler)
+	return handler
 }
 
 func (e *coreWebView2Environment) createController(hwnd uintptr, handler *controllerCompletedHandler) error {
@@ -159,6 +177,9 @@ func (c *coreWebView2Controller) coreWebView2() (*coreWebView2, error) {
 		uintptr(unsafe.Pointer(&webview)),
 	)
 	if failedHRESULT(hr) {
+		if webview != nil {
+			comRelease(unsafe.Pointer(webview))
+		}
 		return nil, hresultError{Op: "ICoreWebView2Controller.get_CoreWebView2", Code: hr}
 	}
 	if webview == nil {
@@ -208,13 +229,31 @@ func comRelease(obj unsafe.Pointer) {
 	syscall.SyscallN(comMethod(obj, iUnknownRelease), uintptr(obj))
 }
 
-func environmentQueryInterface(this, _, ppv uintptr) uintptr {
+func comAddRef(obj unsafe.Pointer) {
+	syscall.SyscallN(comMethod(obj, iUnknownAddRef), uintptr(obj))
+}
+
+func queryInterfaceHandler(this, iid, ppv uintptr, handlerIID comGUID, addRef func(uintptr) uintptr) uintptr {
 	if ppv == 0 {
 		return ePointer
 	}
-	*(*uintptr)(unsafe.Pointer(ppv)) = this
-	environmentAddRef(this)
+	out := (*uintptr)(unsafe.Pointer(ppv))
+	*out = 0
+	if iid == 0 {
+		return ePointer
+	}
+	requested := *(*comGUID)(unsafe.Pointer(iid))
+	if !supportsCOMInterface(requested, handlerIID) {
+		return eNoInterface
+	}
+	*out = this
+	addRef(this)
 	return sOK
+}
+
+func environmentQueryInterface(this, iid, ppv uintptr) uintptr {
+	return queryInterfaceHandler(this, iid, ppv,
+		iidCreateCoreWebView2EnvironmentCompletedHandler, environmentAddRef)
 }
 
 func environmentAddRef(this uintptr) uintptr {
@@ -224,7 +263,12 @@ func environmentAddRef(this uintptr) uintptr {
 
 func environmentRelease(this uintptr) uintptr {
 	handler := (*environmentCompletedHandler)(unsafe.Pointer(this))
-	return uintptr(atomic.AddUint32(&handler.refs, ^uint32(0)))
+	refs := atomic.AddUint32(&handler.refs, ^uint32(0))
+	if refs == 0 {
+		unrootCOMHandler(this)
+	}
+	runtime.KeepAlive(handler)
+	return uintptr(refs)
 }
 
 func environmentInvoke(this, errorCode, result uintptr) uintptr {
@@ -233,13 +277,9 @@ func environmentInvoke(this, errorCode, result uintptr) uintptr {
 	return sOK
 }
 
-func controllerQueryInterface(this, _, ppv uintptr) uintptr {
-	if ppv == 0 {
-		return ePointer
-	}
-	*(*uintptr)(unsafe.Pointer(ppv)) = this
-	controllerAddRef(this)
-	return sOK
+func controllerQueryInterface(this, iid, ppv uintptr) uintptr {
+	return queryInterfaceHandler(this, iid, ppv,
+		iidCreateCoreWebView2ControllerCompletedHandler, controllerAddRef)
 }
 
 func controllerAddRef(this uintptr) uintptr {
@@ -249,7 +289,12 @@ func controllerAddRef(this uintptr) uintptr {
 
 func controllerRelease(this uintptr) uintptr {
 	handler := (*controllerCompletedHandler)(unsafe.Pointer(this))
-	return uintptr(atomic.AddUint32(&handler.refs, ^uint32(0)))
+	refs := atomic.AddUint32(&handler.refs, ^uint32(0))
+	if refs == 0 {
+		unrootCOMHandler(this)
+	}
+	runtime.KeepAlive(handler)
+	return uintptr(refs)
 }
 
 func controllerInvoke(this, errorCode, result uintptr) uintptr {
