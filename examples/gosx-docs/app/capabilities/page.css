@@ -56,7 +56,7 @@
   padding: var(--space-md);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-md);
 }
 
 .capabilities-browser__mark {
@@ -65,7 +65,7 @@
   flex: 0 0 auto;
   overflow: hidden;
   background: var(--code-bg);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
 }
 
 .capabilities-browser__scene {
@@ -99,7 +99,7 @@
 .capabilities-table-wrap {
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -130,7 +130,7 @@
   top: 0;
   z-index: 1;
   color: var(--text-primary);
-  background: #111315;
+  background: var(--color-surface-raised);
   font-size: var(--text-small);
 }
 
@@ -177,13 +177,15 @@
 
 .capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgpu"]) .capabilities-browser-cell__waiting,
 .capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgl"]) .capabilities-browser-cell__waiting,
-.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="canvas2d"]) .capabilities-browser-cell__waiting {
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="canvas"]) .capabilities-browser-cell__waiting,
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="unsupported"]) .capabilities-browser-cell__waiting {
   display: none;
 }
 
 .capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgpu"]) .capabilities-browser-cell__answer--webgpu,
 .capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="webgl"]) .capabilities-browser-cell__answer--webgl,
-.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="canvas2d"]) .capabilities-browser-cell__answer--canvas2d {
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="canvas"]) .capabilities-browser-cell__answer--canvas2d,
+.capabilities-page:has(.capabilities-browser__scene[data-gosx-scene3d-renderer="unsupported"]) .capabilities-browser-cell__answer--unsupported {
   display: block;
 }
 
