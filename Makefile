@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -301,6 +301,11 @@ test-desktop:
 # Windows-only. Run from WSL on a machine with Windows interop enabled.
 test-desktop-windows-smoke:
 	bash scripts/test-desktop-windows-smoke.sh
+
+# Runs the Windows smoke plus runtime selection, production input policy,
+# WebView2 arguments, HTML fullscreen, and executable-icon assertions.
+test-desktop-windows-shipping-smoke:
+	bash scripts/test-desktop-windows-smoke.sh --shipping-features
 
 test-desktop-macos:
 	mkdir -p build/desktop-test

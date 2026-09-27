@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -40,6 +41,7 @@ const (
 	wmKeyDown        = 0x0100
 	wmPowerBroadcast = 0x0218
 	wmAppTray        = 0x8001
+	wmSetIcon        = 0x0080
 
 	vkF12 = 0x7B
 
@@ -60,6 +62,9 @@ const (
 
 	// MonitorFromWindow dwFlags.
 	monitorDefaultToNearest = 0x00000002
+
+	iconSmall = 0
+	iconBig   = 1
 
 	// GetSystemMetrics indices.
 	smCxScreen = 0
@@ -99,6 +104,8 @@ var (
 	procGetPropW            = modUser32.NewProc("GetPropW")
 	procEnumWindows         = modUser32.NewProc("EnumWindows")
 	procSendMessageTimeoutW = modUser32.NewProc("SendMessageTimeoutW")
+	procSendMessageW        = modUser32.NewProc("SendMessageW")
+	procExtractIconExW      = modShell32.NewProc("ExtractIconExW")
 
 	// SetProcessDpiAwarenessContext is Win10 1703+. NewLazyProc resolves
 	// at first .Call(), so older systems silently fall back when the Find()
@@ -213,6 +220,51 @@ func createDesktopWindow(title string, width, height int, app *windowsApp) (uint
 		return 0, err
 	}
 	return hwnd, nil
+}
+
+func setExecutableWindowIcons(hwnd uintptr) (uintptr, uintptr) {
+	executable, err := os.Executable()
+	if err != nil {
+		return 0, 0
+	}
+	path, err := syscall.UTF16PtrFromString(executable)
+	if err != nil {
+		return 0, 0
+	}
+	var extractedLarge, extractedSmall uintptr
+	count, _, _ := procExtractIconExW.Call(
+		uintptr(unsafe.Pointer(path)),
+		0, // index zero is the executable's first icon resource
+		uintptr(unsafe.Pointer(&extractedLarge)),
+		uintptr(unsafe.Pointer(&extractedSmall)),
+		1,
+	)
+	large, small, ok := windowIconHandles(int(count), extractedLarge, extractedSmall)
+	if !ok {
+		if extractedLarge != 0 {
+			procDestroyIcon.Call(extractedLarge)
+		}
+		if extractedSmall != 0 && extractedSmall != extractedLarge {
+			procDestroyIcon.Call(extractedSmall)
+		}
+		return 0, 0
+	}
+	procSendMessageW.Call(hwnd, wmSetIcon, iconBig, large)
+	procSendMessageW.Call(hwnd, wmSetIcon, iconSmall, small)
+	return large, small
+}
+
+func releaseExecutableWindowIcons(hwnd uintptr, large, small uintptr) {
+	if hwnd != 0 {
+		procSendMessageW.Call(hwnd, wmSetIcon, iconBig, 0)
+		procSendMessageW.Call(hwnd, wmSetIcon, iconSmall, 0)
+	}
+	if large != 0 {
+		procDestroyIcon.Call(large)
+	}
+	if small != 0 && small != large {
+		procDestroyIcon.Call(small)
+	}
 }
 
 func registerWindowClass() error {
@@ -504,6 +556,7 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 		if app != nil {
 			removeAppWindowProperty(hwnd, app.options.AppID)
 			app.disposeNativeUI()
+			app.releaseWindowIcons(hwnd)
 			app.releaseWebView()
 		}
 		windowMu.Lock()

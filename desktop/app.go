@@ -25,29 +25,41 @@ var (
 	// ErrInvalidOptions reports invalid desktop app configuration.
 	ErrInvalidOptions = errors.New("invalid desktop options")
 
-	// ErrWebView2Unavailable reports that the Windows WebView2 loader/runtime
-	// needed by the desktop backend cannot be found.
+	// ErrWebView2Unavailable reports that the Windows WebView2 loader or runtime
+	// needed by the desktop backend cannot be found. The more specific loader
+	// and runtime errors also match this sentinel.
 	ErrWebView2Unavailable = errors.New("webview2 unavailable")
+	// ErrWebView2LoaderUnavailable reports that the loader is missing or lacks
+	// a required entry point.
+	ErrWebView2LoaderUnavailable = fmt.Errorf("%w: loader unavailable", ErrWebView2Unavailable)
+	// ErrWebView2RuntimeUnavailable reports that the selected runtime is absent.
+	ErrWebView2RuntimeUnavailable = fmt.Errorf("%w: runtime unavailable", ErrWebView2Unavailable)
 )
 
 // Options configures a native desktop window.
 type Options struct {
-	Title          string
-	Width          int
-	Height         int
-	AppID          string
-	Version        string
-	UpdateFeed     string
-	URL            string
-	HTML           string
-	Debug          bool
-	UserDataDir    string
-	MuteAudio      bool
-	SingleInstance bool
-	DPIAwareness   DPIAwareness
-	Accessibility  AccessibilityOptions
-	CrashReporter  CrashReporterOptions
-
+	Title      string
+	Width      int
+	Height     int
+	AppID      string
+	Version    string
+	UpdateFeed string
+	URL        string
+	HTML       string
+	// BrowserExecutableFolder selects a Fixed Version WebView2 runtime. The
+	// empty value selects the installed Evergreen runtime.
+	BrowserExecutableFolder string
+	// AdditionalBrowserArguments sets WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+	// before the WebView2 environment is created. WebView2 reads this from the
+	// process environment, so it applies to every environment in this process.
+	AdditionalBrowserArguments string
+	Debug                      bool
+	UserDataDir                string
+	MuteAudio                  bool
+	SingleInstance             bool
+	DPIAwareness               DPIAwareness
+	Accessibility              AccessibilityOptions
+	CrashReporter              CrashReporterOptions
 	// DevTools enables the Chromium inspector. Independent of Debug so a
 	// production build can temporarily flip dev-tools on for field
 	// diagnosis without enabling the rest of the Debug surface (default
@@ -83,6 +95,11 @@ type Options struct {
 	OnSuspend func()
 	OnResume  func()
 
+	// OnProcessFailed reports a WebView2 process failure on the WebView2
+	// dispatcher thread. Keep the callback short; call App.Reload if the
+	// application decides that reloading is appropriate.
+	OnProcessFailed func(ProcessFailedKind)
+
 	// OnWindowCreated fires after a native window handle has been created.
 	// The initial Windows backend invokes it for the primary window.
 	OnWindowCreated func(window *Window)
@@ -111,6 +128,7 @@ type App struct {
 type platformApp interface {
 	Run() error
 	Close() error
+	Reload() error
 	Navigate(url string) error
 	SetHTML(html string) error
 	PostMessage(message string) error
@@ -244,6 +262,14 @@ func (a *App) Close() error {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
 	return a.impl.Close()
+}
+
+// Reload reloads the current page in the hosted webview.
+func (a *App) Reload() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Reload()
 }
 
 // Navigate loads a URL in the hosted webview.
@@ -707,6 +733,20 @@ func devToolsEnabled(options Options) bool {
 	return options.Debug || options.DevTools
 }
 
+func webView2LoaderUnavailable(cause error) error {
+	if cause == nil {
+		return ErrWebView2LoaderUnavailable
+	}
+	return fmt.Errorf("%w: %v", ErrWebView2LoaderUnavailable, cause)
+}
+
+func webView2RuntimeUnavailable(cause error) error {
+	if cause == nil {
+		return ErrWebView2RuntimeUnavailable
+	}
+	return fmt.Errorf("%w: %v", ErrWebView2RuntimeUnavailable, cause)
+}
+
 func normalizeOptions(options Options) (Options, error) {
 	options.Title = strings.TrimSpace(options.Title)
 	options.AppID = strings.TrimSpace(options.AppID)
@@ -714,6 +754,7 @@ func normalizeOptions(options Options) (Options, error) {
 	options.UpdateFeed = strings.TrimSpace(options.UpdateFeed)
 	options.URL = strings.TrimSpace(options.URL)
 	options.UserDataDir = strings.TrimSpace(options.UserDataDir)
+	options.BrowserExecutableFolder = strings.TrimSpace(options.BrowserExecutableFolder)
 	options.CrashReporter.DumpDir = strings.TrimSpace(options.CrashReporter.DumpDir)
 	options.CrashReporter.UploadEndpoint = strings.TrimSpace(options.CrashReporter.UploadEndpoint)
 	options.Accessibility.Name = strings.TrimSpace(options.Accessibility.Name)
@@ -757,6 +798,8 @@ func normalizeOptions(options Options) (Options, error) {
 		"url":                          options.URL,
 		"html":                         options.HTML,
 		"userDataDir":                  options.UserDataDir,
+		"browserExecutableFolder":      options.BrowserExecutableFolder,
+		"additionalBrowserArguments":   options.AdditionalBrowserArguments,
 		"crashReporter.dumpDir":        options.CrashReporter.DumpDir,
 		"crashReporter.uploadEndpoint": options.CrashReporter.UploadEndpoint,
 		"accessibility.name":           options.Accessibility.Name,

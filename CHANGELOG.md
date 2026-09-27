@@ -19,6 +19,24 @@
 - Add `desktop.Options.MuteAudio` and `gosx desktop --mute-audio` for Windows
   smoke apps that should mute HTML audio and video.
 
+### Added: Windows WebView2 shipping controls
+
+- `WebView2RuntimeVersion` reports the selected Evergreen or Fixed Version
+  runtime. `ErrWebView2LoaderUnavailable` and
+  `ErrWebView2RuntimeUnavailable` distinguish missing dependencies while
+  preserving `errors.Is(err, ErrWebView2Unavailable)`.
+- `Options.BrowserExecutableFolder` selects a Fixed Version runtime.
+  `Options.AdditionalBrowserArguments` sets the documented
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment
+  creation. WebView2 environment variables are process-wide and apply to every
+  WebView2 environment in the process.
+- Production mode disables browser accelerator keys, zoom controls, and the
+  status bar; Debug mode keeps them enabled. `Options.OnProcessFailed` reports
+  WebView2 failure kinds, and `App.Reload` lets the app choose a recovery.
+- HTML `requestFullscreen()` switches the window to borderless fullscreen on
+  its monitor and restores the earlier window state when fullscreen ends.
+  The executable's first icon resource supplies the window's large and small
+  icons when one is present.
 ### Fixed: Windows WebView2 shuts down before the desktop app closes
 
 - Retain the environment and controller references returned to asynchronous

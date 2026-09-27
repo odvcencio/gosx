@@ -22,22 +22,25 @@ import (
 
 // DesktopRunOptions configures the native desktop development host.
 type DesktopRunOptions struct {
-	Title          string
-	Width          int
-	Height         int
-	AppID          string
-	Addr           string
-	URL            string
-	HTML           string
-	BundleDir      string
-	BundleURL      string
-	UserDataDir    string
-	Debug          bool
-	DevTools       bool
-	NativeBridge   bool
-	SingleInstance bool
-	NativeSmoke    bool
-	MuteAudio      bool
+	Title                      string
+	Width                      int
+	Height                     int
+	AppID                      string
+	Addr                       string
+	URL                        string
+	HTML                       string
+	BundleDir                  string
+	BundleURL                  string
+	UserDataDir                string
+	BrowserExecutableFolder    string
+	AdditionalBrowserArguments string
+	Debug                      bool
+	DevTools                   bool
+	NativeBridge               bool
+	SingleInstance             bool
+	NativeSmoke                bool
+	WebView2RuntimeVersion     bool
+	MuteAudio                  bool
 }
 
 func cmdDesktop() {
@@ -58,12 +61,15 @@ func cmdDesktop() {
 	fs.StringVar(&options.BundleDir, "bundle", "", "open a built GoSX offline/static bundle through app://gosx")
 	fs.StringVar(&options.BundleURL, "bundle-url", "", "entry URL for --bundle (default app://gosx/static/)")
 	fs.StringVar(&options.UserDataDir, "user-data-dir", "", "WebView2 user data directory")
+	fs.StringVar(&options.BrowserExecutableFolder, "browser-executable-folder", "", "Fixed Version WebView2 runtime directory")
+	fs.StringVar(&options.AdditionalBrowserArguments, "additional-browser-arguments", "", "extra Chromium arguments (process-wide WebView2 setting)")
 	fs.BoolVar(&options.Debug, "debug", false, "enable backend debug mode where supported")
 	fs.BoolVar(&options.DevTools, "devtools", false, "enable Chromium devtools and the F12 inspector shortcut")
 	fs.BoolVar(&options.NativeBridge, "native-bridge", false, "enable built-in desktop native APIs on window.gosxDesktop")
 	fs.BoolVar(&options.SingleInstance, "single-instance", false, "forward later launches to the first instance")
 	fs.BoolVar(&options.NativeSmoke, "native-smoke", false, "enable tray, notification, menu, and file-drop smoke hooks")
 	fs.BoolVar(&options.MuteAudio, "mute-audio", false, "mute HTML audio and video in the desktop window")
+	fs.BoolVar(&options.WebView2RuntimeVersion, "webview2-runtime-version", false, "print the selected WebView2 runtime version and exit")
 	parseArgs, devAlias := desktopArgsBeforeParse(os.Args[2:])
 	if err := fs.Parse(parseArgs); err != nil {
 		os.Exit(2)
@@ -77,6 +83,15 @@ func cmdDesktop() {
 	if desktopDirectModeConflictCount(options) > 1 {
 		fmt.Fprintln(os.Stderr, "gosx desktop: --url, --html, and --bundle are mutually exclusive")
 		os.Exit(1)
+	}
+	if options.WebView2RuntimeVersion {
+		version, err := desktop.WebView2RuntimeVersion(options.BrowserExecutableFolder)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gosx desktop: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(version)
+		return
 	}
 	dir := "."
 	if len(args) == 1 {
@@ -106,7 +121,7 @@ func desktopArgsAfterParse(args []string) ([]string, bool) {
 // desktop host. The first backend is Windows WebView2; unsupported platforms
 // return desktop.ErrUnsupported before doing build work.
 func RunDesktop(dir string, options DesktopRunOptions) error {
-	if err := desktop.Available(); err != nil {
+	if _, err := desktop.WebView2RuntimeVersion(options.BrowserExecutableFolder); err != nil {
 		return err
 	}
 	if desktopDirectMode(options) {
@@ -206,19 +221,20 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	}
 
 	desktopOptions := desktop.Options{
-		Title:            options.Title,
-		Width:            options.Width,
-		Height:           options.Height,
-		AppID:            options.AppID,
-		URL:              publicURL,
-		Debug:            options.Debug,
-		DevTools:         options.DevTools,
-		NativeBridge:     options.NativeBridge,
-		UserDataDir:      options.UserDataDir,
-		MuteAudio:        options.MuteAudio,
-		SingleInstance:   options.SingleInstance,
-		OnSecondInstance: desktopSecondInstanceCallback(getDesktopApp),
-	}
+		Title:                      options.Title,
+		Width:                      options.Width,
+		Height:                     options.Height,
+		AppID:                      options.AppID,
+		URL:                        publicURL,
+		Debug:                      options.Debug,
+		DevTools:                   options.DevTools,
+		NativeBridge:               options.NativeBridge,
+		UserDataDir:                options.UserDataDir,
+		MuteAudio:                  options.MuteAudio,
+		BrowserExecutableFolder:    options.BrowserExecutableFolder,
+		AdditionalBrowserArguments: options.AdditionalBrowserArguments,
+		SingleInstance:             options.SingleInstance,
+		OnSecondInstance:           desktopSecondInstanceCallback(getDesktopApp)}
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getDesktopApp)
 	}
@@ -333,20 +349,21 @@ func runDesktopHost(options DesktopRunOptions) error {
 		url = bundleURL
 	}
 	desktopOptions := desktop.Options{
-		Title:            options.Title,
-		Width:            options.Width,
-		Height:           options.Height,
-		AppID:            options.AppID,
-		URL:              url,
-		HTML:             options.HTML,
-		Debug:            options.Debug,
-		DevTools:         options.DevTools,
-		NativeBridge:     options.NativeBridge || bundleRoot != "",
-		UserDataDir:      options.UserDataDir,
-		MuteAudio:        options.MuteAudio,
-		SingleInstance:   options.SingleInstance,
-		OnSecondInstance: desktopSecondInstanceCallback(getApp),
-	}
+		Title:                      options.Title,
+		Width:                      options.Width,
+		Height:                     options.Height,
+		AppID:                      options.AppID,
+		URL:                        url,
+		HTML:                       options.HTML,
+		Debug:                      options.Debug,
+		DevTools:                   options.DevTools,
+		NativeBridge:               options.NativeBridge || bundleRoot != "",
+		UserDataDir:                options.UserDataDir,
+		MuteAudio:                  options.MuteAudio,
+		BrowserExecutableFolder:    options.BrowserExecutableFolder,
+		AdditionalBrowserArguments: options.AdditionalBrowserArguments,
+		SingleInstance:             options.SingleInstance,
+		OnSecondInstance:           desktopSecondInstanceCallback(getApp)}
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getApp)
 	}

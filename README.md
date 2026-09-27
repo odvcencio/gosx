@@ -866,6 +866,26 @@ shared WebView2-environment support lands. From WSL or CI, `make
 build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
 `build/gosx-windows-arm64.exe` for handoff to a Windows host.
 
+Desktop games can select a Fixed Version WebView2 runtime with
+`desktop.Options.BrowserExecutableFolder` and pass Chromium options through
+`desktop.Options.AdditionalBrowserArguments`; for example, `--mute-audio` and
+`--autoplay-policy=no-user-gesture-required`. GoSX sets the documented
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment creation.
+WebView2 environment variables are process-wide and apply to every WebView2
+environment in the process. `desktop.WebView2RuntimeVersion` reports
+the selected runtime, while `desktop.ErrWebView2LoaderUnavailable` and
+`desktop.ErrWebView2RuntimeUnavailable` identify a missing loader or runtime
+and still match `desktop.ErrWebView2Unavailable`.
+
+Production mode disables WebView2 browser accelerators, zoom controls, and its
+status bar; `Options.Debug` leaves them enabled. `Options.OnProcessFailed`
+receives a `desktop.ProcessFailedKind`; the game can call `App.Reload` when it
+chooses to recover. HTML `requestFullscreen()` uses borderless fullscreen on
+the window's monitor and returns to the earlier window state when it ends.
+The first icon resource in the executable supplies the window's large and
+small icons when present. Run `make test-desktop-windows-shipping-smoke` from
+WSL to verify these behaviors on a Windows host.
+
 Trusted desktop content can call `window.gosxDesktop.app`,
 `window.gosxDesktop.window`, `window.gosxDesktop.dialog`,
 `window.gosxDesktop.clipboard`, `window.gosxDesktop.shell`, and

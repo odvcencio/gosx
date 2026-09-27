@@ -29,6 +29,9 @@ function snapshot() {
   report.devicePixelRatio = window.devicePixelRatio;
   report.innerWidth = window.innerWidth;
   report.innerHeight = window.innerHeight;
+  const fullscreenButton = document.getElementById('enter-fullscreen').getBoundingClientRect();
+  report.fullscreenButtonX = fullscreenButton.left + fullscreenButton.width / 2;
+  report.fullscreenButtonY = fullscreenButton.top + fullscreenButton.height / 2;
   report.fullscreen = !!document.fullscreenElement;
   return report;
 }
@@ -151,6 +154,7 @@ def handler_for(state: SmokeState):
                 self.end_headers()
                 return
             if parsed.path == "/results":
+                print(time.strftime("%H:%M:%S"), "GET /results begin", flush=True)
                 with state.lock:
                     body = json.dumps(state.snapshot()).encode("utf-8")
                 self.send_response(200)
@@ -158,6 +162,7 @@ def handler_for(state: SmokeState):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                print(time.strftime("%H:%M:%S"), "GET /results done", flush=True)
                 return
             self.send_error(404)
 

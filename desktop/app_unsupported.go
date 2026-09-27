@@ -17,12 +17,22 @@ func platformAvailable() error {
 	return ErrUnsupported
 }
 
+// WebView2RuntimeVersion is unsupported when no Windows WebView2 backend is
+// available.
+func WebView2RuntimeVersion(string) (string, error) {
+	return "", ErrUnsupported
+}
+
 func (unsupportedApp) Run() error {
 	return ErrUnsupported
 }
 
 func (unsupportedApp) Close() error {
 	return nil
+}
+
+func (unsupportedApp) Reload() error {
+	return ErrUnsupported
 }
 
 func (unsupportedApp) Navigate(url string) error {
