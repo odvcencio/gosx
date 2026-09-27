@@ -3350,13 +3350,20 @@ function loadSceneViewportAPI(options = {}) {
     : 1;
   const environment = Object.assign({ devicePixelRatio }, options.environment || {});
   const context = {
-    window: { devicePixelRatio },
+    window: {
+      devicePixelRatio,
+      getComputedStyle(element) {
+        return element && element.computedStyle || { paddingTop: "0px", paddingBottom: "0px" };
+      },
+    },
     __environment: environment,
   };
   vm.runInNewContext(`
     function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
     function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
     function sceneEnvironmentState() { return __environment; }
+    function setAttrValue(element, name, value) { if (element && typeof element.setAttribute === "function") element.setAttribute(name, String(value)); }
+    function setStyleValue(style, name, value) { if (style) { if (typeof style.setProperty === "function") style.setProperty(name, value); else style[name] = value; } }
     function defaultSceneMaxDevicePixelRatio(capability) {
       if (capability && (capability.reducedData || capability.lowPower)) {
         switch (capability.tier) {
@@ -3376,6 +3383,7 @@ function loadSceneViewportAPI(options = {}) {
       sceneViewportBase,
       sceneViewportDevicePixelRatio,
       sceneViewportFromMount,
+      applySceneViewport,
     };
   `, context, { filename: "scene-viewport.js" });
   return context.viewportAPI;

@@ -22,6 +22,7 @@ const {
   flushAsyncWork,
   telemetryPostBodies,
   telemetryEvents,
+  loadSceneViewportAPI,
   resolveSceneViewportForTest,
 } = require("./runtime-test-harness.js");
 
@@ -98,6 +99,76 @@ test("responsive fill-height Scene3D measures its mount instead of a stale intri
   assert.equal(viewport.cssHeight, 620);
   assert.equal(viewport.pixelWidth, 663);
   assert.equal(viewport.pixelHeight, 620);
+});
+
+test("responsive-height alias also measures its mount instead of a stale intrinsic canvas", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 720,
+    height: 480,
+    responsive: true,
+    responsiveHeight: true,
+  }, {
+    measuredWidth: 663,
+    measuredHeight: 620,
+    canvasMeasuredWidth: 663,
+    canvasMeasuredHeight: 858,
+  });
+
+  assert.equal(viewport.cssWidth, 663);
+  assert.equal(viewport.cssHeight, 620);
+  assert.equal(viewport.pixelWidth, 663);
+  assert.equal(viewport.pixelHeight, 620);
+});
+
+test("responsive fill-height viewport converges when its mount is content-sized", () => {
+  const api = loadSceneViewportAPI();
+  const props = { width: 1920, height: 1080, responsive: true, fillHeight: true };
+  const base = api.sceneViewportBase(props);
+  const makeElement = () => {
+    const attributes = new Map();
+    return {
+      style: {},
+      setAttribute(name, value) { attributes.set(name, String(value)); },
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+    };
+  };
+  const mount = makeElement();
+  const canvas = makeElement();
+  const labelLayer = makeElement();
+  const mountWidth = 1440;
+  canvas.width = 1920;
+  canvas.height = 1080;
+  canvas.style.width = "100%";
+  canvas.style.height = "auto";
+  mount.computedStyle = { paddingTop: "12px", paddingBottom: "8px" };
+  Object.defineProperty(mount, "clientHeight", {
+    get() { return Math.ceil(mount.getBoundingClientRect().height); },
+  });
+  canvas.getBoundingClientRect = () => {
+    const width = canvas.style.width === "100%" ? mountWidth : Number.parseFloat(canvas.style.width) || canvas.width;
+    const height = canvas.style.height === "auto"
+      ? width * canvas.height / Math.max(1, canvas.width)
+      : Number.parseFloat(canvas.style.height) || canvas.height;
+    return { left: 0, top: 0, width, height };
+  };
+  mount.getBoundingClientRect = () => {
+    const canvasRect = canvas.getBoundingClientRect();
+    const labelHeight = labelLayer.style.position === "absolute" ? 0 : Number.parseFloat(labelLayer.style.height) || 0;
+    const inlineBaselineGap = canvas.style.display === "block" ? 0 : 9;
+    const verticalPadding = 20;
+    return { left: 0, top: 0, width: mountWidth, height: canvasRect.height + labelHeight + inlineBaselineGap + verticalPadding };
+  };
+
+  const heights = [];
+  for (let pass = 0; pass < 6; pass += 1) {
+    const viewport = api.sceneViewportFromMount(mount, props, base, canvas, { tier: "full" }, null);
+    heights.push(viewport.cssHeight);
+    api.applySceneViewport(mount, canvas, labelLayer, viewport, base);
+  }
+
+  assert.deepEqual(heights, [heights[0], heights[0], heights[0], heights[0], heights[0], heights[0]]);
+  assert.equal(canvas.style.display, "block");
+  assert.equal(labelLayer.style.position, "absolute");
 });
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
