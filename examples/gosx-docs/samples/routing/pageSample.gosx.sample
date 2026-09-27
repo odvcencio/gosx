@@ -1,0 +1,8 @@
+package blog
+
+func Page() Node {
+	return <article>
+		<h1>{data.slug}</h1>
+		<a href="/blog" data-gosx-link="true">All posts</a>
+	</article>
+}

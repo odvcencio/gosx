@@ -1,0 +1,2 @@
+gosx build --prod --offline .
+gosx desktop --bundle dist/offline

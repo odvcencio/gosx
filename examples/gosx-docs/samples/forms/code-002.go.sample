@@ -1,0 +1,18 @@
+func init() {
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
+		Actions: route.FileActions{
+			"subscribe": func(ctx *action.Context) error {
+				email := ctx.FormData["email"]
+				if email == "" {
+					ctx.ValidationFailure("Email is required.", map[string]string{
+						"email": "Please enter an email address.",
+					})
+					return nil
+				}
+				return ctx.Success("Subscribed!", nil)
+			},
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+}

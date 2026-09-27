@@ -1,0 +1,12 @@
+{
+  "prerender": false,
+  "headers": {
+    "X-Content-Type-Options": "nosniff"
+  },
+  "cache": {
+    "public": true,
+    "maxAge": "1m",
+    "staleWhileRevalidate": "5m"
+  },
+  "cacheTags": ["docs"]
+}

@@ -1,5 +1,7 @@
 package docs
 
+import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+
 func Page() Node {
 	return <div>
 		<section id="quick-start" class="docs-section-block">
@@ -94,9 +96,7 @@ func Page() Node {
 				</strong>
 				Use it as the definitive cross-check whenever an object exists in the scene graph but does not appear on screen. If the object paints here and not in the browser, the defect is in browser-side culling or camera math — not in scene authoring.
 			</p>
-			{CodeBlock("bash", `gosx scene render scene.json --out scene.png
-	gosx scene render scene.json --out scene.png --width 1920 --height 1080 --time 1.5
-	gosx scene render scene.json --fast --out thumb.png   # skip shadows/post-FX, cap tessellation`)}
+			{CodeBlock("bash", docsapp.DocSample("debugging-scene3d/code-001.bash.sample"))}
 			<p>
 				The input is a bare SceneIR document or the runtime props JSON that
 				<span class="inline-code">scene.Props</span>
@@ -109,14 +109,7 @@ func Page() Node {
 				<span class="inline-code">scene/harness</span>
 				package directly:
 			</p>
-			{CodeBlock("go", `session := harness.New(props, preview.Options{Width: 320, Height: 240})
-	if _, err := session.Render(0); err != nil {
-	    t.Fatal(err)
-	}
-	if err := session.Validate(); err != nil {
-	    t.Fatal(err) // fails on zero coverage, a device-lost frame, or a broken Selena material
-	}
-	session.WriteJSON(os.Stdout)`)}
+			{CodeBlock("go", docsapp.DocSample("debugging-scene3d/code-002.go.sample"))}
 			<p>
 				A
 				<span class="inline-code">Report</span>
@@ -171,13 +164,11 @@ func Page() Node {
 				<span class="inline-code">viewCulled</span>
 				flag on ordinary mesh objects above. Enable it before mount:
 			</p>
-			{CodeBlock("javascript", `window.__gosx_scene3d_cull_telemetry = true;`)}
+			{CodeBlock("javascript", docsapp.DocSample("debugging-scene3d/code-003.js.sample"))}
 			<p>
 				For a serialized scene file, check feature use, fallbacks, and backend capability with the CLI instead of a running page:
 			</p>
-			{CodeBlock("bash", `gosx scene check --strict --assets public --budget budget.json scene.json
-	gosx scene inspect --json --strict --budget budget.json --assets public scene.json
-	gosx scene validate --strict scene.json`)}
+			{CodeBlock("bash", docsapp.DocSample("debugging-scene3d/code-004.bash.sample"))}
 			<p>
 				<span class="inline-code">gosx scene check</span>
 				is the combined browser-free gate: validation, inspection and cost, asset reachability, CPU rendering, optional repeat determinism, and optional golden comparison produce one verdict.
@@ -225,10 +216,7 @@ func Page() Node {
 				<span class="inline-code">failed</span>
 				for the current transaction.
 			</p>
-			{CodeBlock("javascript", `const mount = document.querySelector("[data-gosx-scene3d-mounted]")
-	mount.addEventListener("gosx:scene3d:model-hydration-status", ({ detail }) => {
-	    console.log(detail.status, detail.generation, detail.counts, detail.error)
-	})`)}
+			{CodeBlock("javascript", docsapp.DocSample("debugging-scene3d/code-005.js.sample"))}
 			<p>
 				Its detail contains
 				<span class="inline-code">status</span>
@@ -316,13 +304,7 @@ func Page() Node {
 			<p>
 				The runtime mirrors the renderer context and the latest per-model selection context to these mount attributes:
 			</p>
-			{CodeBlock("text", `data-gosx-scene3d-texture-variant-backend
-	data-gosx-scene3d-texture-variant-upload-ready
-	data-gosx-scene3d-texture-variant-token-count
-	data-gosx-scene3d-texture-variant-scope
-	data-gosx-scene3d-model-variant-scope
-	data-gosx-scene3d-model-variant-backend
-	data-gosx-scene3d-model-variant-upload-ready`)}
+			{CodeBlock("text", docsapp.DocSample("debugging-scene3d/code-006.text.sample"))}
 			<p>
 				Each
 				<span class="inline-code">gosx:scene3d:model-status</span>
@@ -356,25 +338,11 @@ func Page() Node {
 				<span class="inline-code">gosx.scene3d.debug.v1</span>
 				). Open the browser console on a live page and call it directly:
 			</p>
-			{CodeBlock("javascript", `window.__gosx_scene3d_debug.listSurfaces();
-	// [{ id, backend, ready, fallbackReason, counts, ... }, ...]
-
-	window.__gosx_scene3d_debug.inspect("scene-mount");
-	// renderer kind, fallbackReason, node counts, feature matrix,
-	// camera, GPU resources, webgpuStats, renderer diagnostics
-
-	window.__gosx_scene3d_debug.captureFrame("scene-mount");
-	// { surfaceID, mimeType: "image/png", dataURL }
-
-	window.__gosx_scene3d_debug.getDiagnostics("scene-mount");
-	window.__gosx_scene3d_debug.getLastPick("scene-mount");`)}
+			{CodeBlock("javascript", docsapp.DocSample("debugging-scene3d/code-007.js.sample"))}
 			<p>
 				The read-only telemetry helper supports legacy and explicitly scoped calls. It uses the debug registry and live mount handle when available, then combines that evidence with strictly parsed mount attributes:
 			</p>
-			{CodeBlock("javascript", `const legacy = window.__gosx_scene3d_telemetry(mount)
-	const first = window.__gosx_scene3d_telemetry(null) // first mounted surface
-	const one = window.__gosx_scene3d_telemetry({ scope: "mount", mount })
-	const page = window.__gosx_scene3d_telemetry({ scope: "page" })`)}
+			{CodeBlock("javascript", docsapp.DocSample("debugging-scene3d/code-008.js.sample"))}
 			<p>
 				Legacy
 				<span class="inline-code">mount</span>
@@ -430,8 +398,8 @@ func Page() Node {
 			<p>
 				For an always-visible heads-up display instead of console calls, enable the on-page inspector overlay:
 			</p>
-			{CodeBlock("javascript", `window.__gosx_scene3d_inspector = true; // set before the Scene3D component mounts`)}
-			{CodeBlock("gosx", `<Scene3D {...data.scene} inspector={true} />`)}
+			{CodeBlock("javascript", docsapp.DocSample("debugging-scene3d/code-009.js.sample"))}
+			{CodeBlock("gosx", docsapp.DocSample("debugging-scene3d/code-010.gosx.sample"))}
 			<p>
 				The overlay renders backend and fallback reason, render-loop state, viewport and device-pixel ratio, draw call and material counts, mesh and instance counts, HTML texture readiness, diagnostic and warning counts, and the last pick target — updated every frame, in the top-right corner of the mount.
 			</p>
@@ -444,7 +412,7 @@ func Page() Node {
 				<span class="inline-code">chrome://tracing</span>
 				or the DevTools Performance panel to inspect compositor-thread activity frame by frame.
 			</p>
-			{CodeBlock("bash", `gosx perf http://localhost:8080/your-scene --frames 120 --trace trace.json`)}
+			{CodeBlock("bash", docsapp.DocSample("debugging-scene3d/code-011.bash.sample"))}
 			<p>
 				<span class="inline-code">gosx perf</span>
 				also detects a software rasterizer (SwiftShader, Mesa llvmpipe, Mesa softpipe, and others) and prints a banner above every GPU section of its report. Perf numbers under software rendering — frame budgets, shader compile stalls, buffer upload time — do not represent what a user on real hardware experiences. Treat any regression found only under software rendering as suspect until it is confirmed on real hardware.
@@ -452,7 +420,7 @@ func Page() Node {
 			<p>
 				A GPU compositor bug can be unreproducible under SwiftShader or Mesa llvmpipe, because software compositing takes a different code path than the real hardware compositor. No sandboxed tool changes this — the fix is to drive the actual browser on the actual hardware. Run the render-truth probe on the machine that has the GPU. The common case takes no flags.
 			</p>
-			{CodeBlock("bash", `node scripts/windows-scene3d-probe.mjs`)}
+			{CodeBlock("bash", docsapp.DocSample("debugging-scene3d/code-012.bash.sample"))}
 			<p>
 				That probes
 				<span class="inline-code">https://m31labs.dev/</span>
@@ -490,9 +458,7 @@ func Page() Node {
 			<p>
 				Edge and Firefox do not share a WebGPU implementation. Edge uses Dawn, which translates WGSL through Tint. Firefox uses wgpu, which translates WGSL through naga. Selena validates its emitted WGSL with naga, so a shader can pass authoring-time validation and still hit a Tint bug in Edge. Run the probe twice and diff the two dumps; the schema is identical, so the comparison is mechanical.
 			</p>
-			{CodeBlock("bash", `node scripts/windows-scene3d-probe.mjs --browser edge    --out probe-edge
-	node scripts/windows-scene3d-probe.mjs --browser firefox --out probe-firefox
-	node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
+			{CodeBlock("bash", docsapp.DocSample("debugging-scene3d/code-013.bash.sample"))}
 			<p>
 				Set
 				<span class="inline-code">GOSX_BROWSER_EXECUTABLE</span>
@@ -607,8 +573,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-scene3d-backend</span>
 				attribute on the page after the settle wait and hard-fails the capture — before any pixel comparison — if a mounted surface did not reach an acceptable backend, or if no Scene3D mount was found at all. The default (no flag) performs no check, so every existing caller keeps its current behavior.
 			</p>
-			{CodeBlock("bash", `gosx visual --require-backend webgpu http://localhost:8080/your-scene
-	gosx visual --require-backend any-gpu --update http://localhost:8080/your-scene`)}
+			{CodeBlock("bash", docsapp.DocSample("debugging-scene3d/code-014.bash.sample"))}
 			<p>
 				A failing run names every mount that did not qualify, states plainly that no shader or post effect (post-FX) ran when the backend fell back to the 2D canvas renderer, and prints the exact headless-Chrome flags that give the capture a real (software) GPU:
 				<span class="inline-code">

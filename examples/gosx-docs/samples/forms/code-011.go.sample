@@ -1,0 +1,3 @@
+if action.WantsJSON(ctx.Request) {
+    // Managed action: return structured feedback.
+}

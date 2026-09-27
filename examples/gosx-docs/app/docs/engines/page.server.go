@@ -27,10 +27,10 @@ func init() {
 				// purpose: a one-node inline fallback is the idiom this same
 				// package already uses in Go glue code, for example in
 				// server.ScenePosterPreload.
-				"mountSample":      "raw, err := json.Marshal(ChartProps{Series: values})\nif err != nil {\n\treturn nil\n}\n\nreturn ctx.Engine(engine.Config{\n\tName:         \"Chart\",\n\tKind:         engine.KindSurface,\n\tMountID:      \"sales-chart\",\n\tProps:        raw,\n\tCapabilities: []engine.Capability{engine.CapCanvas, engine.CapPointer},\n\tMountAttrs: map[string]any{\n\t\t\"class\":      \"chart-surface\",\n\t\t\"aria-label\": \"Sales chart\",\n\t},\n}, gosx.El(\"p\", gosx.Text(\"Chart unavailable\")))",
-				"webgpuSample":     "required := engine.RequireWebGPU(\n\tengine.CapWebGPUTimestampQuery,\n\tengine.WebGPULimit(\"maxComputeWorkgroupsPerDimension\", 256),\n)\n\ncfg := engine.Config{\n\tName:                 \"ParticleLab\",\n\tKind:                 engine.KindSurface,\n\tMountID:              \"particles\",\n\tCapabilities:         []engine.Capability{engine.CapCanvas, engine.CapAnimation},\n\tRequiredCapabilities: required,\n}",
-				"wasmConfigSample": "cfg := engine.Config{\n\tName:     \"Chart\",\n\tKind:     engine.KindSurface,\n\tMountID:  \"chart\",\n\tRuntime:  engine.RuntimeGoWASM,\n\tWASMPath: \"/engines/chart.wasm\",\n}",
-				"wasmModuleSample": "//go:build js && wasm\n\npackage main\n\nimport (\n\t\"m31labs.dev/gosx/engine/wasm\"\n)\n\nfunc main() {\n\terr := wasm.Register(\"Chart\", func(ctx wasm.Context) (wasm.Handle, error) {\n\t\tmount := ctx.Mount()\n\t\t_ = mount\n\t\treturn wasm.HandleFunc(func() {\n\t\t\t// Release listeners and browser resources here.\n\t\t}), nil\n\t})\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\tselect {}\n}",
+				"mountSample":      docsapp.DocSample("engines/mountSample.go.sample"),
+				"webgpuSample":     docsapp.DocSample("engines/webgpuSample.go.sample"),
+				"wasmConfigSample": docsapp.DocSample("engines/wasmConfigSample.go.sample"),
+				"wasmModuleSample": docsapp.DocSample("engines/wasmModuleSample.go.sample"),
 			}, nil
 		},
 	})

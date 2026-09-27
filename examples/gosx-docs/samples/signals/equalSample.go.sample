@@ -1,0 +1,7 @@
+items := signal.NewWithEqual(
+	[]string{"one"},
+	func(a, b []string) bool { return slices.Equal(a, b) },
+)
+
+// Passing nil as the equality function notifies on every Set.
+always := signal.NewWithEqual(map[string]int{}, nil)

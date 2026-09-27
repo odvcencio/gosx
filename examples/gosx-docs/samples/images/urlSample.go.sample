@@ -1,0 +1,5 @@
+url := server.ImageURL("/photos/harbor.jpg", server.ImageTransform{
+	Width:   640,
+	Quality: 78,
+	Format:  "jpeg",
+})

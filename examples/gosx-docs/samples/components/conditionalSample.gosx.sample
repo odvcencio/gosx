@@ -1,0 +1,16 @@
+package profile
+
+type BadgeProps struct {
+	Ready bool
+}
+
+component Badge(props: BadgeProps) {
+	return <span>
+		<If cond={props.Ready}>Ready</If>
+		<If cond={props.Ready == false}>Pending</If>
+	</span>
+}
+
+component Page() {
+	return <main><Badge ready={true} /></main>
+}

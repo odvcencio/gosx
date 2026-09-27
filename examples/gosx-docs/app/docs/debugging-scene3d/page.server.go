@@ -1,12 +1,12 @@
 package docs
 
 import (
-	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
 
 func init() {
-	docs.RegisterDocsPage("Debugging Scene3D", "Diagnose invisible geometry, untrustworthy captures, and GPU compositor bugs with the tooling GoSX already ships.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Debugging Scene3D", "Diagnose invisible geometry, untrustworthy captures, and GPU compositor bugs with the tooling GoSX already ships.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
 				"mode":        "light",

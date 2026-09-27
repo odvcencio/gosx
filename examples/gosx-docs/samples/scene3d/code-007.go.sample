@@ -1,0 +1,16 @@
+Camera: scene.PerspectiveCamera{
+	    Position:     scene.Vec3(0, 2, 8),
+	    Rotation:     scene.Rotate(0, 0, 0),
+	    FOV:          65,
+	    Near:         0.1,
+	    Far:          1000,
+	    TransitionMS: 600,
+	},
+
+	// Orthographic replaces the perspective camera when set.
+	OrthographicCamera: &scene.OrthographicCamera{
+	    Position: scene.Vec3(0, 10, 0),
+	    Zoom:     1.5,
+	    Near:     0.1,
+	    Far:      500,
+	},

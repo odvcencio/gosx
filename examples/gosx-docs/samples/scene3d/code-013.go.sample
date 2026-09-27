@@ -1,0 +1,11 @@
+scene.LineBasicMaterial{
+	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},
+	    Width:         3,
+	}
+
+	scene.LineDashedMaterial{
+	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},
+	    Width:         2,
+	    DashSize:      0.4,
+	    GapSize:       0.2,
+	}

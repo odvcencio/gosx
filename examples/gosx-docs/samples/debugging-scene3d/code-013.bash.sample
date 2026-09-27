@@ -1,0 +1,3 @@
+node scripts/windows-scene3d-probe.mjs --browser edge    --out probe-edge
+	node scripts/windows-scene3d-probe.mjs --browser firefox --out probe-firefox
+	node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox

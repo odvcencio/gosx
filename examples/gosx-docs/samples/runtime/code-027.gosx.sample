@@ -1,0 +1,3 @@
+<a href="/pricing" data-gosx-prefetch="render">Pricing</a>
+	<a href="/account" data-gosx-prefetch="off">Account</a>
+	<a href="/demo" data-gosx-prefetch="force">Demo</a>

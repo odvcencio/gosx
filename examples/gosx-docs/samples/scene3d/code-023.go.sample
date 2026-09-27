@@ -1,0 +1,9 @@
+scene.Model{
+	    Src:                "/models/character.glb",
+	    Animation:          "Run",
+	    Loop:               scene.Bool(true),
+	    AnimationSpeed:     scene.Float(1.2),
+	    AnimationWeight:    scene.Float(1.0),
+	    AnimationFadeInMS:  scene.Int(180),
+	    AnimationFadeOutMS: scene.Int(180),
+	}

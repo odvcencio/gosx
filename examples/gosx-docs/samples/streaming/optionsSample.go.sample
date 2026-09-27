@@ -1,0 +1,6 @@
+ctx.SuspenseWithOptions(server.DeferredOptions{
+	ID:       "account-summary",
+	Tag:      "section",
+	Class:    "summary-shell",
+	Boundary: "component",
+}, fallback, resolve)

@@ -1,0 +1,3 @@
+gosx scene check --strict --assets public --budget budget.json scene.json
+	gosx scene inspect --json --strict --budget budget.json --assets public scene.json
+	gosx scene validate --strict scene.json

@@ -1,0 +1,3 @@
+<ul data-gosx-region data-gosx-region-url="/api/wire/events" data-gosx-region-interval="20s">
+	<li>Server-rendered events appear here.</li>
+</ul>

@@ -1,0 +1,12 @@
+required := engine.RequireWebGPU(
+	engine.CapWebGPUTimestampQuery,
+	engine.WebGPULimit("maxComputeWorkgroupsPerDimension", 256),
+)
+
+cfg := engine.Config{
+	Name:                 "ParticleLab",
+	Kind:                 engine.KindSurface,
+	MountID:              "particles",
+	Capabilities:         []engine.Capability{engine.CapCanvas, engine.CapAnimation},
+	RequiredCapabilities: required,
+}
