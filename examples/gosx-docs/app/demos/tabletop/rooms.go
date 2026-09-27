@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/crdt"
 	"m31labs.dev/gosx/hub"
@@ -154,6 +156,10 @@ func StartRoomJanitor(ctx context.Context) {
 
 // ServeWebSocket resolves a room from the query string and serves its hub.
 func ServeWebSocket(w http.ResponseWriter, req *http.Request) {
+	if !validTabletopWebSocketRequest(req) {
+		http.Error(w, "A valid same-origin WebSocket upgrade is required.", http.StatusBadRequest)
+		return
+	}
 	room, err := Rooms.GetOrCreate(req.URL.Query().Get("room"), time.Now())
 	if err != nil {
 		http.Error(w, "This tabletop room is unavailable.", http.StatusNotFound)
@@ -162,13 +168,40 @@ func ServeWebSocket(w http.ResponseWriter, req *http.Request) {
 	room.Hub.ServeHTTP(w, req)
 }
 
-// NewPrivateRoom creates a room with an unpredictable URL-safe identifier.
-func (m *RoomManager) NewPrivateRoom(now time.Time) (*Room, error) {
-	id, err := m.newID()
-	if err != nil {
-		return nil, err
+func validTabletopWebSocketRequest(req *http.Request) bool {
+	if req == nil || req.URL == nil || req.Method != http.MethodGet || !websocket.IsWebSocketUpgrade(req) {
+		return false
 	}
-	return m.GetOrCreate(id, now)
+	if req.Header.Get("Sec-WebSocket-Version") != "13" {
+		return false
+	}
+	key, err := base64.StdEncoding.DecodeString(req.Header.Get("Sec-WebSocket-Key"))
+	if err != nil || len(key) != 16 {
+		return false
+	}
+	origin := req.Header.Get("Origin")
+	return origin != "" && (origin == "http://"+req.Host || origin == "https://"+req.Host)
+}
+
+// NewPrivateRoomID returns an unpredictable room URL without reserving a
+// room. A page view alone must not consume one of the server's bounded slots.
+func (m *RoomManager) NewPrivateRoomID() (string, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		id, err := m.newID()
+		if err != nil {
+			return "", err
+		}
+		if !validTabletopRoomID(id) {
+			return "", ErrInvalidRoomID
+		}
+		m.mu.Lock()
+		_, exists := m.rooms[id]
+		m.mu.Unlock()
+		if !exists {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("tabletop: could not generate an unused room identifier")
 }
 
 // GetOrCreate returns the named room, refreshing its idle deadline, or creates
@@ -190,6 +223,29 @@ func (m *RoomManager) GetOrCreate(id string, now time.Time) (*Room, error) {
 	room := newTabletopRoom(id, now)
 	m.rooms[id] = room
 	return room, nil
+}
+
+// GetForPage returns an active room or a temporary initial scene for a room
+// link that has not connected yet. It never reserves a manager slot for a
+// normal HTTP page request; the WebSocket handler creates the room after
+// validating the upgrade request.
+func (m *RoomManager) GetForPage(id string, now time.Time) (*Room, bool, error) {
+	id = strings.TrimSpace(id)
+	if !validTabletopRoomID(id) {
+		return nil, false, ErrInvalidRoomID
+	}
+	m.mu.Lock()
+	if room := m.rooms[id]; room != nil {
+		room.touch(now)
+		m.mu.Unlock()
+		return room, true, nil
+	}
+	if len(m.rooms) >= m.maxRooms {
+		m.mu.Unlock()
+		return nil, false, ErrRoomLimit
+	}
+	m.mu.Unlock()
+	return newTabletopRoom(id, now), false, nil
 }
 
 // Sweep removes rooms that exceeded the idle period and have no connected

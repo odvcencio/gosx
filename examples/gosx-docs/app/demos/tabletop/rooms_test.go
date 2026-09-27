@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io/fs"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,6 +151,70 @@ func TestTabletopIdleRoomExpiryAndRoomCap(t *testing.T) {
 	}
 	if _, err := manager.GetOrCreate(first.ID, now.Add(32*time.Minute)); err != nil {
 		t.Fatalf("room slot was not released after expiry: %v", err)
+	}
+}
+
+func TestUnconnectedRoomPageDoesNotReserveRoom(t *testing.T) {
+	manager := NewRoomManager()
+	manager.maxRooms = 1
+	manager.newID = func() (string, error) { return "0123456789abcdef", nil }
+
+	id, err := manager.NewPrivateRoomID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.Count() != 0 {
+		t.Fatalf("private URL creation reserved %d rooms", manager.Count())
+	}
+
+	preview, active, err := manager.GetForPage(id, time.Unix(20, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active || preview.ID != id {
+		t.Fatalf("page preview = (%q, active %t), want (%q, false)", preview.ID, active, id)
+	}
+	if manager.Count() != 0 {
+		t.Fatalf("unconnected page reserved %d rooms", manager.Count())
+	}
+
+	room, err := manager.GetOrCreate(id, time.Unix(20, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.Count() != 1 || room.ID != id {
+		t.Fatalf("WebSocket allocation produced %q and %d rooms", room.ID, manager.Count())
+	}
+	if _, _, err := manager.GetForPage("fedcba9876543210", time.Unix(20, 0)); !errors.Is(err, ErrRoomLimit) {
+		t.Fatalf("page preview at room cap error = %v, want %v", err, ErrRoomLimit)
+	}
+}
+
+func TestOrdinaryHTTPRequestCannotAllocateTabletopRoom(t *testing.T) {
+	previous := Rooms
+	Rooms = NewRoomManager()
+	t.Cleanup(func() { Rooms = previous })
+
+	request := httptest.NewRequest(http.MethodGet, "/demos/tabletop/ws/?room=0123456789abcdef", nil)
+	response := httptest.NewRecorder()
+	ServeWebSocket(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("ordinary HTTP response = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if got := Rooms.Count(); got != 0 {
+		t.Fatalf("ordinary HTTP request allocated %d rooms", got)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/demos/tabletop/ws/?room=0123456789abcdef", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Sec-WebSocket-Version", "13")
+	request.Header.Set("Sec-WebSocket-Key", "invalid")
+	request.Header.Set("Origin", "http://example.com")
+	response = httptest.NewRecorder()
+	ServeWebSocket(response, request)
+	if response.Code != http.StatusBadRequest || Rooms.Count() != 0 {
+		t.Fatalf("malformed upgrade response = %d with %d allocated rooms", response.Code, Rooms.Count())
 	}
 }
 

@@ -46,7 +46,7 @@ func init() {
 func init() {
 	docsapp.RegisterDocsPage("Shared Tabletop", "Place and arrange Poly Haven models in one realtime GoSX room, backed by a CRDT document and Scene3D.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-			room, err := Rooms.GetOrCreate(ctx.Query("room"), time.Now())
+			room, _, err := Rooms.GetForPage(ctx.Query("room"), time.Now())
 			if err != nil {
 				return nil, route.NotFound("This tabletop room is unavailable.")
 			}
@@ -108,14 +108,14 @@ func PrivateRoomRedirect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, req)
 			return
 		}
-		room, err := Rooms.NewPrivateRoom(time.Now())
+		roomID, err := Rooms.NewPrivateRoomID()
 		if err != nil {
 			http.Error(w, "Tabletop rooms are busy. Try again shortly.", http.StatusServiceUnavailable)
 			return
 		}
 		target := *req.URL
 		query := target.Query()
-		query.Set("room", room.ID)
+		query.Set("room", roomID)
 		target.RawQuery = query.Encode()
 		http.Redirect(w, req, target.String(), http.StatusFound)
 	})
