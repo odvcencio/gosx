@@ -28,15 +28,33 @@ func TestTabletopSeedSceneArtContract(t *testing.T) {
 		"prop-book": false, "prop-candle": false, "prop-orb": false,
 	}
 	woodTextureSet := false
-	for _, node := range props.Graph.Nodes {
+	studioBackdrop := false
+	contactShadowCount := 0
+	modelCount := 0
+	var visit func(scene.Node)
+	visit = func(node scene.Node) {
 		switch item := node.(type) {
 		case scene.Model:
+			modelCount++
 			if _, ok := wantObjects[item.ID]; ok {
 				wantObjects[item.ID] = true
 			}
 		case scene.Mesh:
 			if _, ok := wantObjects[item.ID]; ok {
 				wantObjects[item.ID] = true
+			}
+			if strings.HasSuffix(item.ID, "-contact-shadow") {
+				material, materialOK := item.Material.(scene.FlatMaterial)
+				geometry, disc := item.Geometry.(scene.CylinderGeometry)
+				if materialOK && disc && geometry.Height == tabletopContactPad && material.Color == "#211713" && material.Texture == "" && material.Opacity == nil && material.BlendMode == "" {
+					contactShadowCount++
+				} else {
+					t.Errorf("%s must use a dark primitive contact pad", item.ID)
+				}
+			}
+			if item.ID == "tabletop-studio-backdrop" {
+				material, ok := item.Material.(scene.FlatMaterial)
+				studioBackdrop = ok && material.Texture == "/tabletop/studio-sweep.png" && item.Rotation.X > 1 && item.Rotation.X < 1.3
 			}
 			if item.ID == "tabletop-surface" {
 				material, ok := item.Material.(scene.StandardMaterial)
@@ -47,7 +65,14 @@ func TestTabletopSeedSceneArtContract(t *testing.T) {
 					material.NormalMap == "/tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.png" &&
 					material.RoughnessMap == "/tabletop/surfaces/wood_table_001/wood_table_001_rough.png"
 			}
+		case scene.Group:
+			for _, child := range item.Children {
+				visit(child)
+			}
 		}
+	}
+	for _, node := range props.Graph.Nodes {
+		visit(node)
 	}
 	for id, present := range wantObjects {
 		if !present {
@@ -57,8 +82,20 @@ func TestTabletopSeedSceneArtContract(t *testing.T) {
 	if !woodTextureSet {
 		t.Fatal("table surface must use albedo, OpenGL normal and roughness maps")
 	}
+	if !studioBackdrop {
+		t.Fatal("tabletop scene must use a tilted studio sweep behind the still life")
+	}
+	if contactShadowCount != 6 {
+		t.Fatalf("contact-shadow pads = %d, want one for each seeded prop", contactShadowCount)
+	}
+	if modelCount != 1 {
+		t.Fatalf("seed scene downloads %d models, want 1", modelCount)
+	}
 	if props.Environment.Sky == nil || props.Environment.Sky.Mode != "gradient" {
 		t.Fatal("tabletop backdrop must use the gradient sky")
+	}
+	if props.Background == "transparent" || props.CanvasAlpha == nil || *props.CanvasAlpha {
+		t.Fatal("tabletop studio sweep must render into an opaque scene canvas")
 	}
 	if props.Camera.FOV < 27 || props.Camera.FOV > 40 || props.Camera.PortraitFOV < 27 || props.Camera.PortraitFOV > 40 {
 		t.Fatalf("camera fields of view = %g/%g, want 27-40 degrees", props.Camera.FOV, props.Camera.PortraitFOV)

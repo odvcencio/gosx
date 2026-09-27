@@ -23,6 +23,7 @@ func Page() Node {
 					class="home-hero__scene"
 					{...data.heroScene}
 					startPolicy="idle-visible-hardware"
+					autoRotate={false}
 					maxFrameRate={30}
 					respectReducedMotion={true}
 					data-gosx-scene3d-reveal-class="home-scene-ready"

@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ const (
 	appDir  = "examples/gosx-docs/app/demos/tabletop"
 )
 
-var modelIDs = []string{"ceramic_vase_01", "brass_vase_01", "potted_plant_04", "binder_notebook"}
+var modelIDs = []string{"potted_plant_04"}
 
 func main() {
 	if err := generate(); err != nil {
@@ -160,7 +161,7 @@ func generate() error {
 		Root: source, OutputDir: public,
 		Only: []string{"optimize-mesh", "prefilter-ibl-ggx", "generate-split-sum-lut"},
 		IBL: assetpipe.IBLOptions{
-			CubeSize: 64, Samples: 64, ProjectionSamples: 2,
+			CubeSize: 32, Samples: 64, ProjectionSamples: 2,
 			IrradianceSize: 16, BRDFLUTSize: 64, BRDFSamples: 256,
 			BRDFLUTPath: "tabletop/env/brdf-lut.ktx2", Supercompress: true,
 		},
@@ -171,7 +172,9 @@ func generate() error {
 	if execution.Totals.Failed != 0 {
 		return fmt.Errorf("asset pipeline failed: %+v", execution.Results)
 	}
-
+	if err := generateStudioSweep(filepath.Join(public, "tabletop")); err != nil {
+		return err
+	}
 	textureReport := assetpipe.Report{SchemaVersion: assetpipe.SchemaVersion}
 	for rel, workingPNG := range textureInputs {
 		role, colorSpace := textureRole(filepath.Base(rel))
@@ -480,6 +483,36 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0644)
 }
 
+// generateStudioSweep writes a local cool-to-warm gradient texture for the
+// tabletop's camera-facing backdrop. The image is authored here, not sourced.
+func generateStudioSweep(root string) error {
+	const side = 256
+	backdrop := image.NewNRGBA(image.Rect(0, 0, side, side))
+	slate := [3]float64{96, 121, 140}
+	warm := [3]float64{224, 185, 147}
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			dx := (float64(x)/float64(side-1) - 0.5) / 0.42
+			dy := (float64(y)/float64(side-1) - 0.68) / 0.24
+			pool := math.Exp(-0.5 * (dx*dx + dy*dy))
+			offset := backdrop.PixOffset(x, y)
+			for channel := 0; channel < 3; channel++ {
+				backdrop.Pix[offset+channel] = uint8(math.Round(slate[channel] + (warm[channel]-slate[channel])*pool))
+			}
+			backdrop.Pix[offset+3] = 255
+		}
+	}
+	return writePNG(filepath.Join(root, "studio-sweep.png"), backdrop)
+}
+
+func writePNG(path string, img image.Image) error {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		return err
+	}
+	return writeFile(path, encoded.Bytes())
+}
+
 func committedAssetBytes(root string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
@@ -537,6 +570,10 @@ func estimateFirstView(root string) (desktop, phone int64, err error) {
 			desktop += info.Size()
 			phone += info.Size()
 		}
+	}
+	if info, statErr := os.Stat(filepath.Join(root, "studio-sweep.png")); statErr == nil {
+		desktop += info.Size()
+		phone += info.Size()
 	}
 	woodDir := filepath.Join(root, "surfaces", "wood_table_001")
 	entries, readErr := os.ReadDir(woodDir)

@@ -780,6 +780,8 @@
     min-height: 0;
     aspect-ratio: 1100 / 760;
     border-radius: 0.95rem;
+    width: calc(100% + 1.25rem);
+    margin-inline: -0.625rem;
   }
 
   .home-hero__copy h1 {
