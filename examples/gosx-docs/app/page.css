@@ -771,6 +771,10 @@
     padding: 3rem 0 2.5rem;
   }
 
+  .home-hero__eyebrow {
+    display: none;
+  }
+
   .home-hero__media {
     height: auto;
     min-height: 0;
