@@ -111,6 +111,12 @@ set -e
 cp "$stage_wsl/host-$run_id.stdout.txt" "$run_dir/host.stdout.txt" 2>/dev/null || true
 cp "$stage_wsl/host-$run_id.stderr.txt" "$run_dir/host.stderr.txt" 2>/dev/null || true
 cp "$stage_wsl/window-$run_id.png" "$run_dir/window.png" 2>/dev/null || true
+if [[ "$shipping_features" -eq 1 ]]; then
+  cp "$stage_wsl/runtime-version-$run_id.stdout.txt" "$run_dir/runtime-version.stdout.txt" 2>/dev/null || true
+  cp "$stage_wsl/runtime-version-$run_id.stderr.txt" "$run_dir/runtime-version.stderr.txt" 2>/dev/null || true
+  cp -R "$stage_wsl/probe-missing-loader-$run_id" "$run_dir/probe-missing-loader" 2>/dev/null || true
+  cp -R "$stage_wsl/probe-missing-runtime-$run_id" "$run_dir/probe-missing-runtime" 2>/dev/null || true
+fi
 
 cat > "$run_dir/run.txt" <<EOF
 run_id=$run_id

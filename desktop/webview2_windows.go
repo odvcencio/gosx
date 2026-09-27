@@ -233,6 +233,26 @@ func comAddRef(obj unsafe.Pointer) {
 	syscall.SyscallN(comMethod(obj, iUnknownAddRef), uintptr(obj))
 }
 
+func queryCOMInterface(obj unsafe.Pointer, iid comGUID) (unsafe.Pointer, error) {
+	var result unsafe.Pointer
+	hr, _, _ := syscall.SyscallN(
+		comMethod(obj, 0),
+		uintptr(obj),
+		uintptr(unsafe.Pointer(&iid)),
+		uintptr(unsafe.Pointer(&result)),
+	)
+	if failedHRESULT(hr) {
+		if result != nil {
+			comRelease(result)
+		}
+		return nil, hresultError{Op: "IUnknown.QueryInterface", Code: hr}
+	}
+	if result == nil {
+		return nil, fmt.Errorf("%w: QueryInterface returned a nil interface", ErrWebView2Unavailable)
+	}
+	return result, nil
+}
+
 func queryInterfaceHandler(this, iid, ppv uintptr, handlerIID comGUID, addRef func(uintptr) uintptr) uintptr {
 	if ppv == 0 {
 		return ePointer

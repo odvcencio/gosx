@@ -14,6 +14,8 @@ func TestDesktopCOMHandlerIIDMatching(t *testing.T) {
 		{"controller completed", iidCreateCoreWebView2ControllerCompletedHandler},
 		{"web message received", iidWebMessageReceivedEventHandler},
 		{"web resource requested", iidWebResourceRequestedEventHandler},
+		{"process failed", iidProcessFailedEventHandler},
+		{"fullscreen changed", iidContainsFullScreenElementChangedEventHandler},
 	}
 	for _, handler := range handlers {
 		t.Run(handler.name, func(t *testing.T) {
