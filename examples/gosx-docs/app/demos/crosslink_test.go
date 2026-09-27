@@ -124,13 +124,11 @@ func TestDemosIndexRendersRelatedGuideLinks(t *testing.T) {
 	}
 	body := response.Body.String()
 
-	featureLinks := strings.Count(body, `class="demo-feature__guide"`)
-	rowLinks := strings.Count(body, `class="demo-row__guide"`)
-	// Feature card: scene3d-bench -> Debugging Scene3D. Rows: playground ->
-	// compiler/components/islands, collab -> hubs, cms -> forms,
-	// scene3d -> 3D engine. Demos without a pairing render no guide link.
-	if featureLinks != 1 || rowLinks != 6 {
-		t.Fatalf("guide links on /demos: feature=%d row=%d, want 1 and 6", featureLinks, rowLinks)
+	guideLinks := strings.Count(body, `class="demo-card__guide"`)
+	// Water is the only featured card and has no paired guide. The other seven
+	// links come from Playground (three), Collab, CMS, Scene3D, and the bench.
+	if guideLinks != 7 {
+		t.Fatalf("guide links on /demos = %d, want 7", guideLinks)
 	}
 	for _, want := range []string{
 		`href="/docs/compiler"`, `href="/docs/components"`, `href="/docs/islands"`,

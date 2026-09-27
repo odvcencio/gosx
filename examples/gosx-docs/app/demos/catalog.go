@@ -12,11 +12,16 @@ type DemoDefinition struct {
 	Slug         string
 	Title        string
 	Tag          string
+	Summary      string
+	Group        string
+	PosterPath   string
 	Promise      string
 	Lesson       string
 	Accent       string
 	Facets       []string
 	SourcePath   string
+	SourcePaths  []string
+	Backends     []string
 	Packages     []string
 	Status       string
 	RenderMode   string
@@ -42,27 +47,27 @@ var demoCatalog = []DemoDefinition{
 		SourcePath: "examples/gosx-docs/app/demos/checkers/page.gsx", Packages: []string{"scene", "hub", "route", "selena", "arbiter", "elio"},
 		Status: "live", RenderMode: "SSR + Scene3D GPU runtime + authoritative GoSX Hub",
 		Limitations:  "Playable mode is two-player and in-memory. There is no product network multiplayer or persistence; the active CPU uses bounded Go search with a compiled Arbiter policy fallback, while Elio hints remain optional and inactive.",
-		ShowcaseRank: 3,
+		ShowcaseRank: 0,
 	},
 	{
 		Slug: "beacon", Title: "Blackglass Coast", Tag: "Studio-authored water world",
 		Promise: "Orbit a sunlit volcanic cove with a live water surface, basalt shelves, ruins, and an ember beacon—authored as a world, not a prop.",
 		Lesson:  "A typed Studio world contract carries water-volume and gameplay anchors into a bounded GoSX Scene3D runtime with truthful backend fallback and frame-quality telemetry.",
-		Accent:  "#e7bd6b", Facets: []string{"Scene3D", "Studio", "WaterSystem", "PBR", "PostFX", "Compute particles", "WebGPU", "WebGL2"},
+		Accent:  "#e7bd6b", Facets: []string{"Scene3D", "Studio", "WaterSystem", "PBR", "PostFX", "Compute particles"},
 		SourcePath: "examples/gosx-docs/app/demos/beacon/program.go", Packages: []string{"scene", "route"},
-		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
+		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations:  "This first vertical slice binds the authored cove and its water semantics, but it is an orbitable world showcase—not yet a third-person game. WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene caps rendering at 60 frames per second (FPS), a device pixel ratio (DPR) of 1.5, and a 720p render surface.",
-		ShowcaseRank: 1,
+		ShowcaseRank: 0,
 	},
 	{
 		Slug: "water", Title: "Water", Tag: "flagship real-time optics",
 		Promise: "Disturb a physically responsive pool with dielectric Fresnel, depth absorption, live caustics, buoyant objects, and bounded quality profiles.",
 		Lesson:  "A typed GoSX WaterSystem drives one Selena-authored optical model through native WebGPU and WebGL2 backends.",
-		Accent:  "#69e3c7", Facets: []string{"Scene3D", "Selena", "WebGPU", "WebGL2", "Physical optics"},
+		Accent:  "#69e3c7", Facets: []string{"Scene3D", "Selena", "Physical optics"},
 		SourcePath: "examples/gosx-docs/app/demos/water/page.gsx", Packages: []string{"scene", "selena", "route"},
 		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2. Hero targets discrete GPUs; the new optical ALU still needs Apple/Metal hardware certification.",
-		ShowcaseRank: 2,
+		ShowcaseRank: 1,
 	},
 	{
 		Slug: "playground", Title: "GoSX Playground", Tag: "compile .gsx live",
@@ -117,13 +122,13 @@ var demoCatalog = []DemoDefinition{
 		SourcePath: "examples/gosx-docs/app/demos/scene3d-bench/page.gsx", Packages: []string{"scene", "route"},
 		Status: "lab", RenderMode: "SSR + instrumented Scene3D runtime",
 		Limitations:  "Measurements reflect the current machine and browser; they are not cross-device benchmarks.",
-		ShowcaseRank: 4,
+		ShowcaseRank: 0,
 	},
 	{
 		Slug: "html-surface", Title: "Diegetic Panels", Tag: "HTML textured onto 3D geometry",
 		Promise: "Read three Hypertext Markup Language (HTML) panels that the runtime renders as textures on scene geometry. One faces forward, one turns 36 degrees, and one lies flat while rotating.",
 		Lesson:  "A texture-mode scene.HTML is a quad in the scene graph. Page Cascading Style Sheets (CSS), layout, and web fonts render with rotation, occlusion, and depth like a mesh.",
-		Accent:  "#35d6ff", Facets: []string{"Scene3D", "HTML surface", "WebGPU", "WebGL2"},
+		Accent:  "#35d6ff", Facets: []string{"Scene3D", "HTML surface"},
 		SourcePath: "examples/gosx-docs/app/demos/html-surface/program.go", Packages: []string{"scene", "route"},
 		Status: "lab", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations: "Pointer hits expose CSS-pixel surface coordinates. The runtime does not synthesize Document Object Model (DOM) events for descendants. Rasterization responds to authored markup, size, device pixel ratio, stylesheet revisions, and explicit invalidation. It does not observe arbitrary DOM mutations. The runtime reports cross-origin stylesheets as blocked.",
@@ -141,7 +146,7 @@ var demoCatalog = []DemoDefinition{
 		Slug: "orrery", Title: "Lodestar Meridian", Tag: "declarative animation choreography",
 		Promise: "Watch a clockwork star-system engine run a 24-second demonstration cycle: ignition ramp, three keyframed planetary orbits, and a transit moon whose mid-transit alignment fires the heart flare on the same beat.",
 		Lesson:  "GoSX Scene3D ships graph animation channels and material keyframe tracks as typed data — targets, keys, and timing stay stable, deterministic, and asset-free, with declared node, vertex, and pixel budgets.",
-		Accent:  "#c4b5fd", Facets: []string{"Scene3D", "Animation channels", "MaterialAnims", "PostFX", "Points", "WebGPU", "WebGL2"},
+		Accent:  "#c4b5fd", Facets: []string{"Scene3D", "Animation channels", "MaterialAnims", "PostFX", "Points"},
 		SourcePath: "examples/gosx-docs/app/demos/orrery/program.go", Packages: []string{"scene", "route"},
 		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations:  "The choreography is one declared keyframe cycle played by the shared client runtime; it has no user-authored interaction beyond orbit controls and no server state. WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene caps rendering at 60 frames per second (FPS), device pixel ratio (DPR) 1.5, and a 720p render surface, and under prefers-reduced-motion its animation loop is suppressed to a still.",
@@ -150,11 +155,23 @@ var demoCatalog = []DemoDefinition{
 }
 
 func Demos() []DemoDefinition {
-	return demoCatalog
+	demos := make([]DemoDefinition, 0, len(demoCatalog))
+	for _, definition := range demoCatalog {
+		demo := definition
+		demo.Summary = demoSummaries[demo.Slug]
+		demo.Group = demoGroups[demo.Slug]
+		demo.PosterPath = "/demos/posters/" + demo.Slug + ".webp"
+		demo.SourcePaths = append([]string(nil), demoSources[demo.Slug]...)
+		if len(demo.SourcePaths) == 0 && demo.SourcePath != "" {
+			demo.SourcePaths = []string{demo.SourcePath}
+		}
+		demos = append(demos, demo)
+	}
+	return demos
 }
 
 func FindDemo(slug string) (DemoDefinition, bool) {
-	for _, demo := range demoCatalog {
+	for _, demo := range Demos() {
 		if demo.Slug == slug {
 			return demo, true
 		}
@@ -162,13 +179,11 @@ func FindDemo(slug string) (DemoDefinition, bool) {
 	return DemoDefinition{}, false
 }
 
-// ShowcaseDemos returns the editorially promoted demos in an explicit, stable
-// order. Promotion is independent from maturity status: the diagnostic bench
-// remains an honestly labelled lab even while the index gives it prominence.
+// ShowcaseDemos returns the featured row in explicit, stable order.
 func ShowcaseDemos() []DemoDefinition {
-	showcase := make([]DemoDefinition, 0, 4)
+	showcase := make([]DemoDefinition, 0, 1)
 	for rank := 1; rank <= 4; rank++ {
-		for _, demo := range demoCatalog {
+		for _, demo := range Demos() {
 			if demo.ShowcaseRank == rank {
 				showcase = append(showcase, demo)
 				break
@@ -180,7 +195,7 @@ func ShowcaseDemos() []DemoDefinition {
 
 func AdditionalDemos() []DemoDefinition {
 	additional := make([]DemoDefinition, 0, len(demoCatalog)-4)
-	for _, demo := range demoCatalog {
+	for _, demo := range Demos() {
 		if demo.ShowcaseRank == 0 {
 			additional = append(additional, demo)
 		}

@@ -7,13 +7,17 @@ import (
 
 func init() {
 	docsapp.RegisterStaticDocsPage(
-		"Demos",
-		"A tour of GoSX capabilities — servers, islands, real-time, simulation, and 3D.",
+		"GoSX demos",
+		"Browse interactive GoSX demos with source files, rendered posters, and verified renderer backends.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				demos, err := GalleryDemos()
+				if err != nil {
+					return nil, err
+				}
 				return map[string]any{
-					"showcase":   ShowcaseDemos(),
-					"additional": AdditionalDemos(),
+					"featured": FeaturedGalleryDemos(demos),
+					"groups":   GroupedGalleryDemos(demos),
 				}, nil
 			},
 			Bindings: func(_ *route.RouteContext, _ route.FilePage, _ any) route.FileTemplateBindings {

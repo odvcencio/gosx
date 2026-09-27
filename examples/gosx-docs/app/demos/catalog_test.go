@@ -37,11 +37,19 @@ func TestDemoCatalogContracts(t *testing.T) {
 		if len(demo.Facets) == 0 || len(demo.Packages) == 0 || demo.SourcePath == "" {
 			t.Errorf("demo %q lacks proof metadata", demo.Slug)
 		}
+		if demo.Summary == "" || demo.PosterPath != "/demos/posters/"+demo.Slug+".webp" {
+			t.Errorf("demo %q lacks its gallery summary or poster path", demo.Slug)
+		}
+		if len(demo.SourcePaths) == 0 || !contains(demo.SourcePaths, demo.SourcePath) {
+			t.Errorf("demo %q source links must include its primary source %q", demo.Slug, demo.SourcePath)
+		}
 		if demo.RenderMode == "" || demo.Limitations == "" {
 			t.Errorf("demo %q lacks honest runtime metadata", demo.Slug)
 		}
-		if _, err := os.Stat(repoPath(t, demo.SourcePath)); err != nil {
-			t.Errorf("demo %q source path %q: %v", demo.Slug, demo.SourcePath, err)
+		for _, sourcePath := range demo.SourcePaths {
+			if _, err := os.Stat(repoPath(t, sourcePath)); err != nil {
+				t.Errorf("demo %q source path %q: %v", demo.Slug, sourcePath, err)
+			}
 		}
 	}
 	// CMS earned "live" once block adding, live preview, and full-draft publish
@@ -76,10 +84,7 @@ func TestShowcaseDemosHaveStableTruthfulPromotion(t *testing.T) {
 		slug   string
 		status string
 	}{
-		{slug: "beacon", status: "featured"},
 		{slug: "water", status: "featured"},
-		{slug: "checkers", status: "live"},
-		{slug: "scene3d-bench", status: "lab"},
 	}
 	got := ShowcaseDemos()
 	if len(got) != len(want) {
@@ -96,11 +101,50 @@ func TestShowcaseDemosHaveStableTruthfulPromotion(t *testing.T) {
 			t.Errorf("showcase demo %q does not resolve to a source link", demo.Slug)
 		}
 	}
-	if got[3].Status == "featured" {
-		t.Error("the benchmark must remain labelled lab even when editorially promoted")
+	bench, ok := FindDemo("scene3d-bench")
+	if !ok || bench.Status != "lab" || bench.ShowcaseRank != 0 {
+		t.Error("the benchmark must remain a lab outside the featured row")
 	}
 	if len(AdditionalDemos())+len(got) != len(Demos()) {
 		t.Error("showcase and additional catalog slices must partition Demos()")
+	}
+	groups := GroupedGalleryDemos(Demos())
+	var blackglassGroup string
+	for _, group := range groups {
+		for _, demo := range group.Demos {
+			if demo.Slug == "beacon" {
+				blackglassGroup = group.Title
+			}
+		}
+	}
+	if blackglassGroup != "Engine studies" {
+		t.Errorf("Blackglass Coast gallery group = %q, want Engine studies", blackglassGroup)
+	}
+}
+
+func TestGalleryBackendsMatchSceneCapabilityVerdicts(t *testing.T) {
+	demos, err := GalleryDemos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, demo := range demos {
+		props, isScene := scenePropsForDemo(demo.Slug)
+		if !isScene {
+			if len(demo.Backends) == 0 {
+				t.Errorf("non-Scene3D demo %q lacks a renderer description", demo.Slug)
+			}
+			continue
+		}
+		verdict := props.SceneIR().BackendCaps
+		var want []string
+		for _, backend := range verdict.Capable {
+			if label := backendLabel(backend); label != "" {
+				want = append(want, label)
+			}
+		}
+		if strings.Join(demo.Backends, ",") != strings.Join(want, ",") {
+			t.Errorf("demo %q backends = %v, want Go capability verdict %v", demo.Slug, demo.Backends, want)
+		}
 	}
 }
 

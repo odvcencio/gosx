@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDemosIndexLinksToAccessibleScene3DShowreel(t *testing.T) {
+func TestDemosIndexRendersCuratedGalleryWithoutMountingScenes(t *testing.T) {
 	page := readDemoSource(t, "examples/gosx-docs/app/demos/page.gsx")
 	if strings.Contains(page, "<Scene3D ") {
 		t.Fatal("demos index must defer the Scene3D mount to its own route")
@@ -16,14 +16,13 @@ func TestDemosIndexLinksToAccessibleScene3DShowreel(t *testing.T) {
 		t.Error("demos index must not nest a main landmark inside the application main")
 	}
 	for _, required := range []string{
-		`<section class="demos-landing" aria-labelledby="demos-landing-title">`,
-		`id="demos-landing-title"`,
-		`aria-labelledby="demos-showreel-title"`,
-		`aria-describedby="demos-showreel-description"`,
-		`aria-label="Illustration of an orbital sculpture"`,
-		`href="/demos/showreel"`,
-		`data.showcase`,
-		`data.additional`,
+		`<section class="demos-gallery" aria-labelledby="demos-gallery-title">`,
+		`id="demos-gallery-title"`,
+		`data.featured`,
+		`data.groups`,
+		`demo.PosterPath`,
+		`demo.Backends`,
+		`demo.SourcePaths`,
 		`demoSourceURL(demo.SourcePath)`,
 	} {
 		if !strings.Contains(page, required) {
@@ -33,15 +32,11 @@ func TestDemosIndexLinksToAccessibleScene3DShowreel(t *testing.T) {
 	if strings.Contains(page, "<script") {
 		t.Error("demos index must not add bespoke script behavior")
 	}
-	if got := strings.Count(page, `data-gosx-link="true"`); got != 6 {
-		t.Errorf("demos index managed-navigation link declarations = %d, want 6", got)
+	if got := strings.Count(page, `data-gosx-link="true"`); got != 8 {
+		t.Errorf("demos index managed-navigation link declarations = %d, want 8", got)
 	}
 	if strings.Contains(page, `target="_blank" data-gosx-link="true"`) {
 		t.Error("external source links must not be intercepted by managed navigation")
-	}
-	showreel := readDemoSource(t, "examples/gosx-docs/app/demos/showreel/page.gsx")
-	if !strings.Contains(showreel, "<Scene3D {...data.scene} />") || !strings.Contains(showreel, `aria-label="Interactive orbital sculpture.`) {
-		t.Error("dedicated showreel route must mount an accessible Scene3D")
 	}
 }
 
@@ -51,13 +46,12 @@ func TestDemosIndexStylesHonorTokensResponsiveLayoutAndReducedMotion(t *testing.
 		`var(--font-display)`,
 		`var(--color-accent)`,
 		`var(--space-xl)`,
+		`var(--duration-normal)`,
+		`var(--radius-lg)`,
 		`@media (max-width: 700px)`,
 		`@media (prefers-reduced-motion: reduce)`,
-		`.demos-showreel__canvas`,
-		`[data-gosx-scene3d-renderer]::after`,
-		`attr(data-gosx-scene3d-renderer)`,
-		`attr(data-gosx-scene3d-renderer-fallback)`,
-		`overflow-x: hidden`,
+		`.demo-card__poster`,
+		`.demo-card__sources`,
 	} {
 		if !strings.Contains(css, required) {
 			t.Errorf("demos index CSS missing %q", required)
