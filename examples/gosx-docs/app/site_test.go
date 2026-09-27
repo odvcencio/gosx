@@ -11,8 +11,19 @@ func TestPublicSiteURLUsesValidatedPublicOrigin(t *testing.T) {
 	if got, want := PublicBaseURL(), "https://docs.example.test/base"; got != want {
 		t.Fatalf("PublicBaseURL() = %q; want %q", got, want)
 	}
-	if got, want := PublicSiteURL("docs/../docs/routing?tab=bad"), "https://docs.example.test/base/docs/routing"; got != want {
+	if got, want := PublicSiteURL("docs/../docs/routing?tab=bad"), "https://docs.example.test/base/docs/routing/"; got != want {
 		t.Fatalf("PublicSiteURL() = %q; want %q", got, want)
+	}
+	for input, want := range map[string]string{
+		"/":            "https://docs.example.test/base/",
+		"/docs":        "https://docs.example.test/base/docs",
+		"/docs/":       "https://docs.example.test/base/docs",
+		"/demos/water": "https://docs.example.test/base/demos/water/",
+		"/sitemap.xml": "https://docs.example.test/base/sitemap.xml",
+	} {
+		if got := PublicSiteURL(input); got != want {
+			t.Errorf("PublicSiteURL(%q) = %q; want %q", input, got, want)
+		}
 	}
 }
 

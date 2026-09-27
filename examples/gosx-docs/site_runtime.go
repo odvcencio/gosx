@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -242,7 +243,7 @@ func buildAssetFiles(manifest *buildmanifest.Manifest) []buildAssetRef {
 }
 
 func publicSiteRoutes() []string {
-	routes := []string{"/", "/demos"}
+	routes := []string{"/", "/demos", "/capabilities", "/performance"}
 	routes = append(routes, docsapp.DocsCatalogRoutes()...)
 	for _, demo := range demospages.Demos() {
 		routes = append(routes, "/demos/"+demo.Slug)
@@ -253,6 +254,10 @@ func publicSiteRoutes() []string {
 		routePath = strings.TrimSpace(routePath)
 		if routePath == "" || strings.HasPrefix(routePath, "/test/") {
 			continue
+		}
+		routePath = path.Clean("/" + strings.TrimLeft(routePath, "/"))
+		if routePath != "/" && routePath != "/docs" {
+			routePath += "/"
 		}
 		if _, ok := seen[routePath]; ok {
 			continue

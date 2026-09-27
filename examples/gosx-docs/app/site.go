@@ -38,6 +38,9 @@ func PublicSiteURL(routePath string) string {
 	if clean == "." || clean == "" {
 		clean = "/"
 	}
+	if clean != "/" && clean != "/docs" && path.Ext(clean) == "" {
+		clean += "/"
+	}
 	return PublicBaseURL() + clean
 }
 

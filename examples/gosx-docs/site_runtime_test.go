@@ -334,9 +334,20 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 		t.Fatalf("decode sitemap: %v", err)
 	}
 	joined := sitemapResponse.Body.String()
-	for _, required := range []string{"https://docs.example.test/", "https://docs.example.test/docs", "https://docs.example.test/demos/playground"} {
+	for _, required := range []string{
+		"https://docs.example.test/",
+		"https://docs.example.test/docs</loc>",
+		"https://docs.example.test/demos/playground/",
+		"https://docs.example.test/capabilities/",
+		"https://docs.example.test/performance/",
+	} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("sitemap missing %q", required)
+		}
+	}
+	for _, routePath := range publicSiteRoutes() {
+		if routePath != "/" && routePath != "/docs" && !strings.HasSuffix(routePath, "/") {
+			t.Errorf("sitemap route %q is not canonical", routePath)
 		}
 	}
 	if strings.Contains(joined, "/test/") {
