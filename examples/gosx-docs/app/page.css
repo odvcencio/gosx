@@ -511,7 +511,7 @@
 .home-hero {
   display: grid;
   grid-template-areas: "copy media";
-  grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.4fr);
   align-items: center;
   gap: clamp(2rem, 5vw, 5rem);
   width: min(100% - 2rem, 82rem);

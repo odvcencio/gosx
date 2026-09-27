@@ -41,7 +41,7 @@ func main() {
 }
 
 func generate() error {
-	for _, path := range []string{filepath.Join(public, "tabletop", "models"), filepath.Join(public, "tabletop", "env")} {
+	for _, path := range []string{filepath.Join(public, "tabletop", "models"), filepath.Join(public, "tabletop", "env"), filepath.Join(public, "tabletop", "surfaces")} {
 		if err := os.RemoveAll(path); err != nil {
 			return err
 		}
@@ -58,6 +58,9 @@ func generate() error {
 	if err := os.MkdirAll(filepath.Join(source, "tabletop", "env"), 0755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Join(source, "tabletop", "surfaces", "wood_table_001"), 0755); err != nil {
+		return err
+	}
 
 	for _, id := range modelIDs {
 		if err := downloadModel(client, source, id); err != nil {
@@ -66,6 +69,9 @@ func generate() error {
 		if err := rewriteGLTFImageURIs(filepath.Join(source, "tabletop", "models", id, id+"_1k.gltf")); err != nil {
 			return err
 		}
+	}
+	if err := downloadTabletopWood(client, source); err != nil {
+		return err
 	}
 	files, err := getRawJSON(client, polyAPI+"/files/studio_small_09")
 	if err != nil {
@@ -88,8 +94,12 @@ func generate() error {
 	// variants below build 256 px and 128 px KTX2 levels from a 256 px working
 	// image; PNG carries color, alpha, and linear maps without BC support.
 	textureInputs := make(map[string][]byte)
+	textureDirs := make([]string, 0, len(modelIDs)+1)
 	for _, id := range modelIDs {
-		texDir := filepath.Join(source, "tabletop", "models", id, "textures")
+		textureDirs = append(textureDirs, filepath.Join(source, "tabletop", "models", id, "textures"))
+	}
+	textureDirs = append(textureDirs, filepath.Join(source, "tabletop", "surfaces", "wood_table_001"))
+	for _, texDir := range textureDirs {
 		entries, err := os.ReadDir(texDir)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", texDir, err)
@@ -232,21 +242,23 @@ func generate() error {
 
 	// Copy only the reduced PNG fallback sources. Raw glTF JSON, source BINs,
 	// and the HDRI stay in the temporary build tree.
-	if err := filepath.WalkDir(filepath.Join(source, "tabletop", "models"), func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
+	for _, textureRoot := range []string{filepath.Join(source, "tabletop", "models"), filepath.Join(source, "tabletop", "surfaces")} {
+		if err := filepath.WalkDir(textureRoot, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
+				return err
+			}
+			rel, err := filepath.Rel(source, path)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return writeFile(filepath.Join(public, rel), data)
+		}); err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return writeFile(filepath.Join(public, rel), data)
-	}); err != nil {
-		return err
 	}
 
 	assets, err := committedAssetBytes(filepath.Join(public, "tabletop"))
@@ -296,6 +308,46 @@ func downloadModel(client *http.Client, root, id string) error {
 			return fmt.Errorf("Poly Haven omitted URL for %s/%s", id, rel)
 		}
 		if err := download(client, url, filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// downloadTabletopWood fetches the 1K albedo, OpenGL normal and roughness maps
+// from Poly Haven's Wood Table 001 CC0 texture set.
+func downloadTabletopWood(client *http.Client, root string) error {
+	data, err := getRawJSON(client, polyAPI+"/files/wood_table_001")
+	if err != nil {
+		return err
+	}
+	var files map[string]any
+	if err := json.Unmarshal(data, &files); err != nil {
+		return err
+	}
+	directory := filepath.Join(root, "tabletop", "surfaces", "wood_table_001")
+	for _, item := range []struct{ key, name string }{
+		{key: "Diffuse", name: "wood_table_001_diff.jpg"},
+		{key: "nor_gl", name: "wood_table_001_nor_gl.jpg"},
+		{key: "Rough", name: "wood_table_001_rough.jpg"},
+	} {
+		maps, ok := files[item.key].(map[string]any)
+		if !ok {
+			return fmt.Errorf("Poly Haven did not return wood_table_001 %s maps", item.key)
+		}
+		oneK, ok := maps["1k"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("Poly Haven did not return 1K wood_table_001 %s maps", item.key)
+		}
+		jpg, ok := oneK["jpg"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("Poly Haven did not return a JPEG for wood_table_001 %s", item.key)
+		}
+		url, _ := jpg["url"].(string)
+		if url == "" {
+			return fmt.Errorf("Poly Haven omitted URL for wood_table_001 %s", item.key)
+		}
+		if err := download(client, url, filepath.Join(directory, item.name)); err != nil {
 			return err
 		}
 	}
@@ -353,6 +405,8 @@ func textureRole(name string) (string, string) {
 	switch {
 	case strings.Contains(lower, "_nor") || strings.Contains(lower, "_normal"):
 		return "normal", "linear"
+	case strings.Contains(lower, "_rough"):
+		return "mask", "linear"
 	case strings.Contains(lower, "_arm") || strings.Contains(lower, "_orm"):
 		return "packed", "linear"
 	default:
@@ -481,6 +535,32 @@ func estimateFirstView(root string) (desktop, phone int64, err error) {
 		info, statErr := os.Stat(filepath.Join(root, "env", name))
 		if statErr == nil {
 			desktop += info.Size()
+			phone += info.Size()
+		}
+	}
+	woodDir := filepath.Join(root, "surfaces", "wood_table_001")
+	entries, readErr := os.ReadDir(woodDir)
+	if readErr != nil {
+		return 0, 0, readErr
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".png") {
+			continue
+		}
+		base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		variant, _ := filepath.Glob(filepath.Join(woodDir, base+".standard.*.ktx2"))
+		if len(variant) > 0 {
+			var best int64
+			for _, path := range variant {
+				info, statErr := os.Stat(path)
+				if statErr == nil && (best == 0 || info.Size() < best) {
+					best = info.Size()
+				}
+			}
+			desktop += best
+		}
+		info, statErr := entry.Info()
+		if statErr == nil {
 			phone += info.Size()
 		}
 	}

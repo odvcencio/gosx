@@ -11,7 +11,7 @@
   width: min(100% - 2rem, 82rem);
   min-width: 0;
   margin: 0 auto;
-  padding: clamp(2rem, 5vw, 4.5rem) 0 5rem;
+  padding: clamp(1rem, 1.5vw, 1.5rem) 0 5rem;
 }
 
 .tabletop__header {
@@ -19,7 +19,7 @@
   align-items: end;
   justify-content: space-between;
   gap: var(--space-lg);
-  margin-bottom: var(--space-xl);
+  margin-bottom: var(--space-md);
 }
 
 .tabletop__back {
@@ -31,16 +31,16 @@
 }
 
 .tabletop__header h1 {
-  max-width: 14ch;
+  max-width: 25ch;
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(2.3rem, 4.3vw, 4.25rem);
+  font-size: clamp(2.3rem, 3.8vw, 3.5rem);
   line-height: 1.02;
   letter-spacing: var(--ls-headline);
 }
 
 .tabletop__header > div:first-child > p {
-  max-width: 42rem;
+  max-width: 54rem;
   margin: var(--space-md) 0 0;
   color: var(--text-secondary);
   line-height: var(--lh-prose);
@@ -69,7 +69,7 @@
 
 .tabletop__workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: var(--space-lg);
 }
@@ -79,12 +79,19 @@
   min-width: 0;
 }
 
+.tabletop__rail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-lg);
+}
+
 .tabletop__stage {
   position: relative;
   width: 100%;
-  height: auto;
+  height: max(70vh, 40rem);
   min-height: 0;
-  aspect-ratio: 1100 / 760;
+  aspect-ratio: auto;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 1.25rem;
@@ -124,6 +131,56 @@
 
 .tabletop__stage #tabletop-scene[data-gosx-scene3d-revealed="true"] canvas {
   opacity: 1;
+}
+
+.tabletop__software-start {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 3;
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+.tabletop__software-start[hidden],
+.tabletop__software-start [hidden] {
+  display: none;
+}
+
+.tabletop__software-start p {
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  text-align: center;
+}
+
+.tabletop__software-start button {
+  min-height: 2.75rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--accent-line);
+  border-radius: 0.75rem;
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.tabletop__software-start button:focus-visible {
+  outline: 3px solid var(--text-primary);
+  outline-offset: 3px;
+}
+
+.tabletop__stage #tabletop-scene[data-gosx-scene3d-start-required="true"] .tabletop__fallback {
+  display: none;
 }
 
 .tabletop__fallback {

@@ -14,7 +14,61 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/crdt"
+	"m31labs.dev/gosx/scene"
 )
+
+func TestTabletopSeedSceneArtContract(t *testing.T) {
+	room := newTabletopRoom("0123456789abcdef", time.Now())
+	props := room.Props()
+	if got := room.Metrics().Objects; got != 6 {
+		t.Fatalf("seed object count = %d, want 6", got)
+	}
+	wantObjects := map[string]bool{
+		"prop-ceramic": false, "prop-brass": false, "prop-plant": false,
+		"prop-book": false, "prop-candle": false, "prop-orb": false,
+	}
+	woodTextureSet := false
+	for _, node := range props.Graph.Nodes {
+		switch item := node.(type) {
+		case scene.Model:
+			if _, ok := wantObjects[item.ID]; ok {
+				wantObjects[item.ID] = true
+			}
+		case scene.Mesh:
+			if _, ok := wantObjects[item.ID]; ok {
+				wantObjects[item.ID] = true
+			}
+			if item.ID == "tabletop-surface" {
+				material, ok := item.Material.(scene.StandardMaterial)
+				if !ok {
+					t.Fatal("tabletop surface must use a StandardMaterial")
+				}
+				woodTextureSet = material.Texture == "/tabletop/surfaces/wood_table_001/wood_table_001_diff.png" &&
+					material.NormalMap == "/tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.png" &&
+					material.RoughnessMap == "/tabletop/surfaces/wood_table_001/wood_table_001_rough.png"
+			}
+		}
+	}
+	for id, present := range wantObjects {
+		if !present {
+			t.Errorf("seed still life is missing %s", id)
+		}
+	}
+	if !woodTextureSet {
+		t.Fatal("table surface must use albedo, OpenGL normal and roughness maps")
+	}
+	if props.Environment.Sky == nil || props.Environment.Sky.Mode != "gradient" {
+		t.Fatal("tabletop backdrop must use the gradient sky")
+	}
+	if props.Camera.FOV < 27 || props.Camera.FOV > 40 || props.Camera.PortraitFOV < 27 || props.Camera.PortraitFOV > 40 {
+		t.Fatalf("camera fields of view = %g/%g, want 27-40 degrees", props.Camera.FOV, props.Camera.PortraitFOV)
+	}
+	horizontal := math.Hypot(props.Camera.Position.X, props.Camera.Position.Z)
+	elevation := math.Atan2(props.Camera.Position.Y-0.52, horizontal) * 180 / math.Pi
+	if elevation < 15 || elevation > 30 {
+		t.Fatalf("camera elevation = %.1f degrees, want 15-30", elevation)
+	}
+}
 
 func TestTabletopPlacementRules(t *testing.T) {
 	tests := []struct {

@@ -4,8 +4,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 )
+
+func TestTabletopAndHomeUseDeclarativeSceneStartPolicies(t *testing.T) {
+	tabletop, err := os.ReadFile("page.gsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`startPolicy="hardware-auto-software-manual"`,
+		`data-gosx-scene3d-start="tabletop-scene"`,
+		`data-gosx-scene3d-software-note="tabletop-scene"`,
+		"Start the live scene",
+		"This device renders 3D in software.",
+	} {
+		if !strings.Contains(string(tabletop), required) {
+			t.Errorf("tabletop page is missing declarative startup contract %q", required)
+		}
+	}
+
+	home, err := os.ReadFile("../../page.gsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(home), `startPolicy="idle-visible-hardware"`) || !strings.Contains(string(home), `maxFrameRate={30}`) {
+		t.Fatal("home Scene3D must use the idle-visible-hardware policy and 30 FPS cap")
+	}
+}
 
 func TestRoomRouteMiddlewareBypassesISRAndNormalizesSlash(t *testing.T) {
 	var bypass string

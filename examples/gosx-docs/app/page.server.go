@@ -33,7 +33,7 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				heroPoster := server.ScenePosterConfig{
-					URL: "/tabletop/tabletop-home-poster.webp", Alt: "Four PBR studio models arranged on a wood and brass tabletop",
+					URL: "/tabletop/tabletop-home-poster.webp", Alt: "Six studio objects on a textured wood tabletop, backed by a soft gradient sweep",
 					Width: 1100, Height: 760,
 				}
 				ctx.Runtime().SetTextureVariants(homeTabletopVariants)

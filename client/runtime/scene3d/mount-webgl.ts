@@ -5353,7 +5353,8 @@ function gosxConfigureSceneScript(script, role, src) {
     };
     const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
     const changed = state.lastPublishedRevision !== state.qualityRevision;
-    if (!force && !changed && now - state.lastPublishedAtMS < 250) return;
+    // Keep the human-facing status bindings at no more than two updates/sec.
+    if (!force && !changed && now - state.lastPublishedAtMS < 500) return;
     state.lastPublishedAtMS = now;
     state.lastPublishedRevision = state.qualityRevision;
     setAttrValue(mount, "data-gosx-scene3d-adaptive-quality", state.enabled ? "true" : "false");

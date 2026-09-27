@@ -3,17 +3,17 @@
   "adaptiveQuality": true,
   "adaptiveTargetFrameMS": 16.7,
   "adaptiveWarmupFrames": 120,
-  "ariaLabel": "A shared, interactive tabletop diorama with four PBR models",
+  "ariaLabel": "A shared, interactive tabletop still life with six objects",
   "autoRotate": true,
   "background": "#111214",
   "camera": {
     "far": 80,
-    "fov": 40,
+    "fov": 32,
     "near": 0.1,
-    "portraitFOV": 55,
-    "x": 5.5,
-    "y": 4.7,
-    "z": 6.6
+    "portraitFOV": 32,
+    "x": 3.9,
+    "y": 3.05,
+    "z": 4.4
   },
   "canvasAlpha": false,
   "controlMaxDistance": 10.8,
@@ -37,18 +37,6 @@
   "responsive": true,
   "scene": {
     "objects": [
-      {
-        "id": "tabletop-ground",
-        "kind": "plane",
-        "width": 200,
-        "height": 200,
-        "materialKind": "standard",
-        "color": "#17191b",
-        "wireframe": false,
-        "receiveShadow": true,
-        "roughness": 0.92,
-        "y": -0.42
-      },
       {
         "id": "tabletop-base",
         "kind": "cylinder",
@@ -104,13 +92,74 @@
         "radiusTop": 2.2,
         "radiusBottom": 2.2,
         "materialKind": "standard",
-        "color": "#695244",
+        "color": "#d4c2ad",
+        "texture": "/tabletop/surfaces/wood_table_001/wood_table_001_diff.png",
         "wireframe": false,
         "pickable": true,
         "receiveShadow": true,
-        "roughness": 0.38,
+        "roughness": 0.7,
         "metalness": 0.02,
+        "normalMap": "/tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.png",
+        "roughnessMap": "/tabletop/surfaces/wood_table_001/wood_table_001_rough.png",
+        "textureDescriptors": {
+          "baseColor": {
+            "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_diff.png",
+            "role": "base-color",
+            "colorSpace": "srgb",
+            "channels": "rgba",
+            "view": "2d"
+          },
+          "normal": {
+            "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.png",
+            "role": "normal",
+            "colorSpace": "linear",
+            "channels": "rgb",
+            "view": "2d"
+          },
+          "roughness": {
+            "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_rough.png",
+            "role": "roughness",
+            "colorSpace": "linear",
+            "channels": "g",
+            "view": "2d"
+          }
+        },
         "y": 0.052
+      },
+      {
+        "id": "prop-candle",
+        "kind": "cylinder",
+        "height": 0.58,
+        "segments": 32,
+        "radiusTop": 0.12,
+        "radiusBottom": 0.14,
+        "materialKind": "standard",
+        "color": "#bca88e",
+        "wireframe": false,
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true,
+        "roughness": 0.76,
+        "x": 0.45,
+        "y": 0.354,
+        "z": 0.55
+      },
+      {
+        "id": "prop-orb",
+        "kind": "sphere",
+        "radius": 0.24,
+        "segments": 32,
+        "materialKind": "standard",
+        "color": "#9d7557",
+        "wireframe": false,
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true,
+        "roughness": 0.3,
+        "clearcoat": 0.26,
+        "x": 1.27,
+        "y": 0.304,
+        "z": -0.83
       }
     ],
     "models": [
@@ -120,9 +169,9 @@
         "pickable": true,
         "castShadow": true,
         "receiveShadow": true,
-        "x": 0.08,
-        "y": 0.11,
-        "z": 0.96,
+        "x": -0.6,
+        "y": 0.065,
+        "z": 1,
         "rotationY": 0.20000000000000004,
         "src": "/tabletop/models/binder_notebook/binder_notebook_1k.opt.glb",
         "scaleX": 1.75,
@@ -138,9 +187,9 @@
         "pickable": true,
         "castShadow": true,
         "receiveShadow": true,
-        "x": 0.84,
-        "y": 0.11,
-        "z": 0.1,
+        "x": 0.82,
+        "y": 0.065,
+        "z": 0.08,
         "rotationY": 0.45,
         "src": "/tabletop/models/brass_vase_01/brass_vase_01_1k.opt.glb",
         "scaleX": 1.45,
@@ -156,9 +205,9 @@
         "pickable": true,
         "castShadow": true,
         "receiveShadow": true,
-        "x": -0.74,
-        "y": 0.11,
-        "z": 0.22,
+        "x": -0.78,
+        "y": 0.065,
+        "z": 0.16,
         "src": "/tabletop/models/ceramic_vase_01/ceramic_vase_01_1k.opt.glb",
         "scaleX": 1.4,
         "scaleY": 1.4,
@@ -173,9 +222,9 @@
         "pickable": true,
         "castShadow": true,
         "receiveShadow": true,
-        "x": -0.98,
-        "y": 0.11,
-        "z": -0.85,
+        "x": -1.12,
+        "y": 0.065,
+        "z": -0.82,
         "src": "/tabletop/models/potted_plant_04/potted_plant_04_1k.opt.glb",
         "scaleX": 1.28,
         "scaleY": 1.28,
@@ -189,7 +238,7 @@
       {
         "id": "tabletop-key",
         "kind": "directional",
-        "color": "#fff0dc",
+        "color": "#ffd9b5",
         "intensity": 1.7,
         "directionX": -0.42,
         "directionY": -1,
@@ -197,19 +246,19 @@
         "castShadow": true,
         "shadowBias": -0.001,
         "shadowSize": 1024,
-        "shadowSoftness": 0.78
+        "shadowSoftness": 0.55
       },
       {
         "id": "tabletop-fill",
         "kind": "hemisphere",
-        "color": "#e4dfd3",
+        "color": "#a6bbd0",
         "groundColor": "#403b37",
         "intensity": 0.48
       },
       {
         "id": "tabletop-rim",
         "kind": "point",
-        "color": "#e8cda7",
+        "color": "#99b8d2",
         "intensity": 0.65,
         "x": -2.7,
         "y": 2.2,
@@ -220,7 +269,7 @@
     ],
     "environment": {
       "ambientColor": "#c9bca9",
-      "ambientIntensity": 0.18,
+      "ambientIntensity": 0.13,
       "ibl": {
         "schemaVersion": 1,
         "source": "Poly Haven Studio Small 09 (CC0 1.0)",
@@ -318,15 +367,21 @@
           ]
         ]
       },
+      "sky": {
+        "mode": "gradient",
+        "topColor": "#29465f",
+        "horizonColor": "#b38d69",
+        "bottomColor": "#384653"
+      },
       "envIntensity": 0.88,
       "envRotation": 0.25,
-      "exposure": 1.06,
+      "exposure": 1.02,
       "toneMapping": "aces"
     },
     "postEffects": [
       {
         "kind": "toneMapping",
-        "exposure": 1.06,
+        "exposure": 1.02,
         "mode": "aces"
       },
       {

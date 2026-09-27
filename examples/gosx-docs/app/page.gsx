@@ -12,7 +12,7 @@ func Page() Node {
 				<img
 					class="home-hero__poster"
 					src={data.heroPosterURL}
-					alt="Four PBR studio models arranged on a wood and brass tabletop"
+					alt="Six studio objects on a textured wood tabletop, backed by a soft gradient sweep"
 					width="1100"
 					height="760"
 					fetchpriority="high"
@@ -22,11 +22,13 @@ func Page() Node {
 					id="home-tabletop-scene"
 					class="home-hero__scene"
 					{...data.heroScene}
+					startPolicy="idle-visible-hardware"
+					maxFrameRate={30}
 					respectReducedMotion={true}
 					data-gosx-scene3d-reveal-class="home-scene-ready"
 				>
 					<p class="home-hero__fallback">
-						The diorama poster stays visible when this browser cannot run WebGPU or WebGL2.
+						The live scene starts when this page is idle and a hardware GPU is available.
 					</p>
 				</Scene3D>
 				<p class="home-hero__caption">

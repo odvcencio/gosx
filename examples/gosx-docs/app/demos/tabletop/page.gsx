@@ -13,7 +13,7 @@ func Page() Node {
 					<a class="tabletop__back" href="/demos" data-gosx-link="true">All demos</a>
 					<h1 id="tabletop-title">A room you can shape.</h1>
 					<p>
-						Four studio models, one shared document. Place an object on the table to add it for everyone here.
+						Six objects, one shared document. Place another on the table to add it for everyone here.
 					</p>
 				</div>
 				<div
@@ -47,11 +47,20 @@ func Page() Node {
 						<Scene3D
 							id="tabletop-scene"
 							{...data.scene}
+							startPolicy="hardware-auto-software-manual"
 							respectReducedMotion={true}
 							data-gosx-scene3d-reveal-class="tabletop-scene-ready"
 						>
 							<p class="tabletop__fallback">{data.scene.UnsupportedMessage}</p>
 						</Scene3D>
+						<div class="tabletop__software-start" aria-live="polite">
+							<p data-gosx-scene3d-software-note="tabletop-scene" hidden>
+								This device renders 3D in software.
+							</p>
+							<button data-gosx-scene3d-start="tabletop-scene" type="button" hidden>
+								Start the live scene
+							</button>
+						</div>
 					</div>
 					<p class="tabletop__hint">
 						Click or tap an open spot to place. Select a model to rotate or remove it.
@@ -154,6 +163,8 @@ func TabletopControls(props TabletopControlsProps) Node {
 				<button type="button" aria-pressed={palette.Get() == "brass"} data-on-click="palette.Set(\"brass\")">Brass</button>
 				<button type="button" aria-pressed={palette.Get() == "plant"} data-on-click="palette.Set(\"plant\")">Plant</button>
 				<button type="button" aria-pressed={palette.Get() == "book"} data-on-click="palette.Set(\"book\")">Notebook</button>
+				<button type="button" aria-pressed={palette.Get() == "candle"} data-on-click="palette.Set(\"candle\")">Candle</button>
+				<button type="button" aria-pressed={palette.Get() == "orb"} data-on-click="palette.Set(\"orb\")">Sphere</button>
 			</div>
 		</section>
 		<section class="tabletop__control-group">

@@ -2,7 +2,7 @@
   "sourceFiles": [
     {
       "path": "rooms.go",
-      "lines": 896
+      "lines": 932
     },
     {
       "path": "page.server.go",
@@ -10,7 +10,7 @@
     },
     {
       "path": "page.gsx",
-      "lines": 199
+      "lines": 210
     }
   ],
   "javascriptLines": 0
