@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,8 +25,14 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 			t.Fatalf("wait for configured docs server: %v", err)
 		}
 	} else {
-		app.baseURL = fmt.Sprintf("http://127.0.0.1:%d", freeE2EPort(t))
-		app = startDocsApp(t, app.baseURL)
+		// The dev server does not install the docs app's custom room WebSocket
+		// mount. This proof covers the routed room and generated browser runtime,
+		// so use the production-shaped app unless a server was explicitly given.
+		app = startProductionDocsApp(t)
+		// The built app defaults PUBLIC_URL to localhost. Keep the browser origin
+		// aligned with that host so the docs origin checks and WebSocket upgrade
+		// exercise the same public-shaped URL.
+		app.baseURL = strings.Replace(app.baseURL, "http://127.0.0.1:", "http://localhost:", 1)
 	}
 	roomID := fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
 	roomURL := app.baseURL + "/demos/tabletop?room=" + roomID
@@ -37,6 +44,7 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 		if status := page.navigate(t, roomURL); status < 200 || status > 299 {
 			t.Fatalf("%s browser got HTTP %d for shared room\n\nLogs:\n%s", name, status, app.logs.String())
 		}
+		page.waitFor(t, `Array.from(window.__gosx?.hubs?.values?.() || []).some((hub) => hub.entry?.path?.includes("/demos/tabletop/ws/"))`, 10*time.Second, "tabletop hub binding")
 		var hubRoomID string
 		page.eval(t, `new URL(Array.from(window.__gosx.hubs.values())[0].entry.path, location.origin).searchParams.get('room')`, &hubRoomID)
 		if hubRoomID != roomID {
@@ -50,8 +58,8 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 			t.Fatalf("%s browser has horizontal overflow at 390 px", name)
 		}
 	}
-	first.waitFor(t, `document.querySelector('.tabletop__presence strong')?.textContent.includes('2 here')`, 10*time.Second, "two visitors in one room")
-	second.waitFor(t, `document.querySelector('.tabletop__presence strong')?.textContent.includes('2 here')`, 10*time.Second, "shared visitor count")
+	waitForTabletopVisitors(t, first, app, "first")
+	waitForTabletopVisitors(t, second, app, "second")
 
 	saveTabletopEvidenceFrame(t, first, "01-first-before.png")
 	saveTabletopEvidenceFrame(t, second, "02-second-before.png")
@@ -125,6 +133,16 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 	if got := second.PageErrors(); len(got) > 0 {
 		t.Fatalf("second browser reported page errors: %v\nconsole:\n%s", got, second.Console())
 	}
+}
+
+func waitForTabletopVisitors(t *testing.T, page *browserPage, app *docsApp, name string) {
+	t.Helper()
+	if page.pollFor(`document.querySelector('.tabletop__presence strong')?.innerText.includes('2 here')`, 10*time.Second) {
+		return
+	}
+	var state string
+	_ = page.tryEval(`JSON.stringify({presence: document.querySelector('.tabletop__presence')?.innerText, hubs: Array.from(window.__gosx?.hubs?.values?.() || []).map((hub) => ({path: hub.entry?.path, url: hub.socket?.url, readyState: hub.socket?.readyState})), events: window.__tabletopHubEvents})`, &state)
+	t.Fatalf("%s browser did not see two visitors in the shared room\nBrowser state: %s\nConsole:\n%s\nServer logs:\n%s", name, state, page.Console(), app.logs.String())
 }
 
 func saveTabletopEvidenceFrame(t *testing.T, page *browserPage, name string) {
