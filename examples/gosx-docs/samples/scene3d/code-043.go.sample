@@ -1,0 +1,4 @@
+props.AdaptiveQuality = scene.Bool(true)
+	props.AdaptiveTargetFrameMS = 16.7 // aim for 60 fps
+	props.AdaptiveWarmupFrames = 30    // ignore the first 30 frames
+	props.AdaptivePostFX = scene.Bool(true)

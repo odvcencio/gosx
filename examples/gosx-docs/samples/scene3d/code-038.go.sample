@@ -1,0 +1,9 @@
+accel := scene.NewSceneAccelerator(props.Graph, scene.PointThreshold(0.25))
+
+	hit, ok := accel.Raycast(scene.Ray{
+	    Origin:    scene.Vec3(0, 4, 12),
+	    Direction: scene.Vec3(0, -0.3, -1),
+	}, scene.PickableOnly(), scene.MaxDistance(50))
+	if ok {
+	    log.Printf("hit %s at %.3f via %s", hit.ID, hit.Distance, hit.Method)
+	}

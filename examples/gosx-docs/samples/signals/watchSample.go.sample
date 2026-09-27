@@ -1,0 +1,4 @@
+effect := signal.Watch(func() {
+	log.Printf("total changed: %d", total.Get())
+})
+defer effect.Dispose()

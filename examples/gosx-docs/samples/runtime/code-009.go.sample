@@ -1,0 +1,6 @@
+func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    remaining := time.Until(launchAt)
+	    return map[string]any{
+	        "countdownText": fmt.Sprintf("%d:%02d", int(remaining.Minutes()), int(remaining.Seconds())%60),
+	    }, nil
+	}

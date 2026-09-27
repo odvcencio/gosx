@@ -1,0 +1,3 @@
+<b data-gosx-countdown="2026-09-06T17:00:00Z"
+	    data-gosx-live-bind-attr="data-gosx-countdown:clock.effective_deadline"
+	    data-gosx-live-bind-class="pick-clock--paused:clock.paused">15:00</b>

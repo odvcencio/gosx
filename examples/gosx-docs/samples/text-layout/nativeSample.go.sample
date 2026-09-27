@@ -1,0 +1,10 @@
+node := server.TextBlock(server.TextBlockProps{
+	Mode:       server.TextBlockModeNative,
+	Tag:        "p",
+	Text:       article.Summary,
+	Font:       "400 16px Inter",
+	MaxWidth:   520,
+	LineHeight: 24,
+	MaxLines:   3,
+	Overflow:   textlayout.OverflowEllipsis,
+})

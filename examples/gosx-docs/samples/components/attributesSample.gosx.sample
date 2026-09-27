@@ -1,0 +1,12 @@
+type FieldProps struct {
+	ID    string
+	Class string
+	Label string
+}
+
+component Field(props: FieldProps) {
+	return <label className={props.Class} htmlFor={props.ID}>
+		{props.Label}
+		<input id={props.ID} required />
+	</label>
+}

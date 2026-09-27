@@ -1,0 +1,4 @@
+ctx.ValidationFailure("Please correct the highlighted fields.", map[string]string{
+	"email": "A valid email address is required.",
+	"name":  "Name must be at least two characters.",
+})

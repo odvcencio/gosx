@@ -1,0 +1,13 @@
+scene.Points{
+	    ID:           "stars",
+	    Count:        20000,
+	    Positions:    starPositions,
+	    Color:        "#dbeafe",
+	    Style:        scene.PointStyleGlow,
+	    Size:         0.04,
+	    MinPixelSize: 1.5,
+	    MaxPixelSize: 6,
+	    Opacity:      0.9,
+	    BlendMode:    scene.BlendAdditive,
+	    Attenuation:  true,
+	}

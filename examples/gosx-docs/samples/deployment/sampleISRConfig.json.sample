@@ -1,0 +1,8 @@
+{
+  "cache": {
+    "public": true,
+    "maxAge": "60s",
+    "staleWhileRevalidate": "5m"
+  },
+  "cacheTags": ["products"]
+}

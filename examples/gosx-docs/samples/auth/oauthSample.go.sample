@@ -1,0 +1,8 @@
+oauth := authn.OAuth(auth.OAuthOptions{
+	Providers: []auth.OAuthProvider{
+		auth.GoogleProvider(clientID, clientSecret, "https://app.example/auth/google/callback"),
+	},
+	SuccessPath: "/dashboard",
+})
+app.Mount("/auth/google", oauth.BeginHandler("google"))
+app.Mount("/auth/google/callback", oauth.CallbackHandler("google"))

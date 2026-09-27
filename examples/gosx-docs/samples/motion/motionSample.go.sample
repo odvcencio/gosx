@@ -1,0 +1,10 @@
+node := ctx.Motion(server.MotionProps{
+	Tag:      "article",
+	Preset:   server.MotionPresetSlideUp,
+	Trigger:  server.MotionTriggerView,
+	Duration: 260,
+	Delay:    40,
+},
+	gosx.Attrs(gosx.Attr("class", "result-card")),
+	gosx.Text("Ready"),
+)

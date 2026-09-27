@@ -1,0 +1,10 @@
+my-app/
+├── app/
+│   ├── layout.gsx          # Root layout shared by all pages
+│   ├── page.gsx            # Home page template
+│   ├── page.server.go      # Home page server module
+│   ├── error.gsx           # 500 error page
+│   └── not-found.gsx       # 404 page
+├── public/                 # Static assets served at /
+├── main.go                 # App entry point
+└── go.mod

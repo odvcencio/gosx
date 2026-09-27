@@ -1,0 +1,62 @@
+// Ambient — flat fill, no direction.
+	scene.AmbientLight{Color: "#ffffff", Intensity: 0.15}
+
+	// Directional — parallel rays from infinity. Casts shadows.
+	scene.DirectionalLight{
+	    Color:          "#fff1d6",
+	    Intensity:      1.2,
+	    Direction:      scene.Vec3(0.3, -1.0, -0.5),
+	    CastShadow:     true,
+	    ShadowBias:     -0.001,
+	    ShadowSize:     2048,
+	    ShadowCascades: 3,
+	    ShadowSoftness: 1.5,
+	}
+
+	// Point — omnidirectional with distance falloff.
+	scene.PointLight{
+	    Color:     "#D4AF37",
+	    Intensity: 0.8,
+	    Position:  scene.Vec3(-3, 4, 2),
+	    Range:     20,
+	    Decay:     2,
+	}
+
+	// Spot — a cone with a soft edge and one perspective shadow map.
+	scene.SpotLight{
+	    Color:          "#ffffff",
+	    Intensity:      1.5,
+	    Position:       scene.Vec3(0, 6, 0),
+	    Direction:      scene.Vec3(0, -1, 0),
+	    Angle:          0.35, // cone half-angle, radians; must be less than pi/2
+	    Penumbra:       0.2,  // 0 = hard edge, 1 = fully soft
+	    Range:          30,
+	    Decay:          2,
+	    CastShadow:     true,
+	    ShadowBias:     -0.001,
+	    ShadowSize:     1024,
+	    ShadowSoftness: 1.0,
+	}
+
+	// Hemisphere — a sky and ground gradient.
+	scene.HemisphereLight{
+	    SkyColor:    "#87ceeb",
+	    GroundColor: "#2d4a1e",
+	    Intensity:   0.4,
+	}
+
+	// Rect-area — a rectangular emitter.
+	scene.RectAreaLight{
+	    Color:     "#ffffff",
+	    Intensity: 3,
+	    Position:  scene.Vec3(0, 3, 2),
+	    Direction: scene.Vec3(0, -0.3, -1),
+	    Width:     4,
+	    Height:    2,
+	}
+
+	// Light probe — an ambient probe.
+	scene.LightProbe{
+	    Color:     "#cfe6ff",
+	    Intensity: 0.5,
+	}

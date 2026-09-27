@@ -1,0 +1,2 @@
+// Redirect safely and explain what changed.
+ctx.RedirectWithMessage("/subscribe/confirmed", "Subscription confirmed.")

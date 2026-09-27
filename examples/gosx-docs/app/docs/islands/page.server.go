@@ -22,10 +22,10 @@ func init() {
 					{"href": "#program-assets", "label": "Program Assets"},
 					{"href": "#choosing", "label": "Choosing Islands"},
 				},
-				"counterSample":     "package counter\n\n//gosx:island\ncomponent Counter() {\n\tcount := signal.New(0)\n\tincrement := func() { count.Set(count.Get() + 1) }\n\tdecrement := func() { count.Set(count.Get() - 1) }\n\treturn <div class=\"counter\">\n\t\t<button onClick={decrement}>-</button>\n\t\t<span>{count.Get()}</span>\n\t\t<button onClick={increment}>+</button>\n\t</div>\n}",
-				"compositionSample": "type LabelProps struct { Text string }\n\ncomponent Label(props: LabelProps) {\n\treturn <span class=\"label\">{props.Text}{children}</span>\n}\n\n//gosx:island\ncomponent Counter() {\n\tcount := signal.New(0)\n\tincrement := func() { count.Set(count.Get() + 1) }\n\treturn <Label text=\"Count: \">\n\t\t<button onClick={increment}>{count.Get()}</button>\n\t</Label>\n}",
-				"sharedSample":      "//gosx:island\ncomponent ThemeSwitch() {\n\ttheme := signal.NewShared(\"theme\", \"dark\")\n\ttoggle := func() {\n\t\ttheme.Set(theme.Get() == \"dark\" ? \"light\" : \"dark\")\n\t}\n\treturn <button onClick={toggle}>{theme.Get()}</button>\n}",
-				"assetSample":       "node := ctx.Runtime().IslandWithProgramAsset(\n\tcounterProgram,\n\tmap[string]int{\"initial\": 2},\n\t\"/islands/Counter.bin\",\n\t\"bin\",\n\tcounterHash,\n)",
+				"counterSample":     docsapp.DocSample("islands/counterSample.gosx.sample"),
+				"compositionSample": docsapp.DocSample("islands/compositionSample.gosx.sample"),
+				"sharedSample":      docsapp.DocSample("islands/sharedSample.gosx.sample"),
+				"assetSample":       docsapp.DocSample("islands/assetSample.go.sample"),
 			}, nil
 		},
 	})

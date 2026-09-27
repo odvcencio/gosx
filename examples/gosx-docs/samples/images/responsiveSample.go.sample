@@ -1,0 +1,9 @@
+node := server.Image(server.ImageProps{
+	Src:        "/photos/harbor.jpg",
+	Alt:        "Harbor at dusk",
+	Responsive: true,
+	Width:      1200,
+	Height:     750,
+	Widths:     []int{320, 640, 960, 1200},
+	Sizes:      "(max-width: 720px) 100vw, 720px",
+})

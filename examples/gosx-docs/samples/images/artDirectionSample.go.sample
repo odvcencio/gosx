@@ -1,0 +1,18 @@
+node := server.Image(server.ImageProps{
+	Src:    "https://images.example.com/hero-wide.jpg",
+	Alt:    "Potter shaping clay at the wheel",
+	Width:  1600,
+	Height: 900,
+	Sources: []server.ImageSource{
+		{
+			Media:  "(max-width: 600px)",
+			SrcSet: "https://images.example.com/hero-tight-480.jpg 480w, https://images.example.com/hero-tight-800.jpg 800w",
+			Sizes:  "100vw",
+			Width:  800,
+			Height: 1000,
+		},
+	},
+	PictureAttrs: gosx.Attrs(
+		gosx.Attr("class", "responsive-picture"),
+	),
+})

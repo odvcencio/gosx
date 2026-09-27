@@ -1,0 +1,10 @@
+package cards
+
+func Page() Node {
+	return <main>
+		<h1>{data.title}</h1>
+		<Each of={data.cards} as="card">
+			<article>{card.title}</article>
+		</Each>
+	</main>
+}

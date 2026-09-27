@@ -1,0 +1,9 @@
+scene.CustomMaterial{
+	    StandardMaterial: scene.StandardMaterial{Color: "#8ecfff"},
+	    ShaderBackend:    "selena",
+	    VertexWGSL:       vertexWGSL,
+	    FragmentWGSL:     fragmentWGSL,
+	    VertexGLSL:       vertexGLSL,
+	    FragmentGLSL:     fragmentGLSL,
+	    Uniforms:         map[string]any{"pulse": 0.4},
+	}

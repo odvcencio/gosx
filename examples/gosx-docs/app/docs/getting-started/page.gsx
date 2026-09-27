@@ -1,5 +1,7 @@
 package docs
 
+import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+
 func Page() Node {
 	return <div>
 		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
@@ -46,7 +48,7 @@ func Page() Node {
 				<span class="inline-code">go install</span>
 				command.
 			</p>
-			{CodeBlock("bash", "go install m31labs.dev/gosx/cmd/gosx@latest")}
+			{CodeBlock("bash", docsapp.DocSample("getting-started/code-001.bash.sample"))}
 			<p>
 				Verify the installation by running
 				<span class="inline-code">gosx version</span>
@@ -60,7 +62,7 @@ func Page() Node {
 				<span class="inline-code">gosx init</span>
 				command scaffolds a new project with a runnable app, metadata, 404 and 500 pages, public assets, and the navigation runtime already wired up.
 			</p>
-			{CodeBlock("bash", "gosx init my-app\ncd my-app\ngo run .")}
+			{CodeBlock("bash", docsapp.DocSample("getting-started/code-002.bash.sample"))}
 			<p>
 				Open
 				<span class="inline-code">http://localhost:8080</span>
@@ -78,7 +80,7 @@ func Page() Node {
 				<span class="inline-code">page.server.go</span>
 				for server-side data loading and actions.
 			</p>
-			{CodeBlock("text", "my-app/\n├── app/\n│   ├── layout.gsx          # Root layout shared by all pages\n│   ├── page.gsx            # Home page template\n│   ├── page.server.go      # Home page server module\n│   ├── error.gsx           # 500 error page\n│   └── not-found.gsx       # 404 page\n├── public/                 # Static assets served at /\n├── main.go                 # App entry point\n└── go.mod")}
+			{CodeBlock("text", docsapp.DocSample("getting-started/code-003.text.sample"))}
 			<p>
 				The
 				<span class="inline-code">page.gsx</span>
@@ -92,8 +94,8 @@ func Page() Node {
 				<span class="inline-code">func Page() Node</span>
 				form below; see "Component Syntax" further down.
 			</p>
-			{CodeBlock("go", "// app/page.server.go\npackage app\n\nimport (\n\t\"log\"\n\n\t\"m31labs.dev/gosx/route\"\n)\n\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\treturn map[string]any{\n\t\t\t\t\"greeting\": \"Hello from the server\",\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
-			{CodeBlock("gsx", "// app/page.gsx\npackage app\n\nfunc Page() Node {\n\treturn <div>\n\t\t<h1>{data.greeting}</h1>\n\t</div>\n}")}
+			{CodeBlock("go", docsapp.DocSample("getting-started/code-004.go.sample"))}
+			{CodeBlock("gsx", docsapp.DocSample("getting-started/code-005.gsx.sample"))}
 		</section>
 		<section id="authoring-styles" class="docs-section-block">
 			<h2>Component Syntax</h2>
@@ -104,7 +106,7 @@ func Page() Node {
 				<span class="inline-code">props</span>
 				as an ordinary Go type.
 			</p>
-			{CodeBlock("gsx", "package app\n\ntype BadgeProps struct {\n\tLabel string\n\tCount int\n}\n\ncomponent Badge(props: BadgeProps) {\n\treturn <span className=\"badge\">\n\t\t{props.Label}: {props.Count}\n\t</span>\n}\n\ncomponent Page() {\n\treturn <main><Badge label=\"Inbox\" count={0} /></main>\n}")}
+			{CodeBlock("gsx", docsapp.DocSample("getting-started/code-006.gsx.sample"))}
 			<p>
 				A strict server component allows one top-level GSX return and a narrow, renderer-safe expression set. A call uses an exact or unambiguous lower-camel prop name. It passes every field the callee renders explicitly, even a zero value.
 			</p>
@@ -129,7 +131,7 @@ func Page() Node {
 				<span class="inline-code">.go</span>
 				files and recompiles the app on change.
 			</p>
-			{CodeBlock("bash", "gosx dev")}
+			{CodeBlock("bash", docsapp.DocSample("getting-started/code-007.bash.sample"))}
 			<p>
 				The command watches project source, rebuilds when needed, and refreshes connected browser tabs after a successful change. Compiler diagnostics remain in the terminal when a change is invalid.
 			</p>

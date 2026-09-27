@@ -4,12 +4,12 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/action"
-	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
 
 func init() {
-	docs.RegisterDocsPage("Forms", "Server-side form handling with validation, CSRF protection, and flash messages.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Forms", "Server-side form handling with validation, CSRF protection, and flash messages.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
 				"mode":        "light",

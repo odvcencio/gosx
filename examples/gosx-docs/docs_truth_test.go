@@ -3,10 +3,13 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+var sampleReference = regexp.MustCompile(`[A-Za-z]+\.DocSample\("([^"]+\.sample)"\)`)
 
 func TestAPIDocsUseCurrentPublicSurfaces(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -93,6 +96,41 @@ func TestAPIDocsUseCurrentPublicSurfaces(t *testing.T) {
 					t.Errorf("docs/%s retains stale API %q", test.page, forbidden)
 				}
 			}
+		})
+	}
+}
+
+func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	tests := []struct {
+		page     string
+		required string
+	}{
+		{"auth", "auth/sessionSample.go.sample"},
+		{"compiler", "compiler/strictSample.gosx.sample"},
+		{"components", "components/strictSample.gosx.sample"},
+		{"debugging-scene3d", "debugging-scene3d/code-001.bash.sample"},
+		{"deployment", "deployment/sampleBuildModes.bash.sample"},
+		{"engines", "engines/mountSample.go.sample"},
+		{"forms", "forms/code-001.gsx.sample"},
+		{"getting-started", "getting-started/code-001.bash.sample"},
+		{"hubs", "hubs/hubSample.go.sample"},
+		{"images", "images/imageSample.go.sample"},
+		{"islands", "islands/counterSample.gosx.sample"},
+		{"motion", "motion/motionSample.go.sample"},
+		{"routing", "routing/treeSample.text.sample"},
+		{"runtime", "runtime/code-001.gosx.sample"},
+		{"scene3d", "scene3d/code-001.go.sample"},
+		{"signals", "signals/basicSample.go.sample"},
+		{"streaming", "streaming/deferSample.go.sample"},
+		{"text-layout", "text-layout/blockSample.go.sample"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.page, func(t *testing.T) {
+			body := readDocsPagePair(t, root, test.page)
+			assertDocsContract(t, body, []string{test.required}, []string{"CodeBlock(\"go\", `"})
 		})
 	}
 }
@@ -250,6 +288,15 @@ func readDocsPagePair(t *testing.T, root, page string) string {
 		}
 		joined.Write(body)
 		joined.WriteByte('\n')
+		for _, match := range sampleReference.FindAllSubmatch(body, -1) {
+			samplePath := filepath.Join(filepath.Dir(root), "..", "samples", filepath.FromSlash(string(match[1])))
+			sample, err := os.ReadFile(samplePath)
+			if err != nil {
+				t.Fatalf("read documentation sample %s: %v", samplePath, err)
+			}
+			joined.Write(sample)
+			joined.WriteByte('\n')
+		}
 	}
 	return joined.String()
 }

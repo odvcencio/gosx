@@ -1,0 +1,5 @@
+respect := false
+node := ctx.Motion(server.MotionProps{
+	Preset:               server.MotionPresetFade,
+	RespectReducedMotion: &respect,
+}, content)
