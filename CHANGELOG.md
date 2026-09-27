@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added: GPU-driven instancing for the WebGPU renderer
+
+- `scene.Props.GPUDriven` hands every opaque `InstancedMesh` without an
+  authored cull kernel to one GPU-driven host. One compute dispatch per view
+  culls every instance (camera, and each shadow light), and each mesh draws
+  with one indirect draw that pulls its instance record from a storage
+  buffer. Per-instance colors now survive GPU culling.
+- `GPUDriven.Occlusion` adds two-phase hierarchical-Z occlusion culling.
+  The cull and Hi-Z kernels are authored once in Elio and embedded as WGSL.
+- The mode changes no pixels. WebGL, Canvas and headless rendering ignore it.
+  The mount publishes `data-gosx-scene3d-webgpu-gpu-driven-*` telemetry, and
+  the Scene3D Bench gains `gpu-driven` and `instanced-classic` workloads.
+
+### Fixed: instanced meshes no longer allocate GPU state every frame
+
+- The render bundle hands the WebGPU renderer a fresh copy of each instanced
+  mesh every frame. The renderer cached its uniform buffer and bind group on
+  that copy, so it created both again every frame and never replayed its
+  render bundle. The cache is now keyed by mesh id.
+
 ## v0.57.1 (2026-09-24)
 
 ### Fixed: computed-pose morph priors and stale WebGPU output buffers
