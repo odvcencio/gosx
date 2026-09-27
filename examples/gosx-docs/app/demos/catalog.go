@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"fmt"
 	"strings"
 
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
@@ -218,6 +219,10 @@ func demoBackendSummary(values []string) string {
 	default:
 		return strings.Join(values[:len(values)-1], ", ") + " or " + values[len(values)-1]
 	}
+}
+
+func demoSourceCountLabel(paths []string) string {
+	return fmt.Sprintf("All %d source files", len(paths))
 }
 
 func demoStatusLabel(status string) string {

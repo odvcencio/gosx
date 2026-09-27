@@ -15,12 +15,19 @@ func Page() Node {
 					<p class="demos-gallery__eyebrow">Featured</p>
 					<h2 id="demos-featured-title">Start here.</h2>
 				</div>
-				<p>Try the featured demo and follow its source into GoSX.</p>
+				<p>
+					Try the featured demo and follow its source into GoSX.
+				</p>
 			</div>
 			<div class="demos-gallery__featured-list">
 				<Each of={data.featured} as="demo">
 					<article class="demo-card demo-card--featured" data-demo={demo.Slug}>
-						<a class="demo-card__poster" href={"/demos/" + demo.Slug} data-gosx-link="true" aria-label={"Open " + demo.Title}>
+						<a
+							class="demo-card__poster"
+							href={"/demos/" + demo.Slug}
+							data-gosx-link="true"
+							aria-label={"Open " + demo.Title}
+						>
 							<img src={demo.PosterPath} alt="" width="960" height="600" decoding="async" fetchpriority="high" />
 						</a>
 						<div class="demo-card__body">
@@ -35,19 +42,25 @@ func Page() Node {
 								</Each>
 							</ul>
 							<p class="demo-card__backends">
-								Runs on {demoBackendSummary(demo.Backends)}
+								{"Runs on " + demoBackendSummary(demo.Backends)}
 							</p>
 							<footer class="demo-card__actions">
 								<a class="demo-card__open" href={"/demos/" + demo.Slug} data-gosx-link="true">Open demo</a>
 								<a href={demoSourceURL(demo.SourcePath)} target="_blank" rel="noopener noreferrer">View source</a>
 								<Each of={demoGuides(demo.Slug)} as="guide">
-									<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">{guide.Title} guide</a>
+									<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">
+										{guide.Title + " guide"}
+									</a>
 								</Each>
 								<details class="demo-card__sources">
-									<summary>All {len(demo.SourcePaths)} source files</summary>
+									<summary>
+										{demoSourceCountLabel(demo.SourcePaths)}
+									</summary>
 									<ul>
 										<Each of={demo.SourcePaths} as="sourcePath">
-											<li><a href={demoSourceURL(sourcePath)} target="_blank" rel="noopener noreferrer">{sourcePath}</a></li>
+											<li>
+												<a href={demoSourceURL(sourcePath)} target="_blank" rel="noopener noreferrer">{sourcePath}</a>
+											</li>
 										</Each>
 									</ul>
 								</details>
@@ -69,7 +82,12 @@ func Page() Node {
 				<div class="demos-gallery__grid">
 					<Each of={group.Demos} as="demo">
 						<article class="demo-card" data-demo={demo.Slug}>
-							<a class="demo-card__poster" href={"/demos/" + demo.Slug} data-gosx-link="true" aria-label={"Open " + demo.Title}>
+							<a
+								class="demo-card__poster"
+								href={"/demos/" + demo.Slug}
+								data-gosx-link="true"
+								aria-label={"Open " + demo.Title}
+							>
 								<img src={demo.PosterPath} alt="" width="960" height="600" loading="lazy" decoding="async" />
 							</a>
 							<div class="demo-card__body">
@@ -84,19 +102,25 @@ func Page() Node {
 									</Each>
 								</ul>
 								<p class="demo-card__backends">
-									Runs on {demoBackendSummary(demo.Backends)}
+									{"Runs on " + demoBackendSummary(demo.Backends)}
 								</p>
 								<footer class="demo-card__actions">
 									<a class="demo-card__open" href={"/demos/" + demo.Slug} data-gosx-link="true">Open demo</a>
 									<a href={demoSourceURL(demo.SourcePath)} target="_blank" rel="noopener noreferrer">View source</a>
 									<Each of={demoGuides(demo.Slug)} as="guide">
-										<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">{guide.Title} guide</a>
+										<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">
+											{guide.Title + " guide"}
+										</a>
 									</Each>
 									<details class="demo-card__sources">
-										<summary>All {len(demo.SourcePaths)} source files</summary>
+										<summary>
+											{demoSourceCountLabel(demo.SourcePaths)}
+										</summary>
 										<ul>
 											<Each of={demo.SourcePaths} as="sourcePath">
-												<li><a href={demoSourceURL(sourcePath)} target="_blank" rel="noopener noreferrer">{sourcePath}</a></li>
+												<li>
+													<a href={demoSourceURL(sourcePath)} target="_blank" rel="noopener noreferrer">{sourcePath}</a>
+												</li>
 											</Each>
 										</ul>
 									</details>
