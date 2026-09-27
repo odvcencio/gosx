@@ -1,7 +1,5 @@
 package docs
 
-import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
-
 import ui "../../ui"
 
 func Page() Node {
@@ -39,14 +37,14 @@ func Page() Node {
 					.
 				</li>
 			</ul>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-001.go.sample"))}
+			{CodeBlock("go", data.sample001)}
 			<p>
 				Return the props from a route loader, then spread them into the
 				<span class="inline-code">Scene3D</span>
 				component.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-002.go.sample"))}
-			{CodeBlock("gosx", docsapp.DocSample("scene3d/code-003.gosx.sample"))}
+			{CodeBlock("go", data.sample002)}
+			{CodeBlock("gosx", data.sample003)}
 			<p>
 				Set
 				<span class="inline-code">AriaLabel</span>
@@ -99,7 +97,7 @@ func Page() Node {
 					needs a rewrite, not a translation.
 				</li>
 			</ul>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-004.go.sample"))}
+			{CodeBlock("go", data.sample004)}
 		</section>
 		<section id="backends">
 			<h2>Backends and Capability Verdicts</h2>
@@ -278,8 +276,8 @@ func Page() Node {
 				<span class="inline-code">RequiredCapabilities</span>
 				gates the scene at mount time. The WebGPU probe negotiates optional adapter features, required features, and device limits before it reports success.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-005.go.sample"))}
-			{CodeBlock("gosx", docsapp.DocSample("scene3d/code-006.gosx.sample"))}
+			{CodeBlock("go", data.sample005)}
+			{CodeBlock("gosx", data.sample006)}
 			<p>
 				<span class="inline-code">Capabilities</span>
 				describes the surface capability set used for runtime planning;
@@ -313,7 +311,7 @@ func Page() Node {
 				<span class="inline-code">TransitionMS</span>
 				above zero and the client interpolates to the new pose instead of cutting.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-007.go.sample"))}
+			{CodeBlock("go", data.sample007)}
 			<p>
 				Three control modes exist. Omit
 				<span class="inline-code">Controls</span>
@@ -335,7 +333,7 @@ func Page() Node {
 					— free-flight look and movement, pitch included.
 				</li>
 			</ul>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-008.go.sample"))}
+			{CodeBlock("go", data.sample008)}
 			<h3>Drive the camera from a signal</h3>
 			<p>
 				Four signal bindings let other parts of the page read and write scene state without app JavaScript.
@@ -445,8 +443,8 @@ func Page() Node {
 				<span class="inline-code">scene/earcut</span>
 				, a pure-Go port of mapbox/earcut. Normals point straight up. Texture coordinates are omitted; derive them from the positions if you need them.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-009.go.sample"))}
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-010.go.sample"))}
+			{CodeBlock("go", data.sample009)}
+			{CodeBlock("go", data.sample010)}
 		</section>
 		<section id="materials">
 			<h2>Materials</h2>
@@ -460,7 +458,7 @@ func Page() Node {
 				<span class="inline-code">scene.StandardMaterial</span>
 				is the PBR material. It uses the roughness and metalness workflow, plus five extended lobes: clearcoat, sheen, transmission, iridescence, and anisotropy. Each lobe is one scalar in the range 0 to 1. Anisotropy is the exception: it runs from -1 to 1, and the sign selects the tangent or the bitangent direction.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-011.go.sample"))}
+			{CodeBlock("go", data.sample011)}
 			<h3>Style presets</h3>
 			<p>
 				Five presets share the
@@ -471,7 +469,7 @@ func Page() Node {
 				<span class="inline-code">scene.Bool</span>
 				for the pointer fields.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-012.go.sample"))}
+			{CodeBlock("go", data.sample012)}
 			<h3>Line materials</h3>
 			<p>
 				<span class="inline-code">LineBasicMaterial</span>
@@ -481,7 +479,7 @@ func Page() Node {
 				<span class="inline-code">MaterialStyle</span>
 				, so a composite literal needs the embedded field by name. The capability verdict reports that neither GPU backend faithfully renders dashed-line styling; Canvas2D owns the actual dash pattern.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-013.go.sample"))}
+			{CodeBlock("go", data.sample013)}
 			<h3>Render passes and blending</h3>
 			<p>
 				<span class="inline-code">BlendMode</span>
@@ -506,7 +504,7 @@ func Page() Node {
 				<span class="inline-code">Mesh.MaterialAnims</span>
 				drives one material uniform per entry. Each entry either carries keyframes, or replaces them with a spring or an oscillator. Material tracks ship in their own wire program, so they route independently from transform motion.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-014.go.sample"))}
+			{CodeBlock("go", data.sample014)}
 		</section>
 		<section id="selena">
 			<h2>Selena Shaders</h2>
@@ -557,7 +555,7 @@ func Page() Node {
 					— many named materials from one source, parsed once.
 				</li>
 			</ul>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-015.go.sample"))}
+			{CodeBlock("go", data.sample015)}
 			<p>
 				<span class="inline-code">scene.SelenaUniforms</span>
 				converts a typed Go struct into the host uniform map. A shader parameter rename then fails at the call site instead of doing nothing in silence. Field names resolve in order: the
@@ -566,14 +564,14 @@ func Page() Node {
 				<span class="inline-code">json</span>
 				struct tag, then a lower-camel form of the Go field name.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-016.go.sample"))}
+			{CodeBlock("go", data.sample016)}
 			<p>
 				<span class="inline-code">scene.CustomMaterial</span>
 				is the transport underneath. It embeds
 				<span class="inline-code">StandardMaterial</span>
 				and adds the shader payload, so you can hand-write WGSL and GLSL when you do not want Selena.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-017.go.sample"))}
+			{CodeBlock("go", data.sample017)}
 			<p>
 				A custom material narrows the capability verdict. The resolver reads which shader sources the material actually carries. WGSL only serves WebGPU. GLSL only serves WebGL. Ship both, or accept that one backend drops out.
 			</p>
@@ -586,7 +584,7 @@ func Page() Node {
 			<p>
 				The old hard cap of 8 lights is also gone. The light storage buffer starts at 8 entries and doubles on demand up to 256. Past 256 the runtime reports the overflow instead of dropping lights in silence.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-018.go.sample"))}
+			{CodeBlock("go", data.sample018)}
 			<h3>Two honest shortfalls remain</h3>
 			<p>
 				Both shortfalls report themselves through the capability system, so tooling sees them.
@@ -612,7 +610,7 @@ func Page() Node {
 			<p>
 				The cap matters for memory. A light that requests 4096 with the default cap gets a 1024 map. Per-light depth memory drops from about 64 MB to about 4 MB.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-019.go.sample"))}
+			{CodeBlock("go", data.sample019)}
 			<p>
 				A mesh opts in per direction. Set
 				<span class="inline-code">CastShadow</span>
@@ -695,7 +693,7 @@ func Page() Node {
 					at the end of the chain to get edge smoothing back.
 				</p>
 			</div>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-020.go.sample"))}
+			{CodeBlock("go", data.sample020)}
 			<p>
 				<span class="inline-code">MaxPixels</span>
 				caps the offscreen pipeline by total backing pixels after the device pixel ratio. The zero value applies the 1080p default, which is 2,073,600 pixels. Presets run
@@ -735,7 +733,7 @@ func Page() Node {
 				<span class="inline-code">DriftPhase</span>
 				as an offset from 0 to 1.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-021.go.sample"))}
+			{CodeBlock("go", data.sample021)}
 			<h3>Keyframe clips</h3>
 			<p>
 				<span class="inline-code">scene.AnimationClip</span>
@@ -751,13 +749,13 @@ func Page() Node {
 				<span class="inline-code">STEP</span>
 				.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-022.go.sample"))}
+			{CodeBlock("go", data.sample022)}
 			<h3>Skeletal animation from glTF</h3>
 			<p>
 				<span class="inline-code">scene.Model</span>
 				plays a clip embedded in the asset by name. Skinning runs on both GPU backends and is a required feature, so a skinned scene never falls back to canvas2d.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-023.go.sample"))}
+			{CodeBlock("go", data.sample023)}
 			<p>
 				Two capabilities are absent, and a character pipeline usually wants both. There are no morph targets, and there is no blend tree. Cross-fade between two clips with the fade fields, or sequence clips with
 				<span class="inline-code">AnimationSeq</span>
@@ -781,7 +779,7 @@ func Page() Node {
 				<span class="inline-code">OutState</span>
 				are partial prop bags of pointer fields, so an unset field means "do not change this".
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-024.go.sample"))}
+			{CodeBlock("go", data.sample024)}
 			<p>
 				<span class="inline-code">Live</span>
 				names the hub events that should re-read this node. Combine it with a hub binding in the loader, and the node updates without a page navigation.
@@ -851,8 +849,8 @@ func Page() Node {
 				<span class="inline-code">var(--x)</span>
 				. Author CSS-driven values through the composable Scene3D elements, whose attributes are strings.
 			</p>
-			{CodeBlock("gosx", docsapp.DocSample("scene3d/code-025.gosx.sample"))}
-			{CodeBlock("css", docsapp.DocSample("scene3d/code-026.css.sample"))}
+			{CodeBlock("gosx", data.sample025)}
+			{CodeBlock("css", data.sample026)}
 			<p>
 				three.js has no equivalent. This is a framework-level feature, not a library feature: it needs the same runtime to own both the document styles and the scene state.
 			</p>
@@ -863,7 +861,7 @@ func Page() Node {
 				<span class="inline-code">scene.InstancedMesh</span>
 				draws N copies of one geometry in one draw call. WebGPU uses instance-rate vertex buffers for the transform and colour streams. WebGL2 uses the matching instanced draw path. Both share the same IR, pass ordering, and shadow flags.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-027.go.sample"))}
+			{CodeBlock("go", data.sample027)}
 			<p>
 				Rotations, Scales, and Colors are optional. Omit them and every instance takes the identity rotation, unit scale, and the material colour.
 				<span class="inline-code">Attributes</span>
@@ -887,7 +885,7 @@ func Page() Node {
 				<span class="inline-code">InstancedMesh</span>
 				without an authored cull kernel. One compute dispatch culls every instance of those meshes against the camera, and one more per shadow light culls the casters. Each mesh then draws with one indirect draw that reads its instance records from a storage buffer, so per-instance colors survive the cull.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/gpu-driven.go.sample"))}
+			{CodeBlock("go", data.sample028)}
 			<p>
 				<span class="inline-code">Occlusion</span>
 				adds two-phase hierarchical-Z occlusion culling. The main pass first draws what was visible last frame, builds a depth pyramid from that depth, then culls again and draws only what just became visible. It never drops a visible instance, and it costs one extra compute pass and one extra render pass per frame. It pays off when large occluders hide many instances.
@@ -903,7 +901,7 @@ func Page() Node {
 				<span class="inline-code">MeshInstance</span>
 				carries its own position, rotation, and leaf scale.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-028.go.sample"))}
+			{CodeBlock("go", data.sample029)}
 			<h3>Discrete level of detail</h3>
 			<p>
 				<span class="inline-code">scene.LODGroup</span>
@@ -911,7 +909,7 @@ func Page() Node {
 				<span class="inline-code">LODLevel.Distance</span>
 				is the minimum distance at which that level becomes active, and the next level's distance ends it.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-029.go.sample"))}
+			{CodeBlock("go", data.sample030)}
 			<p>
 				<span class="inline-code">LODGroup</span>
 				swaps authored geometry.
@@ -933,13 +931,13 @@ func Page() Node {
 				<span class="inline-code">MaxPixelSize</span>
 				clamp the screen-space footprint so distant points stay visible and near points stay sane.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-030.go.sample"))}
+			{CodeBlock("go", data.sample031)}
 			<h3>Compute particles</h3>
 			<p>
 				<span class="inline-code">scene.ComputeParticles</span>
 				simulates on the GPU. The emitter, the force list, and the material are declarative; a WebGPU compute kernel integrates them. This is a WebGPU-only feature. A WebGL2 page keeps the scene but reports the degradation through the verdict, so gate large counts or profile the fallback.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-031.go.sample"))}
+			{CodeBlock("go", data.sample032)}
 			<p>
 				Force kinds are
 				<span class="inline-code">gravity</span>
@@ -976,7 +974,7 @@ func Page() Node {
 			<p>
 				Five feedback compute kernels drive the surface: seed, drop, displacement, simulation, and normal. Each one is authored in Selena and compiled to WGSL, GLSL, and OpenGL ES Shading Language.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-032.go.sample"))}
+			{CodeBlock("go", data.sample033)}
 			<p>
 				A floating object displaces the surface. Set
 				<span class="inline-code">ObjectKind</span>
@@ -1021,7 +1019,7 @@ func Page() Node {
 				<span class="inline-code">Priority</span>
 				breaks the tie.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-033.go.sample"))}
+			{CodeBlock("go", data.sample034)}
 			<h3>Sprite</h3>
 			<p>
 				<span class="inline-code">scene.Sprite</span>
@@ -1057,7 +1055,7 @@ func Page() Node {
 				<span class="inline-code">HTMLTextureMaxPixelsUnbounded</span>
 				to opt out.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-034.go.sample"))}
+			{CodeBlock("go", data.sample035)}
 		</section>
 		<section id="gltf">
 			<h2>glTF Loading</h2>
@@ -1071,7 +1069,7 @@ func Page() Node {
 				<span class="inline-code">Bounds</span>
 				normalize an asset into a target box, which saves guessing the author's unit scale.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-035.go.sample"))}
+			{CodeBlock("go", data.sample036)}
 			<h3>Nine material extensions parse</h3>
 			<ul>
 				<li>
@@ -1162,11 +1160,11 @@ func Page() Node {
 			<p>
 				One detail earns its keep. Interleaved data deinterleaves per lane before quantizing, so a 4-by-4 matrix stream splits into 16 lanes and each lane gets its own range. Translation lanes then stop crushing scale lanes, which is exactly what a shared range does to an instanced transform buffer.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-036.go.sample"))}
+			{CodeBlock("go", data.sample037)}
 			<p>
 				Use 12 bits for instanced transforms. That holds the error near 0.069 world units. At 8 bits a transform that spans a wide world range drifts visibly.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-037.go.sample"))}
+			{CodeBlock("go", data.sample038)}
 		</section>
 		<section id="raycasting">
 			<h2>Raycasting and Picking</h2>
@@ -1183,7 +1181,7 @@ func Page() Node {
 				<ui.StatCard Value="107,661 → 560 ns" Label="10,000-instance mesh, per ray" />
 				<ui.StatCard Value="1 alloc" Label="per ray, either path" />
 			</div>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-038.go.sample"))}
+			{CodeBlock("go", data.sample039)}
 			<p>
 				Three one-shot helpers skip the accelerator for a single query:
 				<span class="inline-code">scene.Raycast</span>
@@ -1291,7 +1289,7 @@ func Page() Node {
 				<span class="inline-code">Trace</span>
 				returns traversal telemetry with no wall-clock timings, so a snapshot stays stable across machines.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-039.go.sample"))}
+			{CodeBlock("go", data.sample040)}
 			<h3>Browser picking</h3>
 			<p>
 				GPU picking now works on both GPU backends. Before that, one pickable object forced a whole scene onto WebGL2.
@@ -1319,7 +1317,7 @@ func Page() Node {
 			<p>
 				Six helper nodes lower to line geometry, and one lowers to a gizmo group. Use them for editors, debug views, and documentation figures.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-040.go.sample"))}
+			{CodeBlock("go", data.sample041)}
 			<p>
 				<span class="inline-code">TransformControls</span>
 				draws the handles. The browser controls layer owns the pointer mutation. Wire it live with two signals.
@@ -1364,7 +1362,7 @@ func Page() Node {
 			<p>
 				The IR carries the config beside the declared bodies. A server can therefore rebuild an authoritative world from the IR, then run it behind a simulation runner and a hub.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-041.go.sample"))}
+			{CodeBlock("go", data.sample042)}
 			<p>
 				Collider shapes are
 				<span class="inline-code">box</span>
@@ -1385,7 +1383,7 @@ func Page() Node {
 				<span class="inline-code">Props.Audio</span>
 				declares a sample-player manifest: named buses with volume and mute, plus clips addressed by identifier. The client registers the manifest when the engine mounts. No client change is needed.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-042.go.sample"))}
+			{CodeBlock("go", data.sample043)}
 			<p>
 				One quirk is inherited from the client:
 				<span class="inline-code">Muted</span>
@@ -1443,7 +1441,7 @@ func Page() Node {
 			<p>
 				The adaptive block reacts to delivered frame time.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-043.go.sample"))}
+			{CodeBlock("go", data.sample044)}
 			<h3>Quality ladder</h3>
 			<p>
 				<span class="inline-code">Props.QualityLadder</span>
@@ -1453,7 +1451,7 @@ func Page() Node {
 				<em>clarity</em>
 				. A rung has no resolution field, no pixel-ratio field, and no post-effect pixel budget. You physically cannot author a blur.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-044.go.sample"))}
+			{CodeBlock("go", data.sample045)}
 			<p>
 				Two rung fields are pass-through today, and the docs will not pretend otherwise.
 				<span class="inline-code">ComputeBudgetScale</span>
@@ -1468,7 +1466,7 @@ func Page() Node {
 				<span class="inline-code">scene.DiffCommands</span>
 				compares two scene states and emits the minimum command list that turns the first into the second. Send the list over a hub and the client applies it without a re-render.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-045.go.sample"))}
+			{CodeBlock("go", data.sample046)}
 			<p>
 				Command builders exist for each record kind. Use one to emit a targeted patch with no diff.
 			</p>
@@ -1512,7 +1510,7 @@ func Page() Node {
 				<span class="inline-code">preview.Render</span>
 				lowers typed props to the native render bundle and rasterizes one frame in pure Go. Use it for authoring previews, thumbnails, documentation images, and deterministic visual tests. It also accepts a bare IR or the serialized props JSON, which lets a command-line tool render an artifact it received rather than built.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-046.go.sample"))}
+			{CodeBlock("go", data.sample047)}
 			<h3>scene/harness</h3>
 			<p>
 				<span class="inline-code">harness.New</span>
@@ -1536,7 +1534,7 @@ func Page() Node {
 					Selena artifact hashes and validation state per material.
 				</li>
 			</ul>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-047.go.sample"))}
+			{CodeBlock("go", data.sample048)}
 			<p>
 				The session builds one accelerator for the graph and reuses it for every trace, so a long probe sequence stays cheap.
 			</p>
@@ -1556,7 +1554,7 @@ func Page() Node {
 					action. No encoder exists in the module. The command tells you what work exists. You still have to do it.
 				</p>
 			</div>
-			{CodeBlock("bash", docsapp.DocSample("scene3d/code-048.bash.sample"))}
+			{CodeBlock("bash", data.sample049)}
 			<p>
 				The report is still useful. It classifies every asset, probes glTF and KTX2 containers, and measures HTML texture budgets. It also lists shader entry points and names the diagnostics that would break a build. Read it as a work list, not a receipt.
 			</p>
@@ -1582,7 +1580,7 @@ func Page() Node {
 			<p>
 				Compute islands fill the headless controller role. They hydrate through the island virtual machine and the shared-signal bridge, and they own no document nodes. That makes them the right place for input normalization and scene state derivation.
 			</p>
-			{CodeBlock("go", docsapp.DocSample("scene3d/code-049.go.sample"))}
+			{CodeBlock("go", data.sample050)}
 			<p>
 				Use
 				<span class="inline-code">game.Web3DProfile()</span>

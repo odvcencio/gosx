@@ -10,6 +10,8 @@ import (
 )
 
 var sampleReference = regexp.MustCompile(`[A-Za-z]+\.DocSample\("([^"]+\.sample)"\)`)
+var sampleBinding = regexp.MustCompile(`\bdata\.(sample[0-9]{3})\b`)
+var sampleLoader = regexp.MustCompile(`"(sample[0-9]{3})"\s*:\s*docsapp\.DocSample\("([^"]+\.sample)"\)`)
 
 func TestAPIDocsUseCurrentPublicSurfaces(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -138,6 +140,87 @@ func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
 	}
 }
 
+func TestGoSXPagesPassEmbeddedSamplesThroughTheirLoader(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	var pages []string
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info != nil && !info.IsDir() && filepath.Base(path) == "page.gsx" {
+			pages = append(pages, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range pages {
+		gsx, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(gsx), "docsapp.DocSample(") {
+			t.Errorf("%s calls DocSample from .gsx; bind the sample in page.server.go so production pages render it", page)
+		}
+		bindings := sampleBinding.FindAllStringSubmatch(string(gsx), -1)
+		if len(bindings) == 0 {
+			continue
+		}
+		serverPath := filepath.Join(filepath.Dir(page), "page.server.go")
+		server, err := os.ReadFile(serverPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", serverPath, err)
+		}
+		loaders := make(map[string]string)
+		for _, match := range sampleLoader.FindAllStringSubmatch(string(server), -1) {
+			loaders[match[1]] = match[2]
+		}
+		used := make(map[string]bool)
+		for _, binding := range bindings {
+			field := binding[1]
+			used[field] = true
+			if _, ok := loaders[field]; !ok {
+				t.Errorf("%s reads data.%s without a matching page.server.go sample loader", page, field)
+			}
+		}
+		for field := range loaders {
+			if !used[field] {
+				t.Errorf("%s loads %s without a matching .gsx sample binding", serverPath, field)
+			}
+		}
+	}
+}
+
+func TestDocsActiveNavigationContrastUsesDarkTextOnGold(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "app", "docs", "layout.css")
+	css, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lightRule := regexp.MustCompile(`(?s)\.docs-section\.light \.docs-guide-link\.is-current\s*\{([^}]+)\}`)
+	match := lightRule.FindSubmatch(css)
+	if len(match) != 2 {
+		t.Fatal("light-theme active guide navigation rule is missing")
+	}
+	rule := string(match[1])
+	for _, required := range []string{"color: #17140b;", "background: var(--accent);"} {
+		if !strings.Contains(rule, required) {
+			t.Errorf("active guide navigation rule is missing %q", required)
+		}
+	}
+	if strings.Contains(rule, "color: #ffffff;") || strings.Contains(rule, "background: var(--accent-deep);") {
+		t.Fatal("active guide navigation reverted to low-contrast white on gold")
+	}
+}
+
 func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -149,7 +232,7 @@ func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {
 		required  []string
 		forbidden []string
 	}{
-		{page: "getting-started", required: []string{"gosx init my-app", "quickstart-app.jpg", "75 seconds"}, forbidden: []string{"doc-scene", "remains necessary today only for loader-bound routes, islands, and engines"}},
+		{page: "getting-started", required: []string{"GoSX is a Go framework for server-rendered web apps.", "gosx init my-app", "quickstart-app.jpg", "75 seconds"}, forbidden: []string{"doc-scene", "remains necessary today only for loader-bound routes, islands, and engines", "GoSX is a Go framework for server-rendered pages, interactive islands, realtime hubs, and typed 3D scenes."}},
 		{page: "your-first-app", required: []string{"Step 1 · Server data", "Step 2 · Island", "Step 3 · Hub", "shared signal updates the count", "Step 4 · Scene3D", "step-04.jpg"}, forbidden: []string{"doc-scene", "three.js", "refresh binding reruns"}},
 		{page: "compiler", required: []string{"CompilerExample", "Typed component", "Compiled output"}, forbidden: []string{"doc-scene", "Calls stay within one declaration style in v0.39"}},
 		{page: "components", required: []string{"Working typed component", "/docs/typed-live", "View the example source"}, forbidden: []string{"doc-scene"}},

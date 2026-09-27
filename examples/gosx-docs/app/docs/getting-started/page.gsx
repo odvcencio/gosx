@@ -1,16 +1,14 @@
 package docs
 
-import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
-
 func Page() Node {
 	return <div class="prose getting-started">
 		<section class="quickstart" aria-labelledby="quickstart-heading">
 			<div class="quickstart__grid">
 				<div class="quickstart__commands">
 					<h2 id="quickstart-heading">Start in three commands</h2>
-					{CodeBlock("bash", docsapp.DocSample("getting-started/quickstart-install.bash.sample"))}
-					{CodeBlock("bash", docsapp.DocSample("getting-started/quickstart-init.bash.sample"))}
-					{CodeBlock("bash", docsapp.DocSample("getting-started/quickstart-run.bash.sample"))}
+					{CodeBlock("bash", data.sample001)}
+					{CodeBlock("bash", data.sample002)}
+					{CodeBlock("bash", data.sample003)}
 				</div>
 				<figure class="quickstart__preview">
 					<img
@@ -78,13 +76,13 @@ func Page() Node {
 				<code>public/</code>
 				.
 			</p>
-			{CodeBlock("text", docsapp.DocSample("getting-started/code-003.text.sample"))}
+			{CodeBlock("text", data.sample004)}
 			<p>
 				Use
 				<code>gosx dev</code>
 				while editing. It watches the project and refreshes connected browser tabs after a successful rebuild.
 			</p>
-			{CodeBlock("bash", docsapp.DocSample("getting-started/code-007.bash.sample"))}
+			{CodeBlock("bash", data.sample005)}
 		</section>
 	</div>
 }

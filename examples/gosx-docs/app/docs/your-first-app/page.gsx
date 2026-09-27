@@ -1,7 +1,5 @@
 package docs
 
-import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
-
 func Page() Node {
 	return <article class="prose first-app-tutorial">
 		<p class="lede">
@@ -25,11 +23,11 @@ func Page() Node {
 			<h3>
 				<code>app/page.server.go</code>
 			</h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-01-page-server.go.sample"))}
+			{CodeBlock("go", data.sample001)}
 			<h3>
 				<code>app/page.gsx</code>
 			</h3>
-			{CodeBlock("gosx", docsapp.DocSample("tutorial/step-01-page.gsx.sample"))}
+			{CodeBlock("gosx", data.sample002)}
 			<p class="tutorial-result">
 				You should see a page headed “Hello from Go” with today’s visitor count.
 			</p>
@@ -54,11 +52,11 @@ func Page() Node {
 				. The counter is a strict island; its button updates without a page request.
 			</p>
 			<h3><code>app/counter_props.go</code></h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-02-counter-props.go.sample"))}
+			{CodeBlock("go", data.sample003)}
 			<h3><code>app/page.server.go</code></h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-02-page-server.go.sample"))}
+			{CodeBlock("go", data.sample004)}
 			<h3><code>app/page.gsx</code></h3>
-			{CodeBlock("gosx", docsapp.DocSample("tutorial/step-02-page.gsx.sample"))}
+			{CodeBlock("gosx", data.sample005)}
 			<p class="tutorial-result">
 				You should see a counter that starts at zero. Select “Add one” to increment it.
 			</p>
@@ -85,19 +83,19 @@ func Page() Node {
 			<h3>
 				<code>app/tab_hub.go</code>
 			</h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-03-tab-hub.go.sample"))}
+			{CodeBlock("go", data.sample006)}
 			<h3>
 				<code>main.go</code>
 			</h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-03-main.go.sample"))}
+			{CodeBlock("go", data.sample007)}
 			<h3>
 				<code>app/page.server.go</code>
 			</h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-03-page-server.go.sample"))}
+			{CodeBlock("go", data.sample008)}
 			<h3>
 				<code>app/page.gsx</code>
 			</h3>
-			{CodeBlock("gosx", docsapp.DocSample("tutorial/step-03-page.gsx.sample"))}
+			{CodeBlock("gosx", data.sample009)}
 			<p class="tutorial-result">
 				Open this page in two tabs. Both should show the live number of connected tabs.
 			</p>
@@ -124,11 +122,11 @@ func Page() Node {
 			<h3>
 				<code>app/page.server.go</code>
 			</h3>
-			{CodeBlock("go", docsapp.DocSample("tutorial/step-04-page-server.go.sample"))}
+			{CodeBlock("go", data.sample010)}
 			<h3>
 				<code>app/page.gsx</code>
 			</h3>
-			{CodeBlock("gosx", docsapp.DocSample("tutorial/step-04-page.gsx.sample"))}
+			{CodeBlock("gosx", data.sample011)}
 			<p class="tutorial-result">
 				You should see the page data, the counter, the open-tab count, and a shaded gold sphere.
 			</p>
