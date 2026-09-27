@@ -6226,6 +6226,7 @@
   function sceneWebGPUBundleIneligibleReason(flags) {
     if (!flags) return "no-flags";
     if (flags.disabled) return "disabled";
+    if (flags.gpuDrivenSplit) return "gpu-driven-occlusion";
     if (flags.hasWater) return "water";
     if (flags.hasPoints) return "points";
     if (flags.hasLabels) return "labels";
@@ -6236,6 +6237,23 @@
     if (!flags.hasBundleableDraws) return "nothing-to-bundle";
     return "";
   }
+
+  // SCENE_GPU_DRIVEN_INERT_HOST stands in for the GPU-driven instancing host
+  // (indirect-instancing.ts, compute chunk) until that chunk publishes its factory.
+  // Every method reports "not handled", so render() needs no branch for it.
+  var SCENE_GPU_DRIVEN_INERT_HOST = {
+    beginFrame: function() { return false; },
+    owns: function() { return false; },
+    drawMesh: function() { return false; },
+    lightView: function() { return false; },
+    drawShadowMesh: function() { return false; },
+    splitsMainPass: function() { return false; },
+    prepareMainPass: function() { return false; },
+    splitMainPass: function() { return arguments[1]; },
+    finishEncoding: function() { return false; },
+    endFrame: function() { return false; },
+    dispose: function() {},
+  };
 
   // sceneWebGPUDrawListHasDynamicMesh reports whether any object in the three
   // pass lists draws through a path the bundled set excludes.
@@ -6771,6 +6789,7 @@
     var instancedCullSystems = new Map(); // meshId → { system, signature }
     var instancedCacheOwners = new Map(); // meshId → owner of that mesh's cached GPU buffers and bind groups
     var instancedCacheOwnerEpoch = 0;
+    var gpuDrivenHosts = new Map(); // "host" → GPU-driven instancing host; a Map keeps it typed any
     var lastComputeParticleTimeSeconds = null;
     var lastWaterTimeSeconds = null;
     var waterClockAPI = (typeof window !== "undefined" && window.__gosx_scene3d_api)
@@ -8060,7 +8079,7 @@
         size: [width, height, 1],
         format: "depth24plus",
         sampleCount: sampleCount,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       });
       mainDepthView = mainDepthTexture.createView();
       mainDepthWidth = width;
@@ -13769,7 +13788,7 @@
 
       for (var i = 0; i < instancedMeshes.length; i++) {
         var mesh = instancedMeshes[i];
-        if (!mesh) continue;
+        if (!mesh || webGPUGPUDrivenHost().owns(mesh)) continue;
         var wgsl = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL.trim() : null;
         // A mesh without an authored kernel still culls on the GPU when the
         // renderer's own kernel applies. webGPUBuiltinCullEligible states the
@@ -15867,7 +15886,7 @@
       }
 
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
-      drawInstancedShadowMeshes(pass, bundle);
+      drawInstancedShadowMeshes(pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       pass.end();
     }
 
@@ -16233,6 +16252,37 @@
       });
     }
 
+    // webGPUGPUDrivenHost returns this renderer's GPU-driven instancing host
+    // (indirect-instancing.ts), or the inert host until the compute chunk publishes the
+    // factory. The hooks are the renderer's own factories, shader sources and
+    // instanced helpers, so the host builds pipelines that match the renderer's.
+    function webGPUGPUDrivenHost() {
+      var host = gpuDrivenHosts.get("host");
+      if (host) return host;
+      var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+      if (!device || !api || typeof api.createSceneGPUDrivenHost !== "function") return SCENE_GPU_DRIVEN_INERT_HOST;
+      host = api.createSceneGPUDrivenHost(device, {
+        createFrameBindGroupLayout: wgpuCreateFrameBindGroupLayout,
+        createMaterialBindGroupLayout: wgpuCreateMaterialBindGroupLayout,
+        createShadowBindGroupLayout: wgpuCreateShadowBindGroupLayout,
+        pbrInstancedVertexWGSL: WGSL_PBR_INSTANCED_VERTEX,
+        pbrFragmentWGSL: WGSL_PBR_FRAGMENT,
+        shadowInstancedVertexWGSL: WGSL_SHADOW_INSTANCED_VERTEX,
+        shadowFragmentWGSL: WGSL_SHADOW_FRAGMENT,
+        pbrVertexLayout: WGPU_PBR_VERTEX_LAYOUT,
+        shadowVertexLayout: WGPU_SHADOW_VERTEX_LAYOUT,
+        blendState: wgpuBlendState,
+        instancedMeshCount: instancedMeshCount,
+        instancedMeshColorData: instancedMeshColorData,
+        getInstancedGeometry: getInstancedGeometry,
+        ensureInstancedGeometryGPUBuffer: ensureInstancedGeometryGPUBuffer,
+        instancedCullRadius: webGPUInstancedCullRadius,
+        drawInstancedMeshes: drawInstancedMeshes,
+      });
+      gpuDrivenHosts.set("host", host);
+      return host;
+    }
+
     function ensureInstancedTransformGPUBuffer(mesh, data) {
       return wgpuCachedTrackedBuffer(webGPUInstancedCacheOwner(mesh && mesh.id) || mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
@@ -16274,6 +16324,7 @@
 
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var mat = instancedMeshMaterial(mesh, materials);
         pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh));
+        if (webGPUGPUDrivenHost().drawMesh(pass, mesh, depthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
@@ -16423,12 +16474,13 @@
       return bounds || { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
     }
 
-    function drawInstancedShadowMeshes(pass, bundle) {
+    function drawInstancedShadowMeshes(pass, bundle, lightSlot = 0) {
       var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       var drew = false;
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
         if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+        if (webGPUGPUDrivenHost().drawShadowMesh(pass, mesh, lightSlot)) { drew = false; continue; }
         var instanceCount = instancedMeshCount(mesh);
         var transformData = instancedMeshTransformData(mesh, instanceCount);
         if (!transformData) continue;
@@ -18294,6 +18346,12 @@
       // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
       // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
       // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var instancedDrawList = hasInstancedData
+        ? buildInstancedDrawList(bundle, materials)
+        : { opaque: [], alpha: [], additive: [] };
+      var gpuDriven = webGPUGPUDrivenHost();
+      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: instancedDrawList.opaque });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -18329,6 +18387,7 @@
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 
+        gpuDriven.lightView(encoder, lightMatrix, slot);
         renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
         activeShadowCount++;
       }
@@ -18349,7 +18408,6 @@
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
       var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
-      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
         ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing)
         : renderWaterObjectSceneTexturePasses(
@@ -18439,6 +18497,7 @@
       };
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+      gpuDriven.prepareMainPass(mainPassDescriptor);
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
       var skyState = "none";
       if (bundle.environment && bundle.environment.sky) {
@@ -18449,9 +18508,6 @@
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
 
-      var instancedDrawList = hasInstancedData
-        ? buildInstancedDrawList(bundle, materials)
-        : { opaque: [], alpha: [], additive: [] };
       var drawList = hasPBRData
         ? (preparedScene && preparedScene.pbrPasses ? preparedScene.pbrPasses : buildDrawList(bundle))
         : { opaque: [], alpha: [], additive: [] };
@@ -18635,6 +18691,7 @@
         disabled: !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
+        gpuDrivenSplit: gpuDriven.splitsMainPass(),
         hasWater: hasWaterData,
         hasPoints: hasPointsData,
         hasLabels: hasLabels,
@@ -18717,6 +18774,10 @@
         } else if (worldLineEntries.length > 0) {
           drawWorldLineEntries(mainPass, worldLineEntries, "opaque", frameBindGroup);
         }
+
+        // Two-phase occlusion: end the early pass, cull against its depth, and
+        // draw the newly visible instances in a late pass that loads it.
+        mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
 
         // The water surface writes depth before translucent world surfaces.
         // A stele in front of the tide must remain visible after its HTML
@@ -18820,7 +18881,9 @@
 
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
+      gpuDriven.finishEncoding(encoder);
       device.queue.submit([encoder.finish()]);
+      Object.assign(frameStats, gpuDriven.endFrame(canvas && canvas.parentNode));
       pollGPUTimingReadback();
       // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
@@ -18926,6 +18989,8 @@
       }
       instancedCullSystems.clear();
       instancedCacheOwners.clear();
+      gpuDrivenHosts.forEach(function(host) { host.dispose(); });
+      gpuDrivenHosts.clear();
       waterRenderPipelineCache.clear();
       pointsAuthoredPipelineCache.clear();
       pointsAuthoredLayerFailed.clear();

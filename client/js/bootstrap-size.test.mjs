@@ -671,7 +671,11 @@ const budgets = [
   // Measured: 1_729_670 / 476_378 / 382_315. Targets raw 1_660_500 ->
   // 1_664_200, gzip 459_100 -> 460_000 and brotli 365_300 -> 366_000, the
   // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_664_200, gzip: 460_000, brotli: 366_000 },
+  // The GPU-driven renderer seam adds culling, shadow, occlusion and telemetry.
+  // Measured: 1_731_259 / 476_950 / 382_656. Targets raw 1_664_200 ->
+  // 1_665_800, gzip 460_000 -> 460_600 and brotli 366_000 -> 366_300, the
+  // smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap.js", raw: 1_665_800, gzip: 460_600, brotli: 366_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1768,10 +1772,14 @@ const routeBudgets = [
     // the G01 cache merge; HDR presentation adds 128 gzip bytes. The opt-in
     // sky route measures 353_377 gzip / 297_877 Brotli bytes. Keep both the
     // material and latest-main additions within the shared route budget.
+    // The GPU-driven renderer seam adds culling, shadow, occlusion and telemetry.
+    // Measured: 1_314_987 / 355_012 / 298_857. Targets raw 1_251_000 ->
+    // 1_252_500, gzip 338_200 -> 338_700 and brotli 284_500 -> 284_700, the
+    // smallest 100-byte steps that clear the hard limits.
     // Raise raw 1_250_000 -> 1_251_000 for the merged route measurement.
-    raw: 1_251_000,
-    gzip: 338_200,
-    brotli: 284_500,
+    raw: 1_252_500,
+    gzip: 338_700,
+    brotli: 284_700,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
