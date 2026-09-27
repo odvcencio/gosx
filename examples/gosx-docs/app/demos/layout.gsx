@@ -1,8 +1,7 @@
 package docs
 
 // GoSX's managed navigation owns aria-current. The generic declarative binding
-// below projects the active link's metadata into the shell and details drawer;
-// toggles and accessible disclosure behavior are runtime capabilities too.
+// below projects the active link's metadata into the shell and details drawer.
 
 func Layout() Node {
 	return <div
@@ -11,32 +10,6 @@ func Layout() Node {
 		data-gosx-bind-attr="data-demo-slug:data-demo"
 		data-demo-slug={currentDemoSlug}
 	>
-		<header class="demos-topbar">
-			<span class="demos-topbar__crumb">
-				<a href="/" class="demos-topbar__home" data-gosx-link="true">GoSX</a>
-				<span class="demos-topbar__sep" aria-hidden="true">/</span>
-				<a href="/demos" class="demos-topbar__section" data-gosx-link="true">Demos</a>
-			</span>
-			<span class="demos-topbar__edition">
-				Interactive field guide
-				<span aria-hidden="true">·</span>
-				13 studies
-			</span>
-			<details class="demos-topbar__menu-wrap">
-				<summary
-					class="demos-topbar__menu"
-					aria-label="Browse demos"
-					aria-controls="demo-dock"
-					data-gosx-toggle-target=".demos-body"
-					data-gosx-toggle-attribute="data-dock-open"
-				>
-					<span class="demos-topbar__menu-label">Browse demos</span>
-					<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
-					<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
-					<span class="demos-topbar__menu-bar" aria-hidden="true"></span>
-				</summary>
-			</details>
-		</header>
 		<div class="demos-body">
 			<nav id="demo-dock" class="demo-dock" aria-label="Demos">
 				<div class="demo-dock__header">
@@ -62,8 +35,6 @@ func Layout() Node {
 								data-demo-packages={demoValues(demo.Packages)}
 								data-demo-render-mode={demo.RenderMode}
 								data-demo-limitations={demo.Limitations}
-								data-gosx-toggle-close=".demos-body"
-								data-gosx-toggle-attribute="data-dock-open"
 								aria-current={demoAriaCurrent(demo.Slug)}
 								data-gosx-aria-current-managed={demoCurrentManaged(demo.Slug)}
 							>

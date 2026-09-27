@@ -3,7 +3,6 @@ package docs
 func Layout() Node {
 	return <div class="site-shell">
 		<a class="skip-link" href="#main-content">Skip to content</a>
-		<a class="skip-link" href="#pill-nav">Skip to navigation</a>
 		<nav id="pill-nav" class="pill-nav" role="navigation" aria-label="Main navigation">
 			<a href="/" class="pill-logo" data-gosx-link="true" aria-label="GoSX home">GoSX</a>
 			<div class="pill-links">
@@ -66,8 +65,12 @@ func Layout() Node {
 					<div class="nav-group">
 						<span class="nav-group__label">Project</span>
 						<a href="https://github.com/odvcencio/gosx" rel="noopener" class="nav-link">Source on GitHub</a>
-						<a href="https://github.com/odvcencio/gosx/releases/tag/v0.39.0" rel="noopener" class="nav-link">v0.39.0 release notes</a>
-						<a href="/api/site" class="nav-link">Running build metadata</a>
+						<a href="https://github.com/odvcencio/gosx/releases" rel="noopener" class="nav-link">GitHub releases</a>
+						<a href="/api/site" class="nav-link">
+							GoSX
+							{site.frameworkVersion}
+							build details
+						</a>
 					</div>
 				</div>
 			</div>
@@ -80,7 +83,7 @@ func Layout() Node {
 				<div class="site-footer__brand">
 					<span class="site-footer__logo chrome-text">GoSX</span>
 					<span class="site-footer__tagline">
-						This documentation is a GoSX application.
+						GoSX runs this documentation site and its demos.
 					</span>
 				</div>
 				<div class="site-footer__links" aria-label="Project links">
@@ -92,11 +95,16 @@ func Layout() Node {
 					<a href="/api/site" class="site-footer__version">
 						Running GoSX
 						{site.frameworkVersion}
-						·
+						from revision
 						{site.revision}
 					</a>
+					<small>
+						Built at
+						{site.builtAt}
+						· Build details are available at /api/site.
+					</small>
 					<p>
-						Server-rendered routes, actions, islands, hubs, and managed GPU scenes are exercised by this site and its demos.
+						The source, build version, revision, and build time are published with the site response.
 					</p>
 				</div>
 			</div>
