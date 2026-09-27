@@ -4,7 +4,7 @@
 
 .quickstart__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(15rem, 0.9fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   align-items: start;
   gap: var(--space-md);
 }
@@ -28,7 +28,7 @@
 
 .quickstart__commands .code-sample__body pre {
   padding: 0.35rem var(--space-xs);
-  font-size: 0.78rem;
+  font-size: 0.73rem;
   line-height: 1.35;
 }
 
