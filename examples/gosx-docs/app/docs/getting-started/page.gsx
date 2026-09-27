@@ -41,7 +41,7 @@ func Page() Node {
 		<section id="timing" class="docs-section-block">
 			<h2>How long it took</h2>
 			<p>
-				On 2026-09-26, a cold run on a Linux amd64 machine with Go 1.26.4 and an empty module cache reached its first HTTP 200 in 75 seconds: 42 seconds to install the CLI, 7 seconds to scaffold the app, and 27 seconds to start it. It downloaded about 74 MB of modules and 137 MB of Go toolchains.
+				On 2026-09-26, a cold run with an empty module cache on Linux x86_64 (Intel Core Ultra 9 285, 20 CPUs, 19 GiB RAM; Go 1.26.4) reached its first HTTP 200 in 75 seconds: 42 seconds to install the CLI, 7 seconds to scaffold the app, and 27 seconds to start it. It downloaded about 74 MB of modules and 137 MB of Go toolchains.
 			</p>
 		</section>
 		<section id="troubleshooting" class="docs-section-block">
