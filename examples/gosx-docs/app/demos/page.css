@@ -51,7 +51,7 @@
 
 .demos-gallery__section-heading > div {
   display: grid;
-  gap: var(--space-2xs, 0.35rem);
+  gap: var(--space-xs);
 }
 
 .demos-gallery__section-heading h2 {
