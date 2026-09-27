@@ -1,31 +1,63 @@
 package docs
 
+import (
+	"m31labs.dev/gosx/browser"
+	"m31labs.dev/gosx/signal"
+)
+
 func Page() Node {
 	return <div class="home">
-		<section class="hero" aria-labelledby="home-title">
-			<div class="hero__scene" aria-hidden="true">
-				<Scene3D {...data.heroScene} />
-			</div>
-			<div class="hero__overlay">
-				<div class="hero__lockup">
-					<p class="hero__kicker kicker">Go-authored from request to GPU</p>
-					<h1 id="home-title" class="hero__title chrome-text">GoSX</h1>
-					<p class="hero__tagline">
-						Build server-rendered applications, interactive tools, realtime systems, and GPU scenes in Go&mdash;without a JavaScript app toolchain.
+		<section class="home-hero" aria-labelledby="home-title">
+			<div class="home-hero__media">
+				<img
+					class="home-hero__poster"
+					src={data.heroPosterURL}
+					alt="Four PBR studio models arranged on a wood and brass tabletop"
+					width="1100"
+					height="760"
+					fetchpriority="high"
+					decoding="async"
+				 />
+				<Scene3D
+					id="home-tabletop-scene"
+					class="home-hero__scene"
+					{...data.heroScene}
+					respectReducedMotion={true}
+					data-gosx-scene3d-reveal-class="home-scene-ready"
+				>
+					<p class="home-hero__fallback">
+						The diorama poster stays visible when this browser cannot run WebGPU or WebGL2.
 					</p>
-					<div class="hero__actions">
-						<a href="/docs/getting-started" data-gosx-link="true" class="btn btn--gold">Start with GoSX</a>
-						<a href="/demos" data-gosx-link="true" class="btn btn--ghost">See it running</a>
-					</div>
-					<ul class="hero__facts" aria-label="Platform summary">
-						<li>Server HTML</li>
-						<li>Strict, typed GSX</li>
-						<li>Go/WASM islands</li>
-					</ul>
-				</div>
+				</Scene3D>
+				<p class="home-hero__caption">
+					A shared scene, rendered from typed Go data.
+				</p>
 			</div>
-			<div class="hero__scroll" aria-hidden="true">
-				<span class="hero__scroll-indicator"></span>
+			<div class="home-hero__copy">
+				<p class="home-hero__eyebrow">Go from request to GPU</p>
+				<h1 id="home-title">One Go codebase. The whole product.</h1>
+				<p class="home-hero__tagline">
+					Your server, realtime room, shared document, and browser UI run in Go. Scene3D renders on WebGPU or WebGL2, with no CGo or hand-written JavaScript.
+				</p>
+				<ul class="home-hero__facts" aria-label="What runs in GoSX">
+					<li>Go server</li>
+					<li>Hub + CRDT</li>
+					<li>Go browser UI</li>
+					<li>WebGPU / WebGL2</li>
+				</ul>
+				<div class="home-hero__quickstart" aria-labelledby="quickstart-title">
+					<div class="home-hero__quickstart-head">
+						<h2 id="quickstart-title">Try the quickstart</h2>
+						<QuickstartCopy text={data.commands} />
+					</div>
+					<pre>
+						<code>{data.commands}</code>
+					</pre>
+				</div>
+				<nav class="home-hero__actions" aria-label="Get started">
+					<a class="home-hero__start" href="/docs/getting-started" data-gosx-link="true">Start in 5 minutes</a>
+					<a class="home-hero__open" href="/demos/tabletop" data-gosx-link="true">Open the shared scene</a>
+				</nav>
 			</div>
 		</section>
 		<section class="runtime-map" aria-labelledby="runtime-map-title">
@@ -110,7 +142,7 @@ func Page() Node {
 						</div>
 					</div>
 					<footer class="pipeline__footer">
-						Shared bindings &middot; native harness evidence &middot; no demo JavaScript
+						One typed scene &middot; two GPU backends &middot; shared bindings
 					</footer>
 				</div>
 			</div>
@@ -193,4 +225,16 @@ func Page() Node {
 			</div>
 		</section>
 	</div>
+}
+
+//gosx:island
+func QuickstartCopy(props QuickstartCopyProps) Node {
+	status := signal.New("")
+	copy := func() {
+		status.Set(browser.ClipboardWrite(props.Text) ? "Commands copied" : "Clipboard unavailable. Select the commands to copy them.")
+	}
+	return <span class="quickstart-copy">
+		<button type="button" aria-label="Copy quickstart commands" onClick={copy}>Copy</button>
+		<span role="status" aria-live="polite">{status.Get()}</span>
+	</span>
 }

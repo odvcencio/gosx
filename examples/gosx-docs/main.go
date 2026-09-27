@@ -19,6 +19,7 @@ import (
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
 	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
+	tabletop "m31labs.dev/gosx/examples/gosx-docs/app/demos/tabletop"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
@@ -105,6 +106,7 @@ func main() {
 	app.EnableNavigation()
 	app.Use(docsSecurityHeaders)
 	app.Use(canonicalDocsIndex)
+	app.Use(tabletop.RoomRouteMiddleware)
 	app.Use(limitDocsRequestBodies(1 << 20))
 	app.Use(sessions.Middleware)
 	app.Use(authn.Middleware)
@@ -147,6 +149,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	tabletop.StartRoomJanitor(context.Background())
+	app.Mount("/demos/tabletop/ws/", http.HandlerFunc(tabletop.ServeWebSocket))
+	app.Mount("/demos/tabletop", tabletop.PrivateRoomRedirect(rootHandler))
 	app.Mount("/", rootHandler)
 
 	log.Printf("gosx-docs at http://localhost:%s", port)

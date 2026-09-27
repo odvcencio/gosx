@@ -16,8 +16,12 @@ import (
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 13 {
-		t.Fatalf("Demos() length = %d, want 13", len(Demos()))
+	if len(Demos()) != 14 {
+		t.Fatalf("Demos() length = %d, want 14", len(Demos()))
+	}
+	tabletop, ok := FindDemo("tabletop")
+	if !ok || tabletop.Status != "featured" {
+		t.Fatal("tabletop must be listed as a featured demo")
 	}
 	if _, ok := FindDemo("showreel"); !ok {
 		t.Fatal("the showreel route must have catalog metadata for the dock and details panel")

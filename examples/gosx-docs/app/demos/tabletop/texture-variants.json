@@ -1,0 +1,435 @@
+{
+  "schemaVersion": 2,
+  "generator": "gosx assetpipe",
+  "vocabulary": [
+    "container:ktx2",
+    "container:ktx2-zlib",
+    "device-feature:texture-compression-bc",
+    "texture-format:bc1-rgba-unorm-srgb",
+    "texture-format:bc5-rg-unorm",
+    "texture-format:bc7-rgba-unorm",
+    "texture-format:bc7-rgba-unorm-srgb"
+  ],
+  "assets": [
+    {
+      "path": "tabletop/models/binder_notebook/textures/binder_notebook_arm_1k.png",
+      "kind": "texture",
+      "bytes": 72099,
+      "variants": [
+        {
+          "uri": "/tabletop/models/binder_notebook/textures/binder_notebook_arm_1k.standard.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 62492,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/binder_notebook/textures/binder_notebook_arm_1k.low.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 17664,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/binder_notebook/textures/binder_notebook_diff_1k.png",
+      "kind": "texture",
+      "bytes": 97154,
+      "variants": [
+        {
+          "uri": "/tabletop/models/binder_notebook/textures/binder_notebook_diff_1k.standard.bc7-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-srgb-zlib",
+          "bytes": 80221,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm-srgb"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/binder_notebook/textures/binder_notebook_diff_1k.low.bc1-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc1-rgba-unorm-srgb-zlib",
+          "bytes": 9555,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc1-rgba-unorm-srgb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/binder_notebook/textures/binder_notebook_nor_gl_1k.png",
+      "kind": "texture",
+      "bytes": 59042,
+      "variants": [
+        {
+          "uri": "/tabletop/models/binder_notebook/textures/binder_notebook_nor_gl_1k.standard.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 56493,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/binder_notebook/textures/binder_notebook_nor_gl_1k.low.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 14829,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/brass_vase_01/textures/brass_vase_01_arm_1k.png",
+      "kind": "texture",
+      "bytes": 81848,
+      "variants": [
+        {
+          "uri": "/tabletop/models/brass_vase_01/textures/brass_vase_01_arm_1k.standard.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 76159,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/brass_vase_01/textures/brass_vase_01_arm_1k.low.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 19965,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/brass_vase_01/textures/brass_vase_01_diff_1k.png",
+      "kind": "texture",
+      "bytes": 97677,
+      "variants": [
+        {
+          "uri": "/tabletop/models/brass_vase_01/textures/brass_vase_01_diff_1k.standard.bc7-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-srgb-zlib",
+          "bytes": 85438,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm-srgb"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/brass_vase_01/textures/brass_vase_01_diff_1k.low.bc1-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc1-rgba-unorm-srgb-zlib",
+          "bytes": 10117,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc1-rgba-unorm-srgb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/brass_vase_01/textures/brass_vase_01_nor_gl_1k.png",
+      "kind": "texture",
+      "bytes": 64093,
+      "variants": [
+        {
+          "uri": "/tabletop/models/brass_vase_01/textures/brass_vase_01_nor_gl_1k.standard.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 74642,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/brass_vase_01/textures/brass_vase_01_nor_gl_1k.low.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 20501,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_arm_1k.png",
+      "kind": "texture",
+      "bytes": 55219,
+      "variants": [
+        {
+          "uri": "/tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_arm_1k.standard.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 65876,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_arm_1k.low.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 18150,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_diff_1k.png",
+      "kind": "texture",
+      "bytes": 19282,
+      "variants": [
+        {
+          "uri": "/tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_diff_1k.standard.bc7-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-srgb-zlib",
+          "bytes": 36505,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm-srgb"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_diff_1k.low.bc1-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc1-rgba-unorm-srgb-zlib",
+          "bytes": 4871,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc1-rgba-unorm-srgb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_nor_gl_1k.png",
+      "kind": "texture",
+      "bytes": 37512,
+      "variants": [
+        {
+          "uri": "/tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_nor_gl_1k.standard.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 56648,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/ceramic_vase_01/textures/ceramic_vase_01_nor_gl_1k.low.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 17663,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/potted_plant_04/textures/potted_plant_04_arm_1k.png",
+      "kind": "texture",
+      "bytes": 93732,
+      "variants": [
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_arm_1k.standard.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 71182,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_arm_1k.low.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 19127,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/potted_plant_04/textures/potted_plant_04_diff_1k.png",
+      "kind": "texture",
+      "bytes": 110721,
+      "variants": [
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_diff_1k.standard.bc7-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-srgb-zlib",
+          "bytes": 82992,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm-srgb"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_diff_1k.low.bc1-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc1-rgba-unorm-srgb-zlib",
+          "bytes": 9927,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc1-rgba-unorm-srgb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/potted_plant_04/textures/potted_plant_04_nor_gl_1k.png",
+      "kind": "texture",
+      "bytes": 117339,
+      "variants": [
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_nor_gl_1k.standard.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 79984,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_nor_gl_1k.low.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 21018,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        }
+      ]
+    }
+  ]
+}
