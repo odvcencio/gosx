@@ -255,7 +255,7 @@ func (p *browserPage) anyRequest(match func(string) bool) bool {
 // before every document in the tab (playwright addInitScript equivalent).
 func newBrowserPage(t *testing.T, chrome string, extraFlags map[string]any, width, height int, initScript string, timeout time.Duration) *browserPage {
 	t.Helper()
-	args := []string{"--no-sandbox", fmt.Sprintf("--window-size=%d,%d", width, height)}
+	args := []string{"--no-sandbox", "--mute-audio", fmt.Sprintf("--window-size=%d,%d", width, height)}
 	names := make([]string, 0, len(extraFlags))
 	for name := range extraFlags {
 		names = append(names, name)

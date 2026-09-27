@@ -121,7 +121,6 @@ func TestDemoShellUsesGoSXManagedInteractions(t *testing.T) {
 	source := string(layout)
 	for _, required := range []string{
 		`data-gosx-bind-source`,
-		`data-gosx-toggle-target`,
 		`data-gosx-disclosure-target`,
 		`data-gosx-disclosure-close`,
 	} {
@@ -134,7 +133,7 @@ func TestDemoShellUsesGoSXManagedInteractions(t *testing.T) {
 	}
 }
 
-func TestDemoLayoutRendersMobileDockWithCompleteCatalog(t *testing.T) {
+func TestDemoLayoutRendersDockWithoutSecondMobileMenu(t *testing.T) {
 	layoutPath := repoPath(t, "examples/gosx-docs/app/demos/layout.gsx")
 	layout, err := route.FileLayout(layoutPath)
 	if err != nil {
@@ -153,7 +152,7 @@ func TestDemoLayoutRendersMobileDockWithCompleteCatalog(t *testing.T) {
 	}
 
 	links := make(map[string]map[string]string, len(Demos()))
-	var hasDock, hasMobileMenu, hasSlot bool
+	var hasDock, hasDemoMenu, hasSlot bool
 	var visit func(*html.Node)
 	visit = func(node *html.Node) {
 		if node.Type == html.ElementNode {
@@ -162,10 +161,8 @@ func TestDemoLayoutRendersMobileDockWithCompleteCatalog(t *testing.T) {
 			switch {
 			case node.Data == "nav" && attrs["id"] == "demo-dock":
 				hasDock = attrs["aria-label"] == "Demos"
-			case node.Data == "summary" && contains(classes, "demos-topbar__menu"):
-				hasMobileMenu = attrs["aria-controls"] == "demo-dock" &&
-					attrs["data-gosx-toggle-target"] == ".demos-body" &&
-					attrs["data-gosx-toggle-attribute"] == "data-dock-open"
+			case node.Data == "summary" && attrs["aria-controls"] == "demo-dock":
+				hasDemoMenu = true
 			case node.Data == "a" && contains(classes, "demo-dock__link"):
 				links[attrs["href"]] = attrs
 			case node.Data == "main" && attrs["data-test-slot"] == "playground":
@@ -178,8 +175,8 @@ func TestDemoLayoutRendersMobileDockWithCompleteCatalog(t *testing.T) {
 	}
 	visit(doc)
 
-	if !hasDock || !hasMobileMenu {
-		t.Fatalf("rendered demo shell is missing its accessible mobile dock controls: %s", rendered)
+	if !hasDock || hasDemoMenu {
+		t.Fatalf("rendered demo shell must keep its dock without adding a second mobile menu: %s", rendered)
 	}
 	if !hasSlot {
 		t.Fatalf("rendered demo layout dropped its page slot: %s", rendered)

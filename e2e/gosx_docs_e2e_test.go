@@ -197,16 +197,22 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 		t.Error("mobile playground introduced horizontal document scrolling")
 	}
 
-	if err := chromedp.Run(page.ctx, chromedp.Click(`.demos-topbar__menu`, chromedp.ByQuery)); err != nil {
-		t.Fatalf("open mobile demos dock: %v", err)
+	var navContract struct {
+		SiteMenuCount   int  `json:"siteMenuCount"`
+		LegacyMenuCount int  `json:"legacyMenuCount"`
+		DockVisible     bool `json:"dockVisible"`
 	}
-	page.waitFor(t,
-		`document.querySelector('.demos-body')?.hasAttribute('data-dock-open') &&
-		document.querySelector('.demos-topbar__menu')?.getAttribute('aria-expanded') === 'true' &&
-		document.querySelector('#demo-dock')?.getBoundingClientRect().left >= -0.5`,
-		5*time.Second,
-		"settled mobile demos dock",
-	)
+	page.eval(t, `(() => {
+	const dock = document.querySelector('#demo-dock');
+	return {
+	  siteMenuCount: document.querySelectorAll('.pill-toggle').length,
+	  legacyMenuCount: document.querySelectorAll('.demos-topbar__menu').length,
+	  dockVisible: !!dock && getComputedStyle(dock).display !== 'none' && dock.getBoundingClientRect().width > 0,
+	};
+	})()`, &navContract)
+	if navContract.SiteMenuCount != 1 || navContract.LegacyMenuCount != 0 || !navContract.DockVisible {
+		t.Fatalf("mobile demo navigation = %+v, want one site menu, no second menu, and a visible horizontal dock", navContract)
+	}
 	if err := chromedp.Run(page.ctx,
 		chromedp.ScrollIntoView(`.demo-dock__link[href="/demos/cms"]`, chromedp.ByQuery),
 		chromedp.Click(`.demo-dock__link[href="/demos/cms"]`, chromedp.ByQuery),

@@ -71,6 +71,16 @@ func TestDemosIndexStylesHonorTokensResponsiveLayoutAndReducedMotion(t *testing.
 	}
 }
 
+func TestWaterDemoUsesOnlyTheSharedSiteHeaderOffset(t *testing.T) {
+	css := readDemoSource(t, "examples/gosx-docs/app/demos/water/page.css")
+	if !strings.Contains(css, "--water-demo-chrome-offset: calc(var(--site-nav-offset, 61px) + 44px)") {
+		t.Fatal("water stage must use the shared site navigation offset")
+	}
+	if strings.Contains(css, "--water-demo-chrome-offset: calc(var(--site-nav-offset) + 3.5rem)") {
+		t.Fatal("water stage must not reserve space for the removed demo header")
+	}
+}
+
 func TestScene3DShowcaseCSSHasNoOrphanedTail(t *testing.T) {
 	css := readDemoSource(t, "examples/gosx-docs/app/demos/scene3d/page.css")
 	if !strings.HasSuffix(strings.TrimSpace(css), "}") {

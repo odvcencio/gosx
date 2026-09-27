@@ -1,199 +1,15 @@
-/* Demo studio: shared presentation tokens and components. */
-
-@font-face {
-  font-family: "Manrope Demo";
-  src: url("/fonts/Manrope-Variable-Latin.woff2") format("woff2");
-  font-style: normal;
-  font-weight: 400 800;
-  font-display: optional;
-}
-
-/* ------------------------------------------------------------
-   Design tokens — scoped to .demos-shell
-   ------------------------------------------------------------ */
-
+/* Demo layout geometry and compatibility aliases for existing demo styles. */
 .demos-shell {
-	--font-display: "Manrope Demo", sans-serif;
-	--font-body: "Manrope Demo", sans-serif;
-	--font-mono: "JetBrains Mono", monospace;
-	--type-xs: 0.75rem;
-	--type-sm: 0.875rem;
-	--type-base: 1rem;
-	--type-lg: 1.125rem;
-	--type-xl: 1.5rem;
-	--type-2xl: 2.125rem;
-	--type-3xl: clamp(2.75rem, 2.1rem + 2.4vw, 4.25rem);
-	--type-hero: clamp(3.4rem, 2.2rem + 4.8vw, 6.25rem);
-	--color-canvas: #101820;
-	--color-surface: #19242e;
-	--color-surface-raised: #24333e;
-	--color-text: #f7f4ed;
-	--color-text-secondary: #d6d9d7;
-	--color-text-muted: #a9b5bd;
-	--color-accent: #f6ba77;
-	--color-border: rgba(226, 235, 235, 0.13);
-	--color-border-strong: rgba(226, 235, 235, 0.25);
-	--color-backdrop: rgba(7, 16, 23, 0.78);
-	--color-stage: #0c1720;
-	--color-stage-text: #f7f4ed;
-	--color-stage-muted: #b6c5ca;
-	--color-stage-accent: #f6ba77;
-	--duration-fast: 140ms;
-	--duration-standard: 240ms;
-	--duration-reveal: 420ms;
-	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-	--ease-spring: cubic-bezier(0.22, 1.2, 0.36, 1);
-	--space-xs: clamp(0.5rem, 0.45rem + 0.2vw, 0.75rem);
-	--space-sm: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
-	--space-md: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
-	--space-lg: clamp(1.5rem, 1.3rem + 0.8vw, 2rem);
-	--space-xl: clamp(2rem, 1.7rem + 1.25vw, 3rem);
-	--space-2xl: clamp(3rem, 2.5rem + 2vw, 4rem);
-	--space-3xl: clamp(4rem, 3rem + 4vw, 6rem);
-  --radius-sm: 0.5rem;
-  --radius-md: 0.875rem;
-  --radius-lg: 1.5rem;
-  --radius-pill: 100vmax;
-  --elevation-panel: 0 1.5rem 5rem rgba(5, 13, 18, 0.26);
-  --elevation-popover: 0 2.5rem 6rem rgba(5, 13, 18, 0.48);
-  --demo-site-nav-offset: 89px;
-  --demo-bg: var(--color-canvas);
-  --demo-fg: var(--color-text);
-  --demo-muted: var(--color-text-muted);
-  --demo-hair: var(--color-border);
-  --demo-hair-strong: var(--color-border-strong);
-  --demo-accent: var(--color-accent);
+  color-scheme: dark;
   font-family: var(--font-body);
-  font-size: 16px;
-  line-height: 1.6;
+  font-size: var(--type-base);
+  line-height: var(--lh-body);
   color: var(--demo-fg);
   background: var(--demo-bg);
-  min-height: calc(100vh - var(--demo-site-nav-offset));
-  padding-top: var(--demo-site-nav-offset);
+  min-height: 100vh;
+  padding-top: var(--site-nav-offset);
   display: flex;
   flex-direction: column;
-}
-
-@media (prefers-color-scheme: light) {
-  .demos-shell {
-    --color-canvas: #f6f4ef;
-    --color-surface: #ffffff;
-    --color-surface-raised: #eae9e3;
-    --color-text: #14212a;
-    --color-text-secondary: #35454e;
-    --color-text-muted: #586a72;
-    --color-accent: #965112;
-    --color-border: rgba(21, 43, 53, 0.14);
-    --color-border-strong: rgba(21, 43, 53, 0.27);
-    --color-backdrop: rgba(15, 29, 37, 0.56);
-    --elevation-panel: 0 1.5rem 5rem rgba(36, 45, 43, 0.11);
-  }
-
-  /* These stages use light particles, optical overlays, or dark scene panels.
-     Keep their surrounding controls in the same dark viewing environment. */
-  .demos-shell:is(
-    [data-demo-slug="beacon"],
-    [data-demo-slug="checkers"],
-    [data-demo-slug="fluid"],
-    [data-demo-slug="html-surface"],
-    [data-demo-slug="livesim"],
-    [data-demo-slug="orrery"],
-    [data-demo-slug="scene3d"],
-    [data-demo-slug="scene3d-bench"],
-	[data-demo-slug="showreel"],
-    [data-demo-slug="water"]
-  ) {
-    --color-canvas: #101820;
-    --color-surface: #19242e;
-    --color-surface-raised: #24333e;
-    --color-text: #f7f4ed;
-    --color-text-secondary: #d6d9d7;
-    --color-text-muted: #a9b5bd;
-    --color-accent: #f6ba77;
-    --color-border: rgba(226, 235, 235, 0.13);
-    --color-border-strong: rgba(226, 235, 235, 0.25);
-    --color-backdrop: rgba(7, 16, 23, 0.78);
-    --elevation-panel: 0 1.5rem 5rem rgba(5, 13, 18, 0.26);
-    color-scheme: dark;
-  }
-}
-
-/* ------------------------------------------------------------
-   Top bar — thin context strip
-   ------------------------------------------------------------ */
-
-.demos-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 44px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--demo-hair);
-  background: var(--demo-bg);
-  flex-shrink: 0;
-}
-
-.demos-topbar__crumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-
-.demos-topbar__home,
-.demos-topbar__section {
-  color: var(--demo-muted);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-
-.demos-topbar__home:hover,
-.demos-topbar__section:hover {
-  color: var(--demo-fg);
-}
-
-.demos-topbar__home:focus-visible,
-.demos-topbar__section:focus-visible {
-  outline: 2px solid var(--demo-accent);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-.demos-topbar__sep {
-  color: var(--demo-hair-strong);
-  user-select: none;
-}
-
-/* Hamburger — only visible on mobile (<900px) */
-.demos-topbar__menu {
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 44px;
-  min-height: 44px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 10px;
-  color: var(--demo-fg);
-}
-
-.demos-topbar__menu:focus-visible {
-  outline: 2px solid var(--demo-accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-.demos-topbar__menu-bar {
-  display: block;
-  width: 18px;
-  height: 1.5px;
-  background: currentColor;
-  transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
 /* ------------------------------------------------------------
@@ -442,7 +258,7 @@
 
 .demo-details {
   position: fixed;
-  top: var(--demo-site-nav-offset);
+  top: var(--site-nav-offset);
   right: 0;
   bottom: 0;
   z-index: 400;
@@ -527,9 +343,9 @@
 .demo-details__facts dt {
   margin-bottom: var(--space-xs);
   color: var(--demo-muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--type-xs);
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .demo-details__facts dd {
@@ -559,48 +375,63 @@
 }
 
 @media (max-width: 900px) {
-  .demos-shell { --demo-site-nav-offset: 69px; }
-  .demos-topbar__menu {
-    display: flex;
-  }
+  .demos-shell { --site-nav-offset: 4.25rem; }
 
   .demos-body {
-    grid-template-columns: 1fr;
-    position: relative;
+    display: flex;
+    flex-direction: column;
   }
 
   .demo-dock {
-    position: fixed;
-    top: var(--demo-site-nav-offset);
-    left: 0;
-    bottom: 0;
-    width: 280px;
-    z-index: 300;
-    border-right: 1px solid var(--demo-hair-strong);
-    transform: translateX(-100%);
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    overflow-y: auto;
+    position: static;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--demo-hair);
+    overflow: hidden;
   }
 
-  /* GoSX's declarative toggle owns the drawer's attribute and ARIA state. */
-  .demos-body[data-dock-open] .demo-dock {
-    transform: translateX(0);
+  .demo-dock__header { display: none; }
+  .demo-dock__list {
+    display: flex;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+  .demo-dock__item {
+    flex: 0 0 auto;
+    padding: 0;
+  }
+  .demo-dock__link {
+    min-height: 2.75rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+  }
+  .demo-dock__dot,
+  .demo-dock__tag {
+    display: none;
+  }
+  .demo-dock__title {
+    font-size: var(--type-sm);
+  }
+  .demo-dock__item[aria-current="page"] > .demo-dock__link,
+  .demo-dock__link[aria-current="page"] {
+    background: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--color-accent-line);
   }
 
   .demo-viewport {
     width: 100%;
   }
+
+  .demos-shell[data-demo-slug=""] .demo-dock {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .demo-dock {
-    transition: none;
-  }
-
-  .demos-topbar__menu-bar {
-    transition: none;
-  }
-
   .demo-dock__link,
   .demo-meta__pill {
     transition: none;
@@ -713,29 +544,6 @@
   border-color: var(--demo-hair-strong);
 }
 
-.demos-topbar {
-  height: 3.5rem;
-  padding-inline: var(--space-lg);
-  background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
-}
-
-.demos-topbar__crumb {
-  gap: 0.65rem;
-  font-size: var(--type-sm);
-}
-
-.demos-topbar__section { color: var(--demo-fg); font-weight: 700; }
-.demos-topbar__edition {
-  color: var(--demo-muted);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.demos-topbar__edition span { padding-inline: 0.35rem; color: var(--demo-accent); }
-.demos-topbar__menu-label { display: none; }
-
 .demos-body { grid-template-columns: 14.75rem minmax(0, 1fr); }
 .demo-dock { background: var(--color-canvas); }
 .demo-dock__header {
@@ -745,9 +553,7 @@
 .demo-dock__header p {
   margin: 0 0 0.35rem;
   color: var(--demo-muted);
-  font: 500 var(--type-xs)/1.4 var(--font-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 500 var(--type-xs)/1.4 var(--font-body);
 }
 .demo-dock__overview {
   display: flex;
@@ -789,29 +595,60 @@
 .demos-shell[data-demo-slug=""] .demos-body { grid-template-columns: minmax(0, 1fr); }
 .demos-shell[data-demo-slug=""] .demo-dock,
 .demos-shell[data-demo-slug=""] .demo-meta { display: none; }
-.demos-shell[data-demo-slug=""] .demos-body[data-dock-open] .demo-dock { display: block; }
-.demos-shell[data-demo-slug=""]:has(.demos-topbar__menu-wrap[open]) .demo-dock { display: block; transform: translateX(0); }
-.demos-shell:has(.demos-topbar__menu-wrap[open]) .demo-dock { transform: translateX(0); }
-.demos-topbar__menu { list-style: none; cursor: pointer; }
-.demos-topbar__menu::-webkit-details-marker { display: none; }
-
-.site-shell:has(.demos-shell) > .pill-nav {
-  background: rgba(12, 23, 32, 0.96);
-  border-bottom-color: rgba(226, 235, 235, 0.13);
-}
 
 @media (max-width: 900px) {
   .demos-body { grid-template-columns: minmax(0, 1fr); }
-  .demos-topbar { padding-inline: var(--space-md); }
-  .demos-topbar__edition { display: none; }
-  .demos-topbar__menu { display: inline-flex; flex-direction: row; gap: 0.3rem; padding: 0.45rem 0.75rem; border: 1px solid var(--demo-hair-strong); border-radius: var(--radius-pill); }
-  .demos-topbar__menu-label { display: inline; margin-right: 0.3rem; font: 700 var(--type-xs)/1.2 var(--font-body); }
-  .demos-topbar__menu-bar { display: none; }
-  .demo-dock { top: calc(var(--demo-site-nav-offset) + 3.5rem); width: min(20rem, 88vw); box-shadow: var(--elevation-popover); }
   .demo-meta { padding-inline: var(--space-md); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .demo-action { transition: none; }
   .demo-action:hover { transform: none; }
+}
+
+@media (max-width: 900px) {
+  .demos-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .demo-dock {
+    position: static;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--demo-hair);
+    overflow: hidden;
+    box-shadow: none;
+  }
+
+  .demo-dock__header { display: none; }
+  .demo-dock__list {
+    display: flex;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .demo-dock__item { flex: 0 0 auto; padding: 0; }
+  .demo-dock__link {
+    min-height: 2.75rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+  }
+
+  .demo-dock__dot,
+  .demo-dock__tag,
+  .demo-dock__chip { display: none; }
+  .demo-dock__title { font-size: var(--type-sm); }
+
+  .demo-dock__item[aria-current="page"] > .demo-dock__link,
+  .demo-dock__link[aria-current="page"] {
+    background: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--color-accent-line);
+  }
+
+  .demos-shell[data-demo-slug=""] .demo-dock { display: none; }
 }
