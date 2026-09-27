@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added: signed direct-download update checks
+
+- Add `App.CheckSignedUpdate` for the `latest.json` feed produced by
+  `gosx desktop package`. It verifies the detached Ed25519 signature, matches
+  the app and channel, and returns newer-version notes and a download page.
+- Persist check attempts in an app-selected state file and skip checks when
+  disabled, before startup completes, while offline, or within 24 hours of the
+  previous attempt. This path only notifies; players reinstall Setup to
+  upgrade. The existing `App.UpdateCheck()` / `App.UpdateApply()` MSIX feed
+  behavior is unchanged.
+
 ### Added: per-user Windows desktop installer and packager
 
 - Add `gosx desktop package` to build a GUI Setup executable, a portable ZIP,

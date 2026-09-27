@@ -912,10 +912,13 @@ Trusted desktop content can then call:
 const prefs = await window.gosxDesktop.service("prefs").load({ scope: "user" });
 ```
 
-The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
-`App.UpdateApply()` consume MSIX AppInstaller feeds, and
-`CrashReporterOptions` captures Go panics plus Windows minidumps with optional
-user-consented upload.
+The `desktop` package exposes two update paths. `App.UpdateCheck()` and
+`App.UpdateApply()` use the Windows App Installer feed for MSIX releases.
+`App.CheckSignedUpdate()` verifies the signed `latest.json` feed emitted by
+`gosx desktop package` for direct-download releases. It only reports an update;
+the player follows the returned download page and reinstalls Setup. Both paths
+are separate from the optional `CrashReporterOptions`, which captures Go
+panics plus Windows minidumps with optional user-consented upload.
 
 `gosx build --prod` emits a deployable `dist/` bundle with a server binary,
 hashed assets, prerendered static pages, an ISR manifest, and edge worker
@@ -952,9 +955,36 @@ appended. The command template accepts `{input}`, `{output}`, and `{file}`. Use
 `--manifest-key <file>` or `--manifest-sign-cmd <template>` to sign `latest.json`.
 
 Use `gosx desktop package` for a direct-download app with an ordinary per-user
-installer and publisher-hosted `latest.json` manifest. Use `gosx build --msix`
-and `--appinstaller <uri>` when the app distributes MSIX packages through the
-Windows App Installer feed. These are separate delivery and update paths.
+installer and publisher-hosted `latest.json` manifest. The app embeds the
+matching Ed25519 public key in its build and calls the update API after startup,
+from a menu action or later background check. For example, the application can
+keep the key in a Go source constant and keep the check state in its player-data
+directory:
+
+```go
+result, err := app.CheckSignedUpdate(ctx, desktop.SignedUpdateCheckOptions{
+    ManifestURL:     "https://updates.example.com/wb/latest.json",
+    Channel:         "stable",
+    PublicKey:       updatePublicKey,
+    StateFile:       filepath.Join(playerDataDir, "update-check.json"),
+    Enabled:         updateChecksEnabled,
+    StartupComplete: appIsReady,
+    Online:          networkIsAvailable,
+})
+if err == nil && result.Status == desktop.SignedUpdateAvailable {
+    // Show result.Version, result.Notes, and a link to result.DownloadPage.
+}
+```
+
+The app ID and current version come from `desktop.Options`. The state file
+limits attempts to one per 24 hours, including failed requests. The API skips
+checks when disabled, before startup completes, or while the caller reports
+offline. It requires HTTPS; `AllowLoopbackHTTPForTests` is only for local test
+servers. `--manifest-key <file>` or `--manifest-sign-cmd <template>` signs the
+manifest during packaging. Use `gosx build --msix` and `--appinstaller <uri>`
+when the app distributes MSIX packages through the Windows App Installer feed;
+that existing feed and its `App.UpdateCheck()` / `App.UpdateApply()` methods
+remain the MSIX path.
 
 ### Bundle boundary and mutable state
 
