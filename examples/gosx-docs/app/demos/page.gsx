@@ -34,8 +34,8 @@ func Page() Node {
 									<li>{facet}</li>
 								</Each>
 							</ul>
-				<p class="demo-card__backends">
-					Runs on {demoValues(demo.Backends)}
+							<p class="demo-card__backends">
+								Runs on {demoBackendSummary(demo.Backends)}
 							</p>
 							<footer class="demo-card__actions">
 								<a class="demo-card__open" href={"/demos/" + demo.Slug} data-gosx-link="true">Open demo</a>
@@ -73,7 +73,7 @@ func Page() Node {
 								<img src={demo.PosterPath} alt="" width="960" height="600" loading="lazy" decoding="async" />
 							</a>
 							<div class="demo-card__body">
-								<p class="demo-card__status">{demo.Status}</p>
+								<p class="demo-card__status">{demoStatusLabel(demo.Status)}</p>
 								<h3 class="demo-card__title">
 									<a href={"/demos/" + demo.Slug} data-gosx-link="true">{demo.Title}</a>
 								</h3>
@@ -84,7 +84,7 @@ func Page() Node {
 									</Each>
 								</ul>
 								<p class="demo-card__backends">
-									Runs on {demoValues(demo.Backends)}
+									Runs on {demoBackendSummary(demo.Backends)}
 								</p>
 								<footer class="demo-card__actions">
 									<a class="demo-card__open" href={"/demos/" + demo.Slug} data-gosx-link="true">Open demo</a>

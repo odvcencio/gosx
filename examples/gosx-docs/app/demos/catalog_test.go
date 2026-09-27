@@ -148,6 +148,15 @@ func TestGalleryBackendsMatchSceneCapabilityVerdicts(t *testing.T) {
 	}
 }
 
+func TestGalleryLabelsReadAsPlainCopy(t *testing.T) {
+	if got := demoBackendSummary([]string{"WebGPU", "WebGL2"}); got != "WebGPU or WebGL2" {
+		t.Errorf("demoBackendSummary = %q, want %q", got, "WebGPU or WebGL2")
+	}
+	if got := demoStatusLabel("lab"); got != "Lab" {
+		t.Errorf("demoStatusLabel = %q, want Lab", got)
+	}
+}
+
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

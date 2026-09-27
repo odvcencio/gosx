@@ -207,6 +207,26 @@ func demoValues(values []string) string {
 	return strings.Join(values, ", ")
 }
 
+func demoBackendSummary(values []string) string {
+	switch len(values) {
+	case 0:
+		return "Not available"
+	case 1:
+		return values[0]
+	case 2:
+		return values[0] + " or " + values[1]
+	default:
+		return strings.Join(values[:len(values)-1], ", ") + " or " + values[len(values)-1]
+	}
+}
+
+func demoStatusLabel(status string) string {
+	if status == "" {
+		return "Status unavailable"
+	}
+	return strings.ToUpper(status[:1]) + status[1:]
+}
+
 func demoSourceURL(path string) string {
 	return "https://github.com/odvcencio/gosx/blob/main/" + path
 }
