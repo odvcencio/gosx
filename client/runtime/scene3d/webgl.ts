@@ -6602,11 +6602,22 @@
     return state && state.status === "ready" ? state : null;
   }
 
+  function scenePBRRequestFrame(callback) {
+    const motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function" && typeof motionScheduler.cancel === "function") {
+      const id = motionScheduler.request(callback);
+      return { cancel: function() { motionScheduler.cancel(id); } };
+    }
+    if (typeof requestAnimationFrame === "function") {
+      const id = requestAnimationFrame(callback);
+      return { cancel: function() { if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id); } };
+    }
+    return null;
+  }
+
   function scenePBRClearInitialPoll(state) {
     if (!state) return;
-    if (state.frame != null && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(state.frame);
-    }
+    if (state.frame != null) state.frame.cancel();
     if (state.timer != null && typeof clearTimeout === "function") {
       clearTimeout(state.timer);
     }
@@ -6726,7 +6737,7 @@
           scenePBRClearInitialPoll(state);
           poll();
         }
-        if (typeof requestAnimationFrame === "function") state.frame = requestAnimationFrame(run);
+        state.frame = scenePBRRequestFrame(run);
         if (typeof setTimeout === "function") state.timer = setTimeout(run, 50);
         if (state.frame == null && state.timer == null) cancel();
       }

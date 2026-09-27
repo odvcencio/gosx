@@ -231,20 +231,16 @@ var docSceneSpecs = []docSceneSpec{
 	{
 		Route:           "/docs/motion",
 		Slug:            "motion",
-		Eyebrow:         "Motion with an off switch",
-		Title:           "Authored motion explains change and yields to reduced-motion preference.",
-		Summary:         "The keyframe path advances through a short sequence; the final node rotates only when motion is allowed.",
-		InteractionHint: "Pointer interaction only: drag to inspect the path; wheel or pinch to zoom. Reduced motion freezes authored animation.",
+		Eyebrow:         "One motion graph, two render surfaces",
+		Title:           "HTML and Scene3D read the same values in one frame.",
+		Summary:         "Scroll progress moves the HTML card and camera together; a spring scales one scene node, and another follows the HTML marker.",
+		InteractionHint: "Pointer interaction only: drag to orbit; wheel or pinch to zoom. Scroll inside the panel; hover or focus the button to move the mint sphere, and the amber sphere follows its HTML marker.",
 		DemoHref:        "/demos/scene3d",
 		DemoLabel:       "See declarative motion in Scene3D",
 		Anchors: []docSceneAnchor{
-			{ID: "start", Position: scene.Vec3(-3, -0.8, 0), Shape: docSceneSphere},
-			{ID: "key-a", Position: scene.Vec3(-1.5, 0.7, 0.4), Shape: docSceneBox},
-			{ID: "key-b", Position: scene.Vec3(0, -0.2, -0.4), Shape: docScenePyramid},
-			{ID: "key-c", Position: scene.Vec3(1.5, 1, 0.4), Shape: docSceneCylinder},
-			{ID: "finish", Position: scene.Vec3(3, 0, 0), Shape: docSceneTorus, Accent: true, Spin: scene.Rotate(0, 0.003, 0)},
+			{ID: "hover-node", Position: scene.Vec3(1.5, 0.25, 0), Shape: docSceneSphere, Accent: true, Spin: scene.Euler{Y: 0.18}},
+			{ID: "pinned-node", Position: scene.Vec3(-1.3, -0.35, 0), Shape: docSceneSphere},
 		},
-		Links: [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}},
 	},
 	{
 		Route:           "/docs/deployment",
@@ -292,6 +288,7 @@ func normalizeDocSceneRoute(routePath string) string {
 
 func buildDocSceneFeature(spec docSceneSpec) DocSceneFeature {
 	prefix := "doc-" + spec.Slug
+	controls := scene.ControlOrbit
 	nodes := make([]scene.Node, 0, 2+len(spec.Anchors)+len(spec.Links))
 	nodes = append(nodes,
 		scene.AmbientLight{
@@ -355,7 +352,7 @@ func buildDocSceneFeature(spec docSceneSpec) DocSceneFeature {
 			Label:               spec.Title,
 			AriaLabel:           spec.Title,
 			Background:          docSceneCanvas,
-			Controls:            scene.ControlOrbit,
+			Controls:            controls,
 			AutoRotate:          scene.Bool(false),
 			Responsive:          scene.Bool(true),
 			FillHeight:          scene.Bool(true),

@@ -272,7 +272,9 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:commands"], 1);
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:update-props"], 1);
-  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
+  // The scroll request is retained through async Scene3D startup, so the
+  // initial render boundary schedules once more with the same latest reason.
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 2);
 });
 
 test("Scene3D scroll camera offset moves camera by absolute scroll pixels", async () => {

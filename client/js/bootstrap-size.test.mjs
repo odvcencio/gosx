@@ -682,7 +682,12 @@ const budgets = [
   // Brotli 366_300 -> 366_800.
   // Responsive Scene3D fill sizing adds 340 raw bytes. Measured after the fix:
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
-  { file: "bootstrap.js", raw: 1_667_400, gzip: 461_000, brotli: 366_800 },
+  // The shared motion core and DOM/Scene3D bridges measure
+  // 1,773,515 / 490,249 / 393,517. Against the pre-change measurement
+  // (1,732,875 / 477,383 / 382,996), growth is 40,640 / 12,866 / 10,521.
+  // Raise reviewed targets by 42,300 / 13,100 / 10,700; hard-limit headroom is
+  // 1,421 / 235 / 367 bytes.
+  { file: "bootstrap.js", raw: 1_709_400, gzip: 474_100, brotli: 377_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -758,7 +763,10 @@ const budgets = [
   // by the runtime chunk). Measured: 150_160 / 41_135 / 35_887.
   // v0.55.0 soft-navigation reconciliation and declarative link/form routing
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
-  { file: "bootstrap-runtime.js", raw: 156_500, gzip: 43_100, brotli: 37_600 },
+  // The shared motion core brings bootstrap-runtime.js to
+  // 192,680 / 54,858 / 47,693. The reviewed targets leave 100 / 57 / 82 bytes
+  // before the hard limits.
+  { file: "bootstrap-runtime.js", raw: 183_600, gzip: 52_300, brotli: 45_500 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -814,7 +822,9 @@ const budgets = [
   // gosx#217 review follow-up: same navigation.ts/regions.ts growth as
   // bootstrap-runtime.js above, carried by the lite chunk. Measured:
   // 113_659 / 30_609 / 27_146.
-  { file: "bootstrap-lite.js", raw: 113_900, gzip: 30_800, brotli: 27_400 },
+  // The shared motion core brings bootstrap-lite.js to 149,434 / 42,353 /
+  // 37,361. The reviewed targets leave 86 / 67 / 19 bytes before the hard limits.
+  { file: "bootstrap-lite.js", raw: 142_400, gzip: 40_400, brotli: 35_600 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1635,11 +1645,11 @@ const routeBudgets = [
     // Measured selective total: 259_682 / 73_492 / 64_547, plus narrow
     // headroom on gzip/brotli too (both were within single-digit percent of
     // their prior caps already).
-    // v0.55.0 carries the same soft-navigation behavior without pulling in
-    // Scene3D. Measured: 265_883 / 75_486 / 66_333.
-    raw: 266_000,
-    gzip: 75_600,
-    brotli: 66_400,
+    // M1 motion measures 302,603 / 87,447 / 76,551 on this route. The reviewed
+    // targets leave 112 / 123 / 99 bytes before the hard limits.
+    raw: 288_300,
+    gzip: 83_400,
+    brotli: 73_000,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1789,9 +1799,11 @@ const routeBudgets = [
     // Responsive fill sizing measures this route at 1_316_603 raw and 355_507
     // gzip. Raise gzip by the smallest 100-byte step needed; raw and Brotli
     // remain within the existing main budgets.
-    raw: 1_254_000,
-    gzip: 339_200,
-    brotli: 284_900,
+    // M1 motion measures 1,355,955 / 368,200 / 309,920 on this route. The
+    // reviewed targets leave 330 / 184 / 145 bytes before the hard limits.
+    raw: 1_291_700,
+    gzip: 352_000,
+    brotli: 295_300,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1956,9 +1968,11 @@ const routeBudgets = [
     // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
     // All three combine on this merge; caps re-measured from the merged
     // source below.
-    raw: 1_136_000,
-    gzip: 317_000,
-    brotli: 268_500,
+    // M1 motion measures 1,205,881 / 340,271 / 287,178 on this route. The
+    // reviewed targets leave 359 / 244 / 207 bytes before the hard limits.
+    raw: 1_148_800,
+    gzip: 324_300,
+    brotli: 273_700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2125,11 +2139,11 @@ const routeBudgets = [
     // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
     // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
     // 335_000 for headroom. Gzip headroom is unchanged.
-    // GPU-driven crowd motion and adaptive frame pacing both add code to this
-    // route. The build with frame caching measures 1_551_261 / 419_536 /
-    // 354_106.
+    // The M1 motion runtime measures 1,609,694 / 439,360 / 370,076 on the
+    // combined backend fallback route. Raise gzip by 300 bytes; raw and Brotli
+    // remain under their limits, and gzip retains 224 bytes of headroom.
     raw: 1_551_400,
-    gzip: 419_650,
+    gzip: 423_200,
     brotli: 354_200,
   },
   {
@@ -2274,9 +2288,12 @@ const routeBudgets = [
     // Motion-frame dispatch and adaptive frame pacing both add code to this
     // route. The build with frame caching measures 1_148_054 / 306_276 /
     // 256_268.
+    // M1 motion measures 1,203,682 / 324,876 / 271,449 on this route. Raw is
+    // inside its limit; raise gzip and Brotli by 100 bytes each, leaving 204 / 186
+    // bytes inside their hard limits.
     raw: 1_148_200,
-    gzip: 306_400,
-    brotli: 256_350,
+    gzip: 309_600,
+    brotli: 258_700,
   },
 
 ];

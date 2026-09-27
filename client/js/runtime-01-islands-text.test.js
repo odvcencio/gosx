@@ -645,24 +645,23 @@ test("bootstrap lite mounts managed motion blocks and plays load presets", async
 
   const env = createContext({
     elements: [block],
+    performanceNow: () => 0,
   });
+  const raf = installManualRAF(env.context);
 
   runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
   await flushAsyncWork();
 
+  raf.flush(0);
+  raf.flush(100);
+  raf.flush(500);
+  await Promise.resolve();
+
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(block.getAttribute("data-gosx-motion-state"), "finished");
-  assert.equal(block.animateCalls.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(block.animateCalls[0].keyframes)), [
-    { opacity: 0, transform: "translate3d(0, 24px, 0)" },
-    { opacity: 1, transform: "translate3d(0, 0, 0)" },
-  ]);
-  assert.deepEqual(JSON.parse(JSON.stringify(block.animateCalls[0].options)), {
-    duration: 360,
-    delay: 40,
-    easing: "ease-out",
-    fill: "both",
-  });
+  assert.equal(block.animateCalls.length, 0, "the shared runtime drives the preset without a second WAAPI loop");
+  assert.equal(block.style.opacity, "1");
+  assert.equal(block.style.transform, "translate3d(0px, 0px, 0px)");
 });
 
 test("bootstrap lite respects reduced motion on managed motion blocks", async () => {
@@ -689,7 +688,9 @@ test("bootstrap lite defers managed motion view triggers until intersection", as
 
   const env = createContext({
     elements: [block],
+    performanceNow: () => 0,
   });
+  const raf = installManualRAF(env.context);
 
   runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
   await flushAsyncWork();
@@ -702,13 +703,13 @@ test("bootstrap lite defers managed motion view triggers until intersection", as
     { target: block, isIntersecting: true, intersectionRatio: 0.5 },
   ]);
   await flushAsyncWork();
+  raf.flush(0);
+  raf.flush(1000);
+  await Promise.resolve();
 
   assert.equal(block.getAttribute("data-gosx-motion-state"), "finished");
-  assert.equal(block.animateCalls.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(block.animateCalls[0].keyframes)), [
-    { opacity: 0, transform: "scale(0.91)" },
-    { opacity: 1, transform: "scale(1)" },
-  ]);
+  assert.equal(block.animateCalls.length, 0, "view-triggered presets use the shared motion scheduler");
+  assert.equal(block.style.opacity, "1");
 });
 
 test("bootstrap mounts declarative text layout clamp options on managed blocks", async () => {

@@ -32,6 +32,100 @@
     }
   }
 
+  function motionSceneProperty() {
+    const target = arguments[0], property = arguments[1], value = arguments[2];
+    if (!target || typeof target !== "object") return;
+    const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "";
+    let field = parts[parts.length - 1];
+    if (group === "rotation" && ["x", "y", "z"].includes(field)) field = "rotation" + field.toUpperCase();
+    if (group === "scale" && ["x", "y", "z"].includes(field)) field = "scale" + field.toUpperCase();
+    if (["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "opacity", "fov", "near", "far", "zoom"].includes(field)) target[field] = value;
+  }
+
+  function motionSceneCameraProperty() {
+    const property = arguments[0];
+    const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "", field = parts[parts.length - 1];
+    if (group === "rotation" && ["x", "y", "z"].includes(field)) return "rotation" + field.toUpperCase();
+    return ["x", "y", "z", "fov", "near", "far", "zoom", "rotationX", "rotationY", "rotationZ"].includes(field) ? field : "";
+  }
+
+  function applyMotionBindingToRuntimeBundle() {
+    const bundle = arguments[0], binding = arguments[1], value = arguments[2];
+    if (!bundle || !binding) return;
+    if (binding.target === "camera") {
+      const field = motionSceneCameraProperty.call(null, binding.property);
+      if (field) { if (!bundle.camera || typeof bundle.camera !== "object") bundle.camera = {}; bundle.camera[field] = value; }
+      return;
+    }
+    for (const object of Array.isArray(bundle.meshObjects) ? bundle.meshObjects : []) {
+      if (!object || String(object.id || "") !== String(binding.node || "")) continue;
+      if (binding.target === "materialUniform") {
+        if (!object.customUniforms || typeof object.customUniforms !== "object") object.customUniforms = {};
+        object.customUniforms[binding.property] = value;
+      } else if (binding.target === "sceneNode") motionSceneProperty.call(null, object, binding.property, value);
+    }
+  }
+
+  function applyMotionBindingsToRuntimeBundle() {
+    const bundle = arguments[0], sceneState = arguments[1];
+    for (const item of sceneState._gosxMotionRuntimeBindings || []) applyMotionBindingToRuntimeBundle.call(null, bundle, item.binding, item.value);
+  }
+
+  function attachSceneMotionBridge() {
+    const mount = arguments[0], sceneState = arguments[1], scheduleRender = arguments[2];
+    const motion = window.__gosx && window.__gosx.motion;
+    if (!motion || typeof motion.attachScene !== "function") return function() {};
+    return motion.attachScene(mount, {
+      write: function() {
+        const binding = arguments[0], value = arguments[1];
+        /** @type {Array<any>} */
+        const entries = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = []);
+        const key = [binding.target, binding.node || "", binding.property || ""].join("|");
+        let item = entries.find(function() { return arguments[0].key === key; });
+        if (!item) { item = { key: key, binding: binding }; entries.push(item); }
+        item.value = value;
+        if (binding.target === "camera") {
+          const field = motionSceneCameraProperty.call(null, binding.property);
+          if (field) motionSceneProperty.call(null, sceneState.camera, field, value);
+        } else if (binding.target === "materialUniform") {
+          const uniforms = sceneResolveMaterialUniforms(sceneState, binding.node);
+          if (uniforms) uniforms[binding.property] = value;
+        } else if (binding.target === "sceneNode") {
+          motionSceneProperty.call(null, sceneState.objects && sceneState.objects.get(String(binding.node)), binding.property, value);
+        }
+      },
+      pin: function() {
+        const pin = arguments[0], elementRect = arguments[1], sceneRect = arguments[2];
+        const object = sceneState.objects && sceneState.objects.get(String(pin.node || ""));
+        if (!object || !(sceneRect.width > 0) || !(sceneRect.height > 0)) return false;
+        const camera = sceneState.camera || {}, distance = Math.max(0.01, Math.abs(sceneNumber(camera.z, 6)));
+        const worldHeight = 2 * distance * Math.tan(sceneNumber(camera.fov, 75) * Math.PI / 360);
+        const x = sceneNumber(camera.x, 0) + (elementRect.left + elementRect.width * 0.5 - sceneRect.left - sceneRect.width * 0.5) * worldHeight / sceneRect.height;
+        const y = sceneNumber(camera.y, 0) + (sceneRect.top + sceneRect.height * 0.5 - elementRect.top - elementRect.height * 0.5) * worldHeight / sceneRect.height;
+        if (Object.is(object.x, x) && Object.is(object.y, y)) return false;
+        object.x = x; object.y = y;
+        return true;
+      },
+      invalidate: function() { scheduleRender("motion-binding"); },
+    });
+  }
+
+  function sceneMotionRequestFrame() {
+    const callback = arguments[0];
+    const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (scheduler && typeof scheduler.request === "function") return scheduler.request(callback);
+    if (typeof window.requestAnimationFrame === "function") return window.requestAnimationFrame(callback);
+    return setTimeout(function() { callback(Date.now()); }, 16);
+  }
+
+  function sceneMotionCancelFrame() {
+    const handle = arguments[0];
+    const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (scheduler && typeof scheduler.cancel === "function") scheduler.cancel(handle);
+    else if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(handle);
+    else clearTimeout(handle);
+  }
+
   function sceneControlsTarget(props) {
     const raw = props && props.controlTarget && typeof props.controlTarget === "object" ? props.controlTarget : null;
     return {
@@ -941,7 +1035,7 @@
 
     function cancelOrbitInertia() {
       if (orbitFrame) {
-        cancelAnimationFrame(orbitFrame);
+        sceneMotionCancelFrame.call(null, orbitFrame);
         orbitFrame = 0;
       }
     }
@@ -960,10 +1054,10 @@
           scheduleRender("controls-inertia");
         }
         if (sceneOrbitInertiaActive(controls)) {
-          orbitFrame = requestAnimationFrame(step);
+          orbitFrame = sceneMotionRequestFrame.call(null, step);
         }
       };
-      orbitFrame = requestAnimationFrame(step);
+      orbitFrame = sceneMotionRequestFrame.call(null, step);
     }
 
     function onPointerDown(event) {
@@ -1014,10 +1108,10 @@
           scheduleRender("controls");
         }
         if (controls.keys.size > 0) {
-          flyFrame = requestAnimationFrame(step);
+          flyFrame = sceneMotionRequestFrame.call(null, step);
         }
       };
-      flyFrame = requestAnimationFrame(step);
+      flyFrame = sceneMotionRequestFrame.call(null, step);
     }
 
     function onKeyDown(event) {
@@ -1098,7 +1192,7 @@
         detachDocumentListeners();
         cancelOrbitInertia();
         if (flyFrame) {
-          cancelAnimationFrame(flyFrame);
+          sceneMotionCancelFrame.call(null, flyFrame);
           flyFrame = 0;
         }
         canvas.removeEventListener("pointerdown", onPointerDown);

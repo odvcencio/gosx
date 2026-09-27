@@ -1,0 +1,21 @@
+program := motion.NewProgram("gallery")
+
+scroll := program.ScrollProgress("scroll", "", motion.AxisY)
+cameraZ := program.Map("camera-z", scroll, 0, 1, 6, 4.5)
+program.BindCamera(cameraZ, "#scene", "position.z")
+
+hover := program.Hover("hover", "#grow-button")
+spring := program.Spring("grow", 0, motion.SpringOptions{
+	Input:   hover,
+	Physics: motion.Spring{Stiffness: 280, Damping: 23},
+})
+scale := program.Map("scale", spring, 0, 1, 1, 1.4)
+program.BindSceneNode(scale, "#scene", "sphere", "scale.x")
+program.BindSceneNode(scale, "#scene", "sphere", "scale.y")
+program.BindSceneNode(scale, "#scene", "sphere", "scale.z")
+program.PinTo("#scene", "marker-node", "#html-marker")
+
+node := ctx.MotionScope(program, gosx.El("section",
+	gosx.El("button", gosx.Attr("id", "grow-button"), gosx.Text("Grow")),
+	gosx.El("div", gosx.Attr("id", "html-marker")),
+))

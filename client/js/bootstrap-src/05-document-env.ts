@@ -22,6 +22,7 @@
     "data-gosx-motion-easing",
     "data-gosx-motion-distance",
     "data-gosx-motion-respect-reduced",
+    "data-gosx-motion-reduced-policy",
     "data-gosx-motion-split",
     "data-gosx-motion-stagger",
   ];
@@ -111,6 +112,11 @@
         }
       }
     };
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function") {
+      gosxVisualInvalidationHandle = motionScheduler.request(flush);
+      return;
+    }
     if (typeof requestAnimationFrame === "function") {
       gosxVisualInvalidationHandle = requestAnimationFrame(flush);
       return;
@@ -192,6 +198,7 @@
       easing: gosxMotionStringAttr(element, "data-gosx-motion-easing", "cubic-bezier(0.16, 1, 0.3, 1)"),
       distance: Math.max(0, gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-distance", 18), 18)),
       respectReducedMotion: gosxMotionBoolAttr(element, "data-gosx-motion-respect-reduced", true),
+      reducedMotionPolicy: gosxMotionStringAttr(element, "data-gosx-motion-reduced-policy", "skip"),
       split: normalizeGosxMotionSplit(gosxMotionStringAttr(element, "data-gosx-motion-split", "")),
       stagger: Math.max(0, Math.round(gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-stagger", 0), 0))),
     };
@@ -430,6 +437,21 @@
     }
   }
 
+  function gosxManagedMotionAnimate(element, keyframes, options) {
+    const runtime = window.__gosx && window.__gosx.motion;
+    if (runtime && typeof runtime.animateKeyframes === "function") {
+      return runtime.animateKeyframes(element, keyframes, {
+        duration: options.duration,
+        delay: options.delay,
+        easing: options.easing,
+        respectReducedMotion: options.respectReducedMotion,
+        reducedMotion: options.reducedMotionPolicy,
+      });
+    }
+    if (!element || typeof element.animate !== "function") return null;
+    return element.animate(keyframes, options);
+  }
+
   function gosxManagedMotionState(record, state) {
     if (!record || !record.element) {
       return;
@@ -485,11 +507,13 @@
       const delay = record.config.delay + (record.config.stagger * i);
       let animation = null;
       try {
-        animation = units[i].animate(keyframes, {
+        animation = gosxManagedMotionAnimate(units[i], keyframes, {
           duration: record.config.duration,
           delay: delay,
           easing: record.config.easing,
           fill: "both",
+          respectReducedMotion: record.config.respectReducedMotion,
+          reducedMotionPolicy: record.config.reducedMotionPolicy,
         });
       } catch (_error) {
         continue;
@@ -538,7 +562,9 @@
       return;
     }
     record.config = gosxManagedMotionConfig(record.element);
-    if (gosxManagedMotionReduced(record.config)) {
+    const motionRuntime = window.__gosx && window.__gosx.motion;
+    const runtimeAvailable = motionRuntime && typeof motionRuntime.animateKeyframes === "function";
+    if (gosxManagedMotionReduced(record.config) && (!runtimeAvailable || record.config.reducedMotionPolicy === "skip")) {
       record.played = true;
       gosxManagedMotionState(record, "reduced");
       return;
@@ -561,7 +587,7 @@
     setAttrValue(record.element, GOSX_MOTION_REVEALED_ATTR, GOSX_MOTION_LIFE_TOKEN);
     gosxManagedMotionState(record, "running");
     cancelManagedMotionAnimation(record);
-    if (typeof record.element.animate !== "function") {
+    if (!runtimeAvailable && typeof record.element.animate !== "function") {
       gosxManagedMotionState(record, "finished");
       return;
     }
@@ -579,11 +605,13 @@
       // the element so the trigger still resolves rather than hanging.
     }
 
-    const animation = record.element.animate(gosxManagedMotionKeyframes(record.config), {
+    const animation = gosxManagedMotionAnimate(record.element, gosxManagedMotionKeyframes(record.config), {
       duration: record.config.duration,
       delay: record.config.delay,
       easing: record.config.easing,
       fill: "both",
+      respectReducedMotion: record.config.respectReducedMotion,
+      reducedMotionPolicy: record.config.reducedMotionPolicy,
     });
     record.animation = animation || null;
     if (animation && animation.finished && typeof animation.finished.then === "function") {
