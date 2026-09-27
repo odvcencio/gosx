@@ -12,7 +12,7 @@ func Page() Node {
 		</header>
 		<section class="capabilities-browser" data-gosx-scene3d-status-scope aria-label="Browser backend probe">
 			<div class="capabilities-browser__mark" aria-hidden="true">
-				<Scene3D class="capabilities-browser__scene" {...data.probe} />
+				<Scene3D class="capabilities-browser__scene" {...data.probe} stats={false} />
 			</div>
 			<div>
 				<h2>Your browser</h2>

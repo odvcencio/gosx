@@ -3,6 +3,7 @@ package docs
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +15,13 @@ import (
 )
 
 func TestCapabilitiesPageRendersEveryMatrixRowAndBackendCell(t *testing.T) {
+	pageSource, err := os.ReadFile("page.gsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pageSource), `<Scene3D class="capabilities-browser__scene" {...data.probe} stats={false} />`) {
+		t.Fatal("browser capability probe must not render the public Scene3D stats overlay")
+	}
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve test source")
