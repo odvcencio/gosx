@@ -74,7 +74,23 @@ function createLoaderContext(options = {}) {
   sandbox.URL = options.urlAPI || { createObjectURL: () => "blob:fake" };
 
   const context = vm.createContext(sandbox);
-  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  if (options.sceneRuntime) {
+    for (const name of [
+      "10-runtime-primitives.ts",
+      "10-runtime-scene-utils.ts",
+      "11-scene-math.ts",
+      "12-scene-geometry.ts",
+      "13-scene-material.ts",
+    ]) {
+      vm.runInContext(readSource(name), context, { filename: name });
+    }
+    const core = readSource("10-runtime-scene-core.ts");
+    const marker = core.indexOf("// Scene3D shared API");
+    assert.ok(marker >= 0, "core shared API marker located");
+    vm.runInContext(core.slice(0, marker), context, { filename: "10-runtime-scene-core.ts" });
+  } else {
+    vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  }
   vm.runInContext(readSource("../runtime/scene3d/gltf.ts"), context, { filename: "gltf.ts" });
   return { context, sandbox, warnings };
 }
@@ -151,6 +167,51 @@ function extractSpecularTexturedMaterial(context, imageUri) {
   };
   return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
 }
+
+test("GLB PBR factors survive object normalization and material profiling", () => {
+  const { context } = createLoaderContext({ sceneRuntime: true });
+  const document = {
+    asset: { version: "2.0" },
+    images: [{ uri: "normal.png" }, { uri: "occlusion.png" }],
+    textures: [{ source: 0 }, { source: 1 }],
+    materials: [
+      {
+        pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] },
+        emissiveFactor: [0.8, 0.15, 0.05],
+        extensions: { KHR_materials_emissive_strength: { emissiveStrength: 4 } },
+      },
+      { pbrMetallicRoughness: { baseColorFactor: [0.9, 0.7, 0.3, 1] } },
+      { normalTexture: { index: 0, scale: 0 } },
+      { occlusionTexture: { index: 1, strength: 0 } },
+    ],
+  };
+  const raw = document.materials.map((_, index) => plain(call(context,
+    `gltfExtractMaterial(${JSON.stringify(document)}, ${index}, null)`)));
+  const normalized = raw.map((material, index) => plain(call(context,
+    `normalizeSceneObject(${JSON.stringify({ kind: "mesh", material })}, ${index}, null)`)));
+  const profile = (object) => plain(call(context,
+    `sceneObjectMaterialProfile(${JSON.stringify(object)})`));
+
+  assert.deepEqual(raw[0].emissiveColor, [0.8, 0.15, 0.05]);
+  assert.equal(raw[0].emissive, 4);
+  assert.deepEqual(raw[1].emissiveColor, [0, 0, 0]);
+  assert.equal(raw[1].emissive, 1);
+  assert.equal(raw[2].normalScale, 0);
+  assert.equal(raw[3].occlusionStrength, 0);
+
+  assert.deepEqual(normalized[0].emissiveColor, raw[0].emissiveColor);
+  assert.equal(normalized[0].emissive, 4);
+  assert.deepEqual(normalized[1].emissiveColor, [0, 0, 0]);
+  assert.equal(normalized[2].normalScale, 0);
+  assert.equal(normalized[3].occlusionStrength, 0);
+
+  const coloredProfile = profile(normalized[0]);
+  const darkProfile = profile(normalized[1]);
+  assert.deepEqual(coloredProfile.emissiveColor, [0.8, 0.15, 0.05]);
+  assert.equal(coloredProfile.emissive, 4);
+  assert.deepEqual(darkProfile.emissiveColor, [0, 0, 0]);
+  assert.notEqual(coloredProfile.key, darkProfile.key);
+});
 
 // --- KHR_materials_ior ------------------------------------------------------
 

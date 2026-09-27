@@ -2417,3 +2417,40 @@ test("16a skinned LBS output survives renderer disposal with a fresh bind group 
   assert.strictEqual(bound[1].buffer, freshBuffer, "slot 1 reads skinned normals from the fresh output");
   assert.strictEqual(bound[3].buffer, freshBuffer, "slot 3 reads skinned tangents from the fresh output");
 });
+
+test("Scene3D completion timestamps enclose water and post without encoder.writeTimestamp", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true,
+    fakeDeviceOptions: { timestampQuery: true, writeTimestamp: false } });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 96);
+  const bundle = api.createSceneRenderBundle(64, 64, "#000000",
+    { x: 0, y: 1, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false);
+  bundle.postEffects = [{ kind: "fxaa" }, { kind: "bloom", threshold: 1.06 }];
+  harness.canvas.width = harness.canvas.height = 64;
+  const events = [];
+  const original = harness.fake.device.createCommandEncoder;
+  harness.fake.device.createCommandEncoder = function(...args) {
+    const encoder = original.apply(this, args);
+    for (const name of ["beginComputePass", "beginRenderPass", "resolveQuerySet"]) {
+      const call = encoder[name];
+      encoder[name] = function(...args) { events.push([name, args[0]?.label]); return call.apply(this, args); };
+    }
+    return encoder;
+  };
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.equal(harness.renderer.getFrameTiming().status, "pending");
+  await flushAsyncWork();
+  const start = events.findIndex(e => e[1] === "gosx-frame-timer-start");
+  const end = events.findIndex(e => e[1] === "gosx-frame-timer-end");
+  const draws = events.map((e, i) => e[0] === "beginRenderPass" ? i : -1).filter(i => i >= 0);
+  assert.ok(draws.length > 2, "water and post add passes to the main draw");
+  assert.ok(draws.every(i => i > start && i < end), "all frame draws precede the completion timestamp");
+  const sample = harness.renderer.pollPerformanceSample();
+  assert.equal(sample.scope, "frame");
+  assert.equal(harness.renderer.getFrameTiming().gpuMS, sample.gpuMS, "public snapshot survives adaptive-quality consumption");
+  assert.equal(harness.renderer.getFrameTiming().frameSeq, 1);
+  harness.renderer.dispose();
+  assert.equal(harness.renderer.getFrameTiming().status, "disposed");
+  assert.equal(harness.renderer.getFrameTiming().gpuMS, null);
+});

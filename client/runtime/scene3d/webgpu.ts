@@ -1,3 +1,20 @@
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneLatestGPUCompletion(previous, next) {
+    return previous && previous.frameSeq > next.frameSeq ? previous : next;
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneWebGPUCompletionSnapshot(status, sample, disposed, lost) {
+    var state = "measured";
+    if (!sample) state = "pending";
+    else if (performance.now() - sample.atMS > 1000) state = "stale";
+    if (!status.available) state = "unavailable";
+    if (status.failed || lost) state = "failed";
+    if (disposed) state = "disposed";
+    return Object.assign({ status: state, source: "gpu-timestamp", scope: "frame",
+      gpuMS: null, frameSeq: 0, atMS: 0 }, state === "measured" ? sample : {});
+  }
+
   // webgpu.ts — WebGPU rendering backend for GoSX Scene3D.
   // @ts-check
   //
@@ -2764,6 +2781,9 @@
     "    } else {",
     "        color = aces(color);",
     "    }",
+    "    if (mode != 3) {",
+    "        color = pow(max(color, vec3f(0.0)), vec3f(1.0 / 2.2));",
+    "    }",
     "    return vec4f(color, 1.0);",
     "}",
   ].join("\n");
@@ -2815,13 +2835,9 @@
   // GoSX is weakest, and it lands hardest on a shader that is a weighted average
   // of many texture taps.
   //
-  // Where it is SAFE here, and why. Every post target this renderer allocates
-  // uses targetFormat — the preferred canvas format, an 8-bit UNORM. See
-  // ensureFBOs and ensureBloomPingPong. So every value a post shader samples is
-  // already quantized to 8 bits in [0, 1]. An f16 carries an 11-bit significand,
-  // which strictly exceeds that, and the blur weights sum to 1, so the
-  // accumulator never leaves [0, 1] either. Half precision cannot lose a bit the
-  // target could have stored.
+  // The post textures use RGBA16float. Blur and FXAA use bounded weights,
+  // while tone mapping, bright extraction, and depth reconstruction stay f32.
+  // Tests cover HDR inputs through the half and full precision variants.
   //
   // Where it is NOT safe, and why these shaders stay f32:
   //
@@ -4162,7 +4178,8 @@
   // That crash sat undiscovered because the customPost case was unreachable:
   // normalizeScenePostEffect lowercased the kind, so this pass never ran and
   // never reached the uniform upload on the frame after its pipeline resolved.
-  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError, packSelenaUniforms) {
+  function wgpuCreatePostProcessor(device, presentationFormat, onAllocationError, packSelenaUniforms) {
+    var targetFormat = "rgba16float";
     // Resolve the precision variant once per post processor, not per frame.
     var postPrecisionMode = sceneWebGPUPostPrecisionMode(device);
     var postUsesF16 = postPrecisionMode === "f16";
@@ -4395,7 +4412,7 @@
       if (pipelines[name]) return pipelines[name];
       var fragModule = device.createShaderModule({ label: "post-" + name, code: fragmentSource });
       var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, targetFormat);
+      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, name === "present" ? presentationFormat : targetFormat);
       pipelines[name] = pipeline;
       return pipeline;
     }
@@ -4527,7 +4544,7 @@
     return {
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
-        return { colorView: sceneTexView, depthView: depthTexView };
+        return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
       apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
@@ -4535,6 +4552,7 @@
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+        var presentPipeline = getPipeline("present", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
         // postChain is the per-effect render-truth record. Built ONLY when the
         // diagnostics tier is on, so production pays one boolean read.
         //
@@ -4556,16 +4574,16 @@
           postDOMRegionBoundedSkips: 0,
           postDOMRegionBoundedPixels: 0,
           postPrecision: postPrecisionMode,
+          postColorFormat: targetFormat,
           postChain: postChain,
         };
         activePostChain = postChain;
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
-          var isLast = (i === effects.length - 1);
-          var outputView = isLast ? finalView : (currentTexView === sceneTexView ? auxTexView : sceneTexView);
-          var passW = isLast ? canvasW : scaledW;
-          var passH = isLast ? canvasH : scaledH;
+          var outputView = currentTexView === sceneTexView ? auxTexView : sceneTexView;
+          var passW = scaledW;
+          var passH = scaledH;
           activePostIndex = i;
 
           switch (effect.kind) {
@@ -4837,7 +4855,7 @@
             { binding: 0, resource: currentTexView },
             { binding: 1, resource: linearSampler },
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ ]);
-          fullscreenPass(encoder, blitPipeline, blitBG, finalView);
+          fullscreenPass(encoder, presentPipeline, blitBG, finalView);
         }
         activePostChain = null;
         return stats;
@@ -6329,6 +6347,92 @@
     return out;
   }
 
+  var WGSL_SCENE_SKY = [
+    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f };",
+    "@group(0) @binding(0) var<uniform> sky: Sky;",
+    "@group(0) @binding(1) var skySampler: sampler;",
+    "@group(0) @binding(2) var skyImage: texture_2d<f32>;",
+    "@group(0) @binding(3) var skyCube: texture_cube<f32>;",
+    "struct SkyVertex { @builtin(position) position: vec4f, @location(0) ndc: vec2f };",
+    "@vertex fn vertexMain(@builtin(vertex_index) i: u32) -> SkyVertex {",
+    "  var p = array<vec2f, 3>(vec2f(-1,-1), vec2f(3,-1), vec2f(-1,3));",
+    "  var out: SkyVertex; out.position = vec4f(p[i], 1, 1); out.ndc = p[i]; return out;",
+    "}",
+    "@fragment fn fragmentMain(in: SkyVertex) -> @location(0) vec4f {",
+    "  let ray = normalize(sky.forward.xyz + sky.right.xyz * in.ndc.x * sky.right.w + sky.up.xyz * in.ndc.y * sky.up.w);",
+    "  var color = mix(sky.horizon.xyz, select(sky.bottom.xyz, sky.top.xyz, ray.y >= 0), abs(ray.y));",
+    "  let c = cos(sky.forward.w); let s = sin(sky.forward.w);",
+    "  let d = vec3f(ray.x*c + ray.z*s, ray.y, -ray.x*s + ray.z*c);",
+    "  if (sky.bottom.w == 1) {",
+    "    let uv = vec2f(atan2(d.z,d.x)/6.28318530718+0.5, asin(clamp(d.y,-1.0,1.0))/3.14159265359+0.5);",
+    "    color = textureSampleLevel(skyImage, skySampler, uv, sky.horizon.w).rgb;",
+    "  } else if (sky.bottom.w == 2) { color = textureSampleLevel(skyCube, skySampler, d, sky.horizon.w).rgb;",
+    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; }",
+    "  color = max(color * sky.top.w, vec3f(0));",
+    "  if (sky.output.x == 0) { color = select(1.055*pow(color,vec3f(1.0/2.4))-0.055, color*12.92, color <= vec3f(0.0031308)); }",
+    "  return vec4f(color, 1);",
+    "}",
+  ].join("\n");
+
+  // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
+  function wgpuCreateSkyRenderer(device, textureCache, imagePlaceholder, cubePlaceholder) {
+    var data = new Float32Array(28);
+    var uniform = device.createBuffer({ label: "gosx-sky", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    var sampler = device.createSampler({ addressModeU: "repeat", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
+    var layout = device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
+    ] });
+    var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY });
+    var pipelines = new Map();
+    // @ts-ignore TS7018 -- bind-group identities become available on the first draw.
+    var cached = { group: null, image: null, cube: null };
+    return {
+      // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
+      draw: function(pass, opts) {
+        var env = opts.environment, sky = env.sky;
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        var image = imagePlaceholder, cube = cubePlaceholder, state = "gradient";
+        if (sky.mode === "environment") {
+          var desc = env.ibl && env.ibl.radiance;
+          var record = desc && desc.view === "cube" && desc.uri
+            ? wgpuLoadTexture(device, desc.uri, textureCache, desc, "environment-radiance", "linear") : null;
+          if (record && record.loaded && !record.failed) { cube = record.view; data[23] = 2; state = "environment-cube"; }
+          else {
+            record = env.envMap ? wgpuLoadTexture(device, env.envMap, textureCache, null, "environment-radiance", "srgb") : record;
+            if (record && record.loaded && !record.failed) { image = record.view; data[23] = 1; state = "environment-map"; }
+            else state = record && !record.failed ? "environment-pending" : "environment-unavailable";
+          }
+          data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
+        }
+        device.queue.writeBuffer(uniform, 0, data);
+        var key = opts.format + ":" + opts.samples;
+        var pipeline = pipelines.get(key);
+        if (!pipeline) {
+          pipeline = device.createRenderPipeline({ label: "gosx-sky", layout: pipelineLayout,
+            vertex: { module: module, entryPoint: "vertexMain" },
+            fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format }] },
+            primitive: { topology: "triangle-list" }, multisample: { count: opts.samples },
+            depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" } });
+          pipelines.set(key, pipeline);
+        }
+        if (!cached.group || image !== cached.image || cube !== cached.cube) {
+          cached.group = device.createBindGroup({ layout: layout, entries: [
+            { binding: 0, resource: { buffer: uniform } }, { binding: 1, resource: sampler },
+            { binding: 2, resource: image }, { binding: 3, resource: cube },
+          ] });
+          cached.image = image; cached.cube = cube;
+        }
+        pass.setPipeline(pipeline); pass.setBindGroup(0, cached.group); pass.draw(3);
+        return state;
+      },
+      dispose: function() { uniform.destroy(); pipelines.clear(); cached.group = null; },
+    };
+  }
+
   function createSceneWebGPURenderer(canvas, options) {
     function sceneWebGPUFactoryFailure(reason) {
       var text = String(reason || "unknown");
@@ -6414,7 +6518,8 @@
     // initFailed remains for runtime device-loss recovery.
     var initFailed = false;
     var initError = "";
-    var targetFormat = navigator.gpu.getPreferredCanvasFormat();
+    var presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+    var targetFormat = presentationFormat;
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
     var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
     var activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
@@ -6459,7 +6564,7 @@
     function sceneWebGPUCanvasConfiguration() {
       var config = {
         device: device,
-        format: targetFormat,
+        format: presentationFormat,
         alphaMode: activePresentation.alphaMode,
         colorSpace: activePresentation.colorSpace,
       };
@@ -6478,7 +6583,7 @@
       return [
         canvas ? canvas.width : 0,
         canvas ? canvas.height : 0,
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ targetFormat,
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ presentationFormat,
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ p.alphaMode,
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ p.colorSpace,
         p.toneMappingMode || "",
@@ -6675,14 +6780,13 @@
     var webGPUFrameSeq = 0;
     var gpuTiming = null;
     var gpuTimingFailed = false;
-    // A device may advertise timestamp-query while its command encoder does
-    // not expose the encoder-level timestamp operations used by this ring.
-    // Keep feature discovery separate from an actually encodable timer so
-    // adaptive quality can fall back to display-frame timing instead of
-    // waiting forever on a query that can never be written.
+    // Standard pass timestamp writes bracket all commands in the frame encoder.
     var gpuTimingEncodingAvailable = null;
     var failedGPUTimings = [];
     var lastGPUPerformanceSample = null;
+    // @ts-ignore TS7034 -- readback initializes the frame sample asynchronously.
+    var lastGPUCompletionSample = null;
+    var gpuTimingDisposed = false;
     var gpuTimingFrameSeq = 0;
     var deferredWaterTextureRetirements = [];
     var deferredWaterSystemRetirements = [];
@@ -6726,6 +6830,7 @@
     var webGPUBundleCache = null;
 
     function ensureGPUTiming() {
+      if (gpuTimingDisposed) return false;
       if (gpuTiming !== null) return gpuTiming;
       gpuTiming = false;
       var candidateQuerySet = null;
@@ -6758,7 +6863,6 @@
         gpuTiming = {
           querySet: candidateQuerySet,
           slots: slots,
-          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         gpuTimingEncodingAvailable = null;
         gpuTimingFailed = false;
@@ -6798,6 +6902,7 @@
       if (!timing || timing === false) return;
       if (gpuTiming === timing) gpuTiming = false;
       gpuTimingFailed = true;
+      lastGPUCompletionSample = null;
       failedGPUTimings.push({ timing: timing, retireAfterFrame: gpuTimingFrameSeq + 3 });
       lastGPUPerformanceSample = null;
       if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
@@ -6832,19 +6937,23 @@
       if (!timing) return;
       for (var i = 0; i < timing.slots.length; i++) {
         var slot = timing.slots[i];
-        if (!slot.pending || slot.mapping || gpuTimingFrameSeq - slot.frameSeq < 2) continue;
+        if (!slot.pending || slot.mapping) continue;
         if (!slot.readback || typeof slot.readback.mapAsync !== "function") continue;
         slot.mapping = true;
         (function(activeTiming, activeSlot) {
           activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
             if (!activeSlot.readback || typeof activeSlot.readback.getMappedRange !== "function") return;
             var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-            if (gpuTiming === activeTiming && values.length >= 2 && values[1] >= values[0]) {
+            if (gpuTiming === activeTiming && values.length >= 2 && values[1] > values[0]) {
               lastGPUPerformanceSample = {
                 source: "gpu-timestamp",
-                gpuMS: Number(values[1] - values[0]) * activeTiming.timestampPeriodNS / 1000000,
+                scope: "frame",
+                frameSeq: activeSlot.frameSeq,
+                gpuMS: Number(values[1] - values[0]) / 1000000,
                 atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
               };
+              // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
+              lastGPUCompletionSample = sceneLatestGPUCompletion(lastGPUCompletionSample, lastGPUPerformanceSample);
               if (telemetryMount) {
                 telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPerformanceSample.gpuMS.toFixed(3));
                 telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured");
@@ -6856,6 +6965,7 @@
           }).catch(function() {
             activeSlot.pending = false;
             activeSlot.mapping = false;
+            if (gpuTiming === activeTiming) disableGPUTiming(activeTiming);
           });
         })(timing, slot);
         break;
@@ -6866,7 +6976,7 @@
       pollGPUTimingReadback();
       var timing = ensureGPUTiming();
       if (!timing || !encoder) return null;
-      if (typeof encoder.writeTimestamp !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
+      if (typeof encoder.beginComputePass !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
         gpuTimingEncodingAvailable = false;
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
         return null;
@@ -6877,7 +6987,9 @@
         var slot = timing.slots[slotIndex];
         if (!slot || slot.pending || slot.mapping) continue;
         try {
-          encoder.writeTimestamp(timing.querySet, slotIndex * 2);
+          encoder.beginComputePass({ label: "gosx-frame-timer-start", timestampWrites: {
+            querySet: timing.querySet, beginningOfPassWriteIndex: slotIndex * 2,
+          } }).end();
           gpuTimingEncodingAvailable = true;
           return { timing: timing, slot: slot, slotIndex: slotIndex };
         } catch (_timestampBeginError) {
@@ -6891,7 +7003,9 @@
     function endGPUFrameTiming(encoder, token) {
       if (!token) return;
       try {
-        encoder.writeTimestamp(token.timing.querySet, token.slotIndex * 2 + 1);
+        encoder.beginComputePass({ label: "gosx-frame-timer-end", timestampWrites: {
+          querySet: token.timing.querySet, endOfPassWriteIndex: token.slotIndex * 2 + 1,
+        } }).end();
         encoder.resolveQuerySet(token.timing.querySet, token.slotIndex * 2, 2, token.slot.resolve, 0);
         encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, 16);
         token.slot.pending = true;
@@ -6903,22 +7017,9 @@
       }
     }
 
-    // -----------------------------------------------------------------------
-    // Per-pass GPU timing
-    // -----------------------------------------------------------------------
-    //
-    // The frame timer above uses encoder.writeTimestamp. That call is NOT part
-    // of the WebGPU standard: it needed the timestamp-query-inside-passes
-    // feature, and Chromium removed it. On such an implementation
-    // gpuTimingEncodingAvailable goes false and the page gets no GPU time at
-    // all, so adaptive quality falls back to display-frame timing.
-    //
-    // The standard path is timestampWrites on the render-pass descriptor. It
-    // also gives something the frame timer never could: a time per pass. Four
-    // stamps per frame — shadow begin, shadow end, main begin, main end — yield
-    // the shadow cost, the main cost, and a whole-scene GPU time that works
-    // where writeTimestamp does not.
-    //
+    // Per-pass GPU timing.
+    // These optional pass counters describe shadow and main draws only.
+    // The frame timer also includes compute, water, picking and post effects.
     // Slot layout, per ring entry:
     //   0 shadow begin   1 shadow end   2 main begin   3 main end
     var SCENE_WEBGPU_PASS_STAMPS = 4;
@@ -6961,7 +7062,6 @@
         gpuPassTiming = {
           querySet: querySet,
           slots: slots,
-          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "pending");
       } catch (_passTimingError) {
@@ -7056,7 +7156,7 @@
           activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
             if (activeSlot.readback && typeof activeSlot.readback.getMappedRange === "function") {
               var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-              recordGPUPassSample(activeTiming, activeSlot, values);
+              recordGPUPassSample(activeSlot, values);
               activeSlot.readback.unmap();
             }
             activeSlot.pending = false;
@@ -7073,11 +7173,11 @@
     // recordGPUPassSample turns four raw timestamps into milliseconds. A zero or
     // decreasing pair means the implementation did not write that stamp, so the
     // reading is dropped rather than published as 0.
-    function recordGPUPassSample(timing, slot, values) {
+    function recordGPUPassSample(slot, values) {
       if (!values || values.length < SCENE_WEBGPU_PASS_STAMPS) return;
       var toMS = function(begin, end) {
         if (end <= begin) return -1;
-        return Number(end - begin) * timing.timestampPeriodNS / 1000000;
+        return Number(end - begin) / 1000000;
       };
       var shadowMS = slot.hasShadow ? toMS(values[0], values[1]) : 0;
       var mainMS = toMS(values[2], values[3]);
@@ -7099,37 +7199,14 @@
         telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-scene-ms", lastGPUPassSample.sceneMS.toFixed(3));
         telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
       }
-      // Feed the shared performance sample only when the non-standard
-      // encoder-level timer is unavailable. Where both work, the frame timer
-      // keeps ownership so its existing budget assertions stay comparable.
-      if (gpuTimingEncodingAvailable === false || gpuTiming === false) {
-        lastGPUPerformanceSample = {
-          source: "gpu-pass-timestamp",
-          gpuMS: lastGPUPassSample.sceneMS,
-          atMS: lastGPUPassSample.atMS,
-        };
-        if (telemetryMount) {
-          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPassSample.sceneMS.toFixed(3));
-          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured-pass");
-        }
-      }
+
     }
 
     function destroyGPUPassTimingResources() {
       var timing = gpuPassTiming;
       gpuPassTiming = null;
       gpuPassTimingSlot = null;
-      if (!timing || timing === false) return;
-      destroyRendererGPUResource(timing.querySet);
-      for (var i = 0; i < timing.slots.length; i++) {
-        var slot = timing.slots[i];
-        if (!slot) continue;
-        try {
-          if (slot.readback && slot.mapping && typeof slot.readback.unmap === "function") slot.readback.unmap();
-        } catch (_unmapError) {}
-        destroyRendererGPUResource(slot.resolve);
-        destroyRendererGPUResource(slot.readback);
-      }
+      destroyGPUTimingResources(timing);
     }
 
     function pollPerformanceSample() {
@@ -7138,6 +7215,12 @@
       var sample = lastGPUPerformanceSample;
       lastGPUPerformanceSample = null;
       return sample;
+    }
+
+    function getFrameTiming() {
+      pollGPUTimingReadback();
+      // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
+      return sceneWebGPUCompletionSnapshot(getPerformanceTimingStatus(), lastGPUCompletionSample, gpuTimingDisposed, lastDeviceLostInfo);
     }
 
     function getPerformanceTimingStatus() {
@@ -7164,6 +7247,7 @@
     var mainMSAAWidth = 0;
     var mainMSAAHeight = 0;
     var mainMSAASampleCount = 1;
+    var mainMSAAFormat = "";
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
@@ -7286,6 +7370,8 @@
 
     // Post-processor.
     var postProcessor = null;
+    // @ts-ignore TS7018 -- lazily allocated backend sky resources.
+    var skyResources = { renderer: null };
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -7989,7 +8075,7 @@
         mainMSAATexture &&
         mainMSAAWidth === width &&
         mainMSAAHeight === height &&
-        mainMSAASampleCount === sampleCount
+        mainMSAASampleCount === sampleCount && mainMSAAFormat === targetFormat
       ) {
         return mainMSAAView;
       }
@@ -8004,6 +8090,7 @@
       mainMSAAWidth = width;
       mainMSAAHeight = height;
       mainMSAASampleCount = sampleCount;
+      mainMSAAFormat = targetFormat;
       return mainMSAAView;
     }
 
@@ -18103,7 +18190,7 @@
       webGPUBeginRetainedMeshFrame(bundle);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return;
       }
@@ -18134,6 +18221,7 @@
       // forever with a poisoned post-FX target.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
+      targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
@@ -18299,7 +18387,7 @@
 
       if (usePostProcessing) {
         if (!postProcessor) {
-          postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
+          postProcessor = wgpuCreatePostProcessor(device, presentationFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
             return sceneSelenaUniformData(material, owner, renderContext, selenaFrame);
           });
         }
@@ -18352,6 +18440,14 @@
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
+      var skyState = "none";
+      if (bundle.environment && bundle.environment.sky) {
+        if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
+        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix,
+          camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
+      }
+      if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
+
 
       var instancedDrawList = hasInstancedData
         ? buildInstancedDrawList(bundle, materials)
@@ -18725,8 +18821,8 @@
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       device.queue.submit([encoder.finish()]);
-      // Start the pick map AFTER submit. mapAsync resolves on a later task, so
-      // this adds no wait to the frame.
+      pollGPUTimingReadback();
+      // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
       webGPUSweepRetainedMeshBuffers();
       Object.assign(frameStats, webGPURetainedMeshFrameStats());
@@ -18753,7 +18849,11 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
+      if (skyResources.renderer) skyResources.renderer.dispose();
+      skyResources.renderer = null;
 
+      gpuTimingDisposed = true;
+      lastGPUCompletionSample = null;
       try { destroyGPUTimingResources(gpuTiming); } catch (_err) {}
       try { destroyGPUPassTimingResources(); } catch (_err) {}
       if (webGPUBundleCache) {
@@ -19100,6 +19200,7 @@
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,
+      getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
       render: render,
       dispose: dispose,

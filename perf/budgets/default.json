@@ -41,18 +41,18 @@
       ]
     },
     "docs-scene3d-ci": {
-      "description": "Documentation route with a Scene3D teaching surface under CI software rasterization. The network limit covers the measured 1601 KiB WebGPU to WebGL fallback. Load and blocking time remain separate gates; shader compilation on software renderers can create long tasks.",
+      "description": "Documentation route with a Scene3D teaching surface under CI software rasterization. The network limit covers 1610.82 KiB measured in CI run 36273313254 with GPU timing, HDR post color, Sky, and the WebGPU to WebGL fallback. Load and blocking time remain separate gates; shader compilation on software renderers can create long tasks.",
       "assertions": [
         "js_total_kb <= 1650",
-        "network_kb <= 1605",
+        "network_kb <= 1615",
         "lcp <= 18000",
         "tbt <= 15000"
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. Uses a rounded total-payload ceiling with modest release headroom while load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
+      "description": "Water route under CI software rasterization. The network limit covers 1754.04 KiB measured in CI run 36273313254 with GPU timing, HDR post color, and Sky. Load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
       "assertions": [
-        "network_kb <= 1750",
+        "network_kb <= 1760",
         "lcp <= 2000",
         "tbt <= 18000"
       ]

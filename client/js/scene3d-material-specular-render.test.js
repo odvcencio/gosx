@@ -26,6 +26,10 @@ function readBootstrapSource(name) {
   return fs.readFileSync(path.join(srcDir, name), "utf8");
 }
 
+function readSceneRuntimeSource(name) {
+  return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
+}
+
 function trimBeforeSharedApiExport(source) {
   const at = source.indexOf(SHARED_API_EXPORT_MARKER);
   assert.ok(at >= 0, "core '// Scene3D shared API' export marker located");
@@ -116,7 +120,8 @@ function setupWebGLRenderer() {
       "  const names = ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen',",
       "    'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90',",
       "    'specularColorLog',",
-    "    'emissive', 'opacity', 'unlit', 'alphaCutoff',",
+      "    'emissive', 'emissiveColor', 'hasEmissiveColor', 'normalScale', 'occlusionStrength',",
+      "    'opacity', 'unlit', 'alphaCutoff',",
       "    'albedoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'occlusionMap',",
       "    'emissiveMap', 'specularIntensityMap',",
       "    'specularColorMap',",
@@ -164,6 +169,109 @@ function webglUpload(context, literal) {
     "uploadMaterial(gl, uniforms, " + literal + ", null);" +
     "return { f0: gl.floats.get('specularF0'), f90: gl.floats.get('specularF90') }; })()");
 }
+
+test("imported PBR factors reach single-skin and GPU palette crowd uniforms", () => {
+  const { source, context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const document = {
+    asset: { version: "2.0" },
+    materials: [
+      { pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] } },
+      {
+        pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] },
+        emissiveFactor: [0.8, 0.15, 0.05],
+        extensions: { KHR_materials_emissive_strength: { emissiveStrength: 4 } },
+        normalTexture: { scale: 0 },
+        occlusionTexture: { strength: 0 },
+      },
+    ],
+  };
+  const documentLiteral = JSON.stringify(document);
+  const importAndUpload = (index, skinKind) => callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + documentLiteral + ', ' + index + ', null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported' +
+        (skinKind === "single" ? ', skin: { joints: [] }' : "") + ' }, 0, null);' +
+      (skinKind === "palette" ? 'object._crowdSkin = { atlas: { width: 1 } };' : "") +
+      'const material = sceneObjectMaterialProfile(object);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'uploadMaterial(gl, uniforms, material, null);' +
+      'return {' +
+        'profile: material,' +
+        'emissive: gl.floats.get("emissive"),' +
+        'emissiveColor: gl.floats.get("emissiveColor"),' +
+        'hasEmissiveColor: gl.ints.get("hasEmissiveColor"),' +
+        'normalScale: gl.floats.get("normalScale"),' +
+        'occlusionStrength: gl.floats.get("occlusionStrength")' +
+      '};' +
+    '})()');
+
+  assert.match(source, /if \(u_hasEmissiveColor\) \{/);
+  assert.match(source, /vec3 emission = emissiveColor \* emissiveStrength;/);
+  assert.ok(source.includes("uploadMaterial(gl, currentUniforms, mat, textureCache);"),
+    "single skinned meshes upload the resolved material profile");
+  assert.ok(source.includes("uploadMaterial(gl, ip.uniforms, mat, textureCache);"),
+    "GPU palette crowd batches upload the same resolved material profile");
+
+  for (const skinKind of ["single", "palette"]) {
+    const noEmission = importAndUpload(0, skinKind);
+    assert.strictEqual(noEmission.hasEmissiveColor, 1,
+      skinKind + ": imported black emission uses the explicit color branch");
+    assert.deepStrictEqual(Array.from(noEmission.emissiveColor), [0, 0, 0],
+      skinKind + ": a non-emissive GLB material cannot fall back to albedo glow");
+    assert.strictEqual(noEmission.emissive, 1);
+
+    const colored = importAndUpload(1, skinKind);
+    assert.strictEqual(colored.hasEmissiveColor, 1);
+    assert.deepStrictEqual(Array.from(colored.emissiveColor), [0.8, 0.15, 0.05]);
+    assert.strictEqual(colored.emissive, 4,
+      skinKind + ": KHR emissive strength above 1 reaches the uniform");
+    assert.strictEqual(colored.normalScale, 0);
+    assert.strictEqual(colored.occlusionStrength, 0);
+  }
+
+  const cacheEdit = callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + documentLiteral + ', 1, null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported, skin: { joints: [] } }, 0, null);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'const first = sceneObjectMaterialProfile(object); uploadMaterial(gl, uniforms, first, null);' +
+      'const oldStrength = gl.floats.get("emissive"); const oldColor = gl.floats.get("emissiveColor").slice();' +
+      'object.emissiveColor[0] = 0.4; object.emissive = 2; object.normalScale = 0.5; object.occlusionStrength = 0.25;' +
+      'const second = sceneObjectMaterialProfile(object); uploadMaterial(gl, uniforms, second, null);' +
+      'return {' +
+        'sameProfile: first === second, changedKey: first.key !== second.key,' +
+        'oldStrength, oldColor, nextStrength: gl.floats.get("emissive"),' +
+        'nextColor: gl.floats.get("emissiveColor"),' +
+        'nextNormalScale: gl.floats.get("normalScale"),' +
+        'nextOcclusionStrength: gl.floats.get("occlusionStrength")' +
+      '};' +
+    '})()');
+  assert.strictEqual(cacheEdit.sameProfile, false);
+  assert.strictEqual(cacheEdit.changedKey, true);
+  assert.strictEqual(cacheEdit.oldStrength, 4);
+  assert.deepStrictEqual(Array.from(cacheEdit.oldColor), [0.8, 0.15, 0.05]);
+  assert.strictEqual(cacheEdit.nextStrength, 2);
+  assert.deepStrictEqual(Array.from(cacheEdit.nextColor), [0.4, 0.15, 0.05]);
+  assert.strictEqual(cacheEdit.nextNormalScale, 0.5);
+  assert.strictEqual(cacheEdit.nextOcclusionStrength, 0.25);
+
+  const gpu = setupWebGPURenderer();
+  const packProfile = (profile) => callIn(gpu.context,
+    "materialUniformData(" + JSON.stringify(JSON.parse(JSON.stringify(profile))) + ", false, null, null)");
+  const gpuBlack = packProfile(importAndUpload(0, "single").profile);
+  assert.strictEqual(gpuBlack.u[54], 1);
+  assert.deepStrictEqual([gpuBlack.data[56], gpuBlack.data[57], gpuBlack.data[58]], [0, 0, 0]);
+  const gpuColored = packProfile(importAndUpload(1, "palette").profile);
+  assert.strictEqual(gpuColored.data[5], 4);
+  assert.strictEqual(gpuColored.data[52], 0);
+  assert.strictEqual(gpuColored.data[53], 0);
+  assert.strictEqual(gpuColored.u[54], 1);
+  [0.8, 0.15, 0.05].forEach((value, index) => {
+    assert.ok(close6(gpuColored.data[56 + index], value),
+      "WebGPU emissiveColor[" + index + "] = " + gpuColored.data[56 + index] + ", want " + value);
+  });
+});
 
 test("WebGL uploadMaterial uploads the effective specular factors", () => {
   const { context } = setupWebGLRenderer();

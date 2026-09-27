@@ -274,3 +274,72 @@ test("render truth: the mount publishes ONE machine-readable backend record", ()
   // mount -- which runs no shader at all -- can never report gpu=true.
   assert.match(backendMountSource, /gpu: kind === "webgpu" \|\| kind === "webgl"/);
 });
+
+test("scene status binding exposes the rolling frame percentile in milliseconds", () => {
+  const start = backendMountSource.indexOf("  function sceneSyncStatusBindings(mount) {");
+  const end = backendMountSource.indexOf("\n  function createSceneAdaptiveQualityState", start);
+  assert.ok(start >= 0 && end > start, "Scene3D status binding function should be present");
+  const output = {
+    hidden: true,
+    textContent: "measuring…",
+    attrs: new Map([["data-gosx-scene3d-status", "frame-p95"]]),
+    getAttribute(name) { return this.attrs.get(name) || null; },
+    setAttribute(name, value) { this.attrs.set(name, String(value)); },
+  };
+  const scope = {
+    parentNode: null,
+    hasAttribute(name) { return name === "data-gosx-scene3d-status-scope"; },
+    querySelectorAll(selector) {
+      assert.equal(selector, "[data-gosx-scene3d-status]");
+      return [output];
+    },
+  };
+  const mount = {
+    parentNode: scope,
+    hasAttribute() { return false; },
+    getAttribute(name) { return name === "data-gosx-scene3d-quality-p95-ms" ? "12.34" : null; },
+  };
+  const context = {
+    Number,
+    mount,
+    sceneStatusBindingLabel(value) { return String(value); },
+    setAttrValue(element, name, value) { element.setAttribute(name, value); },
+  };
+  vm.runInNewContext(`${backendMountSource.slice(start, end)}\nsceneSyncStatusBindings(mount);`, context);
+  assert.equal(output.textContent, "12.3 ms");
+  assert.equal(output.attrs.get("data-state"), "ready");
+  assert.equal(output.hidden, false);
+});
+
+test("scene status binding reports that frame-p95 is measuring without a sample", () => {
+  const start = backendMountSource.indexOf("  function sceneSyncStatusBindings(mount) {");
+  const end = backendMountSource.indexOf("\n  function createSceneAdaptiveQualityState", start);
+  assert.ok(start >= 0 && end > start, "Scene3D status binding function should be present");
+  const output = {
+    hidden: true,
+    textContent: "",
+    attrs: new Map([["data-gosx-scene3d-status", "frame-p95"]]),
+    getAttribute(name) { return this.attrs.get(name) || null; },
+    setAttribute(name, value) { this.attrs.set(name, String(value)); },
+  };
+  const scope = {
+    parentNode: null,
+    hasAttribute(name) { return name === "data-gosx-scene3d-status-scope"; },
+    querySelectorAll() { return [output]; },
+  };
+  const mount = {
+    parentNode: scope,
+    hasAttribute() { return false; },
+    getAttribute() { return null; },
+  };
+  const context = {
+    Number,
+    mount,
+    sceneStatusBindingLabel(value) { return String(value); },
+    setAttrValue(element, name, value) { element.setAttribute(name, value); },
+  };
+  vm.runInNewContext(`${backendMountSource.slice(start, end)}\nsceneSyncStatusBindings(mount);`, context);
+  assert.equal(output.textContent, "measuring…");
+  assert.equal(output.attrs.get("data-state"), "measuring");
+  assert.equal(output.hidden, false);
+});

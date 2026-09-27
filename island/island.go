@@ -1349,6 +1349,12 @@ func (r *Renderer) BindHubInput(name, path string, bindings []hydrate.HubBinding
 	return r.manifest.AddHubWithInput(name, path, bindings, &input)
 }
 
+// BindHubWithRoundTrip registers a hub connection with a bootstrap-owned RTT
+// heartbeat. The server hub echoes ping data using the configured pong event.
+func (r *Renderer) BindHubWithRoundTrip(name, path string, bindings []hydrate.HubBinding, roundTrip hydrate.HubRoundTripConfig) string {
+	return r.manifest.AddHubWithRoundTrip(name, path, bindings, roundTrip)
+}
+
 // SetClientIdentity configures bootstrap-owned client identity state for the
 // page manifest.
 func (r *Renderer) SetClientIdentity(config hydrate.ClientIdentityConfig) {

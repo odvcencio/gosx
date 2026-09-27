@@ -216,7 +216,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!renderer) return null;
     // Water and authored models share color and depth before post processing.
     var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
-    if (sceneDoc && Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) {
+    var environment = sceneDoc && sceneDoc.environment || props && props.environment;
+    if (sceneDoc && ((Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) || (environment && environment.sky))) {
       var pbrFactory = sceneWebGLRendererFactory();
       var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
       if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
@@ -248,13 +249,10 @@ function gosxConfigureSceneScript(script, role, src) {
           compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
           compositeMS = Math.max(0.01, compositeAtMS - started);
         },
-        // Report the full CPU composite; the water GPU timer covers one pass.
-        pollPerformanceSample: function() {
-          return compositeAtMS > 0 ? { durationMS: compositeMS, source: "cpu-water-world-composite", atMS: compositeAtMS } : null;
-        },
-        getPerformanceTimingStatus: function() {
-          return { available: false, active: false, pending: false };
-        },
+        // The world timer encloses water, surfaces, and the post chain.
+        pollPerformanceSample: worldRenderer.pollPerformanceSample,
+        getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
+        getFrameTiming: worldRenderer.getFrameTiming,
         diagnostics: function() {
           var world = typeof worldRenderer.diagnostics === "function" ? worldRenderer.diagnostics() : {};
           return Object.assign({}, typeof waterRenderer.diagnostics === "function" ? waterRenderer.diagnostics() : {}, {
@@ -5123,7 +5121,6 @@ function gosxConfigureSceneScript(script, role, src) {
       return (dash ? " " : "") + letter.toUpperCase();
     });
   }
-
   // Declarative status bindings keep Scene3D diagnostics visible without
   // requiring demo-specific scripts or CSS parent selectors. A status scope
   // owns one scene mount and any number of renderer/fallback/quality outputs.
@@ -5138,6 +5135,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const backend = mount.getAttribute("data-gosx-scene3d-renderer") || "starting";
     const fallback = mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "";
     const quality = mount.getAttribute("data-gosx-scene3d-quality-active") || "measuring";
+    const frameP95 = Number(mount.getAttribute("data-gosx-scene3d-quality-p95-ms"));
     for (let i = 0; i < bindings.length; i++) {
       const output = bindings[i];
       const kind = output.getAttribute("data-gosx-scene3d-status") || "";
@@ -5154,6 +5152,10 @@ function gosxConfigureSceneScript(script, role, src) {
         value = quality === "measuring" ? "measuring…" : sceneStatusBindingLabel(quality);
         output.hidden = false;
         setAttrValue(output, "data-state", quality);
+      } else if (kind === "frame-p95") {
+        value = Number.isFinite(frameP95) && frameP95 > 0 ? frameP95.toFixed(1) + " ms" : "measuring…";
+        output.hidden = false;
+        setAttrValue(output, "data-state", value === "measuring…" ? "measuring" : "ready");
       } else {
         continue;
       }

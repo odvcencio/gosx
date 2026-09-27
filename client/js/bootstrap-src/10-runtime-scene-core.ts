@@ -86,6 +86,23 @@
     return sceneCSSVarReference(value) ? value.trim() : sceneNumber(value, fallback);
   }
 
+  function sceneFiniteNonnegative(value, fallback) {
+    const parsed = typeof value === "number"
+      ? value
+      : (typeof value === "string" && value.trim() ? Number(value) : NaN);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    const inherited = typeof fallback === "number"
+      ? fallback
+      : (typeof fallback === "string" && fallback.trim() ? Number(fallback) : NaN);
+    return Number.isFinite(inherited) && inherited >= 0 ? inherited : 0;
+  }
+
+  function sceneNonnegativeNumberOrCSSVar(value, fallback) {
+    if (sceneCSSVarReference(value)) return value.trim();
+    if (sceneCSSVarReference(fallback)) return fallback.trim();
+    return sceneFiniteNonnegative(value, fallback);
+  }
+
   function sceneClampNumberOrCSSVar(value, fallback, min, max) {
     if (sceneCSSVarReference(value)) {
       return value.trim();
@@ -832,10 +849,16 @@
       texture,
       unlit,
       opacity,
-      emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
+      emissive: sceneNonnegativeNumberOrCSSVar(
+        sceneObjectMaterialValue(item, "emissive"),
+        sceneNonnegativeNumberOrCSSVar(current.emissive, sceneDefaultMaterialEmissive(materialKind)),
+      ),
+      emissiveColor: sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "emissiveColor"), current.emissiveColor),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
+      normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
+      occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
@@ -1413,7 +1436,20 @@
       override.opacity = sceneObjectMaterialValue(current, "opacity");
     }
     if (sceneObjectMaterialHasValue(current, "emissive")) {
-      override.emissive = sceneObjectMaterialValue(current, "emissive");
+      override.emissive = sceneNonnegativeNumberOrCSSVar(
+        sceneObjectMaterialValue(current, "emissive"),
+        sceneNonnegativeNumberOrCSSVar(current.emissive, sceneDefaultMaterialEmissive(materialKind || "standard")),
+      );
+    }
+    if (sceneObjectMaterialHasValue(current, "emissiveColor")) {
+      const color = sceneCopyFiniteRGB(sceneObjectMaterialValue(current, "emissiveColor"), undefined);
+      if (color) override.emissiveColor = color;
+    }
+    if (sceneObjectMaterialHasValue(current, "normalScale")) {
+      override.normalScale = sceneNumber(sceneObjectMaterialValue(current, "normalScale"), 1);
+    }
+    if (sceneObjectMaterialHasValue(current, "occlusionStrength")) {
+      override.occlusionStrength = clamp01(sceneNumber(sceneObjectMaterialValue(current, "occlusionStrength"), 1));
     }
     if (sceneObjectMaterialHasValue(current, "roughness")) {
       override.roughness = sceneObjectMaterialValue(current, "roughness");
@@ -1564,7 +1600,22 @@
       color: sceneObjectMaterialHasValue(raw, "color") ? sceneObjectMaterialValue(raw, "color") : current.color,
       texture: typeof sceneObjectMaterialValue(raw, "texture") === "string" ? sceneObjectMaterialValue(raw, "texture").trim() : (typeof current.texture === "string" ? current.texture : ""),
       opacity: sceneObjectMaterialHasValue(raw, "opacity") ? sceneClampNumberOrCSSVar(sceneObjectMaterialValue(raw, "opacity"), sceneNumber(current.opacity, 1), 0, 1) : current.opacity,
-      emissive: sceneObjectMaterialHasValue(raw, "emissive") ? sceneClampNumberOrCSSVar(sceneObjectMaterialValue(raw, "emissive"), sceneNumber(current.emissive, 0), 0, 1) : current.emissive,
+      emissive: sceneObjectMaterialHasValue(raw, "emissive")
+        ? sceneNonnegativeNumberOrCSSVar(sceneObjectMaterialValue(raw, "emissive"), sceneNonnegativeNumberOrCSSVar(current.emissive, 0))
+        : (Object.prototype.hasOwnProperty.call(current, "emissive")
+          ? sceneNonnegativeNumberOrCSSVar(current.emissive, 0)
+          : undefined),
+      emissiveColor: sceneObjectMaterialHasValue(raw, "emissiveColor")
+        ? sceneCopyFiniteRGB(sceneObjectMaterialValue(raw, "emissiveColor"), current.emissiveColor)
+        : sceneCopyFiniteRGB(current.emissiveColor, undefined),
+      normalScale: sceneObjectMaterialHasValue(raw, "normalScale")
+        ? sceneNumber(sceneObjectMaterialValue(raw, "normalScale"), sceneNumber(current.normalScale, 1))
+        : (Object.prototype.hasOwnProperty.call(current, "normalScale") ? sceneNumber(current.normalScale, 1) : undefined),
+      occlusionStrength: sceneObjectMaterialHasValue(raw, "occlusionStrength")
+        ? clamp01(sceneNumber(sceneObjectMaterialValue(raw, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1)))
+        : (Object.prototype.hasOwnProperty.call(current, "occlusionStrength")
+          ? clamp01(sceneNumber(current.occlusionStrength, 1))
+          : undefined),
       blendMode: normalizeSceneMaterialBlendMode(
         sceneObjectMaterialHasValue(raw, "blendMode") ? sceneObjectMaterialValue(raw, "blendMode") : current.blendMode,
         materialKind || current.materialKind || "flat",
@@ -1682,7 +1733,7 @@
     // identity and pose vary here. Do not share these across command batches:
     // material/lifecycle changes must still participate in hydration.
     const raw = { src: batch.src };
-    for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "pickable", "visible", "static"]) {
+    for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "pickable", "visible", "static"]) {
       if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") raw[key] = batch[key];
     }
     // Preserve an explicit null, which disables masking, as well as a numeric
@@ -2103,10 +2154,16 @@
       texture: typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : (typeof current.texture === "string" ? current.texture : ""),
       opacity,
       unlit,
-      emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
+      emissive: sceneNonnegativeNumberOrCSSVar(
+        sceneObjectMaterialValue(item, "emissive"),
+        sceneNonnegativeNumberOrCSSVar(current.emissive, sceneDefaultMaterialEmissive(materialKind)),
+      ),
+      emissiveColor: sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "emissiveColor"), current.emissiveColor),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
+      normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
+      occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
@@ -2577,10 +2634,15 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
       texture: typeof item.texture === "string" ? item.texture.trim() : (typeof current.texture === "string" ? current.texture : ""),
       opacity,
-      emissive: sceneClampNumberOrCSSVar(item.emissive, sceneNumber(current.emissive, sceneDefaultMaterialEmissive(kind)), 0, 1),
+      emissive: sceneNonnegativeNumberOrCSSVar(
+        item.emissive,
+        sceneNonnegativeNumberOrCSSVar(current.emissive, sceneDefaultMaterialEmissive(kind)),
+      ),
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(item.ior, current.ior),
+      normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
+      occlusionStrength: clamp01(sceneNumber(item.occlusionStrength, sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
       clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
@@ -2630,6 +2692,8 @@
       _blendModeSpecified: blendModeSpecified || current._blendModeSpecified === true,
       _depthWriteSpecified: depthWriteSpecified || current._depthWriteSpecified === true,
     };
+    const emissiveColor = sceneCopyFiniteRGB(item.emissiveColor, current.emissiveColor);
+    if (emissiveColor) out.emissiveColor = emissiveColor;
     // Normalize unlit from the raw record value: omission and own undefined
     // inherit the current flag; malformed values fall back to it too, so a
     // bad override can neither erase the inherited flag nor define a new one.
@@ -2996,6 +3060,18 @@
     return out.radiance || out.irradiance || out.brdfLUT || out.source ? out : null;
   }
 
+  function normalizeSceneSky(raw) {
+    if (!sceneIsPlainObject(raw)) return null;
+    const color = key => typeof raw[key] === "string" ? raw[key].trim() : "";
+    const topColor = color("topColor"), horizonColor = color("horizonColor"), bottomColor = color("bottomColor");
+    const mode = typeof raw.mode === "string" && raw.mode.trim()
+      ? raw.mode.trim().toLowerCase() : (topColor || horizonColor || bottomColor ? "gradient" : "");
+    if (mode !== "gradient" && mode !== "environment") return null;
+    return { mode, topColor, horizonColor, bottomColor,
+      blur: Math.max(0, Math.min(1, sceneNumber(raw.blur, 0))),
+      intensity: Math.max(0, sceneNumber(raw.intensity, 1) || 1) };
+  }
+
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
@@ -3009,6 +3085,7 @@
       groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
       envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
+      sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
@@ -3058,6 +3135,7 @@
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
         envMap: typeof environment.envMap === "string" ? environment.envMap : "",
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
+        sky: normalizeSceneSky(environment.sky),
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
@@ -3291,6 +3369,9 @@
       opacity: material.opacity != null ? material.opacity : object.opacity,
       unlit: material.unlit !== undefined ? material.unlit : object.unlit,
       emissive: material.emissive != null ? material.emissive : object.emissive,
+      emissiveColor: sceneCopyFiniteRGB(material.emissiveColor, object.emissiveColor),
+      normalScale: material.normalScale != null ? material.normalScale : object.normalScale,
+      occlusionStrength: material.occlusionStrength != null ? material.occlusionStrength : object.occlusionStrength,
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,
       ior: material.ior != null ? material.ior : object.ior,
@@ -6076,9 +6157,9 @@
     }
     const currentEmissive = sceneCSSVarReference(material.emissive)
       ? 0
-      : clamp01(sceneNumber(material.emissive, 0));
+      : sceneFiniteNonnegative(material.emissive, 0);
     const selected = Object.assign({}, material, {
-      emissive: clamp01(currentEmissive + 0.08),
+      emissive: sceneFiniteNonnegative(currentEmissive + 0.08, 0),
       shaderData: null,
     });
     selected.key = sceneMaterialProfileKey(selected);
@@ -7004,6 +7085,7 @@
     createSceneWebGLRenderer: typeof createSceneWebGLRenderer === "function" ? createSceneWebGLRenderer : undefined,
     engineFrame,
     normalizeSceneEnvironment,
+    sceneSkyUniformData: typeof sceneSkyUniformData === "function" ? sceneSkyUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
     normalizeSceneLabel,

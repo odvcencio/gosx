@@ -1,3 +1,106 @@
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneWebGLTimerSampleIsNew(ns, frameSeq, latest) {
+    return Number.isFinite(ns) && ns > 0 && (!latest || frameSeq > latest.frameSeq);
+  }
+
+  // One elapsed query covers the complete frame, including composite callbacks.
+  // Results are read only after availability; this path never waits on the GPU.
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function createSceneWebGLFrameTimer(gl) {
+    const clock = () => performance.now();
+    let extension = null;
+    let status = "unavailable";
+    let frameSeq = 0;
+    let latest = null;
+    let pendingSample = null;
+    let active = null;
+    const slots = [];
+    function clear() {
+      for (const slot of slots) if (slot.query) gl.deleteQuery(slot.query);
+      slots.length = 0;
+      latest = pendingSample = active = null;
+    }
+    function fail() { clear(); status = "failed"; extension = null; }
+    try {
+      extension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+      if (extension && typeof gl.createQuery === "function") {
+        for (let i = 0; i < 3; i++) {
+          const query = gl.createQuery();
+          if (!query) throw new Error("timer query allocation failed");
+          slots.push({ query, pending: false, frameSeq: 0 });
+        }
+        status = "pending";
+      } else extension = null;
+    } catch (_) { fail(); }
+    function poll() {
+      if (!extension || active) return;
+      try {
+        if (gl.isContextLost && gl.isContextLost()) { fail(); return; }
+        if (gl.getParameter(extension.GPU_DISJOINT_EXT)) {
+          // Every outstanding result is invalid after a clock discontinuity.
+          latest = pendingSample = null;
+          status = "disjoint";
+          for (const slot of slots) {
+            gl.deleteQuery(slot.query);
+            slot.query = gl.createQuery();
+            slot.pending = false;
+            if (!slot.query) throw new Error("timer query allocation failed");
+          }
+          return;
+        }
+        for (const slot of slots) {
+          if (!slot.pending || !gl.getQueryParameter(slot.query, gl.QUERY_RESULT_AVAILABLE)) continue;
+          const ns = Number(gl.getQueryParameter(slot.query, gl.QUERY_RESULT));
+          slot.pending = false;
+          if (sceneWebGLTimerSampleIsNew(ns, slot.frameSeq, latest)) {
+            latest = { source: "webgl-timer", scope: "frame", gpuMS: ns / 1e6,
+              frameSeq: slot.frameSeq, atMS: clock() };
+            pendingSample = latest;
+            status = "measured";
+          }
+        }
+      } catch (_) { fail(); }
+    }
+    return {
+      begin() {
+        frameSeq++;
+        poll();
+        if (!extension || active) return null;
+        // Composite water uses the world's query; elapsed queries cannot nest.
+        if (typeof gl.getQuery === "function" && gl.getQuery(extension.TIME_ELAPSED_EXT, gl.CURRENT_QUERY)) return null;
+        const slot = slots.find(s => !s.pending);
+        if (!slot) return null;
+        try {
+          gl.beginQuery(extension.TIME_ELAPSED_EXT, slot.query);
+          slot.frameSeq = frameSeq;
+          active = slot;
+          return slot;
+        } catch (_) { fail(); return null; }
+      },
+      end(slot) {
+        if (!slot || active !== slot || !extension) return;
+        try {
+          gl.endQuery(extension.TIME_ELAPSED_EXT);
+          slot.pending = true;
+          active = null;
+        } catch (_) { fail(); }
+      },
+      poll,
+      sample() { poll(); const sample = pendingSample; pendingSample = null; return sample; },
+      snapshot() {
+        poll();
+        const state = latest && clock() - latest.atMS > 1000 ? "stale" : status;
+        return Object.assign({ status: state, source: "webgl-timer", scope: "frame",
+          gpuMS: null, frameSeq: 0, atMS: 0 }, state === "measured" ? latest : {});
+      },
+      timingStatus() {
+        return { available: !!extension, active: !!extension,
+          pending: !!active || slots.some(s => s.pending), failed: status === "failed", source: "webgl-timer" };
+      },
+      dispose() { clear(); extension = null; status = "disposed"; },
+    };
+  }
+
   // webgl.ts — PBR WebGL2 rendering backend for GoSX Scene3D.
   // @ts-check
   //
@@ -3625,133 +3728,23 @@
       shadow: { desired: 0, failures: 0, nextFrame: 0, pending: false },
       object: { desired: 0, failures: 0, nextFrame: 0, pending: false },
     };
-    var timerExtension = null;
-    var timerQueries = [];
-    var timerQueryCursor = 0;
-    var timerQueryActive = null;
-    var pendingPerformanceSample = null;
+    var frameTimer = createSceneWebGLFrameTimer(gl);
     var lastPerformanceSample = null;
-
-    try {
-      timerExtension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
-      if (timerExtension && typeof gl.createQuery === "function" &&
-          typeof gl.getQueryParameter === "function") {
-        for (var timerIndex = 0; timerIndex < 3; timerIndex++) {
-          timerQueries.push({ query: gl.createQuery(), pending: false, atMS: 0 });
-        }
-        if (timerQueries.some(function(record) { return !record.query; })) {
-          disposeWaterTimerQueries();
-        }
-      } else {
-        timerExtension = null;
-      }
-    } catch (timerInitError) {
-      timerExtension = null;
-      timerQueries.length = 0;
-    }
-
-    function disposeWaterTimerQueries() {
-      if (typeof gl.deleteQuery === "function") {
-        timerQueries.forEach(function(record) {
-          if (record && record.query) gl.deleteQuery(record.query);
-        });
-      }
-      timerQueries.length = 0;
-      timerExtension = null;
-      timerQueryActive = null;
-      pendingPerformanceSample = null;
-    }
-
-    function resetWaterTimerRing() {
-      if (!timerExtension || typeof gl.createQuery !== "function") return;
-      timerQueries.forEach(function(record) {
-        if (record.query && typeof gl.deleteQuery === "function") gl.deleteQuery(record.query);
-        record.query = gl.createQuery();
-        record.pending = false;
-        record.atMS = 0;
-      });
-      if (timerQueries.some(function(record) { return !record.query; })) {
-        disposeWaterTimerQueries();
-        return;
-      }
-      timerQueryCursor = 0;
-      timerQueryActive = null;
-    }
-
+    function disposeWaterTimerQueries() { frameTimer.dispose(); }
     function pollWaterTimerQueries() {
-      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return;
-      try {
-        if (gl.getParameter(timerExtension.GPU_DISJOINT_EXT)) {
-          resetWaterTimerRing();
-          pendingPerformanceSample = null;
-          return;
-        }
-        for (var i = 0; i < timerQueries.length; i++) {
-          var record = timerQueries[i];
-          if (!record.pending || !gl.getQueryParameter(record.query, gl.QUERY_RESULT_AVAILABLE)) continue;
-          var elapsedNS = Number(gl.getQueryParameter(record.query, gl.QUERY_RESULT));
-          record.pending = false;
-          if (Number.isFinite(elapsedNS) && elapsedNS >= 0) {
-            pendingPerformanceSample = {
-              source: "webgl-timer",
-              gpuMS: elapsedNS / 1000000,
-              atMS: record.atMS,
-            };
-            lastPerformanceSample = pendingPerformanceSample;
-          }
-        }
-      } catch (timerPollError) {
-        disposeWaterTimerQueries();
-      }
+      var sample = frameTimer.snapshot();
+      lastPerformanceSample = sample.status === "measured" ? sample : null;
     }
-
-    function beginWaterTimerQuery(nowMS) {
-      pollWaterTimerQueries();
-      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return null;
-      var record = timerQueries[timerQueryCursor];
-      if (!record || record.pending) return null;
-      try {
-        gl.beginQuery(timerExtension.TIME_ELAPSED_EXT, record.query);
-        record.atMS = nowMS;
-        timerQueryActive = record;
-        timerQueryCursor = (timerQueryCursor + 1) % timerQueries.length;
-        return record;
-      } catch (timerBeginError) {
-        disposeWaterTimerQueries();
-        return null;
-      }
-    }
-
-    function endWaterTimerQuery(record) {
-      if (!record || timerQueryActive !== record || !timerExtension) return;
-      try {
-        gl.endQuery(timerExtension.TIME_ELAPSED_EXT);
-        record.pending = true;
-        timerQueryActive = null;
-      } catch (timerEndError) {
-        disposeWaterTimerQueries();
-      }
-    }
-
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+    function beginWaterTimerQuery(_nowMS) { return frameTimer.begin(); }
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+    function endWaterTimerQuery(record) { frameTimer.end(record); }
     function pollPerformanceSample() {
-      pollWaterTimerQueries();
-      var sample = pendingPerformanceSample;
-      pendingPerformanceSample = null;
+      var sample = frameTimer.sample();
+      if (sample) lastPerformanceSample = sample;
       return sample;
     }
-
-    function getPerformanceTimingStatus() {
-      var available = Boolean(timerExtension && timerQueries.length === 3);
-      var pending = Boolean(timerQueryActive) || timerQueries.some(function(record) {
-        return Boolean(record && record.pending);
-      });
-      return {
-        available: available,
-        active: available,
-        pending: pending,
-        source: "webgl-timer",
-      };
-    }
+    function getPerformanceTimingStatus() { return frameTimer.timingStatus(); }
 
     function selectWaterSurfaceGrid(requested) {
       return cachedWaterSurfaceGrid(requested);
@@ -4509,6 +4502,7 @@
       },
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,
+      getFrameTiming: frameTimer.snapshot,
       setLifecycle: setLifecycle,
       dispose: dispose,
       resize: function() {},
@@ -5334,6 +5328,7 @@
       descriptor: descriptor,
       target: target,
       loaded: false,
+      levels: 1,
       failed: false,
       generation: textureMap._gosxGeneration || null,
       disposed: false,
@@ -5385,6 +5380,7 @@
         gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
         if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
           gl.generateMipmap(gl.TEXTURE_2D);
+          record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -7384,6 +7380,80 @@
     );
   }
 
+  const SCENE_SKY_FRAGMENT = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv; out vec4 fragColor;",
+    "uniform vec4 u_sky[7]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
+    "void main() {",
+    "  vec2 ndc = v_uv*2.-1.;",
+    "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w);",
+    "  vec3 color = mix(u_sky[4].xyz, ray.y >= 0. ? u_sky[3].xyz : u_sky[5].xyz, abs(ray.y));",
+    "  float c = cos(u_sky[2].w), s = sin(u_sky[2].w);",
+    "  vec3 d = vec3(ray.x*c+ray.z*s, ray.y, -ray.x*s+ray.z*c);",
+    "  if (u_sky[5].w == 1.) {",
+    "    vec2 uv = vec2(atan(d.z,d.x)/6.28318530718+.5, asin(clamp(d.y,-1.,1.))/3.14159265359+.5);",
+    "    color = textureLod(u_skyImage, uv, u_sky[4].w).rgb;",
+    "  } else if (u_sky[5].w == 2.) { color = textureLod(u_skyCube,d,u_sky[4].w).rgb;",
+    "  } else if (u_sky[5].w == 3.) { color = u_sky[4].xyz; }",
+    "  color = max(color*u_sky[3].w,vec3(0));",
+    "  if (u_sky[6].x == 0.) { color = mix(1.055*pow(color,vec3(1./2.4))-.055,color*12.92,lessThanEqual(color,vec3(.0031308))); }",
+    "  fragColor = vec4(color,1);",
+    "}",
+  ].join("\n");
+
+  // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
+  function createSceneSkyWebGLRenderer(gl, textureCache, imagePlaceholder) {
+    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT);
+    if (!program) return null;
+    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(28);
+    var uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
+    var imageUniform = gl.getUniformLocation(program.program, "u_skyImage");
+    var cubeUniform = gl.getUniformLocation(program.program, "u_skyCube");
+    var imageSampler = gl.createSampler();
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return {
+      // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
+      draw: function(opts) {
+        var env = opts.environment, sky = env.sky;
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        var image = { texture: imagePlaceholder }, cube = scenePBRPlaceholderCube(gl, textureCache);
+        var state = "gradient";
+        if (sky.mode === "environment") {
+          var desc = env.ibl && env.ibl.radiance;
+          var record = desc && desc.view === "cube" && desc.uri
+            ? scenePBRLoadTexture(gl, desc.uri, textureCache, desc, "environment-radiance", "linear") : null;
+          if (record && record.loaded && !record.failed) { cube = record; data[23] = 2; state = "environment-cube"; }
+          else {
+            record = env.envMap ? scenePBRLoadTexture(gl, env.envMap, textureCache, null, "environment-radiance", "srgb") : record;
+            if (record && record.loaded && !record.failed) { image = record; data[23] = 1; state = "environment-map"; }
+            else state = record && !record.failed ? "environment-pending" : "environment-unavailable";
+          }
+          data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
+        }
+        var cull = gl.isEnabled(gl.CULL_FACE);
+        gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+        gl.useProgram(program.program); gl.uniform4fv(uniforms, data);
+        scenePBRBindTexture(gl, 0, image.texture, gl.TEXTURE_2D); gl.uniform1i(imageUniform, 0);
+        scenePBRBindTexture(gl, 1, cube.texture, gl.TEXTURE_CUBE_MAP); gl.uniform1i(cubeUniform, 1);
+        gl.bindSampler(0, imageSampler);
+        drawSceneFullscreenQuad(gl, quad.vao);
+        gl.bindSampler(0, null);
+        gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+        if (cull) gl.enable(gl.CULL_FACE);
+        return state;
+      },
+      dispose: function() {
+        gl.deleteSampler(imageSampler);
+        gl.deleteVertexArray(quad.vao); gl.deleteBuffer(quad.vbo);
+        gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader);
+      },
+    };
+  }
+
   function createScenePBRRenderer(gl, canvas) {
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -7416,6 +7486,8 @@
 
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor = null;
+    // @ts-ignore TS7018 -- lazily allocated backend sky resources.
+    var skyResources = { renderer: null };
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
     // Light matrices now live on the per-cascade objects in shadowSlots[s];
@@ -8607,7 +8679,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta)) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -8773,6 +8845,14 @@
         gl.clearDepth(1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       }
+
+      var skyState = "none";
+      if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
+        if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
+        skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
+          camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
+      }
+      if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
       // could build per-cascade frusta; `cam`, `viewMatrix`, `projMatrix`,
@@ -10782,6 +10862,8 @@
     }
 
     function dispose() {
+      if (skyResources.renderer) skyResources.renderer.dispose();
+      skyResources.renderer = null;
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
       // dispose() first) and normal teardown alike.
       sceneInvalidateGLConstantCache(gl);
@@ -10997,6 +11079,7 @@
     const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
       rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
 
+    var frameTimer = createSceneWebGLFrameTimer(gl);
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
@@ -11008,9 +11091,17 @@
       // selection), so a page whose first crowd-motion batch reaches
       // render() before this has ever run would silently skip drawing it.
       prepareCrowdMotionShaders,
-      render: render,
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+      render: function(bundle, viewport, frameMeta) {
+        var token = frameTimer.begin();
+        try { return render(bundle, viewport, frameMeta); }
+        finally { frameTimer.end(token); }
+      },
+      getFrameTiming: frameTimer.snapshot,
+      pollPerformanceSample: frameTimer.sample,
+      getPerformanceTimingStatus: frameTimer.timingStatus,
       renderSurfaces: renderSurfaces,
-      dispose: dispose,
+      dispose: function() { frameTimer.dispose(); dispose(); },
       diagnostics: diagnostics,
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,

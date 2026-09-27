@@ -1799,8 +1799,9 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
   assert.doesNotMatch(webgpu, /if \(hasSimulationTick && runWaterSim\) \{\s*var normalResult/);
   assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
 
-  assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
+  assert.equal((mount.match(/sceneRenderWithTiming\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
     "every mount render seam must pass frame metadata");
+  assert.match(fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount-telemetry.ts"), "utf8"), /renderer\.render\(bundle, viewport, meta\)/);
   assert.match(mount, /renderer\.setLifecycle\(\{\s*nowMS:[\s\S]*active:[\s\S]*paused:[\s\S]*disposed:[\s\S]*reason:/);
   assert.match(mount, /if \(!active \|\| paused \|\| disposing\) lastSceneRenderNowMS = null/);
 });
