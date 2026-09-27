@@ -63,6 +63,22 @@
   color: var(--text-primary);
 }
 
+.quickstart__live-card {
+  padding: var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+}
+
+.quickstart__live-card h3 {
+  margin: 0 0 var(--space-xs);
+  color: var(--text-primary);
+}
+
+.quickstart__live-card p {
+  margin: 0;
+}
+
 .quickstart__tutorial a {
   font-weight: 600;
 }

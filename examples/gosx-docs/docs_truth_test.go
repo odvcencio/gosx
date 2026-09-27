@@ -118,6 +118,7 @@ func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
 		{"engines", "engines/liveConfig.go.sample"},
 		{"forms", "forms/code-001.gsx.sample"},
 		{"getting-started", "getting-started/quickstart.bash.sample"},
+		{"getting-started", "getting-started/serverRenderedWelcome.gosx.sample"},
 		{"hubs", "hubs/hubSample.go.sample"},
 		{"images", "images/imageSample.go.sample"},
 		{"islands", "islands/counterSample.gosx.sample"},
@@ -137,6 +138,28 @@ func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
 		t.Run(test.page, func(t *testing.T) {
 			body := readDocsPagePair(t, root, test.page)
 			assertDocsContract(t, body, []string{test.required}, []string{"CodeBlock(\"go\", `"})
+		})
+	}
+}
+
+func TestFormerGenericSceneGuidesRenderConceptExamples(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	for _, page := range []string{
+		"getting-started", "compiler", "routing", "runtime", "streaming",
+		"islands", "signals", "hubs", "engines", "motion", "deployment",
+	} {
+		t.Run(page, func(t *testing.T) {
+			body := readDocsPagePair(t, root, page)
+			if !strings.Contains(body, "docs-live-example") {
+				t.Fatalf("docs/%s needs a working concept example where its generic Scene3D banner used to render", page)
+			}
+			if strings.Contains(body, "<script") {
+				t.Fatalf("docs/%s live example must not depend on page JavaScript", page)
+			}
 		})
 	}
 }
@@ -220,6 +243,25 @@ func TestDocsActiveNavigationContrastUsesDarkTextOnGold(t *testing.T) {
 	if strings.Contains(rule, "color: #ffffff;") || strings.Contains(rule, "background: var(--accent-deep);") {
 		t.Fatal("active guide navigation reverted to low-contrast white on gold")
 	}
+}
+
+func TestDocsContrastStylesCoverSharedCodeAndLiveControls(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "app", "docs", "layout.css")
+	css, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDocsContract(t, string(css), []string{
+		".docs-content .code-sample__gutter",
+		"color: var(--text-secondary);",
+		".docs-live-example button:not(.code-sample__copy)",
+		"color: var(--color-canvas);",
+		"background: var(--accent);",
+	}, []string{})
 }
 
 func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {

@@ -1,0 +1,12 @@
+package docs
+
+type QuickstartWelcomeProps struct {
+	Name string
+}
+
+component QuickstartWelcome(props: QuickstartWelcomeProps) {
+	return <section class="quickstart__live-card" aria-label="Server-rendered page example">
+		<h3>Hello, {props.Name}</h3>
+		<p>This page is HTML rendered by GoSX on the server.</p>
+	</section>
+}

@@ -182,6 +182,10 @@
   min-width: 0;
 }
 
+.docs-content .code-sample__gutter {
+  color: var(--text-secondary);
+}
+
 /* Code panels stay dark in both guide themes, so their controls need code-panel
    colors instead of the surrounding page's light or dark text tokens. */
 .docs-content .code-sample__label,
@@ -375,10 +379,8 @@
   cursor: pointer;
 }
 
-@media (scripting: enabled) {
-  .docs-content .code-sample__copy {
-    display: inline-flex;
-  }
+html[data-gosx-runtime-ready="true"] .docs-content .code-sample__copy {
+  display: inline-flex;
 }
 
 .code-sample__copy:hover,
@@ -435,6 +437,23 @@
 .docs-live-example a:hover,
 .docs-live-example a:focus-visible {
   color: var(--text-primary);
+}
+
+.docs-live-example button:not(.code-sample__copy) {
+  min-height: 2.5rem;
+  padding: 0.55em 0.9em;
+  color: var(--color-canvas);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font: 600 var(--text-small)/1.4 var(--font-body);
+  cursor: pointer;
+}
+
+.docs-live-example button:not(.code-sample__copy):hover,
+.docs-live-example button:not(.code-sample__copy):focus-visible {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
 }
 
 .docs-live-example :focus-visible {
@@ -494,7 +513,7 @@
   padding: var(--space-lg);
   color: var(--text-secondary);
   background: var(--bg);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
   line-height: var(--lh-prose);
   text-align: center;

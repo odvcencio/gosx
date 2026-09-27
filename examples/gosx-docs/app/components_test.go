@@ -113,7 +113,7 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 	}
 }
 
-func TestCopyControlTracksBrowserScriptingState(t *testing.T) {
+func TestCopyControlTracksRuntimeReadyState(t *testing.T) {
 	css, err := os.ReadFile("docs/layout.css")
 	if err != nil {
 		t.Fatal(err)
@@ -122,8 +122,8 @@ func TestCopyControlTracksBrowserScriptingState(t *testing.T) {
 	if !strings.Contains(styles, ".code-sample__copy {\n  display: none;") {
 		t.Fatal("copy control must stay hidden before JavaScript initializes")
 	}
-	if !strings.Contains(styles, "@media (scripting: enabled) {\n  .docs-content .code-sample__copy {\n    display: inline-flex;") {
-		t.Fatal("copy control must become visible only when browser scripting is enabled")
+	if !strings.Contains(styles, `html[data-gosx-runtime-ready="true"] .docs-content .code-sample__copy {`) || !strings.Contains(styles, "  display: inline-flex;") {
+		t.Fatal("copy control must become visible only after the browser runtime reports ready")
 	}
 }
 

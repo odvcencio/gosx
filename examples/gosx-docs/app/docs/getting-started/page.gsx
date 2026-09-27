@@ -1,5 +1,21 @@
 package docs
 
+type QuickstartWelcomeProps struct {
+	Name string
+}
+
+component QuickstartWelcome(props: QuickstartWelcomeProps) {
+	return <section class="quickstart__live-card" aria-label="Server-rendered page example">
+		<h3>
+			Hello,
+			{props.Name}
+		</h3>
+		<p>
+			This page is HTML rendered by GoSX on the server.
+		</p>
+	</section>
+}
+
 func Page() Node {
 	return <div class="prose getting-started">
 		<section class="quickstart" aria-labelledby="quickstart-heading">
@@ -27,6 +43,14 @@ func Page() Node {
 				<a href="/docs/your-first-app" data-gosx-link="true">Your first GoSX app</a>
 				to add server data, a counter island, a live hub, and a Scene3D.
 			</p>
+		</section>
+		<section class="docs-live-example" aria-label="Server-rendered GoSX example">
+			<p class="eyebrow">A page rendered from Go</p>
+			<QuickstartWelcome {...data.welcomeProps} />
+			<p>
+				This strict component becomes ordinary HTML in the server response. It has no island directive and needs no page JavaScript.
+			</p>
+			{CodeBlock("gosx", data.serverRenderedWelcomeSample)}
 		</section>
 		<section id="prerequisites" class="docs-section-block">
 			<h2>Prerequisites</h2>
