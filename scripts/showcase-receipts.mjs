@@ -59,10 +59,11 @@ for (const row of desktopRows) {
   if (row.errors?.length || row.error || !row.stats?.drawCadence || !row.stats?.rafCpu || row.firstDrawMs == null) {
     throw new Error(`incomplete GPU timing at ${row.path} (${row.backend}): ${JSON.stringify(row.errors || row.error)}`);
   }
-  const backend = row.backend === 'webgl' ? 'webgl2' : row.backend;
-  if (backend !== 'webgpu' && backend !== 'webgl2') throw new Error(`unexpected GPU backend ${backend}`);
+  const rendererBackend = row.backend === 'webgl' ? 'webgl2' : row.backend;
+  if (rendererBackend !== 'webgpu' && rendererBackend !== 'webgl2') throw new Error(`unexpected GPU backend ${rendererBackend}`);
+  const backend = rendererBackend === 'webgpu' ? 'WebGPU' : 'WebGL2';
   const selected = row.stats.attrs?.['data-gosx-scene3d-renderer'];
-  const expectedRenderer = backend === 'webgpu' ? 'webgpu' : 'webgl';
+  const expectedRenderer = rendererBackend === 'webgpu' ? 'webgpu' : 'webgl';
   if (selected !== expectedRenderer) {
     throw new Error(`${row.path} requested ${backend} but the runtime reported ${selected || 'no renderer'}`);
   }
@@ -79,7 +80,7 @@ for (const row of desktopRows) {
 const scenes = [...scenesByPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 for (const scene of scenes) {
   scene.backends.sort((a, b) => a.backend.localeCompare(b.backend));
-  if (scene.backends.length !== 2 || !scene.backends.some(row => row.backend === 'webgpu') || !scene.backends.some(row => row.backend === 'webgl2')) {
+  if (scene.backends.length !== 2 || !scene.backends.some(row => row.backend === 'WebGPU') || !scene.backends.some(row => row.backend === 'WebGL2')) {
     throw new Error(`${scene.path} needs measured WebGPU and WebGL2 rows at 1440x900`);
   }
 }

@@ -1,12 +1,11 @@
 package performance
 
 func Page() Node {
-	return <main class="performance-page" aria-labelledby="performance-title">
+	return <section class="performance-page" aria-labelledby="performance-title">
 		<header class="performance-header">
-			<p class="performance-kicker">
-				Measured on
-				{data.measuredDate}
-			</p>
+			<If cond={data.hasMeasurements}>
+				<p class="performance-kicker">{data.measuredLabel}</p>
+			</If>
 			<h1 id="performance-title">Performance receipts</h1>
 			<p class="performance-lede">
 				Page scores, renderer timings, asset sizes, and the install quickstart, measured on a local production build.
@@ -24,11 +23,7 @@ func Page() Node {
 						<p class="performance-kicker">Mobile · three cold runs</p>
 						<h2 id="performance-lighthouse-title">Page scores</h2>
 					</div>
-					<p>
-						{data.receipts.Lighthouse.Browser}
-						.
-						{data.receipts.Lighthouse.Method}
-					</p>
+					<p>{data.lighthouseDescriptor}</p>
 				</div>
 				<div class="performance-table-wrap">
 					<table class="performance-table">
@@ -70,13 +65,7 @@ func Page() Node {
 						<p class="performance-kicker">Renderer timing</p>
 						<h2 id="performance-gpu-title">3D frame times</h2>
 					</div>
-					<p>
-						{data.receipts.GPU.Label}
-						.
-						{data.receipts.GPU.Browser}
-						.
-						{data.receipts.GPU.Method}
-					</p>
+					<p>{data.gpuDescriptor}</p>
 				</div>
 				<Each of={data.receipts.GPU.Scenes} as="scene">
 					<article class="performance-scene">
@@ -99,20 +88,16 @@ func Page() Node {
 										<tr>
 											<th scope="row">{backend.Backend}</th>
 											<td>
-												{backend.FirstDrawMs}
-												ms
+												{millisecondsLabel(backend.FirstDrawMs)}
 											</td>
 											<td>
-												{backend.CadenceP50Ms}
-												ms
+												{millisecondsLabel(backend.CadenceP50Ms)}
 											</td>
 											<td>
-												{backend.CadenceP95Ms}
-												ms
+												{millisecondsLabel(backend.CadenceP95Ms)}
 											</td>
 											<td>
-												{backend.RafCPUP95Ms}
-												ms
+												{millisecondsLabel(backend.RafCPUP95Ms)}
 											</td>
 										</tr>
 									</Each>
@@ -172,15 +157,13 @@ func Page() Node {
 					<div>
 						<dt>Cold</dt>
 						<dd>
-							{data.receipts.Quickstart.ColdSec}
-							s
+							{secondsLabel(data.receipts.Quickstart.ColdSec)}
 						</dd>
 					</div>
 					<div>
 						<dt>Warm</dt>
 						<dd>
-							{data.receipts.Quickstart.WarmSec}
-							s
+							{secondsLabel(data.receipts.Quickstart.WarmSec)}
 						</dd>
 					</div>
 				</dl>
@@ -188,24 +171,24 @@ func Page() Node {
 			</section>
 			<footer class="performance-provenance">
 				<p>
-					Measured
-					{data.measuredDate}
-					on
-					{data.receipts.Machine.Name}
-					. Load average during the run:
+					{data.provenanceLabel}
 					<code>{data.receipts.Machine.LoadAverage}</code>
 					.
 				</p>
+				<p>{data.machineDescription}</p>
+				<p>Build source commit</p>
 				<p>
-					Build commit
 					<code>{data.receipts.Commit}</code>
-					. Methods and raw runs are in
-					<a					href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/performance/receipts.json">the committed receipts</a>
-					and
-					<a href="https://github.com/odvcencio/gosx/blob/main/scripts/showcase-receipts.sh">the measurement script</a>
-					.
 				</p>
+				<ul class="performance-links" aria-label="Measurement sources">
+					<li>
+						<a						href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/performance/receipts.json">Committed receipts JSON</a>
+					</li>
+					<li>
+						<a href="https://github.com/odvcencio/gosx/blob/main/scripts/showcase-receipts.sh">Measurement script</a>
+					</li>
+				</ul>
 			</footer>
 		</If>
-	</main>
+	</section>
 }

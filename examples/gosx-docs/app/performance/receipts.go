@@ -1,9 +1,14 @@
 package performance
 
 import (
+	"bytes"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
+	"sort"
 	"time"
 )
 
@@ -93,8 +98,13 @@ func Read() (Receipts, error) {
 		return Receipts{}, err
 	}
 	var receipts Receipts
-	if err := json.Unmarshal(data, &receipts); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipts); err != nil {
 		return Receipts{}, fmt.Errorf("decode performance receipts: %w", err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return Receipts{}, fmt.Errorf("decode performance receipts: expected one JSON document")
 	}
 	return receipts, nil
 }
@@ -103,8 +113,11 @@ func (r Receipts) Validate() error {
 	if r.SchemaVersion != 1 {
 		return fmt.Errorf("schemaVersion must be 1")
 	}
-	if r.MeasuredAt.IsZero() || r.Commit == "" {
+	if r.MeasuredAt.IsZero() || len(r.Commit) != 40 {
 		return fmt.Errorf("measurement timestamp and commit are required")
+	}
+	if _, err := hex.DecodeString(r.Commit); err != nil {
+		return fmt.Errorf("measurement commit must be a hexadecimal Git SHA")
 	}
 	if r.Machine.Name == "" || r.Machine.OS == "" || r.Machine.CPU == "" || r.Machine.MemoryGiB <= 0 || r.Machine.LoadAverage == "" {
 		return fmt.Errorf("machine name, OS, CPU, memory, and load average are required")
@@ -122,6 +135,13 @@ func (r Receipts) Validate() error {
 			if score.Performance < 0 || score.Performance > 100 || score.Accessibility < 0 || score.Accessibility > 100 || score.BestPractices < 0 || score.BestPractices > 100 || score.SEO < 0 || score.SEO > 100 || score.CLS < 0 {
 				return fmt.Errorf("Lighthouse page %q contains an invalid score", page.Path)
 			}
+		}
+		if page.Median.Performance != medianInt(page.Runs, func(score LighthouseScore) int { return score.Performance }) ||
+			page.Median.Accessibility != medianInt(page.Runs, func(score LighthouseScore) int { return score.Accessibility }) ||
+			page.Median.BestPractices != medianInt(page.Runs, func(score LighthouseScore) int { return score.BestPractices }) ||
+			page.Median.SEO != medianInt(page.Runs, func(score LighthouseScore) int { return score.SEO }) ||
+			math.Abs(page.Median.CLS-medianFloat(page.Runs, func(score LighthouseScore) float64 { return score.CLS })) > 0.0001 {
+			return fmt.Errorf("Lighthouse page %q median does not match its three runs", page.Path)
 		}
 	}
 	for _, required := range []string{"/", "/docs", "/docs/getting-started/", "/demos/", "/capabilities/", "/performance/"} {
@@ -146,12 +166,12 @@ func (r Receipts) Validate() error {
 		scenePaths[scene.Path] = true
 		seen := map[string]bool{}
 		for _, backend := range scene.Backends {
-			if (backend.Backend != "webgpu" && backend.Backend != "webgl2") || seen[backend.Backend] || backend.FirstDrawMs <= 0 || backend.CadenceP50Ms <= 0 || backend.CadenceP95Ms <= 0 || backend.RafCPUP95Ms < 0 {
+			if (backend.Backend != "WebGPU" && backend.Backend != "WebGL2") || seen[backend.Backend] || backend.FirstDrawMs <= 0 || backend.CadenceP50Ms <= 0 || backend.CadenceP95Ms <= 0 || backend.RafCPUP95Ms < 0 {
 				return fmt.Errorf("GPU scene %q has incomplete %q timing", scene.Path, backend.Backend)
 			}
 			seen[backend.Backend] = true
 		}
-		if !seen["webgpu"] || !seen["webgl2"] {
+		if !seen["WebGPU"] || !seen["WebGL2"] {
 			return fmt.Errorf("GPU scene %q must include WebGPU and WebGL2", scene.Path)
 		}
 	}
@@ -187,4 +207,22 @@ func (r Receipts) Validate() error {
 		return fmt.Errorf("cold and warm quickstart timings are required")
 	}
 	return nil
+}
+
+func medianInt(values []LighthouseScore, pick func(LighthouseScore) int) int {
+	items := make([]int, len(values))
+	for i, value := range values {
+		items[i] = pick(value)
+	}
+	sort.Ints(items)
+	return items[len(items)/2]
+}
+
+func medianFloat(values []LighthouseScore, pick func(LighthouseScore) float64) float64 {
+	items := make([]float64, len(values))
+	for i, value := range values {
+		items[i] = pick(value)
+	}
+	sort.Float64s(items)
+	return items[len(items)/2]
 }

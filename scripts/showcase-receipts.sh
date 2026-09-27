@@ -19,7 +19,9 @@ elif curl -fsS "$base_url/demos/tabletop/" >/dev/null; then
 else
   featured_path=/demos/water/
 fi
-gpu_paths=${SHOWCASE_GPU_PATHS:-"$featured_path /demos/showreel/ /demos/checkers/ /demos/beacon/ /demos/orrery/ /demos/water/ /demos/scene3d/ /demos/scene3d-bench/ /demos/html-surface/"}
+tabletop_path=
+if [[ "$featured_path" == "/demos/tabletop/" ]]; then tabletop_path=/demos/tabletop/; fi
+gpu_paths=${SHOWCASE_GPU_PATHS:-"$tabletop_path /demos/showreel/ /demos/checkers/ /demos/beacon/ /demos/orrery/ /demos/water/ /demos/scene3d/ /demos/scene3d-bench/ /demos/html-surface/"}
 
 if [[ ! -d "$dist_dir" ]]; then
   echo "production build not found at $dist_dir" >&2
@@ -29,6 +31,7 @@ if [[ ! -x "$tools_dir/lh.sh" || ! -f "$tools_dir/gpu-capture.js" ]]; then
   echo "shared showcase tools not found at $tools_dir" >&2
   exit 1
 fi
+mkdir -p "$evidence_dir/lighthouse" "$evidence_dir/gpu" "$evidence_dir/quickstart"
 if ! curl -fsS "$base_url/api/site" >/dev/null; then
   echo "site is not responding at $base_url" >&2
   exit 1
@@ -38,7 +41,7 @@ if ! curl -fsS "$cdp_url/json/version" > "$evidence_dir/gpu/browser-version.json
   exit 1
 fi
 
-mkdir -p "$evidence_dir/lighthouse" "$evidence_dir/gpu" "$evidence_dir/quickstart"
+load_average_start=$(awk '{print $1 " " $2 " " $3}' /proc/loadavg)
 
 pages=(/ /docs /docs/getting-started/ /demos/ "$featured_path" /capabilities/ /performance/)
 nice -n 10 "$tools_dir/lh.sh" "$base_url" "$evidence_dir/lighthouse" 3 "${pages[@]}"
@@ -58,12 +61,13 @@ GOWORK=off GOMODCACHE="$quickstart_tmp/mod" GOCACHE="$quickstart_tmp/build" GOBI
   go install m31labs.dev/gosx/cmd/gosx@latest \
   > "$evidence_dir/quickstart/warm.log" 2>&1
 
-load_average=$(awk '{print $1 " " $2 " " $3}' /proc/loadavg)
 cpu_model=$(awk -F: '/model name/ {sub(/^ /, "", $2); print $2; exit}' /proc/cpuinfo)
 memory_gib=$(awk '/MemTotal/ {printf "%.2f", $2/1024/1024}' /proc/meminfo)
-machine_name="$(hostname) · WSL2 reference VM"
+machine_name="WSL2 VM · $(nproc) vCPU"
 os_name="$(uname -sr)"
 measured_at=$(date -Iseconds)
+load_average_end=$(awk '{print $1 " " $2 " " $3}' /proc/loadavg)
+load_average="start: $load_average_start; end: $load_average_end"
 commit=$(git -C "$repo_root" rev-parse HEAD)
 meta_file="$evidence_dir/measurement-meta.json"
 python3 - "$meta_file" "$measured_at" "$commit" "$machine_name" "$os_name" "$cpu_model" "$memory_gib" "$load_average" "$featured_path" "$evidence_dir/quickstart/cold.seconds" "$evidence_dir/quickstart/warm.seconds" <<'PY'
@@ -83,3 +87,4 @@ node "$repo_root/scripts/showcase-receipts.mjs" \
   "$evidence_dir" "$dist_dir" "$repo_root/examples/gosx-docs/app/performance/receipts.json"
 rm -rf "$quickstart_tmp"
 echo "Wrote examples/gosx-docs/app/performance/receipts.json from $evidence_dir"
+echo "For a complete /performance receipt, rebuild the site with this JSON and rerun once."

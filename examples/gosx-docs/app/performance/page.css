@@ -201,6 +201,21 @@
   margin: 0.4rem 0;
 }
 
+.performance-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.performance-links a {
+  color: var(--color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
 @media (max-width: 760px) {
   .performance-section__heading {
     display: block;
