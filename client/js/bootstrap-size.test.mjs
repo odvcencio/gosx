@@ -667,7 +667,11 @@ const budgets = [
   // Measured: 1_726_029 / 475_444 / 381_598. Targets raw 1_658_200 ->
   // 1_660_500, gzip 458_200 -> 459_100 and brotli 365_000 -> 365_300, the
   // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_660_500, gzip: 459_100, brotli: 365_300 },
+  // Scene3D hub bindings add setup and disposal telemetry to the monolith.
+  // Measured: 1_729_670 / 476_378 / 382_315. Targets raw 1_660_500 ->
+  // 1_664_200, gzip 459_100 -> 460_000 and brotli 365_300 -> 366_000, the
+  // smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap.js", raw: 1_664_200, gzip: 460_000, brotli: 366_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
