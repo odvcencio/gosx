@@ -663,7 +663,11 @@ const budgets = [
   // Measured: 1_723_671 / 474_492 / 381_358. Targets raw 1_655_000 ->
   // 1_658_200, gzip 454_600 -> 458_200 and brotli 364_200 -> 365_000, the
   // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_658_200, gzip: 458_200, brotli: 365_000 },
+  // Scene3D's glTF material path now preserves authored emission factors.
+  // Measured: 1_726_029 / 475_444 / 381_598. Targets raw 1_658_200 ->
+  // 1_660_500, gzip 458_200 -> 459_100 and brotli 365_000 -> 365_300, the
+  // smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap.js", raw: 1_660_500, gzip: 459_100, brotli: 365_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
