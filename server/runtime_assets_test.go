@@ -1,6 +1,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +14,77 @@ import (
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/buildmanifest"
 )
+
+func TestAppPreservesIslandProgramMediaTypeForCompressedSidecars(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "islands")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rawPath := filepath.Join(assetsDir, "Counter.abcd.gxi")
+	body := []byte{0, 'G', 'X', 'I', 1, 2, 3, 4}
+	if err := os.WriteFile(rawPath, body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestGzip(rawPath+".gz", body); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestBrotli(rawPath+".br", body); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), []byte(`{"runtime":{},"islands":[],"css":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+	for _, tc := range []struct {
+		name            string
+		acceptEncoding  string
+		wantEncoding    string
+		wantContentType string
+		decode          func(io.Reader) ([]byte, error)
+	}{
+		{name: "identity", wantContentType: "application/octet-stream", decode: io.ReadAll},
+		{name: "gzip", acceptEncoding: "gzip", wantEncoding: "gzip", wantContentType: "application/octet-stream", decode: func(r io.Reader) ([]byte, error) {
+			reader, err := gzip.NewReader(r)
+			if err != nil {
+				return nil, err
+			}
+			defer reader.Close()
+			return io.ReadAll(reader)
+		}},
+		{name: "brotli", acceptEncoding: "br", wantEncoding: "br", wantContentType: "application/octet-stream", decode: func(r io.Reader) ([]byte, error) {
+			return io.ReadAll(brotli.NewReader(r))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/gosx/assets/islands/Counter.abcd.gxi", nil)
+			if tc.acceptEncoding != "" {
+				req.Header.Set("Accept-Encoding", tc.acceptEncoding)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", w.Code)
+			}
+			if got := w.Header().Get("Content-Type"); got != tc.wantContentType {
+				t.Fatalf("Content-Type = %q, want %q", got, tc.wantContentType)
+			}
+			if got := w.Header().Get("Content-Encoding"); got != tc.wantEncoding {
+				t.Fatalf("Content-Encoding = %q, want %q", got, tc.wantEncoding)
+			}
+			decoded, err := tc.decode(w.Body)
+			if err != nil {
+				t.Fatalf("decode %s response: %v", tc.name, err)
+			}
+			if string(decoded) != string(body) {
+				t.Fatalf("decoded body = %x, want %x", decoded, body)
+			}
+		})
+	}
+}
 
 func TestRuntimeManifestDirectAssetPathUsesDistAssetsForAppRoot(t *testing.T) {
 	root := t.TempDir()

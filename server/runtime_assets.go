@@ -174,6 +174,11 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
+	// Preserve the media type of a compiled program when serving its compressed
+	// sidecar; otherwise ServeFile infers a type from the .gz or .br filename.
+	if strings.EqualFold(filepath.Ext(fsPath), ".gxi") {
+		setRuntimeContentType(w.Header(), fsPath)
+	}
 	if requestAcceptsBrotli(r) {
 		if brPath := fsPath + ".br"; isFile(brPath) {
 			w.Header().Set("Content-Encoding", "br")
@@ -237,6 +242,8 @@ func setRuntimeContentType(h http.Header, fsPath string) {
 		return
 	}
 	switch strings.ToLower(filepath.Ext(fsPath)) {
+	case ".gxi":
+		h.Set("Content-Type", "application/octet-stream")
 	case ".wasm":
 		h.Set("Content-Type", "application/wasm")
 	case ".js":
