@@ -1,0 +1,12 @@
+return gosx.El("main",
+	ctx.Defer(
+		gosx.El("p", gosx.Text("Loading activity...")),
+		func() (gosx.Node, error) {
+			items, err := loadActivity(ctx.Request.Context())
+			if err != nil {
+				return nil, err
+			}
+			return ActivityList(items), nil
+		},
+	),
+)

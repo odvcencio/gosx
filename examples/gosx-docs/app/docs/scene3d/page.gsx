@@ -1,5 +1,7 @@
 package docs
 
+import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+
 import ui "../../ui"
 
 func Page() Node {
@@ -37,38 +39,14 @@ func Page() Node {
 					.
 				</li>
 			</ul>
-			{CodeBlock("go", `import "m31labs.dev/gosx/scene"
-
-	props := scene.Props{
-	    Width:      1280,
-	    Height:     720,
-	    Background: "#08151f",
-	    Responsive: scene.Bool(true),
-	    Controls:   scene.ControlOrbit,
-	    AriaLabel:  "Product configurator",
-	    Camera: scene.PerspectiveCamera{
-	        Position: scene.Vec3(0, 2, 8),
-	        FOV:      65,
-	    },
-	    Environment: scene.Environment{
-	        AmbientColor:     "#ffffff",
-	        AmbientIntensity: 0.15,
-	        Exposure:         1.2,
-	        ToneMapping:      "aces",
-	    },
-	    Graph: scene.NewGraph(
-	        // lights, meshes, models, particles, helpers ...
-	    ),
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-001.go.sample"))}
 			<p>
 				Return the props from a route loader, then spread them into the
 				<span class="inline-code">Scene3D</span>
 				component.
 			</p>
-			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    return map[string]any{"scene": MyScene()}, nil
-	}`)}
-			{CodeBlock("gosx", `<Scene3D {...data.scene} />`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-002.go.sample"))}
+			{CodeBlock("gosx", docsapp.DocSample("scene3d/code-003.gosx.sample"))}
 			<p>
 				Set
 				<span class="inline-code">AriaLabel</span>
@@ -121,28 +99,7 @@ func Page() Node {
 					needs a rewrite, not a translation.
 				</li>
 			</ul>
-			{CodeBlock("go", `// Wrong: Group has no Scale field. This does not compile.
-	// scene.Group{Scale: scene.Vec3(2, 2, 2), Children: ...}
-
-	// Right: scale each leaf mesh.
-	scene.Group{
-	    ID:       "cluster",
-	    Position: scene.Vec3(0, 1, 0),
-	    Rotation: scene.Rotate(0, 0.4, 0),
-	    Children: []scene.Node{
-	        scene.Mesh{
-	            Geometry: scene.CubeGeometry{Size: 1},
-	            Material: scene.StandardMaterial{Color: "#d4af37"},
-	            Scale:    scene.Vec3(2, 2, 2),
-	        },
-	        scene.Mesh{
-	            Geometry: scene.SphereGeometry{Radius: 0.5, Segments: 32},
-	            Material: scene.StandardMaterial{Color: "#e8e8e8"},
-	            Position: scene.Vec3(2, 0, 0),
-	            Scale:    scene.Vec3(2, 2, 2),
-	        },
-	    },
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-004.go.sample"))}
 		</section>
 		<section id="backends">
 			<h2>Backends and Capability Verdicts</h2>
@@ -321,23 +278,8 @@ func Page() Node {
 				<span class="inline-code">RequiredCapabilities</span>
 				gates the scene at mount time. The WebGPU probe negotiates optional adapter features, required features, and device limits before it reports success.
 			</p>
-			{CodeBlock("go", `props.RequiredCapabilities = scene.RequireWebGPU(
-	    engine.CapWebGPUTimestampQuery,
-	    engine.CapWebGPUShaderF16,
-	    engine.WebGPULimit("maxTextureDimension2D", 4096),
-	    engine.WebGPUAdapterLimit("maxTextureDimension2D", 8192),
-	)
-
-	props.WebGPUAlphaMode = "opaque"
-	props.WebGPUColorSpace = "display-p3"
-	props.WebGPUToneMapping = "extended"
-	props.WebGPUPowerPreference = "high-performance"`)}
-			{CodeBlock("gosx", `<Scene3D
-	  {...data.scene}
-	  requiredCapabilities="webgpu webgpu:timestamp-query"
-	  webgpuAlphaMode="opaque"
-	  webgpuColorSpace="display-p3"
-	/>`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-005.go.sample"))}
+			{CodeBlock("gosx", docsapp.DocSample("scene3d/code-006.gosx.sample"))}
 			<p>
 				<span class="inline-code">Capabilities</span>
 				describes the surface capability set used for runtime planning;
@@ -371,22 +313,7 @@ func Page() Node {
 				<span class="inline-code">TransitionMS</span>
 				above zero and the client interpolates to the new pose instead of cutting.
 			</p>
-			{CodeBlock("go", `Camera: scene.PerspectiveCamera{
-	    Position:     scene.Vec3(0, 2, 8),
-	    Rotation:     scene.Rotate(0, 0, 0),
-	    FOV:          65,
-	    Near:         0.1,
-	    Far:          1000,
-	    TransitionMS: 600,
-	},
-
-	// Orthographic replaces the perspective camera when set.
-	OrthographicCamera: &scene.OrthographicCamera{
-	    Position: scene.Vec3(0, 10, 0),
-	    Zoom:     1.5,
-	    Near:     0.1,
-	    Far:      500,
-	},`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-007.go.sample"))}
 			<p>
 				Three control modes exist. Omit
 				<span class="inline-code">Controls</span>
@@ -408,26 +335,7 @@ func Page() Node {
 					— free-flight look and movement, pitch included.
 				</li>
 			</ul>
-			{CodeBlock("go", `Controls:               scene.ControlOrbit,
-	ControlTarget:          scene.Vec3(0, 1, 0),
-	ControlRotateSpeed:     1.0,
-	ControlZoomSpeed:       1.2,
-	ControlMinDistance:     3,
-	ControlMaxDistance:     40,
-	ControlPitchLimit:      1.2,
-	ControlRotateDirection: "grab", // "orbit" keeps the historical direction
-	DragToRotate:           scene.Bool(true),
-
-	// First-person alternative.
-	// Controls:         scene.ControlFirstPerson,
-	// PointerLock:      scene.Bool(true),
-	// ControlLookSpeed: 0.9,
-	// ControlMoveSpeed: 6,
-
-	// Scroll-driven camera for parallax hero sections. The two values are
-	// page-scroll fractions: 0 is the top of the page, 1 is the bottom.
-	ScrollCameraStart: 0.0,
-	ScrollCameraEnd:   1.0,`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-008.go.sample"))}
 			<h3>Drive the camera from a signal</h3>
 			<p>
 				Four signal bindings let other parts of the page read and write scene state without app JavaScript.
@@ -537,34 +445,8 @@ func Page() Node {
 				<span class="inline-code">scene/earcut</span>
 				, a pure-Go port of mapbox/earcut. Normals point straight up. Texture coordinates are omitted; derive them from the positions if you need them.
 			</p>
-			{CodeBlock("go", `// A building footprint with a courtyard, at ground level.
-	outline := []float64{0, 0, 20, 0, 20, 14, 0, 14}
-	courtyard := [][]float64{{6, 4, 14, 4, 14, 10, 6, 10}}
-
-	scene.Mesh{
-	    Geometry: scene.PolygonGeometry(outline, courtyard, 0),
-	    Material: scene.StandardMaterial{Color: "#2c3a46", Roughness: 0.9},
-	    ReceiveShadow: true,
-	}`)}
-			{CodeBlock("go", `// A torus with smooth tessellation.
-	scene.Mesh{
-	    Geometry: scene.TorusGeometry{
-	        Radius:          2.5,
-	        Tube:            0.08,
-	        RadialSegments:  64,
-	        TubularSegments: 128,
-	    },
-	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.2, Metalness: 0.9},
-	    Position: scene.Vec3(0, 1.5, 0),
-	}
-
-	// A cone: a cylinder with a zero top radius.
-	scene.Mesh{
-	    Geometry: scene.CylinderGeometry{
-	        RadiusTop: 0, RadiusBottom: 1, Height: 2, Segments: 24,
-	    },
-	    Material: scene.StandardMaterial{Color: "#C0C0C0", Roughness: 0.3, Metalness: 0.8},
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-009.go.sample"))}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-010.go.sample"))}
 		</section>
 		<section id="materials">
 			<h2>Materials</h2>
@@ -578,45 +460,7 @@ func Page() Node {
 				<span class="inline-code">scene.StandardMaterial</span>
 				is the PBR material. It uses the roughness and metalness workflow, plus five extended lobes: clearcoat, sheen, transmission, iridescence, and anisotropy. Each lobe is one scalar in the range 0 to 1. Anisotropy is the exception: it runs from -1 to 1, and the sign selects the tangent or the bitangent direction.
 			</p>
-			{CodeBlock("go", `// Polished gold.
-	scene.StandardMaterial{
-	    Color:     "#D4AF37",
-	    Roughness: 0.15, // 0 = mirror, 1 = fully diffuse
-	    Metalness: 0.95, // 0 = dielectric, 1 = conductor
-	}
-
-	// Car paint: a clearcoat layer over a coloured base.
-	scene.StandardMaterial{
-	    Color:     "#8f1d2c",
-	    Roughness: 0.35,
-	    Metalness: 0.1,
-	    Clearcoat: 0.9,
-	}
-
-	// Brushed steel with texture maps.
-	scene.StandardMaterial{
-	    Color:        "#9BA0A8",
-	    Roughness:    0.4,
-	    Metalness:    0.9,
-	    RoughnessMap: "/textures/brushed-roughness.png",
-	    NormalMap:    "/textures/brushed-normal.png",
-	}
-
-	// Frosted glass: transmission plus roughness.
-	scene.StandardMaterial{
-	    Color:        "#aaddff",
-	    Roughness:    0.25,
-	    Transmission: 0.85,
-	    Opacity:      scene.Float(0.6),
-	    BlendMode:    scene.BlendAlpha,
-	}
-
-	// Soap bubble: thin-film iridescence.
-	scene.StandardMaterial{
-	    Color:       "#ffffff",
-	    Roughness:   0.05,
-	    Iridescence: 1.0,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-011.go.sample"))}
 			<h3>Style presets</h3>
 			<p>
 				Five presets share the
@@ -627,11 +471,7 @@ func Page() Node {
 				<span class="inline-code">scene.Bool</span>
 				for the pointer fields.
 			</p>
-			{CodeBlock("go", `scene.FlatMaterial{Color: "#E8E8E8"}                             // unlit solid
-	scene.GhostMaterial{Color: "#D4AF37", Opacity: scene.Float(0.3)} // transparent
-	scene.GlassMaterial{Color: "#aaddff"}                            // refractive
-	scene.GlowMaterial{Color: "#fff1d6", Emissive: scene.Float(1)}   // additive
-	scene.MatteMaterial{Color: "#1a1a18"}                            // Lambertian`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-012.go.sample"))}
 			<h3>Line materials</h3>
 			<p>
 				<span class="inline-code">LineBasicMaterial</span>
@@ -641,17 +481,7 @@ func Page() Node {
 				<span class="inline-code">MaterialStyle</span>
 				, so a composite literal needs the embedded field by name. The capability verdict reports that neither GPU backend faithfully renders dashed-line styling; Canvas2D owns the actual dash pattern.
 			</p>
-			{CodeBlock("go", `scene.LineBasicMaterial{
-	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},
-	    Width:         3,
-	}
-
-	scene.LineDashedMaterial{
-	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},
-	    Width:         2,
-	    DashSize:      0.4,
-	    GapSize:       0.2,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-013.go.sample"))}
 			<h3>Render passes and blending</h3>
 			<p>
 				<span class="inline-code">BlendMode</span>
@@ -676,28 +506,7 @@ func Page() Node {
 				<span class="inline-code">Mesh.MaterialAnims</span>
 				drives one material uniform per entry. Each entry either carries keyframes, or replaces them with a spring or an oscillator. Material tracks ship in their own wire program, so they route independently from transform motion.
 			</p>
-			{CodeBlock("go", `scene.Mesh{
-	    Geometry: scene.SphereGeometry{Radius: 1, Segments: 48},
-	    Material: scene.StandardMaterial{Color: "#d4af37", Emissive: 0.2},
-	    MaterialAnims: []scene.MaterialUniformAnim{
-	        {
-	            Uniform: "emissive",
-	            Arity:   1,
-	            Oscillator: &scene.MaterialOscillatorAnim{
-	                Base:      []float64{0.4},
-	                Amplitude: []float64{0.3},
-	                Freq:      []float64{0.8},
-	            },
-	        },
-	        {
-	            Uniform: "roughness",
-	            Arity:   1,
-	            Spring: &scene.MaterialSpringAnim{
-	                From: 0.8, To: 0.15, Stiffness: 120, Damping: 14,
-	            },
-	        },
-	    },
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-014.go.sample"))}
 		</section>
 		<section id="selena">
 			<h2>Selena Shaders</h2>
@@ -748,24 +557,7 @@ func Page() Node {
 					— many named materials from one source, parsed once.
 				</li>
 			</ul>
-			{CodeBlock("go", `source, err := os.ReadFile("materials/glow.sel")
-	if err != nil {
-	    return err
-	}
-	material, layout, err := scene.CompileSelenaMaterial(source, scene.SelenaMaterialOptions{
-	    Material: "glow",
-	    Standard: scene.StandardMaterial{Color: "#d4af37", Roughness: 0.2},
-	    Uniforms: map[string]any{"pulse": 0.4, "tint": []float64{1, 0.85, 0.4}},
-	})
-	if err != nil {
-	    return err
-	}
-	_ = layout // the binding layout, for tooling and validation
-
-	mesh := scene.Mesh{
-	    Geometry: scene.SphereGeometry{Radius: 1, Segments: 48},
-	    Material: material,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-015.go.sample"))}
 			<p>
 				<span class="inline-code">scene.SelenaUniforms</span>
 				converts a typed Go struct into the host uniform map. A shader parameter rename then fails at the call site instead of doing nothing in silence. Field names resolve in order: the
@@ -774,34 +566,14 @@ func Page() Node {
 				<span class="inline-code">json</span>
 				struct tag, then a lower-camel form of the Go field name.
 			</p>
-			{CodeBlock("go", `type GlowUniforms struct {
-	    Pulse float64   // resolves to "pulse"
-	    Tint  []float64 // resolves to "tint"
-	}
-
-	uniforms, err := scene.SelenaUniforms(GlowUniforms{
-	    Pulse: 0.4,
-	    Tint:  []float64{1, 0.85, 0.4},
-	})
-	if err != nil {
-	    return err
-	}
-	opts := scene.SelenaMaterialOptions{Material: "glow", Uniforms: uniforms}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-016.go.sample"))}
 			<p>
 				<span class="inline-code">scene.CustomMaterial</span>
 				is the transport underneath. It embeds
 				<span class="inline-code">StandardMaterial</span>
 				and adds the shader payload, so you can hand-write WGSL and GLSL when you do not want Selena.
 			</p>
-			{CodeBlock("go", `scene.CustomMaterial{
-	    StandardMaterial: scene.StandardMaterial{Color: "#8ecfff"},
-	    ShaderBackend:    "selena",
-	    VertexWGSL:       vertexWGSL,
-	    FragmentWGSL:     fragmentWGSL,
-	    VertexGLSL:       vertexGLSL,
-	    FragmentGLSL:     fragmentGLSL,
-	    Uniforms:         map[string]any{"pulse": 0.4},
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-017.go.sample"))}
 			<p>
 				A custom material narrows the capability verdict. The resolver reads which shader sources the material actually carries. WGSL only serves WebGPU. GLSL only serves WebGL. Ship both, or accept that one backend drops out.
 			</p>
@@ -814,68 +586,7 @@ func Page() Node {
 			<p>
 				The old hard cap of 8 lights is also gone. The light storage buffer starts at 8 entries and doubles on demand up to 256. Past 256 the runtime reports the overflow instead of dropping lights in silence.
 			</p>
-			{CodeBlock("go", `// Ambient — flat fill, no direction.
-	scene.AmbientLight{Color: "#ffffff", Intensity: 0.15}
-
-	// Directional — parallel rays from infinity. Casts shadows.
-	scene.DirectionalLight{
-	    Color:          "#fff1d6",
-	    Intensity:      1.2,
-	    Direction:      scene.Vec3(0.3, -1.0, -0.5),
-	    CastShadow:     true,
-	    ShadowBias:     -0.001,
-	    ShadowSize:     2048,
-	    ShadowCascades: 3,
-	    ShadowSoftness: 1.5,
-	}
-
-	// Point — omnidirectional with distance falloff.
-	scene.PointLight{
-	    Color:     "#D4AF37",
-	    Intensity: 0.8,
-	    Position:  scene.Vec3(-3, 4, 2),
-	    Range:     20,
-	    Decay:     2,
-	}
-
-	// Spot — a cone with a soft edge and one perspective shadow map.
-	scene.SpotLight{
-	    Color:          "#ffffff",
-	    Intensity:      1.5,
-	    Position:       scene.Vec3(0, 6, 0),
-	    Direction:      scene.Vec3(0, -1, 0),
-	    Angle:          0.35, // cone half-angle, radians; must be less than pi/2
-	    Penumbra:       0.2,  // 0 = hard edge, 1 = fully soft
-	    Range:          30,
-	    Decay:          2,
-	    CastShadow:     true,
-	    ShadowBias:     -0.001,
-	    ShadowSize:     1024,
-	    ShadowSoftness: 1.0,
-	}
-
-	// Hemisphere — a sky and ground gradient.
-	scene.HemisphereLight{
-	    SkyColor:    "#87ceeb",
-	    GroundColor: "#2d4a1e",
-	    Intensity:   0.4,
-	}
-
-	// Rect-area — a rectangular emitter.
-	scene.RectAreaLight{
-	    Color:     "#ffffff",
-	    Intensity: 3,
-	    Position:  scene.Vec3(0, 3, 2),
-	    Direction: scene.Vec3(0, -0.3, -1),
-	    Width:     4,
-	    Height:    2,
-	}
-
-	// Light probe — an ambient probe.
-	scene.LightProbe{
-	    Color:     "#cfe6ff",
-	    Intensity: 0.5,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-018.go.sample"))}
 			<h3>Two honest shortfalls remain</h3>
 			<p>
 				Both shortfalls report themselves through the capability system, so tooling sees them.
@@ -901,11 +612,7 @@ func Page() Node {
 			<p>
 				The cap matters for memory. A light that requests 4096 with the default cap gets a 1024 map. Per-light depth memory drops from about 64 MB to about 4 MB.
 			</p>
-			{CodeBlock("go", `props.Shadows = scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024}
-
-	// Presets: ShadowMaxPixels512, ShadowMaxPixels1024 (default),
-	// ShadowMaxPixels2048, ShadowMaxPixels4096.
-	// Opt out with scene.ShadowMaxPixelsUnbounded.`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-019.go.sample"))}
 			<p>
 				A mesh opts in per direction. Set
 				<span class="inline-code">CastShadow</span>
@@ -988,20 +695,7 @@ func Page() Node {
 					at the end of the chain to get edge smoothing back.
 				</p>
 			</div>
-			{CodeBlock("go", `props.PostFX = scene.PostFX{
-	    MaxPixels: scene.PostFXMaxPixels1080p,
-	    Effects: []scene.PostEffect{
-	        scene.SSAO{Radius: 4, Intensity: 0.55},
-	        scene.Bloom{Threshold: 0.8, Strength: 0.5, Radius: 6, Scale: 0.25},
-	        scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
-	        scene.ColorGrade{Contrast: 1.05, Saturation: 1.1},
-	        scene.Vignette{Intensity: 0.4},
-	        scene.FXAA{}, // always last: it searches tonemapped luma
-	    },
-	}
-
-	// A ready-made 60 fps chain: half-resolution bloom, ACES, FXAA, 720p cap.
-	props.PostFX = scene.GameplayPostFX()`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-020.go.sample"))}
 			<p>
 				<span class="inline-code">MaxPixels</span>
 				caps the offscreen pipeline by total backing pixels after the device pixel ratio. The zero value applies the 1080p default, which is 2,073,600 pixels. Presets run
@@ -1041,14 +735,7 @@ func Page() Node {
 				<span class="inline-code">DriftPhase</span>
 				as an offset from 0 to 1.
 			</p>
-			{CodeBlock("go", `scene.Mesh{
-	    Geometry: scene.TorusGeometry{Radius: 2.5, Tube: 0.08, RadialSegments: 64},
-	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.2, Metalness: 0.9},
-	    Spin:       scene.Rotate(0, 0.003, 0),
-	    Drift:      scene.Vec3(0, 0.4, 0),
-	    DriftSpeed: 1.0,
-	    DriftPhase: 0.5,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-021.go.sample"))}
 			<h3>Keyframe clips</h3>
 			<p>
 				<span class="inline-code">scene.AnimationClip</span>
@@ -1064,31 +751,13 @@ func Page() Node {
 				<span class="inline-code">STEP</span>
 				.
 			</p>
-			{CodeBlock("go", `scene.AnimationClip{
-	    Name:     "hover",
-	    Duration: 2.0,
-	    Channels: []scene.AnimationChannel{{
-	        TargetNode:    0,
-	        Property:      "translation",
-	        Interpolation: "LINEAR",
-	        Times:         []float64{0, 1, 2},
-	        Values:        []float64{0, 0, 0, 0, 0.5, 0, 0, 0, 0},
-	    }},
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-022.go.sample"))}
 			<h3>Skeletal animation from glTF</h3>
 			<p>
 				<span class="inline-code">scene.Model</span>
 				plays a clip embedded in the asset by name. Skinning runs on both GPU backends and is a required feature, so a skinned scene never falls back to canvas2d.
 			</p>
-			{CodeBlock("go", `scene.Model{
-	    Src:                "/models/character.glb",
-	    Animation:          "Run",
-	    Loop:               scene.Bool(true),
-	    AnimationSpeed:     scene.Float(1.2),
-	    AnimationWeight:    scene.Float(1.0),
-	    AnimationFadeInMS:  scene.Int(180),
-	    AnimationFadeOutMS: scene.Int(180),
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-023.go.sample"))}
 			<p>
 				Two capabilities are absent, and a character pipeline usually wants both. There are no morph targets, and there is no blend tree. Cross-fade between two clips with the fade fields, or sequence clips with
 				<span class="inline-code">AnimationSeq</span>
@@ -1112,19 +781,7 @@ func Page() Node {
 				<span class="inline-code">OutState</span>
 				are partial prop bags of pointer fields, so an unset field means "do not change this".
 			</p>
-			{CodeBlock("go", `scene.Mesh{
-	    ID:       "featured",
-	    Geometry: scene.CubeGeometry{Size: 1},
-	    Material: scene.StandardMaterial{Color: "#d4af37"},
-	    Transition: scene.Transition{
-	        In:     scene.TransitionTiming{Duration: 400 * time.Millisecond, Easing: scene.EaseOut},
-	        Out:    scene.TransitionTiming{Duration: 250 * time.Millisecond, Easing: scene.EaseIn},
-	        Update: scene.TransitionTiming{Duration: 300 * time.Millisecond, Easing: scene.EaseInOut},
-	    },
-	    InState:  &scene.MeshProps{Opacity: scene.Float(0), Scale: &smallScale},
-	    OutState: &scene.MeshProps{Opacity: scene.Float(0)},
-	    Live:     scene.Live("inventory:update"),
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-024.go.sample"))}
 			<p>
 				<span class="inline-code">Live</span>
 				names the hub events that should re-read this node. Combine it with a hub binding in the loader, and the node updates without a page navigation.
@@ -1194,15 +851,8 @@ func Page() Node {
 				<span class="inline-code">var(--x)</span>
 				. Author CSS-driven values through the composable Scene3D elements, whose attributes are strings.
 			</p>
-			{CodeBlock("gosx", `<Scene3D ariaLabel="Galaxy" background="var(--galaxy-bg)">
-	  <Environment ambientColor="var(--galaxy-ambient)" fogDensity="var(--galaxy-fog-density)" />
-	  <Material name="core" color="var(--galaxy-core-inner)" roughness="var(--scene-core-roughness, 0.4)" />
-	  <Mesh material="core" kind="sphere" radius="1.4" />
-	</Scene3D>`)}
-			{CodeBlock("bash", `/* The scene follows the theme with no scene JavaScript. */
-	.galaxy { --galaxy-core-inner: #5eead4; --scene-core-roughness: 0.30; }
-	.galaxy.is-hot { --galaxy-core-inner: #ff8a5b; --scene-core-roughness: 0.12; }
-	@media (prefers-color-scheme: light) { .galaxy { --galaxy-ambient: #ffffff; } }`)}
+			{CodeBlock("gosx", docsapp.DocSample("scene3d/code-025.gosx.sample"))}
+			{CodeBlock("css", docsapp.DocSample("scene3d/code-026.css.sample"))}
 			<p>
 				three.js has no equivalent. This is a framework-level feature, not a library feature: it needs the same runtime to own both the document styles and the scene state.
 			</p>
@@ -1213,20 +863,7 @@ func Page() Node {
 				<span class="inline-code">scene.InstancedMesh</span>
 				draws N copies of one geometry in one draw call. WebGPU uses instance-rate vertex buffers for the transform and colour streams. WebGL2 uses the matching instanced draw path. Both share the same IR, pass ordering, and shadow flags.
 			</p>
-			{CodeBlock("go", `positions := make([]scene.Vector3, 500)
-	for i := range positions {
-	    positions[i] = scene.Vec3((rand.Float64()-0.5)*20, 0, (rand.Float64()-0.5)*20)
-	}
-
-	scene.InstancedMesh{
-	    ID:            "grass",
-	    Count:         500,
-	    Geometry:      scene.CylinderGeometry{RadiusTop: 0.05, RadiusBottom: 0.05, Height: 2, Segments: 6},
-	    Material:      scene.StandardMaterial{Color: "#2d4a1e", Roughness: 0.9},
-	    Positions:     positions,
-	    CastShadow:    true,
-	    ReceiveShadow: true,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-027.go.sample"))}
 			<p>
 				Rotations, Scales, and Colors are optional. Omit them and every instance takes the identity rotation, unit scale, and the material colour.
 				<span class="inline-code">Attributes</span>
@@ -1249,15 +886,7 @@ func Page() Node {
 				<span class="inline-code">MeshInstance</span>
 				carries its own position, rotation, and leaf scale.
 			</p>
-			{CodeBlock("go", `scene.InstancedGLBMesh{
-	    ID:  "trees",
-	    Src: "/models/pine.glb",
-	    Instances: []scene.MeshInstance{
-	        {ID: "pine-0", Position: scene.Vec3(0, 0, 0), Scale: scene.Vec3(1, 1, 1)},
-	        {ID: "pine-1", Position: scene.Vec3(6, 0, -3), Scale: scene.Vec3(1.4, 1.6, 1.4)},
-	    },
-	    Static: scene.Bool(true),
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-028.go.sample"))}
 			<h3>Discrete level of detail</h3>
 			<p>
 				<span class="inline-code">scene.LODGroup</span>
@@ -1265,18 +894,7 @@ func Page() Node {
 				<span class="inline-code">LODLevel.Distance</span>
 				is the minimum distance at which that level becomes active, and the next level's distance ends it.
 			</p>
-			{CodeBlock("go", `scene.LODGroup{
-	    ID:       "statue",
-	    Position: scene.Vec3(0, 0, 0),
-	    Levels: []scene.LODLevel{
-	        {Distance: 0, Node: scene.Model{Src: "/models/statue-high.glb"}},
-	        {Distance: 25, Node: scene.Model{Src: "/models/statue-low.glb"}},
-	        {Distance: 80, Node: scene.Mesh{
-	            Geometry: scene.BoxGeometry{Width: 1, Height: 3, Depth: 1},
-	            Material: scene.MatteMaterial{Color: "#3a3a38"},
-	        }},
-	    },
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-029.go.sample"))}
 			<p>
 				<span class="inline-code">LODGroup</span>
 				swaps authored geometry.
@@ -1298,52 +916,13 @@ func Page() Node {
 				<span class="inline-code">MaxPixelSize</span>
 				clamp the screen-space footprint so distant points stay visible and near points stay sane.
 			</p>
-			{CodeBlock("go", `scene.Points{
-	    ID:           "stars",
-	    Count:        20000,
-	    Positions:    starPositions,
-	    Color:        "#dbeafe",
-	    Style:        scene.PointStyleGlow,
-	    Size:         0.04,
-	    MinPixelSize: 1.5,
-	    MaxPixelSize: 6,
-	    Opacity:      0.9,
-	    BlendMode:    scene.BlendAdditive,
-	    Attenuation:  true,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-030.go.sample"))}
 			<h3>Compute particles</h3>
 			<p>
 				<span class="inline-code">scene.ComputeParticles</span>
 				simulates on the GPU. The emitter, the force list, and the material are declarative; a WebGPU compute kernel integrates them. This is a WebGPU-only feature. A WebGL2 page keeps the scene but reports the degradation through the verdict, so gate large counts or profile the fallback.
 			</p>
-			{CodeBlock("go", `scene.ComputeParticles{
-	    ID:    "embers",
-	    Count: 5000,
-	    Emitter: scene.ParticleEmitter{
-	        Kind:     "sphere", // "point", "sphere", "disc", "spiral"
-	        Position: scene.Vec3(0, 2, 0),
-	        Radius:   5,
-	        Rate:     500, // particles per second
-	        Lifetime: 4,   // seconds
-	        Scatter:  0.3,
-	    },
-	    Forces: []scene.ParticleForce{
-	        {Kind: "gravity", Strength: 0.5, Direction: scene.Vec3(0, -1, 0)},
-	        {Kind: "turbulence", Strength: 0.3, Frequency: 1.2},
-	        {Kind: "orbit", Strength: 0.2},
-	    },
-	    Material: scene.ParticleMaterial{
-	        Color:       "#D4AF37",
-	        ColorEnd:    "#ffffff",
-	        Size:        0.05,
-	        SizeEnd:     0.01,
-	        Opacity:     0.9,
-	        OpacityEnd:  0.0,
-	        BlendMode:   scene.BlendAdditive,
-	        Attenuation: true,
-	    },
-	    Bounds: 12,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-031.go.sample"))}
 			<p>
 				Force kinds are
 				<span class="inline-code">gravity</span>
@@ -1380,40 +959,7 @@ func Page() Node {
 			<p>
 				Five feedback compute kernels drive the surface: seed, drop, displacement, simulation, and normal. Each one is authored in Selena and compiled to WGSL, GLSL, and OpenGL ES Shading Language.
 			</p>
-			{CodeBlock("go", `scene.WaterSystem{
-	    ID:         "pool",
-	    Resolution: 512, // simulation grid along one axis
-
-	    // Surface topology is independent from the simulation grid, so you can
-	    // match a reference mesh budget without paying for it in compute state.
-	    SurfaceResolution: 256,
-
-	    PoolShape:    "rounded",
-	    PoolWidth:    12,
-	    PoolHeight:   4,
-	    PoolLength:   12,
-	    CornerRadius: 1.5,
-
-	    WaveSpeed:   1.0,
-	    Damping:     0.995,
-	    NormalScale: 1.2,
-
-	    SeedDrops:    6,
-	    DropRadius:   0.06,
-	    DropStrength: 0.9,
-
-	    ShallowColor:    "#7fd4e8",
-	    DeepColor:       "#0b3a4a",
-	    AboveWaterColor: scene.Vec3(1.2, 1.05, 0.95), // linear HDR, may exceed 1
-	    CubeMap:         "/textures/sky-cube.ktx2",
-	    TileTexture:     "/textures/pool-tile.png",
-
-	    Caustics:           true,
-	    Reflection:         true,
-	    Refraction:         true,
-	    CausticsResolution: 512,
-	    LightDirection:     scene.Vec3(0.3, -1, -0.4),
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-032.go.sample"))}
 			<p>
 				A floating object displaces the surface. Set
 				<span class="inline-code">ObjectKind</span>
@@ -1458,21 +1004,7 @@ func Page() Node {
 				<span class="inline-code">Priority</span>
 				breaks the tie.
 			</p>
-			{CodeBlock("go", `scene.Label{
-	    ID:        "hotspot-1",
-	    Target:    "engine-block",
-	    Text:      "Cast aluminium block",
-	    MaxWidth:  220,
-	    MaxLines:  3,
-	    Overflow:  "ellipsis",
-	    Collision: "hide",
-	    Priority:  10,
-	    Occlude:   true,
-	    OffsetY:   -12,
-	    AnchorX:   0.5,
-	    AnchorY:   1,
-	    ClassName: "hotspot-label",
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-033.go.sample"))}
 			<h3>Sprite</h3>
 			<p>
 				<span class="inline-code">scene.Sprite</span>
@@ -1508,17 +1040,7 @@ func Page() Node {
 				<span class="inline-code">HTMLTextureMaxPixelsUnbounded</span>
 				to opt out.
 			</p>
-			{CodeBlock("go", `scene.HTML{
-	    ID:            "spec-card",
-	    Target:        "engine-block",
-	    Mode:          scene.HTMLDOM,
-	    Markup:        "<h3>V8</h3><p>6.2 litre</p>",
-	    ClassName:     "spec-card",
-	    PointerEvents: "auto",
-	    Occlude:       true,
-	    Scale:         1,
-	    Opacity:       0.95,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-034.go.sample"))}
 		</section>
 		<section id="gltf">
 			<h2>glTF Loading</h2>
@@ -1532,22 +1054,7 @@ func Page() Node {
 				<span class="inline-code">Bounds</span>
 				normalize an asset into a target box, which saves guessing the author's unit scale.
 			</p>
-			{CodeBlock("go", `scene.Model{
-	    ID:       "helmet",
-	    Src:      "/models/helmet.glb",
-	    Position: scene.Vec3(0, 1, 0),
-	    Rotation: scene.Rotate(0, math.Pi, 0),
-	    Scale:    scene.Vec3(1.2, 1.2, 1.2),
-	    Fit:      "contain",
-	    Bounds:   2.5,
-
-	    // Override the asset material from Go — useful for theming shared assets.
-	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.3, Metalness: 0.8},
-
-	    CastShadow:    true,
-	    ReceiveShadow: true,
-	    Static:        scene.Bool(true),
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-035.go.sample"))}
 			<h3>Nine material extensions parse</h3>
 			<ul>
 				<li>
@@ -1638,27 +1145,11 @@ func Page() Node {
 			<p>
 				One detail earns its keep. Interleaved data deinterleaves per lane before quantizing, so a 4-by-4 matrix stream splits into 16 lanes and each lane gets its own range. Translation lanes then stop crushing scale lanes, which is exactly what a shared range does to an instanced transform buffer.
 			</p>
-			{CodeBlock("go", `props.Compression = &scene.Compression{
-	    BitWidth: 12, // 1-8 for point clouds; 12 for transforms
-
-	    // Progressive: ship a 2-bit preview beside the full payload. The client
-	    // renders the preview at once and upgrades when the full data arrives.
-	    Progressive:        true,
-	    PreviewBitWidth:    2,
-	    ProgressiveDelayMS: 400, // spend upgrade CPU after first paint
-
-	    // LOD: keep both payloads and pick per object by camera distance.
-	    LOD:          true,
-	    LODThreshold: 20,
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-036.go.sample"))}
 			<p>
 				Use 12 bits for instanced transforms. That holds the error near 0.069 world units. At 8 bits a transform that spans a wide world range drifts visibly.
 			</p>
-			{CodeBlock("go", `// Compress one instanced mesh on its own, for a spread into a template.
-	props := scene.CompressInstancedTransforms(mesh, 12)
-	if props == nil {
-	    props = mesh.SpreadProps() // fall back to raw transforms
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-037.go.sample"))}
 		</section>
 		<section id="raycasting">
 			<h2>Raycasting and Picking</h2>
@@ -1675,15 +1166,7 @@ func Page() Node {
 				<ui.StatCard Value="107,661 → 560 ns" Label="10,000-instance mesh, per ray" />
 				<ui.StatCard Value="1 alloc" Label="per ray, either path" />
 			</div>
-			{CodeBlock("go", `accel := scene.NewSceneAccelerator(props.Graph, scene.PointThreshold(0.25))
-
-	hit, ok := accel.Raycast(scene.Ray{
-	    Origin:    scene.Vec3(0, 4, 12),
-	    Direction: scene.Vec3(0, -0.3, -1),
-	}, scene.PickableOnly(), scene.MaxDistance(50))
-	if ok {
-	    log.Printf("hit %s at %.3f via %s", hit.ID, hit.Distance, hit.Method)
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-038.go.sample"))}
 			<p>
 				Three one-shot helpers skip the accelerator for a single query:
 				<span class="inline-code">scene.Raycast</span>
@@ -1791,13 +1274,7 @@ func Page() Node {
 				<span class="inline-code">Trace</span>
 				returns traversal telemetry with no wall-clock timings, so a snapshot stays stable across machines.
 			</p>
-			{CodeBlock("go", `trace := accel.Trace(ray)
-	log.Printf("nodes=%d tested=%d rejected=%d instances=%d hits=%d",
-	    trace.NodesVisited,
-	    trace.PrimitivesTested,   // exact tests that ran
-	    trace.BroadphaseRejected, // removed by a bounding-volume test first
-	    trace.InstancesTested,
-	    len(trace.Hits))`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-039.go.sample"))}
 			<h3>Browser picking</h3>
 			<p>
 				GPU picking now works on both GPU backends. Before that, one pickable object forced a whole scene onto WebGL2.
@@ -1825,28 +1302,7 @@ func Page() Node {
 			<p>
 				Six helper nodes lower to line geometry, and one lowers to a gizmo group. Use them for editors, debug views, and documentation figures.
 			</p>
-			{CodeBlock("go", `scene.NewGraph(
-	    scene.AxesHelper{Size: 2, Width: 2},
-	    scene.GridHelper{Size: 20, Divisions: 20, Color: "#2b3b47", Width: 1},
-	    scene.BoxHelper{Width: 2, Height: 1, Depth: 3, Color: "#8ecfff", WidthPx: 2},
-	    scene.BoundingBoxHelper{
-	        Min:     scene.Vec3(-1, 0, -1),
-	        Max:     scene.Vec3(1, 2, 1),
-	        Color:   "#d4af37",
-	        WidthPx: 2,
-	    },
-	    scene.SkeletonHelper{
-	        Joints: joints,
-	        Bones:  [][2]int{{0, 1}, {1, 2}, {2, 3}},
-	        Color:  "#ff8a5b",
-	    },
-	    scene.TransformControls{
-	        ID:     "gizmo",
-	        Target: "selected-mesh",
-	        Mode:   "translate", // "translate", "rotate", "scale"
-	        Size:   1.5,
-	    },
-	)`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-040.go.sample"))}
 			<p>
 				<span class="inline-code">TransformControls</span>
 				draws the handles. The browser controls layer owns the pointer mutation. Wire it live with two signals.
@@ -1891,29 +1347,7 @@ func Page() Node {
 			<p>
 				The IR carries the config beside the declared bodies. A server can therefore rebuild an authoritative world from the IR, then run it behind a simulation runner and a hub.
 			</p>
-			{CodeBlock("go", `props.Physics = scene.PhysicsWorld{
-	    Gravity:          scene.Vec3(0, -9.81, 0),
-	    FixedTimestep:    1.0 / 60.0,
-	    SolverIterations: 8,
-	    BroadphaseCell:   2.0,
-	    Topic:            "arena:physics",
-	    Colliders: []scene.Collider3D{
-	        {Shape: "plane", Normal: scene.Vec3(0, 1, 0), Distance: 0},
-	    },
-	}
-
-	scene.Mesh{
-	    ID:       "crate-1",
-	    Geometry: scene.CubeGeometry{Size: 1},
-	    Material: scene.StandardMaterial{Color: "#a97b3d", Roughness: 0.8},
-	    Position: scene.Vec3(0, 6, 0),
-	    RigidBody: &scene.RigidBody3D{
-	        Mass:        4,
-	        Restitution: 0.2,
-	        Friction:    0.6,
-	        Colliders:   []scene.Collider3D{{Shape: "box", Width: 1, Height: 1, Depth: 1}},
-	    },
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-041.go.sample"))}
 			<p>
 				Collider shapes are
 				<span class="inline-code">box</span>
@@ -1934,17 +1368,7 @@ func Page() Node {
 				<span class="inline-code">Props.Audio</span>
 				declares a sample-player manifest: named buses with volume and mute, plus clips addressed by identifier. The client registers the manifest when the engine mounts. No client change is needed.
 			</p>
-			{CodeBlock("go", `props.Audio = &scene.Audio{
-	    MasterVolume: scene.Float(0.8),
-	    Buses: []scene.AudioBus{
-	        {ID: "sfx", Volume: scene.Float(0.9)},
-	        {ID: "music", Volume: scene.Float(0.4)},
-	    },
-	    Clips: []scene.AudioClip{
-	        {ID: "splash", Src: "/audio/splash.mp3", Bus: "sfx", Preload: true},
-	        {ID: "theme", Src: "/audio/theme.mp3", Bus: "music", Loop: true},
-	    },
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-042.go.sample"))}
 			<p>
 				One quirk is inherited from the client:
 				<span class="inline-code">Muted</span>
@@ -2002,10 +1426,7 @@ func Page() Node {
 			<p>
 				The adaptive block reacts to delivered frame time.
 			</p>
-			{CodeBlock("go", `props.AdaptiveQuality = scene.Bool(true)
-	props.AdaptiveTargetFrameMS = 16.7 // aim for 60 fps
-	props.AdaptiveWarmupFrames = 30    // ignore the first 30 frames
-	props.AdaptivePostFX = scene.Bool(true)`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-043.go.sample"))}
 			<h3>Quality ladder</h3>
 			<p>
 				<span class="inline-code">Props.QualityLadder</span>
@@ -2015,19 +1436,7 @@ func Page() Node {
 				<em>clarity</em>
 				. A rung has no resolution field, no pixel-ratio field, and no post-effect pixel budget. You physically cannot author a blur.
 			</p>
-			{CodeBlock("go", `props.QualityLadder = []scene.QualityRung{
-	    {Name: "raw", PostEffects: nil, LayerGroups: []string{"core"}},
-	    {Name: "lit", PostEffects: []string{"toneMapping"}, LayerGroups: []string{"core", "detail"}},
-	    {Name: "full", PostEffects: []string{"bloom", "toneMapping", "fxaa"},
-	        LayerGroups: []string{"core", "detail", "dust"}},
-	}
-	props.QualityStartRung = 1
-
-	// Tag a mesh or a points layer into a rung group.
-	scene.Mesh{QualityGroup: "dust", /* ... */ }
-
-	// Map a GLB-baked points layer by name when the layer cannot carry a tag.
-	props.PointQualityGroups = map[string]string{"nebula-dust": "dust"}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-044.go.sample"))}
 			<p>
 				Two rung fields are pass-through today, and the docs will not pretend otherwise.
 				<span class="inline-code">ComputeBudgetScale</span>
@@ -2042,12 +1451,7 @@ func Page() Node {
 				<span class="inline-code">scene.DiffCommands</span>
 				compares two scene states and emits the minimum command list that turns the first into the second. Send the list over a hub and the client applies it without a re-render.
 			</p>
-			{CodeBlock("go", `commands := scene.DiffPropsCommands(previous, next)
-	payload, err := scene.MarshalCommands(commands)
-	if err != nil {
-	    return err
-	}
-	// Publish payload on any hub channel the page already binds.`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-045.go.sample"))}
 			<p>
 				Command builders exist for each record kind. Use one to emit a targeted patch with no diff.
 			</p>
@@ -2091,28 +1495,7 @@ func Page() Node {
 				<span class="inline-code">preview.Render</span>
 				lowers typed props to the native render bundle and rasterizes one frame in pure Go. Use it for authoring previews, thumbnails, documentation images, and deterministic visual tests. It also accepts a bare IR or the serialized props JSON, which lets a command-line tool render an artifact it received rather than built.
 			</p>
-			{CodeBlock("go", `result, err := preview.Render(props, preview.Options{
-	    Width:       1280,
-	    Height:      720,
-	    Time:        0,
-	    MaxSegments: 24,   // cap curved tessellation for fast thumbnails
-	    DisablePostFX: true,
-	})
-	if err != nil {
-	    return err
-	}
-
-	file, err := os.Create("scene.png")
-	if err != nil {
-	    return err
-	}
-	defer file.Close()
-	if err := preview.WritePNG(file, result); err != nil {
-	    return err
-	}
-
-	// result.Bundle and result.Stats expose the exact renderer payload:
-	// draw batches, instance counts, materials, and native fallback diagnostics.`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-046.go.sample"))}
 			<h3>scene/harness</h3>
 			<p>
 				<span class="inline-code">harness.New</span>
@@ -2136,22 +1519,7 @@ func Page() Node {
 					Selena artifact hashes and validation state per material.
 				</li>
 			</ul>
-			{CodeBlock("go", `session := harness.New(props, preview.Options{Width: 640, Height: 360})
-
-	if _, err := session.Render(0); err != nil {
-	    return err
-	}
-	if _, err := session.Render(0.5); err != nil {
-	    return err
-	}
-	session.Trace("centre", scene.Ray{
-	    Origin:    scene.Vec3(0, 0, 8),
-	    Direction: scene.Vec3(0, 0, -1),
-	})
-	if err := session.Validate(); err != nil {
-	    return err
-	}
-	return session.WriteJSON(os.Stdout)`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-047.go.sample"))}
 			<p>
 				The session builds one accelerator for the graph and reuses it for every trace, so a long probe sequence stays cheap.
 			</p>
@@ -2171,8 +1539,7 @@ func Page() Node {
 					action. No encoder exists in the module. The command tells you what work exists. You still have to do it.
 				</p>
 			</div>
-			{CodeBlock("bash", `gosx assets plan public
-	gosx assets plan --json --write report.json public/assets`)}
+			{CodeBlock("bash", docsapp.DocSample("scene3d/code-048.bash.sample"))}
 			<p>
 				The report is still useful. It classifies every asset, probes glTF and KTX2 containers, and measures HTML texture budgets. It also lists shader entry points and names the diagnostics that would break a build. Read it as a work list, not a receipt.
 			</p>
@@ -2198,30 +1565,7 @@ func Page() Node {
 			<p>
 				Compute islands fill the headless controller role. They hydrate through the island virtual machine and the shared-signal bridge, and they own no document nodes. That makes them the right place for input normalization and scene state derivation.
 			</p>
-			{CodeBlock("go", `rt := game.New(game.Config{
-	    Profile: game.Web3DProfile(),
-	    Assets:  assets,
-	    Scene: func(ctx *game.Context) scene.Props {
-	        return ProductScene(ctx.Assets)
-	    },
-	})
-
-	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    ctx.Runtime().BindHub("inventory", "/ws/inventory", nil)
-	    ctx.Runtime().ComputeIsland(island.ComputeIslandConfig{
-	        Name:         "ProductSceneController",
-	        Props:        map[string]any{"assetManifest": rt.Assets().Manifest()},
-	        Capabilities: []engine.Capability{engine.CapFetch, engine.CapStorage},
-	    })
-	    sceneProps, ok := rt.BuildScene()
-	    if !ok {
-	        return nil, fmt.Errorf("scene runtime did not produce props")
-	    }
-	    return map[string]any{
-	        "scene":  sceneProps,
-	        "assets": rt.Assets().Manifest(),
-	    }, nil
-	}`)}
+			{CodeBlock("go", docsapp.DocSample("scene3d/code-049.go.sample"))}
 			<p>
 				Use
 				<span class="inline-code">game.Web3DProfile()</span>

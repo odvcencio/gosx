@@ -1,0 +1,22 @@
+// page.server.go — same package as page.gsx
+	type FragmentProps struct {
+	    Label string
+	    Value string
+	}
+
+	func ServeSignalFragment(w http.ResponseWriter, r *http.Request) {
+	    prog, err := route.LoadFileProgramHere("page.gsx")
+	    if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+	        return
+	    }
+	    node, err := route.RenderProgramComponentNode(prog, "SignalCard", route.ProgramRenderEnv{
+	        Props: FragmentProps{Label: "Passing Yards", Value: currentValue()},
+	    })
+	    if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+	        return
+	    }
+	    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	    w.Write([]byte(gosx.RenderHTML(node)))
+	}

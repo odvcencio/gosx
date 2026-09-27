@@ -1,0 +1,7 @@
+trace := accel.Trace(ray)
+	log.Printf("nodes=%d tested=%d rejected=%d instances=%d hits=%d",
+	    trace.NodesVisited,
+	    trace.PrimitivesTested,   // exact tests that ran
+	    trace.BroadphaseRejected, // removed by a bounding-volume test first
+	    trace.InstancesTested,
+	    len(trace.Hits))

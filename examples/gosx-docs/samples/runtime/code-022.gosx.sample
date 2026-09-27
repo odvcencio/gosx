@@ -1,0 +1,15 @@
+// page.gsx
+	type SignalCardProps struct {
+	    Label string
+	    Value string
+	}
+
+	component SignalCard(props: SignalCardProps) {
+	    return <li class="signal-card">{props.Label}: {props.Value}</li>
+	}
+
+	component Page() {
+	    return <ul data-gosx-region data-gosx-region-url="/wire/signal" data-gosx-region-interval="20s">
+	        <SignalCard label="Passing Yards" value="317" />
+	    </ul>
+	}

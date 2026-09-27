@@ -1,0 +1,11 @@
+scene.HTML{
+	    ID:            "spec-card",
+	    Target:        "engine-block",
+	    Mode:          scene.HTMLDOM,
+	    Markup:        "<h3>V8</h3><p>6.2 litre</p>",
+	    ClassName:     "spec-card",
+	    PointerEvents: "auto",
+	    Occlude:       true,
+	    Scale:         1,
+	    Opacity:       0.95,
+	}

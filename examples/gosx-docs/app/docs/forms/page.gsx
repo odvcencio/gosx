@@ -1,5 +1,7 @@
 package docs
 
+import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+
 func Page() Node {
 	return <div>
 		<section id="html-forms" class="docs-section-block">
@@ -13,7 +15,7 @@ func Page() Node {
 				<span class="inline-code">action</span>
 				attributes. Without the runtime, the same markup remains an ordinary browser form.
 			</p>
-			{CodeBlock("gsx", "<form method=\"post\" action={actionPath(\"subscribe\")} data-gosx-managed>\n\t<input type=\"hidden\" name=\"csrf_token\" value={csrf.token} />\n\t<input name=\"email\" type=\"email\" placeholder=\"you@example.com\" />\n\t<button type=\"submit\">Subscribe</button>\n</form>")}
+			{CodeBlock("gsx", docsapp.DocSample("forms/code-001.gsx.sample"))}
 		</section>
 		<section id="server-actions" class="docs-section-block">
 			<h2>Server Actions</h2>
@@ -26,7 +28,7 @@ func Page() Node {
 				<span class="inline-code">*action.Context</span>
 				with the parsed form data and the original HTTP request.
 			</p>
-			{CodeBlock("go", "func init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tActions: route.FileActions{\n\t\t\t\"subscribe\": func(ctx *action.Context) error {\n\t\t\t\temail := ctx.FormData[\"email\"]\n\t\t\t\tif email == \"\" {\n\t\t\t\t\tctx.ValidationFailure(\"Email is required.\", map[string]string{\n\t\t\t\t\t\t\"email\": \"Please enter an email address.\",\n\t\t\t\t\t})\n\t\t\t\t\treturn nil\n\t\t\t\t}\n\t\t\t\treturn ctx.Success(\"Subscribed!\", nil)\n\t\t\t},\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
+			{CodeBlock("go", docsapp.DocSample("forms/code-002.go.sample"))}
 			<p>
 				The action URL is constructed at render time by
 				<span class="inline-code">actionPath("name")</span>
@@ -42,7 +44,7 @@ func Page() Node {
 				<span class="inline-code">ctx.ValidationFailure</span>
 				to return field-level errors. The framework flashes the result through the session on a POST-redirect-GET cycle, so the browser lands back on the form page with errors and submitted values intact.
 			</p>
-			{CodeBlock("go", "ctx.ValidationFailure(\"Please correct the highlighted fields.\", map[string]string{\n\t\"email\": \"A valid email address is required.\",\n\t\"name\":  \"Name must be at least two characters.\",\n})")}
+			{CodeBlock("go", docsapp.DocSample("forms/code-003.go.sample"))}
 			<p>
 				In the template, read field errors through
 				<span class="inline-code">actions.subscribe.fieldErrors.email</span>
@@ -50,7 +52,7 @@ func Page() Node {
 				<span class="inline-code">actions.subscribe.values.email</span>
 				.
 			</p>
-			{CodeBlock("gsx", "<input name=\"email\" value={actions.subscribe.values.email} />\n<p class=\"form-error\">{actions.subscribe.fieldErrors.email}</p>")}
+			{CodeBlock("gsx", docsapp.DocSample("forms/code-004.gsx.sample"))}
 		</section>
 		<section id="csrf-protection" class="docs-section-block">
 			<h2>CSRF Protection</h2>
@@ -66,7 +68,7 @@ func Page() Node {
 				<span class="inline-code">actionPath(...)</span>
 				forms. Static wrappers are fine; GET or native/external forms and fields supplied through dynamic component boundaries remain application-owned.
 			</p>
-			{CodeBlock("gsx", "<input type=\"hidden\" name=\"csrf_token\" value={csrf.token} />")}
+			{CodeBlock("gsx", docsapp.DocSample("forms/code-005.gsx.sample"))}
 			<p>
 				The token is automatically available as
 				<span class="inline-code">csrf.token</span>
@@ -74,15 +76,15 @@ func Page() Node {
 				<span class="inline-code">main.go</span>
 				.
 			</p>
-			{CodeBlock("go", "// main.go\napp.Use(sessions.Middleware)\napp.Use(sessions.Protect)")}
+			{CodeBlock("go", docsapp.DocSample("forms/code-006.go.sample"))}
 		</section>
 		<section id="flash-messages" class="docs-section-block">
 			<h2>Flash Messages</h2>
 			<p>
 				Flash messages survive a redirect. Store a notice in the session from an action handler, then read it back in the template after the browser follows the redirect to the GET page.
 			</p>
-			{CodeBlock("go", "import \"m31labs.dev/gosx/session\"\n\n// inside an action handler:\nsession.AddFlash(ctx.Request, \"notice\", \"Your changes were saved.\")\nreturn ctx.Success(\"\", nil)")}
-			{CodeBlock("gsx", "<p class=\"flash-notice\">{flash.notice}</p>")}
+			{CodeBlock("go", docsapp.DocSample("forms/code-007.go.sample"))}
+			{CodeBlock("gsx", docsapp.DocSample("forms/code-008.gsx.sample"))}
 			<p>
 				The
 				<span class="inline-code">flash</span>
@@ -98,7 +100,7 @@ func Page() Node {
 				<span class="inline-code">ctx.RedirectWithMessage</span>
 				from an action to send the browser to a different URL after a successful post while carrying one human-readable completion message through both native and managed submissions. This preserves the POST-redirect-GET safety model without forcing an enhanced page to reload.
 			</p>
-			{CodeBlock("go", "// Redirect safely and explain what changed.\nctx.RedirectWithMessage(\"/subscribe/confirmed\", \"Subscription confirmed.\")")}
+			{CodeBlock("go", docsapp.DocSample("forms/code-009.go.sample"))}
 			<p>
 				When the action should return to the page that submitted it, opt in with
 				<span class="inline-code">ctx.RedirectBackWithMessage</span>
@@ -110,7 +112,8 @@ func Page() Node {
 				<span class="inline-code">ctx.FormData</span>
 				.
 			</p>
-			{CodeBlock("go", "// In the form:\n<input type=\"hidden\" name={action.ReturnTargetField} value=\"/board?tab=all#roster\" />\n\n// In the action:\nctx.RedirectBackWithMessage(\"/account\", \"Profile saved.\")")}
+			{CodeBlock("gsx", docsapp.DocSample("forms/code-010-form.gsx.sample"))}
+			{CodeBlock("go", docsapp.DocSample("forms/code-010-action.go.sample"))}
 			<p>
 				Use
 				<span class="inline-code">ctx.RedirectWithMessage</span>
@@ -125,7 +128,7 @@ func Page() Node {
 				<span class="inline-code">action.WantsJSON(ctx.Request)</span>
 				to share GoSX's authoritative managed-action negotiation instead of parsing request headers again.
 			</p>
-			{CodeBlock("go", "if action.WantsJSON(ctx.Request) {\n    // Managed action: return structured feedback.\n}")}
+			{CodeBlock("go", docsapp.DocSample("forms/code-011.go.sample"))}
 			<p>
 				Render one
 				<span class="inline-code">data-gosx-toast-host</span>
@@ -137,7 +140,7 @@ func Page() Node {
 				<span class="inline-code">gosx-toast--error</span>
 				classes to match your product.
 			</p>
-			{CodeBlock("gsx", "<div class=\"toast-stack\" data-gosx-toast-host aria-live=\"polite\" aria-relevant=\"additions\"></div>")}
+			{CodeBlock("gsx", docsapp.DocSample("forms/code-012.gsx.sample"))}
 		</section>
 		<div class="demo-well" role="region" aria-label="Form demo">
 			<p class="demo-well__label">Live demo</p>

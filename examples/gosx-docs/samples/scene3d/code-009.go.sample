@@ -1,0 +1,9 @@
+// A building footprint with a courtyard, at ground level.
+	outline := []float64{0, 0, 20, 0, 20, 14, 0, 14}
+	courtyard := [][]float64{{6, 4, 14, 4, 14, 10, 6, 10}}
+
+	scene.Mesh{
+	    Geometry: scene.PolygonGeometry(outline, courtyard, 0),
+	    Material: scene.StandardMaterial{Color: "#2c3a46", Roughness: 0.9},
+	    ReceiveShadow: true,
+	}

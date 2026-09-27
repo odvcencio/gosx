@@ -1,0 +1,1 @@
+gosx perf http://localhost:8080/your-scene --frames 120 --trace trace.json

@@ -1,0 +1,5 @@
+<Scene3D ariaLabel="Galaxy" background="var(--galaxy-bg)">
+	  <Environment ambientColor="var(--galaxy-ambient)" fogDensity="var(--galaxy-fog-density)" />
+	  <Material name="core" color="var(--galaxy-core-inner)" roughness="var(--scene-core-roughness, 0.4)" />
+	  <Mesh material="core" kind="sphere" radius="1.4" />
+	</Scene3D>

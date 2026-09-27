@@ -1,0 +1,14 @@
+type LabelProps struct { Text string }
+
+component Label(props: LabelProps) {
+	return <span class="label">{props.Text}{children}</span>
+}
+
+//gosx:island
+component Counter() {
+	count := signal.New(0)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <Label text="Count: ">
+		<button onClick={increment}>{count.Get()}</button>
+	</Label>
+}

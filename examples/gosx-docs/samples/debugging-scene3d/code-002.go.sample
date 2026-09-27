@@ -1,0 +1,8 @@
+session := harness.New(props, preview.Options{Width: 320, Height: 240})
+	if _, err := session.Render(0); err != nil {
+	    t.Fatal(err)
+	}
+	if err := session.Validate(); err != nil {
+	    t.Fatal(err) // fails on zero coverage, a device-lost frame, or a broken Selena material
+	}
+	session.WriteJSON(os.Stdout)
