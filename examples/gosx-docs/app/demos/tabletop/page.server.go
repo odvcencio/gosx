@@ -66,7 +66,7 @@ func init() {
 			})
 			metrics := room.Metrics()
 			poster := server.ScenePosterConfig{
-					URL: "/tabletop/tabletop-home-poster.webp", Alt: "Six objects arranged on a textured tabletop before this room's edits",
+				URL: "/tabletop/tabletop-home-poster.webp", Alt: "Six objects arranged on a textured tabletop before this room's edits",
 				Width: 1100, Height: 760,
 			}
 			ctx.AddHead(server.ScenePosterPreload(poster))
