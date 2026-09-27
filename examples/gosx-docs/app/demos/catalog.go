@@ -110,13 +110,13 @@ var demoCatalog = []DemoDefinition{
 		Limitations: "Rendering capability and backend depend on the browser GPU stack.",
 	},
 	{
-		Slug: "scene3d-bench", Title: "Scene3D Bench", Tag: "renderer diagnostics",
-		Promise: "Compare seven workloads with live frame-time percentiles, a histogram, an fps sparkline, and detected GPU facts.",
-		Lesson:  "GoSX exposes opt-in renderer measurements without changing the declared Scene3D program.",
+		Slug: "scene3d-bench", Title: "Scene3D Bench", Tag: "renderer workload study",
+		Promise: "Explore URL-selected Scene3D workloads, from static geometry to GPU-driven instances.",
+		Lesson:  "A typed Go scene can select different renderer workloads in the shared browser runtime.",
 		Accent:  "#cbd5e1", Facets: []string{"Scene3D", "Performance", "Diagnostics"},
 		SourcePath: "examples/gosx-docs/app/demos/scene3d-bench/page.gsx", Packages: []string{"scene", "route"},
-		Status: "lab", RenderMode: "SSR + instrumented Scene3D runtime",
-		Limitations:  "Measurements reflect the current machine and browser; they are not cross-device benchmarks.",
+		Status: "lab", RenderMode: "SSR + Scene3D runtime",
+		Limitations:  "The default route shows the scene only. Published frame-time receipts appear on /performance.",
 		ShowcaseRank: 4,
 	},
 	{

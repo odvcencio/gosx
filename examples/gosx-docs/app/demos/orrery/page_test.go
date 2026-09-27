@@ -27,13 +27,10 @@ func readOrreryCSS(t *testing.T) string {
 	return string(css)
 }
 
-// TestOrreryTelemetryDoesNotDependOnBespokeScriptOrCSSHas keeps the renderer
-// status honest through the shared Scene3D bindings only.
-func TestOrreryTelemetryDoesNotDependOnBespokeScriptOrCSSHas(t *testing.T) {
+// TestOrreryKeepsPublicRendererDiagnosticsOutOfThePage keeps debug readouts
+// off the public route while preserving the scene's fallback styling.
+func TestOrreryKeepsPublicRendererDiagnosticsOutOfThePage(t *testing.T) {
 	css := readOrreryCSS(t)
-	if strings.Contains(css, ":has(") {
-		t.Fatal("telemetry must remain truthful in browsers without CSS :has()")
-	}
 	for _, marker := range []string{
 		".orrery__canvas .gosx-scene3d-unsupported",
 		"place-items: center",
@@ -45,18 +42,16 @@ func TestOrreryTelemetryDoesNotDependOnBespokeScriptOrCSSHas(t *testing.T) {
 	}
 
 	page := readOrreryPageSource(t)
-	for _, marker := range []string{
-		`data-gosx-scene3d-status-scope`,
-		`data-gosx-scene3d-status="renderer"`,
-		`data-gosx-scene3d-status="fallback"`,
-		`data-gosx-scene3d-status="quality"`,
-	} {
-		if !strings.Contains(page, marker) {
-			t.Errorf("telemetry binding missing %q", marker)
+	if !strings.Contains(page, `<Scene3D {...data.scene} stats={false} />`) {
+		t.Error("Scene3D stats must be disabled on the public route")
+	}
+	for _, marker := range []string{`data-gosx-scene3d-status`, `__telemetry`, `starting…`, `measuring…`} {
+		if strings.Contains(page, marker) {
+			t.Errorf("public page must not render debug output %q", marker)
 		}
 	}
 	if strings.Contains(page, `<script`) {
-		t.Fatal("the meridian must use shared Scene3D status bindings instead of bespoke JavaScript")
+		t.Fatal("the meridian page must not add bespoke JavaScript")
 	}
 }
 

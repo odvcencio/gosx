@@ -8,18 +8,17 @@ import (
 	"m31labs.dev/gosx/scene"
 )
 
-func TestBeaconTelemetryDoesNotDependOnCSSHas(t *testing.T) {
+func TestBeaconKeepsPublicRendererDiagnosticsOutOfThePage(t *testing.T) {
 	css, err := os.ReadFile("page.css")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if strings.Contains(string(css), ":has(") {
-		t.Fatal("telemetry must remain truthful in browsers without CSS :has()")
 	}
 	for _, marker := range []string{
 		".beacon__canvas .gosx-scene3d-unsupported",
 		"place-items: center",
 		"text-align: center",
+		".blackglass-artifact--ledger dl > div:nth-last-child(-n + 2)",
+		"display: none",
 	} {
 		if !strings.Contains(string(css), marker) {
 			t.Errorf("intentional renderer fallback styling missing %q", marker)
@@ -31,18 +30,16 @@ func TestBeaconTelemetryDoesNotDependOnCSSHas(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(source)
-	for _, marker := range []string{
-		`data-gosx-scene3d-status-scope`,
-		`data-gosx-scene3d-status="renderer"`,
-		`data-gosx-scene3d-status="fallback"`,
-		`data-gosx-scene3d-status="quality"`,
-	} {
-		if !strings.Contains(page, marker) {
-			t.Errorf("telemetry binding missing %q", marker)
+	if !strings.Contains(page, `<Scene3D {...data.scene} stats={false} />`) {
+		t.Error("Scene3D stats must be disabled on the public route")
+	}
+	for _, marker := range []string{`data-gosx-scene3d-status`, `__telemetry`, `starting…`, `measuring…`} {
+		if strings.Contains(page, marker) {
+			t.Errorf("public page must not render debug output %q", marker)
 		}
 	}
 	if strings.Contains(page, `<script`) {
-		t.Fatal("beacon must use shared Scene3D status bindings instead of bespoke JavaScript")
+		t.Fatal("beacon page must not add bespoke JavaScript")
 	}
 }
 

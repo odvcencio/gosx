@@ -7,10 +7,10 @@ func Page() Node {
 			role="group"
 			aria-label="Interactive orbital sculpture. Drag to orbit and scroll or pinch to zoom."
 		>
-			<Scene3D {...data.scene} />
+			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<div class="orbital-study__intro">
-			<p class="orbital-study__eyebrow">Scene3D / Study 01</p>
+			<p class="orbital-study__eyebrow">A typed Scene3D study</p>
 			<h1 id="orbital-study-title">Orbital sculpture</h1>
 			<p>
 				Turn a scene made from typed Go data. Move around its rings, core, and satellites.
