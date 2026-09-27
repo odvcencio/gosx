@@ -34,6 +34,7 @@
 //   data-gosx-toggle-target="#id"     toggle an attribute on another element.
 //   data-gosx-toggle-attribute="open" attribute name (defaults to data-gosx-open).
 //   data-gosx-toggle-close="#id"      remove the configured attribute.
+//   data-gosx-copy-button             copy the first code element in its copy scope.
 //   data-gosx-bind-source="selector"   project attributes from a selected source
 //                                     into descendants using data-gosx-bind-text
 //                                     and data-gosx-bind-attr="to:from".
@@ -417,6 +418,60 @@
     return true;
   }
 
+  function copyCodeFallback(text) {
+    var field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.setAttribute("aria-hidden", "true");
+    field.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    (document.body || document.documentElement).appendChild(field);
+    try {
+      field.select();
+      return typeof document.execCommand === "function" && document.execCommand("copy");
+    } finally {
+      field.remove();
+    }
+  }
+
+  function copyCode(button) {
+    var scope = button.closest("[data-gosx-copy-scope]");
+    var code = scope && scope.querySelector("pre code");
+    if (!code) return;
+    var status = scope.querySelector("[data-gosx-copy-status]");
+    var label = button.getAttribute("data-gosx-copy-label") || "Copy";
+    var copiedText = code.textContent || "";
+    var finish = function (copied) {
+      button.disabled = false;
+      button.textContent = copied ? "Copied" : "Try again";
+      if (status) status.textContent = copied
+        ? "Copied code to the clipboard."
+        : "Copy failed. Select the code and copy it manually.";
+      if (typeof setTimeout === "function") setTimeout(function () {
+        button.textContent = label;
+        if (status) status.textContent = "";
+      }, 1800);
+    };
+    button.disabled = true;
+    button.textContent = "Copying…";
+    if (status) status.textContent = "Copying code.";
+
+    var clipboard = window.navigator && window.navigator.clipboard;
+    var result;
+    var fallbackIsPrimary = !(clipboard && typeof clipboard.writeText === "function");
+    try {
+      result = !fallbackIsPrimary
+        ? clipboard.writeText(copiedText)
+        : Promise.resolve(copyCodeFallback(copiedText));
+    } catch (_) {
+      result = Promise.reject(_);
+    }
+    Promise.resolve(result).then(function (copied) { finish(fallbackIsPrimary ? !!copied : true); }, function () {
+      var fallbackWorked = false;
+      try { fallbackWorked = copyCodeFallback(copiedText); } catch (_) {}
+      finish(fallbackWorked);
+    });
+  }
+
   function bindAttribute(target, spec, source) {
     String(spec || "").split(";").forEach(function (mapping) {
       var split = mapping.indexOf(":");
@@ -460,6 +515,12 @@
     function (e) {
       var t = e.target;
       if (!t || !t.closest) return;
+      var copy = t.closest("[data-gosx-copy-button]");
+      if (copy) {
+        e.preventDefault();
+        if (!copy.disabled) copyCode(copy);
+        return;
+      }
       var toggleClose = t.closest("[data-gosx-toggle-close]");
       if (toggleClose) {
         toggleAttribute(toggleClose, true);

@@ -324,6 +324,43 @@
   color: var(--accent);
 }
 
+.code-sample__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.code-sample__copy {
+  min-width: 4.5rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--border-hover);
+  border-radius: 0.25rem;
+  color: var(--text-primary);
+  background: var(--surface);
+  font: 500 var(--text-small)/1.4 var(--font-body);
+  cursor: pointer;
+}
+
+.code-sample__copy:hover,
+.code-sample__copy:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.code-sample__copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.code-sample__copy:disabled {
+  cursor: wait;
+}
+
+.code-sample__copy-status {
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+}
+
 /* ------------------------------------------------------------
    Route-local Scene3D teaching surface
    ------------------------------------------------------------ */
