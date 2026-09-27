@@ -1,0 +1,13 @@
+doc := crdt.NewDoc()
+if err := doc.Put(crdt.Root, "title", crdt.StringValue("Draft")); err != nil {
+	return err
+}
+if _, err := doc.Commit("set title"); err != nil {
+	return err
+}
+
+value, _, err := doc.Get(crdt.Root, "title")
+if err != nil {
+	return err
+}
+fmt.Println(value.Str)

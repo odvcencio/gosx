@@ -1,0 +1,12 @@
+passkeys := authn.WebAuthn(auth.WebAuthnOptions{
+	RPName: "My App",
+	Origin: "https://app.example",
+	Store:  authredis.NewWebAuthnStore(redisClient, authredis.Options{}),
+	Resolver: auth.WebAuthnResolverFunc(func(ctx context.Context, login string) (auth.User, error) {
+		return lookupUser(ctx, login)
+	}),
+})
+app.Mount("/auth/webauthn/register/options", passkeys.RegisterOptionsHandler())
+app.Mount("/auth/webauthn/register", passkeys.RegisterHandler())
+app.Mount("/auth/webauthn/login/options", passkeys.LoginOptionsHandler())
+app.Mount("/auth/webauthn/login", passkeys.LoginHandler())

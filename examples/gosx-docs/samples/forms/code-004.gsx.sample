@@ -1,0 +1,2 @@
+<input name="email" value={actions.subscribe.values.email} />
+<p class="form-error">{actions.subscribe.fieldErrors.email}</p>

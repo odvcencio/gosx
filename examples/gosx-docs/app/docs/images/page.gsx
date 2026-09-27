@@ -122,7 +122,7 @@ func Page() Node {
 		</p>
 		<h2 id="art-direction">Art direction</h2>
 		<CodeBlock lang="go" source={data.artDirectionSample} />
-		<CodeBlock lang="go" source={data.builtinArtDirectionSample} />
+		<CodeBlock lang="gosx" source={data.builtinArtDirectionSample} />
 		<p>
 			Use ordered
 			<span class="inline-code">server.ImageSource</span>

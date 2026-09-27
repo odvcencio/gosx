@@ -1,0 +1,34 @@
+scene.WaterSystem{
+	    ID:         "pool",
+	    Resolution: 512, // simulation grid along one axis
+
+	    // Surface topology is independent from the simulation grid, so you can
+	    // match a reference mesh budget without paying for it in compute state.
+	    SurfaceResolution: 256,
+
+	    PoolShape:    "rounded",
+	    PoolWidth:    12,
+	    PoolHeight:   4,
+	    PoolLength:   12,
+	    CornerRadius: 1.5,
+
+	    WaveSpeed:   1.0,
+	    Damping:     0.995,
+	    NormalScale: 1.2,
+
+	    SeedDrops:    6,
+	    DropRadius:   0.06,
+	    DropStrength: 0.9,
+
+	    ShallowColor:    "#7fd4e8",
+	    DeepColor:       "#0b3a4a",
+	    AboveWaterColor: scene.Vec3(1.2, 1.05, 0.95), // linear HDR, may exceed 1
+	    CubeMap:         "/textures/sky-cube.ktx2",
+	    TileTexture:     "/textures/pool-tile.png",
+
+	    Caustics:           true,
+	    Reflection:         true,
+	    Refraction:         true,
+	    CausticsResolution: 512,
+	    LightDirection:     scene.Vec3(0.3, -1, -0.4),
+	}

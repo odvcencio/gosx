@@ -1,0 +1,4 @@
+const telemetry = window.__gosx.telemetry
+	telemetry.emit("info", "checkout", "dialog-opened", { orderID: "o_123" })
+	telemetry.flush({ beacon: true })
+	console.table(telemetry.snapshot())

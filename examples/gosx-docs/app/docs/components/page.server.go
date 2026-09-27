@@ -1,115 +1,24 @@
 package docs
 
 import (
-	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
 
-const strictComponentSample = `package profile
+var strictComponentSample = docsapp.DocSample("components/strictSample.gosx.sample")
 
-type BadgeProps struct {
-	Label string
-	Count int
-}
+var legacyComponentSample = docsapp.DocSample("components/legacySample.gosx.sample")
 
-component Badge(props: BadgeProps) {
-	return <span className="badge">
-		{props.Label}: {props.Count}
-	</span>
-}
+var strictConcatSample = docsapp.DocSample("components/concatSample.gosx.sample")
 
-component Page() {
-	return <main><Badge label="Inbox" count={0} /></main>
-}`
+var strictConditionalSample = docsapp.DocSample("components/conditionalSample.gosx.sample")
 
-const legacyComponentSample = `package profile
+var strictEachSample = docsapp.DocSample("components/eachSample.gosx.sample")
 
-func Page() Node {
-	return <main>
-		<h1>{data.title}</h1>
-		<If cond={data.showInbox}>
-			<a href="/inbox">Open inbox</a>
-		</If>
-	</main>
-}`
-
-const strictConcatSample = `package profile
-
-type BadgeProps struct {
-	Tone string
-}
-
-component Badge(props: BadgeProps) {
-	return <span class={"badge tone-" + props.Tone}>
-		{props.Tone}
-	</span>
-}
-
-component Page() {
-	return <main><Badge tone="alert" /></main>
-}`
-
-const strictConditionalSample = `package profile
-
-type BadgeProps struct {
-	Ready bool
-}
-
-component Badge(props: BadgeProps) {
-	return <span>
-		<If cond={props.Ready}>Ready</If>
-		<If cond={props.Ready == false}>Pending</If>
-	</span>
-}
-
-component Page() {
-	return <main><Badge ready={true} /></main>
-}`
-
-const strictEachSample = `package profile
-
-type Stat struct {
-	Label string
-	Value string
-}
-
-type CardProps struct {
-	Stats []Stat
-}
-
-component Card(props: CardProps) {
-	return <ul>
-		<Each of={props.Stats} as="stat" index="i">
-			<li>{i}: {stat.Label} = {stat.Value}</li>
-		</Each>
-	</ul>
-}
-
-func Page() Node {
-	return <main><Card {...loaderCard} /></main>
-}`
-
-const strictSpreadSample = `package profile
-
-type BadgeProps struct {
-	Label string
-	Count int
-}
-
-component Badge(props: BadgeProps) {
-	return <span>{props.Label}: {props.Count}</span>
-}
-
-component Panel(props: BadgeProps) {
-	return <div class="panel"><Badge {...props} /></div>
-}
-
-func Page() Node {
-	return <main><Panel {...data.loaderRow} /></main>
-}`
+var strictSpreadSample = docsapp.DocSample("components/spreadSample.gosx.sample")
 
 func init() {
-	docs.RegisterStaticDocsPage("Components", "Choose between strict typed and legacy Go-function GSX components.", route.FileModuleOptions{
+	docsapp.RegisterStaticDocsPage("Components", "Choose between strict typed and legacy Go-function GSX components.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
 				"mode":        "light",
@@ -134,23 +43,8 @@ func init() {
 				"conditionalSample": strictConditionalSample,
 				"eachSample":        strictEachSample,
 				"spreadSample":      strictSpreadSample,
-				"attributesSample": `type FieldProps struct {
-	ID    string
-	Class string
-	Label string
-}
-
-component Field(props: FieldProps) {
-	return <label className={props.Class} htmlFor={props.ID}>
-		{props.Label}
-		<input id={props.ID} required />
-	</label>
-}`,
-				"commandsSample": `gosx check app/page.gsx
-gosx render app/page.gsx Page
-gosx dev
-gosx build .
-gosx export .`,
+				"attributesSample":  docsapp.DocSample("components/attributesSample.gosx.sample"),
+				"commandsSample":    docsapp.DocSample("components/commandsSample.bash.sample"),
 			}, nil
 		},
 	})

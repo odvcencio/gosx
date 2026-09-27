@@ -1,0 +1,17 @@
+package cards
+
+type CardProps struct {
+	Title string
+	Count int
+}
+
+component Card(props: CardProps) {
+	return <article className="card">
+		<h2>{props.Title}</h2>
+		<span>{props.Count}</span>
+	</article>
+}
+
+component Page() {
+	return <main><Card Title="Queue" Count={2} /></main>
+}

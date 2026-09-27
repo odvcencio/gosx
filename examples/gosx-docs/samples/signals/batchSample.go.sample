@@ -1,0 +1,4 @@
+signal.Batch(func() {
+	first.Set("Grace")
+	last.Set("Hopper")
+})

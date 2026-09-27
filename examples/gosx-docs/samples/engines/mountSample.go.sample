@@ -1,0 +1,16 @@
+raw, err := json.Marshal(ChartProps{Series: values})
+if err != nil {
+	return nil
+}
+
+return ctx.Engine(engine.Config{
+	Name:         "Chart",
+	Kind:         engine.KindSurface,
+	MountID:      "sales-chart",
+	Props:        raw,
+	Capabilities: []engine.Capability{engine.CapCanvas, engine.CapPointer},
+	MountAttrs: map[string]any{
+		"class":      "chart-surface",
+		"aria-label": "Sales chart",
+	},
+}, gosx.El("p", gosx.Text("Chart unavailable")))

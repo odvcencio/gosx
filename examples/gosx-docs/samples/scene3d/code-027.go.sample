@@ -1,0 +1,14 @@
+positions := make([]scene.Vector3, 500)
+	for i := range positions {
+	    positions[i] = scene.Vec3((rand.Float64()-0.5)*20, 0, (rand.Float64()-0.5)*20)
+	}
+
+	scene.InstancedMesh{
+	    ID:            "grass",
+	    Count:         500,
+	    Geometry:      scene.CylinderGeometry{RadiusTop: 0.05, RadiusBottom: 0.05, Height: 2, Segments: 6},
+	    Material:      scene.StandardMaterial{Color: "#2d4a1e", Roughness: 0.9},
+	    Positions:     positions,
+	    CastShadow:    true,
+	    ReceiveShadow: true,
+	}

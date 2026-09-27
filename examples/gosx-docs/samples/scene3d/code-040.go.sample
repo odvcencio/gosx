@@ -1,0 +1,22 @@
+scene.NewGraph(
+	    scene.AxesHelper{Size: 2, Width: 2},
+	    scene.GridHelper{Size: 20, Divisions: 20, Color: "#2b3b47", Width: 1},
+	    scene.BoxHelper{Width: 2, Height: 1, Depth: 3, Color: "#8ecfff", WidthPx: 2},
+	    scene.BoundingBoxHelper{
+	        Min:     scene.Vec3(-1, 0, -1),
+	        Max:     scene.Vec3(1, 2, 1),
+	        Color:   "#d4af37",
+	        WidthPx: 2,
+	    },
+	    scene.SkeletonHelper{
+	        Joints: joints,
+	        Bones:  [][2]int{{0, 1}, {1, 2}, {2, 3}},
+	        Color:  "#ff8a5b",
+	    },
+	    scene.TransformControls{
+	        ID:     "gizmo",
+	        Target: "selected-mesh",
+	        Mode:   "translate", // "translate", "rotate", "scale"
+	        Size:   1.5,
+	    },
+	)

@@ -1,0 +1,4 @@
+<form method="post" action={actionPath("submit")}>
+	<input type="hidden" name="csrf_token" value={csrf.token} />
+	<button type="submit">Submit</button>
+</form>

@@ -1,0 +1,28 @@
+scene.ComputeParticles{
+	    ID:    "embers",
+	    Count: 5000,
+	    Emitter: scene.ParticleEmitter{
+	        Kind:     "sphere", // "point", "sphere", "disc", "spiral"
+	        Position: scene.Vec3(0, 2, 0),
+	        Radius:   5,
+	        Rate:     500, // particles per second
+	        Lifetime: 4,   // seconds
+	        Scatter:  0.3,
+	    },
+	    Forces: []scene.ParticleForce{
+	        {Kind: "gravity", Strength: 0.5, Direction: scene.Vec3(0, -1, 0)},
+	        {Kind: "turbulence", Strength: 0.3, Frequency: 1.2},
+	        {Kind: "orbit", Strength: 0.2},
+	    },
+	    Material: scene.ParticleMaterial{
+	        Color:       "#D4AF37",
+	        ColorEnd:    "#ffffff",
+	        Size:        0.05,
+	        SizeEnd:     0.01,
+	        Opacity:     0.9,
+	        OpacityEnd:  0.0,
+	        BlendMode:   scene.BlendAdditive,
+	        Attenuation: true,
+	    },
+	    Bounds: 12,
+	}

@@ -1,0 +1,1 @@
+window.__gosx_scene3d_inspector = true; // set before the Scene3D component mounts

@@ -1,0 +1,18 @@
+source, err := os.ReadFile("materials/glow.sel")
+	if err != nil {
+	    return err
+	}
+	material, layout, err := scene.CompileSelenaMaterial(source, scene.SelenaMaterialOptions{
+	    Material: "glow",
+	    Standard: scene.StandardMaterial{Color: "#d4af37", Roughness: 0.2},
+	    Uniforms: map[string]any{"pulse": 0.4, "tint": []float64{1, 0.85, 0.4}},
+	})
+	if err != nil {
+	    return err
+	}
+	_ = layout // the binding layout, for tooling and validation
+
+	mesh := scene.Mesh{
+	    Geometry: scene.SphereGeometry{Radius: 1, Segments: 48},
+	    Material: material,
+	}

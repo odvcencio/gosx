@@ -1,0 +1,3 @@
+await window.__gosx.navigation.navigate("/docs/routing")
+	await window.__gosx.navigation.revalidate()
+	console.log(window.__gosx.navigation.getState())

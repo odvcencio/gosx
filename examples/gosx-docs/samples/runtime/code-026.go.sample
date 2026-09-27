@@ -1,0 +1,3 @@
+ctx.ManagedScript(server.AssetURL("scripts/analytics.js"), server.ManagedScriptOptions{
+	    Role: server.ManagedScriptRoleManaged,
+	})

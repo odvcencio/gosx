@@ -1,0 +1,14 @@
+prepared := textlayout.Prepare(text, textlayout.PrepareOptions{
+	WhiteSpace: textlayout.WhiteSpacePreWrap,
+	TabSize:    4,
+})
+measured, err := textlayout.Measure(prepared, measurer, "400 16px Inter")
+if err != nil {
+	return err
+}
+result := textlayout.Layout(measured, textlayout.LayoutOptions{
+	MaxWidth:   520,
+	LineHeight: 24,
+	MaxLines:   3,
+	Overflow:   textlayout.OverflowEllipsis,
+})

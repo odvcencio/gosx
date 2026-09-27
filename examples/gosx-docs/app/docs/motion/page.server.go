@@ -21,8 +21,8 @@ func init() {
 					{"href": "#timing", "label": "Timing"},
 					{"href": "#bootstrap", "label": "Bootstrap"},
 				},
-				"motionSample":  "node := ctx.Motion(server.MotionProps{\n\tTag:      \"article\",\n\tPreset:   server.MotionPresetSlideUp,\n\tTrigger:  server.MotionTriggerView,\n\tDuration: 260,\n\tDelay:    40,\n},\n\tgosx.Attrs(gosx.Attr(\"class\", \"result-card\")),\n\tgosx.Text(\"Ready\"),\n)",
-				"reducedSample": "respect := false\nnode := ctx.Motion(server.MotionProps{\n\tPreset:               server.MotionPresetFade,\n\tRespectReducedMotion: &respect,\n}, content)",
+				"motionSample":  docsapp.DocSample("motion/motionSample.go.sample"),
+				"reducedSample": docsapp.DocSample("motion/reducedSample.go.sample"),
 			}, nil
 		},
 	})
