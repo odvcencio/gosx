@@ -11,8 +11,7 @@ func Page() Node {
 				id={docScene.SurfaceID}
 				class="doc-scene__surface motion-demo__surface"
 				role="region"
-				tabindex="0"
-				aria-label="Scrollable Scene3D motion demo"
+				aria-label="Scene3D motion demo"
 			>
 				<div class="motion-demo__stage">
 					<Scene3D id="motion-scene" class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
@@ -23,7 +22,7 @@ func Page() Node {
 							<p class="motion-demo__label">One scroll value</p>
 							<h2>HTML and the camera move together.</h2>
 							<p>
-								Scroll inside this panel. The card and camera read the same progress.
+								Scroll the page. The card and camera read the same progress.
 							</p>
 						</article>
 						<button id="motion-hover" class="motion-demo__button" type="button">Hover or focus to move the sphere</button>
@@ -42,7 +41,7 @@ func Page() Node {
 						>Waiting for the scene adapter…</output>
 					</div>
 				</div>
-				<div class="motion-demo__scroll-track" aria-hidden="true"></div>
+				<div id="motion-scroll-track" class="motion-demo__scroll-track" aria-hidden="true"></div>
 			</div>
 			<div class="doc-scene__teaching">
 				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
@@ -64,7 +63,7 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Motion values across the page</span>
 			<p class="lede">
-				The HTML card, hover spring, and pinned sphere share values with one Scene3D render. Try the button, then scroll the scene panel.
+				The HTML card, hover spring, and pinned sphere share values with one Scene3D render. Try the button, then scroll the page.
 			</p>
 		</div>
 		<p>

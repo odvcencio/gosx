@@ -2,14 +2,21 @@
   margin-bottom: var(--space-lg);
 }
 
+.motion-page .doc-scene {
+  overflow: visible;
+}
+
+.motion-page .doc-scene__teaching {
+  position: sticky;
+  top: var(--space-lg);
+  align-self: start;
+}
+
 .motion-page .motion-demo__surface {
   --motion-demo-height: clamp(18rem, 38vw, 26rem);
-  height: var(--motion-demo-height);
+  height: auto;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
+  overflow: visible;
   background: #0b1520;
 }
 
@@ -149,7 +156,7 @@
 }
 
 .motion-demo__scroll-track {
-  height: calc(var(--motion-demo-height) * 3);
+  height: max(320vh, calc(var(--motion-demo-height) * 3));
 }
 
 @media (max-width: 600px) {

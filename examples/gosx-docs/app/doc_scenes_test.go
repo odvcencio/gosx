@@ -130,8 +130,8 @@ func TestDocSceneFactoriesStayDeterministicAndWithinBudget(t *testing.T) {
 			}
 		}
 		if spec.Route == "/docs/motion" {
-			if movingNodes != 1 {
-				t.Errorf("motion route moving node count = %d, want 1", movingNodes)
+			if movingNodes != 0 {
+				t.Errorf("motion route has %d decorative moving nodes; the motion program should own movement", movingNodes)
 			}
 		} else if movingNodes != 0 {
 			t.Errorf("route %q has %d decorative moving nodes", spec.Route, movingNodes)

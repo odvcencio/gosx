@@ -37,7 +37,7 @@ func init() {
 
 func motionDemoProgram() (*motion.Program, error) {
 	program := motion.NewProgram("docs-motion")
-	scroll := program.ScrollProgress("panel-scroll", "#doc-motion-surface", motion.AxisY)
+	scroll := program.ScrollProgress("page-scroll", "", motion.AxisY)
 	cardY := program.Map("card-y", scroll, 0, 1, 0, -26)
 	cameraZ := program.Map("camera-z", scroll, 0, 1, 8.4, 6.4)
 	program.BindCSSVariable(cardY, "#motion-card", "--motion-card-y", "px")

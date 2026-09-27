@@ -238,7 +238,7 @@ var docSceneSpecs = []docSceneSpec{
 		DemoHref:        "/demos/scene3d",
 		DemoLabel:       "See declarative motion in Scene3D",
 		Anchors: []docSceneAnchor{
-			{ID: "hover-node", Position: scene.Vec3(1.5, 0.25, 0), Shape: docSceneSphere, Accent: true, Spin: scene.Euler{Y: 0.18}},
+			{ID: "hover-node", Position: scene.Vec3(1.5, 0.25, 0), Shape: docSceneSphere, Accent: true},
 			{ID: "pinned-node", Position: scene.Vec3(-1.3, -0.35, 0), Shape: docSceneSphere},
 		},
 	},
