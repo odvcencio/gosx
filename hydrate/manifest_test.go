@@ -327,13 +327,15 @@ func TestManifestAddControllerRoundTrip(t *testing.T) {
 }
 
 func TestHubBindingDirectionRoundTrip(t *testing.T) {
-	// Verify that Direction, ThrottleMS, and DebounceMS survive JSON round-trip.
+	// Verify that directional limits and Scene3D bindings survive JSON round-trip.
 	b := HubBinding{
-		Event:      "cursor",
-		Signal:     "$cursor",
-		Direction:  "out",
-		ThrottleMS: 50,
-		DebounceMS: 0,
+		Event:          "scene:pick",
+		Direction:      "out",
+		ThrottleMS:     66,
+		SceneMountID:   "tabletop-scene",
+		SceneCommands:  true,
+		SceneInput:     "pick",
+		SceneInputKind: "tabletop",
 	}
 	data, err := json.Marshal(b)
 	if err != nil {
@@ -346,12 +348,11 @@ func TestHubBindingDirectionRoundTrip(t *testing.T) {
 	if got.Direction != "out" {
 		t.Fatalf("direction: expected out, got %q", got.Direction)
 	}
-	if got.ThrottleMS != 50 {
-		t.Fatalf("throttleMs: expected 50, got %d", got.ThrottleMS)
+	if got.ThrottleMS != 66 {
+		t.Fatalf("throttleMs: expected 66, got %d", got.ThrottleMS)
 	}
-	// omitempty: DebounceMS=0 should not appear in JSON
-	if got.DebounceMS != 0 {
-		t.Fatalf("debounceMs: expected 0, got %d", got.DebounceMS)
+	if got.SceneMountID != "tabletop-scene" || !got.SceneCommands || got.SceneInput != "pick" || got.SceneInputKind != "tabletop" {
+		t.Fatalf("Scene3D input binding did not round trip: %+v", got)
 	}
 	// direction:"" should be omitted
 	b2 := HubBinding{Event: "tick", Signal: "$tick"}
@@ -390,6 +391,48 @@ func TestManifestAddHubWithInput(t *testing.T) {
 	}
 	if m.Hubs[0].Input.Mode != "fighting" || m.Hubs[0].Input.Player != 2 {
 		t.Fatalf("unexpected hub input config %#v", m.Hubs[0].Input)
+	}
+}
+
+func TestManifestAddHubWithRoundTrip(t *testing.T) {
+	m := NewManifest()
+	id := m.AddHubWithRoundTrip("tabletop", "/demos/tabletop/ws/?room=abc", []HubBinding{
+		{Event: "scene:update", SceneMountID: "tabletop-scene", SceneCommands: true},
+	}, HubRoundTripConfig{Signal: "$tabletop.rtt", PingEvent: "room:ping", PongEvent: "room:pong", IntervalMS: 2000})
+	if id != "gosx-hub-0" || len(m.Hubs) != 1 || m.Hubs[0].RoundTrip == nil {
+		t.Fatalf("hub round trip entry = %#v, id %q", m.Hubs, id)
+	}
+	encoded, err := json.Marshal(m.Hubs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded HubEntry
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.RoundTrip == nil || decoded.RoundTrip.Signal != "$tabletop.rtt" || decoded.RoundTrip.IntervalMS != 2000 {
+		t.Fatalf("round trip config did not survive manifest JSON: %s", encoded)
+	}
+}
+
+func TestManifestHubRoundTripNormalizesDefaultsAndBounds(t *testing.T) {
+	m := NewManifest()
+	m.AddHubWithRoundTrip("tabletop", "/ws", nil, HubRoundTripConfig{Signal: " $rtt ", IntervalMS: 1})
+	got := m.Hubs[0].RoundTrip
+	if got == nil || got.Signal != "$rtt" || got.PingEvent != "ping" || got.PongEvent != "pong" || got.IntervalMS != 250 {
+		t.Fatalf("normalized round trip = %#v", got)
+	}
+
+	m = NewManifest()
+	m.AddHubWithRoundTrip("tabletop", "/ws", nil, HubRoundTripConfig{Signal: "$rtt", IntervalMS: 90000})
+	if got := m.Hubs[0].RoundTrip; got == nil || got.IntervalMS != 60000 {
+		t.Fatalf("upper interval bound = %#v", got)
+	}
+
+	m = NewManifest()
+	m.AddHubWithRoundTrip("tabletop", "/ws", nil, HubRoundTripConfig{})
+	if m.Hubs[0].RoundTrip != nil {
+		t.Fatalf("empty signal should omit heartbeat config, got %#v", m.Hubs[0].RoundTrip)
 	}
 }
 

@@ -607,6 +607,19 @@ func TestBindHubInputAddsManifestInput(t *testing.T) {
 	}
 }
 
+func TestBindHubWithRoundTripAddsManifestConfig(t *testing.T) {
+	r := NewRenderer("main")
+	r.BindHubWithRoundTrip("tabletop", "/ws/tabletop", []hydrate.HubBinding{
+		{Event: "scene:update", SceneMountID: "scene", SceneCommands: true},
+	}, hydrate.HubRoundTripConfig{Signal: "$rtt", PingEvent: "ping", PongEvent: "pong", IntervalMS: 1000})
+	if len(r.Manifest().Hubs) != 1 || r.Manifest().Hubs[0].RoundTrip == nil {
+		t.Fatalf("expected one hub round trip entry, got %#v", r.Manifest().Hubs)
+	}
+	if r.Manifest().Hubs[0].RoundTrip.Signal != "$rtt" {
+		t.Fatalf("unexpected round trip config %#v", r.Manifest().Hubs[0].RoundTrip)
+	}
+}
+
 func TestRendererSelectsSmallestPublishedRuntimeVariant(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{

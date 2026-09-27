@@ -16,6 +16,7 @@
       clearTimeout(record.refreshTimer);
       record.refreshTimer = null;
     }
+    if (typeof stopHubRoundTrip === "function") stopHubRoundTrip(record);
     record.refreshPreserveScroll = null;
     record.refreshEvent = null;
     record.refreshFetchEpoch = null;
@@ -27,6 +28,14 @@
       record.outputUnsubscribers.forEach(function(fn) { try { fn(); } catch (_) {} });
       record.outputUnsubscribers = null;
     }
+    if (record.sceneCommandObservers instanceof Map) {
+      record.sceneCommandObservers.forEach(function(observer) {
+        try { observer.disconnect(); } catch (_) {}
+      });
+      record.sceneCommandObservers.clear();
+    }
+    if (record.pendingSceneCommands instanceof Map) record.pendingSceneCommands.clear();
+    if (record.lastSceneCommandRevision instanceof Map) record.lastSceneCommandRevision.clear();
     if (record.socket && typeof record.socket.close === "function") {
       try {
         record.socket.close();

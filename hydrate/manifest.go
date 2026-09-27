@@ -120,6 +120,19 @@ type HubEntry struct {
 	// Input describes optional browser input forwarding owned by the GoSX
 	// bootstrap rather than page-authored JavaScript.
 	Input *HubInputConfig `json:"input,omitempty"`
+
+	// RoundTrip asks the bootstrap to measure request/response time against
+	// this hub. The server echoes the ping payload using PongEvent.
+	RoundTrip *HubRoundTripConfig `json:"roundTrip,omitempty"`
+}
+
+// HubRoundTripConfig configures a bootstrap-owned heartbeat that writes the
+// measured hub round trip in milliseconds to a shared signal.
+type HubRoundTripConfig struct {
+	Signal     string `json:"signal"`
+	PingEvent  string `json:"pingEvent,omitempty"`
+	PongEvent  string `json:"pongEvent,omitempty"`
+	IntervalMS int    `json:"intervalMs,omitempty"`
 }
 
 // ControllerEntry describes one bootstrap-owned headless controller instance.
@@ -128,15 +141,24 @@ type ControllerEntry struct {
 	Config controller.Config `json:"config"`
 }
 
-// HubBinding maps an inbound hub event to a shared signal, a soft page
-// refresh, or both. Direction, throttle, and debounce also describe outbound
-// signal bindings.
+// HubBinding maps hub events to shared signals, Scene3D commands or input, or
+// a soft page refresh. Direction, throttle, and debounce also describe
+// outbound signal and Scene3D input bindings.
 type HubBinding struct {
 	Event      string `json:"event"`
 	Signal     string `json:"signal,omitempty"`
 	Direction  string `json:"direction,omitempty"`
 	ThrottleMS int    `json:"throttleMs,omitempty"`
 	DebounceMS int    `json:"debounceMs,omitempty"`
+	// SceneMountID routes a hub payload to one Scene3D mount. SceneCommands
+	// applies {revision, commands} as a revisioned mount command batch. A
+	// non-empty SceneInput forwards matching semantic input kinds from that
+	// mount to the named hub event; "pick" and "gizmo-commit" are supported by
+	// Scene3D today. SceneInputKind replaces the forwarded kind when non-empty.
+	SceneMountID   string `json:"sceneMountId,omitempty"`
+	SceneCommands  bool   `json:"sceneCommands,omitempty"`
+	SceneInput     string `json:"sceneInput,omitempty"`
+	SceneInputKind string `json:"sceneInputKind,omitempty"`
 	// Refresh forces a same-URL soft navigation after a matching inbound event.
 	Refresh bool `json:"refresh,omitempty"`
 	// RefreshDebounceMS joins the hub connection's refresh burst and rearms its
@@ -476,6 +498,37 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 		Bindings: bindings,
 		Input:    input,
 	})
+	return id
+}
+
+// AddHubWithRoundTrip registers a realtime hub with an optional measured
+// request/response heartbeat. The named server handler must echo ping data on
+// the configured pong event.
+func (m *Manifest) AddHubWithRoundTrip(name, path string, bindings []HubBinding, roundTrip HubRoundTripConfig) string {
+	id := m.AddHub(name, path, bindings)
+	if id == "" {
+		return ""
+	}
+	roundTrip.Signal = strings.TrimSpace(roundTrip.Signal)
+	if roundTrip.Signal == "" {
+		return id
+	}
+	roundTrip.PingEvent = strings.TrimSpace(roundTrip.PingEvent)
+	if roundTrip.PingEvent == "" {
+		roundTrip.PingEvent = "ping"
+	}
+	roundTrip.PongEvent = strings.TrimSpace(roundTrip.PongEvent)
+	if roundTrip.PongEvent == "" {
+		roundTrip.PongEvent = "pong"
+	}
+	if roundTrip.IntervalMS <= 0 {
+		roundTrip.IntervalMS = 2000
+	} else if roundTrip.IntervalMS < 250 {
+		roundTrip.IntervalMS = 250
+	} else if roundTrip.IntervalMS > 60000 {
+		roundTrip.IntervalMS = 60000
+	}
+	m.Hubs[len(m.Hubs)-1].RoundTrip = &roundTrip
 	return id
 }
 
