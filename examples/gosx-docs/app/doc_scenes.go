@@ -234,7 +234,7 @@ var docSceneSpecs = []docSceneSpec{
 		Eyebrow:         "One motion graph, two render surfaces",
 		Title:           "HTML and Scene3D read the same values in one frame.",
 		Summary:         "Scroll progress moves the HTML card and camera together; a spring scales one scene node, and another follows the HTML marker.",
-		InteractionHint: "Pointer interaction only: drag to orbit; wheel or pinch to zoom. Scroll inside the panel; hover or focus the button to move the mint sphere, and the amber sphere follows its HTML marker.",
+		InteractionHint: "Pointer interaction only: drag to orbit; wheel or pinch to zoom. Scroll the page; hover or focus the button to move the mint sphere, and the amber sphere follows its HTML marker.",
 		DemoHref:        "/demos/scene3d",
 		DemoLabel:       "See declarative motion in Scene3D",
 		Anchors: []docSceneAnchor{

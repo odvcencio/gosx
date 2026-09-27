@@ -133,6 +133,9 @@ func TestDocSceneFactoriesStayDeterministicAndWithinBudget(t *testing.T) {
 			if movingNodes != 0 {
 				t.Errorf("motion route has %d decorative moving nodes; the motion program should own movement", movingNodes)
 			}
+			if !strings.Contains(spec.InteractionHint, "Scroll the page") {
+				t.Errorf("motion route interaction hint does not describe page scrolling: %q", spec.InteractionHint)
+			}
 		} else if movingNodes != 0 {
 			t.Errorf("route %q has %d decorative moving nodes", spec.Route, movingNodes)
 		}
