@@ -68,22 +68,7 @@ type docSceneSpec struct {
 	Links           [][2]int
 }
 
-var docSceneSpecs = []docSceneSpec{
-	{
-		Route:           "/docs/motion",
-		Slug:            "motion",
-		Eyebrow:         "One motion graph, two render surfaces",
-		Title:           "HTML and Scene3D read the same values in one frame.",
-		Summary:         "Scroll progress moves the HTML card and camera together; a spring scales one scene node, and another follows the HTML marker.",
-		InteractionHint: "Pointer interaction only: drag to orbit; wheel or pinch to zoom. Scroll the page; hover or focus the button to move the mint sphere, and the amber sphere follows its HTML marker.",
-		DemoHref:        "/demos/scene3d",
-		DemoLabel:       "See declarative motion in Scene3D",
-		Anchors: []docSceneAnchor{
-			{ID: "hover-node", Position: scene.Vec3(1.5, 0.25, 0), Shape: docSceneSphere, Accent: true},
-			{ID: "pinned-node", Position: scene.Vec3(-1.3, -0.35, 0), Shape: docSceneSphere},
-		},
-	},
-}
+var docSceneSpecs []docSceneSpec
 
 // DocSceneFeatureForRoute returns a fresh deterministic feature for a selected
 // conceptual docs route. Other routes deliberately return false so they stay
@@ -111,7 +96,6 @@ func normalizeDocSceneRoute(routePath string) string {
 
 func buildDocSceneFeature(spec docSceneSpec) DocSceneFeature {
 	prefix := "doc-" + spec.Slug
-	controls := scene.ControlOrbit
 	nodes := make([]scene.Node, 0, 2+len(spec.Anchors)+len(spec.Links))
 	nodes = append(nodes,
 		scene.AmbientLight{
@@ -175,7 +159,7 @@ func buildDocSceneFeature(spec docSceneSpec) DocSceneFeature {
 			Label:               spec.Title,
 			AriaLabel:           spec.Title,
 			Background:          docSceneCanvas,
-			Controls:            controls,
+			Controls:            scene.ControlOrbit,
 			AutoRotate:          scene.Bool(false),
 			Responsive:          scene.Bool(true),
 			FillHeight:          scene.Bool(true),

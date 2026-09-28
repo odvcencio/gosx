@@ -567,7 +567,7 @@
   }
 
   // applySceneQualityLadderState is applySceneAdaptiveQualityState's ladder
-  // counterpart — same publish-throttle shape (force / 250ms / revision-
+  // counterpart — same publish-throttle shape (force / 500ms / revision-
   // changed gate via lastPublishedAtMS/lastPublishedRevision, reused
   // directly from the shared state object), different attribute set.
   function applySceneQualityLadderState(mount, state, nowMS, force) {
@@ -595,7 +595,7 @@
     };
     const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
     const changed = state.lastPublishedRevision !== state.rungRevision;
-    if (!force && !changed && now - state.lastPublishedAtMS < 250) return;
+    if (!force && !changed && now - state.lastPublishedAtMS < 500) return;
     state.lastPublishedAtMS = now;
     state.lastPublishedRevision = state.rungRevision;
     setAttrValue(mount, "data-gosx-scene3d-quality-ladder", "true");

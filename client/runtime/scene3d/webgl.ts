@@ -540,7 +540,7 @@
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
     "        float opacity = u_opacity;",
     "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
-    "        fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
+    "        fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a * texAlpha);",
     "        return;",
     "    }",
     "",
@@ -823,7 +823,7 @@
     "",
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
-    "    fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
+    "    fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a * texAlpha);",
     "}",
   ].join("\n");
 
@@ -6602,22 +6602,11 @@
     return state && state.status === "ready" ? state : null;
   }
 
-  function scenePBRRequestFrame(callback) {
-    const motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
-    if (motionScheduler && typeof motionScheduler.request === "function" && typeof motionScheduler.cancel === "function") {
-      const id = motionScheduler.request(callback);
-      return { cancel: function() { motionScheduler.cancel(id); } };
-    }
-    if (typeof requestAnimationFrame === "function") {
-      const id = requestAnimationFrame(callback);
-      return { cancel: function() { if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id); } };
-    }
-    return null;
-  }
-
   function scenePBRClearInitialPoll(state) {
     if (!state) return;
-    if (state.frame != null) state.frame.cancel();
+    if (state.frame != null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.frame);
+    }
     if (state.timer != null && typeof clearTimeout === "function") {
       clearTimeout(state.timer);
     }
@@ -6737,7 +6726,7 @@
           scenePBRClearInitialPoll(state);
           poll();
         }
-        state.frame = scenePBRRequestFrame(run);
+        if (typeof requestAnimationFrame === "function") state.frame = requestAnimationFrame(run);
         if (typeof setTimeout === "function") state.timer = setTimeout(run, 50);
         if (state.frame == null && state.timer == null) cancel();
       }

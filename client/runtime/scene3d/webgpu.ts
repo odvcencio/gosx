@@ -1900,7 +1900,7 @@
     "        let color = albedo + emissiveColor * emissiveStrength;",
     "        // Alpha-cut discard after sampling to keep derivative uniformity.",
     "        if (alphaEnabled && coverage < cutoff) { discard; }",
-    "        return vec4f(color, select(finalOpacity, 1.0, alphaEnabled));",
+    "        return vec4f(color, select(coverage, 1.0, alphaEnabled));",
     "    }",
     "",
     // Resolve per-pixel normal via TBN matrix.
@@ -2151,7 +2151,7 @@
     "    }",
     "",
     "    if (alphaEnabled && coverage < cutoff) { discard; }",
-    "    return vec4f(color, select(finalOpacity, 1.0, alphaEnabled));",
+    "    return vec4f(color, select(coverage, 1.0, alphaEnabled));",
     "}",
   ].join("\n");
 

@@ -123,6 +123,73 @@ test("bootstrap connects hubs and forwards events into shared signals", async ()
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap connects Scene3D-bound hubs when the mount becomes command-ready", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "tabletop-scene";
+  const env = createContext({
+    elements: [mount],
+    createWebSocket: (url) => ({ url, close() {} }),
+    fetchRoutes: { "/runtime.wasm": { bytes: [0, 97, 115, 109] } },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [{
+        id: "gosx-hub-0",
+        name: "tabletop",
+        path: "/demos/tabletop/ws/?room=room-one",
+        bindings: [{ event: "scene:update", sceneMountId: "tabletop-scene", sceneCommands: true }],
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.hubs.size, 0);
+  assert.equal(env.sockets.length, 0);
+
+  mount.setAttribute("data-gosx-scene3d-command-ready", "true");
+  const observer = env.mutationObservers.find((candidate) => candidate.options.some(({ options }) =>
+    options.attributeFilter?.includes("data-gosx-scene3d-command-ready")
+  ));
+  assert.ok(observer, "bootstrap observes Scene3D command readiness");
+  observer.trigger([{
+    target: mount,
+    type: "attributes",
+    attributeName: "data-gosx-scene3d-command-ready",
+  }]);
+
+  assert.equal(env.context.__gosx.hubs.size, 1);
+  assert.equal(env.sockets.length, 1);
+  assert.match(env.sockets[0].url, /\/demos\/tabletop\/ws\//);
+});
+
+test("bootstrap connects Scene3D-bound hubs after the mount is command-ready", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "tabletop-scene";
+  mount.setAttribute("data-gosx-scene3d-command-ready", "true");
+  const env = createContext({
+    elements: [mount],
+    createWebSocket: (url) => ({ url, close() {} }),
+    fetchRoutes: { "/runtime.wasm": { bytes: [0, 97, 115, 109] } },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [{
+        id: "gosx-hub-0",
+        name: "tabletop",
+        path: "/demos/tabletop/ws/?room=room-one",
+        bindings: [{ event: "scene:update", sceneMountId: "tabletop-scene", sceneCommands: true }],
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.hubs.size, 1);
+  assert.equal(env.sockets.length, 1);
+});
+
 test("bootstrap hub input sends fighting game snapshots", async () => {
   const sent = [];
   function makeSocket(url) {

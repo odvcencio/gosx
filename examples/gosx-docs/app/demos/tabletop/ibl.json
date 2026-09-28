@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "source": "Poly Haven Studio Small 09 (CC0 1.0)",
+  "radiance": {
+    "uri": "/tabletop/env/studio_small_09.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 6,
+    "width": 32,
+    "height": 32,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/tabletop/env/studio_small_09.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 16,
+    "height": 16,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/tabletop/env/brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      3.061315896487003,
+      2.984008253637078,
+      2.9920238843590736
+    ],
+    [
+      0.2502518052524289,
+      0.2528143563706684,
+      0.27278972694963066
+    ],
+    [
+      -0.3211914191159338,
+      -0.32243692828250603,
+      -0.30543757998982435
+    ],
+    [
+      0.6971372149810579,
+      0.7793239430900418,
+      0.8476608023088661
+    ],
+    [
+      0.6458617346409572,
+      0.7069820780736388,
+      0.7766308631998695
+    ],
+    [
+      1.0725168502999893,
+      1.0312540716234126,
+      1.0387177855466976
+    ],
+    [
+      0.008918944869670781,
+      0.017527880831194078,
+      0.02286913206676643
+    ],
+    [
+      0.9136940429844694,
+      1.0248894278268605,
+      1.1803862568756822
+    ],
+    [
+      1.1548230027835087,
+      1.1394705351354366,
+      1.1601274628927112
+    ]
+  ]
+}

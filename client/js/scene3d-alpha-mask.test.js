@@ -11,6 +11,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 
 const srcDir = path.join(__dirname, "bootstrap-src");
 const SHARED_API_EXPORT_MARKER = "// Scene3D shared API";
@@ -853,6 +854,24 @@ test("opacity-based invisibility cull spares enabled numeric alpha cutoffs", () 
 
   // Opaque unmasked materials behave exactly as before.
   assert.equal(invisible({}, { opacity: 1 }), false, "opacity 1 without cutoff stays visible");
+});
+
+test("alpha-blended textures keep their sampled coverage in both mesh shaders", () => {
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+  const webgl = readSceneRendererBackendSrc("webgl");
+
+  assert.match(webgpu, /let coverage = finalOpacity \* texAlpha;/,
+    "WebGPU coverage includes the base-color texture alpha");
+  assert.match(webgpu, /if \(material\.unlit != 0u\)[\s\S]{0,500}select\(coverage, 1\.0, alphaEnabled\)/,
+    "WebGPU unlit alpha blends use sampled coverage");
+  assert.match(webgpu, /if \(alphaEnabled && coverage < cutoff\)[\s\S]{0,150}select\(coverage, 1\.0, alphaEnabled\)/,
+    "WebGPU lit alpha blends use sampled coverage");
+
+  assert.match(webgl, /float coverage = u_opacity \* clamp\(v_instanceColor\.a, 0\.0, 1\.0\) \* texAlpha;/,
+    "WebGL coverage includes the base-color texture alpha");
+  const webglOutputs = webgl.match(/fragColor = vec4\(color, masked \? 1\.0 : opacity \* v_instanceColor\.a \* texAlpha\);/g) || [];
+  assert.equal(webglOutputs.length, 2,
+    "WebGL unlit and lit alpha blends use sampled coverage");
 });
 
 // The mount-side model zero-opacity hide gate must mirror the core CPU-cull:

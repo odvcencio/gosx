@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 2,
+  "generator": "gosx assetpipe",
+  "vocabulary": [
+    "container:ktx2",
+    "container:ktx2-zlib",
+    "device-feature:texture-compression-bc",
+    "texture-format:bc1-rgba-unorm-srgb",
+    "texture-format:bc4-r-unorm",
+    "texture-format:bc5-rg-unorm",
+    "texture-format:bc7-rgba-unorm",
+    "texture-format:bc7-rgba-unorm-srgb"
+  ],
+  "assets": [
+    {
+      "path": "tabletop/models/potted_plant_04/textures/potted_plant_04_arm_1k.png",
+      "kind": "texture",
+      "bytes": 93732,
+      "variants": [
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_arm_1k.standard.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 71182,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_arm_1k.low.bc7-rgba-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc7-rgba-unorm-zlib",
+          "bytes": 19127,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/potted_plant_04/textures/potted_plant_04_diff_1k.png",
+      "kind": "texture",
+      "bytes": 110721,
+      "variants": [
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_diff_1k.standard.bc7-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-srgb-zlib",
+          "bytes": 82992,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm-srgb"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_diff_1k.low.bc1-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc1-rgba-unorm-srgb-zlib",
+          "bytes": 9927,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc1-rgba-unorm-srgb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/models/potted_plant_04/textures/potted_plant_04_nor_gl_1k.png",
+      "kind": "texture",
+      "bytes": 117339,
+      "variants": [
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_nor_gl_1k.standard.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 79984,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/models/potted_plant_04/textures/potted_plant_04_nor_gl_1k.low.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 21018,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/surfaces/wood_table_001/wood_table_001_diff.png",
+      "kind": "texture",
+      "bytes": 98812,
+      "variants": [
+        {
+          "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_diff.standard.bc7-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc7-rgba-unorm-srgb-zlib",
+          "bytes": 80818,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc7-rgba-unorm-srgb"
+          ]
+        },
+        {
+          "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_diff.low.bc1-rgba-unorm-srgb.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc1-rgba-unorm-srgb-zlib",
+          "bytes": 8600,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc1-rgba-unorm-srgb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.png",
+      "kind": "texture",
+      "bytes": 30619,
+      "variants": [
+        {
+          "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.standard.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 28225,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_nor_gl.low.bc5-rg-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc5-rg-unorm-zlib",
+          "bytes": 7686,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc5-rg-unorm"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tabletop/surfaces/wood_table_001/wood_table_001_rough.png",
+      "kind": "texture",
+      "bytes": 50926,
+      "variants": [
+        {
+          "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_rough.standard.bc4-r-unorm.ktx2",
+          "kind": "texture",
+          "quality": "standard",
+          "compression": "ktx2-bc4-r-unorm-zlib",
+          "bytes": 43806,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc4-r-unorm"
+          ]
+        },
+        {
+          "uri": "/tabletop/surfaces/wood_table_001/wood_table_001_rough.low.bc4-r-unorm.ktx2",
+          "kind": "texture",
+          "quality": "low",
+          "compression": "ktx2-bc4-r-unorm-zlib",
+          "bytes": 11617,
+          "sourceAction": "texture-transcode-ktx2",
+          "requiredCapabilities": [
+            "container:ktx2",
+            "container:ktx2-zlib",
+            "device-feature:texture-compression-bc",
+            "texture-format:bc4-r-unorm"
+          ]
+        }
+      ]
+    }
+  ]
+}

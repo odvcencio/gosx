@@ -20,7 +20,7 @@ import (
 )
 
 func TestDocSceneFeatureRouteSelection(t *testing.T) {
-	expected := []string{"/docs/motion"}
+	expected := []string{}
 	if len(docSceneSpecs) != len(expected) {
 		t.Fatalf("selected route count = %d, want %d", len(docSceneSpecs), len(expected))
 	}
@@ -118,11 +118,8 @@ func TestDocSceneFactoriesStayDeterministicAndWithinBudget(t *testing.T) {
 			}
 		}
 		if spec.Route == "/docs/motion" {
-			if movingNodes != 0 {
-				t.Errorf("motion route has %d decorative moving nodes; the motion program should own movement", movingNodes)
-			}
-			if !strings.Contains(spec.InteractionHint, "Scroll the page") {
-				t.Errorf("motion route interaction hint does not describe page scrolling: %q", spec.InteractionHint)
+			if movingNodes != 1 {
+				t.Errorf("motion route moving node count = %d, want 1", movingNodes)
 			}
 		} else if movingNodes != 0 {
 			t.Errorf("route %q has %d decorative moving nodes", spec.Route, movingNodes)
@@ -254,7 +251,7 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 			t.Fatalf("read selected route %q: %v", spec.Route, err)
 		}
 		for _, contract := range []string{
-			`class="motion-demo__layout"`,
+			`class="doc-scene"`,
 			`respectReducedMotion={true}`,
 			`data-gosx-link="true"`,
 			`aria-labelledby={docScene.HeadingID}`,
@@ -268,7 +265,7 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 			t.Errorf("selected route %q Scene3D node count = %d, want 1", spec.Route, count)
 		}
 	}
-	for _, slug := range []string{"compiler", "deployment", "hubs", "islands", "routing", "runtime", "signals", "streaming", "getting-started"} {
+	for _, slug := range []string{"compiler", "deployment", "hubs", "islands", "motion", "routing", "runtime", "signals", "streaming", "getting-started"} {
 		path := filepath.Join("docs", slug, "page.gsx")
 		source, err := os.ReadFile(path)
 		if err != nil {

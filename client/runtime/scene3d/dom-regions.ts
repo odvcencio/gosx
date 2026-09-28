@@ -262,7 +262,7 @@
 
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
     var disposed = false;
-    var raf = 0;
+    var raf = null;
     var configs = [];
     var key = "";
     var lastPatchKey = "";
@@ -331,7 +331,7 @@
     }
 
     function measureNow() {
-      raf = 0;
+      raf = null;
       if (disposed || configs.length === 0) return;
       var entries = [];
       var targetKeyParts = [];
@@ -369,22 +369,20 @@
     }
 
     function scheduleMeasure() {
-      if (disposed || configs.length === 0 || raf !== 0) return;
-      var motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
-      raf = motionScheduler && typeof motionScheduler.request === "function"
-        ? motionScheduler.request(measureNow)
-        : (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
-          ? window.requestAnimationFrame(measureNow)
-          : setTimeout(function() { measureNow(); }, 0));
+      if (disposed || configs.length === 0 || raf != null) return;
+      var rafFn = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : function(callback) { return setTimeout(function() { callback(Date.now()); }, 0); };
+      raf = rafFn(measureNow);
     }
 
     function cancelMeasure() {
-      if (raf === 0) return;
-      var motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
-      if (motionScheduler && typeof motionScheduler.cancel === "function") motionScheduler.cancel(raf);
-      else if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(raf);
-      else clearTimeout(raf);
-      raf = 0;
+      if (raf == null) return;
+      var cancel = typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function"
+        ? window.cancelAnimationFrame.bind(window)
+        : clearTimeout;
+      cancel(raf);
+      raf = null;
     }
 
     function enableGeometryTracking() {
