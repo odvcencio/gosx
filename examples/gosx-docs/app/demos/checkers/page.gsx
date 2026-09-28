@@ -10,13 +10,13 @@ func Page() Node {
 			</p>
 			<p class="checkers-showcase__status" id="checkers-status" role="status">Connecting to the match…</p>
 		</header>
-		<div class="checkers-showcase__scene" aria-label="Three-dimensional Chinese Checkers board scaffold">
+		<div class="checkers-showcase__scene gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage role="region" aria-label="Three-dimensional Chinese Checkers board scaffold">
 			<img
-				class="checkers-showcase__native-preview"
-				src="/checkers-native-preview.png"
+				class="gosx-scene3d-poster"
+				src="/demos/posters/checkers.webp"
 				alt=""
-				width="960"
-				height="600"
+				width="1000"
+				height="625"
 				decoding="async"
 				fetchpriority="high"
 			 />

@@ -8,6 +8,8 @@ func Page() Node {
 		data-quality={data.diagQuality}
 		aria-label="GoSX flagship water simulation demo"
 	>
+		<div class="water-demo__stage gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
+		<img class="gosx-scene3d-poster" src="/demos/posters/water.webp" alt="" width="1000" height="625" decoding="async" fetchpriority="high" />
 		<Scene3D
 			id="water-demo-scene"
 			class="water-demo__scene"
@@ -241,6 +243,7 @@ func Page() Node {
 				bobSpeed={0}
 			 />
 		</Scene3D>
+		</div>
 		<section class="water-demo__intro" aria-labelledby="water-demo-title">
 			<p class="water-demo__eyebrow">
 				<span aria-hidden="true"></span>

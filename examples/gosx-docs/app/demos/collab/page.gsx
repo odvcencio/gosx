@@ -47,11 +47,11 @@ func Page() Node {
 				<div id="collab-preview" class="collab__preview"></div>
 			</div>
 		</div>
-		<footer class="collab__footer">
+		<div class="collab__footer">
 			<span>
 				One shared document. The last accepted edit wins. This demo stores changes in memory only.
 			</span>
-		</footer>
+		</div>
 		<script src="/collab-client.js" defer></script>
 	</section>
 }

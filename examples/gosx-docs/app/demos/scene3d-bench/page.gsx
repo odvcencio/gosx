@@ -10,7 +10,8 @@ func Page() Node {
 			</span>
 		</header>
 		<div class="scene3d-bench__workspace">
-			<div class="scene3d-bench__scene" aria-label="Live 3D workload">
+			<div class="scene3d-bench__scene gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage role="region" aria-label="Live 3D workload">
+				<img class="gosx-scene3d-poster" src="/demos/posters/scene3d-bench.webp" alt="" width="761" height="588" decoding="async" fetchpriority="high" />
 				<Scene3D {...data.scene} />
 			</div>
 			<div class="scene3d-bench__overlay" id="bench3d-overlay" data-workload={data.workload}>

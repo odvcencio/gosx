@@ -49,7 +49,6 @@ func CodeBlock(lang, source string) gosx.Node {
 	return gosx.El("figure", gosx.Attrs(
 		gosx.Attr("class", "code-sample"),
 		gosx.Attr("data-gosx-copy-scope", ""),
-		gosx.Attr("role", "region"),
 		gosx.Attr("aria-label", highlight.Label(normalized)+" code sample"),
 	),
 		gosx.El("figcaption", gosx.Attrs(gosx.Attr("class", "code-sample__head")),
@@ -69,7 +68,10 @@ func CodeBlock(lang, source string) gosx.Node {
 				)),
 			),
 		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "code-sample__body")),
+		gosx.El("div", gosx.Attrs(
+			gosx.Attr("class", "code-sample__body"),
+			gosx.Attr("tabindex", "0"),
+		),
 			gosx.El("pre", gosx.Attrs(
 				gosx.Attr("class", "code-sample__gutter"),
 				gosx.Attr("aria-hidden", "true"),

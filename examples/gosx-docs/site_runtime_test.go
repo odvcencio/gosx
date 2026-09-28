@@ -285,6 +285,13 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	dynamicRouteDir := filepath.Join(root, "app", "docs", "routing", "examples", "[slug]")
+	if err := os.MkdirAll(dynamicRouteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dynamicRouteDir, "page.gsx"), []byte("package docs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "public", "site.webmanifest"), []byte(`{"name":"GoSX Docs"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -352,6 +359,7 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 		"https://docs.example.test/demos/checkers/",
 		"https://docs.example.test/capabilities/",
 		"https://docs.example.test/performance/",
+		"https://docs.example.test/docs/routing/examples/hello-world</loc>",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("sitemap missing %q", required)

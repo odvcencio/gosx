@@ -3,10 +3,12 @@ package docs
 func Page() Node {
 	return <section class="orbital-study" aria-labelledby="orbital-study-title">
 		<div
-			class="orbital-study__scene"
+			class="orbital-study__scene gosx-scene3d-poster-stage"
 			role="group"
 			aria-label="Interactive orbital sculpture. Drag to orbit and scroll or pinch to zoom."
+			data-gosx-scene3d-poster-stage
 		>
+			<img class="gosx-scene3d-poster" src="/demos/posters/showreel.webp" alt="" width="1000" height="625" decoding="async" fetchpriority="high" />
 			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<div class="orbital-study__intro">

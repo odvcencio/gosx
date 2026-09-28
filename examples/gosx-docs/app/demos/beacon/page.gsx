@@ -9,7 +9,8 @@ func Page() Node {
 		data-period={data.period}
 		data-gosx-scene3d-control-scope
 	>
-		<div class="beacon__canvas">
+		<div class="beacon__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
+			<img class="gosx-scene3d-poster" src="/demos/posters/beacon.webp" alt="" width="1000" height="625" decoding="async" fetchpriority="high" />
 			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<form
