@@ -65,7 +65,7 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 		if hubRoomID != roomID {
 			t.Fatalf("%s browser joined room %q from its hub manifest, want requested room %q", name, hubRoomID, roomID)
 		}
-		page.waitFor(t, `document.querySelector('.tabletop__scene-facts p:first-child strong')?.textContent.trim() === '4'`, 10*time.Second, "four seed objects")
+		page.waitFor(t, `document.querySelector('.tabletop__scene-facts p:first-child strong')?.textContent.trim() === '6'`, 10*time.Second, "six seed objects")
 		var horizontalOverflow bool
 		page.eval(t, `document.documentElement.scrollWidth > document.documentElement.clientWidth`, &horizontalOverflow)
 		if horizontalOverflow {
@@ -101,14 +101,14 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 	for time.Since(start) < 5*time.Second {
 		if first.tryEval(`document.querySelector('.tabletop__scene-facts p:first-child strong')?.textContent.trim()`, &firstCount) == nil &&
 			second.tryEval(`document.querySelector('.tabletop__scene-facts p:first-child strong')?.textContent.trim()`, &secondCount) == nil &&
-			firstCount == "5" && secondCount == "5" {
+			firstCount == "7" && secondCount == "7" {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	elapsed := time.Since(start)
-	if firstCount != "5" || secondCount != "5" {
-		t.Fatalf("shared placement counts after %s are first=%q second=%q, want 5 in both\nFirst room:ui events: %s\nSecond room:ui events: %s\n\nFirst console:\n%s\nSecond console:\n%s", elapsed, firstCount, secondCount, evalTabletopHubEvents(first), evalTabletopHubEvents(second), first.Console(), second.Console())
+	if firstCount != "7" || secondCount != "7" {
+		t.Fatalf("shared placement counts after %s are first=%q second=%q, want 7 in both\nFirst room:ui events: %s\nSecond room:ui events: %s\n\nFirst console:\n%s\nSecond console:\n%s", elapsed, firstCount, secondCount, evalTabletopHubEvents(first), evalTabletopHubEvents(second), first.Console(), second.Console())
 	}
 	for name, page := range map[string]*browserPage{"first": first, "second": second} {
 		var rawEvents string
@@ -124,7 +124,7 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 		}
 		var updateAt int64
 		for _, event := range events {
-			if event.Data.Objects == 5 && event.At >= pointerDownAt && (updateAt == 0 || event.At < updateAt) {
+			if event.Data.Objects == 7 && event.At >= pointerDownAt && (updateAt == 0 || event.At < updateAt) {
 				updateAt = event.At
 			}
 		}
