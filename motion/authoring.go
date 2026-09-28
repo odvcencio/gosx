@@ -8,6 +8,32 @@ import (
 	"time"
 )
 
+var motionCSSUnits = map[string]struct{}{
+	"": {}, "px": {}, "%": {}, "em": {}, "rem": {}, "vh": {}, "vw": {},
+	"vmin": {}, "vmax": {}, "deg": {}, "rad": {}, "turn": {}, "ms": {}, "s": {},
+}
+
+var motionStyleProperties = map[string]struct{}{
+	"opacity": {}, "color": {}, "background": {}, "backgroundColor": {}, "background-color": {},
+	"transform": {}, "transform.x": {}, "transform.y": {}, "transform.z": {}, "transform.scale": {}, "transform.rotate": {}, "transform.rotation": {},
+	"width": {}, "height": {}, "minWidth": {}, "maxWidth": {}, "minHeight": {}, "maxHeight": {},
+	"top": {}, "right": {}, "bottom": {}, "left": {}, "margin": {}, "marginTop": {}, "marginRight": {}, "marginBottom": {}, "marginLeft": {},
+	"padding": {}, "paddingTop": {}, "paddingRight": {}, "paddingBottom": {}, "paddingLeft": {},
+	"borderRadius": {}, "filter": {}, "clipPath": {}, "letterSpacing": {}, "wordSpacing": {},
+}
+
+var motionSceneProperties = map[string]struct{}{
+	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
+	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
+	"scale.x": {}, "scale.y": {}, "scale.z": {}, "opacity": {},
+}
+
+var motionCameraProperties = map[string]struct{}{
+	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
+	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
+	"fov": {}, "near": {}, "far": {}, "zoom": {},
+}
+
 // SignalRef names a motion value in a Program.
 type SignalRef string
 
@@ -263,11 +289,12 @@ func (p *Program) Marshal() ([]byte, error) {
 	if p == nil {
 		return nil, errors.New("motion: nil program")
 	}
-	if p.Version == 0 {
-		p.Version = 1
+	version := p.Version
+	if version == 0 {
+		version = 1
 	}
-	if p.Version != 1 {
-		return nil, fmt.Errorf("motion: unsupported program version %d", p.Version)
+	if version != 1 {
+		return nil, fmt.Errorf("motion: unsupported program version %d", version)
 	}
 	if strings.TrimSpace(p.ID) == "" {
 		return nil, errors.New("motion: program id is required")
@@ -283,6 +310,16 @@ func (p *Program) Marshal() ([]byte, error) {
 		}
 		ids[id] = struct{}{}
 	}
+	for _, signal := range p.Signals {
+		for _, ref := range []SignalRef{signal.Input, signal.A, signal.B, signal.Weight} {
+			if ref == "" {
+				continue
+			}
+			if _, exists := ids[string(ref)]; !exists {
+				return nil, fmt.Errorf("motion: signal %q references unknown signal %q", signal.ID, ref)
+			}
+		}
+	}
 	for _, binding := range p.Bindings {
 		if _, exists := ids[string(binding.Signal)]; !exists {
 			return nil, fmt.Errorf("motion: binding references unknown signal %q", binding.Signal)
@@ -290,13 +327,80 @@ func (p *Program) Marshal() ([]byte, error) {
 		if strings.TrimSpace(binding.Selector) == "" || strings.TrimSpace(binding.Property) == "" {
 			return nil, errors.New("motion: binding selector and property are required")
 		}
+		if err := validateBinding(binding); err != nil {
+			return nil, err
+		}
 	}
 	for _, pin := range p.Pins {
 		if strings.TrimSpace(pin.Scene) == "" || strings.TrimSpace(pin.Node) == "" || strings.TrimSpace(pin.Element) == "" {
 			return nil, errors.New("motion: PinTo requires a scene, node, and element selector")
 		}
 	}
-	return json.Marshal(p)
+	copy := *p
+	copy.Version = version
+	return json.Marshal(&copy)
+}
+
+func validateBinding(binding Binding) error {
+	property := strings.TrimSpace(binding.Property)
+	unit := strings.TrimSpace(binding.Unit)
+	if property != binding.Property || unit != binding.Unit {
+		return errors.New("motion: binding property and unit must not contain surrounding whitespace")
+	}
+	if _, ok := motionCSSUnits[unit]; !ok {
+		return fmt.Errorf("motion: unsupported binding unit %q", binding.Unit)
+	}
+	switch binding.Target {
+	case BindingStyle:
+		if _, ok := motionStyleProperties[property]; !ok {
+			return fmt.Errorf("motion: unsupported style binding property %q", binding.Property)
+		}
+	case BindingCSSVariable:
+		if !validCSSVariable(property) {
+			return fmt.Errorf("motion: invalid CSS variable binding property %q", binding.Property)
+		}
+	case BindingSceneNode:
+		if _, ok := motionSceneProperties[property]; !ok || strings.TrimSpace(binding.Node) == "" || unit != "" {
+			return fmt.Errorf("motion: unsupported scene-node binding property %q", binding.Property)
+		}
+	case BindingMaterialUniform:
+		if !validUniformName(property) || strings.TrimSpace(binding.Node) == "" || unit != "" {
+			return fmt.Errorf("motion: invalid material-uniform binding property %q", binding.Property)
+		}
+	case BindingCamera:
+		if _, ok := motionCameraProperties[property]; !ok || unit != "" {
+			return fmt.Errorf("motion: unsupported camera binding property %q", binding.Property)
+		}
+	default:
+		return fmt.Errorf("motion: unsupported binding target %q", binding.Target)
+	}
+	return nil
+}
+
+func validCSSVariable(property string) bool {
+	if !strings.HasPrefix(property, "--") || len(property) < 3 || len(property) > 128 {
+		return false
+	}
+	for i, r := range property[2:] {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && ((r >= '0' && r <= '9') || r == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validUniformName(property string) bool {
+	if property == "" || len(property) > 64 {
+		return false
+	}
+	for i, r := range property {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (p *Program) source(id string, source MotionSource) SignalRef {

@@ -57,3 +57,73 @@ func TestProgramMarshalRejectsInvalidReferences(t *testing.T) {
 		t.Fatalf("Marshal error = %v, want unknown signal", err)
 	}
 }
+
+func TestProgramMarshalDoesNotMutateVersion(t *testing.T) {
+	p := NewProgram("version-default")
+	p.Version = 0
+	data, err := p.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Version != 0 {
+		t.Fatalf("Marshal mutated Version to %d", p.Version)
+	}
+	var got Program
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != 1 {
+		t.Fatalf("serialized version = %d, want 1", got.Version)
+	}
+}
+
+func TestProgramMarshalRejectsUnsafeBindingValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		binding Binding
+	}{
+		{name: "unknown target", binding: Binding{Target: "script", Selector: "#target", Property: "opacity"}},
+		{name: "cssText", binding: Binding{Target: BindingStyle, Selector: "#target", Property: "cssText"}},
+		{name: "trimmed property", binding: Binding{Target: BindingStyle, Selector: "#target", Property: " opacity "}},
+		{name: "unsafe unit", binding: Binding{Target: BindingCSSVariable, Selector: "#target", Property: "--offset", Unit: ";display:none"}},
+		{name: "trimmed unit", binding: Binding{Target: BindingCSSVariable, Selector: "#target", Property: "--offset", Unit: " px "}},
+		{name: "malformed css variable", binding: Binding{Target: BindingCSSVariable, Selector: "#target", Property: "--x; color"}},
+		{name: "unknown scene property", binding: Binding{Target: BindingSceneNode, Selector: "#scene", Node: "node", Property: "__proto__"}},
+		{name: "uniform injection", binding: Binding{Target: BindingMaterialUniform, Selector: "#scene", Node: "mesh", Property: "glow;opacity"}},
+		{name: "camera unit", binding: Binding{Target: BindingCamera, Selector: "#scene", Property: "position.z", Unit: "px"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			p := NewProgram("unsafe-binding")
+			signal := p.Time("time")
+			test.binding.Signal = signal
+			p.bind(test.binding)
+			if _, err := p.Marshal(); err == nil {
+				t.Fatal("Marshal accepted unsafe binding")
+			}
+		})
+	}
+}
+
+func TestProgramMarshalRejectsUnknownSignalInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*SignalSpec)
+	}{
+		{name: "input", set: func(s *SignalSpec) { s.Input = "missing" }},
+		{name: "a", set: func(s *SignalSpec) { s.A = "missing" }},
+		{name: "b", set: func(s *SignalSpec) { s.B = "missing" }},
+		{name: "weight", set: func(s *SignalSpec) { s.Weight = "missing" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			p := NewProgram("unknown-input")
+			spec := SignalSpec{ID: "derived", Kind: SignalMix}
+			test.set(&spec)
+			p.Signals = append(p.Signals, spec)
+			if _, err := p.Marshal(); err == nil {
+				t.Fatal("Marshal accepted unknown signal input")
+			}
+		})
+	}
+}

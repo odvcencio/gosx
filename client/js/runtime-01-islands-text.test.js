@@ -653,15 +653,54 @@ test("bootstrap lite mounts managed motion blocks and plays load presets", async
   await flushAsyncWork();
 
   raf.flush(0);
-  raf.flush(100);
+  assert.equal(block.style.opacity, "0", "the preset's first keyframe is applied immediately for backwards fill");
+  assert.equal(block.style.transform, "translate3d(0px, 24px, 0px)", "slide-up uses its authored first transform keyframe");
+  assert.equal(block.style.opacity, "0", "the first frame still holds the initial keyframe during the delay");
+  raf.flush(20);
+  assert.equal(block.style.opacity, "0", "the configured 40 ms delay has not elapsed");
+  raf.flush(220);
+  assert.ok(Math.abs(Number(block.style.opacity) - 0.75) < 1e-6, "ease-out shapes the midpoint of the 360 ms preset");
+  assert.equal(block.style.transform, "translate3d(0px, 6px, 0px)", "the transform follows the same eased keyframes");
+
   raf.flush(500);
+  raf.flush(1000);
   await Promise.resolve();
 
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(block.getAttribute("data-gosx-motion-state"), "finished");
   assert.equal(block.animateCalls.length, 0, "the shared runtime drives the preset without a second WAAPI loop");
   assert.equal(block.style.opacity, "1");
-  assert.equal(block.style.transform, "translate3d(0px, 0px, 0px)");
+  assert.equal(block.style.transform, "translate3d(0, 0, 0)");
+});
+
+test("bootstrap lite holds each split motion unit through its stagger delay", async () => {
+  const block = new FakeElement("p", null);
+  block.textContent = "ab";
+  block.setAttribute("data-gosx-motion", "");
+  block.setAttribute("data-gosx-motion-preset", "fade");
+  block.setAttribute("data-gosx-motion-split", "char");
+  block.setAttribute("data-gosx-motion-duration", "100");
+  block.setAttribute("data-gosx-motion-delay", "20");
+  block.setAttribute("data-gosx-motion-stagger", "30");
+  block.setAttribute("data-gosx-motion-easing", "ease-out");
+
+  const env = createContext({ elements: [block], performanceNow: () => 0 });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
+  await flushAsyncWork();
+
+  raf.flush(0);
+  const units = block.children;
+  assert.equal(units.length, 2);
+  assert.equal(units[0].style.opacity, "0", "the first unit immediately receives its first keyframe");
+  assert.equal(units[1].style.opacity, "0", "the staggered unit immediately receives the same backwards fill");
+  raf.flush(10);
+  assert.equal(units[0].style.opacity, "0", "both units remain hidden before the base delay");
+  assert.equal(units[1].style.opacity, "0", "the second unit remains hidden before its stagger delay");
+
+  raf.flush(70);
+  assert.ok(Math.abs(Number(units[0].style.opacity) - 0.75) < 1e-6, "the first unit follows eased progress after its delay");
+  assert.ok(Math.abs(Number(units[1].style.opacity) - 0.36) < 1e-6, "the second unit starts after the additional stagger interval");
 });
 
 test("bootstrap lite respects reduced motion on managed motion blocks", async () => {

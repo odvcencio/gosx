@@ -1424,7 +1424,8 @@
       applySceneRenderLoopState(animation.reason);
     }
 
-    function runSceneFrame() {
+    function runSceneFrame() { return sceneRunFrameGuard(runSceneFrameInner, arguments, function() { return frameHandle === -1; }, function() { frameHandle = 0; }); }
+    function runSceneFrameInner() {
         const now = motionScheduler && typeof motionScheduler.now === "function" ? motionScheduler.now() : arguments[0];
         if (frameHandle !== -1) frameHandle = 0;
         const scheduledRender = renderHandle === -1;
@@ -1432,6 +1433,7 @@
         if (disposed) return;
         const animation = sceneAnimationState();
         if (initPending || (!animation.wants && !scheduledRender) || !sceneCanRender()) { if (sceneFrameRegistration) sceneFrameRegistration.setActive(false); if (frameHandle === -1) frameHandle = 0; applySceneRenderLoopState(animation.reason); return; }
+        if (scheduledRender) { renderFrame(now, lastRenderReason || "refresh"); return; }
         if (animation.wants && framePacingEnabled) {
           var rawTickDeltaMS = lastAnimationFrameAt > 0 && typeof now === "number" ? Math.max(0, now - lastAnimationFrameAt) : 0;
           if (typeof now === "number") {
@@ -2279,7 +2281,7 @@
 	      // drags still fall through to camera navigation.
 	      sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
 	        return viewport;
-	      }, readSceneSourceCamera, scheduleRender);
+	      }, readSceneSourceCamera, scheduleRender, sceneState);
 	      dragHandle = sceneControlHandle.controller
 	        ? { dispose() {} }
 	        : setupSceneDragInteractions(canvas, props, function() {
@@ -3034,10 +3036,9 @@
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
-          applyMotionBindingsToRuntimeBundle.call(null, runtimeBundle, sceneState);
           const effectiveBundle = sceneBundleWithCameraOverride(
-            runtimeBundle,
-            sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
+            applySceneMotionBindings(runtimeBundle, sceneState, sceneControlHandle),
+            sceneCurrentControlCamera(sceneControlController(sceneControlHandle), runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
@@ -3110,7 +3111,7 @@
       const computeQualityScale = sceneQualityLadderComputeBudgetScale(adaptiveQuality);
       const computeQualitySourceInstances = sceneComputeParticlesInstanceCount(sceneState.computeParticles);
       const computeQualityActiveInstances = sceneComputeParticlesInstanceCount(qualityScaledComputeParticles);
-      latestBundle = createSceneRenderBundle(
+      latestBundle = applySceneMotionBindings(createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
@@ -3134,9 +3135,8 @@
           rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
           meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
         },
-      );
-      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven;
-      sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
+      ), sceneState, sceneControlHandle);
+      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
       // this frame (0 when no ladder is active or nothing was tagged). Same

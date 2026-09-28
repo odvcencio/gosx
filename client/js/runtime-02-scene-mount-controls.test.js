@@ -277,6 +277,108 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 2);
 });
 
+async function mountSharedRuntimeSceneForFrameRegression(id, props, onRenderEngine) {
+  const mount = new FakeElement("div", null);
+  mount.id = id + "-root";
+  mount.width = 320;
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      ["/" + id + ".json"]: { text: "{\"name\":\"" + id + "\"}" },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [{
+        id: id,
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mount.id,
+        runtime: "shared",
+        props: Object.assign({ width: 320, height: 180, background: "#08151f" }, props),
+        programRef: "/" + id + ".json",
+      }],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine,
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+  const mounted = env.context.__gosx.engines.get(id);
+  assert.ok(mounted, "shared Scene3D mount should be ready after its two initial frame boundaries");
+  assert.equal(env.engineRenderCalls.length, 1, "initial shared-runtime render should complete once");
+  return { env, mount, mounted, raf };
+}
+
+test("Scene3D eager refresh bypasses maxFrameRate pacing", async () => {
+  const scene = await mountSharedRuntimeSceneForFrameRegression(
+    "gosx-engine-eager-refresh",
+    { maxFrameRate: 1 },
+    () => JSON.stringify({ background: "#08151f", camera: { x: 0, y: 0, z: 6, fov: 72 }, objectCount: 0 }),
+  );
+
+  scene.raf.flush(48);
+  await flushAsyncWork();
+  const rendersAt48 = scene.env.engineRenderCalls.length;
+  scene.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, rendersAt48, "the one-frame animation cap skips the following display tick");
+  const rendersBeforeRefresh = scene.env.engineRenderCalls.length;
+
+  scene.mounted.handle.updateSceneProps({ maxPixelRatio: 1.5 });
+  await flushAsyncWork();
+  scene.raf.flush(80);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, rendersBeforeRefresh + 1, "an eager viewport refresh renders on the next frame despite the animation cap: " + JSON.stringify({
+    raf: scene.raf.count(),
+    loop: scene.mount.getAttribute("data-gosx-scene3d-render-loop"),
+    reason: scene.mount.getAttribute("data-gosx-scene3d-render-loop-reason"),
+    scheduleCounts: scene.mount.__gosxScene3DScheduleCounts,
+    errors: scene.env.consoleLogs.error,
+  }));
+});
+
+test("Scene3D animation resumes after a scene frame throws", async () => {
+  let calls = 0;
+  const scene = await mountSharedRuntimeSceneForFrameRegression(
+    "gosx-engine-frame-recovery",
+    {},
+    () => {
+      calls++;
+      if (calls === 2) throw new Error("intentional frame failure");
+      return JSON.stringify({ background: "#08151f", camera: { x: 0, y: 0, z: 6, fov: 72 }, objectCount: 0 });
+    },
+  );
+
+  scene.raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, 2, "the next animation frame should reach the injected failure");
+  assert.ok(scene.env.consoleLogs.error.some((entry) => entry.includes("intentional frame failure")));
+
+  scene.mounted.handle.updateSceneProps({ maxPixelRatio: 1.5 });
+  await flushAsyncWork();
+  scene.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, 3, "an eager refresh can recover the scene after the failed frame");
+  assert.equal(scene.raf.count(), 1, "the recovered scene must register its next animation frame: " + JSON.stringify({
+    loop: scene.mount.getAttribute("data-gosx-scene3d-render-loop"),
+    reason: scene.mount.getAttribute("data-gosx-scene3d-render-loop-reason"),
+    scheduleCounts: scene.mount.__gosxScene3DScheduleCounts,
+    errors: scene.env.consoleLogs.error,
+  }));
+
+  scene.raf.flush(80);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, 4, "animation continues after the recovery render");
+});
+
 test("Scene3D scroll camera offset moves camera by absolute scroll pixels", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-scroll-offset-root";

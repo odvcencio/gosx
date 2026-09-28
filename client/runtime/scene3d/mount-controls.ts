@@ -32,6 +32,22 @@
     }
   }
 
+  // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
+  function sceneRunFrameGuard(callback, args, shouldRecover, recover) {
+    try { return callback.apply(null, args); } catch (error) { if (shouldRecover()) recover(); throw error; }
+  }
+
+  // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
+  function sceneControlController(handle) {
+    return handle && handle.controller;
+  }
+
+  // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
+  function applySceneMotionBindings(bundle, sceneState, controlHandle) {
+    applyMotionBindingsToRuntimeBundle.call(null, bundle, sceneState, sceneControlController(controlHandle));
+    return bundle;
+  }
+
   function motionSceneProperty() {
     const target = arguments[0], property = arguments[1], value = arguments[2];
     if (!target || typeof target !== "object") return;
@@ -67,8 +83,17 @@
   }
 
   function applyMotionBindingsToRuntimeBundle() {
-    const bundle = arguments[0], sceneState = arguments[1];
-    for (const item of sceneState._gosxMotionRuntimeBindings || []) applyMotionBindingToRuntimeBundle.call(null, bundle, item.binding, item.value);
+    const bundle = arguments[0], sceneState = arguments[1], controls = arguments[2];
+    const layers = sceneState && sceneState._gosxMotionRuntimeBindings;
+    if (!bundle || !layers || typeof layers.values !== "function") return;
+    let cameraOverride = false;
+    for (const layer of layers.values()) {
+      for (const item of layer.values()) {
+        applyMotionBindingToRuntimeBundle.call(null, bundle, item.binding, item.value);
+        if (item.binding.target === "camera") cameraOverride = true;
+      }
+    }
+    if (cameraOverride) applySceneControlsCamera(controls, bundle.camera);
   }
 
   function attachSceneMotionBridge() {
@@ -77,34 +102,50 @@
     if (!motion || typeof motion.attachScene !== "function") return function() {};
     return motion.attachScene(mount, {
       write: function() {
-        const binding = arguments[0], value = arguments[1];
-        /** @type {Array<any>} */
-        const entries = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = []);
+        const binding = arguments[0], value = arguments[1], programToken = arguments[2] || "motion";
+        /** @type {Map<object|string, Map<string, any>>} */
+        const layers = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = new Map());
+        let entries = layers.get(programToken);
+        if (!entries) { entries = new Map(); layers.set(programToken, entries); }
         const key = [binding.target, binding.node || "", binding.property || ""].join("|");
-        let item = entries.find(function() { return arguments[0].key === key; });
-        if (!item) { item = { key: key, binding: binding }; entries.push(item); }
-        item.value = value;
-        if (binding.target === "camera") {
-          const field = motionSceneCameraProperty.call(null, binding.property);
-          if (field) motionSceneProperty.call(null, sceneState.camera, field, value);
-        } else if (binding.target === "materialUniform") {
-          const uniforms = sceneResolveMaterialUniforms(sceneState, binding.node);
-          if (uniforms) uniforms[binding.property] = value;
-        } else if (binding.target === "sceneNode") {
-          motionSceneProperty.call(null, sceneState.objects && sceneState.objects.get(String(binding.node)), binding.property, value);
-        }
+        entries.set(key, { key: key, binding: Object.assign({}, binding), value: value });
       },
       pin: function() {
-        const pin = arguments[0], elementRect = arguments[1], sceneRect = arguments[2];
-        const object = sceneState.objects && sceneState.objects.get(String(pin.node || ""));
-        if (!object || !(sceneRect.width > 0) || !(sceneRect.height > 0)) return false;
+        const pin = arguments[0], elementRect = arguments[1], sceneRect = arguments[2], programToken = arguments[3] || "motion";
+        if (!(sceneRect.width > 0) || !(sceneRect.height > 0)) return false;
         const camera = sceneState.camera || {}, distance = Math.max(0.01, Math.abs(sceneNumber(camera.z, 6)));
         const worldHeight = 2 * distance * Math.tan(sceneNumber(camera.fov, 75) * Math.PI / 360);
         const x = sceneNumber(camera.x, 0) + (elementRect.left + elementRect.width * 0.5 - sceneRect.left - sceneRect.width * 0.5) * worldHeight / sceneRect.height;
         const y = sceneNumber(camera.y, 0) + (sceneRect.top + sceneRect.height * 0.5 - elementRect.top - elementRect.height * 0.5) * worldHeight / sceneRect.height;
-        if (Object.is(object.x, x) && Object.is(object.y, y)) return false;
-        object.x = x; object.y = y;
-        return true;
+        const layers = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = new Map());
+        let entries = layers.get(programToken);
+        if (!entries) { entries = new Map(); layers.set(programToken, entries); }
+        const node = String(pin.node || "");
+        const xKey = ["sceneNode", node, "position.x"].join("|");
+        const yKey = ["sceneNode", node, "position.y"].join("|");
+        const oldX = entries.get(xKey), oldY = entries.get(yKey);
+        const changed = !oldX || !oldY || !Object.is(oldX.value, x) || !Object.is(oldY.value, y);
+        entries.set(xKey, { key: xKey, binding: { target: "sceneNode", node: node, property: "position.x" }, value: x });
+        entries.set(yKey, { key: yKey, binding: { target: "sceneNode", node: node, property: "position.y" }, value: y });
+        return changed;
+      },
+      disposeProgram: function() {
+        const layers = sceneState._gosxMotionRuntimeBindings;
+        if (!layers || typeof layers.delete !== "function" || !layers.delete(arguments[0] || "motion")) return;
+        const baseCamera = sceneState.camera;
+        let camera = baseCamera && typeof baseCamera === "object" ? Object.assign({}, baseCamera) : {};
+        let hasCameraOverride = false;
+        for (const layer of layers.values()) for (const item of layer.values()) if (item.binding.target === "camera") {
+          const field = motionSceneCameraProperty.call(null, item.binding.property);
+          if (field) {
+            if (!camera || typeof camera !== "object") camera = {};
+            camera[field] = item.value;
+            hasCameraOverride = true;
+          }
+        }
+        if (!hasCameraOverride) camera = baseCamera;
+        applySceneControlsCamera(sceneState._gosxMotionController, camera);
+        scheduleRender("motion-dispose");
       },
       invalidate: function() { scheduleRender("motion-binding"); },
     });
@@ -978,8 +1019,10 @@
     return true;
   }
 
-  function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender) {
+  // @ts-ignore TS7006 -- keep this call site JavaScript-compatible in the runtime bundle
+  function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
     const controls = createSceneControls(props);
+    if (sceneState) sceneState._gosxMotionController = controls;
     if (!canvas || !controls) {
       return {
         controller: controls,
@@ -1191,6 +1234,7 @@
       dispose() {
         detachDocumentListeners();
         cancelOrbitInertia();
+        if (sceneState) sceneState._gosxMotionController = null;
         if (flyFrame) {
           sceneMotionCancelFrame.call(null, flyFrame);
           flyFrame = 0;

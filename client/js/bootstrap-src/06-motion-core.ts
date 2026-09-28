@@ -18,6 +18,12 @@
     return Number.isFinite(number) ? number : fallback;
   }
 
+  function motionNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  }
+
   function motionClamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -35,6 +41,39 @@
     return Object.is(a, b);
   }
 
+  const motionCSSUnits = new Set(["", "px", "%", "em", "rem", "vh", "vw", "vmin", "vmax", "deg", "rad", "turn", "ms", "s"]);
+  const motionStyleProperties = new Set([
+    "opacity", "color", "background", "backgroundColor", "background-color", "transform",
+    "transform.x", "transform.y", "transform.z", "transform.scale", "transform.rotate", "transform.rotation",
+    "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight", "top", "right", "bottom", "left",
+    "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "padding", "paddingTop", "paddingRight",
+    "paddingBottom", "paddingLeft", "borderRadius", "filter", "clipPath", "letterSpacing", "wordSpacing",
+  ]);
+  const motionSceneProperties = new Set([
+    "x", "y", "z", "position.x", "position.y", "position.z", "rotation.x", "rotation.y", "rotation.z",
+    "rotationX", "rotationY", "rotationZ", "scale.x", "scale.y", "scale.z", "opacity",
+  ]);
+  const motionCameraProperties = new Set([
+    "x", "y", "z", "position.x", "position.y", "position.z", "rotation.x", "rotation.y", "rotation.z",
+    "rotationX", "rotationY", "rotationZ", "fov", "near", "far", "zoom",
+  ]);
+
+  function motionBindingIsValid(binding) {
+    if (!binding || typeof binding !== "object") return false;
+    if ((binding.target != null && typeof binding.target !== "string") || typeof binding.property !== "string" ||
+        (binding.unit != null && typeof binding.unit !== "string")) return false;
+    const target = binding.target || "style";
+    const property = binding.property;
+    const unit = binding.unit || "";
+    if (property !== property.trim() || unit !== unit.trim() || !motionCSSUnits.has(unit)) return false;
+    if (target === "style") return motionStyleProperties.has(property);
+    if (target === "cssVar") return /^--[A-Za-z_][A-Za-z0-9_-]{0,125}$/.test(property);
+    if (target === "sceneNode") return motionSceneProperties.has(property) && typeof binding.node === "string" && Boolean(binding.node.trim()) && unit === "";
+    if (target === "materialUniform") return /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(property) && typeof binding.node === "string" && Boolean(binding.node.trim()) && unit === "";
+    if (target === "camera") return motionCameraProperties.has(property) && unit === "";
+    return false;
+  }
+
   function motionMix(a, b, t) {
     if (Array.isArray(a) && Array.isArray(b)) {
       const out = new Array(Math.min(a.length, b.length));
@@ -47,13 +86,13 @@
   function createMotionScheduler() {
     const phases = { read: new Set(), evaluate: new Set(), write: new Set() };
     const rectRecords = new Map();
-    let rectMutationObserver = null;
     const continuous = new Set();
     const sceneRecords = new Set();
     let frameCallbacks = new Map();
     let writes = new Map();
     let nextID = 0;
     let frameHandle = null;
+    let activeFrameCallbacks = null;
     let frameKind = "raf";
     let inFrame = false;
     let lastFrameMS = null;
@@ -117,6 +156,7 @@
     function cancel(id) {
       if (id == null || id === 0) return;
       frameCallbacks.delete(id);
+      if (activeFrameCallbacks) activeFrameCallbacks.delete(id);
       if (!hasWork()) cancelScheduled();
     }
 
@@ -182,10 +222,6 @@
       const rect = element.getBoundingClientRect();
       const x = motionNumber(window.scrollX, 0);
       const y = motionNumber(window.scrollY, 0);
-      let position = "";
-      try { position = window.getComputedStyle ? window.getComputedStyle(element).position : ""; } catch (_error) {}
-      record.fixed = position === "fixed";
-      record.sticky = position === "sticky" || position === "-webkit-sticky";
       record.left = motionNumber(rect.left, 0) + (record.fixed ? 0 : x);
       record.top = motionNumber(rect.top, 0) + (record.fixed ? 0 : y);
       record.width = Math.max(0, motionNumber(rect.width, rect.right - rect.left));
@@ -194,39 +230,26 @@
       record.dirty = false;
     }
 
-    function invalidateRects() {
-      for (const record of rectRecords.values()) record.dirty = true;
-    }
-
-    function ensureRectMutationObserver() {
-      if (rectMutationObserver || typeof MutationObserver !== "function" || typeof document === "undefined") return;
-      const root = document.documentElement || document.body;
-      if (!root) return;
-      try {
-        rectMutationObserver = new MutationObserver(function(changes) {
-          if (!changes || !changes.length) return;
-          invalidateRects();
-          requestWork();
-        });
-        rectMutationObserver.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "style", "hidden", "width", "height"] });
-      } catch (_error) {
-        rectMutationObserver = null;
+    function rectPositionAncestry(element) {
+      let fixed = false;
+      let sticky = false;
+      for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
+        let position = "";
+        try { position = window.getComputedStyle ? window.getComputedStyle(node).position : ""; } catch (_error) {}
+        if (position === "fixed") fixed = true;
+        if (position === "sticky" || position === "-webkit-sticky") sticky = true;
+        if (fixed && sticky) break;
       }
-    }
-
-    function releaseRectMutationObserver() {
-      if (rectRecords.size !== 0 || !rectMutationObserver) return;
-      rectMutationObserver.disconnect();
-      rectMutationObserver = null;
+      return { fixed: fixed, sticky: sticky };
     }
 
     function observeRect(element) {
       if (!element || typeof element !== "object") return function() {};
       let record = rectRecords.get(element);
       if (!record) {
-        record = { element: element, left: 0, top: 0, width: 0, height: 0, ready: false, dirty: true, observer: null, users: 0 };
+        const position = rectPositionAncestry(element);
+        record = { element: element, left: 0, top: 0, width: 0, height: 0, ready: false, dirty: true, observer: null, users: 0, fixed: position.fixed, sticky: position.sticky };
         rectRecords.set(element, record);
-        ensureRectMutationObserver();
         if (typeof ResizeObserver === "function") {
           try {
             record.observer = new ResizeObserver(function() {
@@ -249,7 +272,6 @@
         if (active !== record || --record.users > 0) return;
         if (record.observer) record.observer.disconnect();
         rectRecords.delete(element);
-        releaseRectMutationObserver();
       };
     }
 
@@ -306,8 +328,19 @@
       inFrame = true;
       const callbacks = frameCallbacks;
       frameCallbacks = new Map();
+      activeFrameCallbacks = callbacks;
 
       let phaseStart = clockNow();
+      for (const [id, callback] of Array.from(callbacks)) {
+        if (!callbacks.delete(id)) continue;
+        try { callback(currentFrameMS); } catch (error) {
+          if (window.console && typeof window.console.error === "function") window.console.error("[gosx] scheduled frame failed:", error);
+        }
+      }
+      activeFrameCallbacks = null;
+      metrics.maxReadMS = Math.max(metrics.maxReadMS, clockNow() - phaseStart);
+
+      phaseStart = clockNow();
       readRects();
       runCallbacks(phases.read, [currentFrameMS, deltaSeconds]);
       metrics.maxReadMS = Math.max(metrics.maxReadMS, clockNow() - phaseStart);
@@ -330,11 +363,6 @@
       metrics.maxWriteMS = Math.max(metrics.maxWriteMS, clockNow() - phaseStart);
 
       phaseStart = clockNow();
-      for (const callback of callbacks.values()) {
-        try { callback(currentFrameMS); } catch (error) {
-          if (window.console && typeof window.console.error === "function") window.console.error("[gosx] scheduled frame failed:", error);
-        }
-      }
       for (const record of Array.from(sceneRecords)) {
         if (record.disposed || (!record.active && !record.dirty)) continue;
         record.dirty = false;
@@ -356,12 +384,18 @@
     function snapshotMetrics() { return Object.assign({}, metrics); }
 
     function handleScroll(event) {
+      if (rectRecords.size === 0) return;
       const target = event && event.target;
       const scrolling = document.scrollingElement || document.documentElement || document.body;
       for (const record of rectRecords.values()) {
-        if (record.fixed || record.sticky || (target && target !== window && target !== document && target !== scrolling && target !== document.documentElement && target !== document.body)) record.dirty = true;
+        const nestedScroll = target && target !== window && target !== document && target !== scrolling && target !== document.documentElement && target !== document.body;
+        if ((nestedScroll && target.contains && target.contains(record.element)) || (!nestedScroll && (record.fixed || record.sticky))) record.dirty = true;
       }
       requestWork();
+    }
+
+    function invalidateRects() {
+      for (const record of rectRecords.values()) record.dirty = true;
     }
 
     if (typeof window.addEventListener === "function") {
@@ -501,188 +535,6 @@
     return 3 * x1 * (1 - u) * (1 - 3 * u) + 3 * x2 * u * (2 - 3 * u) + 3 * u * u;
   }
 
-  function motionSlerp(a, b, t) {
-    let bx = b[0], by = b[1], bz = b[2], bw = b[3];
-    let dot = a[0] * bx + a[1] * by + a[2] * bz + a[3] * bw;
-    if (dot < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; dot = -dot; }
-    if (dot > 0.9995) {
-      const x = a[0] + t * (bx - a[0]);
-      const y = a[1] + t * (by - a[1]);
-      const z = a[2] + t * (bz - a[2]);
-      const w = a[3] + t * (bw - a[3]);
-      const inv = 1 / Math.sqrt(x*x + y*y + z*z + w*w || 1);
-      return [x*inv, y*inv, z*inv, w*inv];
-    }
-    dot = motionClamp(dot, -1, 1);
-    const theta = Math.acos(dot);
-    const sinTheta = Math.sin(theta);
-    const wa = Math.sin((1-t)*theta) / sinTheta;
-    const wb = Math.sin(t*theta) / sinTheta;
-    return [wa*a[0]+wb*bx, wa*a[1]+wb*by, wa*a[2]+wb*bz, wa*a[3]+wb*bw];
-  }
-
-  function motionComponents(value, arity) {
-    const width = arity === 0 ? 1 : (arity === 1 ? 2 : (arity === 2 ? 3 : 4));
-    const values = value && Array.isArray(value.F) ? value.F : [];
-    const out = new Array(width);
-    for (let i = 0; i < width; i++) out[i] = motionNumber(values[i], 0);
-    return out;
-  }
-
-  function motionSpringDuration(from, to, spring) {
-    const mass = motionNumber(spring.Mass != null ? spring.Mass : spring.mass, 1) || 1;
-    const stiffness = motionNumber(spring.Stiffness != null ? spring.Stiffness : spring.stiffness, 100) || 100;
-    const damping = motionNumber(spring.Damping != null ? spring.Damping : spring.damping, 10) || 10;
-    const omega0 = Math.sqrt(stiffness / mass);
-    const zeta = damping / (2 * Math.sqrt(stiffness * mass));
-    const rate = zeta >= 1
-      ? omega0 * (zeta - Math.sqrt(zeta*zeta - 1))
-      : zeta * omega0;
-    if (rate <= 0) return 10;
-    let result;
-    if (zeta >= 1) {
-      const t0 = -Math.log(1e-3) / rate;
-      result = 1.4 * ((-Math.log(1e-3) + Math.log(1 + rate*t0)) / rate);
-    } else {
-      result = 1.4 * (-Math.log(1e-3) / rate);
-    }
-    return Math.min(10, result);
-  }
-
-  function motionSpringValue(from, to, t, spring) {
-    if (t <= 0) return from;
-    if (t >= motionSpringDuration(from, to, spring)) return to;
-    const mass = motionNumber(spring.Mass != null ? spring.Mass : spring.mass, 1) || 1;
-    const stiffness = motionNumber(spring.Stiffness != null ? spring.Stiffness : spring.stiffness, 100) || 100;
-    const damping = motionNumber(spring.Damping != null ? spring.Damping : spring.damping, 10) || 10;
-    let velocity = motionNumber(spring.Velocity != null ? spring.Velocity : spring.velocity, 0);
-    let x = from;
-    const steps = Math.floor(t / (1 / 240));
-    for (let i = 0; i < steps; i++) {
-      const force = -stiffness * (x - to) - damping * velocity;
-      velocity += (force / mass) * (1 / 240);
-      x += velocity * (1 / 240);
-    }
-    return x;
-  }
-
-  function motionValueLerp(a, b, t, arity) {
-    const av = motionComponents(a, arity);
-    const bv = motionComponents(b, arity);
-    if (arity === 4) return motionSlerp(av, bv, t);
-    for (let i = 0; i < av.length; i++) av[i] += t * (bv[i] - av[i]);
-    return av;
-  }
-
-  function motionCubic(a, outTangent, b, inTangent, delta, t, arity) {
-    const av = motionComponents(a, arity), ov = motionComponents(outTangent, arity);
-    const bv = motionComponents(b, arity), iv = motionComponents(inTangent, arity);
-    const t2 = t*t, t3 = t2*t;
-    const h00 = 2*t3 - 3*t2 + 1, h10 = t3 - 2*t2 + t;
-    const h01 = -2*t3 + 3*t2, h11 = t3 - t2;
-    const out = new Array(av.length);
-    for (let i=0;i<out.length;i++) out[i] = h00*av[i] + delta*h10*ov[i] + h01*bv[i] + delta*h11*iv[i];
-    if (arity === 4) {
-      const mag = Math.sqrt(out[0]*out[0]+out[1]*out[1]+out[2]*out[2]+out[3]*out[3]);
-      if (mag < 1e-15) return [0,0,0,1];
-      for (let i=0;i<4;i++) out[i] /= mag;
-    }
-    return out;
-  }
-
-  function motionEvalGenerator(track, time, reduced, out) {
-    const gen = track.Gen || track.gen || {};
-    const kind = motionNumber(gen.Kind != null ? gen.Kind : gen.kind, 0);
-    const base = gen.Base || gen.base || {};
-    const baseValues = motionComponents(base, motionNumber(base.Arity != null ? base.Arity : base.arity, 0));
-    const spring = gen.Spring || gen.spring || {};
-    if (kind === 1) {
-      if (reduced) out.push([0,0,4,0,0,0,1]);
-      else {
-        const spin = gen.Spin || gen.spin || [0,0,0];
-        const x=motionNumber(spin[0],0)*time/2, y=motionNumber(spin[1],0)*time/2, z=motionNumber(spin[2],0)*time/2;
-        const qx=[Math.sin(x),0,0,Math.cos(x)], qy=[0,Math.sin(y),0,Math.cos(y)], qz=[0,0,Math.sin(z),Math.cos(z)];
-        const mul=(a,b)=>[a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1],a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0],a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3],a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
-        const q=mul(mul(qx,qy),qz);
-        out.push([0,0,4,q[0],q[1],q[2],q[3]]);
-      }
-    } else if (kind === 2) {
-      const value = reduced ? motionNumber(baseValues[1],0) : motionSpringValue(motionNumber(baseValues[0],0), motionNumber(baseValues[1],0), time, spring);
-      out.push([0,0,0,value]);
-    } else if (kind === 3) {
-      const drift = gen.Drift || gen.drift || [0,0,0], speed = gen.DriftSpeed || gen.driftSpeed || [0,0,0], phase = gen.DriftPhase || gen.driftPhase || [0,0,0];
-      const x=[];
-      for(let i=0;i<3;i++) x.push(reduced ? motionNumber(baseValues[i],0) : motionNumber(baseValues[i],0)+motionNumber(drift[i],0)*Math.sin(time*motionNumber(speed[i],0)+motionNumber(phase[i],0)));
-      out.push([0,0,2,x[0],x[1],x[2]]);
-    } else if (kind === 4) {
-      const arity=motionNumber(gen.OscArity != null ? gen.OscArity : gen.oscArity,0);
-      const count=arity===0?1:(arity===1?2:(arity===2?3:4));
-      const bases=gen.OscBase||gen.oscBase||[], amps=gen.OscAmp||gen.oscAmp||[], freqs=gen.OscFreq||gen.oscFreq||[], phases=gen.OscPhase||gen.oscPhase||[];
-      const vals=[];
-      for(let i=0;i<count;i++) vals.push(motionNumber(bases[i],0)+(reduced?0:motionNumber(amps[i],0)*Math.sin(time*motionNumber(freqs[i],0)*2*Math.PI+motionNumber(phases[i],0))));
-      out.push([0,0,arity].concat(vals));
-    }
-  }
-
-  function evaluateTimeline(timeline, time, reducedMotion) {
-    const writes = [];
-    function visit(tl, baseOffset) {
-      const children = tl && (tl.Children || tl.children) || [];
-      for (const child of children) {
-        if (!child) continue;
-        const at=child.At||child.at||{};
-        const kind=motionNumber(at.Kind != null?at.Kind:at.kind,0);
-        const start=baseOffset+(kind===0?motionNumber(at.Val != null?at.Val:at.val,0):0);
-        const track=child.Track||child.track;
-        if (track) {
-          const gen=track.Gen||track.gen;
-          const targetID=motionNumber(track.TargetID != null?track.TargetID:track.targetID,0);
-          const propID=motionNumber(track.PropID != null?track.PropID:track.propID,0);
-          if (gen) {
-            const startIndex=writes.length;
-            motionEvalGenerator(track,time,Boolean(reducedMotion),writes);
-            if(writes.length>startIndex){writes[startIndex][0]=targetID; writes[startIndex][1]=propID;}
-            continue;
-          }
-          const keys=track.Keys||track.keys||[];
-          if (!keys.length) continue;
-          let value, arity;
-          if (reducedMotion) {
-            const last=keys[keys.length-1], raw=last.Value||last.value||{};
-            arity=motionNumber(raw.Arity != null?raw.Arity:raw.arity,0); value=motionComponents(raw,arity);
-          } else {
-            const local=time-start;
-            const first=keys[0], last=keys[keys.length-1];
-            const firstV=first.Value||first.value||{}, lastV=last.Value||last.value||{};
-            arity=motionNumber(firstV.Arity != null?firstV.Arity:firstV.arity,0);
-            if(local<=motionNumber(first.T != null?first.T:first.t,0)) value=motionComponents(firstV,arity);
-            else if(local>=motionNumber(last.T != null?last.T:last.t,0)) value=motionComponents(lastV,arity);
-            else {
-              let i=0;
-              while(i<keys.length-2 && motionNumber((keys[i+1].T != null?keys[i+1].T:keys[i+1].t),0)<=local) i++;
-              const ka=keys[i], kb=keys[i+1];
-              const ta=motionNumber(ka.T != null?ka.T:ka.t,0), tb=motionNumber(kb.T != null?kb.T:kb.t,0);
-              const alpha=(local-ta)/(tb-ta), interp=motionNumber(track.Interp != null?track.Interp:track.interp,0);
-              const va=ka.Value||ka.value||{}, vb=kb.Value||kb.value||{};
-              if(interp===1) value=motionComponents(va,arity);
-              else if(interp===2 && (ka.OutTangent||ka.outTangent) && (kb.InTangent||kb.inTangent)) {
-                value=motionCubic(va,ka.OutTangent||ka.outTangent,vb,kb.InTangent||kb.inTangent,tb-ta,alpha,arity);
-              } else {
-                const ease=ka.Ease||ka.ease||track.Ease||track.ease||{};
-                value=motionValueLerp(va,vb,motionEase(alpha,ease),arity);
-              }
-            }
-          }
-          writes.push([targetID,propID,arity].concat(value));
-        }
-        const sub=child.Sub||child.sub;
-        if(sub) visit(sub,start);
-      }
-    }
-    visit(timeline,0);
-    return writes;
-  }
-
   const reducedQuery = typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
     : null;
@@ -719,12 +571,13 @@
 
     function tick(_now, delta) {
       accumulator += motionClamp(delta, 0, 0.25);
-      const steps = Math.floor(accumulator / (1 / 240));
-      accumulator -= steps * (1 / 240);
+      const stepSeconds = 1 / 240;
+      const steps = Math.floor((accumulator + 1e-12) / stepSeconds);
+      accumulator = Math.max(0, accumulator - steps * stepSeconds);
       for (let i = 0; i < steps; i++) {
         const force = -stiffness * (current - target) - damping * velocity;
-        velocity += (force / mass) * (1 / 240);
-        current += velocity * (1 / 240);
+        velocity += (force / mass) * stepSeconds;
+        current += velocity * stepSeconds;
       }
       if (Math.abs(current - target) < 0.001 && Math.abs(velocity) < 0.01) {
         current = target;
@@ -748,7 +601,14 @@
         if (stopContinuous) { stopContinuous(); stopContinuous = null; }
         return;
       }
-      if (reducedMotion && policy === "static") return;
+      if (reducedMotion && policy === "static") {
+        current = target;
+        velocity = 0;
+        accumulator = 0;
+        value.set(current);
+        if (stopContinuous) { stopContinuous(); stopContinuous = null; }
+        return;
+      }
       if (Math.abs(current - target) < 0.001 && Math.abs(velocity) < 0.01) {
         current = target;
         velocity = 0;
@@ -764,6 +624,12 @@
     const stopReduced = function(next) {
       if (next) {
         if (policy === "skip") {
+          current = target;
+          velocity = 0;
+          accumulator = 0;
+          value.set(current);
+        }
+        if (policy === "static") {
           current = target;
           velocity = 0;
           accumulator = 0;
@@ -828,7 +694,13 @@
         stopContinuous = null;
         return;
       }
-      if (reducedMotion && reducedPolicy === "static") return;
+      if (reducedMotion && reducedPolicy === "static") {
+        startValue = motionClone(target);
+        value.set(target);
+        if (stopContinuous) stopContinuous();
+        stopContinuous = null;
+        return;
+      }
       if (reducedMotion && reducedPolicy === "fade") length = Math.min(length || 100, 120);
       if (!stopContinuous) stopContinuous = scheduler.addContinuous(tick);
     }
@@ -838,6 +710,10 @@
     const stopReduced = function(next) {
       if (next) {
         if (reducedPolicy === "skip") value.set(target);
+        if (reducedPolicy === "static") {
+          startValue = motionClone(target);
+          value.set(target);
+        }
         if (reducedPolicy === "fade") {
           startValue = value.get();
           length = Math.min(length || 120, 120);
@@ -918,8 +794,7 @@
       stopContinuous = null;
       reducedListeners.delete(stopReduced);
     };
-    if (reducedMotion && reducedPolicy === "skip") value.set(last);
-    else if (reducedMotion && reducedPolicy === "static") value.set(first);
+    if (reducedMotion && (reducedPolicy === "skip" || reducedPolicy === "static")) value.set(last);
     else {
       if (reducedMotion && reducedPolicy === "fade") total = Math.min(total || 0.12, 0.12);
       stopContinuous = scheduler.addContinuous(tick);
@@ -989,21 +864,130 @@
     const policy = motionReducedPolicy(config.reducedMotion || "skip");
     const reduce = Boolean(config.respectReducedMotion !== false && reducedMotion);
     let active = true;
-    let startMS = scheduler.now() + (reduce ? 0 : delay);
+    let startMS = motionNow() + (reduce ? 0 : delay);
     let stopContinuous = null;
-    let transform = motionTransformComponents(first.transform);
-    const endTransform = motionTransformComponents(last.transform);
     const id = ++nextAnimationID;
     let animateOpacityOnly = reduce && policy === "fade";
     let runtimeDuration = animateOpacityOnly ? Math.min(duration || 120, 120) : duration;
     let stopReduced = null;
     let resolveFinished;
     const finished = new Promise(function(resolve) { resolveFinished = resolve; });
+    const properties = Array.from(new Set(frames.flatMap(function(frame) {
+      return Object.keys(frame || {}).filter(function(property) { return property !== "offset" && property !== "easing"; });
+    })));
+    const offsets = frames.map(function(frame, index) {
+      const raw = motionNumber(frame && frame.offset, NaN);
+      return Number.isFinite(raw) ? motionClamp(raw, 0, 1) : index / (frames.length - 1);
+    });
+    for (let i = 1; i < offsets.length; i++) offsets[i] = Math.max(offsets[i], offsets[i - 1]);
 
-    function finish(styles) {
+    const originalStyles = new Map();
+    const styleName = function(property) {
+      return property.indexOf("--") === 0 ? property : property.replace(/[A-Z]/g, function(letter) { return "-" + letter.toLowerCase(); });
+    };
+    const styleField = function(property) {
+      return property.indexOf("--") === 0 ? property : property.replace(/-([a-z])/g, function(_match, letter) { return letter.toUpperCase(); });
+    };
+    const readInline = function(property) {
+      const cssName = styleName(property);
+      if (typeof element.style.getPropertyValue === "function") {
+        return { css: true, value: element.style.getPropertyValue(cssName), priority: typeof element.style.getPropertyPriority === "function" ? element.style.getPropertyPriority(cssName) : "" };
+      }
+      return { css: false, value: element.style[styleField(property)] || "", priority: "" };
+    };
+    const restoreInline = function(property, original) {
+      const cssName = styleName(property);
+      if (original.css && typeof element.style.setProperty === "function") {
+        if (original.value || original.priority) element.style.setProperty(cssName, original.value, original.priority);
+        else if (typeof element.style.removeProperty === "function") element.style.removeProperty(cssName);
+        else element.style.setProperty(cssName, "");
+      } else {
+        element.style[styleField(property)] = original.value;
+      }
+    };
+    for (const property of properties) originalStyles.set(property, readInline(property));
+    const originalTransition = readInline("transition");
+    let transitionSuppressed = false;
+
+    function safeFinalStyles() {
+      const styles = Object.assign({}, last);
+      if (typeof last.opacity === "number" || (typeof last.opacity === "string" && last.opacity.trim() !== "")) {
+        let naturalOpacity = NaN;
+        try {
+          const computed = window.getComputedStyle && window.getComputedStyle(element);
+          naturalOpacity = motionNumber(computed && computed.opacity, NaN);
+        } catch (_error) {}
+        if (!Number.isFinite(naturalOpacity)) naturalOpacity = motionNumber(originalStyles.get("opacity") && originalStyles.get("opacity").value, 1);
+        styles.opacity = Math.max(naturalOpacity, motionNumber(last.opacity, naturalOpacity));
+      }
+      return styles;
+    }
+
+    function applyStyles(styles, restoreTransitionAfter) {
       scheduler.queueWrite("motion-animation:" + id, function() {
         for (const property of Object.keys(styles)) motionSetStyle(element, property, styles[property]);
+        if (restoreTransitionAfter && transitionSuppressed) {
+          restoreInline("transition", originalTransition);
+          transitionSuppressed = false;
+        }
       });
+    }
+
+    function setTransitionSuppressed() {
+      if (typeof element.style.setProperty === "function") element.style.setProperty("transition", "none", "important");
+      else element.style.transition = "none";
+      transitionSuppressed = true;
+    }
+
+    function applyStaticStyles() {
+      const styles = safeFinalStyles();
+      setTransitionSuppressed();
+      for (const property of Object.keys(styles)) motionSetStyle(element, property, styles[property]);
+      restoreInline("transition", originalTransition);
+      transitionSuppressed = false;
+    }
+
+    function sample(progress) {
+      let index = 0;
+      while (index < frames.length - 2 && progress > offsets[index + 1]) index++;
+      const a = frames[index] || first;
+      const b = frames[index + 1] || last;
+      const start = offsets[index] || 0;
+      const end = offsets[index + 1] == null ? 1 : offsets[index + 1];
+      const local = end <= start ? 1 : motionClamp((progress - start) / (end - start), 0, 1);
+      const segmentEase = motionResolveEase(a.easing || config.easing || ease);
+      const eased = motionEase(local, segmentEase);
+      const styles = {};
+      for (const property of properties) {
+        const from = a[property];
+        const to = b[property];
+        if (animateOpacityOnly && property !== "opacity") {
+          styles[property] = last[property];
+        } else if (property === "opacity" && typeof from === "number" && typeof to === "number") {
+          styles.opacity = from + (to - from) * eased;
+        } else if (property === "transform" && !animateOpacityOnly) {
+          const fromTransform = motionTransformComponents(from);
+          const toTransform = motionTransformComponents(to);
+          if (fromTransform.known && toTransform.known) {
+            styles.transform = motionFormatTransform({
+              x: fromTransform.x + (toTransform.x - fromTransform.x) * eased,
+              y: fromTransform.y + (toTransform.y - fromTransform.y) * eased,
+              z: fromTransform.z + (toTransform.z - fromTransform.z) * eased,
+              rotate: fromTransform.rotate + (toTransform.rotate - fromTransform.rotate) * eased,
+              scale: fromTransform.scale + (toTransform.scale - fromTransform.scale) * eased,
+              base: toTransform.base || fromTransform.base,
+              known: true,
+            });
+          } else styles[property] = local >= 1 ? to : from;
+        } else {
+          styles[property] = local >= 1 ? to : from;
+        }
+      }
+      return styles;
+    }
+
+    function finish(styles) {
+      applyStyles(styles, true);
       active = false;
       if (stopContinuous) stopContinuous();
       stopContinuous = null;
@@ -1016,44 +1000,19 @@
       return { finished: finished, cancel: function() { active = false; } };
     }
     if (reduce && policy === "static") {
+      applyStaticStyles();
       active = false;
       resolveFinished({ finished: true });
       return { finished: finished, cancel: function() { active = false; } };
     }
-    for (const property of Object.keys(first)) {
-      motionSetStyle(element, property, animateOpacityOnly && property !== "opacity" ? last[property] : first[property]);
-    }
+    setTransitionSuppressed();
+    for (const property of Object.keys(sample(0))) motionSetStyle(element, property, sample(0)[property]);
     function tick(now) {
       if (!active) return false;
       const elapsed = now - startMS;
       if (elapsed < 0) return true;
       const progress = runtimeDuration <= 0 ? 1 : motionClamp(elapsed / runtimeDuration, 0, 1);
-      const eased = motionEase(progress, ease);
-      const styles = {};
-      for (const property of Object.keys(last)) {
-        if (animateOpacityOnly && property !== "opacity") {
-          styles[property] = last[property];
-          continue;
-        }
-        if (property === "opacity" && typeof first.opacity === "number" && typeof last.opacity === "number") {
-          styles.opacity = first.opacity + (last.opacity - first.opacity) * eased;
-        } else if (property === "transform" && transform.known && endTransform.known && !animateOpacityOnly) {
-          styles.transform = motionFormatTransform({
-            x: transform.x + (endTransform.x - transform.x) * eased,
-            y: transform.y + (endTransform.y - transform.y) * eased,
-            z: transform.z + (endTransform.z - transform.z) * eased,
-            rotate: transform.rotate + (endTransform.rotate - transform.rotate) * eased,
-            scale: transform.scale + (endTransform.scale - transform.scale) * eased,
-            base: endTransform.base || transform.base,
-            known: true,
-          });
-        } else {
-          styles[property] = progress >= 1 ? last[property] : first[property];
-        }
-      }
-      scheduler.queueWrite("motion-animation:" + id, function() {
-        for (const property of Object.keys(styles)) motionSetStyle(element, property, styles[property]);
-      });
+      applyStyles(progress >= 1 ? last : sample(progress), progress >= 1);
       if (progress >= 1) {
         active = false;
         stopContinuous = null;
@@ -1069,6 +1028,7 @@
       if (policy === "skip") {
         finish(last);
       } else if (policy === "static") {
+        applyStyles(safeFinalStyles(), true);
         active = false;
         if (stopContinuous) stopContinuous();
         stopContinuous = null;
@@ -1077,7 +1037,7 @@
       } else {
         animateOpacityOnly = true;
         runtimeDuration = Math.min(runtimeDuration || 120, 120);
-        startMS = scheduler.now();
+        startMS = motionNow();
       }
     };
     reducedListeners.add(stopReduced);
@@ -1090,6 +1050,13 @@
         if (stopContinuous) stopContinuous();
         stopContinuous = null;
         if (stopReduced) reducedListeners.delete(stopReduced);
+        scheduler.queueWrite("motion-animation:" + id, function() {
+          for (const [property, original] of originalStyles) restoreInline(property, original);
+          if (transitionSuppressed) {
+            restoreInline("transition", originalTransition);
+            transitionSuppressed = false;
+          }
+        });
         resolveFinished({ finished: false });
       },
     };
@@ -1108,6 +1075,7 @@
   }
 
   function setBoundDOMValue(binding, element, value, transformState) {
+    if (!motionBindingIsValid(binding)) return;
     const property = String(binding.property || "");
     if (binding.target === "cssVar") {
       motionSetStyle(element, property, value, binding.unit || "");
@@ -1129,7 +1097,7 @@
     const kind = spec.kind || spec.Kind;
     if (kind === "time") {
       const value = createSignal(0, name);
-      const start = scheduler.now();
+      const start = motionNow();
       value.dispose = scheduler.addContinuous(function(now) { value.set(Math.max(0, (now - start) / 1000)); return true; });
       return value;
     }
@@ -1183,7 +1151,7 @@
     const program = raw && typeof raw === "object" ? raw : {};
     if (motionNumber(program.version, 0) !== 1 || !Array.isArray(program.signals)) return null;
     const programID = String(program.id || "motion");
-    const record = { root: root, id: programID, signals: new Map(), specs: new Map(), bindings: [], pins: [], stops: [], values: [], disposed: false };
+    const record = { root: root, id: programID, signals: new Map(), specs: new Map(), bindings: [], pins: [], stops: [], values: [], adapters: new Set(), disposed: false };
     for (const spec of program.signals) if (spec && spec.id) record.specs.set(String(spec.id), spec);
     const creating = new Set();
     function getValue(id) {
@@ -1282,7 +1250,7 @@
     }
 
     for (const binding of program.bindings || []) {
-      if (!binding || !binding.signal) continue;
+      if (!motionBindingIsValid(binding) || !binding.signal) continue;
       const value = record.signals.get(String(binding.signal));
       if (!value) continue;
       const target = binding.target || "style";
@@ -1299,11 +1267,12 @@
         const sceneElement = motionQuery(root, binding.selector)[0] || null;
         const attachment = sceneElement && sceneAdapters.get(sceneElement);
         const item = { binding: binding, signal: value, scene: sceneElement, adapter: attachment && attachment.adapter || null, latest: value.get() };
+        if (item.adapter) record.adapters.add(item.adapter);
         const apply = function(next) {
           item.latest = motionClone(next);
           scheduler.queueWrite(item, function() {
             if (item.adapter && !record.disposed) {
-              item.adapter.write(binding, motionClone(item.latest));
+              item.adapter.write(binding, motionClone(item.latest), record);
               if (typeof item.adapter.invalidate === "function") item.adapter.invalidate("motion-binding");
             }
           });
@@ -1321,6 +1290,7 @@
         record.stops.push(scheduler.observeRect(element));
         const attachment = scene && sceneAdapters.get(scene);
         record.pins.push({ spec: pin, scene: scene, element: element, adapter: attachment && attachment.adapter || null });
+        if (attachment && attachment.adapter) record.adapters.add(attachment.adapter);
       }
     }
     if (record.pins.length) {
@@ -1329,7 +1299,7 @@
           if (!pin.adapter || record.disposed) continue;
           const elementRect = scheduler.rect(pin.element), sceneRect = scheduler.rect(pin.scene);
           if (!elementRect || !sceneRect) continue;
-          if (pin.adapter.pin(pin.spec, elementRect, sceneRect) && typeof pin.adapter.invalidate === "function") pin.adapter.invalidate("pin-to");
+          if (pin.adapter.pin(pin.spec, elementRect, sceneRect, record) && typeof pin.adapter.invalidate === "function") pin.adapter.invalidate("pin-to");
         }
       }));
     }
@@ -1342,6 +1312,13 @@
     record.disposed = true;
     for (const stop of record.stops) if (typeof stop === "function") stop();
     for (const value of record.values) if (value && typeof value.dispose === "function") value.dispose();
+    for (const adapter of record.adapters) {
+      if (adapter && typeof adapter.disposeProgram === "function") {
+        adapter.disposeProgram(record);
+        if (typeof adapter.invalidate === "function") adapter.invalidate("motion-dispose");
+      }
+    }
+    record.adapters.clear();
     for (const [name, value] of namedValues) if (name.indexOf(record.id + ".") === 0 && record.signals.has(name.slice(record.id.length + 1)) && record.signals.get(name.slice(record.id.length + 1)) === value) namedValues.delete(name);
     programRecords.delete(record.root);
   }
@@ -1358,16 +1335,10 @@
     return record;
   }
 
-  function walkMotionElements(root, callback) {
-    if (!root) return;
-    if (root.nodeType === 1 && root.hasAttribute && root.hasAttribute("data-gosx-motion-program")) callback(root);
-    const children = root.children || root.childNodes || [];
-    for (const child of children) if (child && child.nodeType === 1) walkMotionElements(child, callback);
-  }
-
   function mountPrograms(root) {
     const target = root || document.body || document.documentElement;
-    walkMotionElements(target, mountProgramElement);
+    if (target && target.nodeType === 1 && target.hasAttribute && target.hasAttribute("data-gosx-motion-program")) mountProgramElement(target);
+    for (const element of motionQuery(target, "[data-gosx-motion-program]")) mountProgramElement(element);
     installProgramObserver(document.body || document.documentElement);
   }
 
@@ -1400,14 +1371,18 @@
     for (const record of programRecords.values()) {
       for (const binding of record.bindings) if (binding.scene === mount) {
         binding.adapter = adapter;
+        record.adapters.add(adapter);
         scheduler.queueWrite(binding, function() {
           if (!record.disposed) {
-            adapter.write(binding.binding, motionClone(binding.latest));
+            adapter.write(binding.binding, motionClone(binding.latest), record);
             if (typeof adapter.invalidate === "function") adapter.invalidate("motion-binding");
           }
         });
       }
-      for (const pin of record.pins) if (pin.scene === mount) pin.adapter = adapter;
+      for (const pin of record.pins) if (pin.scene === mount) {
+        pin.adapter = adapter;
+        record.adapters.add(adapter);
+      }
     }
     if (typeof adapter.invalidate === "function") adapter.invalidate("motion-attach");
     return function() {
@@ -1437,6 +1412,7 @@
   function bindDOM(signal, element, property, unit) {
     if (!signal || !element) return function() {};
     const binding = { target: property.indexOf("--") === 0 ? "cssVar" : "style", property: property, unit: unit || "" };
+    if (!motionBindingIsValid(binding)) return function() {};
     const transform = motionTransformComponents(element.style && element.style.transform);
     return signal.subscribe(function(value) {
       scheduler.queueWrite(element, function() { setBoundDOMValue(binding, element, value, transform); });
@@ -1473,7 +1449,7 @@
     const stop = scheduler.on("evaluate", function(now) {
       const current = motionNumber(signal.get(), 0);
       const dt = Math.max(1e-6, (now - previousMS) / 1000);
-      if (current !== previous) value.set((current - previous) / dt);
+      value.set(current === previous ? 0 : (current - previous) / dt);
       previous = current; previousMS = now;
     });
     value.dispose = stop;
@@ -1482,7 +1458,6 @@
   motion.bind = bindDOM;
   motion.animateKeyframes = animateKeyframes;
   motion.animate = function(element, keyframes, options) { return animateKeyframes(element, keyframes, options); };
-  motion.evaluateTimeline = evaluateTimeline;
   motion.get = function(name) {
     const value = namedValues.get(String(name || ""));
     return value && typeof value.get === "function" ? value.get() : undefined;
