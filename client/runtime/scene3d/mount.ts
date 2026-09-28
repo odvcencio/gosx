@@ -16,7 +16,7 @@
     }
 
     const props = ctx.props || {};
-    if (!(await sceneRunStartPolicy(mount, props, ctx))) return {};
+    if (props.startPolicy === "idle-visible-hardware" && !(await sceneRunStartPolicy(mount, props, ctx))) return {};
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();

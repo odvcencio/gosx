@@ -135,7 +135,7 @@ function paintPosterTwice(window) {
 }
 
 test("the Scene3D factory applies declarative start policy before creating scene state", () => {
-  const gate = mountSource.indexOf("if (!(await sceneRunStartPolicy(mount, props, ctx))) return {};");
+  const gate = mountSource.indexOf('if (props.startPolicy === "idle-visible-hardware" && !(await sceneRunStartPolicy(mount, props, ctx))) return {};');
   const sceneState = mountSource.indexOf("const runtimeScene =", gate);
   assert.notEqual(gate, -1);
   assert.ok(sceneState > gate);
