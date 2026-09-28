@@ -391,6 +391,10 @@
       let mutationObserver = new Array().pop();
       let idleTimer = new Array().pop();
       const cleanup = new Array();
+      const nav = window.navigator || {};
+      const connection = Reflect.get(nav, "connection")
+        || Reflect.get(nav, "mozConnection")
+        || Reflect.get(nav, "webkitConnection");
 
       /** @param {boolean} eligible */
       function finish(
@@ -439,10 +443,6 @@
 
       /** @returns {boolean} */
       function saveData() {
-        const nav = window.navigator || {};
-        const connection = Reflect.get(nav, "connection")
-          || Reflect.get(nav, "mozConnection")
-          || Reflect.get(nav, "webkitConnection");
         return Boolean(connection && connection.saveData);
       }
 
@@ -497,10 +497,6 @@
           cleanup.push(function() { motionQuery.removeListener(check); });
         }
       }
-      const nav = window.navigator || {};
-      const connection = Reflect.get(nav, "connection")
-        || Reflect.get(nav, "mozConnection")
-        || Reflect.get(nav, "webkitConnection");
       listener(connection, "change", check);
       if (typeof MutationObserver !== "undefined" && document.documentElement) {
         mutationObserver = new MutationObserver(check);
