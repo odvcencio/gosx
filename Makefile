@@ -232,13 +232,14 @@ test-wasm:
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
 
-# test-motion-parity: native↔WASM parity gate for the motion evaluator.
-# Runs TestGolden (and the full motion suite) under GOOS=js GOARCH=wasm so that
-# the native-generated golden corpus proves FMA/float parity across targets.
+# test-motion-parity: native↔WASM↔JavaScript parity gate for motion values.
+# The native-generated golden corpus proves evaluator parity across targets;
+# the bootstrap test runs every sample against the browser-side evaluator.
 test-motion-parity:
-	$(GO) test ./motion/
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+	GOWORK=off $(GO) test ./motion/
+	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
+	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+	$(NODE) --test ./client/js/motion-parity.test.mjs
 
 # test-physics-parity: native↔WASM parity gate for the rigid body engine.
 # Replays the golden corpus under GOOS=js GOARCH=wasm and demands bit equality,

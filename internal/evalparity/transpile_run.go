@@ -107,7 +107,10 @@ func (m *transpileModule) buildAndRun(program string) (stdout, buildErr, runErr 
 		return "", fmt.Sprintf("write main.go: %v", err), ""
 	}
 	binPath := filepath.Join(m.dir, "evalparity_bin")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	// Generated harness modules live under os.TempDir(), outside the source
+	// checkout. Disable VCS stamping so Go does not try to discover repository
+	// metadata for that temporary main module.
+	buildCmd := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, ".")
 	buildCmd.Dir = m.dir
 	buildCmd.Env = append(os.Environ(), "GOWORK=off")
 	var buildOut bytes.Buffer

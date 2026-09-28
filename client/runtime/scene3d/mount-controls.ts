@@ -32,6 +32,141 @@
     }
   }
 
+  // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
+  function sceneRunFrameGuard(callback, args, shouldRecover, recover) {
+    try { return callback.apply(null, args); } catch (error) { if (shouldRecover()) recover(); throw error; }
+  }
+
+  // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
+  function sceneControlController(handle) {
+    return handle && handle.controller;
+  }
+
+  // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
+  function applySceneMotionBindings(bundle, sceneState, controlHandle) {
+    applyMotionBindingsToRuntimeBundle.call(null, bundle, sceneState, sceneControlController(controlHandle));
+    return bundle;
+  }
+
+  function motionSceneProperty() {
+    const target = arguments[0], property = arguments[1], value = arguments[2];
+    if (!target || typeof target !== "object") return;
+    const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "";
+    let field = parts[parts.length - 1];
+    if (group === "rotation" && ["x", "y", "z"].includes(field)) field = "rotation" + field.toUpperCase();
+    if (group === "scale" && ["x", "y", "z"].includes(field)) field = "scale" + field.toUpperCase();
+    if (["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "opacity", "fov", "near", "far", "zoom"].includes(field)) target[field] = value;
+  }
+
+  function motionSceneCameraProperty() {
+    const property = arguments[0];
+    const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "", field = parts[parts.length - 1];
+    if (group === "rotation" && ["x", "y", "z"].includes(field)) return "rotation" + field.toUpperCase();
+    return ["x", "y", "z", "fov", "near", "far", "zoom", "rotationX", "rotationY", "rotationZ"].includes(field) ? field : "";
+  }
+
+  function applyMotionBindingToRuntimeBundle() {
+    const bundle = arguments[0], binding = arguments[1], value = arguments[2];
+    if (!bundle || !binding) return;
+    if (binding.target === "camera") {
+      const field = motionSceneCameraProperty.call(null, binding.property);
+      if (field) { if (!bundle.camera || typeof bundle.camera !== "object") bundle.camera = {}; bundle.camera[field] = value; }
+      return;
+    }
+    for (const object of Array.isArray(bundle.meshObjects) ? bundle.meshObjects : []) {
+      if (!object || String(object.id || "") !== String(binding.node || "")) continue;
+      if (binding.target === "materialUniform") {
+        if (!object.customUniforms || typeof object.customUniforms !== "object") object.customUniforms = {};
+        object.customUniforms[binding.property] = value;
+      } else if (binding.target === "sceneNode") motionSceneProperty.call(null, object, binding.property, value);
+    }
+  }
+
+  function applyMotionBindingsToRuntimeBundle() {
+    const bundle = arguments[0], sceneState = arguments[1], controls = arguments[2];
+    const layers = sceneState && sceneState._gosxMotionRuntimeBindings;
+    if (!bundle || !layers || typeof layers.values !== "function") return;
+    let cameraOverride = false;
+    for (const layer of layers.values()) {
+      for (const item of layer.values()) {
+        applyMotionBindingToRuntimeBundle.call(null, bundle, item.binding, item.value);
+        if (item.binding.target === "camera") cameraOverride = true;
+      }
+    }
+    if (cameraOverride) applySceneControlsCamera(controls, bundle.camera);
+  }
+
+  function attachSceneMotionBridge() {
+    const mount = arguments[0], sceneState = arguments[1], scheduleRender = arguments[2];
+    const motion = window.__gosx && window.__gosx.motion;
+    if (!motion || typeof motion.attachScene !== "function") return function() {};
+    return motion.attachScene(mount, {
+      write: function() {
+        const binding = arguments[0], value = arguments[1], programToken = arguments[2] || "motion";
+        /** @type {Map<object|string, Map<string, any>>} */
+        const layers = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = new Map());
+        let entries = layers.get(programToken);
+        if (!entries) { entries = new Map(); layers.set(programToken, entries); }
+        const key = [binding.target, binding.node || "", binding.property || ""].join("|");
+        entries.set(key, { key: key, binding: Object.assign({}, binding), value: value });
+      },
+      pin: function() {
+        const pin = arguments[0], elementRect = arguments[1], sceneRect = arguments[2], programToken = arguments[3] || "motion";
+        if (!(sceneRect.width > 0) || !(sceneRect.height > 0)) return false;
+        const camera = sceneState.camera || {}, distance = Math.max(0.01, Math.abs(sceneNumber(camera.z, 6)));
+        const worldHeight = 2 * distance * Math.tan(sceneNumber(camera.fov, 75) * Math.PI / 360);
+        const x = sceneNumber(camera.x, 0) + (elementRect.left + elementRect.width * 0.5 - sceneRect.left - sceneRect.width * 0.5) * worldHeight / sceneRect.height;
+        const y = sceneNumber(camera.y, 0) + (sceneRect.top + sceneRect.height * 0.5 - elementRect.top - elementRect.height * 0.5) * worldHeight / sceneRect.height;
+        const layers = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = new Map());
+        let entries = layers.get(programToken);
+        if (!entries) { entries = new Map(); layers.set(programToken, entries); }
+        const node = String(pin.node || "");
+        const xKey = ["sceneNode", node, "position.x"].join("|");
+        const yKey = ["sceneNode", node, "position.y"].join("|");
+        const oldX = entries.get(xKey), oldY = entries.get(yKey);
+        const changed = !oldX || !oldY || !Object.is(oldX.value, x) || !Object.is(oldY.value, y);
+        entries.set(xKey, { key: xKey, binding: { target: "sceneNode", node: node, property: "position.x" }, value: x });
+        entries.set(yKey, { key: yKey, binding: { target: "sceneNode", node: node, property: "position.y" }, value: y });
+        return changed;
+      },
+      disposeProgram: function() {
+        const layers = sceneState._gosxMotionRuntimeBindings;
+        if (!layers || typeof layers.delete !== "function" || !layers.delete(arguments[0] || "motion")) return;
+        const baseCamera = sceneState.camera;
+        let camera = baseCamera && typeof baseCamera === "object" ? Object.assign({}, baseCamera) : {};
+        let hasCameraOverride = false;
+        for (const layer of layers.values()) for (const item of layer.values()) if (item.binding.target === "camera") {
+          const field = motionSceneCameraProperty.call(null, item.binding.property);
+          if (field) {
+            if (!camera || typeof camera !== "object") camera = {};
+            camera[field] = item.value;
+            hasCameraOverride = true;
+          }
+        }
+        if (!hasCameraOverride) camera = baseCamera;
+        applySceneControlsCamera(sceneState._gosxMotionController, camera);
+        scheduleRender("motion-dispose");
+      },
+      invalidate: function() { scheduleRender("motion-binding"); },
+    });
+  }
+
+  function sceneMotionRequestFrame() {
+    const callback = arguments[0];
+    const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (scheduler && typeof scheduler.request === "function") return scheduler.request(callback);
+    if (typeof window.requestAnimationFrame === "function") return window.requestAnimationFrame(callback);
+    return setTimeout(function() { callback(Date.now()); }, 16);
+  }
+
+  function sceneMotionCancelFrame() {
+    const handle = arguments[0];
+    const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (scheduler && typeof scheduler.cancel === "function") scheduler.cancel(handle);
+    else if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(handle);
+    else clearTimeout(handle);
+  }
+
   function sceneControlsTarget(props) {
     const raw = props && props.controlTarget && typeof props.controlTarget === "object" ? props.controlTarget : null;
     return {
@@ -884,8 +1019,10 @@
     return true;
   }
 
-  function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender) {
+  // @ts-ignore TS7006 -- keep this call site JavaScript-compatible in the runtime bundle
+  function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
     const controls = createSceneControls(props);
+    if (sceneState) sceneState._gosxMotionController = controls;
     if (!canvas || !controls) {
       return {
         controller: controls,
@@ -941,7 +1078,7 @@
 
     function cancelOrbitInertia() {
       if (orbitFrame) {
-        cancelAnimationFrame(orbitFrame);
+        sceneMotionCancelFrame.call(null, orbitFrame);
         orbitFrame = 0;
       }
     }
@@ -960,10 +1097,10 @@
           scheduleRender("controls-inertia");
         }
         if (sceneOrbitInertiaActive(controls)) {
-          orbitFrame = requestAnimationFrame(step);
+          orbitFrame = sceneMotionRequestFrame.call(null, step);
         }
       };
-      orbitFrame = requestAnimationFrame(step);
+      orbitFrame = sceneMotionRequestFrame.call(null, step);
     }
 
     function onPointerDown(event) {
@@ -1014,10 +1151,10 @@
           scheduleRender("controls");
         }
         if (controls.keys.size > 0) {
-          flyFrame = requestAnimationFrame(step);
+          flyFrame = sceneMotionRequestFrame.call(null, step);
         }
       };
-      flyFrame = requestAnimationFrame(step);
+      flyFrame = sceneMotionRequestFrame.call(null, step);
     }
 
     function onKeyDown(event) {
@@ -1097,8 +1234,9 @@
       dispose() {
         detachDocumentListeners();
         cancelOrbitInertia();
+        if (sceneState) sceneState._gosxMotionController = null;
         if (flyFrame) {
-          cancelAnimationFrame(flyFrame);
+          sceneMotionCancelFrame.call(null, flyFrame);
           flyFrame = 0;
         }
         canvas.removeEventListener("pointerdown", onPointerDown);

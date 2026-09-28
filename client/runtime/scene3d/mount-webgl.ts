@@ -1742,10 +1742,9 @@ function gosxConfigureSceneScript(script, role, src) {
 
   function sceneNextFrame() {
     return new Promise(function(resolve) {
-      /* @ts-expect-error TS2794 -- Promise<T> is inferred from the bare resolve() call inside; T is really void */ if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-        window.requestAnimationFrame(function() { resolve(); });
-        return;
-      }
+      const frameRequest = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler && typeof window.__gosx.motion.scheduler.request === "function" ? window.__gosx.motion.scheduler.request.bind(window.__gosx.motion.scheduler) : typeof window !== "undefined" && typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame.bind(window) : null;
+      /* @ts-expect-error TS2794 -- Promise<T> is inferred from the bare resolve() call inside; T is really void */
+      if (frameRequest) { frameRequest(function() { resolve(); }); return; }
       setTimeout(resolve, 0);
     });
   }
@@ -4908,7 +4907,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const api = sceneRenderTruthAPI();
     const kind = renderer && renderer.kind ? renderer.kind : "";
     const diag = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
-    const adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {};
+    let adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {}; const probe = typeof window !== "undefined" && window.__gosx && window.__gosx.scene3dWebGLProbe; if (kind === "webgl" && probe) adapterInfo = Object.assign({}, adapterInfo, { vendor: adapterInfo.vendor || probe.vendor || "", device: adapterInfo.device || probe.renderer || "", description: adapterInfo.description || probe.renderer || "" });
     const truth = {
       backend: kind,
       // gpu is the assertion a deploy gate wants: did a shader run at all?
