@@ -684,9 +684,10 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // Declarative Scene3D start policies gate startup on idle, visibility,
   // backend and user preferences. Measured: 1_738_257 / 478_833 / 384_182.
-  // Raise raw 1_667_400 -> 1_673_000, gzip 461_000 -> 462_500, and Brotli
-  // 366_800 -> 368_000 to clear the hard limits with narrow headroom.
-  { file: "bootstrap.js", raw: 1_673_000, gzip: 462_500, brotli: 368_000 },
+  // Scene-bound hubs wait for renderer readiness. Measured: 1_739_262 /
+  // 479_126 / 384_527. Raise raw to 1_673_800, gzip to 462_800, and Brotli
+  // to 368_200 so each target clears the hard limit with narrow headroom.
+  { file: "bootstrap.js", raw: 1_673_800, gzip: 462_800, brotli: 368_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1507,7 +1508,10 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
+  // Scene-bound hub readiness adds a deferred-connect observer. Measured:
+  // 49_021 / 15_092 / 13_507. Raise targets to 46_700 / 14_400 / 12_900
+  // to keep the new chunk within the hard limits with narrow headroom.
+  { file: "bootstrap-feature-hubs.js", raw: 46_700, gzip: 14_400, brotli: 12_900 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact

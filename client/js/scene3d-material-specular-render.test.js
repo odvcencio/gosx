@@ -1034,7 +1034,7 @@ test("WebGPU fragment shaders pin coverage discard and corrected alpha selects",
     "strictly-less discard in unlit, main, and water paths");
   assert.doesNotMatch(source, /coverage <= cutoff/);
   assert.strictEqual(
-    (source.match(/select\(finalOpacity, 1\.0, alphaEnabled\)/g) || []).length, 2,
+    (source.match(/select\(coverage, 1\.0, alphaEnabled\)/g) || []).length, 2,
     "unlit and main survivors emit full opacity");
   assert.match(source, /select\(unmaskedOpacity, 1\.0, alphaEnabled\)/);
   assert.doesNotMatch(source, /select\(\w+, coverage, alphaEnabled\)/);

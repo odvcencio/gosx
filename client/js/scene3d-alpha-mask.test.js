@@ -11,6 +11,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 
 const srcDir = path.join(__dirname, "bootstrap-src");
 const SHARED_API_EXPORT_MARKER = "// Scene3D shared API";
@@ -856,8 +857,8 @@ test("opacity-based invisibility cull spares enabled numeric alpha cutoffs", () 
 });
 
 test("alpha-blended textures keep their sampled coverage in both mesh shaders", () => {
-  const webgpu = readRuntimeSource("webgpu.ts");
-  const webgl = readRuntimeSource("webgl.ts");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   assert.match(webgpu, /let coverage = finalOpacity \* texAlpha;/,
     "WebGPU coverage includes the base-color texture alpha");
