@@ -48,7 +48,7 @@ function stripRuntimeTypes(value) {
 }
 
 function sceneStartBackend(options) {
-  const fn = extractFunction("sceneProbeStartBackend", "function sceneWaitForManualStart");
+  const fn = extractFunction("sceneProbeStartBackend", "async function sceneRunStartPolicy");
   const context = {
     window: {
       navigator: options.navigator || {},
@@ -252,14 +252,12 @@ test("idle-visible-hardware leaves a poster when only software rendering is avai
   assert.notEqual(sourceStart, -1);
   const helper = stripRuntimeTypes(source.slice(sourceStart).trim());
   const attributes = new Map();
-  let manualStartRequested = false;
   const mount = {
     setAttribute(name, value) { attributes.set(name, String(value)); },
   };
   const context = {
     sceneWaitForIdleVisible: async () => true,
     sceneProbeStartBackend: async () => ({ hardware: false, softwareWebGL: true }),
-    sceneWaitForManualStart: async () => { manualStartRequested = true; return true; },
     setAttrValue(_mount, name, value) { attributes.set(name, String(value)); },
     Boolean,
     Promise,
@@ -271,54 +269,4 @@ test("idle-visible-hardware leaves a poster when only software rendering is avai
 
   assert.equal(shouldStart, false);
   assert.equal(attributes.get("data-gosx-scene3d-start-state"), "poster");
-  assert.equal(manualStartRequested, false);
-});
-
-test("software WebGL exposes and consumes the matching manual-start control", async () => {
-  const mount = { id: "tabletop-scene" };
-  const listeners = new Map();
-  const attributes = new Set(["hidden"]);
-  const button = {
-    getAttribute(name) { return name === "data-gosx-scene3d-start" ? mount.id : null; },
-    addEventListener(type, callback) { listeners.set(type, callback); },
-    removeEventListener(type) { listeners.delete(type); },
-    removeAttribute(name) { attributes.delete(name); },
-    setAttribute(name) { attributes.add(name); },
-  };
-  const noteAttributes = new Set(["hidden"]);
-  const note = {
-    getAttribute(name) { return name === "data-gosx-scene3d-software-note" ? mount.id : null; },
-    removeAttribute(name) { noteAttributes.delete(name); },
-    setAttribute(name) { noteAttributes.add(name); },
-  };
-  const sourceStart = source.indexOf("function sceneWaitForManualStart(");
-  const sourceEnd = source.indexOf("\n  async function sceneRunStartPolicy", sourceStart);
-  assert.notEqual(sourceStart, -1);
-  assert.notEqual(sourceEnd, -1);
-  const helper = stripRuntimeTypes(source.slice(sourceStart, sourceEnd).trim());
-  class TestMutationObserver { observe() {} disconnect() {} }
-  const context = {
-    document: {
-      documentElement: {},
-      querySelectorAll(selector) { return selector.includes("software-note") ? [note] : [button]; },
-      getElementById(id) { return id === mount.id ? mount : null; },
-    },
-    window: {
-      addEventListener(type, callback) { listeners.set(`window:${type}`, callback); },
-      removeEventListener(type) { listeners.delete(`window:${type}`); },
-    },
-    MutationObserver: TestMutationObserver,
-    Promise,
-    Boolean,
-  };
-  const waitForStart = vm.runInNewContext(`(function() { ${helper}; return sceneWaitForManualStart; })()`, context);
-  const started = waitForStart(mount, () => true);
-  assert.equal(attributes.has("hidden"), false);
-  assert.equal(noteAttributes.has("hidden"), false);
-  let prevented = false;
-  listeners.get("click")({ preventDefault() { prevented = true; } });
-  assert.equal(await started, true);
-  assert.equal(prevented, true);
-  assert.equal(attributes.has("hidden"), true);
-  assert.equal(noteAttributes.has("hidden"), true);
 });

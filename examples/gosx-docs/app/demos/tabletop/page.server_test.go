@@ -24,7 +24,7 @@ func TestTabletopUsesDeclarativeSceneStartPolicyAndFrameCap(t *testing.T) {
 			t.Errorf("tabletop page is missing declarative startup contract %q", required)
 		}
 	}
-	if strings.Contains(string(tabletop), `startPolicy="hardware-auto-software-manual"`) || strings.Contains(string(tabletop), `data-gosx-scene3d-start=`) {
+	if strings.Contains(string(tabletop), `data-gosx-scene3d-start=`) {
 		t.Fatal("tabletop must keep the poster when no hardware GPU is available")
 	}
 }

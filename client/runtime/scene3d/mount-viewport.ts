@@ -580,82 +580,12 @@
     };
   }
 
-  /**
-   * @param {HTMLElement} mount
-   * @param {() => boolean} isCurrent
-   * @returns {Promise<boolean>}
-   */
-  function sceneWaitForManualStart(
-    // @ts-ignore TS7006 -- keep this helper parseable by the raw-JS runtime harness.
-    mount, isCurrent
-  ) {
-    return new Promise(function(resolve) {
-      const controls = document.querySelectorAll('[data-gosx-scene3d-start]');
-      let button = new Array().pop();
-      let note = new Array().pop();
-      for (let i = 0; i < controls.length; i += 1) {
-        if (controls[i].getAttribute("data-gosx-scene3d-start") === mount.id) {
-          button = controls[i];
-          break;
-        }
-      }
-      const notes = document.querySelectorAll('[data-gosx-scene3d-software-note]');
-      for (let i = 0; i < notes.length; i += 1) {
-        if (notes[i].getAttribute("data-gosx-scene3d-software-note") === mount.id) {
-          note = notes[i];
-          break;
-        }
-      }
-      if (!button) {
-        resolve(false);
-        return;
-      }
-      let finished = false;
-      const cleanup = new Array();
-      /** @param {boolean} started */
-      function finish(
-        // @ts-ignore TS7006 -- keep this helper parseable by the raw-JS runtime harness.
-        started
-      ) {
-        if (finished) return;
-        finished = true;
-        cleanup.forEach(function(remove) { remove(); });
-        if (button) button.setAttribute("hidden", "hidden");
-        if (note) note.setAttribute("hidden", "hidden");
-        resolve(Boolean(started));
-      }
-      /** @param {Event} event */
-      function onStart(
-        // @ts-ignore TS7006 -- keep this helper parseable by the raw-JS runtime harness.
-        event
-      ) {
-        if (event && typeof event.preventDefault === "function") event.preventDefault();
-        finish(isCurrent());
-      }
-      button.removeAttribute("hidden");
-      if (note) note.removeAttribute("hidden");
-      button.addEventListener("click", onStart);
-      cleanup.push(function() { button.removeEventListener("click", onStart); });
-      const dispose = function() { finish(false); };
-      window.addEventListener("pagehide", dispose);
-      cleanup.push(function() { window.removeEventListener("pagehide", dispose); });
-      if (typeof MutationObserver !== "undefined" && document.documentElement) {
-        const observer = new MutationObserver(function() {
-          if (mount.id && document.getElementById(mount.id) !== mount) finish(false);
-        });
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-        cleanup.push(function() { observer.disconnect(); });
-      }
-    });
-  }
-
-
   async function sceneRunStartPolicy(
     // @ts-ignore TS7006 -- keep this helper parseable by the raw-JS runtime harness.
     mount, props, ctx
   ) {
     const policy = String(props.startPolicy || "").trim().toLowerCase();
-    if (policy !== "idle-visible-hardware" && policy !== "hardware-auto-software-manual") return true;
+    if (policy !== "idle-visible-hardware") return true;
     mount.setAttribute("data-gosx-scene3d-start-policy", policy);
     const current = function() { return !ctx.isCurrent || ctx.isCurrent(); };
     if (!(await sceneWaitForIdleVisible(mount, current))) {
@@ -664,19 +594,9 @@
     }
     const backend = await sceneProbeStartBackend(props);
     setAttrValue(mount, "data-gosx-scene3d-software-webgl", backend.softwareWebGL ? "true" : "false");
-    if (policy === "idle-visible-hardware" && !backend.hardware) {
+    if (!backend.hardware) {
       setAttrValue(mount, "data-gosx-scene3d-start-state", "poster");
       return false;
-    }
-    if (policy === "hardware-auto-software-manual" && !backend.hardware) {
-      if (!backend.softwareWebGL) {
-        setAttrValue(mount, "data-gosx-scene3d-start-state", "poster");
-        return false;
-      }
-      setAttrValue(mount, "data-gosx-scene3d-start-required", "true");
-      setAttrValue(mount, "data-gosx-scene3d-start-state", "manual");
-      if (!(await sceneWaitForManualStart(mount, current))) return false;
-      setAttrValue(mount, "data-gosx-scene3d-start-required", "false");
     }
     setAttrValue(mount, "data-gosx-scene3d-start-state", "starting");
     return true;
