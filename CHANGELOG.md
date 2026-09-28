@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added: signed direct-download update checks
+
+- Add `App.CheckSignedUpdate` for the `latest.json` feed produced by
+  `gosx desktop package`. It verifies the detached Ed25519 signature, matches
+  the app and channel, and returns newer-version notes and a download page.
+- Persist check attempts in an app-selected state file and skip checks when
+  disabled, before startup completes, while offline, or within 24 hours of the
+  previous attempt. This path only notifies; players reinstall Setup to
+  upgrade. The existing `App.UpdateCheck()` / `App.UpdateApply()` MSIX feed
+  behavior is unchanged.
+
+### Added: per-user Windows desktop installer and packager
+
+- Add `gosx desktop package` to build a GUI Setup executable, a portable ZIP,
+  per-file SHA-256 manifest, direct-download update manifest and package
+  metadata from Linux without cgo or a third-party installer toolchain.
+- Setup verifies its payload before extraction, stages upgrades beside the
+  current install, creates a per-user Start menu shortcut and HKCU Uninstall
+  entry, and preserves the old version if extraction fails. The uninstaller
+  asks before deleting the app-selected data directory; it keeps player data
+  by default. Setup refuses to replace non-empty folders without a matching
+  app ID record, and each packaged uninstaller only removes its matching
+  install folder outside protected roots.
+- The packager downloads Microsoft's Evergreen WebView2 bootstrapper when no
+  local path is configured and records the downloaded file's SHA-256. Code
+  signing remains a command-template step and unsigned builds say so in
+  `package-metadata.json`.
+- Add `desktop.Options.MuteAudio` and `gosx desktop --mute-audio` for Windows
+  smoke apps that should mute HTML audio and video.
+
 ### Added: Windows WebView2 shipping controls
 
 - `WebView2RuntimeVersion` reports the selected Evergreen or Fixed Version
@@ -20,7 +50,6 @@
   its monitor and restores the earlier window state when fullscreen ends.
   The executable's first icon resource supplies the window's large and small
   icons when one is present.
-
 ### Fixed: Windows WebView2 shuts down before the desktop app closes
 
 - Retain the environment and controller references returned to asynchronous

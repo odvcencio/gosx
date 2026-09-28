@@ -55,11 +55,11 @@ type Options struct {
 	AdditionalBrowserArguments string
 	Debug                      bool
 	UserDataDir                string
+	MuteAudio                  bool
 	SingleInstance             bool
 	DPIAwareness               DPIAwareness
 	Accessibility              AccessibilityOptions
 	CrashReporter              CrashReporterOptions
-
 	// DevTools enables the Chromium inspector. Independent of Debug so a
 	// production build can temporarily flip dev-tools on for field
 	// diagnosis without enabling the rest of the Debug surface (default

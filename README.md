@@ -912,10 +912,13 @@ Trusted desktop content can then call:
 const prefs = await window.gosxDesktop.service("prefs").load({ scope: "user" });
 ```
 
-The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
-`App.UpdateApply()` consume MSIX AppInstaller feeds, and
-`CrashReporterOptions` captures Go panics plus Windows minidumps with optional
-user-consented upload.
+The `desktop` package exposes two update paths. `App.UpdateCheck()` and
+`App.UpdateApply()` use the Windows App Installer feed for MSIX releases.
+`App.CheckSignedUpdate()` verifies the signed `latest.json` feed emitted by
+`gosx desktop package` for direct-download releases. It only reports an update;
+the player follows the returned download page and reinstalls Setup. Both paths
+are separate from the optional `CrashReporterOptions`, which captures Go
+panics plus Windows minidumps with optional user-consented upload.
 
 `gosx build --prod` emits a deployable `dist/` bundle with a server binary,
 hashed assets, prerendered static pages, an ISR manifest, and edge worker
@@ -924,6 +927,64 @@ manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `dist/app.msix` through MakeAppx, `--sign` to run signtool with
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
 `dist/app.appinstaller` for AppInstaller-based updates.
+
+For a direct Windows download, stage the app's `.exe`, `WebView2Loader.dll`,
+assets and other runtime files, then package them from Linux:
+
+```sh
+gosx desktop package --input dist/windows --config release/desktop.json --output dist/download
+```
+
+The JSON config supplies `app_id`, `name`, `publisher`, `version`, `icon`,
+`host_exe`, `data_dir`, `update_public_key`, `channel`, `released`, `notes`, and
+`download_page`. `data_dir` must be the player's app-selected data folder; the
+installer never stores player data in its install root. Set
+`webview2_bootstrapper` to a local Microsoft Evergreen bootstrapper when you
+have one, or omit it to download the Microsoft bootstrapper during packaging.
+The packager records its SHA-256 in `package-metadata.json` and bundles it in
+Setup for offline use after download.
+
+The output contains a per-user Setup executable, a portable ZIP, `latest.json`,
+`SHA256SUMS`, and `package-metadata.json`. Setup verifies each payload file
+before extraction, uses `%LOCALAPPDATA%\Programs\<App>` by default, and asks
+before replacing an install with a lower version. It needs no administrator
+rights. The uninstaller asks whether to remove `data_dir`; its default is to
+keep player data. For unsigned builds, metadata records `unsigned`. Use
+`--sign-cmd` to sign each app PE before packaging and Setup after the payload is
+appended. The command template accepts `{input}`, `{output}`, and `{file}`. Use
+`--manifest-key <file>` or `--manifest-sign-cmd <template>` to sign `latest.json`.
+
+Use `gosx desktop package` for a direct-download app with an ordinary per-user
+installer and publisher-hosted `latest.json` manifest. The app embeds the
+matching Ed25519 public key in its build and calls the update API after startup,
+from a menu action or later background check. For example, the application can
+keep the key in a Go source constant and keep the check state in its player-data
+directory:
+
+```go
+result, err := app.CheckSignedUpdate(ctx, desktop.SignedUpdateCheckOptions{
+    ManifestURL:     "https://updates.example.com/wb/latest.json",
+    Channel:         "stable",
+    PublicKey:       updatePublicKey,
+    StateFile:       filepath.Join(playerDataDir, "update-check.json"),
+    Enabled:         updateChecksEnabled,
+    StartupComplete: appIsReady,
+    Online:          networkIsAvailable,
+})
+if err == nil && result.Status == desktop.SignedUpdateAvailable {
+    // Show result.Version, result.Notes, and a link to result.DownloadPage.
+}
+```
+
+The app ID and current version come from `desktop.Options`. The state file
+limits attempts to one per 24 hours, including failed requests. The API skips
+checks when disabled, before startup completes, or while the caller reports
+offline. It requires HTTPS; `AllowLoopbackHTTPForTests` is only for local test
+servers. `--manifest-key <file>` or `--manifest-sign-cmd <template>` signs the
+manifest during packaging. Use `gosx build --msix` and `--appinstaller <uri>`
+when the app distributes MSIX packages through the Windows App Installer feed;
+that existing feed and its `App.UpdateCheck()` / `App.UpdateApply()` methods
+remain the MSIX path.
 
 ### Bundle boundary and mutable state
 
