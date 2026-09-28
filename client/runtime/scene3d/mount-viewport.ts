@@ -391,10 +391,7 @@
       let mutationObserver = new Array().pop();
       let idleTimer = new Array().pop();
       const cleanup = new Array();
-      const nav = window.navigator || {};
-      const connection = Reflect.get(nav, "connection")
-        || Reflect.get(nav, "mozConnection")
-        || Reflect.get(nav, "webkitConnection");
+      const connection = Reflect.get(window.navigator, "connection");
 
       /** @param {boolean} eligible */
       function finish(
