@@ -1798,7 +1798,11 @@ const routeBudgets = [
     // The complete motion fix measures 1,355,038 / 367,463 / 309,371 on this
     // route. Raising gzip's target by 100 bytes leaves 1,247 / 1,121 / 1,219
     // bytes of hard-limit headroom for raw, gzip, and Brotli.
-    raw: 1_291_700,
+    // Curve signals and camera rails add the piecewise curve evaluator to the
+    // shared motion core. The route now measures 1_356_360 / 368_049 / 309_771,
+    // +1_322 raw / +586 gzip / +400 Brotli. Raise raw to 1_292_000; gzip and
+    // Brotli remain within their existing targets.
+    raw: 1_292_000,
     gzip: 352_200,
     brotli: 295_800,
   },
@@ -1967,7 +1971,10 @@ const routeBudgets = [
     // source below.
     // The complete motion fix measures 1,204,868 / 339,499 / 286,726 on this
     // route. Reviewed hard-limit headroom is 1,372 / 1,121 / 1,079 bytes.
-    raw: 1_148_800,
+    // Curve signals and camera rails add the piecewise curve evaluator to the
+    // shared motion core: this route now measures 1_206_286 raw (+1_418). Raise
+    // raw to 1_149_000; gzip and Brotli remain within their existing targets.
+    raw: 1_149_000,
     gzip: 324_400,
     brotli: 274_100,
   },
