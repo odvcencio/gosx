@@ -5,6 +5,9 @@
 // Chunks: bootstrap.js, bootstrap-feature-hubs.js.
 // Closes the sockets 30c opened and drops the hub record.
   function disconnectHub(hubID) {
+    if (gosxHost.hubs && typeof gosxHost.hubs.cancelPending === "function") {
+      gosxHost.hubs.cancelPending(hubID);
+    }
     const record = window.__gosx.hubs.get(hubID);
     if (!record) return;
 

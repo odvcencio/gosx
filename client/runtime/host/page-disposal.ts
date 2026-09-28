@@ -27,6 +27,9 @@
       }
       gosxHost.engines.dispose(engineID);
     }
+    if (gosxHost.hubs && typeof gosxHost.hubs.cancelAllPending === "function") {
+      gosxHost.hubs.cancelAllPending();
+    }
     for (const hubID of Array.from(window.__gosx.hubs.keys())) {
       gosxHost.hubs.disconnect(hubID);
     }

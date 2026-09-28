@@ -630,6 +630,23 @@
   const pendingSceneHubs = new Map();
   let pendingSceneHubObserver = null;
 
+  function stopPendingSceneHubObserverIfIdle() {
+    if (pendingSceneHubs.size !== 0 || !pendingSceneHubObserver) return;
+    pendingSceneHubObserver.disconnect();
+    pendingSceneHubObserver = null;
+  }
+
+  function cancelPendingSceneHub(hubID) {
+    if (hubID == null) return;
+    pendingSceneHubs.delete(String(hubID));
+    stopPendingSceneHubObserverIfIdle();
+  }
+
+  function cancelAllPendingSceneHubs() {
+    pendingSceneHubs.clear();
+    stopPendingSceneHubObserverIfIdle();
+  }
+
   function connectPendingSceneHubs() {
     if (pendingSceneHubs.size === 0) return;
     for (const entry of Array.from(pendingSceneHubs.values())) {
@@ -637,10 +654,7 @@
       pendingSceneHubs.delete(entry.id);
       connectHub(entry);
     }
-    if (pendingSceneHubs.size === 0 && pendingSceneHubObserver) {
-      pendingSceneHubObserver.disconnect();
-      pendingSceneHubObserver = null;
-    }
+    stopPendingSceneHubObserverIfIdle();
   }
 
   function waitForHubSceneBindings(entry) {
@@ -723,6 +737,8 @@
   gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {
     connect: connectHub,
     connectAll: connectAllHubs,
+    cancelPending: cancelPendingSceneHub,
+    cancelAllPending: cancelAllPendingSceneHubs,
     revalidate: revalidateHubConnections,
     reconnectDelayMs: reconnectDelayMs,
   });
