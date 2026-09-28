@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -70,7 +72,11 @@ func mountSiteDocuments(app *server.App, root string) {
 		return siteActionProbe{OK: true, Revision: currentSiteBuildInfo().Revision}, nil
 	})
 	app.Mount("GET /sitemap.xml", server.SitemapHandler(func(*http.Request) (string, error) {
-		return buildSitemapXML(publicSiteRoutes()), nil
+		routes, err := publicSiteRoutes(root)
+		if err != nil {
+			return "", err
+		}
+		return buildSitemapXML(routes), nil
 	}))
 	app.Mount("GET /robots.txt", server.RobotsHandler(func(*http.Request) (string, error) {
 		return "User-agent: *\nAllow: /\nSitemap: " + docsapp.PublicSiteURL("/sitemap.xml") + "\n", nil
@@ -241,8 +247,8 @@ func buildAssetFiles(manifest *buildmanifest.Manifest) []buildAssetRef {
 	return refs
 }
 
-func publicSiteRoutes() []string {
-	routes := []string{"/", "/demos"}
+func publicSiteRoutes(root string) ([]string, error) {
+	routes := []string{"/", "/demos", "/capabilities", "/performance"}
 	routes = append(routes, docsapp.DocsCatalogRoutes()...)
 	for _, demo := range demospages.Demos() {
 		routes = append(routes, "/demos/"+demo.Slug)
@@ -254,6 +260,16 @@ func publicSiteRoutes() []string {
 		if routePath == "" || strings.HasPrefix(routePath, "/test/") {
 			continue
 		}
+		routePath = path.Clean("/" + strings.TrimLeft(routePath, "/"))
+		if routePath != "/" && routePath != "/docs" {
+			prerendered, err := publicRouteIsPrerendered(root, routePath)
+			if err != nil {
+				return nil, err
+			}
+			if prerendered {
+				routePath += "/"
+			}
+		}
 		if _, ok := seen[routePath]; ok {
 			continue
 		}
@@ -261,7 +277,29 @@ func publicSiteRoutes() []string {
 		public = append(public, routePath)
 	}
 	sort.Strings(public)
-	return public
+	return public, nil
+}
+
+func publicRouteIsPrerendered(root, routePath string) (bool, error) {
+	parts := strings.Split(strings.Trim(routePath, "/"), "/")
+	if len(parts) != 2 || (parts[0] != "docs" && parts[0] != "demos") {
+		return true, nil
+	}
+	configPath := filepath.Join(root, "app", parts[0], parts[1], "route.config.json")
+	body, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read route config for %s: %w", routePath, err)
+	}
+	var config struct {
+		Prerender *bool `json:"prerender"`
+	}
+	if err := json.Unmarshal(body, &config); err != nil {
+		return false, fmt.Errorf("decode route config for %s: %w", routePath, err)
+	}
+	return config.Prerender == nil || *config.Prerender, nil
 }
 
 type sitemapURLSet struct {
@@ -277,7 +315,7 @@ type sitemapURL struct {
 func buildSitemapXML(routes []string) string {
 	set := sitemapURLSet{XMLNS: "http://www.sitemaps.org/schemas/sitemap/0.9"}
 	for _, routePath := range routes {
-		set.URLs = append(set.URLs, sitemapURL{Location: docsapp.PublicSiteURL(routePath)})
+		set.URLs = append(set.URLs, sitemapURL{Location: docsapp.PublicSiteRouteURL(routePath)})
 	}
 	data, err := xml.MarshalIndent(set, "", "  ")
 	if err != nil {

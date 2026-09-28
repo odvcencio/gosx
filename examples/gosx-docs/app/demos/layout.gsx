@@ -6,118 +6,139 @@ package docs
 func Layout() Node {
 	return <div
 		class="demos-shell"
-		data-gosx-bind-source=".demo-dock__link[aria-current='page']"
-		data-gosx-bind-attr="data-demo-slug:data-demo"
+		data-gosx-bind-source={demoLayoutBindingSource}
+		data-gosx-bind-attr={demoLayoutBindingAttrs}
 		data-demo-slug={currentDemoSlug}
 	>
 		<div class="demos-body">
-			<nav id="demo-dock" class="demo-dock" aria-label="Demos">
-				<div class="demo-dock__header">
-					<p>Explore the demos</p>
-					<a class="demo-dock__overview" href="/demos" data-gosx-link="true">
-						All studies
-						<span aria-hidden="true">↗</span>
-					</a>
-				</div>
-				<ul class="demo-dock__list" role="list">
-					<Each of={Demos()} as="demo">
-						<li class="demo-dock__item" role="listitem">
-							<a
-								href={"/demos/" + demo.Slug}
-								class="demo-dock__link"
-								data-gosx-link="true"
-								data-demo={demo.Slug}
-								data-demo-title={demo.Title}
-								data-demo-lesson={demo.Lesson}
-								data-demo-facets={demoValues(demo.Facets)}
-								data-demo-source={demoSourceURL(demo.SourcePath)}
-								data-demo-source-path={demo.SourcePath}
-								data-demo-packages={demoValues(demo.Packages)}
-								data-demo-render-mode={demo.RenderMode}
-								data-demo-limitations={demo.Limitations}
-								aria-current={demoAriaCurrent(demo.Slug)}
-								data-gosx-aria-current-managed={demoCurrentManaged(demo.Slug)}
-							>
-								<span class="demo-dock__dot" aria-hidden="true"></span>
-								<span class="demo-dock__body">
-									<span class="demo-dock__title">{demo.Title}</span>
-									<span class="demo-dock__tag">{demo.Tag}</span>
-								</span>
-								<span class={"demo-dock__chip demo-dock__chip--" + demo.Status}>{demo.Status}</span>
-							</a>
-						</li>
-					</Each>
-				</ul>
-			</nav>
+			<If cond={currentDemoSlug != ""}>
+				<nav id="demo-dock" class="demo-dock" aria-label="Demos">
+					<div class="demo-dock__header">
+						<p>Explore the demos</p>
+						<a class="demo-dock__overview" href="/demos" data-gosx-link="true">
+							All studies
+							<span aria-hidden="true">↗</span>
+						</a>
+					</div>
+					<ul class="demo-dock__list" role="list">
+						<Each of={Demos()} as="demo">
+							<li class="demo-dock__item" role="listitem">
+								<a
+									href={"/demos/" + demo.Slug}
+									class="demo-dock__link"
+									data-gosx-link="true"
+									data-demo={demo.Slug}
+									data-demo-title={demo.Title}
+									data-demo-lesson={demo.Lesson}
+									data-demo-facets={demoValues(demo.Facets)}
+									data-demo-source={demoSourceURL(demo.SourcePath)}
+									data-demo-source-path={demo.SourcePath}
+									data-demo-packages={demoValues(demo.Packages)}
+									data-demo-render-mode={demo.RenderMode}
+									data-demo-limitations={demo.Limitations}
+									aria-current={demoAriaCurrent(demo.Slug)}
+									data-gosx-aria-current-managed={demoCurrentManaged(demo.Slug)}
+								>
+									<span class="demo-dock__dot" aria-hidden="true"></span>
+									<span class="demo-dock__body">
+										<span class="demo-dock__title">{demo.Title}</span>
+										<span class="demo-dock__tag">{demo.Tag}</span>
+									</span>
+									<span class={"demo-dock__chip demo-dock__chip--" + demo.Status}>{demo.Status}</span>
+								</a>
+							</li>
+						</Each>
+					</ul>
+				</nav>
+			</If>
 			<div class="demo-viewport">
 				<Slot />
-				<footer class="demo-meta" role="contentinfo" aria-label="Demo metadata">
-					<button
-						type="button"
-						class="demo-meta__pill"
-						data-gosx-disclosure-target="#demo-details"
-						aria-controls="demo-details"
-						aria-expanded="false"
-					>How this is GoSX</button>
-				</footer>
+				<If cond={currentDemoSlug != ""}>
+					<footer class="demo-meta" role="contentinfo" aria-label="Demo metadata">
+						<button
+							type="button"
+							class="demo-meta__pill"
+							data-gosx-disclosure-target="#demo-details"
+							aria-controls="demo-details"
+							aria-expanded="false"
+						>How this is GoSX</button>
+					</footer>
+				</If>
 			</div>
 		</div>
-		<div class="demo-details-backdrop" data-gosx-disclosure-backdrop="#demo-details" hidden></div>
-		<aside
-			id="demo-details"
-			class="demo-details"
-			data-gosx-disclosure
-			data-gosx-bind-source=".demo-dock__link[aria-current='page']"
-			role="dialog"
-			aria-modal="true"
-			aria-labelledby="demo-details-title"
-			hidden
-		>
-			<header class="demo-details__header">
-				<div>
-					<p class="demo-details__eyebrow">How this is GoSX</p>
-					<h2 id="demo-details-title" class="demo-details__title" data-gosx-bind-text="data-demo-title">{currentDemoTitle}</h2>
-				</div>
-				<button
-					type="button"
-					class="demo-details__close"
-					data-gosx-disclosure-close="#demo-details"
-					data-gosx-disclosure-initial-focus
-					aria-label="Close demo details"
-				>×</button>
-			</header>
-			<p class="demo-details__lesson" data-gosx-bind-text="data-demo-lesson">
-				{currentDemoLesson}
-			</p>
-			<dl class="demo-details__facts">
-				<div>
-					<dt>Built with</dt>
-					<dd data-gosx-bind-text="data-demo-facets">{currentDemoFacets}</dd>
-				</div>
-				<div>
-					<dt>Packages</dt>
-					<dd data-gosx-bind-text="data-demo-packages">{currentDemoPackages}</dd>
-				</div>
-				<div>
-					<dt>Rendering</dt>
-					<dd data-gosx-bind-text="data-demo-render-mode">{currentDemoRenderMode}</dd>
-				</div>
-				<div>
-					<dt>Honest limits</dt>
-					<dd data-gosx-bind-text="data-demo-limitations">{currentDemoLimitations}</dd>
-				</div>
-			</dl>
-			<a
-				class="demo-details__source"
-				data-gosx-bind-attr="href:data-demo-source"
-				href={currentDemoSourceURL}
-				target="_blank"
-				rel="noopener noreferrer"
+		<If cond={currentDemoSlug != ""}>
+			<div class="demo-details-backdrop" data-gosx-disclosure-backdrop="#demo-details" hidden></div>
+			<aside
+				id="demo-details"
+				class="demo-details"
+				data-gosx-disclosure
+				data-gosx-bind-source=".demo-dock__link[aria-current='page']"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="demo-details-title"
+				hidden
 			>
-				View GoSX source
-				<span aria-hidden="true">↗</span>
-			</a>
-			<code class="demo-details__path" data-gosx-bind-text="data-demo-source-path">{currentDemoSourcePath}</code>
-		</aside>
+				<header class="demo-details__header">
+					<div>
+						<p class="demo-details__eyebrow">How this is GoSX</p>
+						<h2 id="demo-details-title" class="demo-details__title" data-gosx-bind-text="data-demo-title">{currentDemoTitle}</h2>
+					</div>
+					<button
+						type="button"
+						class="demo-details__close"
+						data-gosx-disclosure-close="#demo-details"
+						data-gosx-disclosure-initial-focus
+						aria-label="Close demo details"
+					>×</button>
+				</header>
+				<p class="demo-details__lesson" data-gosx-bind-text="data-demo-lesson">
+					{currentDemoLesson}
+				</p>
+				<dl class="demo-details__facts">
+					<div>
+						<dt>Built with</dt>
+						<dd data-gosx-bind-text="data-demo-facets">{currentDemoFacets}</dd>
+					</div>
+					<div>
+						<dt>Packages</dt>
+						<dd data-gosx-bind-text="data-demo-packages">{currentDemoPackages}</dd>
+					</div>
+					<div>
+						<dt>Rendering</dt>
+						<dd data-gosx-bind-text="data-demo-render-mode">{currentDemoRenderMode}</dd>
+					</div>
+					<div>
+						<dt>Honest limits</dt>
+						<dd data-gosx-bind-text="data-demo-limitations">{currentDemoLimitations}</dd>
+					</div>
+				</dl>
+				<a
+					class="demo-details__source"
+					data-gosx-bind-attr="href:data-demo-source"
+					href={currentDemoSourceURL}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					View GoSX source
+					<span aria-hidden="true">↗</span>
+				</a>
+				<code class="demo-details__path" data-gosx-bind-text="data-demo-source-path">{currentDemoSourcePath}</code>
+				<details class="demo-details__sources">
+					<summary>All source files</summary>
+					<ul>
+						<Each of={currentDemoSourcePaths} as="sourcePath">
+							<li>
+								<a
+									class="demo-details__source-link"
+									href={demoSourceURL(sourcePath)}
+									target="_blank"
+									rel="noopener noreferrer"
+								>{sourcePath}</a>
+							</li>
+						</Each>
+					</ul>
+				</details>
+			</aside>
+		</If>
 	</div>
 }

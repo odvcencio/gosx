@@ -12,7 +12,18 @@
   src: url('/fonts/SpaceGrotesk-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: 'Space Grotesk Fallback';
+  src: local('Arial');
+  font-weight: 700;
+  font-style: normal;
+  size-adjust: 100%;
+  ascent-override: 98.4%;
+  descent-override: 29.2%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -20,7 +31,7 @@
   src: url('/fonts/Inter-400.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
 }
 
 @font-face {
@@ -28,7 +39,7 @@
   src: url('/fonts/Inter-500.woff2') format('woff2');
   font-weight: 500;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
 }
 
 @font-face {
@@ -36,7 +47,40 @@
   src: url('/fonts/Inter-600.woff2') format('woff2');
   font-weight: 600;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  font-weight: 400;
+  font-style: normal;
+  size-adjust: 106.6%;
+  ascent-override: 96.875%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  font-weight: 500;
+  font-style: normal;
+  size-adjust: 106.9%;
+  ascent-override: 96.875%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  font-weight: 600;
+  font-style: normal;
+  size-adjust: 100.8%;
+  ascent-override: 96.875%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -44,7 +88,18 @@
   src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Fallback';
+  src: local('Courier New');
+  font-weight: 400;
+  font-style: normal;
+  size-adjust: 100%;
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
 }
 
 /* ------------------------------------------------------------
@@ -76,9 +131,9 @@
   --chrome-light: #e8e8e8;
 
   /* Typography */
-  --font-display: 'Space Grotesk', sans-serif;
-  --font-body: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Space Grotesk', 'Space Grotesk Fallback', sans-serif;
+  --font-body: 'Inter', 'Inter Fallback', sans-serif;
+  --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback', monospace;
   --type-xs: 0.75rem;
   --type-sm: clamp(0.833rem, 0.78rem + 0.28vw, 1rem);
   --type-base: clamp(1rem, 0.93rem + 0.38vw, 1.25rem);
