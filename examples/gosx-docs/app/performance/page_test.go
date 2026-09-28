@@ -50,14 +50,17 @@ func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
 
 	if err := measuredCommitIsAncestor(root, receipts.Commit); err != nil {
 		if gitOutputAt(t, root, "rev-parse", "--is-shallow-repository") == "true" {
-			ref := os.Getenv("GITHUB_REF")
-			if regexp.MustCompile(`^refs/pull/[0-9]+/merge$`).MatchString(ref) {
-				// Leave enough history for the merge ref plus recent receipt-maintenance commits.
-				fetch := exec.Command("git", "fetch", "--no-tags", "--deepen=8", "origin", ref)
-				fetch.Dir = root
-				if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
-					t.Fatalf("deepen shallow pull-request history: %v: %s", fetchErr, output)
-				}
+			// CI checks out one commit. Fetch every commit since one day before
+			// the measurement: if the measured commit is an ancestor of HEAD it
+			// was authored no later than the measurement, so this range holds it
+			// however many commits landed afterwards. A fixed --deepen count
+			// broke as soon as more than a few commits followed the receipt.
+			head := gitOutputAt(t, root, "rev-parse", "HEAD")
+			since := receipts.MeasuredAt.Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+			fetch := exec.Command("git", "fetch", "--no-tags", "--shallow-since="+since, "origin", head)
+			fetch.Dir = root
+			if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
+				t.Fatalf("deepen shallow history to %s: %v: %s", since, fetchErr, output)
 			}
 		}
 		if err := measuredCommitIsAncestor(root, receipts.Commit); err != nil {
