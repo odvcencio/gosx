@@ -236,3 +236,52 @@ func TestCameraRailYawStaysContinuousAcrossTheSeam(t *testing.T) {
 		}
 	}
 }
+
+// A smooth curve must stay within the value range of the two stops that bound
+// each segment. This is the property camera rails rely on to keep FOV valid.
+func TestSmoothCurveNeverOvershootsItsStops(t *testing.T) {
+	cases := [][]CurveStop{
+		{{0, 1}, {1, 1}, {2, 179}},
+		{{0, 1}, {1, 179}, {2, 1}, {3, 60}},
+		{{0, 5}, {0.1, 5.5}, {5, -3}, {5.2, -3.1}, {9, 40}},
+		{{0, 0}, {1, 10}},
+	}
+	for ci, stops := range cases {
+		for i := 0; i < len(stops)-1; i++ {
+			lo := math.Min(stops[i].Value, stops[i+1].Value)
+			hi := math.Max(stops[i].Value, stops[i+1].Value)
+			for k := 0; k <= 200; k++ {
+				x := stops[i].At + (stops[i+1].At-stops[i].At)*float64(k)/200
+				if v := CurveValue(stops, true, x); v < lo-1e-9 || v > hi+1e-9 {
+					t.Fatalf("case %d segment %d: curve at %v = %v, outside [%v, %v]", ci, i, x, v, lo, hi)
+				}
+			}
+		}
+	}
+}
+
+func TestCameraRailFOVStaysWithinStopRange(t *testing.T) {
+	p := NewProgram("fov")
+	stops := []RailStop{
+		{At: 0, Position: [3]float64{0, 0, 5}, FOV: 1},
+		{At: 1, Position: [3]float64{1, 0, 5}, FOV: 1},
+		{At: 2, Position: [3]float64{2, 0, 5}, FOV: 179},
+	}
+	if err := p.CameraRail("r", p.Time("t"), "#scene", stops); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range p.Signals {
+		if s.ID != "r.fov" {
+			continue
+		}
+		var cs []CurveStop
+		for _, f := range s.Frames {
+			cs = append(cs, CurveStop{At: f.At, Value: f.Value.(float64)})
+		}
+		for k := 0; k <= 400; k++ {
+			if v := CurveValue(cs, s.Smooth, 2*float64(k)/400); v < 1-1e-9 || v > 179+1e-9 {
+				t.Fatalf("FOV %v at %d is outside 1 to 179", v, k)
+			}
+		}
+	}
+}

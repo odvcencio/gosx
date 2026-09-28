@@ -20,10 +20,10 @@ type CurveStop struct {
 
 // CurveValue evaluates a piecewise scalar curve at x. Outside the stops the
 // curve holds its end values. With smooth false it interpolates linearly; with
-// smooth true it uses a cubic Hermite spline whose tangents are the finite
-// differences between neighbouring stops (one-sided at the ends), so the curve
-// passes through every stop without kinks. The JavaScript runtime implements
-// the same formulas; testdata/curve_golden.json pins both.
+// smooth true it uses a cubic Hermite spline with monotone-cubic tangents
+// (Fritsch-Carlson), so the curve passes through every stop without kinks and
+// never overshoots the values of the two stops around it. The JavaScript
+// runtime implements the same formulas; testdata/curve_golden.json pins both.
 func CurveValue(stops []CurveStop, smooth bool, x float64) float64 {
 	n := len(stops)
 	if n == 0 {
@@ -51,16 +51,44 @@ func CurveValue(stops []CurveStop, smooth bool, x float64) float64 {
 	return (2*t3-3*t2+1)*a.Value + (t3-2*t2+t)*h*ma + (-2*t3+3*t2)*b.Value + (t3-t2)*h*mb
 }
 
+// curveTangent returns the monotone-cubic (Fritsch-Carlson) tangent at stop k.
+// It is zero at local extrema and never lets the spline leave the value range
+// of the two stops that bound a segment, so a smooth curve cannot overshoot.
 func curveTangent(stops []CurveStop, k int) float64 {
 	n := len(stops)
-	lo, hi := k-1, k+1
-	if lo < 0 {
-		lo = 0
+	if n < 2 {
+		return 0
 	}
-	if hi > n-1 {
-		hi = n - 1
+	delta := func(i int) float64 { return (stops[i+1].Value - stops[i].Value) / (stops[i+1].At - stops[i].At) }
+	if n == 2 {
+		return delta(0)
 	}
-	return (stops[hi].Value - stops[lo].Value) / (stops[hi].At - stops[lo].At)
+	if k > 0 && k < n-1 {
+		d0, d1 := delta(k-1), delta(k)
+		if d0*d1 <= 0 {
+			return 0
+		}
+		h0, h1 := stops[k].At-stops[k-1].At, stops[k+1].At-stops[k].At
+		w1, w2 := 2*h1+h0, h1+2*h0
+		return (w1 + w2) / (w1/d0 + w2/d1)
+	}
+	// Endpoint: shape-preserving three-point estimate.
+	var h0, h1, d0, d1 float64
+	if k == 0 {
+		h0, h1 = stops[1].At-stops[0].At, stops[2].At-stops[1].At
+		d0, d1 = delta(0), delta(1)
+	} else {
+		h0, h1 = stops[n-1].At-stops[n-2].At, stops[n-2].At-stops[n-3].At
+		d0, d1 = delta(n-2), delta(n-3)
+	}
+	m := ((2*h0+h1)*d0 - h0*d1) / (h0 + h1)
+	if m*d0 <= 0 {
+		return 0
+	}
+	if d0*d1 <= 0 && math.Abs(m) > 3*math.Abs(d0) {
+		return 3 * d0
+	}
+	return m
 }
 
 // Curve adds a signal that maps an input signal through a piecewise curve. The

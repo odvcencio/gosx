@@ -97,9 +97,29 @@
     return stops.length >= 2 ? stops : [];
   }
 
+  // Monotone-cubic (Fritsch-Carlson) tangent at stop k; mirrors curveTangent in Go.
   function motionCurveTangent(stops, k) {
-    const lo = Math.max(0, k - 1), hi = Math.min(stops.length - 1, k + 1);
-    return (stops[hi].value - stops[lo].value) / (stops[hi].at - stops[lo].at);
+    const n = stops.length;
+    if (n < 2) return 0;
+    const delta = function(i) { return (stops[i + 1].value - stops[i].value) / (stops[i + 1].at - stops[i].at); };
+    if (n === 2) return delta(0);
+    if (k > 0 && k < n - 1) {
+      const d0 = delta(k - 1), d1 = delta(k);
+      if (d0 * d1 <= 0) return 0;
+      const h0 = stops[k].at - stops[k - 1].at, h1 = stops[k + 1].at - stops[k].at;
+      const w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
+      return (w1 + w2) / (w1 / d0 + w2 / d1);
+    }
+    let h0, h1, d0, d1;
+    if (k === 0) {
+      h0 = stops[1].at - stops[0].at; h1 = stops[2].at - stops[1].at; d0 = delta(0); d1 = delta(1);
+    } else {
+      h0 = stops[n - 1].at - stops[n - 2].at; h1 = stops[n - 2].at - stops[n - 3].at; d0 = delta(n - 2); d1 = delta(n - 3);
+    }
+    const m = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+    if (m * d0 <= 0) return 0;
+    if (d0 * d1 <= 0 && Math.abs(m) > 3 * Math.abs(d0)) return 3 * d0;
+    return m;
   }
 
   function motionCurveValue(stops, smooth, x) {
