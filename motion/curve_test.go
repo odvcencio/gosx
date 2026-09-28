@@ -310,3 +310,53 @@ func TestCameraRailRejectsPathsThroughTheLookAtPoint(t *testing.T) {
 		}
 	}
 }
+
+// A rail that passes close to (but not through) its look-at point swings fast
+// there. Adaptive sampling must keep the interpolated aim within the tolerance
+// everywhere, not only at the sample points.
+func TestCameraRailNearTargetKeepsAimBetweenSamples(t *testing.T) {
+	p := NewProgram("near")
+	stops := []RailStop{
+		{At: 0, Position: [3]float64{0.05, 0, 5}, LookAt: [3]float64{0, 0, 0}},
+		{At: 1, Position: [3]float64{0.05, 0, -5}, LookAt: [3]float64{0, 0, 0}},
+	}
+	if err := p.CameraRail("near", p.Time("t"), "#scene", stops); err != nil {
+		t.Fatalf("a rail that misses the target by 0.05 must be accepted: %v", err)
+	}
+	series := map[string][]CurveStop{}
+	smooth := map[string]bool{}
+	for _, s := range p.Signals {
+		if s.Kind != SignalCurve {
+			continue
+		}
+		var cs []CurveStop
+		for _, f := range s.Frames {
+			cs = append(cs, CurveStop{At: f.At, Value: f.Value.(float64)})
+		}
+		series[s.ID], smooth[s.ID] = cs, s.Smooth
+	}
+	if n := len(series["near.rotationY"]); n > railMaxFrames {
+		t.Fatalf("%d yaw frames exceeds the cap of %d", n, railMaxFrames)
+	}
+	worst := 0.0
+	for i := 0; i <= 20000; i++ {
+		at := float64(i) / 20000
+		pos := [3]float64{
+			CurveValue(series["near.x"], smooth["near.x"], at),
+			CurveValue(series["near.y"], smooth["near.y"], at),
+			CurveValue(series["near.z"], smooth["near.z"], at),
+		}
+		rx := CurveValue(series["near.rotationX"], false, at)
+		ry := CurveValue(series["near.rotationY"], false, at)
+		forward := [3]float64{-math.Cos(rx) * math.Sin(ry), math.Sin(rx), -math.Cos(rx) * math.Cos(ry)}
+		to := [3]float64{-pos[0], -pos[1], -pos[2]}
+		length := math.Sqrt(to[0]*to[0] + to[1]*to[1] + to[2]*to[2])
+		dot := (forward[0]*to[0] + forward[1]*to[1] + forward[2]*to[2]) / length
+		if a := math.Acos(math.Min(1, dot)) * 180 / math.Pi; a > worst {
+			worst = a
+		}
+	}
+	if worst > 0.5 {
+		t.Fatalf("worst aim error %.3f degrees, want at most 0.5", worst)
+	}
+}

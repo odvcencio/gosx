@@ -12,6 +12,15 @@ import (
 // angles) so the camera keeps looking at the interpolated look-at point.
 const railSamplesPerSegment = 12
 
+const (
+	// railAimTolerance bounds the yaw and pitch error (radians, 0.1 degrees) of
+	// the linear interpolation between two orientation samples.
+	railAimTolerance = 0.1 * math.Pi / 180
+	// railMaxSubdivisions and railMaxFrames bound the adaptive sampling.
+	railMaxSubdivisions = 14
+	railMaxFrames       = 4096
+)
+
 // CurveStop is one numeric sample of a curve signal.
 type CurveStop struct {
 	At    float64
@@ -172,46 +181,75 @@ func (p *Program) CameraRail(id string, progress SignalRef, sceneSelector string
 		component(func(s RailStop) float64 { return s.LookAt[2] }),
 	}
 
-	// Sample orientation densely from the interpolated position and look-at.
-	var pitch, yaw []CurveStop
-	prevYaw, prevPitch, haveDir := 0.0, 0.0, false
-	for seg := 0; seg < len(stops)-1; seg++ {
-		for k := 0; k <= railSamplesPerSegment; k++ {
-			if seg > 0 && k == 0 {
-				continue
+	// Sample orientation from the interpolated position and look-at point.
+	// Between two samples the runtime interpolates yaw and pitch linearly, so
+	// each interval is subdivided until that linear estimate matches the true
+	// aim at its midpoint. A rail that passes almost through its look-at point
+	// cannot meet the tolerance and is rejected instead of turning the camera
+	// away from its target.
+	aim := func(at, refYaw float64, haveRef bool) (pitchRad, yawRad float64, err error) {
+		var d [3]float64
+		for c := 0; c < 3; c++ {
+			d[c] = CurveValue(look[c], true, at) - CurveValue(pos[c], true, at)
+		}
+		length := math.Sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
+		if length <= 1e-9 {
+			return 0, 0, fmt.Errorf("motion: camera rail passes through its look-at point at progress %v; move a stop or the look-at point", at)
+		}
+		pitchRad = math.Asin(math.Max(-1, math.Min(1, d[1]/length)))
+		yawRad = math.Atan2(-d[0], -d[2])
+		if haveRef {
+			for yawRad-refYaw > math.Pi {
+				yawRad -= 2 * math.Pi
 			}
+			for yawRad-refYaw < -math.Pi {
+				yawRad += 2 * math.Pi
+			}
+		}
+		return pitchRad, yawRad, nil
+	}
+	var pitch, yaw []CurveStop
+	var refine func(aAt, aPitch, aYaw, bAt float64, depth int) error
+	refine = func(aAt, aPitch, aYaw, bAt float64, depth int) error {
+		bPitch, bYaw, err := aim(bAt, aYaw, true)
+		if err != nil {
+			return err
+		}
+		mid := (aAt + bAt) / 2
+		mPitch, mYaw, err := aim(mid, aYaw, true)
+		if err != nil {
+			return err
+		}
+		if math.Abs(mYaw-(aYaw+bYaw)/2) > railAimTolerance || math.Abs(mPitch-(aPitch+bPitch)/2) > railAimTolerance {
+			if depth >= railMaxSubdivisions || len(yaw) >= railMaxFrames {
+				return fmt.Errorf("motion: camera rail turns too sharply near progress %v (it passes almost through its look-at point); move a stop or the look-at point", mid)
+			}
+			if err := refine(aAt, aPitch, aYaw, mid, depth+1); err != nil {
+				return err
+			}
+			lastPitch, lastYaw := pitch[len(pitch)-1].Value, yaw[len(yaw)-1].Value
+			return refine(mid, lastPitch, lastYaw, bAt, depth+1)
+		}
+		pitch = append(pitch, CurveStop{At: bAt, Value: bPitch})
+		yaw = append(yaw, CurveStop{At: bAt, Value: bYaw})
+		return nil
+	}
+	startPitch, startYaw, err := aim(stops[0].At, 0, false)
+	if err != nil {
+		return err
+	}
+	pitch = append(pitch, CurveStop{At: stops[0].At, Value: startPitch})
+	yaw = append(yaw, CurveStop{At: stops[0].At, Value: startYaw})
+	for seg := 0; seg < len(stops)-1; seg++ {
+		for k := 1; k <= railSamplesPerSegment; k++ {
 			at := stops[seg].At + (stops[seg+1].At-stops[seg].At)*float64(k)/railSamplesPerSegment
 			if k == railSamplesPerSegment {
 				at = stops[seg+1].At
 			}
-			var d [3]float64
-			for c := 0; c < 3; c++ {
-				d[c] = CurveValue(look[c], true, at) - CurveValue(pos[c], true, at)
+			prev := len(yaw) - 1
+			if err := refine(pitch[prev].At, pitch[prev].Value, yaw[prev].Value, at, 0); err != nil {
+				return err
 			}
-			length := math.Sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
-			rx, ry := prevPitch, prevYaw
-			if length <= 1e-9 {
-				return fmt.Errorf("motion: camera rail passes through its look-at point at progress %v; move a stop or the look-at point", at)
-			}
-			if length > 1e-9 {
-				rx = math.Asin(math.Max(-1, math.Min(1, d[1]/length)))
-				ry = math.Atan2(-d[0], -d[2])
-				if haveDir {
-					// Keep yaw continuous across the +-pi seam.
-					for ry-prevYaw > math.Pi {
-						ry -= 2 * math.Pi
-					}
-					for ry-prevYaw < -math.Pi {
-						ry += 2 * math.Pi
-					}
-				}
-				prevPitch, prevYaw, haveDir = rx, ry, true
-			}
-			if n := len(yaw); n > 0 && (math.Abs(ry-yaw[n-1].Value) > math.Pi/2 || math.Abs(rx-pitch[n-1].Value) > math.Pi/2) {
-				return fmt.Errorf("motion: camera rail swings more than 90 degrees between progress %v and %v (it passes almost through its look-at point); add stops or move the look-at point", yaw[n-1].At, at)
-			}
-			pitch = append(pitch, CurveStop{At: at, Value: rx})
-			yaw = append(yaw, CurveStop{At: at, Value: ry})
 		}
 	}
 
