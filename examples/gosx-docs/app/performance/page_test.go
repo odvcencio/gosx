@@ -50,7 +50,8 @@ func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
 		if gitOutputAt(t, root, "rev-parse", "--is-shallow-repository") == "true" {
 			ref := os.Getenv("GITHUB_REF")
 			if regexp.MustCompile(`^refs/pull/[0-9]+/merge$`).MatchString(ref) {
-				fetch := exec.Command("git", "fetch", "--no-tags", "--deepen=3", "origin", ref)
+				// Leave enough history for the merge ref plus recent receipt-maintenance commits.
+				fetch := exec.Command("git", "fetch", "--no-tags", "--deepen=8", "origin", ref)
 				fetch.Dir = root
 				if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
 					t.Fatalf("deepen shallow pull-request history: %v: %s", fetchErr, output)
