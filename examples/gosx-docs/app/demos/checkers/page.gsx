@@ -27,7 +27,7 @@ func Page() Node {
 			 />
 			<Scene3D {...data.scene} stats={false} />
 			<p class="checkers-showcase__render-note">
-				Go rendered preview · Scene3D when available
+				Static poster · interactive Scene3D when available
 			</p>
 		</div>
 		<section class="checkers-showcase__dashboard" aria-label="Match controls and live search statistics">
