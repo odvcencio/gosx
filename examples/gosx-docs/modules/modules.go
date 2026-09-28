@@ -3,6 +3,7 @@ package modules
 
 import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/capabilities"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
@@ -39,6 +40,8 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/streaming"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/text-layout"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/typed-live"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/your-first-app"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/performance"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-material"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-spin"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/webgpu-honesty-gate"

@@ -1,0 +1,90 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	starter "my-app/app"
+	_ "my-app/modules"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/env"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
+)
+
+func main() {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := server.ResolveAppRoot(thisFile)
+	if err := env.LoadDir(root, ""); err != nil {
+		log.Fatal(err)
+	}
+
+	appName := getenv("APP_NAME", "My GoSX App")
+	port := getenv("PORT", "8080")
+	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
+	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{
+		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	router := route.NewRouter()
+	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+		ctx.SetLanguage("en")
+		ctx.SetMetadata(server.Metadata{
+			Links: []server.LinkTag{
+				{Rel: "stylesheet", Href: "/styles.css"},
+			},
+		})
+		return server.HTMLDocument(ctx.Document(appName, body))
+	})
+	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
+		log.Fatal(err)
+	}
+
+	app := server.New()
+	app.EnableISR()
+	app.EnableNavigation()
+	app.SetRuntimeRoot(root)
+	app.Use(sessions.Middleware)
+	app.Use(sessions.Protect)
+	app.SetPublicDir(filepath.Join(root, "public"))
+	app.API("GET /api/open-tabs", func(ctx *server.Context) (any, error) {
+		return map[string]any{
+			"html": fmt.Sprintf("<p>Open tabs: %d</p>", starter.TabHub.Presence().Count()),
+		}, nil
+	})
+	app.API("GET /api/health", func(ctx *server.Context) (any, error) {
+		ctx.CachePublic(30 * time.Second)
+		ctx.CacheTag("health")
+		return map[string]any{
+			"ok":      true,
+			"app":     appName,
+			"version": gosx.Version,
+			"time":    time.Now().Format(time.RFC3339),
+		}, nil
+	})
+	rootHandler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app.Mount("/ws", starter.TabHub)
+	app.Mount("/", rootHandler)
+
+	log.Printf("%s listening on http://localhost:%s", appName, port)
+	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+func getenv(key string, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}

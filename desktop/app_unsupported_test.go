@@ -5,6 +5,7 @@ package desktop
 import (
 	"errors"
 	"net/http"
+	"runtime"
 	"testing"
 )
 
@@ -27,6 +28,7 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 		err  error
 	}{
 		{"PostMessage", stub.PostMessage("noop")},
+		{"Reload", stub.Reload()},
 		{"ExecuteScript", stub.ExecuteScript("1")},
 		{"OpenDevTools", stub.OpenDevTools()},
 		{"PrependBootstrapScript", stub.PrependBootstrapScript("noop")},
@@ -59,5 +61,14 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 	}
 	if _, err := stub.NewWindow(WindowOptions{}); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("NewWindow: err = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDesktopWebView2RuntimeVersionUnsupportedPlatform(t *testing.T) {
+	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+		t.Skip("windows desktop backend is supported on this architecture")
+	}
+	if _, err := WebView2RuntimeVersion(""); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("WebView2RuntimeVersion error = %v, want ErrUnsupported", err)
 	}
 }

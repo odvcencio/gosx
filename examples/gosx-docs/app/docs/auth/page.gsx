@@ -32,6 +32,10 @@ func Page() Node {
 		</p>
 		<section id="session-demo" class="demo-well" aria-labelledby="session-demo-title">
 			<p class="demo-well__label">Live session-backed action</p>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/auth/page.server.go"
+				rel="noopener"
+			>View the session action source</a>
 			<h3 id="session-demo-title">Sign in to this documentation route</h3>
 			<If cond={actions.signIn.ok}>
 				<p class="form-status form-status--ok">{actions.signIn.message}</p>

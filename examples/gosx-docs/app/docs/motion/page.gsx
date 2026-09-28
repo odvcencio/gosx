@@ -2,6 +2,17 @@ package docs
 
 func Page() Node {
 	return <article class="prose motion-page">
+		<section class="docs-live-example" aria-label="Motion preset example">
+			<p class="eyebrow">Server-authored motion</p>
+			{motionExample}
+			<p>
+				The example respects reduced-motion settings and keeps its HTML visible without JavaScript.
+			</p>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/motion/page.server.go"
+				rel="noopener"
+			>View the Go motion setup</a>
+		</section>
 		<section
 			class="doc-scene"
 			aria-labelledby={docScene.HeadingID}
@@ -61,36 +72,73 @@ func Page() Node {
 			</div>
 		</section>
 		<div class="page-topper">
-			<span class="eyebrow">Motion values across the page</span>
+			<span class="eyebrow">Progressive DOM motion</span>
 			<p class="lede">
-				The HTML card, hover spring, and pinned sphere share values with one Scene3D render. Try the button, then scroll the page.
+				The server motion primitive emits semantic HTML and a small set of bootstrap-managed transition attributes. Reduced-motion respect is the default.
 			</p>
 		</div>
-		<p>
-			The server serializes this graph once. In the browser, scroll input, the hover spring, DOM writes, and Scene3D rendering pass through one frame scheduler. The HTML and scene read the same signals.
-		</p>
-		<h2 id="one-program">Author one program</h2>
-		<p>
-			Start with the values and bind each one to the places that use it. A spring keeps its current velocity when a new target arrives, so a quick pointer change does not restart from rest.
-		</p>
-		<CodeBlock lang="go" source={data.programSample} />
-		<h2 id="presets">Presets and reduced motion</h2>
-		<p>
-			The existing
-			<span class="inline-code">Motion</span>
-			presets still work for small DOM reveals. Reduced motion is enabled by default; choose
-			<span class="inline-code">skip</span>
-			,
-			<span class="inline-code">fade</span>
-			, or
-			<span class="inline-code">static</span>
-			for each animation. The HTML stays readable when an animation cannot start.
-		</p>
+		<h2 id="dom-motion">DOM motion</h2>
 		<CodeBlock lang="go" source={data.motionSample} />
 		<p>
-			For larger interactions, bind a signal to a DOM style, a CSS variable, a scene node, a material uniform, or the camera. Use
-			<span class="inline-code">PinTo</span>
-			when a scene node should follow an element's measured position.
+			Use
+			<span class="inline-code">ctx.Motion</span>
+			,
+			<span class="inline-code">ctx.Runtime().Motion</span>
+			, or the page-state helper so the document bootstrap is enabled. The package-level
+			<span class="inline-code">server.Motion</span>
+			only creates the element and attributes; it cannot activate page assets by itself.
+		</p>
+		<h2 id="presets">Presets</h2>
+		<p>
+			The DOM presets are
+			<span class="inline-code">fade</span>
+			,
+			<span class="inline-code">slide-up</span>
+			,
+			<span class="inline-code">slide-down</span>
+			,
+			<span class="inline-code">slide-left</span>
+			,
+			<span class="inline-code">slide-right</span>
+			, and
+			<span class="inline-code">zoom-in</span>
+			. Unknown values normalize to fade.
+		</p>
+		<h2 id="triggers">Load and viewport triggers</h2>
+		<p>
+			<span class="inline-code">MotionTriggerLoad</span>
+			is the default and starts when the bootstrap initializes the element.
+			<span class="inline-code">MotionTriggerView</span>
+			waits for the framework's viewport observation. The server HTML remains the fallback when scripting is unavailable.
+		</p>
+		<h2 id="reduced-motion">Reduced motion</h2>
+		<p>
+			<span class="inline-code">RespectReducedMotion</span>
+			is a pointer because omission means true. The bootstrap consults the user's reduced-motion preference and suppresses the authored transition when respect is enabled.
+		</p>
+		<CodeBlock lang="go" source={data.reducedSample} />
+		<p>
+			Opting out is possible for an essential transition, but it should be deliberate and rare. The GSX
+			<span class="inline-code">respectReducedMotion</span>
+			property maps to the same contract.
+		</p>
+		<h2 id="timing">Timing defaults</h2>
+		<p>
+			Duration defaults to 220 milliseconds, delay to zero, distance to 18 pixels, and easing to
+			<span class="inline-code">cubic-bezier(0.16, 1, 0.3, 1)</span>
+			. Non-positive duration or distance selects the default; negative delay becomes zero.
+		</p>
+		<h2 id="one-program">One shared program</h2>
+		<p>
+			The motion package shares scroll, hover, and spring values between DOM styles and Scene3D properties. A spring keeps its velocity when a new target arrives, so a quick pointer change continues smoothly.
+		</p>
+		<CodeBlock lang="go" source={data.programSample} />
+		<h2 id="bootstrap">Boundary with the motion package</h2>
+		<p>
+			<span class="inline-code">server.Motion</span>
+			is the declarative DOM helper described here. The separate
+			<span class="inline-code">motion</span>
+			package contains clips, curves, mixing, springs, targets, and runtime evaluation for authored animation systems; those APIs are not automatically activated by adding a DOM preset.
 		</p>
 	</article>
 }

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Added: Windows WebView2 shipping controls
+
+- `WebView2RuntimeVersion` reports the selected Evergreen or Fixed Version
+  runtime. `ErrWebView2LoaderUnavailable` and
+  `ErrWebView2RuntimeUnavailable` distinguish missing dependencies while
+  preserving `errors.Is(err, ErrWebView2Unavailable)`.
+- `Options.BrowserExecutableFolder` selects a Fixed Version runtime.
+  `Options.AdditionalBrowserArguments` sets the documented
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment
+  creation. WebView2 environment variables are process-wide and apply to every
+  WebView2 environment in the process.
+- Production mode disables browser accelerator keys, zoom controls, and the
+  status bar; Debug mode keeps them enabled. `Options.OnProcessFailed` reports
+  WebView2 failure kinds, and `App.Reload` lets the app choose a recovery.
+- HTML `requestFullscreen()` switches the window to borderless fullscreen on
+  its monitor and restores the earlier window state when fullscreen ends.
+  The executable's first icon resource supplies the window's large and small
+  icons when one is present.
+
+### Fixed: Windows WebView2 shuts down before the desktop app closes
+
+- Retain the environment and controller references returned to asynchronous
+  WebView2 callbacks, then release each owned reference during failure cleanup
+  or normal window teardown. Keep event handlers alive for their registered
+  lifetime and unregister them before closing the controller.
+- The Go COM handlers now accept only `IUnknown` and their own WebView2 handler
+  interface IDs. Unsupported queries clear the output pointer and return
+  `E_NOINTERFACE`.
+- Add `make test-desktop-windows-smoke` for a WSL-to-Windows runtime check of
+  WebGL2, `chrome.webview`, the native bridge, WebView2 process lifetime, and
+  clean window shutdown.
+
 ### Added: GPU-driven instancing for the WebGPU renderer
 
 - `scene.Props.GPUDriven` hands every opaque `InstancedMesh` without an

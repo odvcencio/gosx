@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/route"
@@ -8,7 +9,7 @@ import (
 )
 
 func init() {
-	docsapp.RegisterDocsPage("Motion", "Share scroll and spring signals between HTML and Scene3D.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Motion", "Server-authored motion presets with reduced-motion awareness.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			// Demo diagnostics: shows the demo scene's renderer and GPU adapter.
 			// It is page-scoped, so it ships only on this route.
@@ -24,17 +25,32 @@ func init() {
 			return map[string]any{
 				"mode":        "light",
 				"title":       "Motion",
-				"description": "Share scroll and spring signals between HTML and Scene3D.",
+				"description": "Server-authored motion presets with reduced-motion awareness.",
 				"tags":        []string{"animation", "motion", "transitions", "reduced-motion"},
 				"toc": []map[string]string{
-					{"href": "#one-program", "label": "One program"},
-					{"href": "#presets", "label": "Presets and reduced motion"},
+					{"href": "#dom-motion", "label": "DOM motion"},
+					{"href": "#presets", "label": "Presets"},
+					{"href": "#triggers", "label": "Triggers"},
+					{"href": "#reduced-motion", "label": "Reduced motion"},
+					{"href": "#timing", "label": "Timing"},
+					{"href": "#one-program", "label": "Shared motion"},
+					{"href": "#bootstrap", "label": "Bootstrap"},
 				},
 				"motionSample":  docsapp.DocSample("motion/motionSample.go.sample"),
 				"programSample": docsapp.DocSample("motion/programSample.go.sample"),
 				"reducedSample": docsapp.DocSample("motion/reducedSample.go.sample"),
 				"motionProgram": string(encoded),
 			}, nil
+		},
+		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			var motionExample gosx.Node = gosx.Text("")
+			if ctx != nil {
+				motionExample = ctx.Runtime().Motion(server.MotionProps{
+					Tag: "div", Preset: server.MotionPresetSlideUp, Trigger: server.MotionTriggerLoad,
+					Duration: 260,
+				}, gosx.Attrs(gosx.Attr("class", "motion-demo-card")), gosx.Text("This card uses a server-authored slide-up preset."))
+			}
+			return route.FileTemplateBindings{Values: map[string]any{"motionExample": motionExample}}
 		},
 	})
 }

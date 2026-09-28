@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -189,7 +189,7 @@ test-js:
 	# bypass Go's package cache so source-only renderer edits are always seen.
 	cd cmd/buildbootstrap && GOWORK=off $(GO) test -count=1 -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
 	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
-	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js
+	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js ./scripts/*.test.mjs
 
 # test-editor builds, vets and tests the nested editor module.
 #
@@ -293,11 +293,20 @@ test-water-prod:
 	$(SHELL) ./scripts/prod-water-smoke.sh
 
 test-desktop:
-	$(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'
-	GOOS=windows GOARCH=amd64 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-amd64.test.exe ./desktop
-	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
-	GOOS=windows GOARCH=amd64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
-	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
+	GOWORK=off nice -n 10 $(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-amd64.test.exe ./desktop
+	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
+	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
+
+# Windows-only. Run from WSL on a machine with Windows interop enabled.
+test-desktop-windows-smoke:
+	bash scripts/test-desktop-windows-smoke.sh
+
+# Runs the Windows smoke plus runtime selection, production input policy,
+# WebView2 arguments, HTML fullscreen, and executable-icon assertions.
+test-desktop-windows-shipping-smoke:
+	bash scripts/test-desktop-windows-smoke.sh --shipping-features
 
 test-desktop-macos:
 	mkdir -p build/desktop-test

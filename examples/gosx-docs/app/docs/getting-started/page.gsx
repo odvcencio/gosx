@@ -1,160 +1,103 @@
 package docs
 
-import docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+func QuickstartPage() Node {
+	return <p class="quickstart-example__output">Go rendered this page on the server.</p>
+}
 
 func Page() Node {
-	return <div>
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
+	return <div class="prose getting-started">
+		<section class="quickstart" aria-labelledby="quickstart-heading">
+			<div class="quickstart__grid">
+				<div class="quickstart__commands">
+					<h2 id="quickstart-heading">Start in three commands</h2>
+					{CodeBlock("bash", data.sample001)}
+					{CodeBlock("bash", data.sample002)}
+					{CodeBlock("bash", data.sample003)}
+				</div>
+				<figure class="quickstart__preview">
+					<img
+						src="/docs/quickstart-app.jpg"
+						alt="The scaffolded GoSX app with a welcome page and starter form."
+						width={900}
+						height={560}
+						fetchpriority="high"
+						decoding="async"
+					></img>
+					<figcaption>
+						After it starts, open
+						<code>http://localhost:8080</code>
+						.
+					</figcaption>
+				</figure>
 			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
-			</div>
+			<p class="quickstart__tutorial">
+				The starter app is running. Continue with
+				<a href="/docs/your-first-app" data-gosx-link="true">Your first GoSX app</a>
+				to add server data, a counter island, a live hub, and a Scene3D.
+			</p>
 		</section>
-		<section id="overview" class="docs-section-block">
-			<h2>Overview</h2>
+		<section class="docs-live-example" aria-label="Server-rendered GoSX page">
+			<p class="eyebrow">Your first server-rendered page</p>
+			<QuickstartPage />
+			{CodeBlock("gosx", data.sample006)}
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/getting-started/page.gsx"
+				rel="noopener"
+			>View the page source</a>
+		</section>
+		<section id="prerequisites" class="docs-section-block">
+			<h2>Prerequisites</h2>
 			<p>
-				GoSX is a Go-native web platform for server rendering, routing, forms, auth, interactive islands, realtime hubs, and managed graphics. GSX adds HTML-shaped markup to Go packages; the browser runtime is generated and managed by the framework, so an application does not need a JavaScript app toolchain.
-				<span class="inline-code">gosx build --prod .</span>
-				stages the server, file-route inputs, public content, hashed browser assets, and deployment metadata together in
-				<span class="inline-code">dist/</span>
+				Install Go 1.26 or newer. GoSX declares Go 1.26 in its module file. An older toolchain may download a newer version or stop before the app starts.
+			</p>
+		</section>
+		<section id="timing" class="docs-section-block">
+			<h2>How long it took</h2>
+			<p>
+				On 2026-09-26, a cold run with an empty module cache on Linux x86_64 (Intel Core Ultra 9 285, 20 CPUs, 19 GiB RAM; Go 1.26.4) reached its first HTTP 200 in 75 seconds: 42 seconds to install the CLI, 7 seconds to scaffold the app, and 27 seconds to start it. It downloaded about 74 MB of modules and 137 MB of Go toolchains.
+			</p>
+		</section>
+		<section id="troubleshooting" class="docs-section-block">
+			<h2>Troubleshooting</h2>
+			<h3>Go is too old</h3>
+			<p>
+				Check
+				<code>go version</code>
+				. Install Go 1.26 or newer, then rerun
+				<code>
+					go install m31labs.dev/gosx/cmd/gosx@latest
+				</code>
+				.
+			</p>
+			<h3>Port 8080 is already in use</h3>
+			<p>
+				Start the app on a free port with
+				<code>PORT=8116 go run .</code>
+				, then open
+				<code>http://localhost:8116</code>
 				.
 			</p>
 		</section>
-		<section id="install" class="docs-section-block">
-			<h2>Install</h2>
+		<section id="project-files" class="docs-section-block">
+			<h2>Where the files live</h2>
 			<p>
-				Install the GoSX CLI with a single
-				<span class="inline-code">go install</span>
-				command.
-			</p>
-			{CodeBlock("bash", docsapp.DocSample("getting-started/code-001.bash.sample"))}
-			<p>
-				Verify the installation by running
-				<span class="inline-code">gosx version</span>
+				Page templates are in
+				<code>app/</code>
+				. A page can pair
+				<code>page.gsx</code>
+				markup with
+				<code>page.server.go</code>
+				data and actions. Shared public files live in
+				<code>public/</code>
 				.
 			</p>
-		</section>
-		<section id="create-a-project" class="docs-section-block">
-			<h2>Create a Project</h2>
-			<p>
-				The
-				<span class="inline-code">gosx init</span>
-				command scaffolds a new project with a runnable app, metadata, 404 and 500 pages, public assets, and the navigation runtime already wired up.
-			</p>
-			{CodeBlock("bash", docsapp.DocSample("getting-started/code-002.bash.sample"))}
-			<p>
-				Open
-				<span class="inline-code">http://localhost:8080</span>
-				to see the running application.
-			</p>
-		</section>
-		<section id="project-structure" class="docs-section-block">
-			<h2>Project Structure</h2>
-			<p>
-				A freshly scaffolded project looks like this. Pages live in
-				<span class="inline-code">app/</span>
-				, and each page is a pair of files: a
-				<span class="inline-code">.gsx</span>
-				template and an optional
-				<span class="inline-code">page.server.go</span>
-				for server-side data loading and actions.
-			</p>
-			{CodeBlock("text", docsapp.DocSample("getting-started/code-003.text.sample"))}
-			<p>
-				The
-				<span class="inline-code">page.gsx</span>
-				file is a Go-flavoured HTML template. The
-				<span class="inline-code">page.server.go</span>
-				sibling registers a server module that supplies data to the template through the
-				<span class="inline-code">data</span>
-				binding. Loader data is not available to a strict component yet. A route that reads
-				<span class="inline-code">data</span>
-				keeps the older
-				<span class="inline-code">func Page() Node</span>
-				form below; see "Component Syntax" further down.
-			</p>
-			{CodeBlock("go", docsapp.DocSample("getting-started/code-004.go.sample"))}
-			{CodeBlock("gsx", docsapp.DocSample("getting-started/code-005.gsx.sample"))}
-		</section>
-		<section id="authoring-styles" class="docs-section-block">
-			<h2>Component Syntax</h2>
-			<p>
-				Declare every component with the strict, typed form:
-				<span class="inline-code">component Name(props: Type)</span>
-				. The project-aware CLI checks
-				<span class="inline-code">props</span>
-				as an ordinary Go type.
-			</p>
-			{CodeBlock("gsx", docsapp.DocSample("getting-started/code-006.gsx.sample"))}
-			<p>
-				A strict server component allows one top-level GSX return and a narrow, renderer-safe expression set. A call uses an exact or unambiguous lower-camel prop name. It passes every field the callee renders explicitly, even a zero value.
-			</p>
-			<p>
-				The older
-				<span class="inline-code">func Name(...) Node</span>
-				form is deprecated for ordinary components; GoSX removes its untyped variant before v1.0.
-				<span class="inline-code">gosx check</span>
-				already warns on it. It remains necessary today only for loader-bound routes (as above), islands, and engines. See
-				<a href="/docs/components" data-gosx-link="true">Components</a>
-				for the exact boundary and the migration note.
-			</p>
-		</section>
-		<section id="dev-server" class="docs-section-block">
-			<h2>Dev Server</h2>
+			{CodeBlock("text", data.sample004)}
 			<p>
 				Use
-				<span class="inline-code">gosx dev</span>
-				to start the development server with hot reload. The server watches your
-				<span class="inline-code">.gsx</span>
-				and
-				<span class="inline-code">.go</span>
-				files and recompiles the app on change.
+				<code>gosx dev</code>
+				while editing. It watches the project and refreshes connected browser tabs after a successful rebuild.
 			</p>
-			{CodeBlock("bash", docsapp.DocSample("getting-started/code-007.bash.sample"))}
-			<p>
-				The command watches project source, rebuilds when needed, and refreshes connected browser tabs after a successful change. Compiler diagnostics remain in the terminal when a change is invalid.
-			</p>
-		</section>
-		<section id="next-steps" class="docs-section-block">
-			<h2>Next Steps</h2>
-			<p>
-				Now that the dev server is running, explore what GoSX can do.
-			</p>
-			<ul>
-				<li>
-					<a href="/docs/components" data-gosx-link="true">Components</a>
-					— Strict component syntax, props, renderer boundaries, and the legacy migration note.
-				</li>
-				<li>
-					<a href="/docs/routing" data-gosx-link="true">Routing</a>
-					— File-based routing, dynamic params, and nested layouts.
-				</li>
-				<li>
-					<a href="/docs/forms" data-gosx-link="true">Forms</a>
-					— Server-side form handling with validation and CSRF protection.
-				</li>
-			</ul>
+			{CodeBlock("bash", data.sample005)}
 		</section>
 	</div>
 }

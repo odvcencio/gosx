@@ -1,0 +1,22 @@
+package app
+
+import "m31labs.dev/gosx/signal"
+
+type CounterProps struct {
+	Initial int
+}
+
+//gosx:island
+component Counter(props: CounterProps) {
+	count := signal.New(props.Initial)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <button onClick={increment}>Add one: {count.Get()}</button>
+}
+
+func Page() Node {
+	return <main>
+		<h1>{data.greeting}</h1>
+		<p>Today’s visitors: {data.visitors}</p>
+		<Counter {...data.counterProps} />
+	</main>
+}

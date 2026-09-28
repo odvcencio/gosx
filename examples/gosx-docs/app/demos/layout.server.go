@@ -18,18 +18,23 @@ func init() {
 func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) route.FileTemplateBindings {
 	current, hasCurrent := currentDemoForLayout(ctx, page)
 	values := map[string]any{
-		"currentDemoSlug":        "",
-		"currentDemoTitle":       "Demo details",
-		"currentDemoLesson":      "Choose a demo to inspect how it is built.",
-		"currentDemoFacets":      "—",
-		"currentDemoPackages":    "—",
-		"currentDemoRenderMode":  "—",
-		"currentDemoLimitations": "—",
-		"currentDemoSourceURL":   nil,
-		"currentDemoSourcePath":  "",
+		"currentDemoSlug":         "",
+		"demoLayoutBindingSource": nil,
+		"demoLayoutBindingAttrs":  nil,
+		"currentDemoTitle":        "Demo details",
+		"currentDemoLesson":       "Choose a demo to inspect how it is built.",
+		"currentDemoFacets":       "—",
+		"currentDemoPackages":     "—",
+		"currentDemoRenderMode":   "—",
+		"currentDemoLimitations":  "—",
+		"currentDemoSourceURL":    nil,
+		"currentDemoSourcePath":   "",
+		"currentDemoSourcePaths":  []string{},
 	}
 	if hasCurrent {
 		values["currentDemoSlug"] = current.Slug
+		values["demoLayoutBindingSource"] = ".demo-dock__link[aria-current='page']"
+		values["demoLayoutBindingAttrs"] = "data-demo-slug:data-demo"
 		values["currentDemoTitle"] = current.Title
 		values["currentDemoLesson"] = current.Lesson
 		values["currentDemoFacets"] = demoValues(current.Facets)
@@ -38,6 +43,7 @@ func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) rou
 		values["currentDemoLimitations"] = current.Limitations
 		values["currentDemoSourceURL"] = demoSourceURL(current.SourcePath)
 		values["currentDemoSourcePath"] = current.SourcePath
+		values["currentDemoSourcePaths"] = current.SourcePaths
 	}
 
 	return route.FileTemplateBindings{

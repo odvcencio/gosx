@@ -2,28 +2,30 @@ package docs
 
 func Page() Node {
 	return <article class="prose">
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
+		<section class="docs-live-example" aria-label="Live hub presence example">
+			<p class="eyebrow">Live hub presence</p>
+			<div
+				data-gosx-region="true"
+				data-gosx-region-url="/api/docs-hubs/open-tabs"
+				data-gosx-region-field="html"
+				data-gosx-region-signal="$docs.guidePresence"
+			>
+				<h2>
+					Open guide tabs:
+					{data.openTabs}
+				</h2>
 			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
-			</div>
+			<p>
+				Open this guide in another tab. The hub sends join and leave counts to a shared signal, so the example updates without refreshing the page.
+			</p>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/hubs/hub.go"
+				rel="noopener"
+			>View the hub handler</a>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/hubs/page.server.go"
+				rel="noopener"
+			>View the page binding</a>
 		</section>
 		<div class="page-topper">
 			<span class="eyebrow">Long-lived coordination</span>
