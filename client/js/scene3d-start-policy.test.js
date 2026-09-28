@@ -87,6 +87,7 @@ function sceneIdleGate(options = {}) {
     addEventListener(type, callback) { events.set(`window:${type}`, callback); },
     removeEventListener(type) { events.delete(`window:${type}`); },
     requestIdleCallback(callback) { window.idleCallback = callback; window.idleRequests = (window.idleRequests || 0) + 1; },
+    requestAnimationFrame(callback) { window.paintCallbacks = window.paintCallbacks || []; window.paintCallbacks.push(callback); },
   };
   const mount = {
     id: "home-scene",
@@ -124,37 +125,36 @@ function sceneIdleGate(options = {}) {
   return { gate, mount, window, motion, connection, document, events, observer: TestIntersectionObserver };
 }
 
+function paintPosterTwice(window) {
+  const first = window.paintCallbacks.shift();
+  assert.equal(typeof first, "function", "first paint frame is scheduled");
+  first();
+  const second = window.paintCallbacks.shift();
+  assert.equal(typeof second, "function", "second frame follows the poster paint");
+  second();
+}
+
 test("the Scene3D factory applies declarative start policy before creating scene state", () => {
   const gate = mountSource.indexOf("if (!(await sceneRunStartPolicy(mount, props, ctx))) return {};");
   const sceneState = mountSource.indexOf("const runtimeScene =", gate);
   assert.notEqual(gate, -1);
   assert.ok(sceneState > gate);
   assert.match(source, /async function sceneRunStartPolicy\(/);
+  assert.match(source, /if \(!\(await sceneWaitForIdleVisible\(mount, current\)\)\)/);
 });
 
-test("the home start gate waits for idle, viewport, visible tab, motion, and Save-Data checks", async () => {
+test("the scene start gate keeps the poster for reduced motion and Save-Data", async () => {
   const gate = sceneIdleGate({ reducedMotion: true, saveData: true });
-  let settled = false;
-  const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
-
-  gate.window.idleCallback({ didTimeout: false });
-  gate.observer.last.trigger(true);
-  gate.connection.saveData = false;
-  gate.events.get("connection:change")();
-  await Promise.resolve();
-  assert.equal(settled, false, "reduced motion must keep the poster in place");
-
-  gate.motion.matches = false;
-  gate.events.get("motion:change")();
-  assert.equal(await result, true);
+  assert.equal(await gate.gate(gate.mount, () => true), false);
   assert.equal(gate.observer.last.disconnected, true);
 });
 
-test("the home start gate rejects an offscreen scene", async () => {
+test("the scene start gate rejects an offscreen scene", async () => {
   const gate = sceneIdleGate({ offscreen: true });
   let settled = false;
   const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
   gate.window.idleCallback({ didTimeout: false });
+  paintPosterTwice(gate.window);
   gate.observer.last.trigger(false);
   await Promise.resolve();
   assert.equal(settled, false);
@@ -162,16 +162,28 @@ test("the home start gate rejects an offscreen scene", async () => {
   assert.equal(await result, true);
 });
 
-test("the home start gate waits while its tab is hidden", async () => {
+test("the scene start gate waits while its tab is hidden", async () => {
   const gate = sceneIdleGate({ visibilityState: "hidden" });
   let settled = false;
   const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
   gate.window.idleCallback({ didTimeout: false });
+  paintPosterTwice(gate.window);
   gate.observer.last.trigger(true);
   await Promise.resolve();
   assert.equal(settled, false);
   gate.document.visibilityState = "visible";
   gate.events.get("document:visibilitychange")();
+  assert.equal(await result, true);
+});
+
+test("the scene start gate waits for the poster to paint before resolving an idle slice", async () => {
+  const gate = sceneIdleGate();
+  let settled = false;
+  const result = gate.gate(gate.mount, () => true).then((value) => { settled = true; return value; });
+  gate.window.idleCallback({ didTimeout: false });
+  await Promise.resolve();
+  assert.equal(settled, false, "the live renderer waits for the poster's first paint");
+  paintPosterTwice(gate.window);
   assert.equal(await result, true);
 });
 
@@ -186,6 +198,7 @@ test("a timed-out idle callback keeps the poster until the browser grants an idl
   assert.equal(gate.window.idleRequests, 2, "a timed-out callback must request another idle slice");
 
   gate.window.idleCallback({ didTimeout: false });
+  paintPosterTwice(gate.window);
   assert.equal(await result, true);
 });
 
@@ -232,6 +245,33 @@ test("software WebGPU is rejected when the WebGL fallback is unavailable", async
   const result = await get({});
   assert.equal(result.hardware, false);
   assert.equal(result.softwareWebGL, false);
+});
+
+test("idle-visible-hardware leaves a poster when only software rendering is available", async () => {
+  const sourceStart = source.indexOf("async function sceneRunStartPolicy(");
+  assert.notEqual(sourceStart, -1);
+  const helper = stripRuntimeTypes(source.slice(sourceStart).trim());
+  const attributes = new Map();
+  let manualStartRequested = false;
+  const mount = {
+    setAttribute(name, value) { attributes.set(name, String(value)); },
+  };
+  const context = {
+    sceneWaitForIdleVisible: async () => true,
+    sceneProbeStartBackend: async () => ({ hardware: false, softwareWebGL: true }),
+    sceneWaitForManualStart: async () => { manualStartRequested = true; return true; },
+    setAttrValue(_mount, name, value) { attributes.set(name, String(value)); },
+    Boolean,
+    Promise,
+    String,
+  };
+  const runPolicy = vm.runInNewContext(`(function() { ${helper}; return sceneRunStartPolicy; })()`, context);
+
+  const shouldStart = await runPolicy(mount, { startPolicy: "idle-visible-hardware" }, { isCurrent: () => true });
+
+  assert.equal(shouldStart, false);
+  assert.equal(attributes.get("data-gosx-scene3d-start-state"), "poster");
+  assert.equal(manualStartRequested, false);
 });
 
 test("software WebGL exposes and consumes the matching manual-start control", async () => {

@@ -9,29 +9,23 @@ import (
 	"testing"
 )
 
-func TestTabletopAndHomeUseDeclarativeSceneStartPolicies(t *testing.T) {
+func TestTabletopUsesDeclarativeSceneStartPolicyAndFrameCap(t *testing.T) {
 	tabletop, err := os.ReadFile("page.gsx")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		`startPolicy="hardware-auto-software-manual"`,
-		`data-gosx-scene3d-start="tabletop-scene"`,
-		`data-gosx-scene3d-software-note="tabletop-scene"`,
-		"Start the live scene",
-		"This device renders 3D in software.",
+		`startPolicy="idle-visible-hardware"`,
+		`maxFrameRate={30}`,
+		`respectReducedMotion={true}`,
+		"unsupported GPU keeps the server-rendered poster",
 	} {
 		if !strings.Contains(string(tabletop), required) {
 			t.Errorf("tabletop page is missing declarative startup contract %q", required)
 		}
 	}
-
-	home, err := os.ReadFile("../../page.gsx")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(home), `startPolicy="idle-visible-hardware"`) || !strings.Contains(string(home), `maxFrameRate={30}`) {
-		t.Fatal("home Scene3D must use the idle-visible-hardware policy and 30 FPS cap")
+	if strings.Contains(string(tabletop), `startPolicy="hardware-auto-software-manual"`) || strings.Contains(string(tabletop), `data-gosx-scene3d-start=`) {
+		t.Fatal("tabletop must keep the poster when no hardware GPU is available")
 	}
 }
 

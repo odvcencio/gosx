@@ -13,7 +13,7 @@ func Page() Node {
 					<a class="tabletop__back" href="/demos" data-gosx-link="true">All demos</a>
 					<h1 id="tabletop-title">A room you can shape.</h1>
 					<p>
-						Six objects, one shared document. Place another on the table to add it for everyone here.
+						On supported GPUs, the browser renders the scene live. Object placement, rotation, removal, lighting, and visitor count sync to everyone in the room after the scene is ready. Reduced motion or an unsupported GPU keeps the server-rendered poster.
 					</p>
 				</div>
 				<div
@@ -47,23 +47,16 @@ func Page() Node {
 						<Scene3D
 							id="tabletop-scene"
 							{...data.scene}
-							startPolicy="hardware-auto-software-manual"
+							startPolicy="idle-visible-hardware"
+							maxFrameRate={30}
 							respectReducedMotion={true}
 							data-gosx-scene3d-reveal-class="tabletop-scene-ready"
 						>
 							<p class="tabletop__fallback">{data.scene.UnsupportedMessage}</p>
 						</Scene3D>
-						<div class="tabletop__software-start" aria-live="polite">
-							<p data-gosx-scene3d-software-note="tabletop-scene" hidden>
-								This device renders 3D in software.
-							</p>
-							<button data-gosx-scene3d-start="tabletop-scene" type="button" hidden>
-								Start the live scene
-							</button>
-						</div>
 					</div>
 					<p class="tabletop__hint">
-						Click or tap an open spot to place. Select a model to rotate or remove it.
+						When the live scene starts, tap an open spot to place an object. Select one to rotate or remove it.
 					</p>
 					<div
 						class="tabletop__scene-facts"
@@ -107,7 +100,7 @@ func Page() Node {
 					<details class="tabletop__build">
 						<summary>How this is built</summary>
 						<p>
-							One Go project renders the page and room, validates edits, and synchronizes the Scene3D document.
+							Go renders the page and room, validates edits, and syncs the scene with a CRDT document. Room state stays in server memory and expires after 30 idle minutes. There are no accounts, permanent saves, or freeform text editing.
 						</p>
 						<dl class="tabletop__receipts">
 							<Each of={data.receipt.SourceFiles} as="source">

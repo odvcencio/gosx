@@ -36,7 +36,7 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 	}
 	roomID := fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
 	roomURL := app.baseURL + "/demos/tabletop?room=" + roomID
-	flags := map[string]any{"force-prefers-reduced-motion": "reduce", "mute-audio": true}
+	flags := map[string]any{"enable-unsafe-swiftshader": true, "enable-webgl": true, "use-angle": "swiftshader", "mute-audio": true}
 	traceRoomUI := `window.__tabletopHubEvents = []; window.__tabletopInputs = []; window.__tabletopSends = []; document.addEventListener('gosx:hub:event', (event) => { if (event.detail?.event === 'room:ui') window.__tabletopHubEvents.push({at: Date.now(), data: event.detail.data}); }); window.addEventListener('pointerdown', (event) => window.__tabletopInputs.push({at: Date.now(), type: event.pointerType, x: event.clientX, y: event.clientY}), true); const __tabletopSend = WebSocket.prototype.send; WebSocket.prototype.send = function(data) { try { const message = JSON.parse(data); window.__tabletopSends.push({at: Date.now(), event: message.event}); } catch (_) {} return __tabletopSend.call(this, data); };`
 	first := newBrowserPage(t, chrome, flags, 390, 844, traceRoomUI, 90*time.Second)
 	second := newBrowserPage(t, chrome, flags, 390, 844, traceRoomUI, 90*time.Second)
@@ -44,33 +44,27 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 		if status := page.navigate(t, roomURL); status < 200 || status > 299 {
 			t.Fatalf("%s browser got HTTP %d for shared room\n\nLogs:\n%s", name, status, app.logs.String())
 		}
-		page.waitFor(t, `Array.from(window.__gosx?.hubs?.values?.() || []).some((hub) => hub.entry?.path?.includes("/demos/tabletop/ws/"))`, 10*time.Second, "tabletop hub binding")
+		page.waitFor(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-command-ready') === 'true' ||
+      document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-start-state') === 'poster'`,
+			30*time.Second, "Scene3D hardware start or poster fallback")
+		var startState string
+		page.eval(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-start-state') || ''`, &startState)
+		if startState == "poster" {
+			var posterOnly bool
+			page.eval(t, `Array.from(window.__gosx?.hubs?.values?.() || []).every((hub) => !hub.entry?.path?.includes("/demos/tabletop/ws/")) &&
+      document.querySelector('.tabletop__poster')?.complete && document.querySelector('.tabletop__poster')?.naturalWidth > 0`, &posterOnly)
+			if !posterOnly {
+				t.Fatalf("%s browser did not keep the poster and room hub idle without a renderer\nconsole:\n%s", name, page.Console())
+			}
+			t.Skip("browser has no hardware or software renderer for the live room interaction")
+		}
+		page.waitFor(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-command-ready') === 'true'`, 30*time.Second, "Scene3D command receiver")
+		page.waitFor(t, `Array.from(window.__gosx?.hubs?.values?.() || []).some((hub) => hub.entry?.path?.includes("/demos/tabletop/ws/"))`, 10*time.Second, "tabletop hub binding after Scene3D interaction is ready")
 		var hubRoomID string
-		page.eval(t, `new URL(Array.from(window.__gosx.hubs.values())[0].entry.path, location.origin).searchParams.get('room')`, &hubRoomID)
+		page.eval(t, `new URL(Array.from(window.__gosx.hubs.values()).find((hub) => hub.entry?.path?.includes("/demos/tabletop/ws/")).entry.path, location.origin).searchParams.get('room')`, &hubRoomID)
 		if hubRoomID != roomID {
 			t.Fatalf("%s browser joined room %q from its hub manifest, want requested room %q", name, hubRoomID, roomID)
 		}
-		page.waitFor(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-command-ready') === 'true' ||
-      document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-start-state') === 'manual'`,
-			30*time.Second, "Scene3D hardware start or software fallback")
-		var startState string
-		page.eval(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-start-state') || ''`, &startState)
-		if startState == "manual" {
-			var manualFallback bool
-			page.eval(t, `(() => {
-      const scene = document.querySelector('#tabletop-scene');
-      const button = document.querySelector('[data-gosx-scene3d-start="tabletop-scene"]');
-      const note = document.querySelector('[data-gosx-scene3d-software-note="tabletop-scene"]');
-      if (scene?.getAttribute('data-gosx-scene3d-start-state') !== 'manual') return false;
-      if (!button || button.hidden || !note || note.hidden || !note.textContent.includes('renders 3D in software')) return false;
-      button.click();
-      return true;
-	    })()`, &manualFallback)
-			if !manualFallback {
-				t.Fatalf("%s browser did not show the software WebGL note and start button\nconsole:\n%s", name, page.Console())
-			}
-		}
-		page.waitFor(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-command-ready') === 'true'`, 30*time.Second, "Scene3D command receiver")
 		page.waitFor(t, `document.querySelector('.tabletop__scene-facts p:first-child strong')?.textContent.trim() === '4'`, 10*time.Second, "four seed objects")
 		var horizontalOverflow bool
 		page.eval(t, `document.documentElement.scrollWidth > document.documentElement.clientWidth`, &horizontalOverflow)

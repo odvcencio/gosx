@@ -627,12 +627,60 @@
     }, current.reconnectDelay);
   }
 
+  const pendingSceneHubs = new Map();
+  let pendingSceneHubObserver = null;
+
+  function connectPendingSceneHubs() {
+    if (pendingSceneHubs.size === 0) return;
+    for (const entry of Array.from(pendingSceneHubs.values())) {
+      if (!hubSceneBindingsReady(entry)) continue;
+      pendingSceneHubs.delete(entry.id);
+      connectHub(entry);
+    }
+    if (pendingSceneHubs.size === 0 && pendingSceneHubObserver) {
+      pendingSceneHubObserver.disconnect();
+      pendingSceneHubObserver = null;
+    }
+  }
+
+  function waitForHubSceneBindings(entry) {
+    pendingSceneHubs.set(entry.id, entry);
+    if (!pendingSceneHubObserver && typeof MutationObserver === "function" && document.documentElement) {
+      pendingSceneHubObserver = new MutationObserver(connectPendingSceneHubs);
+      pendingSceneHubObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-gosx-scene3d-command-ready"],
+        childList: true,
+        subtree: true,
+      });
+    }
+    // Check after observing to cover a scene that became ready between the
+    // initial manifest pass and observer registration.
+    connectPendingSceneHubs();
+  }
+
   async function connectAllHubs(manifest) {
     initializeClientIdentity(manifest && manifest.clientIdentity);
     if (!manifest || !manifest.hubs || manifest.hubs.length === 0) return;
     for (const entry of manifest.hubs) {
-      connectHub(entry);
+      if (hubSceneBindingsReady(entry)) {
+        connectHub(entry);
+      } else {
+        waitForHubSceneBindings(entry);
+      }
     }
+  }
+
+  function hubSceneBindingsReady(entry) {
+    const bindings = entry && Array.isArray(entry.bindings) ? entry.bindings : [];
+    for (let i = 0; i < bindings.length; i += 1) {
+      const binding = bindings[i];
+      if (!binding || (!binding.sceneCommands && !binding.sceneInput)) continue;
+      const mountID = String(binding.sceneMountId || "").trim();
+      const mount = mountID ? document.getElementById(mountID) : null;
+      if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return false;
+    }
+    return true;
   }
 
   // revalidateHubConnections repairs sockets the page lost while it was not

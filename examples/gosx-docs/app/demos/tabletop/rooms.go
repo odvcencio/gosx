@@ -470,13 +470,6 @@ func (r *Room) Props() scene.Props {
 	return r.scenePropsWithPointersLocked()
 }
 
-// HomeScene returns the stable seed diorama used for the read-only home hero.
-// It has ambient camera motion, but no hub connection or edit controls.
-func HomeScene() scene.Props {
-	room := newTabletopRoom("0000000000000000", time.Now())
-	return room.Props()
-}
-
 // RoomMetrics is a server-renderable snapshot of room presence, scene state,
 // and the serialized CRDT document size.
 type RoomMetrics struct {
@@ -612,7 +605,7 @@ func (r *Room) scenePropsLocked() scene.Props {
 		AriaLabel:  "A shared, interactive tabletop still life with six objects",
 		Background: "#111214", Controls: "orbit", AutoRotate: scene.Bool(false),
 		Responsive: scene.Bool(true), FillHeight: scene.Bool(false), PreferWebGPU: scene.Bool(true),
-		CanvasAlpha: scene.Bool(false), UnsupportedMessage: "This browser cannot render 3D. The room controls and share link still work.",
+		CanvasAlpha: scene.Bool(false), UnsupportedMessage: "This device cannot start a live 3D scene. The server-rendered poster remains available.",
 		ControlTarget: scene.Vec3(0, 0.52, 0), ControlMinDistance: 4.9, ControlMaxDistance: 10.8,
 		MaxFPS: 120, MaxDevicePixelRatio: 1.5, MaxPixels: scene.PostFXMaxPixels720p,
 		AdaptiveQuality: scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 120,

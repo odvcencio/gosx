@@ -385,6 +385,7 @@
   ) {
     return new Promise(function(resolve) {
       let idle = false;
+      let painted = false;
       let finished = false;
       let intersectionObserver = new Array().pop();
       let mutationObserver = new Array().pop();
@@ -455,7 +456,11 @@
           finish(false);
           return;
         }
-        if (!idle || document.visibilityState !== "visible" || reducedMotion() || saveData()) return;
+        if (reducedMotion() || saveData()) {
+          finish(false);
+          return;
+        }
+        if (!idle || !painted || document.visibilityState !== "visible") return;
         if (typeof IntersectionObserver !== "undefined") {
           // IntersectionObserver owns visibility when present. The rect check
           // also covers the first turn before its first observer callback.
@@ -519,6 +524,17 @@
         window.requestIdleCallback(markIdle, { timeout: 2000 });
       } else {
         idleTimer = setTimeout(function() { idle = true; check(); }, 1000);
+      }
+      const markPainted = function() {
+        painted = true;
+        check();
+      };
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(function() {
+          window.requestAnimationFrame(markPainted);
+        });
+      } else {
+        setTimeout(markPainted, 0);
       }
       check();
     });
@@ -649,7 +665,10 @@
     if (policy !== "idle-visible-hardware" && policy !== "hardware-auto-software-manual") return true;
     mount.setAttribute("data-gosx-scene3d-start-policy", policy);
     const current = function() { return !ctx.isCurrent || ctx.isCurrent(); };
-    if (policy === "idle-visible-hardware" && !(await sceneWaitForIdleVisible(mount, current))) return false;
+    if (!(await sceneWaitForIdleVisible(mount, current))) {
+      if (current()) setAttrValue(mount, "data-gosx-scene3d-start-state", "poster");
+      return false;
+    }
     const backend = await sceneProbeStartBackend(props);
     setAttrValue(mount, "data-gosx-scene3d-software-webgl", backend.softwareWebGL ? "true" : "false");
     if (policy === "idle-visible-hardware" && !backend.hardware) {

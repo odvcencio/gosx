@@ -13,4 +13,4 @@ Run `GOWORK=off go run scripts/generate-tabletop-assets.go` from the repository 
 
 The builder writes `studio-sweep.png` locally for the camera-facing studio gradient and `contact-shadow.png` as a radial alpha falloff.
 
-`tabletop-home-poster.webp` is a capture of the authored Scene3D still life; it has no separate source asset.
+`tabletop-poster.webp` is a capture of the authored Scene3D still life; it has no separate source asset.
