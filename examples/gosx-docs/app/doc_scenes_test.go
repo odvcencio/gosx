@@ -254,7 +254,7 @@ func TestDocSceneRouteCapabilitiesStayLocal(t *testing.T) {
 			t.Fatalf("read selected route %q: %v", spec.Route, err)
 		}
 		for _, contract := range []string{
-			`class="doc-scene"`,
+			`class="motion-demo__layout"`,
 			`respectReducedMotion={true}`,
 			`data-gosx-link="true"`,
 			`aria-labelledby={docScene.HeadingID}`,
