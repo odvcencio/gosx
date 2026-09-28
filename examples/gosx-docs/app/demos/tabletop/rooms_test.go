@@ -3,6 +3,7 @@ package docs
 import (
 	"encoding/json"
 	"errors"
+	"image/png"
 	"io/fs"
 	"math"
 	"net/http"
@@ -45,12 +46,11 @@ func TestTabletopSeedSceneArtContract(t *testing.T) {
 			}
 			if strings.HasSuffix(item.ID, "-contact-shadow") {
 				material, materialOK := item.Material.(scene.FlatMaterial)
-				geometry, disc := item.Geometry.(scene.BufferGeometry)
-				softOpacity := materialOK && material.Opacity != nil && math.Abs(*material.Opacity-0.65) < 0.001
-				if materialOK && disc && len(geometry.Indices) == 192 && material.Color == "#211713" && softOpacity && material.BlendMode == scene.BlendAlpha {
+				geometry, plane := item.Geometry.(scene.PlaneGeometry)
+				if materialOK && plane && geometry.Width > 0 && geometry.Height > 0 && material.Color == "#ffffff" && material.Texture == "/tabletop/contact-shadow.png" && material.BlendMode == scene.BlendAlpha {
 					contactShadowCount++
 				} else {
-					t.Errorf("%s must use a soft dark contact disc", item.ID)
+					t.Errorf("%s must use a textured soft contact shadow", item.ID)
 				}
 			}
 			if item.ID == "tabletop-studio-backdrop" {
@@ -105,6 +105,35 @@ func TestTabletopSeedSceneArtContract(t *testing.T) {
 	elevation := math.Atan2(props.Camera.Position.Y-0.52, horizontal) * 180 / math.Pi
 	if elevation < 15 || elevation > 30 {
 		t.Fatalf("camera elevation = %.1f degrees, want 15-30", elevation)
+	}
+}
+
+func TestTabletopContactShadowTextureHasSoftAlphaFalloff(t *testing.T) {
+	file, err := os.Open("../../../public/tabletop/contact-shadow.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	img, err := png.Decode(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounds := img.Bounds()
+	if bounds.Dx() != 128 || bounds.Dy() != 128 {
+		t.Fatalf("contact shadow dimensions = %dx%d, want 128x128", bounds.Dx(), bounds.Dy())
+	}
+	alpha := func(x, y int) uint32 {
+		_, _, _, a := img.At(x, y).RGBA()
+		return a >> 8
+	}
+	if center := alpha(63, 63); center < 160 {
+		t.Fatalf("contact shadow center alpha = %d, want at least 160", center)
+	}
+	if middle := alpha(107, 63); middle < 100 {
+		t.Fatalf("contact shadow mid-falloff alpha = %d, want at least 100", middle)
+	}
+	if edge := alpha(127, 63); edge > 3 {
+		t.Fatalf("contact shadow edge alpha = %d, want near-transparent", edge)
 	}
 }
 

@@ -540,7 +540,7 @@
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
     "        float opacity = u_opacity;",
     "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
-    "        fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
+    "        fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a * texAlpha);",
     "        return;",
     "    }",
     "",
@@ -823,7 +823,7 @@
     "",
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
-    "    fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
+    "    fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a * texAlpha);",
     "}",
   ].join("\n");
 

@@ -50,6 +50,26 @@ func TestTabletopEditReachesSecondBrowser(t *testing.T) {
 		if hubRoomID != roomID {
 			t.Fatalf("%s browser joined room %q from its hub manifest, want requested room %q", name, hubRoomID, roomID)
 		}
+		page.waitFor(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-command-ready') === 'true' ||
+      document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-start-state') === 'manual'`,
+			30*time.Second, "Scene3D hardware start or software fallback")
+		var startState string
+		page.eval(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-start-state') || ''`, &startState)
+		if startState == "manual" {
+			var manualFallback bool
+			page.eval(t, `(() => {
+      const scene = document.querySelector('#tabletop-scene');
+      const button = document.querySelector('[data-gosx-scene3d-start="tabletop-scene"]');
+      const note = document.querySelector('[data-gosx-scene3d-software-note="tabletop-scene"]');
+      if (scene?.getAttribute('data-gosx-scene3d-start-state') !== 'manual') return false;
+      if (!button || button.hidden || !note || note.hidden || !note.textContent.includes('renders 3D in software')) return false;
+      button.click();
+      return true;
+	    })()`, &manualFallback)
+			if !manualFallback {
+				t.Fatalf("%s browser did not show the software WebGL note and start button\nconsole:\n%s", name, page.Console())
+			}
+		}
 		page.waitFor(t, `document.querySelector('#tabletop-scene')?.getAttribute('data-gosx-scene3d-command-ready') === 'true'`, 30*time.Second, "Scene3D command receiver")
 		page.waitFor(t, `document.querySelector('.tabletop__scene-facts p:first-child strong')?.textContent.trim() === '4'`, 10*time.Second, "four seed objects")
 		var horizontalOverflow bool

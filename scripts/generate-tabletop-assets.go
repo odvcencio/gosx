@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"math"
@@ -35,6 +36,13 @@ const (
 var modelIDs = []string{"potted_plant_04"}
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--contact-shadow-only" {
+		if err := generateContactShadow(filepath.Join(public, "tabletop", "contact-shadow.png")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := generate(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -175,6 +183,9 @@ func generate() error {
 	if err := generateStudioSweep(filepath.Join(public, "tabletop")); err != nil {
 		return err
 	}
+	if err := generateContactShadow(filepath.Join(public, "tabletop", "contact-shadow.png")); err != nil {
+		return err
+	}
 	textureReport := assetpipe.Report{SchemaVersion: assetpipe.SchemaVersion}
 	for rel, workingPNG := range textureInputs {
 		role, colorSpace := textureRole(filepath.Base(rel))
@@ -281,6 +292,33 @@ func generate() error {
 	fmt.Printf("tabletop assets: optimized models and IBL %d bytes; texture variants %d; committed %d bytes; first view desktop %d bytes / phone %d bytes\n",
 		execution.Totals.OutputBytes, len(textureReport.Assets), assets, desktopFirstView, phoneFirstView)
 	return nil
+}
+
+func generateContactShadow(path string) error {
+	const size = 128
+	const innerRadius, strength = 0.68, 0.72
+	image := image.NewNRGBA(image.Rect(0, 0, size, size))
+	center := float64(size-1) / 2
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			radius := math.Hypot(float64(x)-center, float64(y)-center) / center
+			falloff := 0.0
+			switch {
+			case radius <= innerRadius:
+				falloff = 1
+			case radius < 1:
+				t := (radius - innerRadius) / (1 - innerRadius)
+				falloff = 1 - t*t*(3-2*t)
+			}
+			alpha := uint8(math.Round(strength * falloff * 255))
+			image.SetNRGBA(x, y, color.NRGBA{R: 18, G: 13, B: 11, A: alpha})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image); err != nil {
+		return err
+	}
+	return writeFile(path, encoded.Bytes())
 }
 
 func downloadModel(client *http.Client, root, id string) error {

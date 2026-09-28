@@ -648,8 +648,8 @@ func tabletopContactShadow(object tabletopObject) scene.Mesh {
 		width, height = 0.62, 0.56
 	}
 	return scene.Mesh{
-		ID: object.ID + "-contact-shadow", Geometry: scene.CircleGeometry(1, 64, 0, 0),
-		Material: scene.FlatMaterial{Color: "#211713", Opacity: scene.Float(0.65), BlendMode: scene.BlendAlpha}, Scale: scene.Vec3(width/2, 1, height/2),
+		ID: object.ID + "-contact-shadow", Geometry: scene.PlaneGeometry{Width: width, Height: height},
+		Material: scene.FlatMaterial{Color: "#ffffff", Texture: "/tabletop/contact-shadow.png", BlendMode: scene.BlendAlpha},
 		Position: scene.Vec3(object.X, tabletopSurfaceTop+tabletopContactPad/2, object.Z), Pickable: scene.Bool(false),
 	}
 }
