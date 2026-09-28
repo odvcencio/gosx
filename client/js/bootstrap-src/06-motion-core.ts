@@ -83,6 +83,40 @@
     return motionNumber(a, 0) + (motionNumber(b, 0) - motionNumber(a, 0)) * t;
   }
 
+  // Piecewise scalar curve used by "curve" signals and camera rails. The math
+  // mirrors motion.CurveValue in Go; motion/testdata/curve_golden.json pins both.
+  function motionCurveStops(frames) {
+    const stops = [];
+    for (const frame of Array.isArray(frames) ? frames : []) {
+      const at = frame && typeof frame.at === "number" ? frame.at : NaN;
+      const value = frame && typeof frame.value === "number" ? frame.value : NaN;
+      if (!Number.isFinite(at) || !Number.isFinite(value)) return [];
+      if (stops.length && !(at > stops[stops.length - 1].at)) return [];
+      stops.push({ at: at, value: value });
+    }
+    return stops.length >= 2 ? stops : [];
+  }
+
+  function motionCurveTangent(stops, k) {
+    const lo = Math.max(0, k - 1), hi = Math.min(stops.length - 1, k + 1);
+    return (stops[hi].value - stops[lo].value) / (stops[hi].at - stops[lo].at);
+  }
+
+  function motionCurveValue(stops, smooth, x) {
+    const n = stops.length;
+    if (n === 0) return 0;
+    if (x <= stops[0].at) return stops[0].value;
+    if (x >= stops[n - 1].at) return stops[n - 1].value;
+    let i = 0;
+    while (i < n - 2 && x >= stops[i + 1].at) i++;
+    const a = stops[i], b = stops[i + 1];
+    const h = b.at - a.at, t = (x - a.at) / h;
+    if (!smooth) return a.value + (b.value - a.value) * t;
+    const ma = motionCurveTangent(stops, i), mb = motionCurveTangent(stops, i + 1);
+    const t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * a.value + (t3 - 2 * t2 + t) * h * ma + (-2 * t3 + 3 * t2) * b.value + (t3 - t2) * h * mb;
+  }
+
   function createMotionScheduler() {
     const phases = { read: new Set(), evaluate: new Set(), write: new Set() };
     const rectRecords = new Map();
@@ -1135,6 +1169,14 @@
         }
       };
       input.subscribe(compute);
+      return value;
+    }
+    if (kind === "curve") {
+      const input = getValue(spec.input);
+      const stops = motionCurveStops(spec.frames);
+      const smooth = spec.smooth === true;
+      const value = createSignal(stops.length ? stops[0].value : 0, name);
+      input.subscribe(function(next) { value.set(motionCurveValue(stops, smooth, motionNumber(next, 0))); });
       return value;
     }
     if (kind === "mix") {

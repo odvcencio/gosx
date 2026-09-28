@@ -63,6 +63,7 @@ const (
 	SignalClamp      SignalKind = "clamp"
 	SignalMix        SignalKind = "mix"
 	SignalVelocity   SignalKind = "velocity"
+	SignalCurve      SignalKind = "curve"
 )
 
 // MotionAxis names the axis for scroll and pointer sources.
@@ -114,6 +115,7 @@ type SignalSpec struct {
 	Max           float64             `json:"max,omitempty"`
 	Ease          *MotionEase         `json:"ease,omitempty"`
 	Frames        []MotionKeyframe    `json:"frames,omitempty"`
+	Smooth        bool                `json:"smooth,omitempty"`
 	ReducedMotion ReducedMotionPolicy `json:"reducedMotion,omitempty"`
 }
 
@@ -309,6 +311,13 @@ func (p *Program) Marshal() ([]byte, error) {
 			return nil, fmt.Errorf("motion: duplicate signal %q", id)
 		}
 		ids[id] = struct{}{}
+	}
+	for _, signal := range p.Signals {
+		if signal.Kind == SignalCurve {
+			if err := validateCurveSignal(signal); err != nil {
+				return nil, err
+			}
+		}
 	}
 	for _, signal := range p.Signals {
 		for _, ref := range []SignalRef{signal.Input, signal.A, signal.B, signal.Weight} {

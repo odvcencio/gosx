@@ -59,10 +59,17 @@ func motionDemoProgram() (*motion.Program, error) {
 	program := motion.NewProgram("docs-motion")
 	scroll := program.ScrollProgress("page-scroll", "", motion.AxisY)
 	cardY := program.Map("card-y", scroll, 0, 1, 0, -26)
-	cameraZ := program.Map("camera-z", scroll, 0, 1, 8.4, 6.4)
 	program.BindCSSVariable(cardY, "#motion-card", "--motion-card-y", "px")
 	program.BindCSSVariable(scroll, "#doc-motion-surface", "--motion-progress", "")
-	program.BindCamera(cameraZ, "#motion-scene", "position.z")
+	// A camera rail: scroll moves the camera along a curve while it keeps
+	// looking at the scene origin.
+	if err := program.CameraRail("camera-rail", scroll, "#motion-scene", []motion.RailStop{
+		{At: 0, Position: [3]float64{0, 0, 8.4}, LookAt: [3]float64{0, 0, 0}, FOV: 60},
+		{At: 0.5, Position: [3]float64{3, 1.2, 7.2}, LookAt: [3]float64{0, 0, 0}, FOV: 52},
+		{At: 1, Position: [3]float64{0, 0, 6.4}, LookAt: [3]float64{0, 0, 0}, FOV: 60},
+	}); err != nil {
+		return nil, err
+	}
 
 	hover := program.Hover("button-hover", "#motion-hover")
 	lift := program.Spring("hover-spring", 0, motion.SpringOptions{
