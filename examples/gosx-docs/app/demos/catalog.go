@@ -32,16 +32,6 @@ type DemoDefinition struct {
 
 var demoCatalog = []DemoDefinition{
 	{
-		Slug: "tabletop", Title: "Shared Tabletop", Tag: "shared PBR room",
-		Promise: "Place CC0 studio models on one shared table, then change their position, rotation, or lighting with everyone in the room.",
-		Lesson:  "One GoSX page connects the Go room server, a CRDT document, Hub presence, Scene3D commands, and the browser controls.",
-		Accent:  "#d7b783", Facets: []string{"Scene3D", "PBR", "Hub", "CRDT", "WebGPU", "WebGL2"},
-		SourcePath: "examples/gosx-docs/app/demos/tabletop/page.gsx", Packages: []string{"scene", "hub", "crdt", "route"},
-		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime + GoSX Hub and CRDT",
-		Limitations:  "Rooms live in memory, hold up to 64 objects and 8 visitors, and expire after 30 idle minutes. The process accepts up to 200 rooms. WebGPU falls back to WebGL2; browsers without a supported GPU keep the scene poster and room controls.",
-		ShowcaseRank: 0,
-	},
-	{
 		Slug: "showreel", Title: "Orbital sculpture", Tag: "interactive scene study",
 		Promise: "Orbit a small sculpture built from typed Go scene data.",
 		Lesson:  "Scene3D renders a small, asset-free graph of geometry, lighting, materials, and post effects.",

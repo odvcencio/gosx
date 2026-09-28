@@ -1,30 +1,8 @@
 package docs
 
 import (
-	_ "embed"
-	"encoding/json"
-
-	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/route"
-	"m31labs.dev/gosx/server"
 )
-
-type QuickstartCopyProps struct {
-	Text string
-}
-
-// Generated from the flagship's typed Go scene and assetpipe manifest.
-//
-//go:embed demos/tabletop/texture-variants.json
-var homeTabletopVariantData []byte
-
-var homeTabletopVariants assetpipe.VariantManifest
-
-func init() {
-	if err := json.Unmarshal(homeTabletopVariantData, &homeTabletopVariants); err != nil {
-		panic(err)
-	}
-}
 
 func init() {
 	RegisterStaticDocsPage(
@@ -32,16 +10,8 @@ func init() {
 		"Build server-rendered apps, interactive tools, realtime systems, and GPU scenes in Go without a JavaScript app toolchain.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-				heroPoster := server.ScenePosterConfig{
-					URL: "/tabletop/tabletop-home-poster.webp", Alt: "Six studio objects on a textured wood tabletop, backed by a soft gradient sweep",
-					Width: 1100, Height: 760,
-				}
-				ctx.Runtime().SetTextureVariants(homeTabletopVariants)
-				ctx.AddHead(server.ScenePosterPreload(heroPoster))
 				return map[string]any{
-					"heroScene":     HeroScene(),
-					"heroPosterURL": server.AssetURL(heroPoster.URL),
-					"commands":      "go install m31labs.dev/gosx/cmd/gosx@latest\ngosx init my-app\ncd my-app && go run .",
+					"heroScene": HeroScene(),
 					"runtimeSurfaces": []map[string]string{
 						{"num": "01", "name": "Server", "purpose": "Pages, layouts, loaders, metadata, and streamed HTML.", "cost": "Component runtime: none"},
 						{"num": "02", "name": "Action", "purpose": "Typed mutations, validation, CSRF, redirects, and form state.", "cost": "Browser cost: native HTML"},
