@@ -84,6 +84,7 @@ var docSceneSpecs = []docSceneSpec{
 		},
 	},
 }
+
 // DocSceneFeatureForRoute returns a fresh deterministic feature for a selected
 // conceptual docs route. Other routes deliberately return false so they stay
 // free of Scene3D capabilities and runtime payload.
