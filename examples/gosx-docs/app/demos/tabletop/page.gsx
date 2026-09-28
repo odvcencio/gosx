@@ -6,7 +6,7 @@ import (
 )
 
 func Page() Node {
-	return <main class="tabletop" aria-labelledby="tabletop-title" data-gosx-scene3d-status-scope>
+	return <div class="tabletop" data-gosx-scene3d-status-scope>
 		<div class="tabletop__inner">
 			<header class="tabletop__header">
 				<div>
@@ -127,7 +127,7 @@ func Page() Node {
 				</aside>
 			</div>
 		</div>
-	</main>
+	</div>
 }
 
 //gosx:island

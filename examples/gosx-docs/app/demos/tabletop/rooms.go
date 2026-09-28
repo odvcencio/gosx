@@ -605,7 +605,7 @@ func (r *Room) scenePropsLocked() scene.Props {
 		AriaLabel:  "A shared, interactive tabletop still life with six objects",
 		Background: "#111214", Controls: "orbit", AutoRotate: scene.Bool(false),
 		Responsive: scene.Bool(true), FillHeight: scene.Bool(false), PreferWebGPU: scene.Bool(true),
-		CanvasAlpha: scene.Bool(false), UnsupportedMessage: "This device cannot start a live 3D scene. The server-rendered poster remains available.",
+		CanvasAlpha: scene.Bool(false), UnsupportedMessage: "Live 3D is unavailable or off for reduced motion. The server-rendered poster remains available.",
 		ControlTarget: scene.Vec3(0, 0.52, 0), ControlMinDistance: 4.9, ControlMaxDistance: 10.8,
 		MaxFPS: 120, MaxDevicePixelRatio: 1.5, MaxPixels: scene.PostFXMaxPixels720p,
 		AdaptiveQuality: scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 120,

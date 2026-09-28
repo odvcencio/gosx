@@ -134,6 +134,7 @@
 }
 
 .tabletop__fallback {
+  display: none;
   position: absolute;
   right: 1rem;
   bottom: 1rem;
@@ -148,6 +149,10 @@
   color: var(--text-secondary);
   font-size: var(--text-small);
   text-align: center;
+}
+
+.tabletop__stage #tabletop-scene[data-gosx-scene3d-start-state="poster"] .tabletop__fallback {
+  display: block;
 }
 
 .tabletop__hint {
