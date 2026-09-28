@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const source = fs.readFileSync(path.join(repoRoot, "client/js/bootstrap-src/06-motion-core.ts"), "utf8");
 
-function createRuntime() {
+function createRuntime(globals = {}) {
   let nextFrameID = 0;
   const frames = new Map();
   const listeners = new Map();
@@ -54,6 +54,7 @@ function createRuntime() {
     Date,
     setTimeout,
     clearTimeout,
+    ...globals,
   });
   vm.runInContext(source, context, { filename: "06-motion-core.ts" });
 
@@ -66,6 +67,7 @@ function createRuntime() {
       for (const callback of pending) callback(timestamp);
       return pending.length;
     },
+    setTime(timestamp) { clock = timestamp; },
     frameCount() { return frames.size; },
     listeners,
   };
@@ -172,4 +174,108 @@ test("a stable PinTo binding invalidates a scene only when its target position c
   assert.equal(pins, 2, "a dirty rect should recompute the pin");
   assert.equal(invalidations, 1, "an unchanged pin should not invalidate its scene again");
   assert.equal(runtime.frameCount(), 0, "a stable pin should let the scheduler sleep");
+});
+
+
+test("delayed and staggered motion holds its first frame after an idle period", () => {
+  const runtime = createRuntime();
+  runtime.motion.scheduler.request(() => {});
+  runtime.advance(100);
+  assert.equal(runtime.frameCount(), 0);
+  runtime.setTime(5000);
+  const first = { style: {} }, second = { style: {} };
+  runtime.motion.animate(first, [{ opacity: 0 }, { opacity: 1 }], { duration: 100, delay: 100, easing: "linear" });
+  runtime.motion.animate(second, [{ opacity: 0 }, { opacity: 1 }], { duration: 100, delay: 200, easing: "linear" });
+  assert.equal(first.style.opacity, "0", "backwards fill applies immediately");
+  assert.equal(second.style.opacity, "0");
+  runtime.advance(5050);
+  assert.equal(first.style.opacity, "0");
+  assert.equal(second.style.opacity, "0");
+  runtime.advance(5150);
+  assert.equal(Number(first.style.opacity), 0.5);
+  assert.equal(second.style.opacity, "0", "later stagger still waits");
+  runtime.advance(5250);
+  assert.equal(first.style.opacity, "1");
+  assert.equal(Number(second.style.opacity), 0.5);
+});
+
+test("a spring waking an idle scheduler starts like a fresh scheduler", () => {
+  for (const cancelled of [false, true]) {
+    const idle = createRuntime();
+    if (cancelled) {
+      const stop = idle.motion.scheduler.addContinuous(() => true);
+      idle.advance(0);
+      idle.advance(16);
+      stop();
+    } else {
+      idle.motion.scheduler.request(() => {});
+      idle.advance(16);
+    }
+    assert.equal(idle.frameCount(), 0);
+    const fresh = createRuntime();
+    idle.setTime(5000);
+    fresh.setTime(5000);
+    const woke = idle.motion.spring(0, { to: 100 });
+    const initial = fresh.motion.spring(0, { to: 100 });
+    idle.advance(5016);
+    fresh.advance(5016);
+    assert.equal(woke.get(), initial.get(), "idle time must not advance the spring");
+    assert.ok(woke.get() < 10, "the first frame must not jump to its target");
+    woke.dispose();
+    initial.dispose();
+  }
+});
+
+function programElement(program, selectors = {}) {
+  return {
+    nodeType: 1,
+    children: [],
+    hasAttribute(name) { return name === "data-gosx-motion-program"; },
+    getAttribute(name) { return name === "data-gosx-motion-program" ? JSON.stringify(program) : null; },
+    querySelectorAll(selector) { return selectors[selector] ? [selectors[selector]] : []; },
+  };
+}
+
+test("disposing a time program releases continuous frame work", () => {
+  const runtime = createRuntime();
+  const element = programElement({ version: 1, id: "clock", signals: [{ id: "time", kind: "time" }] });
+  runtime.motion.mountPrograms(element);
+  runtime.advance(0);
+  runtime.advance(16);
+  assert.equal(runtime.frameCount(), 1);
+  runtime.motion.disposePrograms(element);
+  runtime.advance(32);
+  assert.equal(runtime.frameCount(), 0, "removed programs must let the scheduler sleep");
+  assert.equal(runtime.advance(48), 0);
+});
+
+test("program disposal releases shared pointer and pin rect observers only after the last user", () => {
+  const observers = [];
+  class ResizeObserver {
+    constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
+    observe(element) { this.element = element; }
+    disconnect() { this.disconnected = true; }
+  }
+  const runtime = createRuntime({ ResizeObserver });
+  const element = {
+    nodeType: 1,
+    addEventListener() {}, removeEventListener() {},
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
+  };
+  const scene = { ...element };
+  const selectors = { "#target": element, "#scene": scene };
+  const pointer = programElement({ version: 1, id: "pointer", signals: [{ id: "x", kind: "pointer", source: { kind: "pointer", selector: "#target", axis: "x" } }] }, selectors);
+  const pins = programElement({ version: 1, id: "pins", signals: [], pins: [{ scene: "#scene", node: "badge", element: "#target" }] }, selectors);
+  runtime.motion.mountPrograms(pointer);
+  runtime.motion.mountPrograms(pins);
+  runtime.advance(16);
+  assert.equal(observers.length, 2, "shared target should have one resize observer");
+  runtime.motion.disposePrograms(pointer);
+  assert.equal(observers.filter((observer) => observer.disconnected).length, 0, "pin still owns the shared target");
+  runtime.motion.disposePrograms(pins);
+  assert.equal(observers.filter((observer) => observer.disconnected).length, 2);
+  runtime.motion.disposePrograms(pins);
+  assert.equal(observers.filter((observer) => observer.disconnected).length, 2, "disposal is idempotent");
+  assert.equal(runtime.motion.scheduler.rect(element), null);
+  assert.equal(runtime.motion.scheduler.rect(scene), null);
 });

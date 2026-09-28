@@ -11,7 +11,6 @@
   const programRecords = new Map();
   const sceneAdapters = new Map();
   let programObserver = null;
-  let adapterReportObserver = null;
   let nextAnimationID = 0;
 
   function motionNumber(value, fallback) {
@@ -85,6 +84,7 @@
     }
 
     function cancelScheduled() {
+      lastFrameMS = null;
       if (frameHandle == null) return;
       if (frameKind === "raf" && typeof window.cancelAnimationFrame === "function") {
         window.cancelAnimationFrame(frameHandle);
@@ -131,7 +131,10 @@
       if (typeof callback !== "function") return function() {};
       continuous.add(callback);
       wake();
-      return function() { continuous.delete(callback); };
+      return function() {
+        continuous.delete(callback);
+        if (!hasWork()) cancelScheduled();
+      };
     }
 
     function queueWrite(key, callback) {
@@ -221,7 +224,7 @@
       if (!element || typeof element !== "object") return function() {};
       let record = rectRecords.get(element);
       if (!record) {
-        record = { element: element, left: 0, top: 0, width: 0, height: 0, ready: false, dirty: true, observer: null };
+        record = { element: element, left: 0, top: 0, width: 0, height: 0, ready: false, dirty: true, observer: null, users: 0 };
         rectRecords.set(element, record);
         ensureRectMutationObserver();
         if (typeof ResizeObserver === "function") {
@@ -237,9 +240,13 @@
         }
         wake();
       }
+      record.users++;
+      let released = false;
       return function() {
+        if (released) return;
+        released = true;
         const active = rectRecords.get(element);
-        if (active !== record) return;
+        if (active !== record || --record.users > 0) return;
         if (record.observer) record.observer.disconnect();
         rectRecords.delete(element);
         releaseRectMutationObserver();
@@ -342,6 +349,7 @@
       metrics.lastFrameMS = Math.max(0, clockNow() - startMS);
       metrics.maxFrameMS = Math.max(metrics.maxFrameMS, metrics.lastFrameMS);
       if (hasWork()) wake();
+      else lastFrameMS = null;
     }
 
     function requestWork() { wake(); }
@@ -378,7 +386,7 @@
       rect: rect,
       invalidateRects: invalidateRects,
       wake: wake,
-      now: function() { return currentFrameMS; },
+      now: function() { return inFrame ? currentFrameMS : clockNow(); },
       delta: function() { return deltaSeconds; },
       isFrame: function() { return inFrame; },
       metrics: snapshotMetrics,
@@ -981,7 +989,7 @@
     const policy = motionReducedPolicy(config.reducedMotion || "skip");
     const reduce = Boolean(config.respectReducedMotion !== false && reducedMotion);
     let active = true;
-    let startMS = null;
+    let startMS = scheduler.now() + (reduce ? 0 : delay);
     let stopContinuous = null;
     let transform = motionTransformComponents(first.transform);
     const endTransform = motionTransformComponents(last.transform);
@@ -1012,10 +1020,11 @@
       resolveFinished({ finished: true });
       return { finished: finished, cancel: function() { active = false; } };
     }
-    const startDelay = reduce ? 0 : delay;
+    for (const property of Object.keys(first)) {
+      motionSetStyle(element, property, animateOpacityOnly && property !== "opacity" ? last[property] : first[property]);
+    }
     function tick(now) {
       if (!active) return false;
-      if (startMS == null) startMS = now + startDelay;
       const elapsed = now - startMS;
       if (elapsed < 0) return true;
       const progress = runtimeDuration <= 0 ? 1 : motionClamp(elapsed / runtimeDuration, 0, 1);
@@ -1055,10 +1064,6 @@
       return true;
     }
 
-    if (!reduce && delay > 0) {
-      const startedAt = scheduler.now() || (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
-      startMS = startedAt + delay;
-    }
     stopReduced = function(next) {
       if (!active || config.respectReducedMotion === false || !next) return;
       if (policy === "skip") {
@@ -1125,7 +1130,7 @@
     if (kind === "time") {
       const value = createSignal(0, name);
       const start = scheduler.now();
-      value.disposeContinuous = scheduler.addContinuous(function(now) { value.set(Math.max(0, (now - start) / 1000)); return true; });
+      value.dispose = scheduler.addContinuous(function(now) { value.set(Math.max(0, (now - start) / 1000)); return true; });
       return value;
     }
     if (kind === "visibility" || kind === "scroll" || kind === "pointer" || kind === "hover") return createSignal(0, name);
@@ -1225,7 +1230,7 @@
         }
       } else if (type === "pointer") {
         if (element && typeof element.addEventListener === "function") {
-          scheduler.observeRect(element);
+          record.stops.push(scheduler.observeRect(element));
           let x = 0, y = 0;
           const onMove = function(event) { x = motionNumber(event.clientX, 0); y = motionNumber(event.clientY, 0); scheduler.wake(); };
           const onLeave = function() { x = 0; y = 0; value.set(0); };
@@ -1312,8 +1317,8 @@
       const scene = motionQuery(root, pin.scene)[0] || null;
       const element = motionQuery(root, pin.element)[0] || null;
       if (scene && element) {
-        scheduler.observeRect(scene);
-        scheduler.observeRect(element);
+        record.stops.push(scheduler.observeRect(scene));
+        record.stops.push(scheduler.observeRect(element));
         const attachment = scene && sceneAdapters.get(scene);
         record.pins.push({ spec: pin, scene: scene, element: element, adapter: attachment && attachment.adapter || null });
       }
@@ -1386,42 +1391,6 @@
       }
     });
     programObserver.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-gosx-motion-program"] });
-  }
-
-  function updateAdapterReports(root) {
-    const target = root || document;
-    const reports = [];
-    if (target.matches && target.matches("[data-gosx-motion-adapter-report]")) reports.push(target);
-    if (target.querySelectorAll) reports.push.apply(reports, Array.from(target.querySelectorAll("[data-gosx-motion-adapter-report]")));
-    for (const report of reports) {
-      const selector = report.getAttribute("data-gosx-motion-adapter-report") || "";
-      let scene = null;
-      try { scene = selector ? document.querySelector(selector) : null; } catch (_error) {}
-      if (!scene) continue;
-      let truth = scene.__gosxScene3DRenderBackendTruth || null;
-      if (!truth) {
-        try { truth = JSON.parse(scene.getAttribute("data-gosx-scene3d-render-backend-truth") || "null"); } catch (_error) {}
-      }
-      if (!truth) continue;
-      const info = truth.adapterInfo || {};
-      const adapter = [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(" ") || truth.adapter || "adapter details unavailable";
-      report.textContent = (truth.backend || "renderer") + " adapter: " + adapter;
-      report.setAttribute("data-gosx-motion-renderer", truth.backend || "");
-      report.setAttribute("data-gosx-motion-adapter", adapter);
-    }
-  }
-
-  function installAdapterReportObserver() {
-    if (adapterReportObserver || typeof MutationObserver !== "function" || typeof document === "undefined") return;
-    const root = document.documentElement || document.body;
-    if (!root || motionQuery(root, "[data-gosx-motion-adapter-report]").length === 0) return;
-    adapterReportObserver = new MutationObserver(function() { updateAdapterReports(document); });
-    try {
-      adapterReportObserver.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-gosx-scene3d-render-backend-truth", "data-gosx-scene3d-renderer"] });
-    } catch (_error) {
-      adapterReportObserver = null;
-    }
-    updateAdapterReports(document);
   }
 
   function attachScene(mount, adapter) {
@@ -1528,7 +1497,6 @@
     return function() { listeners.delete(callback); if (!listeners.size) namedListeners.delete(key); };
   };
   motion.attachScene = attachScene;
-  motion.refreshAdapterReports = function(root) { updateAdapterReports(root || document); };
   motion.mountPrograms = mountPrograms;
   motion.disposePrograms = disposePrograms;
   motion.reducedMotion = function() { return reducedMotion; };
@@ -1541,10 +1509,9 @@
 
   if (typeof document !== "undefined") {
     mountPrograms(document.body || document.documentElement);
-    installAdapterReportObserver();
     if (typeof document.addEventListener === "function") {
-      document.addEventListener("gosx:navigate", function() { mountPrograms(document.body || document.documentElement); installAdapterReportObserver(); updateAdapterReports(document); });
-      document.addEventListener("gosx:region:after", function() { mountPrograms(document.body || document.documentElement); installAdapterReportObserver(); updateAdapterReports(document); });
+      document.addEventListener("gosx:navigate", function() { mountPrograms(document.body || document.documentElement); });
+      document.addEventListener("gosx:region:after", function() { mountPrograms(document.body || document.documentElement); });
     }
   }
 })();

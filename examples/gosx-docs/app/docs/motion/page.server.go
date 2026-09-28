@@ -4,11 +4,15 @@ import (
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {
 	docsapp.RegisterDocsPage("Motion", "Share scroll and spring signals between HTML and Scene3D.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			// Demo diagnostics: shows the demo scene's renderer and GPU adapter.
+			// It is page-scoped, so it ships only on this route.
+			ctx.AddHead(server.LifecycleScript("/motion-adapter-report.js"))
 			program, err := motionDemoProgram()
 			if err != nil {
 				return nil, err

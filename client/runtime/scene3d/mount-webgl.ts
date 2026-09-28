@@ -4941,7 +4941,7 @@ function gosxConfigureSceneScript(script, role, src) {
       setAttrValue(mount, "data-gosx-scene3d-render-backend-truth", encoded);
       setAttrValue(mount, "data-gosx-scene3d-render-gpu", truth.gpu ? "true" : "false");
       setAttrValue(mount, "data-gosx-scene3d-render-implementation", truth.implementation);
-      mount.__gosxScene3DRenderBackendTruth = truth; const motionRuntime = typeof window !== "undefined" && window.__gosx && window.__gosx.motion; if (motionRuntime && typeof motionRuntime.refreshAdapterReports === "function") motionRuntime.refreshAdapterReports();
+      mount.__gosxScene3DRenderBackendTruth = truth;
     }
     return truth;
   }
