@@ -47,7 +47,9 @@ func Page() Node {
 						<div class="tabletop__poster-copy" aria-hidden="true">
 							<span class="tabletop__poster-eyebrow">A shared tabletop</span>
 							<strong>A small room, ready for company.</strong>
-							<span>The live scene takes over after this preview paints.</span>
+							<span>
+								The live scene takes over after this preview paints.
+							</span>
 						</div>
 						<Scene3D
 							id="tabletop-scene"
