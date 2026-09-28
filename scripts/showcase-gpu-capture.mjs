@@ -4,6 +4,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import {
+  hasRepresentativeDrawCadence,
+  MIN_DRAW_CADENCE_SAMPLES,
+} from './showcase-gpu-cadence.mjs';
 
 const require = createRequire(import.meta.url);
 const toolsDir = process.env.SHOWCASE_TOOLS_DIR || '/home/draco/.local/state/nightwatch/reports/gosx-showcase/tools';
@@ -155,7 +159,12 @@ try {
         if (renderer !== wantedRenderer) throw new Error(`requested ${backend}, runtime selected ${renderer || 'no renderer'}`);
         const drawCadence = sortedStats(sample.drawIntervals);
         const raf = sortedStats(sample.frameIntervals);
-        if (!drawCadence || !raf) throw new Error(`alternating wheel input produced ${sample.drawCount} draws and ${sample.frameIntervals.length} RAF intervals`);
+        if (!hasRepresentativeDrawCadence(drawCadence) || !raf) {
+          throw new Error(
+            `alternating wheel input produced ${sample.drawCount} draws and ${sample.frameIntervals.length} RAF intervals; ` +
+            `draw cadence needs at least ${MIN_DRAW_CADENCE_SAMPLES} intervals`,
+          );
+        }
         row.stats = {
           renderedFps: Number((1000 / raf.p50).toFixed(1)),
           drawCadence,

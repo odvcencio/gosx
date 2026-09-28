@@ -389,6 +389,33 @@ func TestDemoOverviewOmitsThePerDemoDockAndDetailDrawer(t *testing.T) {
 			t.Errorf("demo overview should not render per-demo chrome marker %q", marker)
 		}
 	}
+	doc, err := html.Parse(strings.NewReader(rendered))
+	if err != nil {
+		t.Fatalf("parse demo overview: %v", err)
+	}
+	var hasEmptySlug bool
+	var findOverviewShell func(*html.Node)
+	findOverviewShell = func(node *html.Node) {
+		if node.Type == html.ElementNode && contains(strings.Fields(htmlAttributes(node)["class"]), "demos-shell") {
+			attrs := htmlAttributes(node)
+			value, exists := attrs["data-demo-slug"]
+			hasEmptySlug = exists && value == ""
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			findOverviewShell(child)
+		}
+	}
+	findOverviewShell(doc)
+	if !hasEmptySlug {
+		t.Fatal("demo overview must render an empty slug so its no-:has single-column fallback applies")
+	}
+	css, err := os.ReadFile(repoPath(t, "examples/gosx-docs/app/demos/layout.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(css), `.demos-shell[data-demo-slug=""] .demos-body { grid-template-columns: minmax(0, 1fr); }`) {
+		t.Fatal("demo overview must retain a single-column fallback for browsers without :has")
+	}
 }
 
 func normalizedNodeText(node *html.Node) string {

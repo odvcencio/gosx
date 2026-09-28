@@ -47,6 +47,12 @@ func TestCapabilitiesPageRendersEveryMatrixRowAndBackendCell(t *testing.T) {
 			t.Errorf("browser capability column does not handle browser renderer %q", runtimeKind)
 		}
 	}
+	if strings.Contains(string(cssSource), ":has(") {
+		t.Fatal("browser capability answers must not depend on CSS :has support")
+	}
+	if !strings.Contains(string(cssSource), `.capabilities-browser[data-gosx-browser-renderer="webgpu"] + .capabilities-table-wrap .capabilities-browser-cell__answer--webgpu`) {
+		t.Fatal("browser capability answers must follow the probed renderer without :has")
+	}
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve test source")
@@ -63,6 +69,26 @@ func TestCapabilitiesPageRendersEveryMatrixRowAndBackendCell(t *testing.T) {
 	doc, err := html.Parse(strings.NewReader(response.Body.String()))
 	if err != nil {
 		t.Fatalf("parse capabilities page: %v", err)
+	}
+	var probePrecedesTable bool
+	var checkProbeOrder func(*html.Node)
+	checkProbeOrder = func(node *html.Node) {
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type == html.ElementNode && hasHTMLClass(child, "capabilities-browser") {
+				for next := child.NextSibling; next != nil; next = next.NextSibling {
+					if next.Type != html.ElementNode {
+						continue
+					}
+					probePrecedesTable = hasHTMLClass(next, "capabilities-table-wrap")
+					break
+				}
+			}
+			checkProbeOrder(child)
+		}
+	}
+	checkProbeOrder(doc)
+	if !probePrecedesTable {
+		t.Fatal("browser capability probe must be the table wrapper's previous element sibling")
 	}
 
 	wantBackends := map[string]capability.Backend{
@@ -121,6 +147,15 @@ func TestCapabilitiesPageRendersEveryMatrixRowAndBackendCell(t *testing.T) {
 			t.Errorf("capabilities page is missing Matrix row %q", feature)
 		}
 	}
+}
+
+func hasHTMLClass(node *html.Node, want string) bool {
+	for _, class := range strings.Fields(htmlAttributes(node)["class"]) {
+		if class == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCapabilitiesPageExplainsTheHonestyGateInThreeSentences(t *testing.T) {

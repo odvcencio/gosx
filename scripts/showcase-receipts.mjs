@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
+import {
+  hasRepresentativeDrawCadence,
+  MIN_DRAW_CADENCE_SAMPLES,
+} from './showcase-gpu-cadence.mjs';
 
 const [evidenceDir, distDir, outFile] = process.argv.slice(2);
 if (!evidenceDir || !distDir || !outFile) {
@@ -62,8 +66,14 @@ const titles = new Map([
   ['/demos/lodestar/', 'Lodestar Meridian'],
 ]);
 for (const row of desktopRows) {
-  if (row.errors?.length || row.error || !row.stats?.drawCadence || !row.stats?.rafCpu || row.firstDrawMs == null) {
+  if (row.errors?.length || row.error || !row.stats?.rafCpu || row.firstDrawMs == null) {
     throw new Error(`incomplete GPU timing at ${row.path} (${row.backend}): ${JSON.stringify(row.errors || row.error)}`);
+  }
+  if (!hasRepresentativeDrawCadence(row.stats?.drawCadence)) {
+    throw new Error(
+      `GPU timing at ${row.path} (${row.backend}) needs at least ${MIN_DRAW_CADENCE_SAMPLES} draw intervals; ` +
+      `found ${row.stats?.drawCadence?.n ?? 0}`,
+    );
   }
   const rendererBackend = row.backend === 'webgl' ? 'webgl2' : row.backend;
   if (rendererBackend !== 'webgpu' && rendererBackend !== 'webgl2') throw new Error(`unexpected GPU backend ${rendererBackend}`);
