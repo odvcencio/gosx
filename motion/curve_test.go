@@ -285,3 +285,28 @@ func TestCameraRailFOVStaysWithinStopRange(t *testing.T) {
 		}
 	}
 }
+
+func TestCameraRailRejectsPathsThroughTheLookAtPoint(t *testing.T) {
+	// The camera flies straight through the point it looks at, so its aim
+	// direction flips 180 degrees somewhere between two samples. Interpolating
+	// across that would turn the camera away from its target.
+	for name, stops := range map[string][]RailStop{
+		"through the target": {
+			{At: 0, Position: [3]float64{0, 0, 5}, LookAt: [3]float64{0, 0, 0}},
+			{At: 1, Position: [3]float64{0, 0, -5}, LookAt: [3]float64{0, 0, 0}},
+		},
+		"onto the target": {
+			{At: 0, Position: [3]float64{0, 0, 5}, LookAt: [3]float64{0, 0, 0}},
+			{At: 1, Position: [3]float64{0, 0, 0}, LookAt: [3]float64{0, 0, 0}},
+		},
+	} {
+		p := NewProgram("x")
+		err := p.CameraRail("x", p.Time("t"), "#scene", stops)
+		if err == nil || !strings.Contains(err.Error(), "look-at") {
+			t.Fatalf("%s: err = %v, want a look-at error", name, err)
+		}
+		if len(p.Signals) != 1 || len(p.Bindings) != 0 {
+			t.Fatalf("%s: a rejected rail must not add signals or bindings, got %d signals %d bindings", name, len(p.Signals), len(p.Bindings))
+		}
+	}
+}

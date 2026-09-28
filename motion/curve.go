@@ -190,6 +190,9 @@ func (p *Program) CameraRail(id string, progress SignalRef, sceneSelector string
 			}
 			length := math.Sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
 			rx, ry := prevPitch, prevYaw
+			if length <= 1e-9 {
+				return fmt.Errorf("motion: camera rail passes through its look-at point at progress %v; move a stop or the look-at point", at)
+			}
 			if length > 1e-9 {
 				rx = math.Asin(math.Max(-1, math.Min(1, d[1]/length)))
 				ry = math.Atan2(-d[0], -d[2])
@@ -203,6 +206,9 @@ func (p *Program) CameraRail(id string, progress SignalRef, sceneSelector string
 					}
 				}
 				prevPitch, prevYaw, haveDir = rx, ry, true
+			}
+			if n := len(yaw); n > 0 && (math.Abs(ry-yaw[n-1].Value) > math.Pi/2 || math.Abs(rx-pitch[n-1].Value) > math.Pi/2) {
+				return fmt.Errorf("motion: camera rail swings more than 90 degrees between progress %v and %v (it passes almost through its look-at point); add stops or move the look-at point", yaw[n-1].At, at)
 			}
 			pitch = append(pitch, CurveStop{At: at, Value: rx})
 			yaw = append(yaw, CurveStop{At: at, Value: ry})
