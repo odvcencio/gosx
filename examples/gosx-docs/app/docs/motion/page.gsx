@@ -14,19 +14,19 @@ func Page() Node {
 			>View the Go motion setup</a>
 		</section>
 		<section
-			class="doc-scene"
+			class="motion-demo__layout"
 			aria-labelledby={docScene.HeadingID}
 			data-gosx-motion-program={data.motionProgram}
 		>
 			<div
 				id={docScene.SurfaceID}
-				class="doc-scene__surface motion-demo__surface"
+				class="motion-demo__surface"
 				role="region"
 				aria-label="Scene3D motion demo"
 			>
 				<div class="motion-demo__stage">
-					<Scene3D id="motion-scene" class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-						<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
+					<Scene3D id="motion-scene" class="motion-demo__mount" {...docScene.Scene} respectReducedMotion={true}>
+						<div class="motion-demo__fallback">{docScene.Scene.UnsupportedMessage}</div>
 					</Scene3D>
 					<div class="motion-demo__overlay">
 						<article id="motion-card" class="motion-demo__card">
@@ -54,11 +54,11 @@ func Page() Node {
 				</div>
 				<div id="motion-scroll-track" class="motion-demo__scroll-track" aria-hidden="true"></div>
 			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
+			<div class="motion-demo__teaching">
+				<p class="motion-demo__eyebrow">{docScene.Eyebrow}</p>
+				<p id={docScene.HeadingID} class="motion-demo__title" role="heading" aria-level="2">{docScene.Title}</p>
+				<p class="motion-demo__summary">{docScene.Summary}</p>
+				<dl class="motion-demo__facts">
 					<div>
 						<dt>Backend contract</dt>
 						<dd>{docScene.BackendTruth}</dd>
@@ -68,7 +68,7 @@ func Page() Node {
 						<dd>{docScene.InteractionHint}</dd>
 					</div>
 				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="motion-demo__link">{docScene.DemoLabel}</a>
 			</div>
 		</section>
 		<div class="page-topper">
