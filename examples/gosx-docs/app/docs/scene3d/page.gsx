@@ -143,7 +143,7 @@ func Page() Node {
 				<em>degrades</em>
 				it, and the reason ships with the verdict.
 			</p>
-		<div class="scene3d-table-wrap" tabindex="0">
+			<div class="scene3d-table-wrap" tabindex="0">
 				<table class="scene3d-matrix">
 					<caption>
 						Every row of the

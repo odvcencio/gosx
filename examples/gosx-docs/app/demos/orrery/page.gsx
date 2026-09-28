@@ -14,7 +14,15 @@ func Page() Node {
 				</p>
 			</header>
 			<div class="orrery__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
-				<img class="gosx-scene3d-poster" src="/demos/posters/orrery.webp" alt="" width="1000" height="625" decoding="async" fetchpriority="high" />
+				<img
+					class="gosx-scene3d-poster"
+					src="/demos/posters/orrery.webp"
+					alt=""
+					width="1000"
+					height="625"
+					decoding="async"
+					fetchpriority="high"
+				 />
 				<Scene3D {...data.scene} stats={false} />
 			</div>
 			<div class="orrery__overlay">

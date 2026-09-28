@@ -8,7 +8,15 @@ func Page() Node {
 		data-gosx-scene3d-status-scope
 	>
 		<div class="scene3d-showcase__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
-			<img class="gosx-scene3d-poster" src="/demos/posters/scene3d.webp" alt="" width="1000" height="625" decoding="async" fetchpriority="high" />
+			<img
+				class="gosx-scene3d-poster"
+				src="/demos/posters/scene3d.webp"
+				alt=""
+				width="1000"
+				height="625"
+				decoding="async"
+				fetchpriority="high"
+			 />
 			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<div class="scene3d-showcase__overlay">
