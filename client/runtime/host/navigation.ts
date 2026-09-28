@@ -393,6 +393,10 @@
   }
 
   function gosxRuntimeFrame(callback) {
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function") {
+      return motionScheduler.request(callback);
+    }
     const scheduler = window.__gosx && window.__gosx.scheduler;
     if (scheduler && typeof scheduler.frame === "function") {
       navigationFrameSequence += 1;

@@ -258,7 +258,34 @@ func corpusCases() []goldenCase {
 	}
 
 	// -----------------------------------------------------------------------
-	// 4. multi_track: two positioned tracks — vec3 at PosAbs 0, scalar at PosAbs 0.5
+	// 4. cubic_bezier_ease: CSS-style cubic-bezier easing between scalar keys
+	// -----------------------------------------------------------------------
+	{
+		ease := Ease{Kind: EaseCubicBezier, Args: []float64{0.16, 1, 0.3, 1}}
+		tl := Timeline{
+			Children: []Positioned{{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 1,
+					PropID:   2,
+					Keys: []Key{
+						{T: 0, Value: ScalarV(0), Ease: &ease},
+						{T: 1, Value: ScalarV(1)},
+					},
+					Interp: InterpLinear,
+				},
+			}},
+		}
+		cases = append(cases, goldenCase{
+			Name:     "cubic_bezier_ease",
+			Tol:      1e-9,
+			Timeline: tl,
+			Samples:  sampleTimeline(&tl, []float64{0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0}),
+		})
+	}
+
+	// -----------------------------------------------------------------------
+	// 5. multi_track: two positioned tracks — vec3 at PosAbs 0, scalar at PosAbs 0.5
 	// -----------------------------------------------------------------------
 	{
 		tl := Timeline{

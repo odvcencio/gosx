@@ -133,7 +133,7 @@ func startProductionDocsApp(t *testing.T) *docsApp {
 	if dist == "" {
 		build := exec.Command("go", "run", "./cmd/gosx", "build", "--prod", "./examples/gosx-docs")
 		build.Dir = root
-		build.Env = append(os.Environ(), "GOWORK=off")
+		build.Env = os.Environ()
 		if output, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("build production docs: %v\n%s", err, output)
 		}

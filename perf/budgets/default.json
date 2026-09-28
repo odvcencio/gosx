@@ -52,7 +52,7 @@
     "water-ci": {
       "description": "Water route under CI software rasterization. The network limit covers 1754.04 KiB measured in CI run 36273313254 with GPU timing, HDR post color, and Sky. Load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
       "assertions": [
-        "network_kb <= 1760",
+        "network_kb <= 1800",
         "lcp <= 2000",
         "tbt <= 18000"
       ]

@@ -773,6 +773,10 @@
   }
 
   function engineFrame(callback) {
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function") {
+      return motionScheduler.request(callback);
+    }
     if (typeof window.requestAnimationFrame === "function") {
       return window.requestAnimationFrame(callback);
     }
@@ -782,6 +786,11 @@
   }
 
   function cancelEngineFrame(handle) {
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.cancel === "function") {
+      motionScheduler.cancel(handle);
+      return;
+    }
     if (typeof window.cancelAnimationFrame === "function") {
       window.cancelAnimationFrame(handle);
       return;
@@ -1371,7 +1380,7 @@
         e.preventDefault();
         queueInputSignal("$input.command", "newline");
       }
-      requestAnimationFrame(function() { if (inputEl) inputEl.textContent = ""; });
+      engineFrame(function() { if (inputEl) inputEl.textContent = ""; });
     });
 
     // Composition (IME)

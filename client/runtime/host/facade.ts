@@ -101,7 +101,10 @@
       const record = frames.get(frameKey);
       if (!record) return;
       frames.delete(frameKey);
-      if (record.raf && typeof window.cancelAnimationFrame === "function") {
+      const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+      if (record.scheduler && motionScheduler && typeof motionScheduler.cancel === "function") {
+        motionScheduler.cancel(record.id);
+      } else if (record.raf && typeof window.cancelAnimationFrame === "function") {
         window.cancelAnimationFrame(record.id);
       } else if (typeof clearTimeout === "function") {
         clearTimeout(record.id);
@@ -132,17 +135,19 @@
       const frameKey = String(key || "default");
       cancelFrame(frameKey);
       if (disposed || typeof callback !== "function") return function () {};
+      const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+      const hasScheduler = Boolean(motionScheduler && typeof motionScheduler.request === "function");
       const hasRAF = typeof window.requestAnimationFrame === "function";
-      if (!hasRAF && typeof setTimeout !== "function") return function () {};
-      const record = { id: null, raf: hasRAF };
+      if (!hasScheduler && !hasRAF && typeof setTimeout !== "function") return function () {};
+      const record = { id: null, raf: hasRAF, scheduler: hasScheduler };
       const run = (timestamp) => {
         if (frames.get(frameKey) !== record || disposed) return;
         frames.delete(frameKey);
         callback(timestamp);
       };
-      record.id = hasRAF
-        ? window.requestAnimationFrame(run)
-        : setTimeout(() => run(Date.now()), 16);
+      record.id = hasScheduler
+        ? motionScheduler.request(run)
+        : (hasRAF ? window.requestAnimationFrame(run) : setTimeout(() => run(Date.now()), 16));
       frames.set(frameKey, record);
       return () => {
         if (frames.get(frameKey) === record) cancelFrame(frameKey);

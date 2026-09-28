@@ -682,12 +682,9 @@ const budgets = [
   // Brotli 366_300 -> 366_800.
   // Responsive Scene3D fill sizing adds 340 raw bytes. Measured after the fix:
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
-  // Declarative Scene3D start policies gate startup on idle, visibility,
-  // backend and user preferences. Measured: 1_738_257 / 478_833 / 384_182.
-  // Scene-bound hubs wait for renderer readiness. Measured: 1_739_262 /
-  // 479_126 / 384_527. Raise raw to 1_673_800, gzip to 462_800, and Brotli
-  // to 368_200 so each target clears the hard limit with narrow headroom.
-  { file: "bootstrap.js", raw: 1_673_800, gzip: 462_800, brotli: 368_200 },
+  // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
+  // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
+  { file: "bootstrap.js", raw: 1_709_400, gzip: 474_100, brotli: 377_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -763,7 +760,9 @@ const budgets = [
   // by the runtime chunk). Measured: 150_160 / 41_135 / 35_887.
   // v0.55.0 soft-navigation reconciliation and declarative link/form routing
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
-  { file: "bootstrap-runtime.js", raw: 156_500, gzip: 43_100, brotli: 37_600 },
+  // The complete motion fix measures 190,789 / 53,839 / 46,948. Reviewed
+  // hard-limit headroom is 1,991 / 1,076 / 1,037 bytes.
+  { file: "bootstrap-runtime.js", raw: 183_600, gzip: 52_300, brotli: 45_700 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -819,7 +818,9 @@ const budgets = [
   // gosx#217 review follow-up: same navigation.ts/regions.ts growth as
   // bootstrap-runtime.js above, carried by the lite chunk. Measured:
   // 113_659 / 30_609 / 27_146.
-  { file: "bootstrap-lite.js", raw: 113_900, gzip: 30_800, brotli: 27_400 },
+  // The complete motion fix measures 147,576 / 41,324 / 36,551. Reviewed
+  // hard-limit headroom is 1,944 / 1,096 / 1,039 bytes.
+  { file: "bootstrap-lite.js", raw: 142_400, gzip: 40_400, brotli: 35_800 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1508,10 +1509,7 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  // Scene-bound hub readiness adds a deferred-connect observer. Measured:
-  // 49_021 / 15_092 / 13_507. Raise targets to 46_700 / 14_400 / 12_900
-  // to keep the new chunk within the hard limits with narrow headroom.
-  { file: "bootstrap-feature-hubs.js", raw: 46_700, gzip: 14_400, brotli: 12_900 },
+  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -1643,11 +1641,11 @@ const routeBudgets = [
     // Measured selective total: 259_682 / 73_492 / 64_547, plus narrow
     // headroom on gzip/brotli too (both were within single-digit percent of
     // their prior caps already).
-    // v0.55.0 carries the same soft-navigation behavior without pulling in
-    // Scene3D. Measured: 265_883 / 75_486 / 66_333.
-    raw: 266_000,
-    gzip: 75_600,
-    brotli: 66_400,
+    // The complete motion fix measures 300,712 / 86,428 / 75,806 on this route.
+    // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
+    raw: 288_300,
+    gzip: 83_400,
+    brotli: 73_200,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1797,12 +1795,12 @@ const routeBudgets = [
     // Responsive fill sizing measures this route at 1_316_603 raw and 355_507
     // gzip. Raise gzip by the smallest 100-byte step needed; raw and Brotli
     // remain within the existing main budgets.
-    // Scene3D start-policy support adds 5,367 raw bytes to this route.
-    // Measured: 1_321_970 / 356_984 / 300_245. Raise raw 1_254_000 ->
-    // 1_259_500, gzip 339_200 -> 340_700, and Brotli 284_900 -> 286_100.
-    raw: 1_259_500,
-    gzip: 340_700,
-    brotli: 286_100,
+    // The complete motion fix measures 1,355,038 / 367,463 / 309,371 on this
+    // route. Raising gzip's target by 100 bytes leaves 1,247 / 1,121 / 1,219
+    // bytes of hard-limit headroom for raw, gzip, and Brotli.
+    raw: 1_291_700,
+    gzip: 352_200,
+    brotli: 295_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1967,9 +1965,11 @@ const routeBudgets = [
     // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
     // All three combine on this merge; caps re-measured from the merged
     // source below.
-    raw: 1_136_000,
-    gzip: 317_000,
-    brotli: 268_500,
+    // The complete motion fix measures 1,204,868 / 339,499 / 286,726 on this
+    // route. Reviewed hard-limit headroom is 1,372 / 1,121 / 1,079 bytes.
+    raw: 1_148_800,
+    gzip: 324_400,
+    brotli: 274_100,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2136,12 +2136,11 @@ const routeBudgets = [
     // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
     // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
     // 335_000 for headroom. Gzip headroom is unchanged.
-    // GPU-driven crowd motion and adaptive frame pacing both add code to this
-    // route. The build with frame caching measures 1_551_261 / 419_536 /
-    // 354_106.
+    // The complete motion fix measures 1,608,681 / 438,588 / 369,624 on this
+    // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
     raw: 1_551_400,
-    gzip: 419_650,
-    brotli: 354_200,
+    gzip: 423_300,
+    brotli: 354_300,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2285,9 +2284,11 @@ const routeBudgets = [
     // Motion-frame dispatch and adaptive frame pacing both add code to this
     // route. The build with frame caching measures 1_148_054 / 306_276 /
     // 256_268.
+    // The complete motion fix measures 1,202,669 / 324,104 / 270,997 on this
+    // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
     raw: 1_148_200,
-    gzip: 306_400,
-    brotli: 256_350,
+    gzip: 309_700,
+    brotli: 259_100,
   },
 
 ];
