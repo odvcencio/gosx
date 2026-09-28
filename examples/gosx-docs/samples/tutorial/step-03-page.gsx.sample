@@ -1,0 +1,32 @@
+package app
+
+import "m31labs.dev/gosx/signal"
+
+type CounterProps struct {
+	Initial int
+}
+
+//gosx:island
+component Counter(props: CounterProps) {
+	count := signal.New(props.Initial)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <section>
+		<button onClick={increment}>Add one: {count.Get()}</button>
+	</section>
+}
+
+func Page() Node {
+	return <main>
+		<h1>{data.greeting}</h1>
+		<p>Today’s visitors: {data.visitors}</p>
+		<Counter {...data.counterProps} />
+		<div
+			data-gosx-region="true"
+			data-gosx-region-url="/api/open-tabs"
+			data-gosx-region-field="html"
+			data-gosx-region-signal="$tutorial.openTabs"
+		>
+			<p>Open tabs: {data.openTabs}</p>
+		</div>
+	</main>
+}

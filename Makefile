@@ -189,7 +189,7 @@ test-js:
 	# bypass Go's package cache so source-only renderer edits are always seen.
 	cd cmd/buildbootstrap && GOWORK=off $(GO) test -count=1 -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
 	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
-	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js
+	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js ./scripts/*.test.mjs
 
 # test-editor builds, vets and tests the nested editor module.
 #

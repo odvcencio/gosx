@@ -276,6 +276,15 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "public"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for _, route := range []string{"docs/auth", "docs/forms", "demos/playground"} {
+		configDir := filepath.Join(root, "app", filepath.FromSlash(route))
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "route.config.json"), []byte(`{"prerender":false}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(root, "public", "site.webmanifest"), []byte(`{"name":"GoSX Docs"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -334,9 +343,35 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 		t.Fatalf("decode sitemap: %v", err)
 	}
 	joined := sitemapResponse.Body.String()
-	for _, required := range []string{"https://docs.example.test/", "https://docs.example.test/docs", "https://docs.example.test/demos/playground"} {
+	for _, required := range []string{
+		"https://docs.example.test/",
+		"https://docs.example.test/docs</loc>",
+		"https://docs.example.test/docs/auth</loc>",
+		"https://docs.example.test/docs/forms</loc>",
+		"https://docs.example.test/demos/playground</loc>",
+		"https://docs.example.test/demos/checkers/",
+		"https://docs.example.test/capabilities/",
+		"https://docs.example.test/performance/",
+	} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("sitemap missing %q", required)
+		}
+	}
+	routes, err := publicSiteRoutes(root)
+	if err != nil {
+		t.Fatalf("build sitemap routes: %v", err)
+	}
+	for _, routePath := range routes {
+		prerendered, err := publicRouteIsPrerendered(root, strings.TrimSuffix(routePath, "/"))
+		if err != nil {
+			t.Errorf("route %q config: %v", routePath, err)
+			continue
+		}
+		if routePath == "/" || routePath == "/docs" {
+			continue
+		}
+		if strings.HasSuffix(routePath, "/") != prerendered {
+			t.Errorf("sitemap route %q does not match prerender canonical policy %t", routePath, prerendered)
 		}
 	}
 	if strings.Contains(joined, "/test/") {

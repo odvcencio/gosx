@@ -5,14 +5,19 @@ import (
 	"m31labs.dev/gosx/route"
 )
 
+type LiveCounterPropsData struct {
+	Initial int
+}
+
 func init() {
 	docsapp.RegisterDocsPage("Islands", "Explicit interactive regions compiled for the shared GoSX browser VM.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
-				"mode":        "",
-				"title":       "Islands",
-				"description": "Explicit interactive regions compiled for the shared GoSX browser VM.",
-				"tags":        []string{"islands", "signals", "handlers", "hydration", "vm"},
+				"mode":             "",
+				"title":            "Islands",
+				"description":      "Explicit interactive regions compiled for the shared GoSX browser VM.",
+				"tags":             []string{"islands", "signals", "handlers", "hydration", "vm"},
+				"liveCounterProps": LiveCounterPropsData{Initial: 2},
 				"toc": []map[string]string{
 					{"href": "#island-model", "label": "Island Model"},
 					{"href": "#authoring", "label": "Authoring"},
@@ -23,6 +28,7 @@ func init() {
 					{"href": "#choosing", "label": "Choosing Islands"},
 				},
 				"counterSample":     docsapp.DocSample("islands/counterSample.gosx.sample"),
+				"liveCounterSample": docsapp.DocSample("islands/liveCounter.gosx.sample"),
 				"compositionSample": docsapp.DocSample("islands/compositionSample.gosx.sample"),
 				"sharedSample":      docsapp.DocSample("islands/sharedSample.gosx.sample"),
 				"assetSample":       docsapp.DocSample("islands/assetSample.go.sample"),

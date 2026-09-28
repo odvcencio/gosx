@@ -118,10 +118,21 @@
   border-left-color: var(--accent-line);
 }
 
-.docs-guide-link:active,
-.docs-guide-link.is-current {
+.docs-guide-link:active {
   color: var(--text-primary);
-  background: var(--accent-soft);
+  background: var(--surface);
+  border-left-color: var(--accent);
+}
+
+.docs-guide-link.is-current {
+  color: #17140b;
+  background: var(--accent);
+  border-left-color: var(--accent);
+}
+
+.docs-section.light .docs-guide-link.is-current {
+	color: #17140b;
+	background: var(--accent);
   border-left-color: var(--accent);
 }
 
@@ -172,6 +183,49 @@
 
 .docs-content {
   min-width: 0;
+}
+
+/* Code panels stay dark in both guide themes, so their controls need code-panel
+   colors instead of the surrounding page's light or dark text tokens. */
+.docs-content .code-sample__label,
+.docs-content .code-sample__copy {
+  color: var(--code-property);
+}
+
+.docs-content .code-sample__copy {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(232, 232, 232, 0.55);
+}
+
+.docs-content .code-sample__copy:hover,
+.docs-content .code-sample__copy:focus-visible {
+  color: var(--code-function);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--code-function);
+}
+
+.docs-content .code-sample__copy:focus-visible {
+  outline-color: var(--code-function);
+}
+
+.docs-content .code-sample__copy-status {
+  color: var(--code-text);
+}
+
+:global(.docs-content .code-sample__gutter) {
+  color: var(--code-comment);
+}
+
+.docs-content .code-sample__copy {
+  display: none;
+}
+
+:global(html[data-gosx-runtime-ready="true"] .docs-content .code-sample__copy) {
+  display: inline-flex;
+}
+
+:global(html[data-gosx-copy-ready="true"] .docs-content .code-sample__copy) {
+  display: inline-flex;
 }
 
 /* ------------------------------------------------------------
@@ -257,8 +311,8 @@
 }
 
 .docs-header {
-  margin-bottom: var(--space-2xl);
-  padding-bottom: var(--space-lg);
+	margin-bottom: var(--space-sm);
+	padding-bottom: var(--space-xs);
   border-bottom: 1px solid var(--border);
 }
 
@@ -364,6 +418,43 @@
 /* ------------------------------------------------------------
    Route-local Scene3D teaching surface
    ------------------------------------------------------------ */
+
+.docs-live-example {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-xl);
+  padding: var(--space-md);
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--border-hover);
+  border-radius: 0.35rem;
+}
+
+.docs-live-example p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.docs-live-example .eyebrow {
+  color: var(--accent);
+}
+
+.docs-live-example a {
+  width: fit-content;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.docs-live-example a:hover,
+.docs-live-example a:focus-visible {
+  color: var(--text-primary);
+}
+
+.docs-live-example :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 
 .doc-scene {
   display: grid;
@@ -646,6 +737,11 @@
    ------------------------------------------------------------ */
 
 @media (max-width: 767px) {
+  .docs-header__eyebrow,
+  .docs-header__tags {
+    display: none;
+  }
+
   .docs-guide-navigation--desktop {
     display: none;
   }
@@ -709,22 +805,7 @@
   }
 
   .docs-page-toc {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-    margin-top: var(--space-md);
-    padding-top: var(--space-md);
-  }
-
-  .docs-page-toc > p {
-    width: 100%;
-  }
-
-  .toc-link {
-    border-left: none;
-    padding: var(--space-xs) var(--space-sm);
-    background: var(--surface);
-    border-radius: 0.25em;
+    display: none;
   }
 
   .doc-scene {

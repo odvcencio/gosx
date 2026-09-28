@@ -123,14 +123,11 @@ func TestDemosIndexRendersRelatedGuideLinks(t *testing.T) {
 		t.Fatalf("GET /demos status = %d", response.Code)
 	}
 	body := response.Body.String()
-
-	featureLinks := strings.Count(body, `class="demo-feature__guide"`)
-	rowLinks := strings.Count(body, `class="demo-row__guide"`)
-	// Feature card: scene3d-bench -> Debugging Scene3D. Rows: playground ->
-	// compiler/components/islands, collab -> hubs, cms -> forms,
-	// scene3d -> 3D engine. Demos without a pairing render no guide link.
-	if featureLinks != 1 || rowLinks != 6 {
-		t.Fatalf("guide links on /demos: feature=%d row=%d, want 1 and 6", featureLinks, rowLinks)
+	guideLinks := strings.Count(body, `class="demo-card__guide"`)
+	// Water is the only featured card and has no paired guide. The other seven
+	// links come from Playground (three), Collab, CMS, Scene3D, and the bench.
+	if guideLinks != 7 {
+		t.Fatalf("guide links on /demos = %d, want 7", guideLinks)
 	}
 	for _, want := range []string{
 		`href="/docs/compiler"`, `href="/docs/components"`, `href="/docs/islands"`,
@@ -143,5 +140,42 @@ func TestDemosIndexRendersRelatedGuideLinks(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered /demos is missing %q", want)
 		}
+	}
+}
+
+func TestDemosGalleryRendersEveryPosterBackendAndSource(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source")
+	}
+	router := route.NewRouter()
+	if err := router.AddDir(filepath.Dir(filepath.Dir(thisFile)), route.FileRoutesOptions{}); err != nil {
+		t.Fatalf("add app routes: %v", err)
+	}
+	response := httptest.NewRecorder()
+	router.Build().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/demos", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /demos status = %d", response.Code)
+	}
+	body := response.Body.String()
+	demos, err := GalleryDemos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, demo := range demos {
+		if !strings.Contains(body, `src="`+demo.PosterPath+`"`) {
+			t.Errorf("gallery is missing poster for %q", demo.Slug)
+		}
+		if !strings.Contains(body, `Runs on `+demoBackendSummary(demo.Backends)) {
+			t.Errorf("gallery is missing renderer verdict for %q", demo.Slug)
+		}
+		for _, source := range demo.SourcePaths {
+			if !strings.Contains(body, demoSourceURL(source)) {
+				t.Errorf("gallery is missing source link %q", source)
+			}
+		}
+	}
+	if strings.Contains(body, `<gosx-scene3d`) || strings.Contains(body, `data-gosx-scene3d=`) {
+		t.Error("gallery must not mount a Scene3D before visitors open a demo")
 	}
 }

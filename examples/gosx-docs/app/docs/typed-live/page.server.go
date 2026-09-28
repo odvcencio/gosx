@@ -8,12 +8,12 @@ import (
 func init() {
 	docsapp.RegisterStaticDocsPage(
 		"Typed Component Proof",
-		"A production-rendered GoSX route authored with the v0.39 strict typed component syntax.",
+		"A production-rendered GoSX route authored with a strict typed component.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
 					"title":       "Typed Component Proof",
-					"description": "A production-rendered route authored with the v0.39 strict typed component syntax.",
+					"description": "A production-rendered route authored with a strict typed component.",
 					"tags":        []string{"strict", "typed", "tsx", "dogfood"},
 					"toc":         []map[string]string{},
 				}, nil

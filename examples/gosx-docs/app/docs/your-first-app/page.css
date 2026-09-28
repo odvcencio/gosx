@@ -1,0 +1,43 @@
+.first-app-tutorial > p:first-child {
+  max-width: 48rem;
+}
+
+.tutorial-step {
+  margin: var(--space-2xl) 0;
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 7rem;
+}
+
+.first-app-tutorial .tutorial-step h2 {
+  margin-top: var(--space-xs);
+}
+
+.first-app-tutorial .tutorial-step h3 {
+  margin: var(--space-lg) 0 var(--space-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+.tutorial-result {
+  color: var(--text-primary);
+}
+
+.tutorial-step figure {
+  margin: var(--space-md) 0 0;
+}
+
+.tutorial-step figure img {
+  display: block;
+  width: min(100%, 52rem);
+  height: auto;
+  border: 1px solid var(--border);
+}
+
+.tutorial-step figcaption {
+  margin-top: var(--space-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+}

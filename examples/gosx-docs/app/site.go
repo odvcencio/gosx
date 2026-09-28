@@ -38,6 +38,31 @@ func PublicSiteURL(routePath string) string {
 	if clean == "." || clean == "" {
 		clean = "/"
 	}
+	if clean != "/" && clean != "/docs" && path.Ext(clean) == "" {
+		clean += "/"
+	}
+	return PublicBaseURL() + clean
+}
+
+// PublicSiteRouteURL builds an absolute URL for a route whose canonical slash
+// policy has already been resolved by the site router. Unlike PublicSiteURL,
+// it preserves that policy so dynamic routes can remain slashless.
+func PublicSiteRouteURL(routePath string) string {
+	if parsed, err := url.Parse(strings.TrimSpace(routePath)); err == nil {
+		routePath = parsed.Path
+	}
+	routePath = strings.TrimSpace(routePath)
+	trailingSlash := strings.HasSuffix(routePath, "/")
+	clean := path.Clean("/" + routePath)
+	if clean == "." || clean == "" {
+		clean = "/"
+	}
+	if clean == "/docs" {
+		trailingSlash = false
+	}
+	if trailingSlash && clean != "/" {
+		clean += "/"
+	}
 	return PublicBaseURL() + clean
 }
 

@@ -13,6 +13,7 @@ func init() {
 				"title":       "Deployment",
 				"description": "Build, export, and operate the staged GoSX deployment bundle.",
 				"tags":        []string{"build", "deploy", "static", "ssr", "isr", "edge", "offline"},
+				"buildInfo":   docsapp.SiteBuildInfo(),
 				"toc": []map[string]string{
 					{"href": "#build-output", "label": "Build output"},
 					{"href": "#static-export", "label": "Static export"},

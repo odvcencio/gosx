@@ -14,9 +14,7 @@ component ContractRow(props: ContractRowProps) {
 
 component Page() {
 	return <article className="typed-proof">
-		<p className="typed-proof__kicker">
-			Rendered by the v0.39 strict component path
-		</p>
+		<p className="typed-proof__kicker">Rendered by a strict typed component</p>
 		<h2>This page is the example.</h2>
 		<p>
 			Its source uses the TSX-like component declaration, a real Go props struct, lower-camel attributes, and the production file renderer serving this request.
