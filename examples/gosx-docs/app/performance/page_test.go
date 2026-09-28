@@ -65,7 +65,7 @@ func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
 			// reachable from main even though the receipt still records that
 			// commit's exact tree. Fetch only this known source commit and accept
 			// it only when both receipt hashes match; the diff checks below still
-			// restrict every post-measurement change to reviewed neutral files.
+			// reject changes to the docs build and measurement inputs.
 			if receipts.Commit != squashedMeasurementCommit || receipts.Tree != squashedMeasurementTree {
 				t.Fatalf("measured commit %s is not an ancestor of HEAD: %v", receipts.Commit, err)
 			}
@@ -85,42 +85,173 @@ func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
 	}
 
 	changed := strings.Fields(gitOutputAt(t, root, "diff", "--name-only", receipts.Commit, "HEAD"))
-	// The receipt generator writes receipts.json as its only tracked output.
-	allowed := map[string]bool{
-		"examples/gosx-docs/app/performance/receipts.json": true,
-		// Test changes do not alter the measured build or its evidence.
-		"examples/gosx-docs/app/capabilities/page_test.go": true,
-		"examples/gosx-docs/app/demos/catalog_test.go":     true,
-		"examples/gosx-docs/app/performance/page_test.go":  true,
-		"scripts/showcase-gpu-cadence.test.mjs":            true,
-	}
-	// These exact production-file blobs are measurement-neutral: the CSS keeps
-	// the same verdict styles in Chrome while adding older-browser support; the
-	// GPU scripts only reject undersampled captures and leave timing math intact;
-	// the Makefile change only makes the guard test run in CI. Pin the blobs so
-	// future edits to these paths still require a new receipt measurement.
-	measurementNeutral := map[string]string{
-		"Makefile": "c6d0f02a5c1de6673a104e011bb212ad645c6f01",
-		"examples/gosx-docs/app/capabilities/page.css": "406f787b52c4d98bc86d5002ff4be02684803c57",
-		"scripts/showcase-gpu-cadence.mjs":             "b798f91d123dc4de3cb8c08a8008574420bfa926",
-		"scripts/showcase-gpu-capture.mjs":             "bb96528aa837899b5475a13da1fc6e5447323988",
-		"scripts/showcase-receipts.mjs":                "c532380a3f9ef524ab9903089139d154e6315bf2",
-	}
 	if len(changed) == 0 {
 		t.Fatal("receipt commit must follow the measured build commit")
 	}
+	inputs, err := docsPerformanceReceiptInputs(root)
+	if err != nil {
+		t.Fatalf("compute docs performance receipt inputs: %v", err)
+	}
 	for _, file := range changed {
-		if !allowed[file] {
-			wantBlob, ok := measurementNeutral[file]
-			if !ok {
-				t.Errorf("file %q changed after the measured build; only receipts, generated outputs, and pinned measurement-neutral paths may change", file)
-				continue
-			}
-			if gotBlob := gitOutputAt(t, root, "rev-parse", "HEAD:"+file); gotBlob != wantBlob {
-				t.Errorf("measurement-neutral file %q blob = %s, want reviewed blob %s", file, gotBlob, wantBlob)
-			}
+		var blob string
+		if _, pinned := performanceReceiptNeutralBlobs[file]; pinned {
+			blob = gitOutputAt(t, root, "rev-parse", "HEAD:"+file)
+		}
+		if receiptInputNeedsRemeasure(file, blob, inputs) {
+			t.Errorf("measurement input %q changed after the measured build; re-measure the docs performance receipt", file)
 		}
 	}
+}
+
+func TestPerformanceReceiptMeasurementInputScope(t *testing.T) {
+	root := gitOutput(t, "rev-parse", "--show-toplevel")
+	inputs, err := docsPerformanceReceiptInputs(root)
+	if err != nil {
+		t.Fatalf("compute docs performance receipt inputs: %v", err)
+	}
+
+	for _, test := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "desktop source is outside the measured build", path: "desktop/app.go", want: false},
+		{name: "docs page is a measurement input", path: "examples/gosx-docs/app/docs/runtime/page.gsx", want: true},
+		{name: "imported server package is a measurement input", path: "server/assets.go", want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := receiptInputNeedsRemeasure(test.path, "", inputs); got != test.want {
+				t.Fatalf("receiptInputNeedsRemeasure(%q) = %t, want %t", test.path, got, test.want)
+			}
+		})
+	}
+}
+
+type performanceReceiptInputs struct {
+	packageDirs []string
+}
+
+var performanceReceiptNeutralBlobs = map[string]string{
+	// Preserve the reviewed CSS fallback and incomplete-capture checks without
+	// changing measured values. Exact blobs keep later edits to these inputs stale.
+	"examples/gosx-docs/app/capabilities/page.css": "406f787b52c4d98bc86d5002ff4be02684803c57",
+	"scripts/showcase-gpu-cadence.mjs":             "b798f91d123dc4de3cb8c08a8008574420bfa926",
+	"scripts/showcase-gpu-capture.mjs":             "bb96528aa837899b5475a13da1fc6e5447323988",
+	"scripts/showcase-receipts.mjs":                "c532380a3f9ef524ab9903089139d154e6315bf2",
+}
+
+func docsPerformanceReceiptInputs(root string) (performanceReceiptInputs, error) {
+	// The docs app's non-test Go dependency graph supplies the framework package
+	// roots. The input matcher adds the docs content, browser bundle sources,
+	// bundle builder, and the scripts that capture and generate this receipt.
+	command := exec.Command("go", "list", "-deps", "-f", "{{if and .Module .Module.Main}}{{.Dir}}{{end}}", "./examples/gosx-docs")
+	command.Dir = root
+	command.Env = environmentWithGOWORKOff(os.Environ())
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return performanceReceiptInputs{}, fmt.Errorf("go list docs dependencies: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	inputs := performanceReceiptInputs{}
+	for _, dir := range strings.Fields(string(output)) {
+		rel, err := filepath.Rel(root, dir)
+		if err != nil {
+			return performanceReceiptInputs{}, fmt.Errorf("make docs package path relative: %w", err)
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		inputs.packageDirs = append(inputs.packageDirs, filepath.ToSlash(rel))
+	}
+	return inputs, nil
+}
+
+func environmentWithGOWORKOff(environment []string) []string {
+	filtered := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, "GOWORK=") {
+			filtered = append(filtered, entry)
+		}
+	}
+	return append(filtered, "GOWORK=off")
+}
+
+func (inputs performanceReceiptInputs) contains(file string) bool {
+	file = filepath.ToSlash(filepath.Clean(file))
+	if file == "examples/gosx-docs/app/performance/receipts.json" || strings.HasSuffix(file, "_test.go") {
+		return false
+	}
+	switch file {
+	case "go.mod", "go.sum",
+		"scripts/showcase-receipts.sh",
+		"scripts/showcase-receipts.mjs",
+		"scripts/showcase-gpu-capture.mjs",
+		"scripts/showcase-gpu-cadence.mjs":
+		return true
+	}
+	for _, root := range []string{
+		"examples/gosx-docs/app",
+		"examples/gosx-docs/public",
+		"examples/gosx-docs/samples",
+	} {
+		if pathUnder(file, root) {
+			return true
+		}
+	}
+	if strings.HasPrefix(file, "examples/gosx-docs/") {
+		// The docs executable's package sources are listed by go list below;
+		// deployment-only files beside main.go are outside the measured site.
+		rel := strings.TrimPrefix(file, "examples/gosx-docs/")
+		if !strings.Contains(rel, "/") && filepath.Ext(file) == ".go" {
+			return true
+		}
+	}
+	for _, root := range []string{"client/js", "client/runtime", "client/wasm", "cmd/buildbootstrap"} {
+		if pathUnder(file, root) && !isTestOnlySource(file) {
+			return true
+		}
+	}
+	for _, dir := range inputs.packageDirs {
+		if !pathUnder(file, dir) || isTestOnlySource(file) {
+			continue
+		}
+		// The root and docs executable package directories also contain
+		// unrelated project files. Their Go sources are build inputs.
+		if dir == "." || dir == "examples/gosx-docs" {
+			return filepath.Ext(file) == ".go"
+		}
+		return true
+	}
+	return false
+}
+
+func pathUnder(file, root string) bool {
+	if root == "." {
+		return !strings.Contains(file, "/")
+	}
+	return file == root || strings.HasPrefix(file, strings.TrimSuffix(root, "/")+"/")
+}
+
+func isTestOnlySource(file string) bool {
+	if strings.Contains(file, ".test.") || strings.HasSuffix(file, ".dmj") || strings.HasSuffix(file, ".md") {
+		return true
+	}
+	for _, component := range strings.Split(file, "/") {
+		if component == "testdata" {
+			return true
+		}
+	}
+	return false
+}
+
+func receiptInputNeedsRemeasure(file, blob string, inputs performanceReceiptInputs) bool {
+	if !inputs.contains(file) {
+		return false
+	}
+	if want, pinned := performanceReceiptNeutralBlobs[file]; pinned && blob == want {
+		return false
+	}
+	return true
 }
 
 func measuredCommitIsAncestor(root, commit string) error {
