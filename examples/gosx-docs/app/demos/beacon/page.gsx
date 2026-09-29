@@ -2,65 +2,41 @@ package docs
 
 func Page() Node {
 	return <section
-		class="beacon"
-		aria-label="Blackglass Coast"
+		class="bgb"
+		aria-label="Blackglass Beach"
 		role="region"
 		data-view={data.view}
 		data-period={data.period}
 		data-gosx-scene3d-control-scope
+		data-gosx-scene3d-status-scope
 	>
-		<div class="beacon__canvas">
-			<Scene3D {...data.scene} stats={false} />
+		<div class="bgb__canvas">
+			<Scene3D {...data.scene} />
 		</div>
-		<form
-			class="beacon__ripple-control"
-			aria-hidden="true"
-			data-gosx-scene3d-control-form="water-tap"
-			data-gosx-scene3d-control-subject="blackglass-cove"
-		></form>
-		<header class="beacon__intro">
-			<p class="beacon__eyebrow">
-				A view of the coast ·
-				{data.viewName}
-				·
-				{data.periodName}
+		<a class="bgb__close" href="/demos" data-gosx-link="true" aria-label="Back to the demos">×</a>
+		<div class="bgb__controls">
+			<nav class="bgb__group" aria-label="View">
+				<a class="bgb__link bgb__view-shore" href={data.shoreHref} data-gosx-link="true">Shore</a>
+				<a class="bgb__link bgb__view-glass" href={data.glassHref} data-gosx-link="true">Glass</a>
+				<a class="bgb__link bgb__view-cliff" href={data.cliffHref} data-gosx-link="true">Cliff</a>
+			</nav>
+			<nav class="bgb__group" aria-label="Light">
+				<a class="bgb__link bgb__period-golden-hour" href={data.goldenHref} data-gosx-link="true">Golden hour</a>
+				<a class="bgb__link bgb__period-blue-hour" href={data.blueHref} data-gosx-link="true">Blue hour</a>
+				<a class="bgb__link bgb__period-noon" href={data.noonHref} data-gosx-link="true">Noon</a>
+			</nav>
+		</div>
+		<aside class="bgb__reveal" aria-label="How this is rendered">
+			<p class="bgb__reveal-kicker">This is not three.js.</p>
+			<p class="bgb__reveal-body">
+				It is GoSX Scene3D, drawing with
+				<output data-gosx-scene3d-status="renderer">starting…</output>
+				<output data-gosx-scene3d-status="fallback" hidden></output>
+				at
+				<output data-gosx-scene3d-status="frame-p95">measuring…</output>
+				per frame (p95). The sky, sea, sand, glass and light are generated in Go.
 			</p>
-			<h1>Blackglass Coast</h1>
-			<p class="beacon__copy">
-				Orbit a volcanic shore. Change the light, follow the beacon, and tap the tide.
-			</p>
-		</header>
-		<aside class="beacon__dock" aria-label="Coast controls">
-			<div class="beacon__dock-row">
-				<div class="beacon__dock-group">
-					<p>View</p>
-					<nav aria-label="Camera view">
-						<a class="beacon__view-overlook" href={data.overlookHref}>Overlook</a>
-						<a class="beacon__view-arrival" href={data.arrivalHref}>Arrival beach</a>
-						<a class="beacon__view-beacon" href={data.beaconHref}>Beacon terrace</a>
-					</nav>
-				</div>
-				<div class="beacon__dock-group">
-					<p>Light</p>
-					<nav aria-label="Light period">
-						<a class="beacon__period-daybreak" href={data.daybreakHref}>Daybreak</a>
-						<a class="beacon__period-high-sun" href={data.highSunHref}>High sun</a>
-						<a class="beacon__period-ember-hour" href={data.emberHref}>Ember hour</a>
-					</nav>
-				</div>
-			</div>
-			<p class="beacon__controls">
-				Drag or swipe to orbit · scroll or pinch to zoom · tap the water for ripples
-			</p>
-			<details class="beacon__facts">
-				<summary>Render limits and keyboard controls</summary>
-				<p>
-					60 FPS cap · DPR ≤ 1.5 · 720p scene · 540p effects · 512px shadow · 128² tide grid · ≤320 embers
-				</p>
-				<p>
-					Use the arrow keys to explore. Use + or − to zoom. Press Home to restore this view.
-				</p>
-			</details>
+			<a class="bgb__reveal-link" href="/docs/scene3d" data-gosx-link="true">How it works</a>
 		</aside>
 	</section>
 }

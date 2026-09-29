@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": "physical-sky:noon",
+  "radiance": {
+    "uri": "/env/blackglass-beach/noon.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 7,
+    "width": 64,
+    "height": 64,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/env/blackglass-beach/noon.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 8,
+    "height": 8,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/env/blackglass-beach/noon.brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      1.7087295737482504,
+      2.4982442210938136,
+      3.386116281185007
+    ],
+    [
+      0.953889345315164,
+      1.488336451894994,
+      2.1669809736263823
+    ],
+    [
+      -0.24990008975208713,
+      -0.3269644772903092,
+      -0.4044138122004468
+    ],
+    [
+      -0.1749857369802573,
+      -0.22894639782850842,
+      -0.28317623814322984
+    ],
+    [
+      -0.20418851304997154,
+      -0.2732842873098043,
+      -0.3450416134766958
+    ],
+    [
+      -0.2916052076585256,
+      -0.39028416547088157,
+      -0.49276512543908946
+    ],
+    [
+      0.327693616761456,
+      0.3986023523014808,
+      0.3928591006488829
+    ],
+    [
+      0.18609219683412545,
+      0.23827335003626238,
+      0.28064528467003097
+    ],
+    [
+      0.4321735853394181,
+      0.5170179874375561,
+      0.4762413171851224
+    ]
+  ]
+}

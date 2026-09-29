@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": "physical-sky:golden-hour",
+  "radiance": {
+    "uri": "/env/blackglass-beach/golden-hour.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 7,
+    "width": 64,
+    "height": 64,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/env/blackglass-beach/golden-hour.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 8,
+    "height": 8,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/env/blackglass-beach/golden-hour.brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      0.8982574299460886,
+      1.0858488481905517,
+      1.2393897790269552
+    ],
+    [
+      0.4120187658478001,
+      0.6020180511536076,
+      0.7898613243380191
+    ],
+    [
+      -0.4554583616379523,
+      -0.3769395737830025,
+      -0.27300094485196336
+    ],
+    [
+      -0.11352390385134484,
+      -0.09396027638453613,
+      -0.06805558417532549
+    ],
+    [
+      -0.039860808501113426,
+      -0.042089989645150185,
+      -0.036585953015663114
+    ],
+    [
+      -0.15985577538813736,
+      -0.1688020940272022,
+      -0.14672980039745925
+    ],
+    [
+      0.6573726148072825,
+      0.5899413240025746,
+      0.45450463228814497
+    ],
+    [
+      0.24726491683950852,
+      0.2214910841968506,
+      0.17989346208688542
+    ],
+    [
+      0.20830607364345288,
+      0.18862745842755196,
+      0.11062597861882383
+    ]
+  ]
+}

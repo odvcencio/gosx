@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": "physical-sky:blue-hour",
+  "radiance": {
+    "uri": "/env/blackglass-beach/blue-hour.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 7,
+    "width": 64,
+    "height": 64,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/env/blackglass-beach/blue-hour.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 8,
+    "height": 8,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/env/blackglass-beach/blue-hour.brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      0.22881786679668054,
+      0.2328328934070087,
+      0.2260847204371046
+    ],
+    [
+      0.15177129383904497,
+      0.1691983126853423,
+      0.17466635246177478
+    ],
+    [
+      -0.01597971389291413,
+      -0.008370030681490637,
+      -0.003043442306809501
+    ],
+    [
+      -0.005190606009039449,
+      -0.002719335137976318,
+      -0.0009889502289092138
+    ],
+    [
+      -0.0016544784916537123,
+      -0.0012572964423806122,
+      -0.000527058181774772
+    ],
+    [
+      -0.005090280423022245,
+      -0.003868581004883538,
+      -0.0016216378445230986
+    ],
+    [
+      0.04296292101069272,
+      0.029042524643649415,
+      0.009898299001853114
+    ],
+    [
+      0.022250706680569894,
+      0.019335067799562473,
+      0.014231452108366717
+    ],
+    [
+      0.013165926322587573,
+      -0.002897645805361803,
+      -0.02201050504140135
+    ]
+  ]
+}
