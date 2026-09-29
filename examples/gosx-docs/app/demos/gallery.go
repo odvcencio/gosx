@@ -78,8 +78,8 @@ var demoSources = map[string][]string{
 	"beacon": {
 		"examples/gosx-docs/app/demos/beacon/beach.go",
 		"examples/gosx-docs/app/demos/beacon/ibl-beach/golden-hour.json",
-		"examples/gosx-docs/app/demos/beacon/internal/beachgen/beachgen.go",
-		"examples/gosx-docs/app/demos/beacon/internal/beachgen/skyibl.go",
+		"examples/gosx-docs/internal/beachgen/beachgen.go",
+		"examples/gosx-docs/internal/beachgen/skyibl.go",
 		"examples/gosx-docs/app/demos/beacon/page.css",
 		"examples/gosx-docs/app/demos/beacon/page.gsx",
 		"examples/gosx-docs/app/demos/beacon/page.server.go",

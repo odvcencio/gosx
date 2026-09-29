@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon/internal/beachgen"
+	"m31labs.dev/gosx/examples/gosx-docs/internal/beachgen"
 )
 
 func main() {
