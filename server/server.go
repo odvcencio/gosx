@@ -1150,6 +1150,11 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
+	if !a.compressionOff && serveCompressedFile(w, r, fsPath, func(ext string) (string, bool) {
+		return bundlepolicy.PublicPath(a.publicDir, r.URL.Path+ext, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
+	}) {
+		return true
+	}
 	http.ServeFile(w, r, fsPath)
 	return true
 }

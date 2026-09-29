@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"m31labs.dev/gosx/internal/httpcompress"
 )
 
 // ErrISRArtifactNotFound reports that no cached ISR artifact exists for the
@@ -44,6 +46,14 @@ type ISRStore interface {
 	LoadState(bundleRoot, pagePath string, fallbackGeneratedAt time.Time) (ISRPageState, error)
 	SaveState(bundleRoot, pagePath string, state ISRPageState) error
 	AcquireRefresh(bundleRoot, pagePath string) (ISRRefreshLease, bool, error)
+}
+
+// ISRCompressedStore optionally supplies precompressed variants for ISR hits.
+// The returned bytes must encode the artifact at originalModTime, with an
+// identity body of at least 1 KiB. Stores without this interface use dynamic
+// compression, so existing ISRStore implementations need no changes.
+type ISRCompressedStore interface {
+	ReadCompressedArtifact(staticDir, pagePath, file, encoding string, originalModTime time.Time) (ISRArtifact, error)
 }
 
 // InMemoryISRStore is the default ISR store. Artifacts live on the local
@@ -101,6 +111,38 @@ func (s *InMemoryISRStore) ReadArtifact(staticDir, pagePath, file string) (ISRAr
 	}, nil
 }
 
+// ReadCompressedArtifact loads a fresh local sidecar for an ISR artifact.
+func (s *InMemoryISRStore) ReadCompressedArtifact(staticDir, pagePath, file, encoding string, originalModTime time.Time) (ISRArtifact, error) {
+	ext := ".br"
+	if encoding == "gzip" {
+		ext = ".gz"
+	} else if encoding != "br" {
+		return ISRArtifact{}, ErrISRArtifactNotFound
+	}
+	original, ok := safeArtifactPath(staticDir, file)
+	if !ok {
+		return ISRArtifact{}, ErrISRArtifactNotFound
+	}
+	source, err := os.Stat(original)
+	if err != nil || source.Size() < httpcompress.MinimumSize || !source.ModTime().Equal(originalModTime) {
+		return ISRArtifact{}, ErrISRArtifactNotFound
+	}
+	info, err := os.Lstat(original + ext)
+	if err != nil || !info.Mode().IsRegular() || info.ModTime().Before(originalModTime) {
+		return ISRArtifact{}, ErrISRArtifactNotFound
+	}
+	stored, err := s.ReadArtifact(staticDir, pagePath, file+ext)
+	if err != nil {
+		return ISRArtifact{}, err
+	}
+	after, err := os.Stat(original)
+	if err != nil || !after.ModTime().Equal(originalModTime) {
+		return ISRArtifact{}, ErrISRArtifactNotFound
+	}
+	stored.ModTime = originalModTime
+	return stored, nil
+}
+
 // WriteArtifact stores an artifact body and returns its modification time.
 func (s *InMemoryISRStore) WriteArtifact(staticDir, pagePath, file string, body []byte) (ISRArtifactInfo, error) {
 	target, ok := safeArtifactPath(staticDir, file)
@@ -136,6 +178,13 @@ func (s *InMemoryISRStore) WriteArtifact(staticDir, pagePath, file string, body 
 	if err := os.Rename(tempName, target); err != nil {
 		_ = os.Remove(tempName)
 		return ISRArtifactInfo{}, err
+	}
+	// The old variants describe the previous body. Regenerated artifacts use
+	// dynamic compression until fresh variants are supplied.
+	for _, ext := range []string{".br", ".gz"} {
+		if err := os.Remove(target + ext); err != nil && !os.IsNotExist(err) {
+			return ISRArtifactInfo{}, err
+		}
 	}
 	info, err := os.Stat(target)
 	if err != nil {
