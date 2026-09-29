@@ -1795,3 +1795,57 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		}
 	}
 }
+
+func TestSceneDrivenPreloads(t *testing.T) {
+	cases := []struct {
+		name, props  string
+		scene        bool
+		want, absent []string
+	}{
+		{"no scene", `{}`, false, nil, []string{"bootstrap-feature-scene3d", "as=\"image\"", "as=\"fetch\""}},
+		{"WebGL only", `{"forceWebGL":true,"scene":{"objects":[{"texture":"/albedo.jpg?x=1&y=2"}]}}`, true, []string{"scene3d-webgl.js", `href="/albedo.jpg?x=1&amp;y=2" as="image" crossorigin="anonymous"`}, []string{"scene3d-webgpu.js", "scene3d-gltf.js", "scene3d-compute.js"}},
+		{"WebGPU only", `{"scene":{"backendCaps":{"capable":["webgpu"]}}}`, true, []string{"scene3d-webgpu.js"}, []string{"scene3d-webgl.js", "scene3d-gltf.js"}},
+		{"GPU fallback", `{"scene":{}}`, true, []string{"scene3d-webgpu.js", "scene3d-webgl.js"}, []string{"scene3d-gltf.js"}},
+		{"glTF preview", `{"scene":{"models":[{"src":"/full.glb","progressive":true,"previewSrc":"/preview.glb","fullSrc":"/full.glb","animation":"walk"},{"src":"/later.glb"}]}}`, true, []string{"scene3d-gltf.js", "scene3d-animation.js", `href="/preview.glb" as="fetch" crossorigin="anonymous"`}, []string{"href=\"/full.glb\"", "href=\"/later.glb\""}},
+		{"compute and decompress", `{"compression":{},"scene":{"computeParticles":[{}]}}`, true, []string{"scene3d-compute.js", "scene3d-decompress.js"}, nil},
+		{"instanced GLB", `{"scene":{"instancedGLBMeshes":[{"src":"/crowd.glb"}]}}`, true, []string{"scene3d-gltf.js", `href="/crowd.glb" as="fetch"`}, nil},
+		{"IBL", `{"scene":{"environment":{"ibl":{"radiance":{"uri":"/radiance.ktx2"},"irradiance":{"uri":"/irradiance.ktx2"},"brdfLUT":{"uri":"/brdf.ktx2"}}}}}`, true, []string{"scene3d-gltf.js", `href="/radiance.ktx2" as="fetch"`}, nil},
+		{"water", `{"scene":{"waterSystems":[{"tileTexture":"/tile.jpg","cubeMap":"/sky/{face}.jpg"}]}}`, true, []string{`href="/tile.jpg" as="image"`, `href="/sky/ypos.jpg" as="image"`}, []string{"yneg.jpg"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRenderer("main")
+			r.bootstrapRuntimePath = "/gosx/bootstrap-runtime.js"
+			r.bootstrapFeatureScene3dPath = "/gosx/bootstrap-feature-scene3d.js"
+			r.bootstrapFeatureScene3dWebGPUPath = "/gosx/bootstrap-feature-scene3d-webgpu.js"
+			r.bootstrapFeatureScene3dWebGLPath = "/gosx/bootstrap-feature-scene3d-webgl.js"
+			r.bootstrapFeatureScene3dGLTFPath = "/gosx/bootstrap-feature-scene3d-gltf.js"
+			r.bootstrapFeatureScene3dAnimationPath = "/gosx/bootstrap-feature-scene3d-animation.js"
+			r.bootstrapFeatureScene3dComputePath = "/gosx/bootstrap-feature-scene3d-compute.js"
+			r.bootstrapFeatureScene3dDecompressPath = "/gosx/bootstrap-feature-scene3d-decompress.js"
+			name := "OtherSurface"
+			if tc.scene {
+				name = "GoSXScene3D"
+			}
+			cfg := engine.Config{Name: name, Kind: engine.KindSurface, Props: json.RawMessage(tc.props)}
+			r.RenderEngine(cfg, gosx.Text(""))
+			r.RenderEngine(cfg, gosx.Text(""))
+			hints := gosx.RenderHTML(r.PreloadHints())
+			for _, want := range tc.want {
+				if !strings.Contains(hints, want) {
+					t.Errorf("missing %q: %s", want, hints)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(hints, absent) {
+					t.Errorf("unexpected %q: %s", absent, hints)
+				}
+			}
+			for _, line := range strings.Split(strings.TrimSpace(hints), "\n") {
+				if line != "" && strings.Count(hints, line) > 1 {
+					t.Errorf("duplicate hint: %s", line)
+				}
+			}
+		})
+	}
+}

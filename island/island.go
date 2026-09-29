@@ -1886,6 +1886,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 		}
 	}
 
+	r.writeScene3DPreloads(&b)
 	return gosx.RawHTML(b.String())
 }
 
