@@ -54,8 +54,8 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("stacks and boulders have %d vertices, want 18522", count)
 	}
 	t.Logf("stacks-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, stacks), len(first["stacks-v2.glb"]))
-	if count := positionCount(t, monolith); count != 192 {
-		t.Errorf("monolith has %d vertices, want 192", count)
+	if count := positionCount(t, monolith); count < 150 || count > 400 {
+		t.Errorf("monolith has %d vertices, want a faceted shard of 150-400", count)
 	}
 	t.Logf("monolith-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, monolith), len(first["monolith-v2.glb"]))
 
@@ -72,11 +72,9 @@ func TestGenerateAssets(t *testing.T) {
 	if stackHigh[1] < 17.9 || stackHigh[1] > 18.1 {
 		t.Errorf("stack tops reach %.3f m; want the main stack near 18 m", stackHigh[1])
 	}
-	monoLow, monoHigh := checkBounds(t, first["monolith-v2.glb"], monolith, [3]float64{-.81, -.01, -.26}, [3]float64{.81, 3.75, .26})
-	checkNear(t, "monolith left", monoLow[0], -.8, .01)
+	monoLow, monoHigh := checkBounds(t, first["monolith-v2.glb"], monolith, [3]float64{-1.2, -.01, -.6}, [3]float64{1.2, 3.5, .6})
 	checkNear(t, "monolith bottom", monoLow[1], 0, .01)
-	checkNear(t, "monolith right", monoHigh[0], .8, .01)
-	checkNear(t, "monolith depth", monoHigh[2], .25, .01)
+	checkNear(t, "monolith apex", monoHigh[1], 3.42, .01)
 
 	checkGLBEncoding(t, first["beach-v2.glb"], beach, true)
 	checkGLBEncoding(t, first["stacks-v2.glb"], stacks, false)

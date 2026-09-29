@@ -596,35 +596,50 @@ func averageVertexNormals(g *geometry) {
 	}
 }
 
+// monolithGeometry is a knapped obsidian shard: six jittered rings of seven
+// points narrowing to an off-centre apex, flat-shaded so every facet
+// catches the sky and sun at its own angle (conchoidal glass, not a box).
 func monolithGeometry() (*geometry, error) {
 	g := &geometry{}
-	const halfWidth, halfDepth, chamfer = .8, .25, .05
-	bottomInner := chamferedRect(halfWidth-chamfer, halfDepth-chamfer, chamfer)
-	outer := chamferedRect(halfWidth, halfDepth, chamfer)
-	bottomInnerRing := make([]vec3, 8)
-	bottomOuterRing := make([]vec3, 8)
-	upperOuterRing := make([]vec3, 8)
-	topInnerRing := make([]vec3, 8)
-	for i := 0; i < 8; i++ {
-		bottomInnerRing[i] = vec3{bottomInner[i][0], 0, bottomInner[i][1]}
-		bottomOuterRing[i] = vec3{outer[i][0], .05, outer[i][1]}
-		topY := 3.4 + outer[i][0]*math.Tan(12*math.Pi/180)
-		upperOuterRing[i] = vec3{outer[i][0], topY - .05, outer[i][1]}
-		innerX := bottomInner[i][0]
-		innerZ := bottomInner[i][1]
-		topInnerRing[i] = vec3{innerX, 3.4 + innerX*math.Tan(12*math.Pi/180), innerZ}
+	rng := newRandom(0x0B51D1A)
+	const sides = 7
+	ringY := []float64{0, .5, 1.25, 2.05, 2.7, 3.05}
+	ringR := []float64{.72, .78, .7, .56, .38, .2}
+	rings := make([][]vec3, len(ringY))
+	for r := range ringY {
+		twist := float64(r) * .31
+		for k := 0; k < sides; k++ {
+			a := 2*math.Pi*float64(k)/sides + twist + (rng.float64()-.5)*.35
+			rad := ringR[r] * (0.78 + .44*rng.float64())
+			y := ringY[r]
+			if r > 0 {
+				y += (rng.float64() - .5) * .22
+			}
+			// Flattened section: the shard is a blade, wider than it is deep.
+			rings[r] = append(rings[r], vec3{math.Cos(a) * rad, y, math.Sin(a) * rad * .45})
+		}
 	}
-	for i := 0; i < 8; i++ {
-		next := (i + 1) % 8
-		midX := (outer[i][0] + outer[next][0]) * .5
-		midZ := (outer[i][1] + outer[next][1]) * .5
-		outward := vec3{midX, 0, midZ}
-		addQuad(g, bottomInnerRing[i], bottomOuterRing[i], bottomOuterRing[next], bottomInnerRing[next], outward)
-		addQuad(g, bottomOuterRing[i], upperOuterRing[i], upperOuterRing[next], bottomOuterRing[next], outward)
-		addQuad(g, upperOuterRing[i], topInnerRing[i], topInnerRing[next], upperOuterRing[next], outward)
-		topNormal := normalize(vec3{-math.Tan(12 * math.Pi / 180), 1, 0})
-		addTriangle(g, vec3{0, 3.4, 0}, topInnerRing[next], topInnerRing[i], topNormal)
-		addTriangle(g, vec3{0, 0, 0}, bottomInnerRing[next], bottomInnerRing[i], vec3{0, -1, 0})
+	apex := vec3{.12, 3.42, -.04}
+	tri := func(a, b, c vec3) {
+		n := normalize(cross(sub(b, a), sub(c, a)))
+		centre := scaleVec(vec3{a.x + b.x + c.x, 0, a.z + b.z + c.z}, 1.0/3)
+		if dot(n, centre) < 0 && n.y < .9 { // keep side facets facing outward
+			n = scaleVec(n, -1)
+			b, c = c, b
+		}
+		addTriangle(g, a, b, c, n)
+	}
+	for r := 0; r+1 < len(rings); r++ {
+		for k := 0; k < sides; k++ {
+			a, b := rings[r][k], rings[r][(k+1)%sides]
+			c, d := rings[r+1][(k+1)%sides], rings[r+1][k]
+			tri(a, b, c)
+			tri(a, c, d)
+		}
+	}
+	top := rings[len(rings)-1]
+	for k := 0; k < sides; k++ {
+		tri(top[k], top[(k+1)%sides], apex)
 	}
 	return g, nil
 }
