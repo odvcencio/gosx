@@ -64,6 +64,7 @@ const (
 	FeatureSkyEnvironment Feature = "sky-environment"
 	FeatureSkyGradient    Feature = "sky-gradient"
 	FeatureSkyPhysical    Feature = "sky-physical"
+	FeatureOcean          Feature = "ocean"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -288,6 +289,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	FeatureSkyEnvironment: {BackendWebGPU: true, BackendWebGL: true},
 	FeatureSkyGradient:    {BackendWebGPU: true, BackendWebGL: true},
 	FeatureSkyPhysical:    {BackendWebGPU: true, BackendWebGL: true},
+	FeatureOcean:          {BackendWebGPU: false, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {
