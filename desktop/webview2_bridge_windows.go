@@ -19,6 +19,8 @@ const (
 	webViewGetSettings                         = 3
 	webViewAddNavigationCompleted              = 15
 	webViewRemoveNavigationCompleted           = 16
+	webViewAddPermissionRequested              = 23
+	webViewRemovePermissionRequested           = 24
 	webViewAddProcessFailed                    = 25
 	webViewRemoveProcessFailed                 = 26
 	webViewAddScriptToExecuteOnDocumentCreated = 27
@@ -245,6 +247,29 @@ func (w *coreWebView2) removeNavigationCompleted(token int64) error {
 	)
 	if failedHRESULT(hr) {
 		return hresultError{Op: "ICoreWebView2.remove_NavigationCompleted", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) addPermissionRequested(handler *permissionRequestedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddPermissionRequested),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_PermissionRequested", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removePermissionRequested(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemovePermissionRequested),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_PermissionRequested", Code: hr}
 	}
 	return nil
 }

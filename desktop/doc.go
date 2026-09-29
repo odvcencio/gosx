@@ -19,6 +19,11 @@
 // --use-adapter-luid to pick the rendering adapter, and Options.MuteAudio
 // adds --mute-audio.
 //
+// Windows apps can call AcquireSingleInstance at the start of main to reserve
+// their app ID before desktop startup; close the returned InstanceLock when
+// the process exits. If first is false, call ForwardToFirstInstance with the
+// launch arguments and working directory, then exit.
+//
 // When Options.Debug is false, the backend disables browser accelerator keys,
 // browser zoom controls, and the WebView2 status bar. Debug mode leaves these
 // controls enabled. Options.OnProcessFailed reports the failed WebView2
@@ -27,6 +32,13 @@
 // window's monitor and restore the previous window state when fullscreen ends.
 // The executable's first icon resource is used for the window's large and
 // small icons when present.
+//
+// App.Window returns the primary window once it exists, and Window.Handle
+// returns its native handle (an HWND on Windows). Options.OnFocusChanged
+// reports when the window gains or loses focus; with NativeBridge it also
+// sends the page a "gosx.window.focus" event. ShowMessage shows a native
+// message box and works before New; App.ShowMessage owns the box by the app
+// window.
 //
 // macOS and Linux currently return ErrUnsupported; darwin/amd64 and
 // darwin/arm64 are cross-compiled in CI so the unsupported path stays

@@ -175,6 +175,27 @@ func TestNativeBridgeMethodsDispatchToApp(t *testing.T) {
 	}
 }
 
+func TestNativeBridgeMessageBoxMethodRegistered(t *testing.T) {
+	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+		t.Skip("message box test must not open a native dialog")
+	}
+	var sent []string
+	app := &App{options: Options{NativeBridge: true}, impl: &recordingPlatformApp{}}
+	app.bridge = bridge.NewRouter(func(raw string) error {
+		sent = append(sent, raw)
+		return nil
+	}, bridge.Limit{})
+	if err := app.registerNativeBridgeMethods(); err != nil {
+		t.Fatalf("register native methods: %v", err)
+	}
+	if err := app.bridge.Dispatch(`{"op":"req","id":"message","method":"gosx.desktop.dialog.message","payload":{}}`); err != nil {
+		t.Fatalf("dispatch message dialog: %v", err)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "desktop backend unsupported") {
+		t.Fatalf("message dialog response = %#v, want registered method returning unsupported", sent)
+	}
+}
+
 func TestRunUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		t.Skip("windows desktop backend is supported on this architecture")
@@ -222,6 +243,7 @@ func (a *recordingPlatformApp) SetTray(TrayOptions) error                       
 func (a *recordingPlatformApp) CloseTray() error                                 { return nil }
 func (a *recordingPlatformApp) Notify(Notification) error                        { return nil }
 func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error          { return nil }
+func (a *recordingPlatformApp) PrimaryWindow() *Window                           { return nil }
 
 func TestNewUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
@@ -333,5 +355,27 @@ func TestStartupTimelineWithoutReporter(t *testing.T) {
 	}
 	if got := (&App{}).StartupTimeline(); got != (StartupTimeline{}) {
 		t.Fatalf("app without backend timeline = %+v", got)
+	}
+}
+
+func TestPermissionKindMapping(t *testing.T) {
+	cases := map[int32]PermissionKind{
+		-1: PermissionUnknown, 0: PermissionUnknown, 1: PermissionMicrophone, 2: PermissionCamera,
+		4: PermissionNotifications, 9: PermissionAutoplay, 11: PermissionMIDISysex, 13: PermissionPersistentStorage, 99: PermissionUnknown,
+	}
+	for value, want := range cases {
+		if got := permissionKindFromWebView2(value); got != want {
+			t.Fatalf("permissionKindFromWebView2(%d) = %q, want %q", value, got, want)
+		}
+	}
+	for decision, want := range map[PermissionDecision]int32{PermissionAllow: 1, PermissionDeny: 2} {
+		if got, ok := webView2PermissionState(decision); !ok || got != want {
+			t.Fatalf("webView2PermissionState(%q) = %d, %v", decision, got, ok)
+		}
+	}
+	for _, decision := range []PermissionDecision{PermissionAsk, "maybe"} {
+		if _, ok := webView2PermissionState(decision); ok {
+			t.Fatalf("webView2PermissionState(%q) changed the state", decision)
+		}
 	}
 }

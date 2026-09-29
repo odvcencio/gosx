@@ -108,6 +108,10 @@ type Options struct {
 	OnSuspend func()
 	OnResume  func()
 
+	// OnFocusChanged fires when the primary native window changes focus.
+	// Callbacks run on the window procedure thread and should return quickly.
+	OnFocusChanged func(focused bool)
+
 	// OnProcessFailed reports a WebView2 process failure on the WebView2
 	// dispatcher thread. Keep the callback short; call App.Reload if the
 	// application decides that reloading is appropriate.
@@ -117,6 +121,15 @@ type Options struct {
 	// top-level navigation finishes. Keep it short. App.StartupTimeline
 	// reports the first navigation's completion time.
 	OnNavigationCompleted func(NavigationCompleted)
+
+	// OnPermissionRequested decides browser permission requests from page
+	// content (Web MIDI, microphone, notifications, ...). It runs on the
+	// WebView2 dispatcher thread; keep it short. Return PermissionAllow or
+	// PermissionDeny to answer without a prompt, or PermissionAsk to let
+	// WebView2 show its own prompt. Nil keeps the WebView2 prompt for
+	// every request. Grant only to origins you trust, such as the app's own
+	// loopback server; check PermissionRequest.URI.
+	OnPermissionRequested func(PermissionRequest) PermissionDecision
 
 	// OnWindowCreated fires after a native window handle has been created.
 	// The initial Windows backend invokes it for the primary window.
@@ -172,6 +185,7 @@ type platformApp interface {
 	RegisterFileType(ext, icon, handler string) error
 	SetMenuBar(menu Menu) error
 	SetTray(options TrayOptions) error
+	PrimaryWindow() *Window
 	CloseTray() error
 	Notify(notification Notification) error
 	SetFileDropHandler(handler func([]string)) error
@@ -189,6 +203,15 @@ func New(options Options) (*App, error) {
 	userCallback := normalized.OnWebMessage
 
 	app := &App{options: normalized}
+	userFocusCallback := normalized.OnFocusChanged
+	normalized.OnFocusChanged = func(focused bool) {
+		if userFocusCallback != nil {
+			userFocusCallback(focused)
+		}
+		if normalized.NativeBridge && app.bridge != nil {
+			_ = app.bridge.Emit("gosx.window.focus", map[string]bool{"focused": focused})
+		}
+	}
 
 	// Install the preprocessor wrapper. The wrapper is what the platform
 	// impl actually invokes; it fans the message out through the bridge
@@ -248,6 +271,14 @@ func (a *App) Options() Options {
 		return Options{}
 	}
 	return a.options
+}
+
+// Window returns the primary native window after it has been created.
+func (a *App) Window() *Window {
+	if a == nil || a.impl == nil {
+		return nil
+	}
+	return a.impl.PrimaryWindow()
 }
 
 // Bridge returns the typed IPC router for this app. Handlers register
@@ -442,6 +473,17 @@ func (a *App) registerNativeBridgeMethods() error {
 			return err
 		}
 		return bridgeVoid(ctx, a.SetMinSize(req.Width, req.Height))
+	})
+	register("gosx.desktop.dialog.message", func(ctx *bridge.Context) error {
+		var options MessageOptions
+		if err := ctx.Decode(&options); err != nil {
+			return err
+		}
+		result, err := a.ShowMessage(options)
+		if err != nil {
+			return err
+		}
+		return ctx.Respond(result)
 	})
 	register("gosx.desktop.window.setMaxSize", func(ctx *bridge.Context) error {
 		var req struct {

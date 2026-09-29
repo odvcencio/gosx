@@ -29,6 +29,8 @@ const (
 	swShowDefault    = 10
 	swRestore        = 9
 
+	wmActivate       = 0x0006
+	waInactive       = 0
 	wmClose          = 0x0010
 	wmDestroy        = 0x0002
 	wmCommand        = 0x0111
@@ -85,28 +87,31 @@ var (
 
 	procGetModuleHandleW = modKernel.NewProc("GetModuleHandleW")
 
-	procRegisterClassExW    = modUser32.NewProc("RegisterClassExW")
-	procCreateWindowExW     = modUser32.NewProc("CreateWindowExW")
-	procDefWindowProcW      = modUser32.NewProc("DefWindowProcW")
-	procDestroyWindow       = modUser32.NewProc("DestroyWindow")
-	procDispatchMessageW    = modUser32.NewProc("DispatchMessageW")
-	procGetClientRect       = modUser32.NewProc("GetClientRect")
-	procGetMessageW         = modUser32.NewProc("GetMessageW")
-	procLoadCursorW         = modUser32.NewProc("LoadCursorW")
-	procPostMessageW        = modUser32.NewProc("PostMessageW")
-	procPostQuitMessage     = modUser32.NewProc("PostQuitMessage")
-	procShowWindow          = modUser32.NewProc("ShowWindow")
-	procTranslateMessage    = modUser32.NewProc("TranslateMessage")
-	procUpdateWindow        = modUser32.NewProc("UpdateWindow")
-	procSetWindowTextW      = modUser32.NewProc("SetWindowTextW")
-	procSetForegroundWindow = modUser32.NewProc("SetForegroundWindow")
-	procSetPropW            = modUser32.NewProc("SetPropW")
-	procRemovePropW         = modUser32.NewProc("RemovePropW")
-	procGetPropW            = modUser32.NewProc("GetPropW")
-	procEnumWindows         = modUser32.NewProc("EnumWindows")
-	procSendMessageTimeoutW = modUser32.NewProc("SendMessageTimeoutW")
-	procSendMessageW        = modUser32.NewProc("SendMessageW")
-	procExtractIconExW      = modShell32.NewProc("ExtractIconExW")
+	procRegisterClassExW         = modUser32.NewProc("RegisterClassExW")
+	procCreateWindowExW          = modUser32.NewProc("CreateWindowExW")
+	procDefWindowProcW           = modUser32.NewProc("DefWindowProcW")
+	procDestroyWindow            = modUser32.NewProc("DestroyWindow")
+	procDispatchMessageW         = modUser32.NewProc("DispatchMessageW")
+	procGetClientRect            = modUser32.NewProc("GetClientRect")
+	procGetMessageW              = modUser32.NewProc("GetMessageW")
+	procLoadCursorW              = modUser32.NewProc("LoadCursorW")
+	procPostMessageW             = modUser32.NewProc("PostMessageW")
+	procPostQuitMessage          = modUser32.NewProc("PostQuitMessage")
+	procShowWindow               = modUser32.NewProc("ShowWindow")
+	procIsIconic                 = modUser32.NewProc("IsIconic")
+	procGetWindowThreadProcessId = modUser32.NewProc("GetWindowThreadProcessId")
+	procAllowSetForegroundWindow = modUser32.NewProc("AllowSetForegroundWindow")
+	procTranslateMessage         = modUser32.NewProc("TranslateMessage")
+	procUpdateWindow             = modUser32.NewProc("UpdateWindow")
+	procSetWindowTextW           = modUser32.NewProc("SetWindowTextW")
+	procSetForegroundWindow      = modUser32.NewProc("SetForegroundWindow")
+	procSetPropW                 = modUser32.NewProc("SetPropW")
+	procRemovePropW              = modUser32.NewProc("RemovePropW")
+	procGetPropW                 = modUser32.NewProc("GetPropW")
+	procEnumWindows              = modUser32.NewProc("EnumWindows")
+	procSendMessageTimeoutW      = modUser32.NewProc("SendMessageTimeoutW")
+	procSendMessageW             = modUser32.NewProc("SendMessageW")
+	procExtractIconExW           = modShell32.NewProc("ExtractIconExW")
 
 	// SetProcessDpiAwarenessContext is Win10 1703+. NewLazyProc resolves
 	// at first .Call(), so older systems silently fall back when the Find()
@@ -494,6 +499,10 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 	windowMu.Unlock()
 
 	switch message {
+	case wmActivate:
+		if app != nil {
+			app.onFocusChanged(uint16(wparam) != waInactive)
+		}
 	case wmCommand:
 		if app != nil && app.handleMenuCommand(wparam) {
 			return 0
@@ -574,6 +583,7 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 			app.releaseWindowIcons(hwnd)
 			app.releaseWebView()
 			app.stopDispatch()
+			app.clearPrimaryWindow()
 		}
 		windowMu.Lock()
 		delete(windowApps, hwnd)

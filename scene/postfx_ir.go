@@ -168,10 +168,18 @@ func (ir TonemapIR) MarshalJSON() ([]byte, error) {
 // u_intensity. We translate at the IR boundary so the public Go API can use
 // the more intuitive name without renaming the shader.
 type BloomIR struct {
+	Mode      string // emitted only when "mip"
 	Threshold float64
 	Strength  float64
 	Radius    float64
 	Scale     float64 // emitted only when in (0, 1]
+}
+
+func bloomMode(mode string) string {
+	if mode == "mip" {
+		return mode
+	}
+	return ""
 }
 
 func (ir BloomIR) legacyProps() map[string]any {
@@ -195,6 +203,9 @@ func (ir BloomIR) legacyProps() map[string]any {
 	}
 	if ir.Scale > 0 && ir.Scale <= 1 {
 		out["scale"] = ir.Scale
+	}
+	if ir.Mode == "mip" {
+		out["mode"] = ir.Mode
 	}
 	return out
 }
@@ -226,6 +237,9 @@ func (ir BloomIR) MarshalJSON() ([]byte, error) {
 		b.WriteString(`,"scale":`)
 		b.WriteString(strconv.FormatFloat(ir.Scale, 'f', -1, 64))
 	}
+	if ir.Mode == "mip" {
+		b.WriteString(`,"mode":"mip"`)
+	}
 	b.WriteByte('}')
 	return []byte(b.String()), nil
 }
@@ -241,6 +255,7 @@ func (ir BloomIR) MarshalJSON() ([]byte, error) {
 // second marshal reproduces the first one byte for byte.
 func (ir *BloomIR) UnmarshalJSON(data []byte) error {
 	var wire struct {
+		Mode      string  `json:"mode"`
 		Threshold float64 `json:"threshold"`
 		Intensity float64 `json:"intensity"`
 		Radius    float64 `json:"radius"`
@@ -248,6 +263,10 @@ func (ir *BloomIR) UnmarshalJSON(data []byte) error {
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
+	}
+	ir.Mode = ""
+	if wire.Mode == "mip" {
+		ir.Mode = wire.Mode
 	}
 	ir.Threshold = wire.Threshold
 	ir.Strength = wire.Intensity
@@ -565,6 +584,7 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 			})
 		case Bloom:
 			out = append(out, BloomIR{
+				Mode:      bloomMode(ev.Mode),
 				Threshold: float64(ev.Threshold),
 				Strength:  float64(ev.Strength),
 				Radius:    float64(ev.Radius),

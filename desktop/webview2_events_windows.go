@@ -230,3 +230,107 @@ func navigationCompletedInvoke(this, _sender, args uintptr) uintptr {
 	handler.app.onNavigationCompleted((*coreWebView2NavigationCompletedEventArgs)(unsafe.Pointer(args)).read())
 	return sOK
 }
+
+const (
+	permissionArgsGetURI           = 3
+	permissionArgsGetKind          = 4
+	permissionArgsGetUserInitiated = 5
+	permissionArgsPutState         = 7
+)
+
+type coreWebView2PermissionRequestedEventArgs struct {
+	vtbl uintptr
+}
+
+func (a *coreWebView2PermissionRequestedEventArgs) read() PermissionRequest {
+	request := PermissionRequest{Kind: PermissionUnknown}
+	var uri *uint16
+	if hr, _, _ := syscall.SyscallN(comMethod(unsafe.Pointer(a), permissionArgsGetURI),
+		uintptr(unsafe.Pointer(a)), uintptr(unsafe.Pointer(&uri))); !failedHRESULT(hr) && uri != nil {
+		request.URI = utf16PtrToString(uri)
+		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(uri)))
+	}
+	var kind int32
+	if hr, _, _ := syscall.SyscallN(comMethod(unsafe.Pointer(a), permissionArgsGetKind),
+		uintptr(unsafe.Pointer(a)), uintptr(unsafe.Pointer(&kind))); !failedHRESULT(hr) {
+		request.Kind = permissionKindFromWebView2(kind)
+	}
+	var userInitiated int32
+	if hr, _, _ := syscall.SyscallN(comMethod(unsafe.Pointer(a), permissionArgsGetUserInitiated),
+		uintptr(unsafe.Pointer(a)), uintptr(unsafe.Pointer(&userInitiated))); !failedHRESULT(hr) {
+		request.UserInitiated = userInitiated != 0
+	}
+	return request
+}
+
+func (a *coreWebView2PermissionRequestedEventArgs) setState(state int32) error {
+	hr, _, _ := syscall.SyscallN(comMethod(unsafe.Pointer(a), permissionArgsPutState),
+		uintptr(unsafe.Pointer(a)), uintptr(state))
+	if failedHRESULT(hr) {
+		return hresultError{Op: "PermissionRequestedEventArgs.put_State", Code: hr}
+	}
+	return nil
+}
+
+type permissionRequestedEventHandler struct {
+	vtbl *permissionRequestedEventHandlerVtbl
+	refs uint32
+	app  *windowsApp
+}
+
+type permissionRequestedEventHandlerVtbl struct {
+	QueryInterface uintptr
+	AddRef         uintptr
+	Release        uintptr
+	Invoke         uintptr
+}
+
+var permissionRequestedEventHandlerVtblInstance = permissionRequestedEventHandlerVtbl{
+	QueryInterface: syscall.NewCallback(permissionRequestedQueryInterface),
+	AddRef:         syscall.NewCallback(permissionRequestedAddRef),
+	Release:        syscall.NewCallback(permissionRequestedRelease),
+	Invoke:         syscall.NewCallback(permissionRequestedInvoke),
+}
+
+func newPermissionRequestedEventHandler(app *windowsApp) *permissionRequestedEventHandler {
+	handler := &permissionRequestedEventHandler{vtbl: &permissionRequestedEventHandlerVtblInstance, refs: 1, app: app}
+	rootCOMHandler(uintptr(unsafe.Pointer(handler)), handler)
+	return handler
+}
+
+func permissionRequestedQueryInterface(this, iid, ppv uintptr) uintptr {
+	return queryInterfaceHandler(this, iid, ppv, iidPermissionRequestedEventHandler, permissionRequestedAddRef)
+}
+
+func permissionRequestedAddRef(this uintptr) uintptr {
+	handler := (*permissionRequestedEventHandler)(unsafe.Pointer(this))
+	return uintptr(atomic.AddUint32(&handler.refs, 1))
+}
+
+func permissionRequestedRelease(this uintptr) uintptr {
+	handler := (*permissionRequestedEventHandler)(unsafe.Pointer(this))
+	refs := atomic.AddUint32(&handler.refs, ^uint32(0))
+	if refs == 0 {
+		unrootCOMHandler(this)
+	}
+	runtime.KeepAlive(handler)
+	return uintptr(refs)
+}
+
+func permissionRequestedInvoke(this, _sender, args uintptr) uintptr {
+	handler := (*permissionRequestedEventHandler)(unsafe.Pointer(this))
+	if handler == nil || handler.app == nil || args == 0 {
+		return sOK
+	}
+	eventArgs := (*coreWebView2PermissionRequestedEventArgs)(unsafe.Pointer(args))
+	handler.app.mu.Lock()
+	decide := handler.app.options.OnPermissionRequested
+	handler.app.mu.Unlock()
+	if decide == nil {
+		return sOK
+	}
+	if state, ok := webView2PermissionState(decide(eventArgs.read())); ok {
+		_ = eventArgs.setState(state)
+	}
+	return sOK
+}

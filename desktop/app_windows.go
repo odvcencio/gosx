@@ -18,8 +18,9 @@ import (
 type windowsApp struct {
 	options Options
 
-	mu   sync.Mutex
-	hwnd uintptr
+	mu            sync.Mutex
+	primaryWindow *Window
+	hwnd          uintptr
 
 	// dispatch runs WebView2 calls on the window thread (see onUIThread).
 	dispatch        uiDispatcher
@@ -35,7 +36,7 @@ type windowsApp struct {
 	settingsRef     *comReference
 	runErr          error
 	webviewReleased bool
-	singleLock      *singleInstanceLock
+	singleLock      *InstanceLock
 
 	envHandler           *environmentCompletedHandler
 	envHandlerRef        *comReference
@@ -57,6 +58,10 @@ type windowsApp struct {
 	navCompletedRef      *comReference
 	navCompletedToken    int64
 	navCompletedAdded    bool
+	permissionHandler    *permissionRequestedEventHandler
+	permissionRef        *comReference
+	permissionToken      int64
+	permissionAdded      bool
 
 	// created is when New built this app; timeline durations are measured
 	// from it. backgroundBrush paints WM_ERASEBKGND when BackgroundColor is
@@ -98,6 +103,7 @@ type windowsApp struct {
 	menuBar             uintptr
 	contextMenus        map[uintptr]uintptr
 	pendingTray         *TrayOptions
+	focusTracker        focusStateTracker
 	tray                *windowsTray
 	nextNativeCommandID uint16
 	menuActions         map[uint16]func()
@@ -146,7 +152,7 @@ func (a *windowsApp) Run() error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	if a.options.SingleInstance {
+	if a.options.SingleInstance && !instanceLockHeld(a.options.AppID) {
 		lock, owned, err := acquireSingleInstanceLock(a.options.AppID)
 		if err != nil {
 			return err
@@ -155,8 +161,9 @@ func (a *windowsApp) Run() error {
 			defer lock.Close()
 			return forwardCurrentLaunch(a.options.AppID)
 		}
+		heldLock := newInstanceLock(a.options.AppID, lock.Close)
 		a.mu.Lock()
-		a.singleLock = lock
+		a.singleLock = heldLock
 		a.mu.Unlock()
 		defer func() {
 			a.mu.Lock()
@@ -456,9 +463,20 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	navCompletedRef := ownCOMReference(unsafe.Pointer(navCompletedHandler), func(ptr unsafe.Pointer) {
 		navigationCompletedRelease(uintptr(ptr))
 	})
-	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken int64
-	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded bool
+	var permissionHandler *permissionRequestedEventHandler
+	var permissionRef *comReference
+	if a.options.OnPermissionRequested != nil {
+		permissionHandler = newPermissionRequestedEventHandler(a)
+		permissionRef = ownCOMReference(unsafe.Pointer(permissionHandler), func(ptr unsafe.Pointer) {
+			permissionRequestedRelease(uintptr(ptr))
+		})
+	}
+	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken, permissionToken int64
+	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded, permissionAdded bool
 	cleanupLocal := func() {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
 		if navCompletedAdded {
 			_ = webview.removeNavigationCompleted(navCompletedToken)
 		}
@@ -475,6 +493,7 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 			_ = webview.removeWebMessageReceived(msgToken)
 		}
 		controller.close()
+		permissionRef.Release()
 		navCompletedRef.Release()
 		fullscreenRef.Release()
 		processFailedRef.Release()
@@ -526,6 +545,14 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		return
 	}
 	navCompletedAdded = true
+	if permissionHandler != nil {
+		permissionToken, err = webview.addPermissionRequested(permissionHandler)
+		if err != nil {
+			failLocal(err)
+			return
+		}
+		permissionAdded = true
+	}
 	// Replay any filters registered before the webview came up.
 	a.mu.Lock()
 	pendingRoutes := append([]*servedRoute(nil), a.servedRoutes...)
@@ -560,6 +587,10 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	a.navCompletedRef = navCompletedRef
 	a.navCompletedToken = navCompletedToken
 	a.navCompletedAdded = navCompletedAdded
+	a.permissionHandler = permissionHandler
+	a.permissionRef = permissionRef
+	a.permissionToken = permissionToken
+	a.permissionAdded = permissionAdded
 	a.resHandler = resHandler
 	a.resHandlerRef = resHandlerRef
 	a.resHandlerToken = resToken
@@ -656,6 +687,12 @@ func (a *windowsApp) releaseWebView() {
 	fullscreenToken, fullscreenAdded := a.fullscreenToken, a.fullscreenAdded
 	navCompletedRef := a.navCompletedRef
 	navCompletedToken, navCompletedAdded := a.navCompletedToken, a.navCompletedAdded
+	permissionRef := a.permissionRef
+	permissionToken, permissionAdded := a.permissionToken, a.permissionAdded
+	a.permissionHandler = nil
+	a.permissionRef = nil
+	a.permissionToken = 0
+	a.permissionAdded = false
 	a.navCompletedHandler = nil
 	a.navCompletedRef = nil
 	a.navCompletedToken = 0
@@ -689,6 +726,9 @@ func (a *windowsApp) releaseWebView() {
 	a.mu.Unlock()
 
 	if webview != nil {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
 		if navCompletedAdded {
 			_ = webview.removeNavigationCompleted(navCompletedToken)
 		}
@@ -712,6 +752,7 @@ func (a *windowsApp) releaseWebView() {
 	webviewRef.Release()
 	controllerRef.Release()
 	envRef.Release()
+	permissionRef.Release()
 	navCompletedRef.Release()
 	fullscreenRef.Release()
 	processFailedRef.Release()
@@ -1035,11 +1076,43 @@ func (a *windowsApp) fireWindowCreated(hwnd uintptr) {
 	a.mu.Lock()
 	cb := a.options.OnWindowCreated
 	options := a.options
+	window := a.primaryWindow
+	if window == nil {
+		window = newPrimaryWindow(hwnd, options, func(menu Menu) error {
+			return a.setWindowContextMenu(hwnd, menu)
+		})
+		a.primaryWindow = window
+	}
 	a.mu.Unlock()
 	if cb != nil {
-		cb(newPrimaryWindow(hwnd, options, func(menu Menu) error {
-			return a.setWindowContextMenu(hwnd, menu)
-		}))
+		cb(window)
+	}
+}
+
+// clearPrimaryWindow forgets the destroyed primary window, so App.Window
+// returns nil and App.ShowMessage (for example from OnClose) does not use a
+// handle Windows may reuse.
+func (a *windowsApp) clearPrimaryWindow() {
+	a.mu.Lock()
+	a.primaryWindow = nil
+	a.mu.Unlock()
+}
+
+func (a *windowsApp) PrimaryWindow() *Window {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.primaryWindow
+}
+
+func (a *windowsApp) onFocusChanged(focused bool) {
+	if !a.focusTracker.Update(focused) {
+		return
+	}
+	a.mu.Lock()
+	cb := a.options.OnFocusChanged
+	a.mu.Unlock()
+	if cb != nil {
+		cb(focused)
 	}
 }
 

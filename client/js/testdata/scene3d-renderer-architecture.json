@@ -32,8 +32,10 @@
     "16a1-scene-webgpu-selena-uniforms.ts",
     "hydrate-input.ts",
     "mount-webgl.ts",
+    "webgl-bloom.ts",
     "webgl-ocean.ts",
     "webgl.ts",
+    "webgpu-bloom.ts",
     "webgpu-ocean.ts",
     "webgpu.ts"
   ],
@@ -65,7 +67,17 @@
     },
     {
       "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-bloom.ts",
       "count": 2
     },
     {
@@ -255,7 +267,17 @@
     },
     {
       "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu-bloom.ts",
       "count": 2
     },
     {
@@ -293,6 +315,7 @@
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-bloom.ts",
         "../runtime/scene3d/webgl-ocean.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ],
@@ -302,14 +325,16 @@
         "bootstrap-src/16b-scene-hdr.ts": "shared-scene-support",
         "bootstrap-src/16e-scene-webgl-legacy.ts": "backend-support",
         "../runtime/scene3d/webgl.ts": "governed-renderer",
+        "../runtime/scene3d/webgl-bloom.ts": "governed-renderer",
         "../runtime/scene3d/webgl-ocean.ts": "governed-renderer",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper"
       },
       "sources": [
         "../runtime/scene3d/webgl.ts",
-        "../runtime/scene3d/webgl-ocean.ts"
+        "../runtime/scene3d/webgl-ocean.ts",
+        "../runtime/scene3d/webgl-bloom.ts"
       ],
-      "maxLines": 11494,
+      "maxLines": 11608,
       "maxFileLines": 11270
     },
     "webgpu": {
@@ -319,6 +344,7 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ],
@@ -327,15 +353,17 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts": "backend-support",
         "../runtime/scene3d/webgpu.ts": "governed-renderer",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": "governed-renderer",
+        "../runtime/scene3d/webgpu-bloom.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-ocean.ts": "governed-renderer",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper"
       },
       "sources": [
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
-        "../runtime/scene3d/webgpu-ocean.ts"
+        "../runtime/scene3d/webgpu-ocean.ts",
+        "../runtime/scene3d/webgpu-bloom.ts"
       ],
-      "maxLines": 19744,
+      "maxLines": 19869,
       "maxFileLines": 19328
     }
   },
@@ -347,7 +375,9 @@
     "../runtime/scene3d/mount-webgl.ts": 5588,
     "../runtime/scene3d/mount.ts": 3859,
     "../runtime/scene3d/webgl-ocean.ts": 224,
-    "../runtime/scene3d/webgpu-ocean.ts": 211
+    "../runtime/scene3d/webgpu-ocean.ts": 211,
+    "../runtime/scene3d/webgl-bloom.ts": 114,
+    "../runtime/scene3d/webgpu-bloom.ts": 125
   },
   "functionDefaults": {
     "lines": 200,

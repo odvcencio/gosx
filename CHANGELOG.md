@@ -20,6 +20,61 @@
   `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
   Canvas2D gets gradient stops computed from the model. Capability
   `sky-physical`.
+### Added: opt-in Scene3D mip bloom
+
+- Set `scene.Bloom.Mode` to `"mip"` for soft-knee extraction, a bounded HDR
+  input, and up to six filtered bloom levels on WebGL2 and WebGPU. Additive
+  tent upsampling avoids the spaced blur copies around bright edges.
+- Empty and unknown modes preserve the existing bloom output and wire shape.
+  `Bloom.Scale` still controls prefilter resolution; resize and disposal free
+  the full level chain.
+
+### Added: desktop window handle, focus events, message box
+
+- Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
+  own window by title to call Win32 APIs.
+- Add `Options.OnFocusChanged(focused bool)`, fired from `WM_ACTIVATE` when
+  focus changes. With `NativeBridge`, the page also receives a
+  `gosx.window.focus` event with `{focused}`.
+- Add `desktop.ShowMessage` (works before `New`) and `App.ShowMessage`
+  (owned by the app window): info, warning, error, and question icons;
+  OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
+  it as `gosxDesktop.dialog.message`.
+### Fixed and added: desktop single instance
+
+- Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
+  Windows session, so a second user signed in to the same PC could not start
+  the app. It is now `Local\gosx-<appID>` (one per session).
+- Add `desktop.AcquireSingleInstance(appID)` and `desktop.InstanceLock`, so an
+  app can reserve its ID at the top of `main`, before its own startup work,
+  and `desktop.ForwardToFirstInstance(appID, args, workingDir)`, which hands a
+  later launch to the running window (waiting up to 10 s for it to appear).
+  `Options.SingleInstance` reuses a lock the process already holds.
+- The running instance now restores its window if it is minimized, and the
+  forwarding process grants it foreground rights (`AllowSetForegroundWindow`)
+  so the window can come to the front.
+### Added: desktop sidecar processes
+
+- Add `desktop/sidecar`: `sidecar.Start` runs a helper process (a local game
+  server, an audio engine) without a console window, copies its output to a
+  writer, and returns once a stdout line matches `ReadyLine` (the first
+  submatch, such as a listen address, is returned by `Ready`) or `ReadyURL`
+  answers. On Windows the process starts suspended, joins a Job Object, and
+  then resumes, so it and anything it starts end when the app exits or
+  crashes. On Linux a crashed app's sidecar gets SIGKILL, but processes the
+  sidecar started do not (no unprivileged Job Object equivalent). `Stop` sends SIGTERM first on Unix, then kills the job or
+  process group after the grace period, including children that ignored
+  SIGTERM after the main process exited. On Unix, children left behind when
+  the sidecar exits on its own are killed too, as the Job Object does on
+  Windows.
+### Added: desktop permission requests
+
+- Add `Options.OnPermissionRequested`. It receives each browser permission
+  request (kind, origin, and whether a user gesture started it) and returns
+  `PermissionAllow`, `PermissionDeny`, or `PermissionAsk` (WebView2's own
+  prompt, the behavior without a handler). WebView2 reports Web MIDI requests,
+  including `requestMIDIAccess({sysex: false})`, as `PermissionMIDISysex`;
+  before this, a desktop app's Web MIDI request waited on a prompt.
 
 ### Fixed: desktop WebView calls from goroutines
 
