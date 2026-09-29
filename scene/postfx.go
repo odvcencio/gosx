@@ -96,6 +96,10 @@ func (Tonemap) isPostEffect() {}
 // vertically, and the result is additively composited back onto the scene at
 // Strength.
 type Bloom struct {
+	// Mode selects soft-knee mip-chain bloom when set to "mip".
+	// Empty and unknown values preserve the legacy bright-pass blur.
+	Mode string
+
 	Threshold float32 // luminance above which pixels bloom (default 0.8)
 	Strength  float32 // intensity of the bloom contribution (default 0.5)
 	Radius    float32 // blur radius in pixels (default 5)

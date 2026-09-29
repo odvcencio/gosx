@@ -851,3 +851,51 @@ func TestCompressorSkipsPostFXFields(t *testing.T) {
 			got, PostFXMaxPixels720p)
 	}
 }
+
+func TestBloomModeIR(t *testing.T) {
+	for _, mode := range []string{"", "mip", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			irs := (PostFX{Effects: []PostEffect{Bloom{Mode: mode}}}).sceneIR()
+			ir := irs[0].(BloomIR)
+			data, err := json.Marshal(ir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var props map[string]any
+			if err := json.Unmarshal(data, &props); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "mip" {
+				if props["mode"] != "mip" || ir.legacyProps()["mode"] != "mip" {
+					t.Fatalf("missing mip mode: %s", data)
+				}
+			} else if _, ok := props["mode"]; ok {
+				t.Fatalf("unexpected mode: %s", data)
+			}
+			var roundTrip BloomIR
+			if err := json.Unmarshal(data, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if mode == "mip" {
+				want = mode
+			}
+			if roundTrip.Mode != want {
+				t.Fatalf("mode = %q, want %q", roundTrip.Mode, want)
+			}
+			if mode != "mip" {
+				legacy, _ := json.Marshal(BloomIR{})
+				if string(data) != string(legacy) {
+					t.Fatalf("legacy wire changed: %s", data)
+				}
+			}
+		})
+	}
+	var ir BloomIR
+	if err := json.Unmarshal([]byte(`{"kind":"bloom","mode":"unknown"}`), &ir); err != nil {
+		t.Fatal(err)
+	}
+	if ir.Mode != "" {
+		t.Fatalf("unknown mode retained: %q", ir.Mode)
+	}
+}
