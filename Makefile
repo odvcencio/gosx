@@ -296,6 +296,8 @@ test-desktop:
 	GOWORK=off nice -n 10 $(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'
 	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-amd64.test.exe ./desktop
 	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
+	GOWORK=off nice -n 10 $(GO) test ./desktop/sidecar
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-sidecar-windows-amd64.test.exe ./desktop/sidecar
 	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
 	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
 

@@ -57,6 +57,10 @@ type windowsApp struct {
 	navCompletedRef      *comReference
 	navCompletedToken    int64
 	navCompletedAdded    bool
+	permissionHandler    *permissionRequestedEventHandler
+	permissionRef        *comReference
+	permissionToken      int64
+	permissionAdded      bool
 
 	// created is when New built this app; timeline durations are measured
 	// from it. backgroundBrush paints WM_ERASEBKGND when BackgroundColor is
@@ -456,9 +460,20 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	navCompletedRef := ownCOMReference(unsafe.Pointer(navCompletedHandler), func(ptr unsafe.Pointer) {
 		navigationCompletedRelease(uintptr(ptr))
 	})
-	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken int64
-	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded bool
+	var permissionHandler *permissionRequestedEventHandler
+	var permissionRef *comReference
+	if a.options.OnPermissionRequested != nil {
+		permissionHandler = newPermissionRequestedEventHandler(a)
+		permissionRef = ownCOMReference(unsafe.Pointer(permissionHandler), func(ptr unsafe.Pointer) {
+			permissionRequestedRelease(uintptr(ptr))
+		})
+	}
+	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken, permissionToken int64
+	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded, permissionAdded bool
 	cleanupLocal := func() {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
 		if navCompletedAdded {
 			_ = webview.removeNavigationCompleted(navCompletedToken)
 		}
@@ -475,6 +490,7 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 			_ = webview.removeWebMessageReceived(msgToken)
 		}
 		controller.close()
+		permissionRef.Release()
 		navCompletedRef.Release()
 		fullscreenRef.Release()
 		processFailedRef.Release()
@@ -526,6 +542,14 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		return
 	}
 	navCompletedAdded = true
+	if permissionHandler != nil {
+		permissionToken, err = webview.addPermissionRequested(permissionHandler)
+		if err != nil {
+			failLocal(err)
+			return
+		}
+		permissionAdded = true
+	}
 	// Replay any filters registered before the webview came up.
 	a.mu.Lock()
 	pendingRoutes := append([]*servedRoute(nil), a.servedRoutes...)
@@ -560,6 +584,10 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	a.navCompletedRef = navCompletedRef
 	a.navCompletedToken = navCompletedToken
 	a.navCompletedAdded = navCompletedAdded
+	a.permissionHandler = permissionHandler
+	a.permissionRef = permissionRef
+	a.permissionToken = permissionToken
+	a.permissionAdded = permissionAdded
 	a.resHandler = resHandler
 	a.resHandlerRef = resHandlerRef
 	a.resHandlerToken = resToken
@@ -656,6 +684,12 @@ func (a *windowsApp) releaseWebView() {
 	fullscreenToken, fullscreenAdded := a.fullscreenToken, a.fullscreenAdded
 	navCompletedRef := a.navCompletedRef
 	navCompletedToken, navCompletedAdded := a.navCompletedToken, a.navCompletedAdded
+	permissionRef := a.permissionRef
+	permissionToken, permissionAdded := a.permissionToken, a.permissionAdded
+	a.permissionHandler = nil
+	a.permissionRef = nil
+	a.permissionToken = 0
+	a.permissionAdded = false
 	a.navCompletedHandler = nil
 	a.navCompletedRef = nil
 	a.navCompletedToken = 0
@@ -689,6 +723,9 @@ func (a *windowsApp) releaseWebView() {
 	a.mu.Unlock()
 
 	if webview != nil {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
 		if navCompletedAdded {
 			_ = webview.removeNavigationCompleted(navCompletedToken)
 		}
@@ -712,6 +749,7 @@ func (a *windowsApp) releaseWebView() {
 	webviewRef.Release()
 	controllerRef.Release()
 	envRef.Release()
+	permissionRef.Release()
 	navCompletedRef.Release()
 	fullscreenRef.Release()
 	processFailedRef.Release()

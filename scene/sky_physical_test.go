@@ -121,3 +121,29 @@ func TestPhysicalSkyParamsGolden(t *testing.T) {
 		}
 	}
 }
+
+// TestPhysicalSkyNeverProducesNaN sweeps the allowed parameter space around
+// the horizon, where the sun fade can exceed a small Rayleigh value.
+func TestPhysicalSkyNeverProducesNaN(t *testing.T) {
+	for el := -12.0; el <= 12; el += 0.25 {
+		for _, rayleigh := range []float64{0.0005, 0.005, 0.02, 0.2, 2, 8} {
+			for _, turbidity := range []float64{1, 10, 20} {
+				for _, mie := range []float64{0.0001, 0.005, 0.1} {
+					s := Sky{Mode: "physical", SunDirection: SunDirectionFromAngles(el, 30), Rayleigh: rayleigh, Turbidity: turbidity, MieCoefficient: mie}
+					for _, dir := range []Vector3{{Y: 1}, {Y: 0.01, Z: -1}, {Y: -0.5, X: 1}, s.SunDirection} {
+						r, g, b := s.PhysicalRadiance(dir, true)
+						if math.IsNaN(r+g+b) || math.IsInf(r+g+b, 0) || r < 0 || g < 0 || b < 0 {
+							t.Fatalf("el=%v rayleigh=%v turbidity=%v mie=%v dir=%v gives %v %v %v", el, rayleigh, turbidity, mie, dir, r, g, b)
+						}
+					}
+					n := normalizeSky(&s)
+					for _, stop := range []string{n.TopColor, n.HorizonColor, n.BottomColor} {
+						if len(stop) != 7 || strings.ContainsAny(stop[1:], "-+NI") {
+							t.Fatalf("el=%v rayleigh=%v: invalid fallback stop %q", el, rayleigh, stop)
+						}
+					}
+				}
+			}
+		}
+	}
+}

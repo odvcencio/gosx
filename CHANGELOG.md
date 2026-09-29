@@ -13,6 +13,30 @@
   Canvas2D gets gradient stops computed from the model. Capability
   `sky-physical`.
 
+
+### Added: desktop sidecar processes
+
+- Add `desktop/sidecar`: `sidecar.Start` runs a helper process (a local game
+  server, an audio engine) without a console window, copies its output to a
+  writer, and returns once a stdout line matches `ReadyLine` (the first
+  submatch, such as a listen address, is returned by `Ready`) or `ReadyURL`
+  answers. On Windows the process starts suspended, joins a Job Object, and
+  then resumes, so it and anything it starts end when the app exits or
+  crashes. On Linux a crashed app's sidecar gets SIGKILL, but processes the
+  sidecar started do not (no unprivileged Job Object equivalent). `Stop` sends SIGTERM first on Unix, then kills the job or
+  process group after the grace period, including children that ignored
+  SIGTERM after the main process exited. On Unix, children left behind when
+  the sidecar exits on its own are killed too, as the Job Object does on
+  Windows.
+### Added: desktop permission requests
+
+- Add `Options.OnPermissionRequested`. It receives each browser permission
+  request (kind, origin, and whether a user gesture started it) and returns
+  `PermissionAllow`, `PermissionDeny`, or `PermissionAsk` (WebView2's own
+  prompt, the behavior without a handler). WebView2 reports Web MIDI requests,
+  including `requestMIDIAccess({sysex: false})`, as `PermissionMIDISysex`;
+  before this, a desktop app's Web MIDI request waited on a prompt.
+
 ### Fixed: desktop WebView calls from goroutines
 
 - `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,

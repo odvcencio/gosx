@@ -335,3 +335,25 @@ func TestStartupTimelineWithoutReporter(t *testing.T) {
 		t.Fatalf("app without backend timeline = %+v", got)
 	}
 }
+
+func TestPermissionKindMapping(t *testing.T) {
+	cases := map[int32]PermissionKind{
+		-1: PermissionUnknown, 0: PermissionUnknown, 1: PermissionMicrophone, 2: PermissionCamera,
+		4: PermissionNotifications, 9: PermissionAutoplay, 11: PermissionMIDISysex, 13: PermissionPersistentStorage, 99: PermissionUnknown,
+	}
+	for value, want := range cases {
+		if got := permissionKindFromWebView2(value); got != want {
+			t.Fatalf("permissionKindFromWebView2(%d) = %q, want %q", value, got, want)
+		}
+	}
+	for decision, want := range map[PermissionDecision]int32{PermissionAllow: 1, PermissionDeny: 2} {
+		if got, ok := webView2PermissionState(decision); !ok || got != want {
+			t.Fatalf("webView2PermissionState(%q) = %d, %v", decision, got, ok)
+		}
+	}
+	for _, decision := range []PermissionDecision{PermissionAsk, "maybe"} {
+		if _, ok := webView2PermissionState(decision); ok {
+			t.Fatalf("webView2PermissionState(%q) changed the state", decision)
+		}
+	}
+}
