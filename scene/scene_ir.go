@@ -231,6 +231,9 @@ type ObjectIR struct {
 	ShaderSource          string            `json:"shaderSource,omitempty"`
 	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
 	Pickable              *bool             `json:"pickable,omitempty"`
+	Interactive           bool              `json:"interactive,omitempty"`
+	Label                 string            `json:"label,omitempty"`
+	InteractiveOrder      int               `json:"interactiveOrder,omitempty"`
 	Visible               *bool             `json:"visible,omitempty"`
 	Selected              bool              `json:"selected,omitempty"`
 	// GizmoRing marks a TransformControls rotate-mode ring helper mesh; see

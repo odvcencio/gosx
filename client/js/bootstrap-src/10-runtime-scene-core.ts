@@ -902,7 +902,12 @@
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
         texture === "",
       ),
-      pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable,
+      interactive: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false),
+      label: typeof item.label === "string" ? item.label.trim() : (typeof current.label === "string" ? current.label.trim() : ""),
+      interactiveOrder: Math.max(0, Math.floor(sceneNumber(item.interactiveOrder, sceneNumber(current.interactiveOrder, 0)))),
+      pickable: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false)
+        ? true
+        : (Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable),
       visible: Object.prototype.hasOwnProperty.call(item, "visible")
         ? sceneBool(item.visible, true)
         : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
@@ -1529,7 +1534,12 @@
       animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
-      pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
+      interactive: sceneBool(current.interactive, false),
+      label: typeof current.label === "string" ? current.label.trim() : "",
+      interactiveOrder: Math.max(0, Math.floor(sceneNumber(current.interactiveOrder, 0))),
+      pickable: sceneBool(current.interactive, false)
+        ? true
+        : (hasPickable ? sceneBool(current.pickable, false) : undefined),
       visible: hasVisible ? sceneBool(current.visible, true) : true,
       static: hasStatic ? sceneBool(current.static, false) : null,
       castShadow: hasCastShadow ? sceneBool(current.castShadow, false) : undefined,

@@ -51,6 +51,9 @@
 
       objects.forEach(function(object, index) {
         var path = "objects[" + index + "]";
+        if (object && object.interactive === true && !sceneStrictString(object.label)) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path + ".label", object.id);
+        }
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, object && object.id, path + ".id", strict || !!(object && object.pickable));
         validateSceneStrictPrimitive(diagnostics, object || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, object || {}, path);
@@ -60,6 +63,9 @@
       });
       models.forEach(function(model, index) {
         var path = "models[" + index + "]";
+        if (model && model.interactive === true && !sceneStrictString(model.label)) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path + ".label", model.id);
+        }
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, model && model.id, path + ".id", strict || !!(model && model.pickable));
         validateSceneStrictPrimitive(diagnostics, model || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, model || {}, path);
