@@ -40,6 +40,16 @@
   (owned by the app window): info, warning, error, and question icons;
   OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
   it as `gosxDesktop.dialog.message`.
+### Added: Scene3D rendering before models
+
+- Add `scene.Props.RenderBeforeModels` to draw the first frame while model
+  assets load. Sky, water, lights, and other scene nodes can render first;
+  loaded models appear in a later render. Unset or false keeps the existing
+  wait for models.
+- Report the selected path in `data-gosx-scene3d-first-frame` as
+  `before-models` or `after-models`. Disposing a scene while models load
+  prevents late hydration from rendering it again.
+
 ### Fixed and added: desktop single instance
 
 - Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
