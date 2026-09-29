@@ -551,7 +551,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "anonymous@4548:14",
-      "lines": 304,
+      "lines": 305,
       "cyclomatic": 29,
       "cognitive": 81,
       "maxNesting": 8,

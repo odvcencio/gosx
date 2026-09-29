@@ -686,7 +686,9 @@ const budgets = [
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
   // The opt-in mip-chain bloom measures 1_791_301 / 495_429 / 397_639;
   // targets rise by the smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_725_800, gzip: 479_100, brotli: 381_300 },
+  // render-before-models measures 1_791_641 / 495_626 / 398_227;
+  // targets rise by the smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap.js", raw: 1_726_200, gzip: 479_300, brotli: 381_900 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1814,8 +1816,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The opt-in mip-chain bloom measures 1_370_303 / 372_336 / 313_591;
     // targets rise by the smallest 100-byte steps that clear the hard limits.
-    raw: 1_305_300,
-    gzip: 356_000,
+    // render-before-models measures 1_370_571 / 372_473 / 313_586;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_305_400,
+    gzip: 356_100,
     brotli: 298_800,
   },
   {
@@ -1992,8 +1996,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The opt-in mip-chain bloom measures 1_218_974 / 344_168 / 290_564;
     // targets rise by the smallest 100-byte steps that clear the hard limits.
-    raw: 1_161_100,
-    gzip: 327_900,
+    // render-before-models measures 1_219_242 / 344_305 / 290_559;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_161_200,
+    gzip: 328_000,
     brotli: 276_800,
   },
   {
@@ -2167,8 +2173,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The opt-in mip-chain bloom measures 1_627_679 / 444_765 / 374_843;
     // targets rise by the smallest 100-byte steps that clear the hard limits.
-    raw: 1_562_200,
-    gzip: 428_400,
+    // render-before-models measures 1_627_947 / 444_902 / 374_838;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_562_500,
+    gzip: 428_600,
     brotli: 358_500,
   },
   {
@@ -2319,8 +2327,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The opt-in mip-chain bloom measures 1_217_859 / 328_935 / 275_061;
     // targets rise by the smallest 100-byte steps that clear the hard limits.
-    raw: 1_160_100,
-    gzip: 313_400,
+    // render-before-models measures 1_218_127 / 329_072 / 275_056;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_160_200,
+    gzip: 313_500,
     brotli: 262_100,
   },
 

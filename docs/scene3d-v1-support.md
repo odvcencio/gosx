@@ -50,6 +50,17 @@ dashboards, and interactive scenes. Its supported boundary is:
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
   the existing JavaScript, network, WASM, and performance budgets.
 
+Set `scene.Props.RenderBeforeModels` to `scene.Bool(true)` to draw the first
+frame without waiting for glTF or other model assets. Sky, water, lights, and
+non-model nodes render while models load; hydration keeps its existing commit
+behavior and schedules a render with reason `models` when it settles, including
+failure. Transition priming and progressive-model setup still follow hydration.
+Disposal or mount replacement prevents late hydration from rendering the old
+scene. A nil prop emits no `renderBeforeModels` key and preserves existing wire
+bytes; nil or false keeps the wait for models. The mount reports the selected
+startup path as `before-models` or `after-models` in
+`data-gosx-scene3d-first-frame`.
+
 ## Executable corpus status
 
 | Corpus ID | Current state | Closure needed |
