@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/session"
 )
 
 const streamTailMarker = "<!--gosx-stream-tail-->"
@@ -60,6 +61,13 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	status := res.Status
 	if status == 0 {
 		status = http.StatusOK
+	}
+	if session.HasState(res.Request) || (res.Request != nil &&
+		(res.Request.Header.Get("Cookie") != "" || res.Request.Header.Get("Authorization") != "")) {
+		if res.Cache == nil {
+			res.Cache = NewCacheState()
+		}
+		res.Cache.SetPolicy(NoStoreCache())
 	}
 
 	html := gosx.RenderHTML(res.Node)

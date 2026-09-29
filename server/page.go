@@ -137,6 +137,7 @@ func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle
 	if s == nil {
 		s = NewPageStateForRequest(request)
 	}
+	s.PrepareCache(request)
 	path := documentContextPath(request)
 	// A shared cache stores one body and replays it to every client, so the
 	// document must not name this request. Omit the request ID there.
