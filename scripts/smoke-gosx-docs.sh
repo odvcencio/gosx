@@ -198,8 +198,19 @@ if ! fetch_exact "/docs/getting-started/" "$tmp_dir/guide.html"; then
 	echo "gosx docs smoke: trailing-slash ISR guide did not return HTTP 200" >&2
 	exit 1
 fi
-grep -Eqi '^x-gosx-isr:.*(HIT|STALE)' "$tmp_dir/guide.html.headers"
-grep -Fq "<link rel=\"canonical\" href=\"${site_origin}/docs/getting-started\"" "$tmp_dir/guide.html"
+if ! grep -Eqi '^x-gosx-isr:.*(HIT|STALE)' "$tmp_dir/guide.html.headers"; then
+	echo "gosx docs smoke: /docs/getting-started/ x-gosx-isr header is $(awk -F ': *' 'tolower($1) == "x-gosx-isr" { gsub("\\r", "", $2); print $2 }' "$tmp_dir/guide.html.headers" | sed -n '1p'); expected HIT or STALE" >&2
+	exit 1
+fi
+# A canonical link names the final served URL, not one that redirects. The
+# slash-less guide URL redirects to /docs/getting-started/ (asserted above), so
+# the canonical must include the slash.
+expected_canonical="${site_origin}/docs/getting-started/"
+actual_canonical="$(grep -o '<link rel="canonical" href="[^"]*"' "$tmp_dir/guide.html" | sed -n '1s/.*href="\([^"]*\)"/\1/p')"
+if [ "$actual_canonical" != "$expected_canonical" ]; then
+	echo "gosx docs smoke: /docs/getting-started/ canonical is ${actual_canonical:-missing}; expected ${expected_canonical}" >&2
+	exit 1
+fi
 
 # Fetch the actual deploy bundle, not just its HTML. Hashed runtime paths come
 # from the rendered document. The CSS compatibility URL resolves through the
