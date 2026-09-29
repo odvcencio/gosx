@@ -11,11 +11,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 995676,
-          "htmlWireBytes": 189145,
+          "htmlWireBytes": 189187,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 219028,
           "requests": 8,
-          "totalWireBytes": 1131483,
+          "totalWireBytes": 1131525,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -30,11 +31,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 111656,
-          "htmlWireBytes": 198179,
+          "htmlWireBytes": 198220,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 256427,
+          "totalWireBytes": 256469,
           "wasmWireBytes": 256
         },
         "require": [
@@ -49,11 +51,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 243502,
+          "htmlWireBytes": 243544,
+          "imageWireBytes": 40541,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
-          "requests": 2,
-          "totalWireBytes": 264882,
+          "requests": 3,
+          "totalWireBytes": 305465,
           "wasmWireBytes": 256
         },
         "require": [
@@ -68,11 +71,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 995676,
-          "htmlWireBytes": 223911,
+          "htmlWireBytes": 223953,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 219028,
           "requests": 6,
-          "totalWireBytes": 1129380,
+          "totalWireBytes": 1129422,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -88,6 +92,7 @@
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 995676,
           "htmlWireBytes": 746234,
+          "imageWireBytes": 230728,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 233877,
           "requests": 13,
@@ -105,11 +110,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 202911,
+          "htmlWireBytes": 202953,
+          "imageWireBytes": 47935,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 2791,
-          "requests": 5,
-          "totalWireBytes": 263720,
+          "requests": 6,
+          "totalWireBytes": 311698,
           "wasmWireBytes": 256
         },
         "require": [
@@ -123,11 +129,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 506236,
-          "htmlWireBytes": 216636,
+          "htmlWireBytes": 216679,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 61752,
           "requests": 11,
-          "totalWireBytes": 673403,
+          "totalWireBytes": 673445,
           "wasmWireBytes": 336602
         },
         "require": [
@@ -141,11 +148,12 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 178504,
+          "htmlWireBytes": 178589,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 236753,
+          "totalWireBytes": 236837,
           "wasmWireBytes": 256
         },
         "require": [
@@ -163,6 +171,7 @@
           "cssWireBytes": 4182,
           "frameworkJsWireBytes": 110278,
           "htmlWireBytes": 114855,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "requests": 2,
@@ -181,6 +190,7 @@
           "cssWireBytes": 4182,
           "frameworkJsWireBytes": 506231,
           "htmlWireBytes": 114660,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 59192,
           "requests": 8,
@@ -199,6 +209,7 @@
           "cssWireBytes": 4182,
           "frameworkJsWireBytes": 110278,
           "htmlWireBytes": 112854,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "requests": 2,

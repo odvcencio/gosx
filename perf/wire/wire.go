@@ -41,6 +41,8 @@ const (
 	KindWASM     = "wasm"
 	KindData     = "data"
 	KindProgram  = "program"
+	KindImage    = "image"
+	KindFont     = "font"
 	KindOther    = "other"
 )
 
@@ -217,6 +219,10 @@ func classify(p string, res Resource, hint string) string {
 		return KindStyle
 	case ext == ".gxi" || ext == ".gxb":
 		return KindProgram
+	case ext == ".woff2" || ext == ".woff" || ext == ".ttf" || ext == ".otf":
+		return KindFont
+	case ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".webp" || ext == ".avif" || ext == ".gif" || ext == ".svg" || ext == ".ktx2":
+		return KindImage
 	case ext == ".json" || ext == ".bin":
 		return KindData
 	}
@@ -268,6 +274,14 @@ func scanHTML(body []byte) ([]ref, inlineStats, error) {
 						refs = append(refs, manifestRefs(text)...)
 					}
 				}
+			case "img":
+				// Eager images load with the page. A lazy image loads only
+				// near the viewport, so it is not on the initial load path.
+				// Only src is followed (not srcset) so the measurement does
+				// not depend on a viewport width.
+				if src := attr(n, "src"); src != "" && !strings.EqualFold(strings.TrimSpace(attr(n, "loading")), "lazy") && !strings.HasPrefix(src, "data:") {
+					refs = append(refs, ref{href: src, kind: KindImage, initiator: "img"})
+				}
 			case "link":
 				rels := strings.Fields(strings.ToLower(attr(n, "rel")))
 				href := attr(n, "href")
@@ -289,6 +303,10 @@ func scanHTML(body []byte) ([]ref, inlineStats, error) {
 							kind = KindStyle
 						case "fetch":
 							kind = KindData
+						case "image":
+							kind = KindImage
+						case "font":
+							kind = KindFont
 						}
 						// Fonts and images are content, not framework cost;
 						// they still count as requests and bytes.

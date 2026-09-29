@@ -61,7 +61,14 @@ func testServer(t *testing.T) *httptest.Server {
 <script>small()</script>
 <script id="gosx-manifest" type="application/json">{"runtime":{"path":"/gosx/rt.0123456789abcdef.wasm"},"islands":[{"programRef":"/gosx/islands/C.0123456789abcdef.gxi"}],"props":{"path":"/not-an-asset"}}</script>
 <script type="application/ld+json">{"@type":"Thing"}</script>
-</head><body><script defer src="/gosx/boot.js"></script></body></html>`))
+</head><body><img src="/hero.jpg" alt=""><img loading="lazy" src="/below.jpg" alt=""><img src="data:image/gif;base64,R0lGOD" alt="">
+<script defer src="/gosx/boot.js"></script></body></html>`))
+	})
+	mux.HandleFunc("/hero.jpg", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat([]byte{0xff}, 3000))
+	})
+	mux.HandleFunc("/below.jpg", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("lazy image fetched")
 	})
 	mux.HandleFunc("/site.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css")
@@ -95,12 +102,13 @@ func TestCrawlCountsTheLoadPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// document + css + wasm (preload and manifest dedupe to one) + gxi + boot.js
-	if r.Requests != 5 {
+	// document + css + wasm (preload and manifest dedupe to one) + gxi +
+	// eager image + boot.js; the lazy and data: images are not fetched.
+	if r.Requests != 6 {
 		for _, res := range r.Resources {
 			t.Logf("resource %s %s", res.URL, res.Kind)
 		}
-		t.Fatalf("requests = %d, want 5", r.Requests)
+		t.Fatalf("requests = %d, want 6", r.Requests)
 	}
 	if r.InlineScriptMax != 3000 || r.InlineScriptBytes != 3000+int64(len("small()")) {
 		t.Fatalf("inline script max=%d total=%d", r.InlineScriptMax, r.InlineScriptBytes)
@@ -117,7 +125,7 @@ func TestCrawlCountsTheLoadPath(t *testing.T) {
 	if boot.ContentEncoding != "br" || boot.WireBytes >= boot.DecodedBytes || boot.DecodedBytes != int64(len(strings.Repeat("console.log('runtime');", 200))) {
 		t.Fatalf("boot.js wire=%d decoded=%d enc=%q; want brotli wire bytes below decoded bytes", boot.WireBytes, boot.DecodedBytes, boot.ContentEncoding)
 	}
-	if r.WireBytes[KindWASM] != 2000 || r.WireBytes[KindProgram] != 4 || r.WireBytes[KindStyle] != 6 {
+	if r.WireBytes[KindWASM] != 2000 || r.WireBytes[KindProgram] != 4 || r.WireBytes[KindStyle] != 6 || r.WireBytes[KindImage] != 3000 {
 		t.Fatalf("wire bytes by kind = %v", r.WireBytes)
 	}
 	var sum int64

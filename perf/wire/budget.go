@@ -19,6 +19,7 @@ const (
 	MetricJSWireBytes          = "jsWireBytes"
 	MetricWASMWireBytes        = "wasmWireBytes"
 	MetricCSSWireBytes         = "cssWireBytes"
+	MetricImageWireBytes       = "imageWireBytes"
 	MetricRequests             = "requests"
 	MetricInlineScriptBytes    = "inlineScriptBytes"
 )
@@ -31,6 +32,7 @@ var Metrics = []string{
 	MetricJSWireBytes,
 	MetricWASMWireBytes,
 	MetricCSSWireBytes,
+	MetricImageWireBytes,
 	MetricRequests,
 	MetricInlineScriptBytes,
 }
@@ -148,6 +150,8 @@ func (r Route) Value(metric string) int64 {
 		return r.WireBytes[KindWASM]
 	case MetricCSSWireBytes:
 		return r.WireBytes[KindStyle]
+	case MetricImageWireBytes:
+		return r.WireBytes[KindImage]
 	case MetricRequests:
 		return int64(r.Requests)
 	case MetricInlineScriptBytes:
@@ -175,7 +179,7 @@ func (r Route) EvaluatePolicies() map[string]PolicyResult {
 
 	var bad []string
 	for _, res := range r.Resources {
-		if res.Kind == KindOther || res.DecodedBytes <= 1024 {
+		if res.Kind == KindOther || res.Kind == KindImage || res.Kind == KindFont || res.DecodedBytes <= 1024 {
 			continue
 		}
 		if !compressed(res.ContentEncoding) {

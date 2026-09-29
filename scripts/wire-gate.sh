@@ -13,7 +13,10 @@
 # Environment:
 #   WIRE_GATE_MODE=check|update  update rewrites the budget to the
 #                                measurements (limits only move down).
-#   WIRE_GATE_BASE_BUDGET=FILE   base-branch budget for the ratchet check.
+#   WIRE_GATE_BASE_BUDGET=FILE   base-branch budget for the ratchet check, or
+#                                "none" when the base tree has no budget file.
+#   WIRE_GATE_ALLOW_RAISE=1      with update, also raise limits; the ratchet
+#                                then needs a reason in each raise map.
 #   WIRE_GATE_REUSE_DOCS=1       reuse an existing examples/gosx-docs/dist.
 #   WIRE_GATE_OUT=DIR            report directory (default build/wire-gate).
 set -eu
@@ -96,6 +99,9 @@ start docs "$root/examples/gosx-docs" "$docs_port" /readyz
 write_flag=""
 if [ "$mode" = "update" ]; then
 	write_flag="-write"
+	if [ "${WIRE_GATE_ALLOW_RAISE:-}" = "1" ]; then
+		write_flag="-write -allow-raise"
+	fi
 fi
 
 status=0
@@ -107,9 +113,11 @@ status=0
 	-markdown "$out/wire-report.md" \
 	$write_flag || status=$?
 
-if [ -n "${WIRE_GATE_BASE_BUDGET:-}" ]; then
-	"$wiregate_bin" ratchet -base "$WIRE_GATE_BASE_BUDGET" -head perf/budgets/wire.json || status=1
-fi
+case "${WIRE_GATE_BASE_BUDGET:-}" in
+"") ;;
+none) "$wiregate_bin" ratchet -initial -head perf/budgets/wire.json || status=1 ;;
+*) "$wiregate_bin" ratchet -base "$WIRE_GATE_BASE_BUDGET" -head perf/budgets/wire.json || status=1 ;;
+esac
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 	{

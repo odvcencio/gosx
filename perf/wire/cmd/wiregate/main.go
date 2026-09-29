@@ -184,6 +184,7 @@ func runRatchet(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("ratchet", flag.ContinueOnError)
 	basePath := fs.String("base", "", "budget file from the base branch")
 	headPath := fs.String("head", "perf/budgets/wire.json", "budget file of this change")
+	initial := fs.Bool("initial", false, "the base branch has no budget file (checked by the caller); skip the ratchet")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -191,13 +192,18 @@ func runRatchet(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read head budget: %w", err)
 	}
-	baseData, err := os.ReadFile(*basePath)
-	if errors.Is(err, os.ErrNotExist) || (err == nil && len(strings.TrimSpace(string(baseData))) == 0) {
-		fmt.Fprintln(stdout, "wiregate: no base budget; nothing to ratchet against")
+	if *initial {
+		fmt.Fprintln(stdout, "wiregate: the base branch has no budget; nothing to ratchet against")
 		return nil
 	}
+	if *basePath == "" {
+		return errors.New("ratchet needs -base FILE, or -initial when the base branch has no budget")
+	}
+	// A missing or empty base file is an error, never a pass: a failed
+	// fetch of the base revision must not skip the ratchet.
+	baseData, err := os.ReadFile(*basePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("read base budget: %w", err)
 	}
 	base, err := wire.ParseBudget(baseData)
 	if err != nil {
@@ -262,8 +268,8 @@ func Table(after Report, before *Report) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("| App | Route | Total | Framework JS+WASM | HTML | JS | WASM | CSS | Requests | Inline JS | Policies failing |\n")
-	b.WriteString("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
+	b.WriteString("| App | Route | Total | Framework JS+WASM | HTML | JS | WASM | CSS | Images | Requests | Inline JS | Policies failing |\n")
+	b.WriteString("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
 	for _, r := range after.Routes {
 		p, hasPrev := prev[r.App+" "+r.Route]
 		cell := func(metric string, bytes bool) string {
@@ -283,7 +289,7 @@ func Table(after Report, before *Report) string {
 				failing = pf + " → " + failing
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			r.App, r.Route,
 			cell(wire.MetricTotalWireBytes, true),
 			cell(wire.MetricFrameworkJSWireBytes, true),
@@ -291,6 +297,7 @@ func Table(after Report, before *Report) string {
 			cell(wire.MetricJSWireBytes, true),
 			cell(wire.MetricWASMWireBytes, true),
 			cell(wire.MetricCSSWireBytes, true),
+			cell(wire.MetricImageWireBytes, true),
 			cell(wire.MetricRequests, false),
 			cell(wire.MetricInlineScriptBytes, true),
 			failing)

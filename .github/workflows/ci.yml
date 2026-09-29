@@ -340,21 +340,31 @@ jobs:
           TINYGO_VERSION: 0.41.1
         run: scripts/install-ci-tinygo.sh
 
+      # The ratchet compares with the base branch's budget. A failed fetch
+      # fails this step; only a base tree verified to lack the budget file
+      # skips the ratchet (the PR that introduces the file).
       - name: Fetch the base-branch budget
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -eu
           mkdir -p build/wire-gate
-          : >build/wire-gate/base-budget.json
-          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            git fetch --quiet --no-tags --depth=1 origin "$BASE_SHA" || true
-            git show "$BASE_SHA:perf/budgets/wire.json" >build/wire-gate/base-budget.json 2>/dev/null || : >build/wire-gate/base-budget.json
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "WIRE_GATE_BASE_BUDGET=none" >>"$GITHUB_ENV"
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          if [ -z "$(git ls-tree "$BASE_SHA" -- perf/budgets/wire.json)" ]; then
+            echo "base $BASE_SHA has no perf/budgets/wire.json"
+            echo "WIRE_GATE_BASE_BUDGET=none" >>"$GITHUB_ENV"
+          else
+            git show "$BASE_SHA:perf/budgets/wire.json" >build/wire-gate/base-budget.json
+            echo "WIRE_GATE_BASE_BUDGET=build/wire-gate/base-budget.json" >>"$GITHUB_ENV"
           fi
 
       - name: Wire budget gate
-        env:
-          WIRE_GATE_BASE_BUDGET: build/wire-gate/base-budget.json
         run: make wire-gate
 
       - name: Upload wire report
