@@ -120,7 +120,7 @@ function setupWebGLRenderer() {
       "  const names = ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen',",
       "    'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90',",
       "    'specularColorLog',",
-      "    'emissive', 'emissiveColor', 'hasEmissiveColor', 'normalScale', 'occlusionStrength',",
+      "    'emissive', 'emissiveColor', 'hasEmissiveColor', 'normalScale', 'normalUVScale', 'occlusionStrength',",
       "    'opacity', 'unlit', 'alphaCutoff',",
       "    'albedoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'occlusionMap',",
       "    'emissiveMap', 'specularIntensityMap',",
@@ -271,6 +271,29 @@ test("imported PBR factors reach single-skin and GPU palette crowd uniforms", ()
     assert.ok(close6(gpuColored.data[56 + index], value),
       "WebGPU emissiveColor[" + index + "] = " + gpuColored.data[56 + index] + ", want " + value);
   });
+});
+
+test("a normal-texture-only KHR_texture_transform scale reaches the WebGL normalUVScale uniform", () => {
+  const { context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const document = JSON.stringify({
+    asset: { version: "2.0" },
+    materials: [
+      { pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+        normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [60, 45] } } } },
+      { pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1] } },
+    ],
+  });
+  const upload = index => callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + document + ', ' + index + ', null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported }, 0, null);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'uploadMaterial(gl, uniforms, sceneObjectMaterialProfile(object), null);' +
+      'return gl.floats.get("normalUVScale");' +
+    '})()');
+  assert.deepStrictEqual(Array.from(upload(0)), [60, 45], "the detail scale survives normalization and the material profile");
+  assert.deepStrictEqual(Array.from(upload(1)), [1, 1], "no transform uploads scale 1");
 });
 
 test("WebGL uploadMaterial uploads the effective specular factors", () => {

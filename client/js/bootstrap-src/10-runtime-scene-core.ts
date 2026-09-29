@@ -858,6 +858,7 @@
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
+      normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
@@ -1620,6 +1621,7 @@
       emissiveColor: sceneObjectMaterialHasValue(raw, "emissiveColor")
         ? sceneCopyFiniteRGB(sceneObjectMaterialValue(raw, "emissiveColor"), current.emissiveColor)
         : sceneCopyFiniteRGB(current.emissiveColor, undefined),
+      normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(raw, "normalUVScale"), current.normalUVScale),
       normalScale: sceneObjectMaterialHasValue(raw, "normalScale")
         ? sceneNumber(sceneObjectMaterialValue(raw, "normalScale"), sceneNumber(current.normalScale, 1))
         : (Object.prototype.hasOwnProperty.call(current, "normalScale") ? sceneNumber(current.normalScale, 1) : undefined),
@@ -2175,6 +2177,7 @@
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
+      normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
@@ -2654,6 +2657,7 @@
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(item.ior, current.ior),
       normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
+      normalUVScale: sceneNormalUVScale(item.normalUVScale, current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(item.occlusionStrength, sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
@@ -3384,6 +3388,7 @@
       emissive: material.emissive != null ? material.emissive : object.emissive,
       emissiveColor: sceneCopyFiniteRGB(material.emissiveColor, object.emissiveColor),
       normalScale: material.normalScale != null ? material.normalScale : object.normalScale,
+      normalUVScale: material.normalUVScale != null ? material.normalUVScale : object.normalUVScale,
       occlusionStrength: material.occlusionStrength != null ? material.occlusionStrength : object.occlusionStrength,
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,

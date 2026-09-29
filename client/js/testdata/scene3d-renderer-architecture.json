@@ -408,8 +408,8 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@7468:3",
       "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "cyclomatic": 1028,
+      "cognitive": 1629,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -579,8 +579,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6454:3",
       "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "cyclomatic": 4103,
+      "cognitive": 5320,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -851,8 +851,8 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
       "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "cyclomatic": 1028,
+      "cognitive": 1629,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -914,8 +914,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
       "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "cyclomatic": 4103,
+      "cognitive": 5320,
       "maxNesting": 7,
       "parameters": 2
     },
