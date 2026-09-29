@@ -46,7 +46,7 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	beachGLB, err := writeGLB(beach, terrainMaterial(), []embeddedImage{{name: "albedo", data: albedo, mime: "image/jpeg"}, {name: "metallic-roughness", data: mr}, {name: "sand-normal", data: normal}})
+	beachGLB, err := writeGLB(beach, terrainMaterial(), []embeddedImage{{name: "albedo", data: albedo, mime: "image/jpeg"}, {name: "metallic-roughness", data: mr}, {name: "sand-normal", data: normal, mime: "image/jpeg"}})
 	if err != nil {
 		return nil, fmt.Errorf("beach GLB: %w", err)
 	}
@@ -54,7 +54,7 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	stacksGLB, err := writeGLB(stacks, rockMaterial(), []embeddedImage{{name: "rock-normal", data: rockNormal}})
+	stacksGLB, err := writeGLB(stacks, rockMaterial(), []embeddedImage{{name: "rock-normal", data: rockNormal, mime: "image/jpeg"}})
 	if err != nil {
 		return nil, fmt.Errorf("stacks GLB: %w", err)
 	}
@@ -75,8 +75,8 @@ func Generate(seed int64) (map[string][]byte, error) {
 		"beach-v2.glb":        beachGLB,
 		"beach-v2-albedo.jpg": albedo,
 		"beach-v2-mr.png":     mr,
-		"sand-normal.png":     normal,
-		"rock-normal.png":     rockNormal,
+		"sand-normal.jpg":     normal,
+		"rock-normal.jpg":     rockNormal,
 		"stacks-v2.glb":       stacksGLB,
 		"monolith-v2.glb":     monolithGLB,
 	}, nil
@@ -91,7 +91,7 @@ func Write(outDir string, seed int64) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "rock-normal.png", "stacks-v2.glb", "monolith-v2.glb"} {
+	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb"} {
 		if err := os.WriteFile(filepath.Join(outDir, name), files[name], 0o644); err != nil {
 			return err
 		}
@@ -133,22 +133,24 @@ func terrainHeight(n noiseField, x, z float64) float64 {
 }
 
 func terrainGeometry(n noiseField) (*geometry, error) {
-	const columns, rows = 161, 161
+	const columns, rows = 129, 129
 	g := &geometry{positions: make([]float64, 0, columns*rows*3), normals: make([]float64, 0, columns*rows*3), uvs: make([]float64, 0, columns*rows*2), indices: make([]uint16, 0, (columns-1)*(rows-1)*6)}
 	zs := make([]float64, rows)
+	// Half of the rows cover the shoreline and foreground (z in [-12, 22]).
+	far, near := rows/4, rows/2
 	for row := 0; row < rows; row++ {
 		switch {
-		case row < 40:
-			zs[row] = lerp(-40, -12, float64(row)/39)
-		case row <= 120:
-			zs[row] = lerp(-12, 22, float64(row-40)/80)
+		case row < far:
+			zs[row] = lerp(-40, -12, float64(row)/float64(far))
+		case row < far+near:
+			zs[row] = lerp(-12, 22, float64(row-far)/float64(near))
 		default:
-			zs[row] = lerp(22, 50, float64(row-120)/40)
+			zs[row] = lerp(22, 50, float64(row-far-near)/float64(rows-1-far-near))
 		}
 	}
 	for _, z := range zs {
 		for column := 0; column < columns; column++ {
-			x := -60 + 120*float64(column)/160
+			x := -60 + 120*float64(column)/float64(columns-1)
 			y := terrainHeight(n, x, z)
 			dx := (terrainHeight(n, x+.2, z) - terrainHeight(n, x-.2, z)) / .4
 			dz := (terrainHeight(n, x, z+.2) - terrainHeight(n, x, z-.2)) / .4
@@ -262,17 +264,11 @@ func makeMetalRoughness(n noiseField) ([]byte, error) {
 }
 
 func makeSandNormal() ([]byte, error) {
-	palette := make(color.Palette, 64)
-	for ix := 0; ix < 8; ix++ {
-		for iy := 0; iy < 8; iy++ {
-			nx := (float64(ix)/7*2 - 1) * .16
-			ny := (float64(iy)/7*2 - 1) * .28
-			nz := math.Sqrt(math.Max(.01, 1-nx*nx-ny*ny))
-			palette[ix*8+iy] = color.RGBA{R: uint8(math.Round((nx*.5 + .5) * 255)), G: uint8(math.Round((ny*.5 + .5) * 255)), B: uint8(math.Round((nz*.5 + .5) * 255)), A: 255}
-		}
-	}
-	img := image.NewPaletted(image.Rect(0, 0, 512, 512), palette)
+	// Full-precision tangent-space normals: a palette quantizes the ripple
+	// slopes away and the sand renders flat.
+	img := image.NewNRGBA(image.Rect(0, 0, 512, 512))
 	const tileMeters = 2.5
+	const strength = 5.0
 	for y := 0; y < 512; y++ {
 		v := float64(y) / 512
 		for x := 0; x < 512; x++ {
@@ -280,13 +276,11 @@ func makeSandNormal() ([]byte, error) {
 			du := 1.0 / 512
 			dhdu := (rippleHeight(u+du, v) - rippleHeight(u-du, v)) / (2 * du * tileMeters)
 			dhdv := (rippleHeight(u, v+du) - rippleHeight(u, v-du)) / (2 * du * tileMeters)
-			normal := normalize(vec3{-dhdu * .8, -dhdv * .8, 1})
-			ix := int(math.Round(clamp(normal.x/.32*.5+.5, 0, 1) * 7))
-			iy := int(math.Round(clamp(normal.y/.56*.5+.5, 0, 1) * 7))
-			img.SetColorIndex(x, y, uint8(ix*8+iy))
+			n := normalize(vec3{-dhdu * strength, -dhdv * strength, 1})
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(math.Round((n.x*.5 + .5) * 255)), G: uint8(math.Round((n.y*.5 + .5) * 255)), B: uint8(math.Round((n.z*.5 + .5) * 255)), A: 255})
 		}
 	}
-	return encodePNG(img)
+	return encodeJPEG(img, 92)
 }
 
 func periodicRockHeight(n noiseField, u, v float64) float64 {
@@ -306,18 +300,7 @@ func periodicRockHeight(n noiseField, u, v float64) float64 {
 
 func makeRockNormal(seed int64) ([]byte, error) {
 	const size = 256
-	palette := make(color.Palette, 64)
-	for ix := 0; ix < 8; ix++ {
-		for iy := 0; iy < 8; iy++ {
-			normal := normalize(vec3{(float64(ix)/7*2 - 1) * .7, (float64(iy)/7*2 - 1) * .7, 1})
-			palette[ix*8+iy] = color.RGBA{
-				R: uint8(math.Round((normal.x*.5 + .5) * 255)),
-				G: uint8(math.Round((normal.y*.5 + .5) * 255)),
-				B: uint8(math.Round((normal.z*.5 + .5) * 255)), A: 255,
-			}
-		}
-	}
-	img := image.NewPaletted(image.Rect(0, 0, size, size), palette)
+	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 	n := newNoise(seed + 0x70C)
 	const du = 1.0 / size
 	for y := 0; y < size; y++ {
@@ -327,18 +310,26 @@ func makeRockNormal(seed int64) ([]byte, error) {
 			dhdu := (periodicRockHeight(n, u+du, v) - periodicRockHeight(n, u-du, v)) / (2 * du) * .025
 			dhdv := (periodicRockHeight(n, u, v+du) - periodicRockHeight(n, u, v-du)) / (2 * du) * .025
 			normal := normalize(vec3{-dhdu * 1.5, -dhdv * 1.5, 1})
-			ix := int(math.Round(clamp(normal.x/.7*.5+.5, 0, 1) * 7))
-			iy := int(math.Round(clamp(normal.y/.7*.5+.5, 0, 1) * 7))
-			img.SetColorIndex(x, y, uint8(ix*8+iy))
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(math.Round((normal.x*.5 + .5) * 255)), G: uint8(math.Round((normal.y*.5 + .5) * 255)), B: uint8(math.Round((normal.z*.5 + .5) * 255)), A: 255})
 		}
 	}
-	return encodePNG(img)
+	return encodeJPEG(img, 92)
 }
 func rippleHeight(u, v float64) float64 {
 	warp := .045*math.Sin(2*math.Pi*3*u)*math.Sin(2*math.Pi*2*v) + .025*math.Sin(2*math.Pi*(5*u+4*v))
 	phase := 2 * math.Pi * 9 * (v + warp)
 	grain := .00018*math.Sin(2*math.Pi*(37*u+19*v)) + .00012*math.Sin(2*math.Pi*(23*u-41*v))
 	return .00224*math.Sin(phase) + grain
+}
+
+// encodeJPEG keeps noisy texture maps small; quality 92 hides block
+// artifacts in tangent-space normals of sand and rock.
+func encodeJPEG(img image.Image, quality int) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func encodePNG(img image.Image) ([]byte, error) {

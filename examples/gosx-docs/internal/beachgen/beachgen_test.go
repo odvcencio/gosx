@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
@@ -22,7 +23,7 @@ func TestGenerateAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "rock-normal.png", "stacks-v2.glb", "monolith-v2.glb"}
+	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb"}
 	if len(first) != len(want) {
 		t.Fatalf("got %d output files, want %d", len(first), len(want))
 	}
@@ -45,8 +46,8 @@ func TestGenerateAssets(t *testing.T) {
 	beach := mustParse(t, first["beach-v2.glb"])
 	stacks := mustParse(t, first["stacks-v2.glb"])
 	monolith := mustParse(t, first["monolith-v2.glb"])
-	if count := positionCount(t, beach); count != 161*161 {
-		t.Errorf("beach has %d vertices, want %d", count, 161*161)
+	if count := positionCount(t, beach); count != 129*129 {
+		t.Errorf("beach has %d vertices, want %d", count, 129*129)
 	}
 	t.Logf("beach-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, beach), len(first["beach-v2.glb"]))
 	if count := positionCount(t, stacks); count != 18522 {
@@ -89,15 +90,15 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("terrain height at (0,-20) = %.4f, want below -2m", h)
 	}
 
-	for name, budget := range map[string]int{"beach-v2.glb": 700 << 10, "stacks-v2.glb": 450 << 10, "monolith-v2.glb": 20 << 10} {
+	for name, budget := range map[string]int{"beach-v2.glb": 560 << 10, "stacks-v2.glb": 450 << 10, "monolith-v2.glb": 20 << 10} {
 		if len(first[name]) > budget {
 			t.Errorf("%s is %d bytes, budget is %d", name, len(first[name]), budget)
 		}
 	}
-	for name, size := range map[string][2]int{"beach-v2-mr.png": {256, 256}, "sand-normal.png": {512, 512}, "rock-normal.png": {256, 256}} {
-		decoded, err := png.Decode(bytes.NewReader(first[name]))
+	for name, size := range map[string][2]int{"beach-v2-mr.png": {256, 256}, "sand-normal.jpg": {512, 512}, "rock-normal.jpg": {256, 256}} {
+		decoded, _, err := image.Decode(bytes.NewReader(first[name]))
 		if err != nil {
-			t.Errorf("%s is not a decodable PNG: %v", name, err)
+			t.Errorf("%s is not a decodable image: %v", name, err)
 			continue
 		}
 		if bounds := decoded.Bounds(); bounds.Dx() != size[0] || bounds.Dy() != size[1] {
@@ -301,7 +302,7 @@ func checkRockMaterial(t *testing.T, data []byte) {
 	if err := json.Unmarshal(glbJSON(t, data), &root); err != nil {
 		t.Fatal(err)
 	}
-	if len(root.Images) != 1 || root.Images[0].MIMEType != "image/png" || len(root.Materials) != 1 {
+	if len(root.Images) != 1 || (root.Images[0].MIMEType != "image/png" && root.Images[0].MIMEType != "image/jpeg") || len(root.Materials) != 1 {
 		t.Fatalf("rock material has %d embedded images and %d materials", len(root.Images), len(root.Materials))
 	}
 	material := root.Materials[0]
