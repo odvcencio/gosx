@@ -208,7 +208,11 @@ func (a *windowsApp) Run() error {
 		}()
 	}
 
-	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, a)
+	placement := a.options.InitialPlacement
+	if !placement.IsZero() {
+		placement = clampPlacement(placement, monitorWorkAreas())
+	}
+	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, placement, a)
 	if err != nil {
 		return err
 	}
@@ -234,7 +238,7 @@ func (a *windowsApp) Run() error {
 	}
 	a.fireWindowCreated(hwnd)
 
-	showWindow(hwnd)
+	showWindow(hwnd, placement.Maximized)
 	a.markStartup(&a.timeline.WindowShown)
 	if err := a.createWebView(); err != nil {
 		destroyWindow(hwnd)
@@ -969,6 +973,21 @@ func (a *windowsApp) serveOnUI(prefix string, handler http.Handler) error {
 // can land here without touching callers.
 func filterURI(prefix string) string {
 	return prefix
+}
+
+func (a *windowsApp) WindowPlacement() (WindowPlacement, error) {
+	a.mu.Lock()
+	hwnd := a.hwnd
+	a.mu.Unlock()
+	if hwnd == 0 {
+		return WindowPlacement{}, fmt.Errorf("%w: window handle is not available", ErrWindowNotReady)
+	}
+	a.fullscreenMu.Lock()
+	defer a.fullscreenMu.Unlock()
+	if a.fullscreen.active {
+		return a.fullscreen.savedPlacement, nil
+	}
+	return getWindowPlacement(hwnd)
 }
 
 // SetFullscreen toggles borderless-fullscreen mode for the hosted window.

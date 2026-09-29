@@ -73,6 +73,12 @@ func TestDesktopWebView2RuntimeVersionUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestUnsupportedWindowPlacement(t *testing.T) {
+	if _, err := (unsupportedApp{}).WindowPlacement(); err != ErrUnsupported {
+		t.Fatalf("WindowPlacement() error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestShowMessageUnsupportedPlatform(t *testing.T) {
 	if _, err := ShowMessage(MessageOptions{}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("ShowMessage error = %v, want ErrUnsupported", err)
