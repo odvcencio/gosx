@@ -182,15 +182,25 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 			rock := math.Hypot(dx, dz) > .6 || (math.Abs(x) > 34 && h > 2)
 			ao := ambientOcclusion(n, x, z, h)
 			factor := .45 + .55*ao
-			base := [3]float64{43, 41, 39}
+			base := [3]float64{62, 58, 54}
 			if rock {
-				base = [3]float64{37, 39, 42}
+				base = [3]float64{40, 42, 45}
 			} else {
-				mottle := n.fbm(x/3+float64(seed%19), z/3-float64(seed%23), 3) * .02
-				grain := n.value(x*18+float64(seed%19), z*18-float64(seed%23)) * .03
-				factor *= 1 + mottle + grain
-				if h > -.2 && h < .45 && z < 4 {
-					factor *= .65
+				mottle := n.fbm(x/3+float64(seed%19), z/3-float64(seed%23), 3) * .10
+				streaks := n.fbm(x/9+float64(seed%7), z*1.4, 3) * .08 // wind streaks run across the beach
+				grain := n.value(x*18+float64(seed%19), z*18-float64(seed%23)) * .10
+				factor *= 1 + mottle + streaks + grain
+				// Swash marks: thin light lines of shell grit left along the
+				// contours the surge reached, broken up by noise.
+				if h > .25 && h < 1.0 && z < 10 {
+					phase := h*38 + 2.2*n.fbm(x/6, z/6, 2)
+					line := math.Pow(math.Max(0, math.Cos(phase)), 24) * smoothstep(.2, .6, n.fbm(x/2.5+3, z/2.5, 2))
+					factor *= 1 + .45*line
+				}
+				// Wet sand is darker; its roughness band makes it mirror the sky.
+				wet := smoothstep(.5, .2, h)
+				if z < 4 {
+					factor *= 1 - .55*wet
 				}
 			}
 			img.SetNRGBA(px, py, color.NRGBA{
@@ -692,12 +702,12 @@ func makeBathymetry(n noiseField) ([]byte, error) {
 				// A smooth mound, not a disk: the shallow-water and foam bands
 				// then ring the rock instead of drawing texel squares.
 				d := math.Hypot(wx-centerX, z-stack.z)
-				rise := 1 - smoothstep(stack.radius*.7, stack.radius*1.2, d)
+				rise := 1 - smoothstep(stack.radius*.92, stack.radius*1.08, d)
 				height = math.Max(height, lerp(height, stack.height, rise))
 			}
 			for _, boulder := range boulders {
 				d := math.Hypot(wx-boulder.x, z-boulder.z)
-				rise := 1 - smoothstep(boulder.radius*.6, boulder.radius*1.45, d)
+				rise := 1 - smoothstep(boulder.radius*.8, boulder.radius*1.15, d)
 				top := terrainHeight(n, boulder.x, boulder.z) + boulder.radius
 				height = math.Max(height, lerp(height, top, rise))
 			}

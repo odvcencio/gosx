@@ -48,7 +48,7 @@ func blackglassBeachViewFor(raw string) blackglassBeachView {
 	case "cliff":
 		return blackglassBeachView{"cliff", "From the cliff", scene.Vec3(-26, 17, 22), scene.Vec3(-2, 0, -18)}
 	default:
-		return blackglassBeachView{"shore", "The shore", scene.Vec3(2.4, 2.9, 14.5), scene.Vec3(-2, 0.4, -22)}
+		return blackglassBeachView{"shore", "The shore", scene.Vec3(0.5, 2.6, 13.5), scene.Vec3(-8, 1.0, -20)}
 	}
 }
 
@@ -156,7 +156,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			scene.Model{ID: "beach", Src: blackglassBeachModelRoot + "beach-v2.glb", Bounds: 90, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "sea-stacks", Src: blackglassBeachModelRoot + "stacks-v2.glb", Bounds: 60, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
-				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: -0.5}, CastShadow: true, ReceiveShadow: true,
+				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: -1.16}, CastShadow: true, ReceiveShadow: true,
 				Material: scene.StandardMaterial{Color: "#050608", Roughness: 0.035, Metalness: 0, Clearcoat: 1}},
 		),
 	}
