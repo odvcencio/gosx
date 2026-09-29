@@ -1112,7 +1112,7 @@ func Page() Node {
 				</li>
 				<li>
 					<span class="inline-code">KHR_texture_transform</span>
-					— bakes into the texture-coordinate buffer at load time.
+					— bakes into the texture-coordinate buffer at load time. A scale on the normal texture alone (a tiling detail map) is applied in the shader instead.
 				</li>
 			</ul>
 			<p>

@@ -189,7 +189,7 @@
     // index 41 above carries the specular flag and index 43 stays
     // padding, keeping the struct at 208 bytes total (41 flag,
     // 42 cutoff, 43 pad).
-    "    alphaCutoff: f32,",
+    "    alphaCutoff: f32, normalUVScaleV: f32,",
     "    specularF0: vec3f,",
     "    specularF90: f32,",
     // Per-channel log2 of the authored dielectric specular coefficient
@@ -1909,7 +1909,7 @@
     "        let T = normalize(in.tangent);",
     "        let B = normalize(in.bitangent);",
     "        let TBN = mat3x3f(T, B, N);",
-    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv * select(vec2f(1.0), vec2f(material.modelScaleSigns.w, material.normalUVScaleV), material.modelScaleSigns.w > 0.0)).rgb * 2.0 - 1.0;",
     "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -14527,7 +14527,7 @@
         f[20 + mi] = model ? sceneNumber(model[mi], mi % 5 === 0 ? 1 : 0) : (mi % 5 === 0 ? 1 : 0);
       }
       f[36] = f[37] = f[38] = 1;
-      f[39] = 0;
+      f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 0; // modelScaleSigns.w: normal-map U scale (0 = 1)
       // Dedicated trailing material scalars: normal-incidence dielectric F0
       // from the authored IOR, then the vec3f alignment word at index 41
       // reused as the hasSpecularIntensityMap flag (u[41], set by
@@ -14542,7 +14542,7 @@
       f[42] = (typeof alphaCutoff === "number" && Number.isFinite(alphaCutoff) && alphaCutoff >= 0)
         ? (alphaCutoff <= 1 ? Math.fround(alphaCutoff) : 2)
         : -1; // alphaCutoff, normalized the same way as the WebGL renderer
-      f[43] = 0;
+      f[43] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 0; // normalUVScaleV
       var specular = sceneWebGPUSpecularFactors(mat);
       f[44] = specular.f0[0];
       f[45] = specular.f0[1];

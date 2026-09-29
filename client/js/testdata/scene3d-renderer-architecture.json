@@ -17,7 +17,7 @@
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2808,
     "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth."
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. The normal-map UV scale adds one uniform upload with two defaults to createScenePBRRenderer and one selection to createSceneWebGPURenderer; their exceptions record the measured values."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -378,8 +378,8 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@7468:3",
       "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "cyclomatic": 1028,
+      "cognitive": 1629,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -549,8 +549,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6454:3",
       "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "cyclomatic": 4103,
+      "cognitive": 5320,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -821,8 +821,8 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
       "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "cyclomatic": 1028,
+      "cognitive": 1629,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -884,8 +884,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
       "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "cyclomatic": 4103,
+      "cognitive": 5320,
       "maxNesting": 7,
       "parameters": 2
     },

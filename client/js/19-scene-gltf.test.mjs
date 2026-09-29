@@ -1467,6 +1467,21 @@ test("KHR_texture_transform on the base colour texture reaches the material", ()
   assert.deepEqual(material.uvTransform, { m00: 2, m01: 0, m02: 0, m10: 0, m11: 2, m12: 0 });
 });
 
+test("a scale on the normal texture alone becomes normalUVScale (a tiling detail map)", () => {
+  const { context } = createLoaderContext();
+  const detail = extractMaterial(context, {
+    pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+    normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [60, 45] } } },
+  });
+  assert.deepEqual(Array.from(detail.normalUVScale), [60, 45]);
+  assert.equal(detail.uvTransform, undefined, "base colour UVs stay untransformed");
+  const shared = extractMaterial(context, {
+    pbrMetallicRoughness: { baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } } },
+    normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+  });
+  assert.equal(shared.normalUVScale, undefined, "a transform shared with base colour is baked once, not applied twice");
+});
+
 test("KHR_texture_transform never writes into the shared GLB buffer", () => {
   // A tightly packed accessor hands back a Float32Array view over the binary
   // chunk. Baking the transform must copy first, or a second primitive that
