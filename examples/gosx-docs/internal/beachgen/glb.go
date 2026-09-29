@@ -88,7 +88,7 @@ func writeGLB(mesh *geometry, material map[string]any, images []embeddedImage) (
 	if len(images) != 0 {
 		root["images"] = imageRecords
 		root["textures"] = textureRecords
-		root["samplers"] = []any{map[string]any{"magFilter": 9729, "minFilter": 9729, "wrapS": 10497, "wrapT": 10497}}
+		root["samplers"] = []any{map[string]any{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}} // trilinear: tiled maps must not alias at distance
 		root["extensionsUsed"] = []string{"KHR_mesh_quantization", "KHR_texture_transform"}
 	}
 	jsonData, err := json.Marshal(root)

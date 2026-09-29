@@ -357,7 +357,7 @@ func terrainMaterial() map[string]any {
 		"pbrMetallicRoughness": map[string]any{
 			"baseColorTexture":         map[string]any{"index": 0},
 			"metallicRoughnessTexture": map[string]any{"index": 1},
-			"metallicFactor":           1.0,
+			"metallicFactor":           0.0, // sand is a dielectric; the paletted MR map repeats roughness in B
 			"roughnessFactor":          1.0,
 		},
 		"normalTexture": map[string]any{"index": 2, "scale": .6, "extensions": map[string]any{"KHR_texture_transform": transform}},
