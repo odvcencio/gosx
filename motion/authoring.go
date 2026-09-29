@@ -155,6 +155,9 @@ type Program struct {
 	Signals  []SignalSpec `json:"signals"`
 	Bindings []Binding    `json:"bindings,omitempty"`
 	Pins     []PinBinding `json:"pins,omitempty"`
+	// CSSCompiled lists the indexes of Bindings that CompileCSS turned into
+	// CSS. The browser runtime skips them when it supports scroll timelines.
+	CSSCompiled []int `json:"cssCompiled,omitempty"`
 }
 
 // SpringOptions configures a spring signal. Input, when set, retargets the
@@ -338,6 +341,11 @@ func (p *Program) Marshal() ([]byte, error) {
 		}
 		if err := validateBinding(binding); err != nil {
 			return nil, err
+		}
+	}
+	for _, index := range p.CSSCompiled {
+		if index < 0 || index >= len(p.Bindings) {
+			return nil, fmt.Errorf("motion: cssCompiled index %d is outside the %d bindings", index, len(p.Bindings))
 		}
 	}
 	for _, pin := range p.Pins {

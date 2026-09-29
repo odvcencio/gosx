@@ -762,7 +762,7 @@ const budgets = [
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
   // The complete motion fix measures 190,789 / 53,839 / 46,948. Reviewed
   // hard-limit headroom is 1,991 / 1,076 / 1,037 bytes.
-  { file: "bootstrap-runtime.js", raw: 183_600, gzip: 52_300, brotli: 45_700 },
+  { file: "bootstrap-runtime.js", raw: 184_000, gzip: 52_300, brotli: 45_700 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -820,7 +820,7 @@ const budgets = [
   // 113_659 / 30_609 / 27_146.
   // The complete motion fix measures 147,576 / 41,324 / 36,551. Reviewed
   // hard-limit headroom is 1,944 / 1,096 / 1,039 bytes.
-  { file: "bootstrap-lite.js", raw: 142_400, gzip: 40_400, brotli: 35_800 },
+  { file: "bootstrap-lite.js", raw: 142_900, gzip: 40_400, brotli: 35_800 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1643,7 +1643,9 @@ const routeBudgets = [
     // their prior caps already).
     // The complete motion fix measures 300,712 / 86,428 / 75,806 on this route.
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
-    raw: 288_300,
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    raw: 288_800,
     gzip: 83_400,
     brotli: 73_200,
     maxMonolithFraction: 0.25,
@@ -1802,7 +1804,9 @@ const routeBudgets = [
     // shared motion core. The route now measures 1_356_360 / 368_049 / 309_771,
     // +1_322 raw / +586 gzip / +400 Brotli. Raise raw to 1_292_000; gzip and
     // Brotli remain within their existing targets.
-    raw: 1_292_000,
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    raw: 1_293_000,
     gzip: 352_200,
     brotli: 295_800,
   },
@@ -1974,7 +1978,9 @@ const routeBudgets = [
     // Curve signals and camera rails add the piecewise curve evaluator to the
     // shared motion core: this route now measures 1_206_286 raw (+1_418). Raise
     // raw to 1_149_000; gzip and Brotli remain within their existing targets.
-    raw: 1_149_000,
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    raw: 1_150_000,
     gzip: 324_400,
     brotli: 274_100,
   },

@@ -1,0 +1,15 @@
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes gosx-motion-demo-0-aefd3536 {
+      0% { --progress: 0; }
+      100% { --progress: 1; }
+    }
+    :where([data-gosx-motion-scope='demo']) :is(#card) {
+      animation-name: gosx-motion-demo-0-aefd3536;
+      animation-timeline: scroll(root block);
+      animation-duration: 1ms;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+    }
+  }
+}

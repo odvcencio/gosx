@@ -96,3 +96,53 @@ test("malformed curve stops leave the signal at zero instead of throwing", () =>
     for (const write of writes) assert.equal(write.value, 0, JSON.stringify(stops));
   }
 });
+
+// CSS compilation: bindings the server compiled to CSS run in JavaScript only
+// when the browser cannot run scroll timelines.
+test("cssCompiled bindings are skipped only when scroll timelines are supported", () => {
+  for (const supported of [true, false]) {
+    const runtimeWrites = [];
+    let clock = 0;
+    const body = { nodeType: 1, children: [], querySelectorAll() { return []; }, contains() { return false; } };
+    const document = { body, documentElement: body, scrollingElement: body, addEventListener() {}, querySelector() { return null; } };
+    const frames = new Map();
+    let id = 0;
+    const window = {
+      __gosx: {}, scrollX: 0, scrollY: 0, innerWidth: 1280, innerHeight: 720, console,
+      matchMedia() { return { matches: false, addEventListener() {} }; },
+      addEventListener() {},
+      requestAnimationFrame(cb) { frames.set(++id, cb); return id; },
+      cancelAnimationFrame(i) { frames.delete(i); },
+    };
+    const context = vm.createContext({
+      window, document, console, performance: { now() { return clock; } }, Date, setTimeout, clearTimeout,
+      CSS: { supports(query) { return supported && /animation-timeline: scroll\(\)/.test(query); } },
+    });
+    vm.runInContext(source, context, { filename: "06-motion-core.ts" });
+    const scene = { nodeType: 1, getBoundingClientRect() { return { left: 0, top: 0, width: 1, height: 1 }; } };
+    window.__gosx.motion.attachScene(scene, { write(binding, value) { runtimeWrites.push(binding.property + "=" + value); }, pin() { return false; }, invalidate() {}, disposeProgram() {} });
+    const program = programElement({
+      version: 1,
+      id: "css",
+      signals: [
+        { id: "clock", kind: "time" },
+        { id: "a", kind: "map", input: "clock", from: 0, to: 1, min: 10, max: 20 },
+        { id: "b", kind: "map", input: "clock", from: 0, to: 1, min: 0, max: 1 },
+      ],
+      // Binding 0 is compiled to CSS; binding 1 is not.
+      bindings: [
+        { signal: "a", target: "camera", selector: "#scene", property: "position.x" },
+        { signal: "b", target: "camera", selector: "#scene", property: "position.y" },
+      ],
+      cssCompiled: [0],
+    }, { "#scene": scene });
+    window.__gosx.motion.mountPrograms(program);
+    clock = 500;
+    for (const cb of Array.from(frames.values())) cb(500);
+    const xs = runtimeWrites.filter((w) => w.startsWith("position.x="));
+    const ys = runtimeWrites.filter((w) => w.startsWith("position.y="));
+    assert.ok(ys.length > 0, `supported=${supported}: the uncompiled binding must always run`);
+    if (supported) assert.equal(xs.length, 0, "the CSS-compiled binding must not also run in JavaScript");
+    else assert.ok(xs.length > 0, "without scroll timelines the compiled binding is the JavaScript fallback");
+  }
+});

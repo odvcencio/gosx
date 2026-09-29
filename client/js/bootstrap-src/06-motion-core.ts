@@ -1209,8 +1209,41 @@
     return createSignal(0, name);
   }
 
+  function motionScrollTimelinesSupported() {
+    try {
+      return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("animation-timeline: scroll()");
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // The server compiles fixed page-scroll bindings to CSS and lists them in
+  // program.cssCompiled. When the browser supports scroll timelines the CSS
+  // owns them, so drop those bindings and any signal only they used. Otherwise
+  // the program runs whole, which is the fallback.
+  function motionWithoutCSSCompiled(program) {
+    const listed = Array.isArray(program.cssCompiled) ? program.cssCompiled : [];
+    if (!listed.length || !Array.isArray(program.bindings) || !motionScrollTimelinesSupported()) return program;
+    const skip = new Set(listed.filter(function(index) { return Number.isInteger(index); }));
+    const bindings = program.bindings.filter(function(_binding, index) { return !skip.has(index); });
+    const specs = new Map();
+    for (const spec of program.signals) if (spec && spec.id) specs.set(String(spec.id), spec);
+    const needed = new Set();
+    const visit = function(id) {
+      const key = String(id || "");
+      if (!key || needed.has(key)) return;
+      needed.add(key);
+      const spec = specs.get(key);
+      if (spec) for (const ref of [spec.input, spec.a, spec.b, spec.weight]) visit(ref);
+    };
+    for (const binding of bindings) visit(binding && binding.signal);
+    const signals = program.signals.filter(function(spec) { return spec && needed.has(String(spec.id)); });
+    return Object.assign({}, program, { signals: signals, bindings: bindings });
+  }
+
   function createProgram(root, raw) {
-    const program = raw && typeof raw === "object" ? raw : {};
+    const parsed = raw && typeof raw === "object" ? raw : {};
+    const program = motionNumber(parsed.version, 0) === 1 && Array.isArray(parsed.signals) ? motionWithoutCSSCompiled(parsed) : parsed;
     if (motionNumber(program.version, 0) !== 1 || !Array.isArray(program.signals)) return null;
     const programID = String(program.id || "motion");
     const record = { root: root, id: programID, signals: new Map(), specs: new Map(), bindings: [], pins: [], stops: [], values: [], adapters: new Set(), disposed: false };
