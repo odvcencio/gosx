@@ -17,7 +17,7 @@
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2808,
     "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Rendering before models adds a guarded hydration continuation; the mount limit uses its measured 3875 lines."
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Rendering before models adds a guarded hydration continuation; the mount limit uses its measured 3877 lines, including ownership after handle publication."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -337,7 +337,7 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5588,
-    "../runtime/scene3d/mount.ts": 3875
+    "../runtime/scene3d/mount.ts": 3877
   },
   "functionDefaults": {
     "lines": 200,

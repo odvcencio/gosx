@@ -17,6 +17,7 @@
 
     const props = ctx.props || {};
     const renderBeforeModels = props.renderBeforeModels === true;
+    let handle = null;
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -59,7 +60,9 @@
     const sceneMountOwner = { m: mount };
     mount.__gosxScene3DOwner = sceneMountOwner;
     function scene3DFactoryOwned() {
-      return scene3DFactoryCurrent() && mount.__gosxScene3DOwner === sceneMountOwner;
+      // The pending factory token retires when the handle is published.
+      const mounted = renderBeforeModels && handle && mount.__gosxScene3DHandle === handle;
+      return (mounted || scene3DFactoryCurrent()) && mount.__gosxScene3DOwner === sceneMountOwner;
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
@@ -3284,7 +3287,6 @@
     // safe even when loading, instantiation, skin setup, or status listeners
     // fail. The mount continues with the prior committed generation (or no
     // model-derived records on initial hydration).
-    let handle = null;
     if (!renderBeforeModels) {
       await sceneModelHydration;
       if (!scene3DFactoryOwned()) {
