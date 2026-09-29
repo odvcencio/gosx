@@ -1872,11 +1872,11 @@
     };
   }
 
-  function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction) {
+  function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction, interactiveEnabled, emitPointerPhase) {
     const pickNamespace = scenePickSignalNamespace(props);
     const eventNamespace = sceneEventSignalNamespace(props);
     const cursorNamespace = sceneCursorSignalNamespace(props);
-    if (!canvas || (!pickNamespace && !eventNamespace && !cursorNamespace)) {
+    if (!canvas || (!pickNamespace && !eventNamespace && !cursorNamespace && !interactiveEnabled)) {
       return {
         getSnapshot() {
           return null;
@@ -1910,6 +1910,10 @@
       }
     }
 
+    function emitFocusPointer(type, targetID, clicked) {
+      if (typeof emitPointerPhase === "function") emitPointerPhase(type, targetID || "", clicked === true);
+    }
+
     function attachDocumentListeners() {
       if (documentListenersAttached) {
         return;
@@ -1936,6 +1940,7 @@
         return;
       }
       emit("move", before);
+      emitFocusPointer("move", state.hoverID, false);
       publish();
     }
 
@@ -1943,7 +1948,9 @@
       const before = scenePickStateSnapshot(state);
       const handled = sceneHandlePickDown(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
       emit("down", before);
+      emitFocusPointer("move", state.hoverID, false);
       if (handled) {
+        emitFocusPointer("down", state.downID, false);
         attachDocumentListeners();
         sceneCapturePointer(canvas, state.pointerId);
         if (typeof event.preventDefault === "function") {
@@ -1958,11 +1965,15 @@
 
     function onPointerUp(event) {
       const before = scenePickStateSnapshot(state);
+      const downID = state.downID;
+      const previousClickCount = state.clickCount;
       const result = sceneHandlePickUp(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
       if (!result.handled) {
         return;
       }
       emit("up", before);
+      emitFocusPointer("move", state.hoverID, false);
+      emitFocusPointer("up", downID, state.clickCount > previousClickCount);
       detachDocumentListeners();
       sceneReleasePointer(canvas, result.pointerId);
       if (typeof event.preventDefault === "function") {
@@ -1976,11 +1987,13 @@
 
     function onPointerCancel(event) {
       const before = scenePickStateSnapshot(state);
+      const downID = state.downID;
       const result = sceneHandlePickCancel(state, event);
       if (!result.handled) {
         return;
       }
       emit("cancel", before);
+      emitFocusPointer("cancel", downID, false);
       detachDocumentListeners();
       sceneReleasePointer(canvas, result.pointerId);
       publish();
@@ -1988,9 +2001,11 @@
 
     function onPointerLeave() {
       const before = scenePickStateSnapshot(state);
+      const hoverID = state.hoverID;
       if (!sceneHandlePickLeave(state)) {
         return;
       }
+      emitFocusPointer("leave", hoverID, false);
       emit("leave", before);
       publish();
     }
