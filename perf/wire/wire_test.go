@@ -62,7 +62,12 @@ func testServer(t *testing.T) *httptest.Server {
 <script id="gosx-manifest" type="application/json">{"runtime":{"path":"/gosx/rt.0123456789abcdef.wasm"},"islands":[{"programRef":"/gosx/islands/C.0123456789abcdef.gxi"}],"props":{"path":"/not-an-asset"}}</script>
 <script type="application/ld+json">{"@type":"Thing"}</script>
 </head><body><img src="/hero.jpg" alt=""><img loading="lazy" src="/below.jpg" alt=""><img src="data:image/gif;base64,R0lGOD" alt="">
+<div data-gosx-scene3d-gltf-url="/gosx/lazy-gltf.js" data-gosx-other="/gosx/not-a-url-attr.js"></div>
 <script defer src="/gosx/boot.js"></script></body></html>`))
+	})
+	mux.HandleFunc("/gosx/lazy-gltf.js", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "lazy", Value: "1"})
+		w.Write([]byte(strings.Repeat("lazy();", 300)))
 	})
 	mux.HandleFunc("/hero.jpg", func(w http.ResponseWriter, r *http.Request) {
 		w.Write(bytes.Repeat([]byte{0xff}, 3000))
@@ -112,6 +117,21 @@ func TestCrawlCountsTheLoadPath(t *testing.T) {
 	}
 	if r.InlineScriptMax != 3000 || r.InlineScriptBytes != 3000+int64(len("small()")) {
 		t.Fatalf("inline script max=%d total=%d", r.InlineScriptMax, r.InlineScriptBytes)
+	}
+	if r.LazyWireBytes != int64(len(strings.Repeat("lazy();", 300))) {
+		t.Fatalf("on-demand bytes = %d", r.LazyWireBytes)
+	}
+	var lazy *Resource
+	for i := range r.Resources {
+		if r.Resources[i].URL == "/gosx/lazy-gltf.js" {
+			lazy = &r.Resources[i]
+		}
+	}
+	if lazy == nil || lazy.Kind != KindLazyScript || !lazy.SetCookie {
+		t.Fatalf("on-demand chunk not measured for policies: %+v", lazy)
+	}
+	if !strings.Contains(r.EvaluatePolicies()[PolicyRuntimeHashed].Reason, "/gosx/lazy-gltf.js") && !strings.Contains(r.EvaluatePolicies()[PolicyRuntimeHashed].Reason, "more") {
+		t.Fatalf("unhashed on-demand chunk passed runtime-hashed: %q", r.EvaluatePolicies()[PolicyRuntimeHashed].Reason)
 	}
 	if r.InlineDataBytes == 0 {
 		t.Fatal("inline JSON data bytes not counted")

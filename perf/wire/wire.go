@@ -43,6 +43,11 @@ const (
 	KindProgram  = "program"
 	KindImage    = "image"
 	KindFont     = "font"
+	// KindLazyScript is a runtime chunk the page advertises for on-demand
+	// loading (a data-gosx-*-url attribute naming a /gosx/ asset). Which
+	// ones load depends on the device and the scene, so they are counted in
+	// their own limit and in the policies, not in totals or requests.
+	KindLazyScript = "lazy-js"
 	// KindRedirect is a 3xx hop on the way to a document or resource.
 	KindRedirect = "redirect"
 	KindOther    = "other"
@@ -83,6 +88,10 @@ type Route struct {
 	// (inline bytes travel inside the document, so they are counted at their
 	// share of the document's compression ratio).
 	FrameworkJSWireBytes int64 `json:"frameworkJsWireBytes"`
+
+	// LazyWireBytes sums the on-demand runtime chunks the page advertises
+	// (KindLazyScript). They are not in TotalWireBytes or Requests.
+	LazyWireBytes int64 `json:"lazyWireBytes"`
 
 	InlineScriptBytes int64 `json:"inlineScriptBytes"`
 	InlineScriptMax   int64 `json:"inlineScriptMax"`
@@ -198,6 +207,12 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 			return Route{}, err
 		}
 		res.Kind = classify(abs.Path, res, r.kind)
+		if r.kind == KindLazyScript {
+			res.Kind = KindLazyScript
+			out.Resources = append(out.Resources, res)
+			out.LazyWireBytes += res.WireBytes
+			continue
+		}
 		out.Resources = append(out.Resources, res)
 		out.Requests++
 		out.WireBytes[res.Kind] += res.WireBytes
@@ -263,6 +278,11 @@ func scanHTML(body []byte) ([]ref, inlineStats, error) {
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
+			for _, a := range n.Attr {
+				if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") && strings.HasPrefix(a.Val, "/gosx/") {
+					refs = append(refs, ref{href: a.Val, kind: KindLazyScript, initiator: "on-demand"})
+				}
+			}
 			switch n.Data {
 			case "script":
 				src := attr(n, "src")

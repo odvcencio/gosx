@@ -268,7 +268,7 @@ func Table(after Report, before *Report) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("| App | Route | Total | Framework JS+WASM | HTML | JS | WASM | CSS | Images | Requests | Inline JS | Policies failing |\n")
+	b.WriteString("| App | Route | Total | Framework JS+WASM | HTML | JS | WASM | CSS | Images | On-demand JS | Requests | Inline JS | Policies failing |\n")
 	b.WriteString("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
 	for _, r := range after.Routes {
 		p, hasPrev := prev[r.App+" "+r.Route]
@@ -289,7 +289,7 @@ func Table(after Report, before *Report) string {
 				failing = pf + " → " + failing
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			r.App, r.Route,
 			cell(wire.MetricTotalWireBytes, true),
 			cell(wire.MetricFrameworkJSWireBytes, true),
@@ -298,11 +298,12 @@ func Table(after Report, before *Report) string {
 			cell(wire.MetricWASMWireBytes, true),
 			cell(wire.MetricCSSWireBytes, true),
 			cell(wire.MetricImageWireBytes, true),
+			cell(wire.MetricLazyJSWireBytes, true),
 			cell(wire.MetricRequests, false),
 			cell(wire.MetricInlineScriptBytes, true),
 			failing)
 	}
-	b.WriteString("\nBytes are as sent on the wire (after br or gzip), fetched with `Accept-Encoding: br, gzip` and a mobile user agent. Inline JS is uncompressed.\n")
+	b.WriteString("\nBytes are as sent on the wire (after br or gzip), fetched with `Accept-Encoding: br, gzip` and a mobile user agent. Inline JS is uncompressed. On-demand JS is every runtime chunk the page advertises for loading on demand; it is not in Total or Requests.\n")
 	return b.String()
 }
 

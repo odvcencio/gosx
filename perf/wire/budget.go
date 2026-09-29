@@ -20,6 +20,7 @@ const (
 	MetricWASMWireBytes        = "wasmWireBytes"
 	MetricCSSWireBytes         = "cssWireBytes"
 	MetricImageWireBytes       = "imageWireBytes"
+	MetricLazyJSWireBytes      = "lazyJsWireBytes"
 	MetricRequests             = "requests"
 	MetricInlineScriptBytes    = "inlineScriptBytes"
 )
@@ -33,6 +34,7 @@ var Metrics = []string{
 	MetricWASMWireBytes,
 	MetricCSSWireBytes,
 	MetricImageWireBytes,
+	MetricLazyJSWireBytes,
 	MetricRequests,
 	MetricInlineScriptBytes,
 }
@@ -150,6 +152,8 @@ func (r Route) Value(metric string) int64 {
 		return r.WireBytes[KindWASM]
 	case MetricCSSWireBytes:
 		return r.WireBytes[KindStyle]
+	case MetricLazyJSWireBytes:
+		return r.LazyWireBytes
 	case MetricImageWireBytes:
 		return r.WireBytes[KindImage]
 	case MetricRequests:
@@ -209,7 +213,7 @@ func (r Route) EvaluatePolicies() map[string]PolicyResult {
 
 	bad = nil
 	for _, res := range r.Resources {
-		if !isFramework(pathOf(res.URL)) || (res.Kind != KindScript && res.Kind != KindWASM) {
+		if !isFramework(pathOf(res.URL)) || (res.Kind != KindScript && res.Kind != KindWASM && res.Kind != KindLazyScript) {
 			continue
 		}
 		if !res.Hashed || !res.Immutable {
