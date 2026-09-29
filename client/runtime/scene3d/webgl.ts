@@ -209,7 +209,7 @@
     "uniform float u_emissive;",
     "uniform vec3 u_emissiveColor;",
     "uniform bool u_hasEmissiveColor;",
-    "uniform float u_normalScale;",
+    "uniform float u_normalScale; uniform vec2 u_normalUVScale;",
     "uniform float u_occlusionStrength;",
     "uniform vec3 u_rimColor;",
     "uniform float u_rimPower;",
@@ -550,7 +550,7 @@
     "        vec3 T = normalize(v_tangent);",
     "        vec3 B = normalize(v_bitangent);",
     "        mat3 TBN = mat3(T, B, N);",
-    "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        vec3 mapNormal = texture(u_normalMap, v_uv * (u_normalUVScale.x > 0.0 ? u_normalUVScale : vec2(1.0))).rgb * 2.0 - 1.0;",
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -5576,7 +5576,7 @@
       emissive: gl.getUniformLocation(program, "u_emissive"),
       emissiveColor: gl.getUniformLocation(program, "u_emissiveColor"),
       hasEmissiveColor: gl.getUniformLocation(program, "u_hasEmissiveColor"),
-      normalScale: gl.getUniformLocation(program, "u_normalScale"),
+      normalScale: gl.getUniformLocation(program, "u_normalScale"), normalUVScale: gl.getUniformLocation(program, "u_normalUVScale"),
       occlusionStrength: gl.getUniformLocation(program, "u_occlusionStrength"),
       rimColor: gl.getUniformLocation(program, "u_rimColor"),
       rimPower: gl.getUniformLocation(program, "u_rimPower"),
@@ -8518,7 +8518,7 @@
       var emissiveColor = scenePBREmissiveColor(mat);
       gl.uniform3f(uniforms.emissiveColor, emissiveColor[0], emissiveColor[1], emissiveColor[2]);
       gl.uniform1i(uniforms.hasEmissiveColor, scenePBRHasEmissiveColor(mat) ? 1 : 0);
-      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1));
+      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1)); if (uniforms.normalUVScale) gl.uniform2f(uniforms.normalUVScale, sceneNumber(mat.normalUVScale && mat.normalUVScale[0], 1), sceneNumber(mat.normalUVScale && mat.normalUVScale[1], 1));
       gl.uniform1f(uniforms.occlusionStrength, clamp01(sceneNumber(mat.occlusionStrength, 1)));
       var rimColor = scenePBRRimColor(mat);
       gl.uniform3f(uniforms.rimColor, rimColor[0], rimColor[1], rimColor[2]);
