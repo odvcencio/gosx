@@ -53,6 +53,11 @@ type OceanBathymetry struct {
 	MaxZ      float64 `json:"maxZ"`
 	MinHeight float64 `json:"minHeight"`
 	MaxHeight float64 `json:"maxHeight"`
+	// Encoding is "linear" (the default: R maps MinHeight..MaxHeight) or
+	// "signed-sqrt": s = 2R - 1 and height = sign(s) * s^2 * max(|MinHeight|,
+	// |MaxHeight|). Signed-sqrt spends the 8-bit steps near y = 0, so a gentle
+	// beach gets millimetre steps at the waterline instead of 5 cm terraces.
+	Encoding string `json:"encoding,omitempty"`
 }
 
 // normalizeOcean trims colors and bathymetry URLs, preserves zero as the
@@ -114,6 +119,10 @@ func normalizeOceanBathymetry(bathymetry *OceanBathymetry) *OceanBathymetry {
 	}
 	out := *bathymetry
 	out.Src = strings.TrimSpace(out.Src)
+	out.Encoding = strings.ToLower(strings.TrimSpace(out.Encoding))
+	if out.Encoding != "signed-sqrt" {
+		out.Encoding = ""
+	}
 	if out.Src == "" || out.MaxX <= out.MinX || out.MaxZ <= out.MinZ || out.MaxHeight <= out.MinHeight {
 		return nil
 	}

@@ -37,6 +37,8 @@ test("ocean uniform block packs 35 vec4s with a Gerstner table sized by signific
   assert.deepEqual(Array.from(low.slice(132, 135)), [0, 0, 0], "no physical sky: no sun glint");
   const shore = api.sceneOceanUniformData(oceanRecord({ bathymetry: { src: "/h.png", minX: -60, minZ: -40, maxX: 60, maxZ: 50, minHeight: -8, maxHeight: 4 } }), {}, {}, 0, true, "high");
   assert.deepEqual(Array.from(shore.slice(20, 27)), [-60, -40, 60, 50, -8, 4, 1]);
+  const sqrt = api.sceneOceanUniformData(oceanRecord({ bathymetry: { src: "/h.png", minX: -60, minZ: -40, maxX: 60, maxZ: 50, minHeight: -8, maxHeight: 4, encoding: "signed-sqrt" } }), {}, {}, 0, true, "high");
+  assert.deepEqual(Array.from(sqrt.slice(24, 27)), [0, 8, 2], "signed-sqrt packs its symmetric range and flag 2");
   h.renderer.dispose();
 });
 

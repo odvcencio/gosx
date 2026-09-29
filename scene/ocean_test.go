@@ -89,3 +89,14 @@ func TestOceanRaisesFeature(t *testing.T) {
 		t.Fatalf("an absent ocean raised %s", capability.FeatureOcean)
 	}
 }
+
+func TestOceanBathymetryEncodingNormalizes(t *testing.T) {
+	base := OceanBathymetry{Src: "h.png", MinX: -1, MinZ: -1, MaxX: 1, MaxZ: 1, MinHeight: -8, MaxHeight: 4}
+	for input, want := range map[string]string{"": "", "linear": "", " Signed-Sqrt ": "signed-sqrt", "log": ""} {
+		b := base
+		b.Encoding = input
+		if got := normalizeOcean(&Ocean{Bathymetry: &b}).Bathymetry.Encoding; got != want {
+			t.Fatalf("encoding %q normalized to %q, want %q", input, got, want)
+		}
+	}
+}

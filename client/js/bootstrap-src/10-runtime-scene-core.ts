@@ -3104,7 +3104,8 @@
       const maxX = sceneNumber(source.maxX, 0), maxZ = sceneNumber(source.maxZ, 0);
       const minHeight = sceneNumber(source.minHeight, 0), maxHeight = sceneNumber(source.maxHeight, 0);
       if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
-        bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight };
+        const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
+        bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
       }
     }
     return {

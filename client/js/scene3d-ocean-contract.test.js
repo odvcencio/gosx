@@ -30,7 +30,9 @@ test("ocean normalization applies defaults, clamps values, wraps direction, and 
 
   const validBathymetry = { src: " map.png ", minX: -10, minZ: -20, maxX: 10, maxZ: 20, minHeight: -5, maxHeight: 2 };
   assert.deepEqual(plain(api.normalizeSceneOcean({ bathymetry: validBathymetry }).bathymetry),
-    { src: "map.png", minX: -10, minZ: -20, maxX: 10, maxZ: 20, minHeight: -5, maxHeight: 2 });
+    { src: "map.png", minX: -10, minZ: -20, maxX: 10, maxZ: 20, minHeight: -5, maxHeight: 2, encoding: "linear" });
+  assert.equal(api.normalizeSceneOcean({ bathymetry: { ...validBathymetry, encoding: " Signed-Sqrt " } }).bathymetry.encoding, "signed-sqrt");
+  assert.equal(api.normalizeSceneOcean({ bathymetry: { ...validBathymetry, encoding: "log" } }).bathymetry.encoding, "linear");
   for (const bathymetry of [
     { ...validBathymetry, src: " " },
     { ...validBathymetry, maxX: -10 },

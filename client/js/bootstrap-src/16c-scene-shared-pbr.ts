@@ -118,7 +118,8 @@
   //   0  level, extent, time (s), speed        1  deep.rgb, clarity
   //   2  shallow.rgb, roughness                3  scatter.rgb, foam
   //   4  foamColor.rgb, surf                   5  bathymetry minX, minZ, maxX, maxZ
-  //   6  bathymetry minH, maxH, has, waves     7  camera.xyz, output linear (1) or sRGB (0)
+  //   6  bathymetry minH, maxH, has (1 linear, 2 signed-sqrt: minH 0, maxH = range), waves
+  //   7  camera.xyz, output linear (1) or sRGB (0)
   //   8  rings, segments, inner radius, ring growth
   //   9..20  six Gerstner waves: (dir.x, dir.z, k, omega), (amplitude, Q*a, phase, 0)
   //   21..31 the sky block from sceneSkyUniformData (mode in [26].w)
@@ -176,7 +177,11 @@
     var b = o.bathymetry;
     if (b && b.src) {
       out[20] = b.minX; out[21] = b.minZ; out[22] = b.maxX; out[23] = b.maxZ;
-      out[24] = b.minHeight; out[25] = b.maxHeight; out[26] = 1;
+      if (b.encoding === "signed-sqrt") {
+        out[24] = 0; out[25] = Math.max(Math.abs(b.minHeight), Math.abs(b.maxHeight)); out[26] = 2;
+      } else {
+        out[24] = b.minHeight; out[25] = b.maxHeight; out[26] = 1;
+      }
     }
     var low = quality === "low";
     var waves = low ? 4 : 6;
