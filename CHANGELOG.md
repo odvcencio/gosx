@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added: desktop startup timeline, navigation event, and background color
+
+- Add `App.StartupTimeline()`, which reports when the window was created and
+  shown, when the WebView2 environment and controller were ready, and when the
+  first navigation finished, measured from `desktop.New`.
+- Add `Options.OnNavigationCompleted` (navigation ID, success, and WebView2
+  web error status).
+- Add `Options.BackgroundColor` (`#RGB` or `#RRGGBB`). It paints the native
+  window before WebView2 covers it, removing the white frame a dark app showed
+  for the first 200-450 ms, and sets the WebView2 controller's default
+  background.
+
 ### Added: signed direct-download update checks
 
 - Add `App.CheckSignedUpdate` for the `latest.json` feed produced by

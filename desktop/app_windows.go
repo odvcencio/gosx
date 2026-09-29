@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -49,6 +50,17 @@ type windowsApp struct {
 	fullscreenRef        *comReference
 	fullscreenToken      int64
 	fullscreenAdded      bool
+	navCompletedHandler  *navigationCompletedEventHandler
+	navCompletedRef      *comReference
+	navCompletedToken    int64
+	navCompletedAdded    bool
+
+	// created is when New built this app; timeline durations are measured
+	// from it. backgroundBrush paints WM_ERASEBKGND when BackgroundColor is
+	// set.
+	created              time.Time
+	timeline             StartupTimeline
+	backgroundBrush      uintptr
 	resHandler           *webResourceRequestedHandler
 	resHandlerRef        *comReference
 	resHandlerToken      int64
@@ -89,7 +101,33 @@ type windowsApp struct {
 }
 
 func newPlatformApp(options Options) (platformApp, error) {
-	return &windowsApp{options: options}, nil
+	return &windowsApp{options: options, created: time.Now()}, nil
+}
+
+// markStartup records the first time a startup phase finished.
+func (a *windowsApp) markStartup(phase *time.Duration) {
+	a.mu.Lock()
+	if *phase == 0 {
+		*phase = time.Since(a.created)
+	}
+	a.mu.Unlock()
+}
+
+// StartupTimeline implements startupTimelineReporter.
+func (a *windowsApp) StartupTimeline() StartupTimeline {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.timeline
+}
+
+func (a *windowsApp) onNavigationCompleted(event NavigationCompleted) {
+	a.markStartup(&a.timeline.FirstNavigationCompleted)
+	a.mu.Lock()
+	cb := a.options.OnNavigationCompleted
+	a.mu.Unlock()
+	if cb != nil {
+		cb(event)
+	}
 }
 
 func platformAvailable() error {
@@ -143,10 +181,28 @@ func (a *windowsApp) Run() error {
 	}
 	defer coUninitialize()
 
+	if color, _, ok, _ := parseBackgroundColor(a.options.BackgroundColor); ok {
+		brush, err := createSolidBrush(color)
+		if err != nil {
+			return err
+		}
+		a.mu.Lock()
+		a.backgroundBrush = brush
+		a.mu.Unlock()
+		defer func() {
+			a.mu.Lock()
+			brush := a.backgroundBrush
+			a.backgroundBrush = 0
+			a.mu.Unlock()
+			deleteGDIObject(brush)
+		}()
+	}
+
 	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, a)
 	if err != nil {
 		return err
 	}
+	a.markStartup(&a.timeline.WindowCreated)
 	a.mu.Lock()
 	a.hwnd = hwnd
 	a.mu.Unlock()
@@ -168,6 +224,7 @@ func (a *windowsApp) Run() error {
 	a.fireWindowCreated(hwnd)
 
 	showWindow(hwnd)
+	a.markStartup(&a.timeline.WindowShown)
 	if err := a.createWebView(); err != nil {
 		destroyWindow(hwnd)
 		return err
@@ -305,6 +362,9 @@ func (a *windowsApp) onEnvironmentCreated(hr uintptr, env *coreWebView2Environme
 	}
 	a.env = env
 	a.envRef = envRef
+	if a.timeline.EnvironmentReady == 0 {
+		a.timeline.EnvironmentReady = time.Since(a.created)
+	}
 	hwnd := a.hwnd
 	handler := newControllerCompletedHandler(a)
 	a.controllerHandler = handler
@@ -386,9 +446,16 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	fullscreenRef := ownCOMReference(unsafe.Pointer(fullscreenHandler), func(ptr unsafe.Pointer) {
 		fullscreenChangedRelease(uintptr(ptr))
 	})
-	var msgToken, resToken, processFailedToken, fullscreenToken int64
-	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded bool
+	navCompletedHandler := newNavigationCompletedEventHandler(a)
+	navCompletedRef := ownCOMReference(unsafe.Pointer(navCompletedHandler), func(ptr unsafe.Pointer) {
+		navigationCompletedRelease(uintptr(ptr))
+	})
+	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken int64
+	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded bool
 	cleanupLocal := func() {
+		if navCompletedAdded {
+			_ = webview.removeNavigationCompleted(navCompletedToken)
+		}
 		if fullscreenAdded {
 			_ = webview.removeFullscreenChanged(fullscreenToken)
 		}
@@ -402,6 +469,7 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 			_ = webview.removeWebMessageReceived(msgToken)
 		}
 		controller.close()
+		navCompletedRef.Release()
 		fullscreenRef.Release()
 		processFailedRef.Release()
 		resHandlerRef.Release()
@@ -446,6 +514,12 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		return
 	}
 	fullscreenAdded = true
+	navCompletedToken, err = webview.addNavigationCompleted(navCompletedHandler)
+	if err != nil {
+		failLocal(err)
+		return
+	}
+	navCompletedAdded = true
 	// Replay any filters registered before the webview came up.
 	a.mu.Lock()
 	pendingRoutes := append([]*servedRoute(nil), a.servedRoutes...)
@@ -476,6 +550,10 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	a.fullscreenRef = fullscreenRef
 	a.fullscreenToken = fullscreenToken
 	a.fullscreenAdded = fullscreenAdded
+	a.navCompletedHandler = navCompletedHandler
+	a.navCompletedRef = navCompletedRef
+	a.navCompletedToken = navCompletedToken
+	a.navCompletedAdded = navCompletedAdded
 	a.resHandler = resHandler
 	a.resHandlerRef = resHandlerRef
 	a.resHandlerToken = resToken
@@ -499,10 +577,16 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		a.failSetup(err)
 		return
 	}
+	if color, _, ok, _ := parseBackgroundColor(a.options.BackgroundColor); ok {
+		// Older runtimes lack ICoreWebView2Controller2; the window brush
+		// still covers the area until the page paints.
+		_ = controller.setDefaultBackgroundColor(color)
+	}
 	if err := controller.setVisible(true); err != nil {
 		a.failSetup(err)
 		return
 	}
+	a.markStartup(&a.timeline.ControllerReady)
 	if html != "" {
 		err = webview.navigateToString(html)
 	} else {
@@ -564,6 +648,12 @@ func (a *windowsApp) releaseWebView() {
 	resHandlerToken, resHandlerRegistered := a.resHandlerToken, a.resHandlerRegistered
 	processFailedToken, processFailedAdded := a.processFailedToken, a.processFailedAdded
 	fullscreenToken, fullscreenAdded := a.fullscreenToken, a.fullscreenAdded
+	navCompletedRef := a.navCompletedRef
+	navCompletedToken, navCompletedAdded := a.navCompletedToken, a.navCompletedAdded
+	a.navCompletedHandler = nil
+	a.navCompletedRef = nil
+	a.navCompletedToken = 0
+	a.navCompletedAdded = false
 	a.controller = nil
 	a.controllerRef = nil
 	a.webview = nil
@@ -593,6 +683,9 @@ func (a *windowsApp) releaseWebView() {
 	a.mu.Unlock()
 
 	if webview != nil {
+		if navCompletedAdded {
+			_ = webview.removeNavigationCompleted(navCompletedToken)
+		}
 		if fullscreenAdded {
 			_ = webview.removeFullscreenChanged(fullscreenToken)
 		}
@@ -613,6 +706,7 @@ func (a *windowsApp) releaseWebView() {
 	webviewRef.Release()
 	controllerRef.Release()
 	envRef.Release()
+	navCompletedRef.Release()
 	fullscreenRef.Release()
 	processFailedRef.Release()
 	resHandlerRef.Release()
