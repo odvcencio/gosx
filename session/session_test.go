@@ -89,6 +89,7 @@ func TestProtectRejectsMissingOrInvalidToken(t *testing.T) {
 	manager := MustNew("csrf-test-secret-value", Options{})
 	handler := manager.Middleware(manager.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+			Current(r).Set("form", "active")
 			_, _ = io.WriteString(w, Token(r))
 			return
 		}
@@ -156,6 +157,7 @@ func TestProtectAcceptsMultipartFormToken(t *testing.T) {
 	manager := MustNew("csrf-test-secret-value", Options{})
 	handler := manager.Middleware(manager.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+			Current(r).Set("form", "active")
 			_, _ = io.WriteString(w, Token(r))
 			return
 		}
