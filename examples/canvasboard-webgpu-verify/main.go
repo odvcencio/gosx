@@ -65,7 +65,7 @@
 //
 // # Run
 //
-//	cd /home/draco/work/gosx
+//	cd path/to/gosx
 //	GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" \
 //	  -o /tmp/gosx-webgpu-verify/gosx-runtime.wasm m31labs.dev/gosx/client/wasm
 //	go run ./examples/canvasboard-webgpu-verify 2>&1

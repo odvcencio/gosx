@@ -5610,7 +5610,7 @@ For the current runtime, that trims the external graph to `github.com/odvcencio/
 
 When the active `go` binary is too new for TinyGo, `gosx build` now retries the TinyGo compile against compatible installed Go SDKs. It checks `GOSX_TINYGO_GOROOT`, `$HOME/sdk/go1.*`, and `/usr/local/go`, filters to Go 1.19 through Go 1.25, picks the newest compatible root, and runs TinyGo with that root first on `PATH` plus `GOTOOLCHAIN=local`.
 
-On the release machine, the build used Go 1.25.9 at `/home/draco/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
+On the release machine, the build used Go 1.25.9 at `$HOME/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
 
 Measured release output:
 

@@ -33,7 +33,6 @@ async function loadAcorn() {
   const candidates = [
     process.env.ACORN_PATH,
     "acorn",
-    "/home/draco/work/gotreesitter-gophercon26/node_modules/acorn/dist/acorn.mjs",
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {

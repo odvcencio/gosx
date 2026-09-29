@@ -32,8 +32,8 @@ repo_root=$(git rev-parse --show-toplevel)
 # shellcheck source=showcase-windows-cdp.sh
 source "$script_dir/showcase-windows-cdp.sh"
 
-tools_dir=${SHOWCASE_TOOLS_DIR:-/home/draco/.local/state/nightwatch/reports/gosx-showcase/tools}
-evidence_dir=${SHOWCASE_EVIDENCE_DIR:-/home/draco/.local/state/nightwatch/reports/gosx-showcase/lanes/showcase-system/receipts}
+tools_dir=${SHOWCASE_TOOLS_DIR:?set SHOWCASE_TOOLS_DIR to a directory holding lh.sh and node_modules/{lighthouse,playwright}}
+evidence_dir=${SHOWCASE_EVIDENCE_DIR:-${TMPDIR:-/tmp}/gosx-showcase-receipts}
 gpu_port=${GOSX_RECEIPT_GPU_PORT:-8291}
 gpu_bridge=${GOSX_RECEIPT_GPU_BRIDGE:-8292}
 lh_port=${GOSX_RECEIPT_LH_PORT:-8293}
