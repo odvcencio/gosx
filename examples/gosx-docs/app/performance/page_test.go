@@ -137,10 +137,16 @@ type performanceReceiptInputs struct {
 var performanceReceiptNeutralBlobs = map[string]string{
 	// Preserve the reviewed CSS fallback and incomplete-capture checks without
 	// changing measured values. Exact blobs keep later edits to these inputs stale.
+	// The showcase-receipts.sh, showcase-gpu-capture.mjs, and freevars.mjs blobs
+	// changed only their machine-specific defaults (tools directory, evidence
+	// directory, CDP address, acorn fallback); no measured value or build output
+	// changed.
+	"cmd/buildbootstrap/freevars.mjs":              "e0b207b4743858c44f667dd7029734369cb66d1d",
 	"examples/gosx-docs/app/capabilities/page.css": "406f787b52c4d98bc86d5002ff4be02684803c57",
 	"scripts/showcase-gpu-cadence.mjs":             "b798f91d123dc4de3cb8c08a8008574420bfa926",
-	"scripts/showcase-gpu-capture.mjs":             "bb96528aa837899b5475a13da1fc6e5447323988",
+	"scripts/showcase-gpu-capture.mjs":             "9d6f85a038dda0e04a3bcd220ccdc95166b55876",
 	"scripts/showcase-receipts.mjs":                "c532380a3f9ef524ab9903089139d154e6315bf2",
+	"scripts/showcase-receipts.sh":                 "11fce1fa8d40e7865b3723d8e5a5225ba306c2f9",
 }
 
 func docsPerformanceReceiptInputs(root string) (performanceReceiptInputs, error) {

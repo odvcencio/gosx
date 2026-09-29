@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 powerShell='/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 windows_root='/mnt/c/Temp/wb-rel-installer'
-evidence_root='/home/draco/.local/state/nightwatch/reports/wb-release/installer'
+evidence_root="${GOSX_SMOKE_EVIDENCE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gosx/installer-smoke}"
 nuget_url='https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4191.47/microsoft.web.webview2.1.0.4191.47.nupkg'
 nuget_sha='f492bbf547d0da329553b6727435b677579b1e9f91cc9e4a1ad029366d5f23d0'
 loader_sha='c66e4a92fdc7a216118e43b7a5024ea2200e8c43f9310bf20d96a0084f82c5bc'

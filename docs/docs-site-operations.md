@@ -17,8 +17,9 @@ the guides describe.
 
 Production must set `PUBLIC_URL`, `GOSX_DOCS_REVISION`,
 `GOSX_DOCS_BUILT_AT`, and the out-of-band `SESSION_SECRET`. The checked-in
-Kubernetes manifest intentionally contains placeholders for the image digest
-and build identity; applying it directly is expected to fail image resolution.
+Kubernetes manifest intentionally contains placeholders for the image
+repository, namespace, image digest, and build identity; applying it directly
+is expected to fail image resolution.
 
 ## Deploy
 
@@ -27,10 +28,18 @@ Docker, `kubectl`, `jq`, TinyGo 0.41.1, registry credentials, and the target
 Kubernetes context configured:
 
 ```sh
+GOSX_DOCS_REGISTRY=registry.example.com/team/gosx-docs \
+GOSX_DOCS_NAMESPACE=docs \
 TINYGO=/opt/tinygo-0.41.1/bin/tinygo \
 GOSX_TINYGO_GOROOT=/opt/go1.25.5 \
   scripts/deploy-gosx-docs.sh
 ```
+
+`GOSX_DOCS_REGISTRY` is the image repository and `GOSX_DOCS_NAMESPACE` is the
+target Kubernetes namespace. Both are site-specific, so they stay out of the
+repository: export them, or define them in `$HOME/.config/gosx/deploy.env`
+(set `GOSX_DEPLOY_ENV` to use another file). The script refuses to run without
+both values.
 
 `GOSX_TINYGO_GOROOT` must point at the Go 1.25.5 compatibility toolchain used
 by TinyGo. The target Deployment and `gosx-docs` Secret must already exist; the
@@ -61,6 +70,10 @@ The container root is read-only. An init container copies the image's staged
 HTML into a bounded writable `emptyDir` mounted at `/opt/gosx-docs/static`, so
 the default ISR store can refresh an artifact without making the rest of the
 image writable.
+
+The optional redirect manifest `deploy/gosx-demo.yaml` uses the same
+`__NAMESPACE__` placeholder. Render it before applying:
+`sed "s/__NAMESPACE__/$GOSX_DOCS_NAMESPACE/g" deploy/gosx-demo.yaml | kubectl apply -f -`.
 
 For an image-only rollout, build `Dockerfile.runtime` with
 `GOSX_DOCS_IMAGE_REVISION` and `GOSX_DOCS_IMAGE_BUILT_AT` build arguments from
@@ -99,8 +112,8 @@ The Deployment retains five revisions. Inspect and undo with standard
 Kubernetes rollout commands, then run the same public smoke gate:
 
 ```sh
-kubectl rollout history -n draco-quest deployment/gosx-docs
-kubectl rollout undo -n draco-quest deployment/gosx-docs
-kubectl rollout status -n draco-quest deployment/gosx-docs --timeout=5m
+kubectl rollout history -n "$GOSX_DOCS_NAMESPACE" deployment/gosx-docs
+kubectl rollout undo -n "$GOSX_DOCS_NAMESPACE" deployment/gosx-docs
+kubectl rollout status -n "$GOSX_DOCS_NAMESPACE" deployment/gosx-docs --timeout=5m
 scripts/smoke-gosx-docs.sh https://gosx.m31labs.dev
 ```

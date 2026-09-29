@@ -1,8 +1,22 @@
 #!/usr/bin/env sh
 set -eu
 
-registry="harbor.draco.quest/orchard/gosx-docs"
-namespace="draco-quest"
+# Site-specific values stay out of the repository. Export them, or define them
+# in the file named by GOSX_DEPLOY_ENV (default: $HOME/.config/gosx/deploy.env).
+# Exported values win over the file.
+registry="${GOSX_DOCS_REGISTRY:-}"
+namespace="${GOSX_DOCS_NAMESPACE:-}"
+deploy_env="${GOSX_DEPLOY_ENV:-${HOME:-}/.config/gosx/deploy.env}"
+if [ -f "$deploy_env" ]; then
+	# shellcheck disable=SC1090
+	. "$deploy_env"
+	registry="${registry:-${GOSX_DOCS_REGISTRY:-}}"
+	namespace="${namespace:-${GOSX_DOCS_NAMESPACE:-}}"
+fi
+if [ -z "$registry" ] || [ -z "$namespace" ]; then
+	echo "gosx docs deploy: set GOSX_DOCS_REGISTRY (image repository, for example registry.example.com/team/gosx-docs) and GOSX_DOCS_NAMESPACE (target Kubernetes namespace), or define them in ${deploy_env}" >&2
+	exit 1
+fi
 deployment="gosx-docs"
 container="gosx-docs"
 init_container="stage-isr"
@@ -294,6 +308,8 @@ immutable_image="${registry}@sha256:${digest}"
 manifest="$(mktemp)"
 
 sed \
+	-e "s|__IMAGE_REPOSITORY__|${registry}|g" \
+	-e "s/__NAMESPACE__/${namespace}/g" \
 	-e "s/__IMAGE_DIGEST__/${digest}/g" \
 	-e "s/__GIT_REVISION__/${revision}/g" \
 	-e "s/__BUILT_AT__/${built_at}/g" \
