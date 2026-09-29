@@ -1568,7 +1568,9 @@
     }
   }
 
-  function sceneHTMLPerspectiveTransform(element, corners) {
+  // element is the overlay host (its measured size is cached on it); corners are
+  // the four projected plane corners, with null entries behind the camera.
+  function sceneHTMLPerspectiveTransform(element: any, corners: any) {
     if (!Array.isArray(corners) || corners.length !== 4) return null;
     for (const point of corners) {
       if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;

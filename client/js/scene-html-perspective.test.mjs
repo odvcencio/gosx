@@ -19,7 +19,9 @@ function functionSource(source, name) {
     if (source[index] === "{") depth += 1;
     if (source[index] === "}") {
       depth -= 1;
-      if (depth === 0) return source.slice(start, index + 1);
+      // Sources are TypeScript; the test harness runs plain JavaScript, so drop
+      // the ": any" parameter annotations.
+      if (depth === 0) return source.slice(start, index + 1).replace(/\b(\w+): any\b/g, "$1");
     }
   }
   throw new Error(`unterminated function ${name}`);
