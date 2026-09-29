@@ -40,6 +40,12 @@ test("physical sky normalizes, clamps, and packs the Go golden parameter block",
   const hidden = new Float32Array(16);
   api.sceneSkyPhysicalParams({ mode: "physical", sunDiskRadius: -1 }, hidden, 0);
   assert.equal(hidden[11], 2, "a negative disk radius hides the sun");
+  const below = new Float32Array(16);
+  for (const el of [-0.5, -2, -6]) {
+    const r = el * Math.PI / 180;
+    api.sceneSkyPhysicalParams({ mode: "physical", rayleigh: 0.001, sunDirection: { x: 0, y: Math.sin(r), z: -Math.cos(r) } }, below, 0);
+    for (let i = 0; i < 8; i++) assert.ok(Number.isFinite(below[i]) && below[i] >= 0, `param ${i} at ${el} degrees: ${below[i]}`);
+  }
   assert.match(api.sceneSkyPhysicalShaderSource("glsl"), /vec3 gosxPhysicalSky\(/);
   assert.match(api.sceneSkyPhysicalShaderSource("wgsl"), /fn gosxPhysicalSky\(/);
   h.renderer.dispose();

@@ -81,8 +81,8 @@
     "  float g2 = g * g;",
     "  float mPhase = 0.0795775 * (1. - g2) / pow(max(1. - 2. * g * ct + g2, 1e-6), 1.5);",
     "  vec3 scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3(1e-30));",
-    "  vec3 lin = pow(betaR.w * scatter * (1. - fex), vec3(1.5));",
-    "  lin *= mix(vec3(1.), pow(betaR.w * scatter * fex, vec3(.5)), clamp(pow(1. - sun.y, 5.), 0., 1.));",
+    "  vec3 lin = pow(max(betaR.w * scatter * (1. - fex), vec3(0.)), vec3(1.5));",
+    "  lin *= mix(vec3(1.), pow(max(betaR.w * scatter * fex, vec3(0.)), vec3(.5)), clamp(pow(max(1. - sun.y, 0.), 5.), 0., 1.));",
     "  float disk = sun.w <= 1. ? smoothstep(sun.w, sun.w + 0.00002, ct) : 0.;",
     "  vec3 l0 = 0.1 * fex + betaR.w * 19000. * fex * disk;",
     "  vec3 c = (lin + l0) * 0.04 + vec3(0., 0.0003, 0.00075);",
@@ -100,8 +100,8 @@
     "  let g2 = g * g;",
     "  let mPhase = 0.0795775 * (1.0 - g2) / pow(max(1.0 - 2.0 * g * ct + g2, 1e-6), 1.5);",
     "  let scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3f(1e-30));",
-    "  var lin = pow(betaR.w * scatter * (1.0 - fex), vec3f(1.5));",
-    "  lin = lin * mix(vec3f(1.0), pow(betaR.w * scatter * fex, vec3f(0.5)), clamp(pow(1.0 - sun.y, 5.0), 0.0, 1.0));",
+    "  var lin = pow(max(betaR.w * scatter * (1.0 - fex), vec3f(0.0)), vec3f(1.5));",
+    "  lin = lin * mix(vec3f(1.0), pow(max(betaR.w * scatter * fex, vec3f(0.0)), vec3f(0.5)), clamp(pow(max(1.0 - sun.y, 0.0), 5.0), 0.0, 1.0));",
     "  var disk = 0.0;",
     "  if (sun.w <= 1.0) { disk = smoothstep(sun.w, sun.w + 0.00002, ct); }",
     "  let l0 = 0.1 * fex + betaR.w * 19000.0 * fex * disk;",
@@ -146,7 +146,7 @@
     var zenith = Math.acos(Math.max(-1, Math.min(1, sy)));
     var sunE = 1000 * Math.max(0, 1 - Math.exp(-((Math.PI / 1.95 - zenith) / 1.5)));
     var sunFade = 1 - Math.max(0, Math.min(1, 1 - Math.exp(sy)));
-    var rayleighCoefficient = rayleigh - (1 - sunFade), c = 0.2 * turbidity * 10e-18;
+    var rayleighCoefficient = Math.max(0, rayleigh - (1 - sunFade)), c = 0.2 * turbidity * 10e-18;
     var totalRayleigh = [5.804542996261093e-6, 1.3562911419845635e-5, 3.0265902468824876e-5];
     var mieConst = [1.8399918514433978e14, 2.7798023919660528e14, 4.0790479543861094e14];
     for (var i = 0; i < 3; i++) {

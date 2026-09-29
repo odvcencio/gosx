@@ -685,12 +685,10 @@ const budgets = [
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
   // The physical sky (Sky Mode "physical": shared GLSL and WGSL scattering
-  // functions, the parameter block and normalization) adds 4,351 raw, 1,673
-  // gzip and 1,313 Brotli bytes: 1_772_255 -> 1_776_606 raw, 489_437 ->
-  // 491_110 gzip, 392_618 -> 393_931 Brotli. Raise by the smallest 100-byte
-  // steps that clear the hard limits: raw 1_709_400 -> 1_711_100 and gzip
-  // 474_100 -> 474_800; Brotli keeps headroom.
-  { file: "bootstrap.js", raw: 1_711_100, gzip: 474_800, brotli: 377_700 },
+  // functions, the parameter block and normalization) measures 1_776_701 raw,
+  // 491_118 gzip and 394_089 Brotli (main: 1_772_255 / 489_437 / 392_618).
+  // Targets rise by the smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap.js", raw: 1_711_200, gzip: 474_800, brotli: 377_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1804,11 +1802,10 @@ const routeBudgets = [
     // The complete motion fix measures 1,355,038 / 367,463 / 309,371 on this
     // route. Raising gzip's target by 100 bytes leaves 1,247 / 1,121 / 1,219
     // bytes of hard-limit headroom for raw, gzip, and Brotli.
-    // The physical sky measures this route at 1_359_318 / 369_175 / 310_703.
-    // Raise by the smallest 100-byte steps: raw 1_291_700 -> 1_294_700, gzip
-    // 352_200 -> 352_800, Brotli 295_800 -> 296_100.
+    // The physical sky measures this route at 1_359_413 / 369_189 / 310_857.
+    // Targets rise by the smallest 100-byte steps that clear the hard limits.
     raw: 1_294_700,
-    gzip: 352_800,
+    gzip: 352_900,
     brotli: 296_100,
   },
   {
@@ -1976,12 +1973,11 @@ const routeBudgets = [
     // source below.
     // The complete motion fix measures 1,204,868 / 339,499 / 286,726 on this
     // route. Reviewed hard-limit headroom is 1,372 / 1,121 / 1,079 bytes.
-    // The physical sky measures this route at 1_209_238 / 341_280 / 288_030.
-    // Raise by the smallest 100-byte steps: raw 1_148_800 -> 1_151_700, gzip
-    // 324_400 -> 325_100, Brotli 274_100 -> 274_400.
-    raw: 1_151_700,
+    // The physical sky measures this route at 1_209_333 / 341_294 / 288_184.
+    // Targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_151_800,
     gzip: 325_100,
-    brotli: 274_400,
+    brotli: 274_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2150,12 +2146,11 @@ const routeBudgets = [
     // 335_000 for headroom. Gzip headroom is unchanged.
     // The complete motion fix measures 1,608,681 / 438,588 / 369,624 on this
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
-    // The physical sky measures this route at 1_613_403 / 440_469 / 371_041.
-    // Raise by the smallest 100-byte steps: gzip 423_300 -> 424_100, Brotli
-    // 354_300 -> 354_800; raw keeps headroom.
+    // The physical sky measures this route at 1_613_498 / 440_483 / 371_195.
+    // Targets rise by the smallest 100-byte steps that clear the hard limits.
     raw: 1_551_400,
     gzip: 424_100,
-    brotli: 354_800,
+    brotli: 354_900,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2301,10 +2296,9 @@ const routeBudgets = [
     // 256_268.
     // The complete motion fix measures 1,202,669 / 324,104 / 270,997 on this
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
-    // The physical sky measures this route at 1_207_045 / 325_851 / 272_232.
-    // Raise by the smallest 100-byte steps: raw 1_148_200 -> 1_149_600, gzip
-    // 309_700 -> 310_400, Brotli 259_100 -> 259_500.
-    raw: 1_149_600,
+    // The physical sky measures this route at 1_207_140 / 325_865 / 272_386.
+    // Targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_149_700,
     gzip: 310_400,
     brotli: 259_500,
   },

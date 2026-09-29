@@ -82,7 +82,9 @@ func newPhysicalSkyParams(s Sky) physicalSkyParams {
 	zenith := math.Acos(math.Max(-1, math.Min(1, sun.Y)))
 	p.sunE = physicalSkySunEE * math.Max(0, 1-math.Exp(-((physicalSkySunCutoff-zenith)/physicalSkySunSteepness)))
 	p.sunFade = 1 - math.Max(0, math.Min(1, 1-math.Exp(sun.Y)))
-	rayleighCoefficient := rayleigh - (1 - p.sunFade)
+	// Below the horizon the fade can exceed a small authored Rayleigh value;
+	// a negative coefficient would make the extinction grow and pow() NaN.
+	rayleighCoefficient := math.Max(0, rayleigh-(1-p.sunFade))
 	c := 0.2 * turbidity * 10e-18
 	for i := 0; i < 3; i++ {
 		p.betaR[i] = physicalSkyTotalRayleigh[i] * rayleighCoefficient
@@ -131,8 +133,8 @@ func (p physicalSkyParams) radiance(dir Vector3) [3]float64 {
 	for i := 0; i < 3; i++ {
 		fex := math.Exp(-(p.betaR[i]*sR + p.betaM[i]*sM))
 		scatter := (p.betaR[i]*rPhase + p.betaM[i]*mPhase) / math.Max(p.betaR[i]+p.betaM[i], 1e-30)
-		lin := math.Pow(p.sunE*scatter*(1-fex), 1.5)
-		lin *= mix1(1, math.Pow(p.sunE*scatter*fex, 0.5), horizonMix)
+		lin := math.Pow(math.Max(p.sunE*scatter*(1-fex), 0), 1.5)
+		lin *= mix1(1, math.Pow(math.Max(p.sunE*scatter*fex, 0), 0.5), horizonMix)
 		l0 := 0.1*fex + p.sunE*19000*fex*disk
 		color := (lin+l0)*0.04 + offset[i]
 		out[i] = math.Pow(math.Max(color, 0), exponent) * p.intensity
