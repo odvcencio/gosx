@@ -20,7 +20,7 @@ func TestGenerateAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"beach-v2.glb", "beach-v2-albedo.png", "beach-v2-mr.png", "sand-normal.png", "stacks-v2.glb", "monolith-v2.glb"}
+	want := []string{"beach-v2.glb", "beach-v2-albedo.png", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "stacks-v2.glb", "monolith-v2.glb"}
 	if len(first) != len(want) {
 		t.Fatalf("got %d output files, want %d", len(first), len(want))
 	}

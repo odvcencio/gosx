@@ -61,7 +61,12 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("monolith GLB: %w", err)
 	}
+	height, err := makeBathymetry(noise)
+	if err != nil {
+		return nil, err
+	}
 	return map[string][]byte{
+		"beach-v2-height.png": height,
 		"beach-v2.glb":        beachGLB,
 		"beach-v2-albedo.png": albedo,
 		"beach-v2-mr.png":     mr,
@@ -80,7 +85,7 @@ func Write(outDir string, seed int64) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.png", "beach-v2-mr.png", "sand-normal.png", "stacks-v2.glb", "monolith-v2.glb"} {
+	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.png", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "stacks-v2.glb", "monolith-v2.glb"} {
 		if err := os.WriteFile(filepath.Join(outDir, name), files[name], 0o644); err != nil {
 			return err
 		}
@@ -452,3 +457,30 @@ func cross(a, b vec3) vec3                { return vec3{a.y*b.z - a.z*b.y, a.z*b
 func sub(a, b vec3) vec3                  { return vec3{a.x - b.x, a.y - b.y, a.z - b.z} }
 func dot(a, b vec3) float64               { return a.x*b.x + a.y*b.y + a.z*b.z }
 func scaleVec(a vec3, scale float64) vec3 { return vec3{a.x * scale, a.y * scale, a.z * scale} }
+
+// Bathymetry heightmap for scene.Ocean: the terrain height function sampled
+// over a wider area than the mesh, so the far sea floor and the headlands
+// beyond the mesh edges still read correctly. R = (h - BathymetryMinHeight) /
+// (BathymetryMaxHeight - BathymetryMinHeight), row 0 at BathymetryMinZ.
+const (
+	BathymetrySize      = 256
+	BathymetryMinX      = -80.0
+	BathymetryMaxX      = 80.0
+	BathymetryMinZ      = -60.0
+	BathymetryMaxZ      = 50.0
+	BathymetryMinHeight = -8.0
+	BathymetryMaxHeight = 4.0
+)
+
+func makeBathymetry(n noiseField) ([]byte, error) {
+	img := image.NewGray(image.Rect(0, 0, BathymetrySize, BathymetrySize))
+	for y := 0; y < BathymetrySize; y++ {
+		z := BathymetryMinZ + (float64(y)+0.5)/BathymetrySize*(BathymetryMaxZ-BathymetryMinZ)
+		for x := 0; x < BathymetrySize; x++ {
+			wx := BathymetryMinX + (float64(x)+0.5)/BathymetrySize*(BathymetryMaxX-BathymetryMinX)
+			v := (terrainHeight(n, wx, z) - BathymetryMinHeight) / (BathymetryMaxHeight - BathymetryMinHeight)
+			img.Pix[y*img.Stride+x] = uint8(math.Round(math.Max(0, math.Min(1, v)) * 255))
+		}
+	}
+	return encodePNG(img)
+}
