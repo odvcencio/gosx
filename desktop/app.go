@@ -53,18 +53,26 @@ type Options struct {
 	// before the WebView2 environment is created. WebView2 reads this from the
 	// process environment, so it applies to every environment in this process.
 	AdditionalBrowserArguments string
-	Debug                      bool
-	UserDataDir                string
+	// GPU selects the adapter WebView2 renders on (high performance, low
+	// power, or one adapter by LUID). The switches are added to the
+	// process-wide browser arguments. An operator's
+	// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS value that names a GPU switch
+	// overrides this option.
+	GPU         GPUOptions
+	Debug       bool
+	UserDataDir string
 	// BackgroundColor ("#RGB" or "#RRGGBB") paints the native window and the
 	// WebView2 default background before the page draws, so a dark app does
 	// not flash white at startup. Empty keeps the system window color and
 	// the WebView2 default (white).
 	BackgroundColor string
-	MuteAudio       bool
-	SingleInstance  bool
-	DPIAwareness    DPIAwareness
-	Accessibility   AccessibilityOptions
-	CrashReporter   CrashReporterOptions
+	// MuteAudio silences HTML media elements and passes --mute-audio to
+	// WebView2, which also silences Web Audio (AudioContext, AudioWorklet).
+	MuteAudio      bool
+	SingleInstance bool
+	DPIAwareness   DPIAwareness
+	Accessibility  AccessibilityOptions
+	CrashReporter  CrashReporterOptions
 	// DevTools enables the Chromium inspector. Independent of Debug so a
 	// production build can temporarily flip dev-tools on for field
 	// diagnosis without enabling the rest of the Debug surface (default
@@ -796,6 +804,11 @@ func normalizeOptions(options Options) (Options, error) {
 		return Options{}, err
 	}
 	options.DPIAwareness = dpi
+	gpu, err := normalizeGPUOptions(options.GPU)
+	if err != nil {
+		return Options{}, err
+	}
+	options.GPU = gpu
 	_, background, _, err := parseBackgroundColor(options.BackgroundColor)
 	if err != nil {
 		return Options{}, err

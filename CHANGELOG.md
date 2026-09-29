@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added: WebView2 GPU selection; fixed: operator browser arguments were dropped
+
+- Add `Options.GPU` (`GPUPreferenceHighPerformance`, `GPUPreferenceLowPower`,
+  or one adapter by `AdapterLUID`) and `desktop.GPUAdapters()`, which lists the
+  hardware DXGI adapters and their LUIDs. `gosx desktop --gpu` sets the
+  preference.
+- Fix: a desktop app that set `AdditionalBrowserArguments` replaced any
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` value already in the environment,
+  so operator and test overrides (for example a GPU adapter) were ignored.
+  The app's switches now come first and the operator's value last; an
+  operator GPU switch replaces the app's GPU switch.
+- `Options.MuteAudio` now also passes `--mute-audio`, which silences Web
+  Audio as well as media elements.
 ### Added: desktop startup timeline, navigation event, and background color
 
 - Add `App.StartupTimeline()`, which reports when the window was created and

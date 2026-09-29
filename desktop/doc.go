@@ -12,7 +12,12 @@
 // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS before the WebView2 environment is
 // created. WebView2 reads this process-wide variable, so the value applies to
 // every WebView2 environment in the process. For example, games can request
-// --mute-audio or --autoplay-policy=no-user-gesture-required.
+// --autoplay-policy=no-user-gesture-required. A value already present in
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS when the app starts is kept and
+// placed last, so an operator can override the app's switches. Options.GPU
+// adds --force_high_performance_gpu, --force_low_power_gpu, or
+// --use-adapter-luid to pick the rendering adapter, and Options.MuteAudio
+// adds --mute-audio.
 //
 // When Options.Debug is false, the backend disables browser accelerator keys,
 // browser zoom controls, and the WebView2 status bar. Debug mode leaves these

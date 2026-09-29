@@ -312,10 +312,12 @@ func (a *windowsApp) createWebView() error {
 	if err != nil {
 		return err
 	}
-	if a.options.AdditionalBrowserArguments != "" {
-		if err := os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", a.options.AdditionalBrowserArguments); err != nil {
-			return fmt.Errorf("set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: %w", err)
-		}
+	// Merge the app's switches with any value the operator already set, so
+	// field and test overrides (for example a GPU adapter) still apply.
+	// Write the composed value every time: an earlier app in this process
+	// may have left its own switches in the process-wide variable.
+	if err := setBrowserArgumentsEnv(composeBrowserArguments(a.options, operatorBrowserArguments())); err != nil {
+		return err
 	}
 
 	handler := newEnvironmentCompletedHandler(a)

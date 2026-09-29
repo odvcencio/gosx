@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -229,6 +230,61 @@ func TestNewUnsupportedPlatform(t *testing.T) {
 	_, err := New(Options{})
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestComposeBrowserArguments(t *testing.T) {
+	tests := []struct {
+		name     string
+		options  Options
+		operator string
+		want     string
+	}{
+		{name: "empty", want: ""},
+		{name: "app only", options: Options{AdditionalBrowserArguments: " --no-first-run "}, want: "--no-first-run"},
+		{name: "operator kept last", options: Options{AdditionalBrowserArguments: "--no-first-run"}, operator: "--use-angle=d3d11", want: "--no-first-run --use-angle=d3d11"},
+		{name: "operator only", operator: "--use-angle=d3d11", want: "--use-angle=d3d11"},
+		{name: "high performance", options: Options{GPU: GPUOptions{Preference: GPUPreferenceHighPerformance}}, want: "--force_high_performance_gpu"},
+		{name: "low power", options: Options{GPU: GPUOptions{Preference: GPUPreferenceLowPower}}, want: "--force_low_power_gpu"},
+		{name: "adapter wins over preference", options: Options{GPU: GPUOptions{Preference: GPUPreferenceLowPower, AdapterLUID: GPUAdapterLUID{High: 0, Low: 81115}}}, want: "--use-adapter-luid=0,81115"},
+		{name: "negative high part", options: Options{GPU: GPUOptions{AdapterLUID: GPUAdapterLUID{High: -1, Low: 4294967295}}}, want: "--use-adapter-luid=-1,4294967295"},
+		{name: "operator GPU switch drops app GPU switch", options: Options{AdditionalBrowserArguments: "--no-first-run", GPU: GPUOptions{Preference: GPUPreferenceHighPerformance}}, operator: "--force_low_power_gpu --use-adapter-luid=0,90433", want: "--no-first-run --force_low_power_gpu --use-adapter-luid=0,90433"},
+		{name: "mute audio", options: Options{MuteAudio: true}, want: "--mute-audio"},
+		{name: "mute audio not repeated", options: Options{MuteAudio: true, AdditionalBrowserArguments: "--mute-audio"}, want: "--mute-audio"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := composeBrowserArguments(tt.options, tt.operator); got != tt.want {
+				t.Fatalf("composeBrowserArguments() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewRejectsUnknownGPUPreference(t *testing.T) {
+	_, err := normalizeOptions(Options{GPU: GPUOptions{Preference: "fastest"}})
+	if !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("normalizeOptions error = %v, want ErrInvalidOptions", err)
+	}
+	options, err := normalizeOptions(Options{GPU: GPUOptions{Preference: GPUPreferenceHighPerformance}})
+	if err != nil || options.GPU.Preference != GPUPreferenceHighPerformance {
+		t.Fatalf("normalizeOptions = %+v, %v", options.GPU, err)
+	}
+}
+
+func TestSetBrowserArgumentsEnvReplacesEarlierValue(t *testing.T) {
+	t.Setenv(webView2BrowserArgumentsEnv, "--from-an-earlier-app")
+	if err := setBrowserArgumentsEnv(""); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := os.LookupEnv(webView2BrowserArgumentsEnv); ok {
+		t.Fatalf("empty composition left %q in the environment", value)
+	}
+	if err := setBrowserArgumentsEnv("--force_low_power_gpu"); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv(webView2BrowserArgumentsEnv); got != "--force_low_power_gpu" {
+		t.Fatalf("environment = %q", got)
 	}
 }
 
