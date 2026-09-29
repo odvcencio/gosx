@@ -55,11 +55,16 @@ type Options struct {
 	AdditionalBrowserArguments string
 	Debug                      bool
 	UserDataDir                string
-	MuteAudio                  bool
-	SingleInstance             bool
-	DPIAwareness               DPIAwareness
-	Accessibility              AccessibilityOptions
-	CrashReporter              CrashReporterOptions
+	// BackgroundColor ("#RGB" or "#RRGGBB") paints the native window and the
+	// WebView2 default background before the page draws, so a dark app does
+	// not flash white at startup. Empty keeps the system window color and
+	// the WebView2 default (white).
+	BackgroundColor string
+	MuteAudio       bool
+	SingleInstance  bool
+	DPIAwareness    DPIAwareness
+	Accessibility   AccessibilityOptions
+	CrashReporter   CrashReporterOptions
 	// DevTools enables the Chromium inspector. Independent of Debug so a
 	// production build can temporarily flip dev-tools on for field
 	// diagnosis without enabling the rest of the Debug surface (default
@@ -99,6 +104,11 @@ type Options struct {
 	// dispatcher thread. Keep the callback short; call App.Reload if the
 	// application decides that reloading is appropriate.
 	OnProcessFailed func(ProcessFailedKind)
+
+	// OnNavigationCompleted fires on the WebView2 dispatcher thread when a
+	// top-level navigation finishes. Keep it short. App.StartupTimeline
+	// reports the first navigation's completion time.
+	OnNavigationCompleted func(NavigationCompleted)
 
 	// OnWindowCreated fires after a native window handle has been created.
 	// The initial Windows backend invokes it for the primary window.
@@ -786,6 +796,11 @@ func normalizeOptions(options Options) (Options, error) {
 		return Options{}, err
 	}
 	options.DPIAwareness = dpi
+	_, background, _, err := parseBackgroundColor(options.BackgroundColor)
+	if err != nil {
+		return Options{}, err
+	}
+	options.BackgroundColor = background
 	if options.Accessibility.Enabled && options.Accessibility.Name == "" {
 		options.Accessibility.Name = options.Title
 	}

@@ -231,3 +231,51 @@ func TestNewUnsupportedPlatform(t *testing.T) {
 		t.Fatalf("error = %v, want ErrUnsupported", err)
 	}
 }
+
+func TestParseBackgroundColor(t *testing.T) {
+	tests := []struct {
+		in        string
+		canonical string
+		color     rgbColor
+		set       bool
+		wantErr   bool
+	}{
+		{in: "", set: false},
+		{in: "#131007", canonical: "#131007", color: rgbColor{0x13, 0x10, 0x07}, set: true},
+		{in: " #ABCDEF ", canonical: "#abcdef", color: rgbColor{0xab, 0xcd, 0xef}, set: true},
+		{in: "#fff", canonical: "#ffffff", color: rgbColor{0xff, 0xff, 0xff}, set: true},
+		{in: "131007", wantErr: true},
+		{in: "#12345", wantErr: true},
+		{in: "#gggggg", wantErr: true},
+		{in: "#1234567", wantErr: true},
+	}
+	for _, tt := range tests {
+		color, canonical, set, err := parseBackgroundColor(tt.in)
+		if tt.wantErr {
+			if !errors.Is(err, ErrInvalidOptions) {
+				t.Fatalf("parseBackgroundColor(%q) error = %v, want ErrInvalidOptions", tt.in, err)
+			}
+			continue
+		}
+		if err != nil || color != tt.color || canonical != tt.canonical || set != tt.set {
+			t.Fatalf("parseBackgroundColor(%q) = %+v, %q, %v, %v", tt.in, color, canonical, set, err)
+		}
+	}
+	options, err := normalizeOptions(Options{BackgroundColor: "#ABC"})
+	if err != nil || options.BackgroundColor != "#aabbcc" {
+		t.Fatalf("normalizeOptions background = %q, %v", options.BackgroundColor, err)
+	}
+	if _, err := normalizeOptions(Options{BackgroundColor: "dark"}); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("normalizeOptions(dark) error = %v", err)
+	}
+}
+
+func TestStartupTimelineWithoutReporter(t *testing.T) {
+	var nilApp *App
+	if got := nilApp.StartupTimeline(); got != (StartupTimeline{}) {
+		t.Fatalf("nil app timeline = %+v", got)
+	}
+	if got := (&App{}).StartupTimeline(); got != (StartupTimeline{}) {
+		t.Fatalf("app without backend timeline = %+v", got)
+	}
+}

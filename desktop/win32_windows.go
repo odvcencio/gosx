@@ -37,6 +37,7 @@ const (
 	wmDropFiles      = 0x0233
 	wmGetObject      = 0x003D
 	wmSize           = 0x0005
+	wmEraseBkgnd     = 0x0014
 	wmGetMinMaxInfo  = 0x0024
 	wmKeyDown        = 0x0100
 	wmPowerBroadcast = 0x0218
@@ -524,6 +525,10 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 			if ret := app.handleAccessibilityObject(wparam, lparam); ret != 0 {
 				return ret
 			}
+		}
+	case wmEraseBkgnd:
+		if app != nil && app.paintBackground(hwnd, wparam) {
+			return 1
 		}
 	case wmSize:
 		if app != nil {

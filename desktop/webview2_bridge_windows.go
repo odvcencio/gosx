@@ -17,6 +17,8 @@ import (
 const (
 	// ICoreWebView2 additions.
 	webViewGetSettings                         = 3
+	webViewAddNavigationCompleted              = 15
+	webViewRemoveNavigationCompleted           = 16
 	webViewAddProcessFailed                    = 25
 	webViewRemoveProcessFailed                 = 26
 	webViewAddScriptToExecuteOnDocumentCreated = 27
@@ -222,6 +224,29 @@ func (w *coreWebView2) containsFullScreenElement() (bool, error) {
 		return false, hresultError{Op: "ICoreWebView2.get_ContainsFullScreenElement", Code: hr}
 	}
 	return contains != 0, nil
+}
+
+func (w *coreWebView2) addNavigationCompleted(handler *navigationCompletedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddNavigationCompleted),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_NavigationCompleted", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeNavigationCompleted(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveNavigationCompleted),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_NavigationCompleted", Code: hr}
+	}
+	return nil
 }
 
 func (w *coreWebView2) addProcessFailed(handler *processFailedEventHandler) (int64, error) {
