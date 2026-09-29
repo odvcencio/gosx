@@ -144,7 +144,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			},
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels1440p, Effects: []scene.PostEffect{
-			scene.Bloom{Threshold: 1.2, Strength: 0.3, Radius: 6, Scale: 0.5},
+			scene.Bloom{Threshold: 1.5, Strength: 0.2, Radius: 4, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: period.Exposure},
 			scene.Vignette{Intensity: 0.18},
 			scene.FXAA{},
@@ -156,7 +156,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			scene.Model{ID: "beach", Src: blackglassBeachModelRoot + "beach-v2.glb", Bounds: 90, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "sea-stacks", Src: blackglassBeachModelRoot + "stacks-v2.glb", Bounds: 60, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
-				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: 0.75}, CastShadow: true, ReceiveShadow: true,
+				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: -1.07}, CastShadow: true, ReceiveShadow: true,
 				Material: scene.StandardMaterial{Color: "#050608", Roughness: 0.035, Metalness: 0, Clearcoat: 1}},
 		),
 	}

@@ -32,9 +32,9 @@ func Page() Node {
 				It is GoSX Scene3D, drawing with
 				<output data-gosx-scene3d-status="renderer">starting…</output>
 				<output data-gosx-scene3d-status="fallback" hidden></output>
-				at
+				with
 				<output data-gosx-scene3d-status="frame-p95">measuring…</output>
-				per frame (p95). The sky, sea, sand, glass and light are generated in Go.
+				of render work per frame (p95). The sky, sea, sand, glass and light are generated in Go.
 			</p>
 			<a class="bgb__reveal-link" href="/docs/scene3d" data-gosx-link="true">How it works</a>
 		</aside>

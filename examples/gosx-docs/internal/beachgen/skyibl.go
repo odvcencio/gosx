@@ -43,18 +43,44 @@ const (
 	skyPrefilterRuns  = 256
 )
 
-// groundRadiance darkens directions below the horizon toward black volcanic
-// sand lit by the sky, so the lower hemisphere of the IBL is not sky.
+// groundRadiance fills the hemisphere below the horizon. Toward the open sea
+// (-Z) it is dark water that mirrors the sky with Fresnel weighting; toward
+// land (+Z) it is black volcanic sand lit by the sky. Glossy surfaces (the
+// monolith, wet sand) then reflect a sea horizon instead of more sky.
 func groundRadiance(sky scene.Sky, d ibl.Vec3) (float64, float64, float64) {
 	r, g, b := sky.PhysicalRadiance(scene.Vector3{X: d.X, Y: d.Y, Z: d.Z}, false)
 	if d.Y >= 0 {
 		return r, g, b
 	}
 	ur, ug, ub := sky.PhysicalRadiance(scene.Vector3{Y: 1}, false)
+	// Sea: reflect the direction about the surface and weight by Fresnel.
+	cosI := -d.Y
+	fresnel := 0.02 + 0.98*math.Pow(1-cosI, 5)
+	rr, rg, rb := sky.PhysicalRadiance(scene.Vector3{X: d.X, Y: -d.Y, Z: d.Z}, false)
+	deep := [3]float64{0.012, 0.045, 0.06} // linear deep-water body colour times sky light
+	sea := [3]float64{
+		fresnel*rr + (1-fresnel)*deep[0]*ur*3,
+		fresnel*rg + (1-fresnel)*deep[1]*ug*3,
+		fresnel*rb + (1-fresnel)*deep[2]*ub*3,
+	}
 	const sandAlbedo = 0.045
-	t := math.Min(1, -d.Y/0.12)
-	mix := func(a, b float64) float64 { return a + (b-a)*t }
-	return mix(r, sandAlbedo*ur*2), mix(g, sandAlbedo*ug*2), mix(b, sandAlbedo*ub*2)
+	sand := [3]float64{sandAlbedo * ur * 2, sandAlbedo * ug * 2, sandAlbedo * ub * 2}
+	// Sea toward -Z, sand toward +Z, with a soft seam; the horizon itself
+	// stays continuous with the sky for the first 7 degrees below it.
+	seaWeight := 1 - smoothstepGo(-0.35, 0.35, d.Z)
+	horizon := math.Min(1, -d.Y/0.12)
+	out := [3]float64{}
+	sky3 := [3]float64{r, g, b}
+	for i := range out {
+		ground := seaWeight*sea[i] + (1-seaWeight)*sand[i]
+		out[i] = sky3[i] + (ground-sky3[i])*horizon
+	}
+	return out[0], out[1], out[2]
+}
+
+func smoothstepGo(e0, e1, x float64) float64 {
+	t := math.Max(0, math.Min(1, (x-e0)/(e1-e0)))
+	return t * t * (3 - 2*t)
 }
 
 // BakeSkyIBL renders the period's sky into radiance, irradiance and BRDF
