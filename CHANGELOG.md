@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added: physical sky for Scene3D
+
+- `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
+  scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`
+  (`scene.SunDirectionFromAngles` helps), `Turbidity`, `Rayleigh`,
+  `MieCoefficient`, `MieDirectionalG` and `SunDiskRadius`; zero means the
+  default. `Sky.PhysicalRadiance` evaluates the same model in Go, and
+  `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
+  Canvas2D gets gradient stops computed from the model. Capability
+  `sky-physical`.
+
 ### Fixed: desktop WebView calls from goroutines
 
 - `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,

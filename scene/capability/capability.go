@@ -63,6 +63,7 @@ const (
 	// Sky features cover GPU backgrounds. Canvas2D retains the flat clear color.
 	FeatureSkyEnvironment Feature = "sky-environment"
 	FeatureSkyGradient    Feature = "sky-gradient"
+	FeatureSkyPhysical    Feature = "sky-physical"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -286,6 +287,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	// Both GPU backends draw gradient and environment skies. Canvas2D degrades.
 	FeatureSkyEnvironment: {BackendWebGPU: true, BackendWebGL: true},
 	FeatureSkyGradient:    {BackendWebGPU: true, BackendWebGL: true},
+	FeatureSkyPhysical:    {BackendWebGPU: true, BackendWebGL: true},
 }
 
 func supports(b Backend, f Feature) bool {
