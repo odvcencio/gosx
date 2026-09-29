@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 powerShell='/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 windows_root='/mnt/c/Temp/wb-rel-installer'
-evidence_root='/home/draco/.local/state/nightwatch/reports/wb-release/installer'
+evidence_root="${GOSX_SMOKE_EVIDENCE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gosx/installer-smoke}"
 
 if [[ ! -x "$powerShell" ]] || ! command -v wslpath >/dev/null 2>&1; then
   echo 'ERROR: Windows update-check smoke requires WSL interop and Windows PowerShell at /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe.' >&2

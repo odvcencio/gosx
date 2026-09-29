@@ -6,11 +6,11 @@ set -euo pipefail
 # real-GPU frame, bundle, and install measurements into one checked-in JSON.
 
 repo_root=$(git rev-parse --show-toplevel)
-tools_dir=${SHOWCASE_TOOLS_DIR:-/home/draco/.local/state/nightwatch/reports/gosx-showcase/tools}
+tools_dir=${SHOWCASE_TOOLS_DIR:?set SHOWCASE_TOOLS_DIR to a directory holding lh.sh and node_modules/{lighthouse,playwright}}
 base_url=${SHOWCASE_BASE_URL:-http://localhost:8118}
-evidence_dir=${SHOWCASE_EVIDENCE_DIR:-/home/draco/.local/state/nightwatch/reports/gosx-showcase/lanes/showcase-system/receipts}
+evidence_dir=${SHOWCASE_EVIDENCE_DIR:-${TMPDIR:-/tmp}/gosx-showcase-receipts}
 dist_dir=${SHOWCASE_DIST_DIR:-$repo_root/examples/gosx-docs/dist}
-cdp_url=${CDP_URL:-http://172.29.240.1:8119}
+cdp_url=${CDP_URL:-http://localhost:8119}
 
 if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   echo "commit the source tree before generating receipts so the recorded SHA names the measured build" >&2

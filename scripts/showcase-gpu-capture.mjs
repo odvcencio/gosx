@@ -10,7 +10,10 @@ import {
 } from './showcase-gpu-cadence.mjs';
 
 const require = createRequire(import.meta.url);
-const toolsDir = process.env.SHOWCASE_TOOLS_DIR || '/home/draco/.local/state/nightwatch/reports/gosx-showcase/tools';
+const toolsDir = process.env.SHOWCASE_TOOLS_DIR;
+if (!toolsDir) {
+  throw new Error('set SHOWCASE_TOOLS_DIR to a directory that contains node_modules/playwright');
+}
 const { chromium } = require(path.join(toolsDir, 'node_modules/playwright'));
 const [base, outDir, label, ...paths] = process.argv.slice(2);
 if (!base || !outDir || !label || paths.length === 0) {
@@ -66,7 +69,7 @@ const sortedStats = values => {
 };
 
 fs.mkdirSync(outDir, { recursive: true });
-const browser = await chromium.connectOverCDP(process.env.CDP_URL || 'http://172.29.240.1:8119');
+const browser = await chromium.connectOverCDP(process.env.CDP_URL || 'http://localhost:8119');
 const rows = [];
 try {
   for (const route of paths) {
