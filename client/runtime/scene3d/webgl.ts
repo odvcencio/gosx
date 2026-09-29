@@ -8518,7 +8518,7 @@
       var emissiveColor = scenePBREmissiveColor(mat);
       gl.uniform3f(uniforms.emissiveColor, emissiveColor[0], emissiveColor[1], emissiveColor[2]);
       gl.uniform1i(uniforms.hasEmissiveColor, scenePBRHasEmissiveColor(mat) ? 1 : 0);
-      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1)); if (uniforms.normalUVScale) gl.uniform2f(uniforms.normalUVScale, sceneNumber(mat.normalUVScale && mat.normalUVScale[0], 1), sceneNumber(mat.normalUVScale && mat.normalUVScale[1], 1));
+      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1)); if (uniforms.normalUVScale) gl.uniform2f(uniforms.normalUVScale, mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1, mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 1);
       gl.uniform1f(uniforms.occlusionStrength, clamp01(sceneNumber(mat.occlusionStrength, 1)));
       var rimColor = scenePBRRimColor(mat);
       gl.uniform3f(uniforms.rimColor, rimColor[0], rimColor[1], rimColor[2]);

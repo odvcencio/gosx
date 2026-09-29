@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-### Added: physical sky for Scene3D
+### Fixed: tiling normal maps from glTF
+
+- A `KHR_texture_transform` scale on `normalTexture` alone (a detail map that
+  tiles while base colour spans the mesh) now reaches the WebGL2 and WebGPU
+  shaders as `normalUVScale`. Before, the loader baked only the base colour
+  transform, so such normal maps stretched across the whole mesh. A transform
+  shared with base colour is still baked into the UVs once.
+
+### Fixed and added: desktop single instance
 
 - `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
   scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`

@@ -650,7 +650,7 @@
   const sceneSharedMaterialProfiles = new Map();
   const sceneObjectMaterialInputKeys = [
     "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
-    "emissive", "emissiveColor", "normalScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
+    "emissive", "emissiveColor", "normalScale", "normalUVScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
     "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineDash",
     "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
     "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout",
@@ -669,6 +669,15 @@
       if (!Object.prototype.hasOwnProperty.call(snapshot, key) || !sceneMaterialInputEqual(value[key], snapshot[key])) return false;
     }
     return true;
+  }
+
+  // sceneNormalUVScale normalizes a normal-map UV scale (a tiling detail map)
+  // to [u, v] with finite positive entries, or returns fallback.
+  function sceneNormalUVScale(value, fallback) {
+    if (!value || typeof value.length !== "number" || value.length < 2) return fallback === undefined ? null : fallback;
+    var u = Number(value[0]), v = Number(value[1]);
+    if (!(u > 0) || !(v > 0) || !isFinite(u) || !isFinite(v)) return fallback === undefined ? null : fallback;
+    return u === 1 && v === 1 ? null : [u, v];
   }
 
   function sceneObjectMaterialProfile(object) {
@@ -730,6 +739,7 @@
       emissive: sceneNonnegativeNumberOrCSSVar(object && object.emissive, sceneDefaultMaterialEmissive(kind)),
       emissiveColor: sceneCopyFiniteRGB(object && object.emissiveColor, undefined),
       normalScale: sceneNumber(object && object.normalScale, 1),
+      normalUVScale: sceneNormalUVScale(object && object.normalUVScale, null),
       occlusionStrength: clamp01(sceneNumber(object && object.occlusionStrength, 1)),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
@@ -825,6 +835,7 @@
       // precision in identity so nearby authored values cannot share a
       // profile or reuse stale uniforms.
       String(sceneNumber(profile && profile.normalScale, 1)),
+      JSON.stringify(sceneNormalUVScale(profile && profile.normalUVScale, null)),
       String(clamp01(sceneNumber(profile && profile.occlusionStrength, 1))),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),

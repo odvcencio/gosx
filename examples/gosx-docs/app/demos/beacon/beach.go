@@ -152,7 +152,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels2048},
 		Graph: scene.NewGraph(
 			scene.DirectionalLight{ID: "sun", Color: period.SunColor, Intensity: period.SunPower, Direction: scene.Vec3(-sun.X, -sun.Y, -sun.Z),
-				CastShadow: true, ShadowBias: -0.0006, ShadowSize: 2048, ShadowCascades: 3, ShadowSoftness: 1.5},
+				CastShadow: true, ShadowBias: -0.0018, ShadowSize: 2048, ShadowCascades: 3, ShadowSoftness: 1.5},
 			scene.Model{ID: "beach", Src: blackglassBeachModelRoot + "beach-v2.glb", Bounds: 90, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "sea-stacks", Src: blackglassBeachModelRoot + "stacks-v2.glb", Bounds: 60, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
