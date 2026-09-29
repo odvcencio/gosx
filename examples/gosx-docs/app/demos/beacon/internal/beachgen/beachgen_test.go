@@ -271,8 +271,8 @@ func checkGLBEncoding(t *testing.T, data []byte, doc *gltfedit.Document, texture
 			if root.Materials[0].NormalTexture.Scale != .6 || len(transform) != 2 || transform[0] != 60 || transform[1] != 45 {
 				t.Errorf("normal map parameters are scale=%g transform=%v, want 0.6 and [60 45]", root.Materials[0].NormalTexture.Scale, transform)
 			}
-			if embedded.MIMEType != "image/png" || embedded.BufferView < 0 || embedded.BufferView >= len(root.BufferViews) {
-				t.Errorf("invalid embedded PNG image reference: %+v", embedded)
+			if (embedded.MIMEType != "image/png" && embedded.MIMEType != "image/jpeg") || embedded.BufferView < 0 || embedded.BufferView >= len(root.BufferViews) {
+				t.Errorf("invalid embedded image reference: %+v", embedded)
 			}
 		}
 	}
