@@ -304,6 +304,12 @@ func (s *PageState) BodyAttrsValue() gosx.AttrList {
 // has rendered, so engines registered by layouts (not just pages) make it
 // into the manifest — the manifest is marshaled when Head() runs.
 func (s *PageState) Head() gosx.Node {
+	// Without a body to inspect, preserve the registered navigation API.
+	// DocumentContext selects it after rendering the complete page body.
+	return s.headWithNavigation(true)
+}
+
+func (s *PageState) headWithNavigation(navigation bool) gosx.Node {
 	if s == nil {
 		return gosx.Text("")
 	}
@@ -312,7 +318,7 @@ func (s *PageState) Head() gosx.Node {
 		nodes = append(nodes, metaHead)
 	}
 	nodes = append(nodes, s.head...)
-	if s.navigationHead != nil {
+	if navigation && s.navigationHead != nil {
 		if nav := s.navigationHead(s.nonce); !nav.IsZero() {
 			nodes = append(nodes, nav)
 		}

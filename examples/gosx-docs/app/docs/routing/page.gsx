@@ -94,12 +94,24 @@ func Page() Node {
 			. GoSX does not expose a file-route rewrite declaration in this release.
 		</p>
 		<h2 id="navigation">Managed navigation</h2>
+		<CodeBlock lang="go" source={data.navigationSample} />
 		<p>
-			Enable navigation on the server with
+			Call
 			<span class="inline-code">app.EnableNavigation()</span>
-			at the composition root. Links marked
+			at the composition root, then use
+			<span class="inline-code">server.Link</span>
+			or mark a template link with
 			<span class="inline-code">data-gosx-link="true"</span>
-			can fetch the next server-rendered document and swap managed content while preserving the browser history contract.
+			. The link fetches the next server-rendered page and swaps its content while preserving browser history.
+		</p>
+		<p>
+			GoSX loads navigation as one external script with a content-hashed URL. The browser can cache it for a year and reuse it across pages. The server supplies Brotli or gzip bytes when supported. A runtime change gets a new URL.
+		</p>
+		<p>
+			The script loads when a page has managed links or forms, navigation features such as countdowns or live bindings, an active client runtime, or managed lifecycle scripts. It also stays available for streamed content. Ordinary same-origin links, GET forms, and framework action forms keep their existing automatic enhancement. Existing apps need no code changes.
+		</p>
+		<p>
+			A static page without these features loads no framework JavaScript. Its links keep native browser behavior. Once loaded, the navigation runtime stays active across page swaps, even when the next page omits the script.
 		</p>
 		<p>
 			The server remains authoritative on every navigation. External links, downloads, modified clicks, and links outside the managed contract continue through native browser navigation.

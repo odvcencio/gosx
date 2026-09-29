@@ -764,8 +764,15 @@
     const currentMarkers = ensureHeadMarkers();
     const head = document.head;
     const currentNodes = collectManagedHeadNodes(head);
+    // Navigation belongs to the original document, including its CSP nonce.
+    // Keep the loaded script even when the next page needs no navigation, and
+    // ignore incoming navigation tags so swaps never fetch or execute it again.
+    const isNavigationScript = function(node) {
+      return isElement(node, "SCRIPT") && node.getAttribute("data-gosx-navigation") === "true";
+    };
     const currentBuckets = new Map();
     for (const node of currentNodes) {
+      if (isNavigationScript(node)) continue;
       const key = headNodeMatchKey(node, window.location.href);
       if (!currentBuckets.has(key)) {
         currentBuckets.set(key, []);
@@ -774,9 +781,10 @@
     }
 
     const nextNodes = collectManagedHeadNodes(nextDoc.head);
-    const orderedNodes = [];
+    const orderedNodes = currentNodes.filter(isNavigationScript);
     const insertedNodes = [];
     for (const node of nextNodes) {
+      if (isNavigationScript(node)) continue;
       const key = headNodeMatchKey(node, baseURL);
       const bucket = currentBuckets.get(key);
       if (bucket && bucket.length > 0) {

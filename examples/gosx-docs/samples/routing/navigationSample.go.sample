@@ -1,0 +1,6 @@
+app := server.New()
+app.EnableNavigation()
+
+app.Page("GET /", func(ctx *server.Context) gosx.Node {
+    return server.Link("/docs", gosx.Text("Read docs"))
+})

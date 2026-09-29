@@ -23,7 +23,7 @@ func buildFileRoutedApp(t *testing.T, layout LayoutFunc) (*server.App, http.Hand
 	router.Add(Route{
 		Pattern: "/",
 		Handler: func(ctx *RouteContext) gosx.Node {
-			return gosx.El("p", gosx.Text("home"))
+			return server.Link("/next", gosx.Text("Next"))
 		},
 	})
 
@@ -81,7 +81,7 @@ func TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript(t *testing.T
 	router.Add(Route{
 		Pattern: "/",
 		Handler: func(ctx *RouteContext) gosx.Node {
-			return gosx.El("p", gosx.Text("home"))
+			return server.Link("/next", gosx.Text("Next"))
 		},
 	})
 	rootHandler, err := router.BuildChecked()
@@ -97,6 +97,22 @@ func TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript(t *testing.T
 	html := getBody(t, handler)
 	if count := strings.Count(html, navScriptOpenTag); count != 1 {
 		t.Fatalf("expected exactly one navigation script tag when Mount runs before EnableNavigation, got %d\n%s", count, html)
+	}
+}
+
+func TestFileRoutedStaticPageOmitsNavigationScript(t *testing.T) {
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument(ctx.Document("Static", body))
+	})
+	router.Add(Route{Pattern: "/", Handler: func(ctx *RouteContext) gosx.Node {
+		return gosx.El("main", gosx.Text("Static page"))
+	}})
+	app := server.New()
+	app.EnableNavigation()
+	app.Mount("/", router.Build())
+	if body := getBody(t, app.Build()); strings.Contains(body, navScriptOpenTag) || strings.Contains(body, `src="/gosx/`) {
+		t.Fatal("static file route shipped framework JavaScript")
 	}
 }
 

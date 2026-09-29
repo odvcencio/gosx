@@ -137,6 +137,8 @@ func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle
 	if s == nil {
 		s = NewPageStateForRequest(request)
 	}
+	bodyHTML := gosx.RenderHTML(body)
+	loadNavigation := navigation && s.needsNavigation(request, bodyHTML)
 	path := documentContextPath(request)
 	// A shared cache stores one body and replays it to every client, so the
 	// document must not name this request. Omit the request ID there.
@@ -165,7 +167,7 @@ func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle
 		doc.Bootstrap = doc.Runtime.Bootstrap
 		doc.RuntimeActive = doc.Runtime.Runtime
 	}
-	doc.Head = gosx.Fragment(s.Head(), documentContractNode(doc))
+	doc.Head = gosx.Fragment(s.headWithNavigation(loadNavigation), documentContractNode(doc))
 	doc.documentContractPrepared = true
 	return doc
 }

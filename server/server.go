@@ -325,8 +325,8 @@ func (a *App) HandleAPI(route APIRoute) {
 	}
 }
 
-// EnableNavigation injects the built-in client-side page navigation runtime
-// into document/head-aware responses.
+// EnableNavigation loads the cached client navigation runtime on pages with
+// navigable links, managed forms, navigation behaviors or a client runtime.
 //
 // Call it any time before Build(): Build() is what wires the navigation-runtime
 // head builder into every mounted NavigationConfigurable handler (see Mount and
@@ -1042,17 +1042,30 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	doc := ctx.documentContext(pattern, defaultTitle, renderedBody, a.navigation)
 	switch {
 	case a.document != nil:
-		return a.document(doc)
+		// A custom document can contribute links outside doc.Body. Check its
+		// final output too, without rendering the callback a second time.
+		rendered := gosx.RenderHTML(a.document(doc))
+		if a.navigation && ctx.needsNavigation(ctx.Request, rendered) {
+			nav := gosx.RenderHTML(navigationScriptWithNonce(ctx.Nonce()))
+			if !strings.Contains(rendered, nav) {
+				return appendDocumentHead(rendered, nav)
+			}
+		}
+		return gosx.RawHTML(rendered)
 	case a.layout != nil:
-		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head())
+		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx)
 	default:
 		return HTMLDocument(doc)
 	}
 }
 
-func renderLegacyLayout(document, extraHead gosx.Node) gosx.Node {
+func renderLegacyLayout(document gosx.Node, ctx *Context) gosx.Node {
 	rendered := gosx.RenderHTML(document)
-	head := gosx.RenderHTML(extraHead)
+	head := gosx.RenderHTML(ctx.headWithNavigation(ctx.needsNavigation(ctx.Request, rendered)))
+	return appendDocumentHead(rendered, head)
+}
+
+func appendDocumentHead(rendered, head string) gosx.Node {
 	if strings.TrimSpace(head) == "" {
 		return gosx.RawHTML(rendered)
 	}

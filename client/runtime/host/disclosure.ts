@@ -2,7 +2,7 @@
 // GoSX browser host: accessible disclosure and modal authority.
 //
 // This file is intentionally shipped by both the fetched bootstrap bundles and
-// app.EnableNavigation's inline runtime. The public namespace guard is the
+// app.EnableNavigation's navigation asset. The public namespace guard is the
 // ownership boundary: whichever path evaluates first installs the one set of
 // delegated listeners; every later evaluation reuses that exact authority.
 (function () {

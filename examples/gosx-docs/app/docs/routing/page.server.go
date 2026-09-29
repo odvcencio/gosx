@@ -21,10 +21,11 @@ func init() {
 					{"href": "#configuration", "label": "Configuration"},
 					{"href": "#navigation", "label": "Navigation"},
 				},
-				"treeSample":   docsapp.DocSample("routing/treeSample.text.sample"),
-				"moduleSample": docsapp.DocSample("routing/moduleSample.go.sample"),
-				"pageSample":   docsapp.DocSample("routing/pageSample.gosx.sample"),
-				"configSample": docsapp.DocSample("routing/configSample.json.sample"),
+				"treeSample":       docsapp.DocSample("routing/treeSample.text.sample"),
+				"moduleSample":     docsapp.DocSample("routing/moduleSample.go.sample"),
+				"pageSample":       docsapp.DocSample("routing/pageSample.gosx.sample"),
+				"configSample":     docsapp.DocSample("routing/configSample.json.sample"),
+				"navigationSample": docsapp.DocSample("routing/navigationSample.go.sample"),
 			}, nil
 		},
 	})

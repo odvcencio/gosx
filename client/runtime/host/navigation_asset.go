@@ -7,12 +7,12 @@ import _ "embed"
 // TypeScript authority so navigation publishes legacy names through the same
 // facade-owned boundary as the bootstrap bundles.
 //
-// NavigationRuntime ships minified (gosx#221). compatibility.ts and
-// navigation.ts stay in this directory unminified as the sources of truth —
+// NavigationRuntime ships minified (gosx#221). compatibility.ts, disclosure.ts
+// and navigation.ts stay here unminified as the sources of truth —
 // for a human reader, for the JS test suite (client/js/runtime-test-
 // harness.js reads both directly), and for cmd/buildbootstrap's TypeScript
 // validation and chunk-closure check. navigation-runtime.min.js is the
-// generated, committed artifact cmd/buildbootstrap builds from those two
+// generated, committed artifact cmd/buildbootstrap builds from these
 // sources (see its inlineAssets table in cmd/buildbootstrap/main.go); only
 // the generated artifact reaches the browser. Regenerate it with
 // `go generate ./client/runtime/host` or `make build-bootstrap`, and verify

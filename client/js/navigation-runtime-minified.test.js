@@ -19,6 +19,9 @@ const assert = require("node:assert/strict");
 const {
   navigationSource,
   navigationRuntimeMinifiedSource,
+  FakeElement,
+  appendManagedHead,
+  buildNavigatedDocument,
   createContext,
   runScript,
 } = require("./runtime-test-harness.js");
@@ -42,6 +45,45 @@ test("the minified navigation runtime artifact parses and boots", () => {
   // gosxHostCompatibility.install for both at the end of its own IIFE.
   assert.equal(env.context.__gosx_page_nav, navigation, "__gosx_page_nav must be installed and alias the same navigation object");
   assert.equal(typeof env.context.__gosx_submit_action, "function");
+});
+
+test("the external navigation runtime persists through pages that omit it", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/plain": { text: "__PLAIN__", url: "http://localhost:3000/plain" },
+      "http://localhost:3000/next": { text: "__NEXT__", url: "http://localhost:3000/next" },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.document.readyState = "interactive"; // A defer script runs after parsing.
+  const script = new FakeElement("script", null);
+  script.setAttribute("data-gosx-navigation", "true");
+  script.setAttribute("src", "/gosx/assets/runtime/navigation.0123456789abcdef.js");
+  script.setAttribute("nonce", "original-nonce");
+  appendManagedHead(env.document, [script]);
+
+  parsedDocs.set("__PLAIN__", buildNavigatedDocument({ title: "Plain", bodyNodes: [] }));
+  const incomingScript = script.cloneNode(true);
+  incomingScript.setAttribute("nonce", "next-page-nonce");
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/plain");
+  link.setAttribute("data-gosx-link", "true");
+  parsedDocs.set("__NEXT__", buildNavigatedDocument({ title: "Next", headNodes: [incomingScript], bodyNodes: [link] }));
+  runScript(navigationRuntimeMinifiedSource, env.context, "navigation-runtime.min.js");
+  const navigation = env.context.__gosx.navigation;
+  const listenerCount = env.document.eventListeners.get("click").length;
+
+  assert.equal(await navigation.navigate("http://localhost:3000/plain"), true);
+  assert.equal(script.parentNode, env.document.head, "a page without the tag keeps the original runtime");
+  assert.equal(await navigation.navigate("http://localhost:3000/next"), true);
+  assert.equal(env.context.__gosx.navigation, navigation);
+  assert.equal(script.parentNode, env.document.head);
+  assert.equal(script.getAttribute("nonce"), "original-nonce");
+  assert.equal(env.document.head.querySelectorAll('script[data-gosx-navigation="true"]').length, 1);
+  assert.equal(env.document.eventListeners.get("click").length, listenerCount);
+  assert.equal(env.document.body.querySelector('a[data-gosx-link="true"]').getAttribute("data-gosx-link-state"), "idle");
 });
 
 test("the minified artifact publishes the same navigation API surface as the source", () => {
