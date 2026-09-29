@@ -37,6 +37,20 @@ test("ocean uniform block packs 35 vec4s with a Gerstner table sized by signific
   assert.deepEqual(Array.from(low.slice(132, 135)), [0, 0, 0], "no physical sky: no sun glint");
   const shore = api.sceneOceanUniformData(oceanRecord({ bathymetry: { src: "/h.png", minX: -60, minZ: -40, maxX: 60, maxZ: 50, minHeight: -8, maxHeight: 4 } }), {}, {}, 0, true, "high");
   assert.deepEqual(Array.from(shore.slice(20, 27)), [-60, -40, 60, 50, -8, 4, 1]);
+  const sqrt = api.sceneOceanUniformData(oceanRecord({ bathymetry: { src: "/h.png", minX: -60, minZ: -40, maxX: 60, maxZ: 50, minHeight: -8, maxHeight: 4, encoding: "signed-sqrt" } }), {}, {}, 0, true, "high");
+  assert.deepEqual(Array.from(sqrt.slice(24, 27)), [0, 8, 2], "signed-sqrt packs its symmetric range and flag 2");
+  h.renderer.dispose();
+});
+
+test("the ocean survives scene state and per-frame lighting resolution into the render bundle", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { environment: { ocean: { waveHeight: 1.4 } } } });
+  assert.equal(state.environment.ocean.waveHeight, 1.4);
+  const bundle = api.createSceneRenderBundle(64, 64, "#000000", {}, [], [], [], [], [],
+    state.environment, 0, [], [], [], [], [], 0, false);
+  assert.ok(bundle.environment.ocean, "the render bundle carries the ocean");
+  assert.equal(bundle.environment.ocean.waveHeight, 1.4);
   h.renderer.dispose();
 });
 

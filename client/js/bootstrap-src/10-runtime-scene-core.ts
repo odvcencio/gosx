@@ -3104,7 +3104,8 @@
       const maxX = sceneNumber(source.maxX, 0), maxZ = sceneNumber(source.maxZ, 0);
       const minHeight = sceneNumber(source.minHeight, 0), maxHeight = sceneNumber(source.maxHeight, 0);
       if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
-        bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight };
+        const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
+        bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
       }
     }
     return {
@@ -3191,6 +3192,8 @@
         envMap: typeof environment.envMap === "string" ? environment.envMap : "",
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
+        // Already normalized by normalizeSceneEnvironment; pass it through.
+        ocean: environment.ocean || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
