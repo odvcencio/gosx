@@ -9,6 +9,10 @@ import (
 
 type unsupportedApp struct{}
 
+func showPlatformMessage(MessageOptions, uintptr) (MessageResult, error) {
+	return "", ErrUnsupported
+}
+
 func newPlatformApp(Options) (platformApp, error) {
 	return nil, ErrUnsupported
 }
@@ -104,7 +108,10 @@ func (unsupportedApp) OpenURL(string) error {
 	return ErrUnsupported
 }
 
-func (unsupportedApp) SetFullscreen(bool) error  { return ErrUnsupported }
+func (unsupportedApp) SetFullscreen(bool) error { return ErrUnsupported }
+func (unsupportedApp) WindowPlacement() (WindowPlacement, error) {
+	return WindowPlacement{}, ErrUnsupported
+}
 func (unsupportedApp) SetMinSize(int, int) error { return ErrUnsupported }
 func (unsupportedApp) SetMaxSize(int, int) error { return ErrUnsupported }
 
@@ -139,3 +146,5 @@ func (unsupportedApp) Notify(Notification) error {
 func (unsupportedApp) SetFileDropHandler(func([]string)) error {
 	return ErrUnsupported
 }
+
+func (unsupportedApp) PrimaryWindow() *Window { return nil }

@@ -684,7 +684,7 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_709_400, gzip: 474_100, brotli: 377_700 },
+  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -762,7 +762,7 @@ const budgets = [
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
   // The complete motion fix measures 190,789 / 53,839 / 46,948. Reviewed
   // hard-limit headroom is 1,991 / 1,076 / 1,037 bytes.
-  { file: "bootstrap-runtime.js", raw: 183_600, gzip: 52_300, brotli: 45_700 },
+  { file: "bootstrap-runtime.js", raw: 184_000, gzip: 52_300, brotli: 45_700 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -820,7 +820,7 @@ const budgets = [
   // 113_659 / 30_609 / 27_146.
   // The complete motion fix measures 147,576 / 41,324 / 36,551. Reviewed
   // hard-limit headroom is 1,944 / 1,096 / 1,039 bytes.
-  { file: "bootstrap-lite.js", raw: 142_400, gzip: 40_400, brotli: 35_800 },
+  { file: "bootstrap-lite.js", raw: 142_900, gzip: 40_400, brotli: 35_800 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1643,7 +1643,9 @@ const routeBudgets = [
     // their prior caps already).
     // The complete motion fix measures 300,712 / 86,428 / 75,806 on this route.
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
-    raw: 288_300,
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    raw: 288_800,
     gzip: 83_400,
     brotli: 73_200,
     maxMonolithFraction: 0.25,
@@ -1798,9 +1800,17 @@ const routeBudgets = [
     // The complete motion fix measures 1,355,038 / 367,463 / 309,371 on this
     // route. Raising gzip's target by 100 bytes leaves 1,247 / 1,121 / 1,219
     // bytes of hard-limit headroom for raw, gzip, and Brotli.
-    raw: 1_291_700,
-    gzip: 352_200,
-    brotli: 295_800,
+    // Curve signals and camera rails add the piecewise curve evaluator to the
+    // shared motion core. The route now measures 1_356_360 / 368_049 / 309_771,
+    // +1_322 raw / +586 gzip / +400 Brotli. Raise raw to 1_292_000; gzip and
+    // Brotli remain within their existing targets.
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_300_500,
+    gzip: 354_500,
+    brotli: 297_400,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1967,9 +1977,16 @@ const routeBudgets = [
     // source below.
     // The complete motion fix measures 1,204,868 / 339,499 / 286,726 on this
     // route. Reviewed hard-limit headroom is 1,372 / 1,121 / 1,079 bytes.
-    raw: 1_148_800,
-    gzip: 324_400,
-    brotli: 274_100,
+    // Curve signals and camera rails add the piecewise curve evaluator to the
+    // shared motion core: this route now measures 1_206_286 raw (+1_418). Raise
+    // raw to 1_149_000; gzip and Brotli remain within their existing targets.
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_157_600,
+    gzip: 326_600,
+    brotli: 275_700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2138,9 +2155,11 @@ const routeBudgets = [
     // 335_000 for headroom. Gzip headroom is unchanged.
     // The complete motion fix measures 1,608,681 / 438,588 / 369,624 on this
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
-    raw: 1_551_400,
-    gzip: 423_300,
-    brotli: 354_300,
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_553_800,
+    gzip: 425_700,
+    brotli: 356_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2286,9 +2305,11 @@ const routeBudgets = [
     // 256_268.
     // The complete motion fix measures 1,202,669 / 324,104 / 270,997 on this
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
-    raw: 1_148_200,
-    gzip: 309_700,
-    brotli: 259_100,
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_155_300,
+    gzip: 311_900,
+    brotli: 260_700,
   },
 
 ];

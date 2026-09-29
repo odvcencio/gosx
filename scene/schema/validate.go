@@ -174,6 +174,12 @@ func validateParentMatrixRaw(report *Report, record json.RawMessage, path, fallb
 	}
 }
 
+func validateInteractiveNode(report *Report, interactive bool, label, id, path string) {
+	if interactive && strings.TrimSpace(label) == "" {
+		report.add(Error, "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path+".label", id, nil)
+	}
+}
+
 func validateDocument(report *Report, doc Document, opts Options) {
 	if doc.Schema != "" && doc.Schema != scene.SceneIRSchema {
 		severity := Warn
@@ -237,6 +243,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		validateGeometryKind(report, object.Kind, object.ID, path)
 		validateMaterialKind(report, object.MaterialKind, object.ID, path, opts.Strict)
 		validateBlendMode(report, object.BlendMode, object.ID, path)
+		validateInteractiveNode(report, object.Interactive, object.Label, object.ID, path)
 		validateObject(report, object, path)
 	}
 	for i, model := range doc.Models {
@@ -244,6 +251,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		addID(model.ID, path+".id", model.Pickable != nil && *model.Pickable)
 		addTargetID(model.ID)
 		animatableIDs[model.ID] = struct{}{}
+		validateInteractiveNode(report, model.Interactive, model.Label, model.ID, path)
 		validateObject(report, model.ObjectIR, path)
 		if !modelHasValidAssetSource(model) {
 			report.add(Error, "scene.asset.missing", "Model scene record requires src", path+".src", model.ID, nil)
@@ -801,6 +809,13 @@ func validateHTML(report *Report, html scene.HTMLIR, path string, opts Options, 
 	}
 	if mode != "dom" && mode != "texture" && mode != "portal" && mode != "world" && mode != "screen" {
 		report.add(Warn, "scene.html.unknown_mode", "HTML surface mode is not part of the formal mode set", path+".mode", html.ID, map[string]any{"mode": html.Mode})
+	}
+	if html.Perspective {
+		if mode != "dom" {
+			report.add(Warn, "scene.html.perspective_ignored_mode", "Perspective HTML positioning applies only to DOM mode", path+".perspective", html.ID, map[string]any{"mode": mode})
+		} else if html.SurfaceWidth <= 0 || html.SurfaceHeight <= 0 {
+			report.add(Error, "scene.html.perspective_size_missing", "Perspective DOM HTML requires positive surfaceWidth and surfaceHeight", path, html.ID, map[string]any{"surfaceWidth": html.SurfaceWidth, "surfaceHeight": html.SurfaceHeight})
+		}
 	}
 	if mode == "texture" {
 		severity := Warn

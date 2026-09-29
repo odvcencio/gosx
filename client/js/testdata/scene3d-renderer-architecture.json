@@ -17,7 +17,7 @@
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2808,
     "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth."
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -337,7 +337,7 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5588,
-    "../runtime/scene3d/mount.ts": 3859
+    "../runtime/scene3d/mount.ts": 3866
   },
   "functionDefaults": {
     "lines": 200,

@@ -66,6 +66,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount.ts",
@@ -214,6 +215,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"

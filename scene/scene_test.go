@@ -2250,6 +2250,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 				Markup:        `<button>Inspect</button>`,
 				ClassName:     "scene-card",
 				Position:      Vec3(0, 1.05, 0.2),
+				Perspective:   true,
+				SurfaceWidth:  1.4,
+				SurfaceHeight: 0.6,
 				Width:         220,
 				Height:        88,
 				Priority:      5,
@@ -2289,6 +2292,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if card.PointerEvents != "auto" || !card.Occlude {
 		t.Fatalf("expected html interaction fields, got %#v", card)
 	}
+	if !card.Perspective || card.SurfaceWidth != 1.4 || card.SurfaceHeight != 0.6 {
+		t.Fatalf("expected perspective plane dimensions to lower, got %#v", card)
+	}
 	if ir.HTML[1].Mode != string(HTMLTexture) {
 		t.Fatalf("expected html surface texture mode marker, got %#v", ir.HTML[1].Mode)
 	}
@@ -2321,6 +2327,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	}
 	if got := html[0]["target"]; got != "hero" {
 		t.Fatalf("expected target in legacy props, got %#v", got)
+	}
+	if got := html[0]["perspective"]; got != true {
+		t.Fatalf("expected perspective in legacy props, got %#v", got)
 	}
 	if got := html[1]["mode"]; got != string(HTMLTexture) {
 		t.Fatalf("expected texture mode in legacy props, got %#v", got)

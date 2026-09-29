@@ -175,6 +175,27 @@ func TestNativeBridgeMethodsDispatchToApp(t *testing.T) {
 	}
 }
 
+func TestNativeBridgeMessageBoxMethodRegistered(t *testing.T) {
+	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+		t.Skip("message box test must not open a native dialog")
+	}
+	var sent []string
+	app := &App{options: Options{NativeBridge: true}, impl: &recordingPlatformApp{}}
+	app.bridge = bridge.NewRouter(func(raw string) error {
+		sent = append(sent, raw)
+		return nil
+	}, bridge.Limit{})
+	if err := app.registerNativeBridgeMethods(); err != nil {
+		t.Fatalf("register native methods: %v", err)
+	}
+	if err := app.bridge.Dispatch(`{"op":"req","id":"message","method":"gosx.desktop.dialog.message","payload":{}}`); err != nil {
+		t.Fatalf("dispatch message dialog: %v", err)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "desktop backend unsupported") {
+		t.Fatalf("message dialog response = %#v, want registered method returning unsupported", sent)
+	}
+}
+
 func TestRunUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		t.Skip("windows desktop backend is supported on this architecture")
@@ -212,16 +233,20 @@ func (a *recordingPlatformApp) Clipboard() (string, error)                      
 func (a *recordingPlatformApp) SetClipboard(text string) error                   { a.clipboard = text; return nil }
 func (a *recordingPlatformApp) OpenURL(string) error                             { return nil }
 func (a *recordingPlatformApp) SetFullscreen(bool) error                         { return nil }
-func (a *recordingPlatformApp) SetMinSize(int, int) error                        { return nil }
-func (a *recordingPlatformApp) SetMaxSize(int, int) error                        { return nil }
-func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)         { return nil, ErrUnsupported }
-func (a *recordingPlatformApp) RegisterProtocol(string) error                    { return nil }
-func (a *recordingPlatformApp) RegisterFileType(string, string, string) error    { return nil }
-func (a *recordingPlatformApp) SetMenuBar(Menu) error                            { return nil }
-func (a *recordingPlatformApp) SetTray(TrayOptions) error                        { return nil }
-func (a *recordingPlatformApp) CloseTray() error                                 { return nil }
-func (a *recordingPlatformApp) Notify(Notification) error                        { return nil }
-func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error          { return nil }
+func (a *recordingPlatformApp) WindowPlacement() (WindowPlacement, error) {
+	return WindowPlacement{}, nil
+}
+func (a *recordingPlatformApp) SetMinSize(int, int) error                     { return nil }
+func (a *recordingPlatformApp) SetMaxSize(int, int) error                     { return nil }
+func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)      { return nil, ErrUnsupported }
+func (a *recordingPlatformApp) RegisterProtocol(string) error                 { return nil }
+func (a *recordingPlatformApp) RegisterFileType(string, string, string) error { return nil }
+func (a *recordingPlatformApp) SetMenuBar(Menu) error                         { return nil }
+func (a *recordingPlatformApp) SetTray(TrayOptions) error                     { return nil }
+func (a *recordingPlatformApp) CloseTray() error                              { return nil }
+func (a *recordingPlatformApp) Notify(Notification) error                     { return nil }
+func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error       { return nil }
+func (a *recordingPlatformApp) PrimaryWindow() *Window                        { return nil }
 
 func TestNewUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {

@@ -231,6 +231,9 @@ type ObjectIR struct {
 	ShaderSource          string            `json:"shaderSource,omitempty"`
 	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
 	Pickable              *bool             `json:"pickable,omitempty"`
+	Interactive           bool              `json:"interactive,omitempty"`
+	Label                 string            `json:"label,omitempty"`
+	InteractiveOrder      int               `json:"interactiveOrder,omitempty"`
 	Visible               *bool             `json:"visible,omitempty"`
 	Selected              bool              `json:"selected,omitempty"`
 	// GizmoRing marks a TransformControls rotate-mode ring helper mesh; see
@@ -463,6 +466,7 @@ type HTMLIR struct {
 	ID               string       `json:"id"`
 	Target           string       `json:"target,omitempty"`
 	Mode             string       `json:"mode,omitempty"`
+	Perspective      bool         `json:"perspective,omitempty"`
 	HTML             string       `json:"html"`
 	ClassName        string       `json:"className,omitempty"`
 	Fallback         string       `json:"fallback,omitempty"`
@@ -3083,6 +3087,9 @@ func (item HTMLIR) legacyProps() map[string]any {
 	}
 	setString(record, "target", item.Target)
 	setString(record, "mode", item.Mode)
+	if item.Perspective {
+		record["perspective"] = true
+	}
 	setString(record, "className", item.ClassName)
 	setString(record, "fallback", item.Fallback)
 	setString(record, "fallbackReason", item.FallbackReason)

@@ -1,8 +1,12 @@
 program := motion.NewProgram("gallery")
 
 scroll := program.ScrollProgress("scroll", "", motion.AxisY)
-cameraZ := program.Map("camera-z", scroll, 0, 1, 6, 4.5)
-program.BindCamera(cameraZ, "#scene", "position.z")
+// A camera rail moves the camera along a spline while it keeps looking at the
+// look-at point. Scroll progress picks the position on the rail.
+_ = program.CameraRail("rail", scroll, "#scene", []motion.RailStop{
+	{At: 0, Position: [3]float64{0, 0, 6}, LookAt: [3]float64{0, 0, 0}, FOV: 60},
+	{At: 1, Position: [3]float64{2.5, 1, 4.5}, LookAt: [3]float64{0, 0, 0}, FOV: 50},
+})
 
 hover := program.Hover("hover", "#grow-button")
 spring := program.Spring("grow", 0, motion.SpringOptions{
