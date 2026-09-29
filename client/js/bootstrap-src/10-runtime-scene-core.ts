@@ -7099,6 +7099,7 @@
     sceneSkyPhysicalParams: typeof sceneSkyPhysicalParams === "function" ? sceneSkyPhysicalParams : undefined,
     sceneSkyPhysicalShaderSource: typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource : undefined,
     sceneSkyPhysicalSource: typeof sceneSkyPhysicalSource === "function" ? sceneSkyPhysicalSource : undefined,
+    sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
     normalizeSceneLabel,

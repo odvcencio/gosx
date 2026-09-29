@@ -168,6 +168,8 @@ var outputs = []output{
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
+			// The Environment.Ocean passes ship beside the renderer that calls them.
+			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
@@ -181,6 +183,7 @@ var outputs = []output{
 			// right after 16a because that placement compresses best.
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
+			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
@@ -469,6 +472,7 @@ var outputs = []output{
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
+			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},
@@ -511,6 +515,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
+			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
 	},

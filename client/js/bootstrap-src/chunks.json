@@ -47,9 +47,11 @@
         "bootstrap-src/16c-scene-shared-pbr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-ocean.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-ocean.ts",
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -227,6 +229,7 @@
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-ocean.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },
@@ -255,6 +258,7 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-ocean.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },

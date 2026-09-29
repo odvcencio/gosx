@@ -240,3 +240,4 @@ declare var sceneSkyUniformData: any;
 declare var sceneSkyPhysicalParams: any;
 declare var sceneSkyPhysicalShaderSource: any;
 declare var sceneSkyPhysicalSource: any;
+declare var sceneOceanUniformData: any;

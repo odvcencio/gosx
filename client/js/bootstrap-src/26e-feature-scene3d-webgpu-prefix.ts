@@ -87,6 +87,7 @@
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
+  var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;

@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2808,
-    "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth."
+    "revisedGovernanceLineBudget": 2816,
+    "actualGovernanceLinesAtReview": 2816,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. The open-ocean passes add two governed renderer sources (216 WebGL2 and 199 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -32,7 +32,9 @@
     "16a1-scene-webgpu-selena-uniforms.ts",
     "hydrate-input.ts",
     "mount-webgl.ts",
+    "webgl-ocean.ts",
     "webgl.ts",
+    "webgpu-ocean.ts",
     "webgpu.ts"
   ],
   "intentionalDirectRendererReferences": [
@@ -291,6 +293,7 @@
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-ocean.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -299,12 +302,14 @@
         "bootstrap-src/16b-scene-hdr.ts": "shared-scene-support",
         "bootstrap-src/16e-scene-webgl-legacy.ts": "backend-support",
         "../runtime/scene3d/webgl.ts": "governed-renderer",
+        "../runtime/scene3d/webgl-ocean.ts": "governed-renderer",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper"
       },
       "sources": [
-        "../runtime/scene3d/webgl.ts"
+        "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-ocean.ts"
       ],
-      "maxLines": 11270,
+      "maxLines": 11486,
       "maxFileLines": 11270
     },
     "webgpu": {
@@ -314,6 +319,7 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-ocean.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -321,13 +327,15 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts": "backend-support",
         "../runtime/scene3d/webgpu.ts": "governed-renderer",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": "governed-renderer",
+        "../runtime/scene3d/webgpu-ocean.ts": "governed-renderer",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper"
       },
       "sources": [
         "../runtime/scene3d/webgpu.ts",
-        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-ocean.ts"
       ],
-      "maxLines": 19533,
+      "maxLines": 19732,
       "maxFileLines": 19328
     }
   },
@@ -337,7 +345,9 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5588,
-    "../runtime/scene3d/mount.ts": 3859
+    "../runtime/scene3d/mount.ts": 3859,
+    "../runtime/scene3d/webgl-ocean.ts": 216,
+    "../runtime/scene3d/webgpu-ocean.ts": 199
   },
   "functionDefaults": {
     "lines": 200,

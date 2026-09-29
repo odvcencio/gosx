@@ -110,6 +110,119 @@
     "}",
   ].join("\n");
 
+  // --- Ocean ---
+  //
+  // sceneOceanUniformData packs one Environment.Ocean (already normalized by
+  // normalizeSceneOcean, so every field holds its default) and the scene sky
+  // into SCENE_OCEAN_VEC4S vec4s shared by the WebGL2 and WebGPU passes:
+  //   0  level, extent, time (s), speed        1  deep.rgb, clarity
+  //   2  shallow.rgb, roughness                3  scatter.rgb, foam
+  //   4  foamColor.rgb, surf                   5  bathymetry minX, minZ, maxX, maxZ
+  //   6  bathymetry minH, maxH, has, waves     7  camera.xyz, output linear (1) or sRGB (0)
+  //   8  rings, segments, inner radius, ring growth
+  //   9..20  six Gerstner waves: (dir.x, dir.z, k, omega), (amplitude, Q*a, phase, 0)
+  //   21..31 the sky block from sceneSkyUniformData (mode in [26].w)
+  //   32 ambient sky light rgb            33 sun radiance rgb at the surface
+  //   34 direction toward the sun xyz
+  // Colors are converted to linear light. Wave amplitudes follow a significant
+  // height Hs: sum(a^2) = Hs^2 / 8. quality "low" (default on low-end
+  // hardware) halves the grid and uses four waves.
+  var SCENE_OCEAN_VEC4S = 35;
+  var SCENE_OCEAN_WAVE_RATIO = [1, 0.73, 0.53, 0.39, 0.28, 0.21];
+  var SCENE_OCEAN_WAVE_ANGLE = [0, 0.38, -0.46, 0.83, -0.95, 1.4];
+  var SCENE_OCEAN_WAVE_WEIGHT = [1, 0.62, 0.42, 0.28, 0.19, 0.13];
+  var sceneOceanSkyScratch = new Float32Array(44), sceneOceanViewScratch = new Float32Array(16);
+
+  function sceneOceanLinear(hex, out, offset) {
+    var c = sceneColorRGBA(hex, [0, 0, 0, 1]);
+    for (var i = 0; i < 3; i++) out[offset + i] = c[i] <= 0.04045 ? c[i] / 12.92 : Math.pow((c[i] + 0.055) / 1.055, 2.4);
+  }
+
+  // sceneSkyPhysicalRadianceInto evaluates gosxPhysicalSky on the CPU (no sun
+  // disk) from a sceneSkyPhysicalParams block; the ocean uses it for the
+  // per-frame ambient light so phones do not evaluate it per pixel.
+  function sceneSkyPhysicalRadianceInto(p, dx, dy, dz, out, offset) {
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1; dx /= len; dy /= len; dz /= len;
+    var zenith = Math.acos(Math.max(0, Math.min(1, dy)));
+    var inv = 1 / (Math.cos(zenith) + 0.15 * Math.pow(93.885 - zenith * 57.29577951, -1.253));
+    var ct = dx * p[8] + dy * p[9] + dz * p[10], g = p[12], g2 = g * g;
+    var rPhase = 0.0596831 * (1 + ct * ct), mPhase = 0.0795775 * (1 - g2) / Math.pow(Math.max(1 - 2 * g * ct + g2, 1e-6), 1.5);
+    var horizon = Math.max(0, Math.min(1, Math.pow(1 - p[9], 5))), exponent = 1 / (1.2 + 1.2 * p[7]);
+    var bias = [0, 0.0003, 0.00075];
+    for (var i = 0; i < 3; i++) {
+      var fex = Math.exp(-(p[i] * 8400 * inv + p[4 + i] * 1250 * inv));
+      var scatter = (p[i] * rPhase + p[4 + i] * mPhase) / Math.max(p[i] + p[4 + i], 1e-30);
+      var lin = Math.pow(p[3] * scatter * (1 - fex), 1.5) * (1 + (Math.pow(p[3] * scatter * fex, 0.5) - 1) * horizon);
+      out[offset + i] = Math.pow(Math.max((lin + 0.1 * fex) * 0.04 + bias[i], 0), exponent);
+    }
+    return out;
+  }
+
+  function sceneOceanUniformData(ocean, environment, camera, timeSeconds, linear, quality, out) {
+    out = out || new Float32Array(SCENE_OCEAN_VEC4S * 4);
+    out.fill(0);
+    if (quality !== "low" && quality !== "high") {
+      var nav = typeof navigator !== "undefined" ? navigator : {};
+      // @ts-ignore TS2339 -- deviceMemory is a Chromium-only Navigator field.
+      quality = gosxLowEndHardware(nav.deviceMemory, nav.hardwareConcurrency) ? "low" : "high";
+    }
+    var o = ocean || {};
+    out[0] = sceneNumber(o.level, 0); out[1] = sceneNumber(o.extent, 4000);
+    out[2] = sceneNumber(timeSeconds, 0); out[3] = sceneNumber(o.speed, 1);
+    sceneOceanLinear(o.deepColor || "#03141f", out, 4); out[7] = sceneNumber(o.clarity, 4);
+    sceneOceanLinear(o.shallowColor || "#1f6f78", out, 8); out[11] = sceneNumber(o.roughness, 0.06);
+    sceneOceanLinear(o.scatterColor || "#2fa58f", out, 12); out[15] = sceneNumber(o.foam, 0.6);
+    sceneOceanLinear(o.foamColor || "#e9eef0", out, 16); out[19] = sceneNumber(o.surf, 0.5);
+    var b = o.bathymetry;
+    if (b && b.src) {
+      out[20] = b.minX; out[21] = b.minZ; out[22] = b.maxX; out[23] = b.maxZ;
+      out[24] = b.minHeight; out[25] = b.maxHeight; out[26] = 1;
+    }
+    var low = quality === "low";
+    var waves = low ? 4 : 6;
+    out[27] = waves;
+    out[28] = sceneNumber(camera && camera.x, 0); out[29] = sceneNumber(camera && camera.y, 0);
+    out[30] = sceneNumber(camera && camera.z, 0); out[31] = linear ? 1 : 0;
+    var rings = low ? 96 : 192, segments = low ? 128 : 256, inner = 0.35;
+    out[32] = rings; out[33] = segments; out[34] = inner; out[35] = Math.log(out[1] / inner + 1) / rings;
+    var height = sceneNumber(o.waveHeight, 0.8), length = sceneNumber(o.waveLength, 18);
+    var chop = sceneNumber(o.choppiness, 0.6), wind = sceneNumber(o.windDirection, 0) * Math.PI / 180;
+    var weights = 0;
+    for (var w = 0; w < waves; w++) weights += SCENE_OCEAN_WAVE_WEIGHT[w] * SCENE_OCEAN_WAVE_WEIGHT[w];
+    for (var i = 0; i < waves; i++) {
+      var base = 36 + i * 8, angle = wind + SCENE_OCEAN_WAVE_ANGLE[i];
+      var k = 2 * Math.PI / (length * SCENE_OCEAN_WAVE_RATIO[i]);
+      out[base] = Math.sin(angle); out[base + 1] = Math.cos(angle); out[base + 2] = k;
+      out[base + 3] = Math.sqrt(9.81 * k) * out[3];
+      out[base + 4] = SCENE_OCEAN_WAVE_WEIGHT[i] * height / Math.sqrt(8 * weights);
+      out[base + 5] = chop / (k * waves);
+      out[base + 6] = ((i * 0.6180339887) % 1) * 2 * Math.PI;
+    }
+    var sky = environment && environment.sky;
+    var skyEnv = sky ? environment : { sky: { mode: "gradient", topColor: "#6d8fb0", horizonColor: "#c8d6e0", bottomColor: "#c8d6e0" } };
+    sceneSkyUniformData(sceneOceanSkyScratch, skyEnv, sceneOceanViewScratch, { fov: 60 }, 1, true);
+    if (sky && sky.mode !== "physical") sceneOceanSkyScratch[23] = 0; // Reflect the gradient stops for image skies.
+    out.set(sceneOceanSkyScratch, 84);
+    var intensity = sceneOceanSkyScratch[15];
+    if (sky && sky.mode === "physical") {
+      var sp = sceneOceanSkyScratch.subarray(28, 44);
+      sceneSkyPhysicalRadianceInto(sp, 0, 1, 0, out, 128);
+      sceneSkyPhysicalRadianceInto(sp, sp[8], 0.08, sp[10], sceneOceanViewScratch, 0);
+      sceneSkyPhysicalRadianceInto(sp, -sp[8], 0.08, -sp[10], sceneOceanViewScratch, 4);
+      for (var a = 0; a < 3; a++) out[128 + a] = intensity * (0.6 * out[128 + a] + 0.25 * sceneOceanViewScratch[a] + 0.15 * sceneOceanViewScratch[4 + a]);
+      // Sun radiance: sea-level transmittance along the sun ray times the sun's
+      // illuminance, scaled to the sky's display-referred range.
+      var zen = Math.acos(Math.max(0, Math.min(1, sp[9])));
+      var inv = 1 / (Math.cos(zen) + 0.15 * Math.pow(93.885 - zen * 57.29577951, -1.253));
+      for (var c = 0; c < 3; c++) out[132 + c] = intensity * Math.exp(-(sp[c] * 8400 * inv + sp[4 + c] * 1250 * inv)) * sp[3] * 0.012;
+      out[136] = sp[8]; out[137] = sp[9]; out[138] = sp[10];
+    } else {
+      for (var b2 = 0; b2 < 3; b2++) out[128 + b2] = 0.6 * sceneOceanSkyScratch[12 + b2] * intensity + 0.4 * sceneOceanSkyScratch[16 + b2] * intensity;
+      out[136] = 0.3; out[137] = 0.6; out[138] = -0.74; // No sun disk: a soft key light, no glint.
+    }
+    return out;
+  }
+
   // sceneSkyPhysicalShaderSource returns the GLSL ("glsl") or WGSL ("wgsl")
   // gosxPhysicalSky function. A function, not a var, so the scene API object
   // can export it before this file's assignments run.
