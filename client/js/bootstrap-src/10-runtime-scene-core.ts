@@ -3191,6 +3191,8 @@
         envMap: typeof environment.envMap === "string" ? environment.envMap : "",
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
+        // Already normalized by normalizeSceneEnvironment; pass it through.
+        ocean: environment.ocean || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),

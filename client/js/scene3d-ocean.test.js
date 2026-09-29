@@ -40,6 +40,18 @@ test("ocean uniform block packs 35 vec4s with a Gerstner table sized by signific
   h.renderer.dispose();
 });
 
+test("the ocean survives scene state and per-frame lighting resolution into the render bundle", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { environment: { ocean: { waveHeight: 1.4 } } } });
+  assert.equal(state.environment.ocean.waveHeight, 1.4);
+  const bundle = api.createSceneRenderBundle(64, 64, "#000000", {}, [], [], [], [], [],
+    state.environment, 0, [], [], [], [], [], 0, false);
+  assert.ok(bundle.environment.ocean, "the render bundle carries the ocean");
+  assert.equal(bundle.environment.ocean.waveHeight, 1.4);
+  h.renderer.dispose();
+});
+
 test("WebGPU draws the ocean in the direct path with premultiplied alpha and restores the frame group", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
   const bundle = makePointsBundle(null); bundle.points = [];
