@@ -35,7 +35,7 @@ type windowsApp struct {
 	settingsRef     *comReference
 	runErr          error
 	webviewReleased bool
-	singleLock      *singleInstanceLock
+	singleLock      *InstanceLock
 
 	envHandler           *environmentCompletedHandler
 	envHandlerRef        *comReference
@@ -150,7 +150,7 @@ func (a *windowsApp) Run() error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	if a.options.SingleInstance {
+	if a.options.SingleInstance && !instanceLockHeld(a.options.AppID) {
 		lock, owned, err := acquireSingleInstanceLock(a.options.AppID)
 		if err != nil {
 			return err
@@ -159,8 +159,9 @@ func (a *windowsApp) Run() error {
 			defer lock.Close()
 			return forwardCurrentLaunch(a.options.AppID)
 		}
+		heldLock := newInstanceLock(a.options.AppID, lock.Close)
 		a.mu.Lock()
-		a.singleLock = lock
+		a.singleLock = heldLock
 		a.mu.Unlock()
 		defer func() {
 			a.mu.Lock()

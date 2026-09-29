@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed and added: desktop single instance
+
+- Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
+  Windows session, so a second user signed in to the same PC could not start
+  the app. It is now `Local\gosx-<appID>` (one per session).
+- Add `desktop.AcquireSingleInstance(appID)` and `desktop.InstanceLock`, so an
+  app can reserve its ID at the top of `main`, before its own startup work,
+  and `desktop.ForwardToFirstInstance(appID, args, workingDir)`, which hands a
+  later launch to the running window (waiting up to 10 s for it to appear).
+  `Options.SingleInstance` reuses a lock the process already holds.
+- The running instance now restores its window if it is minimized, and the
+  forwarding process grants it foreground rights (`AllowSetForegroundWindow`)
+  so the window can come to the front.
 ### Added: desktop sidecar processes
 
 - Add `desktop/sidecar`: `sidecar.Start` runs a helper process (a local game

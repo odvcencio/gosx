@@ -17,6 +17,16 @@ func platformAvailable() error {
 	return ErrUnsupported
 }
 
+// AcquireSingleInstance is unsupported when no Windows desktop backend is available.
+func AcquireSingleInstance(string) (*InstanceLock, bool, error) {
+	return nil, false, ErrUnsupported
+}
+
+// ForwardToFirstInstance is unsupported when no Windows desktop backend is available.
+func ForwardToFirstInstance(string, []string, string) error {
+	return ErrUnsupported
+}
+
 // WebView2RuntimeVersion is unsupported when no Windows WebView2 backend is
 // available.
 func WebView2RuntimeVersion(string) (string, error) {
