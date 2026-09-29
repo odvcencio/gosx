@@ -144,7 +144,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			},
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels1440p, Effects: []scene.PostEffect{
-			scene.Bloom{Threshold: 1.5, Strength: 0.2, Radius: 4, Scale: 0.5},
+			scene.Bloom{Threshold: 1.4, Strength: 0.22, Radius: 1.5, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: period.Exposure},
 			scene.Vignette{Intensity: 0.18},
 			scene.FXAA{},
