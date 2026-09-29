@@ -1,4 +1,9 @@
 @supports (animation-timeline: scroll()) {
+  @property --progress {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+  }
   @media (prefers-reduced-motion: no-preference) {
     @keyframes gosx-motion-demo-0-aefd3536 {
       0% { --progress: 0; }

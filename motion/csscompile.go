@@ -62,6 +62,14 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 		if !ok {
 			continue
 		}
+		// An unregistered custom property animates discretely (it flips at the
+		// midpoint), so a CSS variable only compiles when its unit maps to a
+		// registerable syntax.
+		if binding.Target == BindingCSSVariable {
+			if _, known := cssPropertySyntax(binding.Unit); !known {
+				continue
+			}
+		}
 		compiled[i] = compiledMotionBinding{binding: binding, source: source, stops: stops}
 	}
 	if len(compiled) == 0 {
@@ -70,10 +78,18 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 	}
 
 	var body strings.Builder
+	var registered strings.Builder
+	registeredNames := make(map[string]bool)
 	for i := range p.Bindings {
 		item, ok := compiled[i]
 		if !ok {
 			continue
+		}
+		if item.binding.Target == BindingCSSVariable && !registeredNames[item.binding.Property] {
+			registeredNames[item.binding.Property] = true
+			syntax, _ := cssPropertySyntax(item.binding.Unit)
+			fmt.Fprintf(&registered, "  @property %s {\n    syntax: '%s';\n    inherits: true;\n    initial-value: %s%s;\n  }\n",
+				item.binding.Property, syntax, formatCSSFloat(item.stops[0].value), item.binding.Unit)
 		}
 		name := cssAnimationName(p.ID, i)
 		fmt.Fprintf(&body, "    @keyframes %s {\n", name)
@@ -99,11 +115,13 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 		copy := cloneMotionProgram(p)
 		return "", &copy, nil
 	}
-	css = "@supports (animation-timeline: scroll()) {\n  @media (prefers-reduced-motion: no-preference) {\n" + body.String() + "  }\n}\n"
+	css = "@supports (animation-timeline: scroll()) {\n" + registered.String() + "  @media (prefers-reduced-motion: no-preference) {\n" + body.String() + "  }\n}\n"
 
 	// The CSS is embedded verbatim in a style element, so it must never be able
 	// to close it or open a comment, whatever the program ID or selectors hold.
-	if strings.Contains(css, "<") {
+	// (The @property syntax strings such as '<length>' are safe: only "</" and
+	// "<!" matter inside a style element.)
+	if lower := strings.ToLower(css); strings.Contains(lower, "</") || strings.Contains(lower, "<!") {
 		copy := cloneMotionProgram(p)
 		return "", &copy, nil
 	}
@@ -354,4 +372,22 @@ func cloneMotionProgram(p *Program) Program {
 	copy.Bindings = append([]Binding(nil), p.Bindings...)
 	copy.Pins = append([]PinBinding(nil), p.Pins...)
 	return copy
+}
+
+// cssPropertySyntax maps a binding unit to the @property syntax that lets the
+// browser interpolate the variable.
+func cssPropertySyntax(unit string) (string, bool) {
+	switch unit {
+	case "":
+		return "<number>", true
+	case "px", "em", "rem", "vh", "vw", "vmin", "vmax":
+		return "<length>", true
+	case "%":
+		return "<percentage>", true
+	case "deg", "rad", "turn":
+		return "<angle>", true
+	case "ms", "s":
+		return "<time>", true
+	}
+	return "", false
 }

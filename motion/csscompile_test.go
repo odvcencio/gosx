@@ -138,7 +138,7 @@ func TestCompileCSSUnitsReducedMotionAndVisibleFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"@media (prefers-reduced-motion: no-preference)", "@supports (animation-timeline: scroll())", "width: 0px", "width: 100px", "--offset: 0px", "--offset: 100px"} {
+	for _, expected := range []string{"@media (prefers-reduced-motion: no-preference)", "@supports (animation-timeline: scroll())", "width: 0px", "width: 100px", "--offset: 0px", "--offset: 100px", "@property --offset", "syntax: '<length>'"} {
 		if !strings.Contains(css, expected) {
 			t.Fatalf("expected %q in CSS:\n%s", expected, css)
 		}
@@ -204,4 +204,43 @@ func cssKeyframeValue(css string, progress float64) (float64, bool) {
 		return 0, false
 	}
 	return first + (last-first)*progress, true
+}
+
+// A CSS variable animated without a registered syntax flips at the midpoint of
+// the animation instead of interpolating, so every compiled variable must be
+// registered with @property, and a unit that has no syntax must stay in JS.
+func TestCompileCSSRegistersCustomPropertiesSoTheyInterpolate(t *testing.T) {
+	for _, tc := range []struct{ unit, syntax string }{
+		{"", "<number>"}, {"px", "<length>"}, {"rem", "<length>"}, {"%", "<percentage>"}, {"deg", "<angle>"}, {"ms", "<time>"},
+	} {
+		p := NewProgram("props")
+		scroll := p.ScrollProgress("scroll", "", AxisY)
+		p.BindCSSVariable(p.Map("m", scroll, 0, 1, 2, 9), "#card", "--v", tc.unit)
+		css, rest, err := CompileCSS(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "@property --v {\n    syntax: '" + tc.syntax + "';\n    inherits: true;\n    initial-value: 2" + tc.unit + ";\n  }"
+		if !strings.Contains(css, want) || len(rest.CSSCompiled) != 1 {
+			t.Fatalf("unit %q: want %q registered; css=\n%s", tc.unit, want, css)
+		}
+		if strings.Count(css, "@property --v") != 1 {
+			t.Fatalf("unit %q: the property must be registered once", tc.unit)
+		}
+	}
+}
+
+func TestCompileCSSRegistersAVariableOnceForTwoBindings(t *testing.T) {
+	p := NewProgram("dup")
+	scroll := p.ScrollProgress("scroll", "", AxisY)
+	m := p.Map("m", scroll, 0, 1, 0, 10)
+	p.BindCSSVariable(m, "#a", "--v", "px")
+	p.BindCSSVariable(m, "#b", "--v", "px")
+	css, rest, err := CompileCSS(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(css, "@property --v") != 1 || len(rest.CSSCompiled) != 2 {
+		t.Fatalf("want one @property and two compiled bindings; compiled=%v css=\n%s", rest.CSSCompiled, css)
+	}
 }

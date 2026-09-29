@@ -117,7 +117,7 @@ func MotionScopeWithOptions(program *motion.Program, options MotionScopeOptions,
 	}
 	children := []any{attrs}
 	if cssText != "" {
-		// The compiler guarantees cssText contains no "<", so raw embedding is safe.
+		// The compiler guarantees cssText holds no "</" or "<!", so raw embedding is safe.
 		children = append(children, gosx.El("style", gosx.RawHTML(cssText)))
 	}
 	children = append(children, args...)

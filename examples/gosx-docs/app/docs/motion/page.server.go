@@ -18,7 +18,13 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
-			encoded, err := program.Marshal()
+			// Fixed page-scroll bindings compile to CSS; the program still ships in
+			// full so browsers without scroll timelines run them in JavaScript.
+			_, full, err := motion.CompileCSS(program)
+			if err != nil {
+				return nil, err
+			}
+			encoded, err := full.Marshal()
 			if err != nil {
 				return nil, err
 			}
@@ -40,6 +46,7 @@ func init() {
 				"programSample": docsapp.DocSample("motion/programSample.go.sample"),
 				"reducedSample": docsapp.DocSample("motion/reducedSample.go.sample"),
 				"motionProgram": string(encoded),
+				"motionScope":   program.ID,
 			}, nil
 		},
 		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
@@ -50,7 +57,14 @@ func init() {
 					Duration: 260,
 				}, gosx.Attrs(gosx.Attr("class", "motion-demo-card")), gosx.Text("This card uses a server-authored slide-up preset."))
 			}
-			return route.FileTemplateBindings{Values: map[string]any{"motionExample": motionExample}}
+			var motionStyle gosx.Node = gosx.Text("")
+			if program, err := motionDemoProgram(); err == nil {
+				if css, _, err := motion.CompileCSS(program); err == nil && css != "" {
+					// The compiler guarantees css holds no "</" or "<!", so raw embedding is safe.
+					motionStyle = gosx.El("style", gosx.RawHTML(css))
+				}
+			}
+			return route.FileTemplateBindings{Values: map[string]any{"motionExample": motionExample, "motionStyle": motionStyle}}
 		},
 	})
 }
