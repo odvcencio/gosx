@@ -44,11 +44,11 @@ type blackglassBeachView struct {
 func blackglassBeachViewFor(raw string) blackglassBeachView {
 	switch raw {
 	case "glass":
-		return blackglassBeachView{"glass", "The glass", scene.Vec3(-0.4, 1.45, 10.2), scene.Vec3(-2.6, 1.9, 5.2)}
+		return blackglassBeachView{"glass", "The glass", scene.Vec3(-2.2, 1.6, 8.8), scene.Vec3(-6.2, 1.9, 2.6)}
 	case "cliff":
 		return blackglassBeachView{"cliff", "From the cliff", scene.Vec3(-26, 17, 22), scene.Vec3(-2, 0, -18)}
 	default:
-		return blackglassBeachView{"shore", "The shore", scene.Vec3(3.2, 1.7, 13.5), scene.Vec3(-1.5, 2.2, -24)}
+		return blackglassBeachView{"shore", "The shore", scene.Vec3(2.4, 2.9, 14.5), scene.Vec3(-2, 0.4, -22)}
 	}
 }
 
@@ -119,8 +119,8 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	horizon := blackglassBeachHorizon(sky)
 	return scene.Props{
 		Width: 1280, Height: 720,
-		Label:     "Blackglass Beach — " + view.Name + " at " + period.Name,
-		AriaLabel: "A black sand beach at " + period.Name + ": waves run up the sand below basalt sea stacks, and an obsidian monolith stands at the waterline.",
+		Label:      "Blackglass Beach — " + view.Name + " at " + period.Name,
+		AriaLabel:  "A black sand beach at " + period.Name + ": waves run up the sand below basalt sea stacks, and an obsidian monolith stands at the waterline.",
 		Background: horizon, Controls: scene.ControlOrbit, AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
 		PreferWebGPU: scene.Bool(true), CanvasAlpha: scene.Bool(false), Stats: scene.Bool(false),
 		UnsupportedMessage: "Interactive 3D is unavailable in this browser.",
@@ -156,7 +156,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			scene.Model{ID: "beach", Src: blackglassBeachModelRoot + "beach-v2.glb", Bounds: 90, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "sea-stacks", Src: blackglassBeachModelRoot + "stacks-v2.glb", Bounds: 60, CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
-				Position: scene.Vec3(-2.6, 0.18, 5.4), Rotation: scene.Euler{Y: 0.55}, CastShadow: true, ReceiveShadow: true,
+				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: 0.75}, CastShadow: true, ReceiveShadow: true,
 				Material: scene.StandardMaterial{Color: "#050608", Roughness: 0.035, Metalness: 0, Clearcoat: 1}},
 		),
 	}

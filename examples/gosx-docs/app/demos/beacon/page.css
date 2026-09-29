@@ -48,7 +48,8 @@
 @keyframes bgb-reveal { to { opacity: 1; transform: none; } }
 @media (max-width: 640px) {
   .bgb__controls { left: 10px; right: 10px; bottom: 10px; justify-content: center; }
-  .bgb__reveal { left: 10px; right: 10px; bottom: 64px; max-width: none; }
+  .bgb__reveal { left: 10px; right: 58px; top: 12px; bottom: auto; max-width: none; padding: 10px 12px; }
+  .bgb__reveal-body { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bgb__reveal { transform: none; animation-duration: 1ms; }
