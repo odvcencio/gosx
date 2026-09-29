@@ -4,7 +4,6 @@ import (
 	"html"
 
 	"m31labs.dev/gosx"
-	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
 // navigationScriptWithNonce renders the framework-owned page-navigation
@@ -12,7 +11,7 @@ import (
 // owner of this script, which prevents applications from accidentally
 // creating a second runtime with a stale or missing request nonce.
 func navigationScriptWithNonce(nonce string) gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + runtimehost.NavigationRuntime + `</script>`)
+	return gosx.RawHTML(`<script data-gosx-navigation="true" defer src="/gosx/assets/runtime/` + navigationAsset.metadata.File + `" integrity="` + navigationAsset.metadata.Integrity + `" crossorigin="anonymous"` + nonceAttr(nonce) + `></script>`)
 }
 
 func nonceAttr(nonce string) string {

@@ -212,6 +212,9 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	if err != nil {
 		return err
 	}
+	if _, err := writeNavigationRuntimeAsset(filepath.Join(buildDir, "assets", "runtime"), gosxRoot); err != nil {
+		return err
+	}
 	if err := ensureWASMRuntimeDependencies(dir); err != nil {
 		return err
 	}

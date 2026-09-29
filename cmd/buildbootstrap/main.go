@@ -590,18 +590,18 @@ var outputs = []output{
 }
 
 // inlineAssets lists artifacts this tool prepares for direct Go embedding
-// rather than for a fetched <script src> bundle. app.EnableNavigation
-// (server/navigation.go) inlines the navigation runtime straight into every
-// page's <head> so it runs before any other script fetches — it must stay
-// out of the outputs bundle graph above, which is why navigation.ts is a
+// rather than for the bootstrap bundle graph. app.EnableNavigation
+// (server/navigation.go) loads the embedded navigation runtime through a
+// content-hashed external script, including in apps with no build output.
+// It stays out of the outputs bundle graph above, which is why navigation.ts is a
 // named exemption in TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph.
 //
 // An inline asset gets the same concatenate/erase-types/minify treatment as
 // a bundle (buildBundle), but the build writes only the minified .min.js
 // file next to its .ts sources: no .map, no .gz/.br sidecars, and it never
-// joins chunks.json, because nothing ever fetches it over the network —
-// client/runtime/host/navigation_asset.go go:embeds it straight into the Go
-// binary that the framework-owned navigation head writes inline into the page.
+// joins chunks.json. client/runtime/host/navigation_asset.go embeds it in the
+// server, which hashes and precompresses it once at startup. gosx build and
+// export also write the same asset and its sidecars to their runtime output.
 var inlineAssets = []output{
 	{
 		name: "../runtime/host/navigation-runtime.min.js",

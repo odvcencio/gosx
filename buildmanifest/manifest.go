@@ -48,6 +48,7 @@ type RuntimeAssets struct {
 	Bootstrap          HashedAsset                    `json:"bootstrap"`
 	BootstrapLite      HashedAsset                    `json:"bootstrapLite,omitempty"`
 	BootstrapRuntime   HashedAsset                    `json:"bootstrapRuntime,omitempty"`
+	Navigation         HashedAsset                    `json:"navigation,omitzero"`
 	// The fields below back build.runtime.exclude roles (cmd/gosx/config.go,
 	// cmd/gosx/size.go). "omitempty" cannot drop a zero HashedAsset struct —
 	// encoding/json only treats false/0/nil/empty-collection values as empty
@@ -186,6 +187,7 @@ type RuntimePaths struct {
 	Bootstrap                             string
 	BootstrapLite                         string
 	BootstrapRuntime                      string
+	Navigation                            string
 	BootstrapFeatureIslands               string
 	BootstrapFeatureEngines               string
 	BootstrapFeatureHubs                  string
@@ -239,6 +241,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		Bootstrap:                             AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
 		BootstrapLite:                         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
 		BootstrapRuntime:                      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapRuntime.File),
+		Navigation:                            AssetURL(assetBaseURL, "runtime", m.Runtime.Navigation.File),
 		BootstrapFeatureIslands:               AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureIslands.File),
 		BootstrapFeatureEngines:               AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
 		BootstrapFeatureHubs:                  AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),

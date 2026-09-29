@@ -33,8 +33,14 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 			t.Fatalf("expected export artifact %s: %v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "dist", "static", "gosx")); !os.IsNotExist(err) {
-		t.Fatalf("expected zero-runtime starter export to omit dist/static/gosx, got %v", err)
+	assets, err := filepath.Glob(filepath.Join(dir, "build", "assets", "runtime", "navigation.*.js"))
+	if err != nil || len(assets) != 1 {
+		t.Fatalf("staged navigation assets = %v, error = %v", assets, err)
+	}
+	for _, ext := range []string{"", ".gz", ".br"} {
+		if _, err := os.Stat(filepath.Join(dir, "dist", "static", "gosx", "assets", "runtime", filepath.Base(assets[0])) + ext); err != nil {
+			t.Fatalf("export omitted navigation%s asset: %v", ext, err)
+		}
 	}
 
 	indexHTML := readFile(t, filepath.Join(dir, "dist", "static", "index.html"))
@@ -71,11 +77,11 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		t.Fatalf("unexpected root export route %#v", manifest.Routes[0])
 	}
 	// The starter template calls app.EnableNavigation() (see cmd/gosx/init.go),
-	// so the exported route carries the inline navigation script and reports
+	// so the exported route carries the external navigation script and reports
 	// Navigation: true (gosx#169 — App.Mount now wires that flag through to a
 	// file-routed app instead of silently dropping it). Navigation adds no
-	// WASM or bootstrap asset: it is one inline <script>, so Bootstrap and WASM
-	// stay false and dist/static/gosx stays absent (checked above).
+	// WASM or bootstrap asset: Bootstrap and WASM stay false, and the hashed
+	// navigation script and its sidecars are copied into the static output.
 	if !manifest.Routes[0].Capabilities.Navigation {
 		t.Fatalf("expected exported starter route to report navigation, got %#v", manifest.Routes[0].Capabilities)
 	}

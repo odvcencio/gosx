@@ -620,6 +620,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	manifest.Runtime.StandardGoWASMExec = standardGoWASMExecAsset
 	fmt.Printf("    %s (%d bytes, standard Go)\n", standardGoWASMExecAsset.File, standardGoWASMExecAsset.Size)
 
+	navigationAsset, err := writeNavigationRuntimeAsset(runtimeDir, gosxRoot)
+	if err != nil {
+		return err
+	}
+	manifest.Runtime.Navigation = navigationAsset
+	fmt.Printf("    %s (%d bytes)\n", navigationAsset.File, navigationAsset.Size)
+
 	// bootstrap.js, patch.js, and the lazily loaded HLS runtime. Each entry
 	// carries a build.runtime.exclude role (cmd/gosx/size.go
 	// runtimeExcludableAssetRoles); a blank role marks the core loader chain,

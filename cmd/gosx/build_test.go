@@ -656,14 +656,9 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 			t.Fatalf("expected build artifact %s: %v", rel, err)
 		}
 	}
-	for _, rel := range []string{
-		"dist/static/assets/runtime",
-		"dist/static/gosx",
-	} {
-		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
-			t.Fatalf("did not expect zero-runtime static build artifact %s: %v", rel, err)
-		}
-	}
+	navigation := navigationManifestAsset(t, filepath.Join(dir, "dist", "build.json"))
+	assertNavigationRuntimeAsset(t, filepath.Join(dir, "dist", "assets", "runtime"), navigation)
+	assertNavigationRuntimeAsset(t, filepath.Join(dir, "dist", "static", "gosx", "assets", "runtime"), navigation)
 
 	stackHTML := readFile(t, filepath.Join(dir, "dist", "static", "stack", "index.html"))
 	if !strings.Contains(stackHTML, `href="../styles.css"`) {

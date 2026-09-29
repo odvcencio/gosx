@@ -40,7 +40,13 @@ func TestNavigationScriptWithNonceEscapesAttributeValue(t *testing.T) {
 }
 
 func TestNavigationRuntimePropagatesNonceToDynamicManagedScripts(t *testing.T) {
-	html := gosx.RenderHTML(navigationScriptWithNonce("nav-nonce"))
+	app := New()
+	res := httptest.NewRecorder()
+	app.Build().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/gosx/assets/runtime/"+navigationAsset.metadata.File, nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("navigation asset status = %d", res.Code)
+	}
+	script := res.Body.String()
 
 	// The navigation runtime ships minified (gosx#221): buildInlineAsset
 	// (cmd/buildbootstrap) safely renames the local identifiers this test
@@ -57,8 +63,8 @@ func TestNavigationRuntimePropagatesNonceToDynamicManagedScripts(t *testing.T) {
 		`script[nonce][data-gosx-script]`,
 		`.nonce=`,
 	} {
-		if !strings.Contains(html, snippet) {
-			t.Fatalf("expected navigation runtime to include %q in %q", snippet, html)
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("expected navigation runtime to include %q", snippet)
 		}
 	}
 }
@@ -103,8 +109,11 @@ func TestAppThreadsPerRequestNonceToOwnedInlineAndRuntimeScripts(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	body := w.Body.String()
+	if attrs := navigationScriptAttrs(t, body); attrs["nonce"] != "req-nonce-1" {
+		t.Fatalf("navigation script nonce = %q", attrs["nonce"])
+	}
 	for _, snippet := range []string{
-		`<script data-gosx-navigation="true" nonce="req-nonce-1">`,
+		`<script data-gosx-navigation="true" defer src="/gosx/assets/runtime/navigation.`,
 		`data-gosx-document-contract nonce="req-nonce-1">`,
 		`data-gosx-script="bootstrap" data-gosx-bootstrap-mode="lite" src="/gosx/bootstrap-lite.js"`,
 		`type="text/javascript" crossorigin="anonymous" referrerpolicy="no-referrer" nonce="req-nonce-1"`,

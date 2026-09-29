@@ -2,8 +2,8 @@ package host
 
 import _ "embed"
 
-// NavigationRuntime is the browser navigation host embedded by
-// the framework-owned navigation head. The compatibility adapter precedes the JSDoc-only
+// NavigationRuntime is the browser navigation host served as a content-hashed
+// external asset by the framework. The compatibility adapter precedes the JSDoc-only
 // TypeScript authority so navigation publishes legacy names through the same
 // facade-owned boundary as the bootstrap bundles.
 //

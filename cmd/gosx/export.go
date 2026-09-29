@@ -126,6 +126,9 @@ func copyExportRuntime(buildDir, outputDir string, manifest exportManifest) erro
 
 func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	if rel, ok := strings.CutPrefix(ref, "/gosx/assets/"); ok && rel != "" {
+		return filepath.Join(buildDir, "assets", filepath.FromSlash(rel)), true
+	}
 	switch ref {
 	case "/gosx/runtime.wasm":
 		return filepath.Join(buildDir, "gosx-runtime.wasm"), true
