@@ -5,12 +5,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/island"
 )
 
@@ -212,29 +212,7 @@ func requestAcceptsEncoding(r *http.Request, encoding string) bool {
 	if r == nil {
 		return false
 	}
-	encoding = strings.ToLower(strings.TrimSpace(encoding))
-	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		fields := strings.Split(part, ";")
-		token := strings.ToLower(strings.TrimSpace(fields[0]))
-		if token == "" {
-			continue
-		}
-		if token != encoding {
-			continue
-		}
-		for _, param := range fields[1:] {
-			key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
-			if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
-				continue
-			}
-			q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-			if err == nil && q <= 0 {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return httpcompress.Accepts(strings.Join(r.Header.Values("Accept-Encoding"), ","), encoding)
 }
 
 func setRuntimeContentType(h http.Header, fsPath string) {

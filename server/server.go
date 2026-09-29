@@ -105,6 +105,8 @@ type App struct {
 	clientEventsLogger *slog.Logger
 	headDecorators     []HeadDecorator
 	securityPolicy     SecurityPolicy
+	compressionOff     bool
+	legacyGzip         bool
 
 	schedulerOnce sync.Once
 	scheduler     *scheduled.Scheduler
@@ -462,11 +464,20 @@ func (a *App) MountApp(prefix string, child *App) {
 	a.Mount(pattern, lazy)
 }
 
-// EnableGzip adds gzip compression middleware. It compresses all responses
-// when the client advertises gzip support, skipping WebSocket upgrades and
-// pre-compressed responses. Call this before Use() calls that write responses.
+// DisableCompression opts out of the default negotiated text compression.
+// Call it before Build or ListenAndServe.
+func (a *App) DisableCompression() {
+	a.compressionOff = true
+	a.legacyGzip = false
+}
+
+// EnableGzip retains the legacy gzip-only opt-in when default compression is
+// disabled. With default compression enabled it is a no-op. Call before Build.
 func (a *App) EnableGzip() {
-	a.Use(GzipMiddleware())
+	if !a.compressionOff {
+		return
+	}
+	a.legacyGzip = true
 }
 
 // Use appends middleware to the handler chain.
@@ -904,6 +915,11 @@ func (a *App) wrap(handler http.Handler) http.Handler {
 	wrapped := handler
 	for i := len(a.middleware) - 1; i >= 0; i-- {
 		wrapped = a.middleware[i](wrapped)
+	}
+	if !a.compressionOff {
+		wrapped = CompressionMiddleware()(wrapped)
+	} else if a.legacyGzip {
+		wrapped = GzipMiddleware()(wrapped)
 	}
 	if len(a.observers) > 0 {
 		wrapped = ObserveHandler(wrapped, append([]RequestObserver(nil), a.observers...))
