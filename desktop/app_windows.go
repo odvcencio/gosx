@@ -18,8 +18,9 @@ import (
 type windowsApp struct {
 	options Options
 
-	mu   sync.Mutex
-	hwnd uintptr
+	mu            sync.Mutex
+	primaryWindow *Window
+	hwnd          uintptr
 
 	// dispatch runs WebView2 calls on the window thread (see onUIThread).
 	dispatch        uiDispatcher
@@ -102,6 +103,7 @@ type windowsApp struct {
 	menuBar             uintptr
 	contextMenus        map[uintptr]uintptr
 	pendingTray         *TrayOptions
+	focusTracker        focusStateTracker
 	tray                *windowsTray
 	nextNativeCommandID uint16
 	menuActions         map[uint16]func()
@@ -1074,11 +1076,43 @@ func (a *windowsApp) fireWindowCreated(hwnd uintptr) {
 	a.mu.Lock()
 	cb := a.options.OnWindowCreated
 	options := a.options
+	window := a.primaryWindow
+	if window == nil {
+		window = newPrimaryWindow(hwnd, options, func(menu Menu) error {
+			return a.setWindowContextMenu(hwnd, menu)
+		})
+		a.primaryWindow = window
+	}
 	a.mu.Unlock()
 	if cb != nil {
-		cb(newPrimaryWindow(hwnd, options, func(menu Menu) error {
-			return a.setWindowContextMenu(hwnd, menu)
-		}))
+		cb(window)
+	}
+}
+
+// clearPrimaryWindow forgets the destroyed primary window, so App.Window
+// returns nil and App.ShowMessage (for example from OnClose) does not use a
+// handle Windows may reuse.
+func (a *windowsApp) clearPrimaryWindow() {
+	a.mu.Lock()
+	a.primaryWindow = nil
+	a.mu.Unlock()
+}
+
+func (a *windowsApp) PrimaryWindow() *Window {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.primaryWindow
+}
+
+func (a *windowsApp) onFocusChanged(focused bool) {
+	if !a.focusTracker.Update(focused) {
+		return
+	}
+	a.mu.Lock()
+	cb := a.options.OnFocusChanged
+	a.mu.Unlock()
+	if cb != nil {
+		cb(focused)
 	}
 }
 
