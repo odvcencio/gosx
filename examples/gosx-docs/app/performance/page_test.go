@@ -45,8 +45,8 @@ func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := gitOutput(t, "rev-parse", "--show-toplevel")
-	const squashedMeasurementCommit = "575eb7fce914bcfb1eb074072a12124587784d32"
-	const squashedMeasurementTree = "6b1e56742b48f21c63e30e65584501dea4209d63"
+	const squashedMeasurementCommit = "fe25097652dc4696bc5fc4945c63c760eaa00741"
+	const squashedMeasurementTree = "dd6393e1153a07fcfdd74d08f2c1b6cfc89ee677"
 
 	if err := measuredCommitIsAncestor(root, receipts.Commit); err != nil {
 		if gitOutputAt(t, root, "rev-parse", "--is-shallow-repository") == "true" {
@@ -64,7 +64,7 @@ func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
 			}
 		}
 		if err := measuredCommitIsAncestor(root, receipts.Commit); err != nil {
-			// PR #392 was squash-merged, so its measured source commit is not
+			// PRs #392 and #403 were squash-merged, so the measured source commit is not
 			// reachable from main even though the receipt still records that
 			// commit's exact tree. Fetch only this known source commit and accept
 			// it only when both receipt hashes match; the diff checks below still
