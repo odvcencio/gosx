@@ -18,7 +18,7 @@ test("ocean uniform block packs 35 vec4s with a Gerstner table sized by signific
   const api = h.env.context.__gosx_scene3d_api;
   const env = { sky: { mode: "physical", sunDirection: { x: 0, y: 0.1, z: -1 } } };
   const out = api.sceneOceanUniformData(oceanRecord({ waveHeight: 2 }), env, { x: 1, y: 2, z: 3 }, 5, true, "high");
-  assert.equal(out.length, 140, "webgl-ocean.ts and webgpu-ocean.ts allocate 140 floats");
+  assert.equal(out.length, 140, "both ocean passes allocate 140 floats");
   assert.deepEqual(Array.from(out.slice(28, 32)), [1, 2, 3, 1], "camera and linear output");
   assert.equal(out[27], 6); assert.equal(out[32], 192); assert.equal(out[33], 256);
   let sumA2 = 0;

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added: open ocean for Scene3D
+
+- `Environment.Ocean` draws an open sea to the horizon on WebGPU and WebGL2:
+  Gerstner swell, sky reflection with Fresnel, sun glint, crest scatter,
+  whitecaps and horizon fade. An optional bathymetry heightmap adds shallow
+  water over the terrain, shoaling, shore and rock foam, and a run-up surge.
+  Capability `ocean`; the mount reports `data-gosx-scene3d-ocean`.
+
 ### Added: physical sky for Scene3D
 
 - `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie

@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2816,
-    "actualGovernanceLinesAtReview": 2816,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size."
+    "revisedGovernanceLineBudget": 2838,
+    "actualGovernanceLinesAtReview": 2838,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -65,7 +65,17 @@
     },
     {
       "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl-ocean.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-ocean.ts",
       "count": 2
     },
     {
@@ -255,7 +265,17 @@
     },
     {
       "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl-ocean.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu-ocean.ts",
       "count": 2
     },
     {
@@ -368,7 +388,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10191:5",
+      "name": "applyPointsAuthoredCustomUniforms@10193:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -387,9 +407,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@7470:3",
-      "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "lines": 3434,
+      "cyclomatic": 1027,
+      "cognitive": 1626,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -431,7 +451,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10668:5",
+      "name": "drawInstancedMeshes@10670:5",
       "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -440,7 +460,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9760:5",
+      "name": "drawPBRObjectList@9762:5",
       "lines": 283,
       "cyclomatic": 82,
       "cognitive": 196,
@@ -449,7 +469,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10367:5",
+      "name": "drawPointsEntries@10369:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -458,7 +478,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9490:5",
+      "name": "prepareRigidMeshBatches@9492:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -477,9 +497,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "render@8646:5",
-      "lines": 312,
-      "cyclomatic": 90,
-      "cognitive": 131,
+      "lines": 314,
+      "cyclomatic": 91,
+      "cognitive": 132,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -559,8 +579,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6454:3",
       "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "cyclomatic": 4106,
+      "cognitive": 5323,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -694,8 +714,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "render@18162:5",
       "lines": 697,
-      "cyclomatic": 191,
-      "cognitive": 246,
+      "cyclomatic": 195,
+      "cognitive": 250,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -830,9 +850,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "lines": 3434,
+      "cyclomatic": 1027,
+      "cognitive": 1626,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -894,8 +914,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
       "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "cyclomatic": 4106,
+      "cognitive": 5323,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -921,8 +941,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "render",
       "lines": 697,
-      "cyclomatic": 191,
-      "cognitive": 246,
+      "cyclomatic": 195,
+      "cognitive": 250,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -952,9 +972,9 @@
         "bootstrap-feature-scene3d-webgl.js"
       ],
       "raw": 845500,
-      "gzip": 236500,
+      "gzip": 237700,
       "brotli": 197200,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room."
+      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps."
     },
     "base+webgpu": {
       "chunks": [
@@ -962,9 +982,9 @@
         "bootstrap-feature-scene3d-webgpu.js"
       ],
       "raw": 991100,
-      "gzip": 263200,
+      "gzip": 264800,
       "brotli": 218700,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room."
+      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -974,9 +994,9 @@
         "bootstrap-feature-scene3d-animation.js"
       ],
       "raw": 908300,
-      "gzip": 259500,
+      "gzip": 259600,
       "brotli": 217700,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room."
+      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps."
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -986,9 +1006,9 @@
         "bootstrap-feature-scene3d-animation.js"
       ],
       "raw": 1053900,
-      "gzip": 286200,
+      "gzip": 286700,
       "brotli": 239100,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room."
+      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps."
     }
   },
   "rendererABI": {

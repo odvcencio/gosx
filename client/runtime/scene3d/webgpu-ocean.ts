@@ -1,6 +1,6 @@
-// webgpu-ocean.ts — the WebGPU open-ocean pass for Environment.Ocean.
+// The WebGPU open-ocean pass for Environment.Ocean.
 //
-// The WGSL twin of webgl-ocean.ts: one draw of a camera-centred polar grid
+// The WGSL twin of the WebGL2 ocean pass: one draw of a camera-centred polar grid
 // built from vertex_index, Gerstner swell, sky reflection, GGX sun glint,
 // crest scatter, whitecaps, and bathymetry-aware shallows, foam and run-up.
 // It draws inside the main pass after opaque geometry with premultiplied

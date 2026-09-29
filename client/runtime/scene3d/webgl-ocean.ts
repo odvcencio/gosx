@@ -1,4 +1,4 @@
-// webgl-ocean.ts — the WebGL2 open-ocean pass for Environment.Ocean.
+// The WebGL2 open-ocean pass for Environment.Ocean.
 //
 // One draw of a camera-centred polar grid (no vertex buffers; gl_VertexID
 // builds the grid) displaced by Gerstner swell, shaded with the scene sky
