@@ -4524,18 +4524,16 @@
     var auxFBO = null;
     var scratchFBO = null;
     var pingPong = null;
+    var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     var currentWidth = 0;
     var currentHeight = 0;
     var hdrDegradationReported = false;
-
     // Lazily compiled shader programs, keyed by effect name.
     var programs = {};
-
     // Custom post program cache: name → program | null (null = failed, skip).
     var customPostPrograms = {};
     // Failed custom post names (to warn once only).
     var customPostFailed = {};
-
     // Get or compile a post-processing program.
     function getProgram(name, fragmentSource) {
       if (programs[name]) return programs[name];
@@ -4543,7 +4541,6 @@
       if (prog) programs[name] = prog;
       return prog;
     }
-
     // --- Render truth -------------------------------------------------------
     // createScenePostProcessor lives at module scope, a SIBLING of the renderer
     // closure, so it cannot see webglRenderTruth(). Resolve the shared helpers
@@ -4733,6 +4730,7 @@
     // (not the pass dims, which flip to canvas dims on the last pass when
     // the composite writes directly to the screen).
     function applyBloom(inputTex, effect, targetFBO, passW, passH, scaledW, scaledH) {
+      if (effect.mode === "mip") return mipBloom.apply({ input: inputTex, effect: effect, target: targetFBO, passWidth: passW, passHeight: passH, width: scaledW, height: scaledH });
       var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
       var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
       var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
@@ -4881,6 +4879,7 @@
         // Invalidation key is scaled dims so both canvas resize and maxPixels
         // change trigger reallocation.
         if (sw !== currentWidth || sh !== currentHeight) {
+          mipBloom.dispose();
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = createScenePostFBO(gl, sw, sh, true);
           if (!sceneFBO.hdrSupported && !hdrDegradationReported) {
@@ -5069,6 +5068,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
+        mipBloom.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = null;

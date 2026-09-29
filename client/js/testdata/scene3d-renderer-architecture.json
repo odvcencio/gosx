@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2808,
-    "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth."
+    "revisedGovernanceLineBudget": 2838,
+    "actualGovernanceLinesAtReview": 2838,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -32,7 +32,9 @@
     "16a1-scene-webgpu-selena-uniforms.ts",
     "hydrate-input.ts",
     "mount-webgl.ts",
+    "webgl-bloom.ts",
     "webgl.ts",
+    "webgpu-bloom.ts",
     "webgpu.ts"
   ],
   "intentionalDirectRendererReferences": [
@@ -63,7 +65,17 @@
     },
     {
       "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-bloom.ts",
       "count": 2
     },
     {
@@ -253,7 +265,17 @@
     },
     {
       "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu-bloom.ts",
       "count": 2
     },
     {
@@ -291,6 +313,7 @@
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-bloom.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -299,12 +322,14 @@
         "bootstrap-src/16b-scene-hdr.ts": "shared-scene-support",
         "bootstrap-src/16e-scene-webgl-legacy.ts": "backend-support",
         "../runtime/scene3d/webgl.ts": "governed-renderer",
+        "../runtime/scene3d/webgl-bloom.ts": "governed-renderer",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper"
       },
       "sources": [
-        "../runtime/scene3d/webgl.ts"
+        "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-bloom.ts"
       ],
-      "maxLines": 11270,
+      "maxLines": 11384,
       "maxFileLines": 11270
     },
     "webgpu": {
@@ -314,6 +339,7 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-bloom.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -321,13 +347,15 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts": "backend-support",
         "../runtime/scene3d/webgpu.ts": "governed-renderer",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": "governed-renderer",
+        "../runtime/scene3d/webgpu-bloom.ts": "governed-renderer",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper"
       },
       "sources": [
         "../runtime/scene3d/webgpu.ts",
-        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-bloom.ts"
       ],
-      "maxLines": 19533,
+      "maxLines": 19658,
       "maxFileLines": 19328
     }
   },
@@ -337,7 +365,9 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5588,
-    "../runtime/scene3d/mount.ts": 3866
+    "../runtime/scene3d/mount.ts": 3866,
+    "../runtime/scene3d/webgl-bloom.ts": 114,
+    "../runtime/scene3d/webgpu-bloom.ts": 125
   },
   "functionDefaults": {
     "lines": 200,
@@ -349,7 +379,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4923:14",
+      "name": "anonymous@4922:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -386,9 +416,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor@4521:3",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
+      "lines": 554,
+      "cyclomatic": 141,
+      "cognitive": 201,
       "maxNesting": 5,
       "parameters": 2
     },
@@ -520,7 +550,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "anonymous@4550:14",
+      "name": "anonymous@4548:14",
       "lines": 304,
       "cyclomatic": 29,
       "cognitive": 81,
@@ -773,7 +803,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "wgpuCreatePostProcessor@4181:3",
-      "lines": 669,
+      "lines": 673,
       "cyclomatic": 126,
       "cognitive": 194,
       "maxNesting": 8,
@@ -829,9 +859,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
+      "lines": 554,
+      "cyclomatic": 141,
+      "cognitive": 201,
       "maxNesting": 5,
       "parameters": 2
     },
@@ -928,7 +958,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "wgpuCreatePostProcessor",
-      "lines": 669,
+      "lines": 673,
       "cyclomatic": 126,
       "cognitive": 194,
       "maxNesting": 8,

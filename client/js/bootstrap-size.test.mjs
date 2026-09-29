@@ -684,7 +684,9 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_400 },
+  // The opt-in mip-chain bloom measures 1_791_301 / 495_429 / 397_639;
+  // targets rise by the smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap.js", raw: 1_725_800, gzip: 479_100, brotli: 381_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1375,7 +1377,9 @@ const budgets = [
   // all three caps raised with narrow rounding headroom.
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
+  // The opt-in mip-chain bloom measures 408_705 / 100_597 / 84_279;
+  // targets rise by the smallest 100-byte steps that clear the hard limits.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_896, brotli: 80_355 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1808,9 +1812,11 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_300_500,
-    gzip: 354_500,
-    brotli: 297_400,
+    // The opt-in mip-chain bloom measures 1_370_303 / 372_336 / 313_591;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_305_300,
+    gzip: 356_000,
+    brotli: 298_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1984,9 +1990,11 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_157_600,
-    gzip: 326_600,
-    brotli: 275_700,
+    // The opt-in mip-chain bloom measures 1_218_974 / 344_168 / 290_564;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_161_100,
+    gzip: 327_900,
+    brotli: 276_800,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2157,9 +2165,11 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_553_800,
-    gzip: 425_700,
-    brotli: 356_000,
+    // The opt-in mip-chain bloom measures 1_627_679 / 444_765 / 374_843;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_562_200,
+    gzip: 428_400,
+    brotli: 358_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2307,9 +2317,11 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_155_300,
-    gzip: 311_900,
-    brotli: 260_700,
+    // The opt-in mip-chain bloom measures 1_217_859 / 328_935 / 275_061;
+    // targets rise by the smallest 100-byte steps that clear the hard limits.
+    raw: 1_160_100,
+    gzip: 313_400,
+    brotli: 262_100,
   },
 
 ];

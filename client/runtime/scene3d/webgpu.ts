@@ -4198,9 +4198,8 @@
     var depthTexView = null;
     var currentWidth = 0;
     var currentHeight = 0;
-
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
-
+    var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
     // Same memoization pattern as the renderer's wgpuCachedBindGroup: a bind
     // group stays valid while the layout and every bound resource identity
     // are unchanged, and per-frame recreation churns GPU wrapper objects.
@@ -4235,7 +4234,6 @@
       }
       return owner;
     }
-
     // Render-truth chain state, owned by apply() but hoisted here so
     // fullscreenPass -- the ONE function every post pass funnels through --
     // can attribute its dispatch to the effect currently being processed.
@@ -4244,7 +4242,6 @@
     // to add a new effect case that forgets to report itself.
     var activePostChain = null;
     var activePostIndex = -1;
-
     // Lazily compiled pipelines and layouts.
     var pipelines = {};
     var postParamsLayout = null;
@@ -4439,6 +4436,7 @@
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
+      mipBloom.dispose();
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
@@ -4604,6 +4602,7 @@
               break;
             }
             case SCENE_POST_BLOOM: {
+              if (effect.mode === "mip") { currentTexView = mipBloom.apply({ encoder: encoder, input: currentTexView, effect: effect, output: outputView, width: scaledW, height: scaledH, index: i }); break; }
               // Bloom ping-pong resolution is scaledW/H * Bloom.Scale.
               // Zero / out-of-range scale falls back to 0.5 (v0.14.0 default),
               // matching the WebGL helper in applyBloom.
@@ -4862,6 +4861,7 @@
       },
 
       dispose: function() {
+        mipBloom.dispose();
         disposed = true;
         if (sceneTex) sceneTex.destroy();
         if (auxTex) auxTex.destroy();

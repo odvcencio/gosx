@@ -243,3 +243,6 @@ declare var sceneFocusPointerHandler: any;
 declare var webGPUObjectModelMatrix: any;
 
 declare var sceneSkyUniformData: any;
+
+declare function createSceneWebGLMipBloom(host: any): any;
+declare function createSceneWebGPUMipBloom(host: any): any;
