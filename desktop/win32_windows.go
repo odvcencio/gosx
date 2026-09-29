@@ -557,12 +557,23 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 			destroyWindow(hwnd)
 			return 0
 		}
+	case wmAppDispatch:
+		if app != nil {
+			app.drainDispatchQueue()
+			return 0
+		}
 	case wmDestroy:
 		if app != nil {
+			// Run calls already queued while the WebView still exists,
+			// release it on this thread, and only then let later calls run
+			// on their own threads: by then they find no WebView and
+			// return "not ready" instead of touching it off-thread.
+			app.drainDispatchQueue()
 			removeAppWindowProperty(hwnd, app.options.AppID)
 			app.disposeNativeUI()
 			app.releaseWindowIcons(hwnd)
 			app.releaseWebView()
+			app.stopDispatch()
 		}
 		windowMu.Lock()
 		delete(windowApps, hwnd)

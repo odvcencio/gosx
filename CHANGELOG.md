@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed: desktop WebView calls from goroutines
+
+- `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,
+  `OpenDevTools`, `PrependBootstrapScript`, and `Serve` now run on the window
+  thread when called from another goroutine. WebView2 rejects calls from
+  other threads with HRESULT 0x802A000C, so, for example, a host that
+  reloaded the page or pushed an event from a background goroutine failed
+  silently. Calls made on the window thread still run directly. If the
+  window thread cannot be woken, the call returns an error instead of running
+  off-thread. Bursts of calls post one wake message. After the window closes
+  and the WebView is released, calls that need a live WebView (`Reload`,
+  `PostMessage`, `ExecuteScript`, `OpenDevTools`) return "webview not ready";
+  `Navigate`, `SetHTML`, `PrependBootstrapScript`, and `Serve` store their
+  value and return nil.
 ### Added: WebView2 GPU selection; fixed: operator browser arguments were dropped
 
 - Add `Options.GPU` (`GPUPreferenceHighPerformance`, `GPUPreferenceLowPower`,
