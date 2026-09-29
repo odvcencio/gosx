@@ -72,12 +72,33 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 		}
 		compiled[i] = compiledMotionBinding{binding: binding, source: source, stops: stops}
 	}
+	// Two compiled bindings that animate the same CSS property of the same
+	// element would overwrite each other (the later animation wins), while
+	// JavaScript combines them (for example transform.x and transform.y both
+	// become the translate property). Leave every binding in such a group to
+	// JavaScript so no effect is lost.
+	propertyKey := func(b Binding) string {
+		property, _, _ := cssDeclaration(b, 0)
+		return b.Selector + "\x00" + property
+	}
+	propertyCount := make(map[string]int, len(compiled))
+	for _, item := range compiled {
+		propertyCount[propertyKey(item.binding)]++
+	}
+	for i, item := range compiled {
+		if propertyCount[propertyKey(item.binding)] > 1 {
+			delete(compiled, i)
+		}
+	}
 	if len(compiled) == 0 {
 		copy := cloneMotionProgram(p)
 		return "", &copy, nil
 	}
 
 	var body strings.Builder
+	type ruleItem struct{ name, timeline string }
+	ruleOrder := make([]string, 0, len(compiled))
+	ruleItems := make(map[string][]ruleItem, len(compiled))
 	var registered strings.Builder
 	registeredNames := make(map[string]bool)
 	for i := range p.Bindings {
@@ -102,13 +123,29 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 		}
 		body.WriteString("    }\n")
 		selector := scopedCSSSelector(p.ID, item.binding.Selector)
-		timeline := "scroll(root " + cssAxis(item.source.Source.Axis) + ")"
+		if _, seen := ruleItems[selector]; !seen {
+			ruleOrder = append(ruleOrder, selector)
+		}
+		ruleItems[selector] = append(ruleItems[selector], ruleItem{name: name, timeline: "scroll(root " + cssAxis(item.source.Source.Axis) + ")"})
+	}
+	// One rule per element lists every animation, so several fixed effects on
+	// one element all apply instead of the last declaration winning.
+	for _, selector := range ruleOrder {
+		items := ruleItems[selector]
+		names := make([]string, len(items))
+		timelines := make([]string, len(items))
+		durations := make([]string, len(items))
+		easings := make([]string, len(items))
+		fills := make([]string, len(items))
+		for i, item := range items {
+			names[i], timelines[i], durations[i], easings[i], fills[i] = item.name, item.timeline, "1ms", "linear", "both"
+		}
 		fmt.Fprintf(&body, "    %s {\n", selector)
-		fmt.Fprintf(&body, "      animation-name: %s;\n", name)
-		fmt.Fprintf(&body, "      animation-timeline: %s;\n", timeline)
-		body.WriteString("      animation-duration: 1ms;\n")
-		body.WriteString("      animation-timing-function: linear;\n")
-		body.WriteString("      animation-fill-mode: both;\n")
+		fmt.Fprintf(&body, "      animation-name: %s;\n", strings.Join(names, ", "))
+		fmt.Fprintf(&body, "      animation-timeline: %s;\n", strings.Join(timelines, ", "))
+		fmt.Fprintf(&body, "      animation-duration: %s;\n", strings.Join(durations, ", "))
+		fmt.Fprintf(&body, "      animation-timing-function: %s;\n", strings.Join(easings, ", "))
+		fmt.Fprintf(&body, "      animation-fill-mode: %s;\n", strings.Join(fills, ", "))
 		body.WriteString("    }\n")
 	}
 	if body.Len() == 0 {

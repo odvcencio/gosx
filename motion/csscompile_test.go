@@ -244,3 +244,72 @@ func TestCompileCSSRegistersAVariableOnceForTwoBindings(t *testing.T) {
 		t.Fatalf("want one @property and two compiled bindings; compiled=%v css=\n%s", rest.CSSCompiled, css)
 	}
 }
+
+// Several fixed effects on one element must all apply. Each compiled effect is
+// its own animation, so they go in one rule as lists; separate rules would let
+// the last animation-name declaration win and silently drop the others, while
+// the runtime skips every compiled binding.
+func TestCompileCSSListsEveryAnimationOfOneElementInOneRule(t *testing.T) {
+	p := NewProgram("multi")
+	scroll := p.ScrollProgress("scroll", "", AxisY)
+	fade := p.Map("fade", scroll, 0, 1, 1, 0)
+	grow := p.Map("grow", scroll, 0, 1, 100, 300)
+	p.BindStyle(fade, "#card", "opacity", "")
+	p.BindStyle(grow, "#card", "width", "px")
+	p.BindStyle(fade, "#other", "opacity", "")
+	css, rest, err := CompileCSS(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest.CSSCompiled) != 3 {
+		t.Fatalf("CSSCompiled = %v, want all three bindings", rest.CSSCompiled)
+	}
+	card := ":where([data-gosx-motion-scope='multi']) :is(#card) {"
+	if strings.Count(css, card) != 1 {
+		t.Fatalf("want exactly one rule for #card:\n%s", css)
+	}
+	if strings.Count(css, "animation-name:") != 2 {
+		t.Fatalf("want one animation-name declaration per element (two elements):\n%s", css)
+	}
+	rule := css[strings.Index(css, card):]
+	rule = rule[:strings.Index(rule, "}")]
+	for _, want := range []string{"animation-name: gosx-motion-multi-0-", "animation-timeline: scroll(root block), scroll(root block)", "animation-duration: 1ms, 1ms", "animation-fill-mode: both, both"} {
+		if !strings.Contains(rule, want) {
+			t.Fatalf("rule for #card lacks %q:\n%s", want, rule)
+		}
+	}
+	if !strings.Contains(rule, ", gosx-motion-multi-1-") {
+		t.Fatalf("rule for #card must list both animations:\n%s", rule)
+	}
+}
+
+// Bindings that would animate the same property of the same element cannot
+// both be CSS animations, and JavaScript combines them (transform.x and
+// transform.y both become one translate), so all of them stay in JavaScript.
+func TestCompileCSSLeavesSamePropertyConflictsToJavaScript(t *testing.T) {
+	p := NewProgram("conflict")
+	scroll := p.ScrollProgress("scroll", "", AxisY)
+	x := p.Map("x", scroll, 0, 1, 0, 40)
+	y := p.Map("y", scroll, 0, 1, 0, 80)
+	p.BindStyle(x, "#card", "transform.x", "px")
+	p.BindStyle(y, "#card", "transform.y", "px")
+	p.BindCSSVariable(x, "#card", "--p", "px")
+	p.BindCSSVariable(y, "#card", "--p", "px")
+	css, rest, err := CompileCSS(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if css != "" || len(rest.CSSCompiled) != 0 {
+		t.Fatalf("conflicting bindings must stay in JavaScript: css=%q compiled=%v", css, rest.CSSCompiled)
+	}
+
+	// A conflict on one element does not stop other elements from compiling.
+	p.BindStyle(x, "#free", "opacity", "")
+	css, rest, err = CompileCSS(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rest.CSSCompiled, []int{4}) || !strings.Contains(css, "#free") || strings.Contains(css, "#card") {
+		t.Fatalf("only the conflict-free binding should compile: compiled=%v css=\n%s", rest.CSSCompiled, css)
+	}
+}
