@@ -130,7 +130,12 @@ const WGSL_SCENE_OCEAN = [
 
 // wgpuCreateOceanRenderer builds the pass lazily; pipelines are cached per
 // target format and sample count, like the sky pass.
-function wgpuCreateOceanRenderer(device, textureCache, placeholderView) {
+function wgpuCreateOceanRenderer(device, textureCache) {
+  // A deep-sea placeholder (R = 0) until the bathymetry map loads.
+  const placeholder = device.createTexture({ label: "gosx-ocean-bathymetry-placeholder", size: [1, 1, 1], format: "rgba8unorm",
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+  device.queue.writeTexture({ texture: placeholder }, new Uint8Array([0, 0, 0, 255]), { bytesPerRow: 4 }, [1, 1, 1]);
+  const placeholderView = placeholder.createView();
   const data = new Float32Array(16 + 140 /* sceneOceanUniformData: 35 vec4 */);
   const uniform = device.createBuffer({ label: "gosx-ocean", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
@@ -178,7 +183,7 @@ function wgpuCreateOceanRenderer(device, textureCache, placeholderView) {
       if (opts.frameBindGroup) pass.setBindGroup(0, opts.frameBindGroup);
       return state;
     },
-    dispose: function() { uniform.destroy(); pipelines.clear(); group = null; },
+    dispose: function() { uniform.destroy(); placeholder.destroy(); pipelines.clear(); group = null; },
   };
 }
 
@@ -189,7 +194,7 @@ function wgpuOceanDraw(resources, pass, opts) {
   let state = "none";
   if (env && env.ocean) {
     if (!resources.renderer && !resources.failed) {
-      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache, opts.placeholderView);
+      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache);
       resources.failed = !resources.renderer;
     }
     state = resources.renderer ? resources.renderer.draw(pass, opts) : "unavailable";

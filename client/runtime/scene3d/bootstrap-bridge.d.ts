@@ -241,3 +241,6 @@ declare var sceneSkyPhysicalParams: any;
 declare var sceneSkyPhysicalShaderSource: any;
 declare var sceneSkyPhysicalSource: any;
 declare var sceneOceanUniformData: any;
+// Ocean passes live in webgl-ocean.ts and webgpu-ocean.ts (same chunk as the renderer).
+declare function sceneOceanWebGLDraw(resources: any, gl: any, opts: any): void;
+declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;

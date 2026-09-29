@@ -128,8 +128,8 @@ var capabilityCellReasons = map[capability.Feature]map[capability.Backend]string
 		capability.BackendCanvas2D: "Canvas2D keeps a flat clear color; the server fills matching gradient stops.",
 	},
 	capability.FeatureOcean: {
-		capability.BackendWebGPU:   "Planned: open-ocean surface pass.",
-		capability.BackendWebGL:    "Planned: open-ocean surface pass.",
+		capability.BackendWebGPU:   "The renderer draws Gerstner swell, sky reflection, sun glint, foam and depth-aware shallows.",
+		capability.BackendWebGL:    "The renderer draws Gerstner swell, sky reflection, sun glint, foam and depth-aware shallows.",
 		capability.BackendCanvas2D: "Canvas2D does not draw an ocean.",
 	},
 }

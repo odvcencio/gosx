@@ -289,7 +289,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	FeatureSkyEnvironment: {BackendWebGPU: true, BackendWebGL: true},
 	FeatureSkyGradient:    {BackendWebGPU: true, BackendWebGL: true},
 	FeatureSkyPhysical:    {BackendWebGPU: true, BackendWebGL: true},
-	FeatureOcean:          {BackendWebGPU: false, BackendWebGL: false},
+	FeatureOcean:          {BackendWebGPU: true, BackendWebGL: true},
 }
 
 func supports(b Backend, f Feature) bool {
