@@ -252,6 +252,13 @@ func Page() Node {
 							<td>no</td>
 						</tr>
 						<tr>
+							<th scope="row">ocean</th>
+							<td>yes</td>
+							<td>yes</td>
+							<td>no</td>
+							<td>no</td>
+						</tr>
+						<tr>
 							<th scope="row">rect-area-light</th>
 							<td>yes</td>
 							<td>no</td>

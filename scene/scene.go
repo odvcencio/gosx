@@ -82,7 +82,9 @@ type Environment struct {
 	IBL EnvironmentIBL
 	// Sky selects the background source drawn behind the scene. A nil Sky
 	// keeps the flat Props.Background clear color. See sky.go.
-	Sky          *Sky
+	Sky *Sky
+	// Ocean describes the open-ocean surface. See ocean.go.
+	Ocean        *Ocean
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64

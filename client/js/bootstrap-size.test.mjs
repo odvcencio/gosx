@@ -686,7 +686,9 @@ const budgets = [
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
   // The physical sky measures 1_787_265 / 494_518 / 397_055; targets rise by the
   // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_721_800, gzip: 478_200, brotli: 380_700 },
+  // Environment.Ocean (the two ocean passes and the shared packing) measures
+  // 1_811_342 / 503_343 / 402_536; targets rise by the smallest 100-byte steps.
+  { file: "bootstrap.js", raw: 1_745_900, gzip: 487_000, brotli: 386_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1054,7 +1056,9 @@ const budgets = [
   // persistent-buffer upload path. The build with frame caching measures
   // 251_292 / 70_024 / 59_410;
   // retain narrow rounding headroom so later growth remains visible.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 70_100, brotli: 59_500 },
+  // Environment.Ocean (the two ocean passes and the shared packing) measures
+  // 263_410 / 74_722 / 62_954; targets rise by the smallest 100-byte steps.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 71_300, brotli: 60_000 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1181,7 +1185,9 @@ const budgets = [
   // caching measures 594_098 / 166_371 / 137_740.
   // The physical sky measures 620_165 / 175_266 / 144_289; targets rise by the
   // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 167_000, brotli: 137_850 },
+  // Environment.Ocean (the two ocean passes and the shared packing) measures
+  // 624_328 / 177_226 / 145_904; targets rise by the smallest 100-byte steps.
+  { file: "bootstrap-feature-scene3d.js", raw: 594_700, gzip: 168_900, brotli: 139_050 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1379,7 +1385,9 @@ const budgets = [
   // all three caps raised with narrow rounding headroom.
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
+  // Environment.Ocean (the two ocean passes and the shared packing) measures
+  // 414_783 / 103_155 / 85_635; targets rise by the smallest 100-byte steps.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 395_166, gzip: 98_396, brotli: 81_655 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1814,9 +1822,11 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical sky measures 1_369_726 / 372_535 / 313_438; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
-    raw: 1_304_800,
-    gzip: 356_200,
-    brotli: 298_600,
+    // Environment.Ocean (the two ocean passes and the shared packing) measures
+    // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
+    raw: 1_319_300,
+    gzip: 362_100,
+    brotli: 302_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1992,9 +2002,11 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical sky measures 1_219_646 / 344_640 / 290_765; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
-    raw: 1_161_800,
-    gzip: 328_400,
-    brotli: 277_000,
+    // Environment.Ocean (the two ocean passes and the shared packing) measures
+    // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
+    raw: 1_175_100,
+    gzip: 333_700,
+    brotli: 281_200,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2167,9 +2179,11 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical sky measures 1_623_811 / 443_829 / 373_776; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
-    raw: 1_558_300,
-    gzip: 427_500,
-    brotli: 357_400,
+    // Environment.Ocean (the two ocean passes and the shared packing) measures
+    // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
+    raw: 1_582_400,
+    gzip: 436_800,
+    brotli: 364_300,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2319,9 +2333,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
-    raw: 1_159_600,
-    gzip: 313_600,
-    brotli: 261_900,
+    raw: 1_174_100,
+    gzip: 319_400,
+    brotli: 266_100,
   },
 
 ];
