@@ -1,0 +1,217 @@
+{
+  "schema": "gosx.wire-budget/v1",
+  "note": "Per-route wire budgets checked by scripts/wire-gate.sh on every pull request. Limits only move down: a raise needs a reason in the route's raise map. Regenerate with make wire-gate-update.",
+  "tolerance": {
+    "bytesPercent": 2,
+    "bytesMin": 512
+  },
+  "apps": {
+    "docs": {
+      "/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 995676,
+          "htmlWireBytes": 189145,
+          "inlineScriptBytes": 111586,
+          "jsWireBytes": 219028,
+          "requests": 8,
+          "totalWireBytes": 1131483,
+          "wasmWireBytes": 665060
+        },
+        "require": [
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/capabilities/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 111656,
+          "htmlWireBytes": 198179,
+          "inlineScriptBytes": 111656,
+          "jsWireBytes": 256,
+          "requests": 4,
+          "totalWireBytes": 256427,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/demos/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 110278,
+          "htmlWireBytes": 243502,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 256,
+          "requests": 2,
+          "totalWireBytes": 264882,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/demos/scene3d/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 995676,
+          "htmlWireBytes": 223911,
+          "inlineScriptBytes": 111586,
+          "jsWireBytes": 219028,
+          "requests": 6,
+          "totalWireBytes": 1129380,
+          "wasmWireBytes": 665060
+        },
+        "require": [
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/demos/water": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 995676,
+          "htmlWireBytes": 746234,
+          "inlineScriptBytes": 111586,
+          "jsWireBytes": 233877,
+          "requests": 13,
+          "totalWireBytes": 1897280,
+          "wasmWireBytes": 665060
+        },
+        "require": [
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/docs/getting-started/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 110278,
+          "htmlWireBytes": 202911,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 2791,
+          "requests": 5,
+          "totalWireBytes": 263720,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/docs/islands/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 506236,
+          "htmlWireBytes": 216636,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 61752,
+          "requests": 11,
+          "totalWireBytes": 673403,
+          "wasmWireBytes": 336602
+        },
+        "require": [
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/performance/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 110278,
+          "htmlWireBytes": 178504,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 256,
+          "requests": 4,
+          "totalWireBytes": 236753,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      }
+    },
+    "scaffold": {
+      "/": {
+        "limits": {
+          "cssWireBytes": 4182,
+          "frameworkJsWireBytes": 110278,
+          "htmlWireBytes": 114855,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 256,
+          "requests": 2,
+          "totalWireBytes": 118820,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/counter/": {
+        "limits": {
+          "cssWireBytes": 4182,
+          "frameworkJsWireBytes": 506231,
+          "htmlWireBytes": 114660,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 59192,
+          "requests": 8,
+          "totalWireBytes": 514577,
+          "wasmWireBytes": 336602
+        },
+        "require": [
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      },
+      "/stack/": {
+        "limits": {
+          "cssWireBytes": 4182,
+          "frameworkJsWireBytes": 110278,
+          "htmlWireBytes": 112854,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 256,
+          "requests": 2,
+          "totalWireBytes": 116819,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ]
+      }
+    }
+  }
+}
