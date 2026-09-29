@@ -1059,9 +1059,15 @@ type HTML struct {
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Position         Vector3
+	// Perspective renders a DOM-mode overlay as a flat plane of SurfaceWidth by
+	// SurfaceHeight world units in the local XY plane, positioned and rotated in
+	// world space and drawn with a CSS matrix3d, so real focusable HTML sits on
+	// a 3D plane. Both surface dimensions must be positive when it is set.
+	Perspective bool
 	// Rotation orients a texture surface in world space, in radians, applied
 	// X then Y then Z. The quad starts in the XZ plane; Rotation.X = -math.Pi/2
-	// stands it upright. DOM-mode overlays ignore this field.
+	// stands it upright. DOM-mode overlays use it only when Perspective is true,
+	// and then the plane starts in the XY plane facing +Z.
 	Rotation Euler
 	// Spin adds constant angular velocity in radians per second.
 	Spin          Euler
@@ -3934,6 +3940,7 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		MaxTexturePixels: item.html.MaxTexturePixels,
 		SurfaceWidth:     item.html.SurfaceWidth,
 		SurfaceHeight:    item.html.SurfaceHeight,
+		Perspective:      item.html.Perspective,
 		X:                position.X,
 		Y:                position.Y,
 		Z:                position.Z,

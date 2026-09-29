@@ -802,6 +802,13 @@ func validateHTML(report *Report, html scene.HTMLIR, path string, opts Options, 
 	if mode != "dom" && mode != "texture" && mode != "portal" && mode != "world" && mode != "screen" {
 		report.add(Warn, "scene.html.unknown_mode", "HTML surface mode is not part of the formal mode set", path+".mode", html.ID, map[string]any{"mode": html.Mode})
 	}
+	if html.Perspective {
+		if mode != "dom" {
+			report.add(Warn, "scene.html.perspective_ignored_mode", "Perspective HTML positioning applies only to DOM mode", path+".perspective", html.ID, map[string]any{"mode": mode})
+		} else if html.SurfaceWidth <= 0 || html.SurfaceHeight <= 0 {
+			report.add(Error, "scene.html.perspective_size_missing", "Perspective DOM HTML requires positive surfaceWidth and surfaceHeight", path, html.ID, map[string]any{"surfaceWidth": html.SurfaceWidth, "surfaceHeight": html.SurfaceHeight})
+		}
+	}
 	if mode == "texture" {
 		severity := Warn
 		if opts.Strict {
