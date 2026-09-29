@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1269,4 +1270,55 @@ func TestWaterQualityProfilesPreserveTruthfulFeatureCoverage(t *testing.T) {
 			previous = current
 		}
 	}
+}
+
+// The page loader writes per-request keys into the map it gets. That map must be
+// private to the request: a shared one crashed the live site under concurrent
+// load ("fatal error: concurrent map writes") and leaked one visitor's knobs
+// into another's page.
+func TestWaterDemoDataReturnsAPrivateCopyPerCall(t *testing.T) {
+	first, err := WaterDemoData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := WaterDemoData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first["diagDpr"] = 9.9
+	first["waterControlData"] = "replaced"
+	if _, leaked := second["diagDpr"]; leaked {
+		t.Fatal("a key written to one result appeared in another call's result")
+	}
+	if second["waterControlData"] == "replaced" {
+		t.Fatal("a replaced top-level value appeared in another call's result")
+	}
+	third, _ := WaterDemoData()
+	if _, leaked := third["diagDpr"]; leaked {
+		t.Fatal("the shared data was modified")
+	}
+}
+
+func TestWaterDemoDataIsSafeToWriteConcurrently(t *testing.T) {
+	var wg sync.WaitGroup
+	for worker := 0; worker < 32; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				data, err := WaterDemoData()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				data["diagWorker"] = worker
+				data["diagIteration"] = i
+				if data["diagWorker"] != worker {
+					t.Errorf("worker %d read another request's value", worker)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
 }
