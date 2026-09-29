@@ -182,6 +182,7 @@ var outputs = []output{
 			// right after 16a because that placement compresses best.
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
+			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
@@ -513,6 +514,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
+			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
 	},

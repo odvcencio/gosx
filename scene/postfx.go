@@ -91,7 +91,7 @@ func (Tonemap) isPostEffect() {}
 
 // Bloom adds an HDR-driven glow around bright pixels.
 //
-// Implementation: bright-pass extracts pixels above the luminance Threshold
+// By default, bright-pass extracts pixels above the luminance Threshold
 // into a half-resolution FBO, separable Gaussian blur runs horizontally and
 // vertically, and the result is additively composited back onto the scene at
 // Strength.
@@ -102,7 +102,7 @@ type Bloom struct {
 
 	Threshold float32 // luminance above which pixels bloom (default 0.8)
 	Strength  float32 // intensity of the bloom contribution (default 0.5)
-	Radius    float32 // blur radius in pixels (default 5)
+	Radius    float32 // blur radius in pixels (default 5); mip tent radius is Radius / 5
 
 	// Scale is an additional bloom-internal downscale applied on top of
 	// the PostFX.MaxPixels factor. The zero value maps to 0.5 (runtime

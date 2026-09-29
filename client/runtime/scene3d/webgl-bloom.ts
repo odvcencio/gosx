@@ -40,6 +40,10 @@ function createSceneWebGLMipBloom(host) {
     "}",
   ].join("\n");
 
+  function number(value, fallback) {
+    return typeof value === "number" && isFinite(value) ? value : fallback;
+  }
+
   function dispose() {
     for (var i = 0; i < levels.length; i++) {
       disposeScenePostFBO(gl, levels[i].base);
@@ -81,9 +85,9 @@ function createSceneWebGLMipBloom(host) {
       if (!prefilter || !downsample || !upsample || !composite) return args.input;
       var scale = effect.scale > 0 && effect.scale <= 1 ? effect.scale : 0.5;
       ensureLevels(Math.max(1, Math.floor(args.width * scale)), Math.max(1, Math.floor(args.height * scale)));
-      var radius = Math.min(2, Math.max(0.25, (effect.radius > 0 ? sceneFiniteNumber(effect.radius, 5) : 5) / 5));
+      var radius = Math.min(2, Math.max(0.25, (effect.radius > 0 ? number(effect.radius, 5) : 5) / 5));
       draw(prefilter, args.input, levels[0].base);
-      gl.uniform1f(gl.getUniformLocation(prefilter.program, "u_threshold"), Math.max(0, sceneFiniteNumber(effect.threshold, 0.8)));
+      gl.uniform1f(gl.getUniformLocation(prefilter.program, "u_threshold"), Math.max(0, number(effect.threshold, 0.8)));
       drawSceneFullscreenQuad(gl, host.quad.vao);
       for (var i = 1; i < levels.length; i++) {
         var source = levels[i - 1].base;
@@ -102,7 +106,7 @@ function createSceneWebGLMipBloom(host) {
       }
       host.beginPostPass(composite, args.input, args.target ? args.target.fbo : null, args.passWidth, args.passHeight);
       bloomTexture(composite, smaller.colorTex);
-      gl.uniform1f(gl.getUniformLocation(composite.program, "u_intensity"), sceneFiniteNumber(effect.intensity, 0.5));
+      gl.uniform1f(gl.getUniformLocation(composite.program, "u_intensity"), number(effect.intensity, 0.5));
       drawSceneFullscreenQuad(gl, host.quad.vao);
       return args.target ? args.target.colorTex : null;
     },

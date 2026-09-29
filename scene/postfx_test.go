@@ -880,6 +880,12 @@ func TestBloomModeIR(t *testing.T) {
 			if mode == "mip" {
 				want = mode
 			}
+			if ir.Mode != want {
+				t.Fatalf("lowered mode = %q, want %q", ir.Mode, want)
+			}
+			if _, ok := ir.legacyProps()["mode"]; ok != (mode == "mip") {
+				t.Fatalf("legacy props retained unsupported mode %q", mode)
+			}
 			if roundTrip.Mode != want {
 				t.Fatalf("mode = %q, want %q", roundTrip.Mode, want)
 			}
