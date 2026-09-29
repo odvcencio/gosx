@@ -86,6 +86,64 @@ func TestCompileCSSMixedProgramListsOnlyTheCompiledBindings(t *testing.T) {
 	}
 }
 
+func TestCompileCSSPropertyConflictsIncludeNonCompilableBindings(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		scrollSelector string
+		scrollProperty string
+		springSelector string
+		springProperty string
+		wantCompiled   []int
+	}{
+		{
+			name:           "same selector and property",
+			scrollSelector: "#card",
+			scrollProperty: "opacity",
+			springSelector: "#card",
+			springProperty: "opacity",
+		},
+		{
+			name:           "same selector and different properties",
+			scrollSelector: "#card",
+			scrollProperty: "opacity",
+			springSelector: "#card",
+			springProperty: "width",
+			wantCompiled:   []int{0},
+		},
+		{
+			name:           "different selectors and same property",
+			scrollSelector: "#card",
+			scrollProperty: "opacity",
+			springSelector: "#other",
+			springProperty: "opacity",
+			wantCompiled:   []int{0},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p := NewProgram("conflict")
+			scroll := p.ScrollProgress("scroll", "", AxisY)
+			mapped := p.Map("mapped", scroll, 0, 1, 0, 1)
+			p.BindStyle(mapped, test.scrollSelector, test.scrollProperty, "")
+			spring := p.Spring("spring", 0, SpringOptions{To: 1})
+			p.BindStyle(spring, test.springSelector, test.springProperty, "")
+
+			css, rest, err := CompileCSS(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rest == nil || !reflect.DeepEqual(rest.CSSCompiled, test.wantCompiled) {
+				t.Fatalf("CSSCompiled = %v, want %v", rest.CSSCompiled, test.wantCompiled)
+			}
+			if len(test.wantCompiled) == 0 && css != "" {
+				t.Fatalf("CSS = %q, want no compiled CSS", css)
+			}
+			if len(test.wantCompiled) != 0 && css == "" {
+				t.Fatal("expected the scroll binding to compile")
+			}
+		})
+	}
+}
+
 func TestCompileCSSOnlyCompilesPageScroll(t *testing.T) {
 	for name, build := range map[string]func() *Program{
 		"element visibility": func() *Program {

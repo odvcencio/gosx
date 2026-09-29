@@ -72,18 +72,18 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 		}
 		compiled[i] = compiledMotionBinding{binding: binding, source: source, stops: stops}
 	}
-	// Two compiled bindings that animate the same CSS property of the same
-	// element would overwrite each other (the later animation wins), while
-	// JavaScript combines them (for example transform.x and transform.y both
-	// become the translate property). Leave every binding in such a group to
-	// JavaScript so no effect is lost.
+	// A CSS animation can hide inline styles from another binding to the same CSS
+	// property and element. Count every style/CSS-variable binding, not only the
+	// ones that can be compiled.
 	propertyKey := func(b Binding) string {
 		property, _, _ := cssDeclaration(b, 0)
 		return b.Selector + "\x00" + property
 	}
-	propertyCount := make(map[string]int, len(compiled))
-	for _, item := range compiled {
-		propertyCount[propertyKey(item.binding)]++
+	propertyCount := make(map[string]int, len(p.Bindings))
+	for _, binding := range p.Bindings {
+		if binding.Target == BindingStyle || binding.Target == BindingCSSVariable {
+			propertyCount[propertyKey(binding)]++
+		}
 	}
 	for i, item := range compiled {
 		if propertyCount[propertyKey(item.binding)] > 1 {
