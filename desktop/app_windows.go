@@ -18,8 +18,11 @@ import (
 type windowsApp struct {
 	options Options
 
-	mu              sync.Mutex
-	hwnd            uintptr
+	mu   sync.Mutex
+	hwnd uintptr
+
+	// dispatch runs WebView2 calls on the window thread (see onUIThread).
+	dispatch        uiDispatcher
 	iconLarge       uintptr
 	iconSmall       uintptr
 	env             *coreWebView2Environment
@@ -206,6 +209,7 @@ func (a *windowsApp) Run() error {
 	a.mu.Lock()
 	a.hwnd = hwnd
 	a.mu.Unlock()
+	a.startDispatch(hwnd)
 	large, small := setExecutableWindowIcons(hwnd)
 	a.mu.Lock()
 	a.iconLarge = large
@@ -257,7 +261,7 @@ func (a *windowsApp) Close() error {
 	return nil
 }
 
-func (a *windowsApp) Navigate(url string) error {
+func (a *windowsApp) navigateOnUI(url string) error {
 	normalized, err := normalizeOptions(Options{Title: a.options.Title, Width: a.options.Width, Height: a.options.Height, URL: url})
 	if err != nil {
 		return err
@@ -274,7 +278,7 @@ func (a *windowsApp) Navigate(url string) error {
 	return webview.navigate(normalized.URL)
 }
 
-func (a *windowsApp) SetHTML(html string) error {
+func (a *windowsApp) setHTMLOnUI(html string) error {
 	if _, err := normalizeOptions(Options{Title: a.options.Title, Width: a.options.Width, Height: a.options.Height, HTML: html}); err != nil {
 		return err
 	}
@@ -289,7 +293,7 @@ func (a *windowsApp) SetHTML(html string) error {
 	return webview.navigateToString(html)
 }
 
-func (a *windowsApp) Reload() error {
+func (a *windowsApp) reloadOnUI() error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -770,7 +774,7 @@ func configureDefaultSettings(s *coreWebView2Settings, o Options) error {
 // PostMessage sends a string payload to the webview's chrome.webview event
 // listener. Falls back silently when the webview hasn't finished creation
 // — the caller can retry after OnWebMessage confirms the bridge is live.
-func (a *windowsApp) PostMessage(message string) error {
+func (a *windowsApp) postMessageOnUI(message string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -783,7 +787,7 @@ func (a *windowsApp) PostMessage(message string) error {
 // ExecuteScript runs arbitrary JavaScript in the top-level frame. The
 // completion handler form is ignored for simplicity — callers that need
 // the return value can use PostMessage to round-trip through JS.
-func (a *windowsApp) ExecuteScript(script string) error {
+func (a *windowsApp) executeScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -796,7 +800,7 @@ func (a *windowsApp) ExecuteScript(script string) error {
 // OpenDevTools pops the Chromium dev-tools inspector in a separate
 // window. Requires Options.Debug or Options.DevTools; otherwise returns
 // an error because the underlying setting disables the call.
-func (a *windowsApp) OpenDevTools() error {
+func (a *windowsApp) openDevToolsOnUI() error {
 	if !devToolsEnabled(a.options) {
 		return fmt.Errorf("%w: Options.Debug or Options.DevTools must be true to open dev tools",
 			ErrInvalidOptions)
@@ -820,7 +824,7 @@ func (a *windowsApp) openDevToolsFromShortcut() {
 // PrependBootstrapScript queues a JS snippet that will run before every
 // document load inside the webview. Calls queued before Run are stored
 // in pendingBootstrap and registered once the controller completes.
-func (a *windowsApp) PrependBootstrapScript(script string) error {
+func (a *windowsApp) prependBootstrapScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.pendingBootstrap = script
@@ -897,7 +901,7 @@ func (a *windowsApp) SetTitle(title string) error {
 // matches everything rooted at "app://assets/". Registrations are
 // first-match-wins in insertion order, so specific prefixes should be
 // registered before generic ones.
-func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+func (a *windowsApp) serveOnUI(prefix string, handler http.Handler) error {
 	if strings.TrimSpace(prefix) == "" {
 		return fmt.Errorf("%w: serve prefix must be non-empty", ErrInvalidOptions)
 	}
@@ -1081,4 +1085,44 @@ func resolveUserDataDir(configured string) (string, error) {
 		return "", fmt.Errorf("create WebView2 user data dir: %w", err)
 	}
 	return dir, nil
+}
+
+// Navigate runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Navigate(url string) error {
+	return a.onUIThread(func() error { return a.navigateOnUI(url) })
+}
+
+// SetHTML runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) SetHTML(html string) error {
+	return a.onUIThread(func() error { return a.setHTMLOnUI(html) })
+}
+
+// Reload runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Reload() error {
+	return a.onUIThread(a.reloadOnUI)
+}
+
+// PostMessage runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) PostMessage(message string) error {
+	return a.onUIThread(func() error { return a.postMessageOnUI(message) })
+}
+
+// ExecuteScript runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) ExecuteScript(script string) error {
+	return a.onUIThread(func() error { return a.executeScriptOnUI(script) })
+}
+
+// OpenDevTools runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) OpenDevTools() error {
+	return a.onUIThread(a.openDevToolsOnUI)
+}
+
+// PrependBootstrapScript runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) PrependBootstrapScript(script string) error {
+	return a.onUIThread(func() error { return a.prependBootstrapScriptOnUI(script) })
+}
+
+// Serve runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+	return a.onUIThread(func() error { return a.serveOnUI(prefix, handler) })
 }
