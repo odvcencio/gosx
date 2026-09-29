@@ -3284,6 +3284,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureEnvironmentMap,
 	capability.FeatureSkyEnvironment,
 	capability.FeatureSkyGradient,
+	capability.FeatureSkyPhysical,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3383,6 +3384,9 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	}
 	if skyRaisesGradientFeature(ir.Environment.Sky) {
 		seen[capability.FeatureSkyGradient] = true
+	}
+	if skyRaisesPhysicalFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyPhysical] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

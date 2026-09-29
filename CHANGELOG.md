@@ -20,6 +20,20 @@
   (owned by the app window): info, warning, error, and question icons;
   OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
   it as `gosxDesktop.dialog.message`.
+
+### Added: physical sky for Scene3D
+
+- `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
+  scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`
+  (`scene.SunDirectionFromAngles` helps), `Turbidity`, `Rayleigh`,
+  `MieCoefficient`, `MieDirectionalG` and `SunDiskRadius`; zero means the
+  default. `Sky.PhysicalRadiance` evaluates the same model in Go, and
+  `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
+  Canvas2D gets gradient stops computed from the model. Capability
+  `sky-physical`.
+
+
+
 ### Fixed and added: desktop single instance
 
 - Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
