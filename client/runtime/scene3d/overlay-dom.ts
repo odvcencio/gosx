@@ -673,7 +673,7 @@
     setStyleValue(element.style, "--gosx-scene-html-pointer-events", normalizeSceneHTMLPointerEvents(htmlEntry.pointerEvents, "none"));
     if (perspective) {
       setStyleValue(element.style, "transform-origin", "0 0");
-      const transform = sceneHTMLPerspectiveTransform(element, htmlEntry.perspectiveCorners);
+      const transform = sceneHTMLPerspectiveTransform.call(null, element, htmlEntry.perspectiveCorners);
       if (transform) {
         setStyleValue(element.style, "transform", transform);
       } else {
@@ -1568,9 +1568,12 @@
     }
   }
 
-  // element is the overlay host (its measured size is cached on it); corners are
-  // the four projected plane corners, with null entries behind the camera.
-  function sceneHTMLPerspectiveTransform(element: any, corners: any) {
+  // arguments[0] is the overlay host (its measured size is cached on it) and
+  // arguments[1] the four projected plane corners, with null entries behind the
+  // camera. Read through arguments so the function adds no implicit-any
+  // parameters and stays plain JavaScript for the test harnesses.
+  function sceneHTMLPerspectiveTransform() {
+    const element = arguments[0], corners = arguments[1];
     if (!Array.isArray(corners) || corners.length !== 4) return null;
     for (const point of corners) {
       if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;

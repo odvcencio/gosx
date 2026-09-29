@@ -63,9 +63,10 @@ class FakeElement {
 }
 
 function loadFocusRuntime() {
-  const layer = new FakeElement("div");
+  const host = new FakeElement("div");
   const context = vm.createContext({
     document: { createElement: (tag) => new FakeElement(tag) },
+    sceneStateObjects: (state) => (state && state.objects) || [],
     Map,
     Set,
     Array,
@@ -76,14 +77,26 @@ function loadFocusRuntime() {
   vm.runInContext(fs.readFileSync(path.join(root, "../runtime/scene3d/mount-scene-focus.ts"), "utf8"), context, {
     filename: "mount-scene-focus.ts",
   });
-  context.__layer = layer;
-  return { context, layer };
+  context.__host = host;
+  // The focus layer is created lazily, so read it from the host after a sync.
+  const layer = new Proxy({}, { get: (_, key) => (host.children[0] || { children: [] })[key] });
+  return { context, host, layer };
 }
+
+test("a scene without interactive nodes adds no DOM", () => {
+  const { context, host } = loadFocusRuntime();
+  vm.runInContext(`
+    __focus = setupSceneNodeFocusProxies(__host);
+    syncSceneNodeFocusProxies(__focus, { meshObjects: [{ id: "plain", label: "Not interactive" }] });`, context);
+  assert.equal(host.children.length, 0);
+  assert.equal(vm.runInContext("sceneFocusEnabled({ objects: [{ id: 'plain' }] })", context), false);
+  assert.equal(vm.runInContext("sceneFocusEnabled({ objects: [{ id: 'a', interactive: true, label: 'A' }] })", context), true);
+});
 
 test("scene focus proxies retain scene-node order and accessible names", () => {
   const { context, layer } = loadFocusRuntime();
   vm.runInContext(`
-    __focus = setupSceneNodeFocusProxies(__layer);
+    __focus = setupSceneNodeFocusProxies(__host);
     syncSceneNodeFocusProxies(__focus, { meshObjects: [
       { id: "second", interactive: true, label: "Second node", interactiveOrder: 2 },
       { id: "ignored", label: "Not interactive" },
@@ -99,7 +112,7 @@ test("scene focus proxies retain scene-node order and accessible names", () => {
 test("picked pointer interactions reach the proxy in order and mirror state", () => {
   const { context, layer } = loadFocusRuntime();
   vm.runInContext(`
-    __focus = setupSceneNodeFocusProxies(__layer);
+    __focus = setupSceneNodeFocusProxies(__host);
     syncSceneNodeFocusProxies(__focus, { objects: [{ id: "target", interactive: true, label: "Target" }] });
     dispatchSceneNodeFocusPointer(__focus, { type: "move", targetID: "target" });
     dispatchSceneNodeFocusPointer(__focus, { type: "down", targetID: "target" });`, context);
@@ -116,16 +129,17 @@ test("picked pointer interactions reach the proxy in order and mirror state", ()
 
 test("the existing canvas picker forwards pointer phases to the matching proxy", () => {
   const context = createContext();
-  const layer = new FakeElement("div");
+  const host = new FakeElement("div");
   const documentListeners = new Map();
   context.document = {
     createElement: (tag) => new FakeElement(tag),
     addEventListener(name, listener) { documentListeners.set(name, listener); },
     removeEventListener(name) { documentListeners.delete(name); },
   };
-  context.__layer = layer;
+  context.sceneStateObjects = (state) => (state && state.objects) || [];
+  context.__host = host;
   vm.runInContext(fs.readFileSync(path.join(root, "../runtime/scene3d/mount-scene-focus.ts"), "utf8"), context);
-  context.__focus = vm.runInContext("setupSceneNodeFocusProxies(__layer)", context);
+  context.__focus = vm.runInContext("setupSceneNodeFocusProxies(__host)", context);
   const pickGeometry = quad(-1);
   context.__bundle = baseBundle(Object.assign({}, pickGeometry, {
     objects: [{ id: "quad", interactive: true, label: "Picked quad", interactiveOrder: 1 }],
@@ -155,10 +169,10 @@ test("the existing canvas picker forwards pointer phases to the matching proxy",
   vm.runInContext(`
     syncSceneNodeFocusProxies(__focus, __bundle);
     __pick = setupScenePickInteractions(__canvas, {}, function() { return __viewport; }, function() { return __bundle; }, function() {}, true,
-      function(type, targetID, clicked) { dispatchSceneNodeFocusPointer(__focus, { type: type, targetID: targetID, clicked: clicked }); });`, context);
+      sceneFocusPointerHandler(__focus));`, context);
   canvas.fire("pointermove");
   canvas.fire("pointerdown");
-  const proxy = layer.children[0];
+  const proxy = host.children[0].children[0];
   assert.equal(proxy.getAttribute("data-hover"), "true");
   assert.equal(proxy.getAttribute("data-pressed"), "true");
   canvas.fire("pointerup");
@@ -170,9 +184,9 @@ test("the existing canvas picker forwards pointer phases to the matching proxy",
 });
 
 test("keyboard focus mirrors hover, Enter and Space click, and disposal removes proxies", () => {
-  const { context, layer } = loadFocusRuntime();
+  const { context, host, layer } = loadFocusRuntime();
   vm.runInContext(`
-    __focus = setupSceneNodeFocusProxies(__layer);
+    __focus = setupSceneNodeFocusProxies(__host);
     syncSceneNodeFocusProxies(__focus, { objects: [{ id: "keyboard", interactive: true, label: "Keyboard node" }] });`, context);
   const proxy = layer.children[0];
   proxy.focus();
@@ -183,13 +197,13 @@ test("keyboard focus mirrors hover, Enter and Space click, and disposal removes 
   assert.equal(proxy.key(" "), true);
   assert.deepEqual(proxy.events, ["pointerenter", "click", "click"]);
   vm.runInContext("disposeSceneNodeFocusProxies(__focus)", context);
-  assert.equal(layer.children.length, 0);
+  assert.equal(host.children.length, 0, "disposal removes the focus layer with its proxies");
 });
 
 test("removing a scene node removes its proxy", () => {
   const { context, layer } = loadFocusRuntime();
   vm.runInContext(`
-    __focus = setupSceneNodeFocusProxies(__layer);
+    __focus = setupSceneNodeFocusProxies(__host);
     syncSceneNodeFocusProxies(__focus, { objects: [{ id: "gone", interactive: true, label: "Gone" }] });
     syncSceneNodeFocusProxies(__focus, { objects: [] });`, context);
   assert.equal(layer.children.length, 0);

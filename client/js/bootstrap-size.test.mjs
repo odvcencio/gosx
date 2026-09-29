@@ -684,7 +684,7 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_717_000, gzip: 476_600, brotli: 379_200 },
+  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1807,7 +1807,8 @@ const routeBudgets = [
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_300_100,
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_300_500,
     gzip: 354_500,
     brotli: 297_400,
   },
@@ -1982,7 +1983,8 @@ const routeBudgets = [
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_157_100,
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_157_600,
     gzip: 326_600,
     brotli: 275_700,
   },
@@ -2154,7 +2156,8 @@ const routeBudgets = [
     // The complete motion fix measures 1,608,681 / 438,588 / 369,624 on this
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_553_300,
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_553_800,
     gzip: 425_700,
     brotli: 356_000,
   },
@@ -2303,7 +2306,8 @@ const routeBudgets = [
     // The complete motion fix measures 1,202,669 / 324,104 / 270,997 on this
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_154_900,
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    raw: 1_155_300,
     gzip: 311_900,
     brotli: 260_700,
   },
