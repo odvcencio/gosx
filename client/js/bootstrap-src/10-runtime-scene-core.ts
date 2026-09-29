@@ -3082,6 +3082,50 @@
     });
   }
 
+  function normalizeSceneOcean(raw) {
+    if (!sceneIsPlainObject(raw)) return null;
+    const number = key => sceneNumber(raw[key], 0);
+    const parameter = (key, fallback, minimum, maximum) => {
+      const value = number(key);
+      return value === 0 ? fallback : Math.max(minimum, Math.min(maximum, value));
+    };
+    const color = (key, fallback) => {
+      const value = typeof raw[key] === "string" ? raw[key].trim() : "";
+      return value || fallback;
+    };
+    let windDirection = number("windDirection") % 360;
+    if (windDirection < 0) windDirection += 360;
+    const source = sceneIsPlainObject(raw.bathymetry) ? raw.bathymetry : null;
+    if (windDirection === 0) windDirection = 0;
+    let bathymetry = null;
+    if (source) {
+      const src = typeof source.src === "string" ? source.src.trim() : "";
+      const minX = sceneNumber(source.minX, 0), minZ = sceneNumber(source.minZ, 0);
+      const maxX = sceneNumber(source.maxX, 0), maxZ = sceneNumber(source.maxZ, 0);
+      const minHeight = sceneNumber(source.minHeight, 0), maxHeight = sceneNumber(source.maxHeight, 0);
+      if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
+        bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight };
+      }
+    }
+    return {
+      level: number("level"), windDirection,
+      waveHeight: parameter("waveHeight", 0.8, 0.05, 6),
+      waveLength: parameter("waveLength", 18, 2, 120),
+      choppiness: parameter("choppiness", 0.6, 0, 1),
+      speed: parameter("speed", 1, 0, 4),
+      deepColor: color("deepColor", "#03141f"),
+      shallowColor: color("shallowColor", "#1f6f78"),
+      scatterColor: color("scatterColor", "#2fa58f"),
+      foamColor: color("foamColor", "#e9eef0"),
+      clarity: parameter("clarity", 4, 0.5, 40),
+      roughness: parameter("roughness", 0.06, 0.01, 0.5),
+      foam: parameter("foam", 0.6, 0, 1),
+      surf: parameter("surf", 0.5, 0, 1),
+      extent: parameter("extent", 4000, 100, 20000),
+      bathymetry,
+    };
+  }
+
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
@@ -3096,6 +3140,7 @@
       envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
+      ocean: normalizeSceneOcean(Object.prototype.hasOwnProperty.call(source, "ocean") ? source.ocean : base.ocean),
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
@@ -7095,6 +7140,7 @@
     createSceneWebGLRenderer: typeof createSceneWebGLRenderer === "function" ? createSceneWebGLRenderer : undefined,
     engineFrame,
     normalizeSceneEnvironment,
+    normalizeSceneOcean,
     sceneSkyUniformData: typeof sceneSkyUniformData === "function" ? sceneSkyUniformData : undefined,
     sceneSkyPhysicalParams: typeof sceneSkyPhysicalParams === "function" ? sceneSkyPhysicalParams : undefined,
     sceneSkyPhysicalShaderSource: typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource : undefined,
