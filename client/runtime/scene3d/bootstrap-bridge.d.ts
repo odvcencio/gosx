@@ -237,3 +237,5 @@ declare var setupScenePickInteractions: any;
 declare var webGPUObjectModelMatrix: any;
 
 declare var sceneSkyUniformData: any;
+
+declare function createSceneWebGLMipBloom(host: any): any;

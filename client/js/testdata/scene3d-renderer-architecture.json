@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2808,
-    "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth."
+    "revisedGovernanceLineBudget": 2823,
+    "actualGovernanceLinesAtReview": 2823,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. The post-processor exception increases only to the measured mip dispatch and cleanup complexity."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -33,7 +33,8 @@
     "hydrate-input.ts",
     "mount-webgl.ts",
     "webgl.ts",
-    "webgpu.ts"
+    "webgpu.ts",
+    "webgl-bloom.ts"
   ],
   "intentionalDirectRendererReferences": [
     {
@@ -280,6 +281,16 @@
       "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
       "source": "webgpu.ts",
       "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl-bloom.ts",
+      "count": 2
     }
   ],
   "sourceSets": {
@@ -291,6 +302,7 @@
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-bloom.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -299,12 +311,14 @@
         "bootstrap-src/16b-scene-hdr.ts": "shared-scene-support",
         "bootstrap-src/16e-scene-webgl-legacy.ts": "backend-support",
         "../runtime/scene3d/webgl.ts": "governed-renderer",
-        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper"
+        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper",
+        "../runtime/scene3d/webgl-bloom.ts": "governed-renderer"
       },
       "sources": [
-        "../runtime/scene3d/webgl.ts"
+        "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-bloom.ts"
       ],
-      "maxLines": 11270,
+      "maxLines": 11380,
       "maxFileLines": 11270
     },
     "webgpu": {
@@ -337,7 +351,8 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5588,
-    "../runtime/scene3d/mount.ts": 3859
+    "../runtime/scene3d/mount.ts": 3859,
+    "../runtime/scene3d/webgl-bloom.ts": 110
   },
   "functionDefaults": {
     "lines": 200,
@@ -349,7 +364,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4923:14",
+      "name": "anonymous@4922:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -386,9 +401,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor@4521:3",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
+      "lines": 554,
+      "cyclomatic": 141,
+      "cognitive": 201,
       "maxNesting": 5,
       "parameters": 2
     },
@@ -829,9 +844,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
+      "lines": 554,
+      "cyclomatic": 141,
+      "cognitive": 201,
       "maxNesting": 5,
       "parameters": 2
     },

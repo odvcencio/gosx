@@ -168,6 +168,7 @@ var outputs = []output{
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
+			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
@@ -469,6 +470,7 @@ var outputs = []output{
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
+			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},

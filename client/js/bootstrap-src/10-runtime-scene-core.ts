@@ -2800,6 +2800,7 @@
       mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     };
+    if (kind === SCENE_POST_BLOOM) normalized.mode = normalized.mode.trim().toLowerCase() === "mip" ? "mip" : "";
     return Object.assign({}, current, item, normalized);
   }
 
