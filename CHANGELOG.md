@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added: opt-in Scene3D mip bloom
+
+- Set `scene.Bloom.Mode` to `"mip"` for soft-knee extraction, a bounded HDR
+  input, and up to six filtered bloom levels on WebGL2 and WebGPU. Additive
+  tent upsampling avoids the spaced blur copies around bright edges.
+- Empty and unknown modes preserve the existing bloom output and wire shape.
+  `Bloom.Scale` still controls prefilter resolution; resize and disposal free
+  the full level chain.
+
 ### Added: desktop window handle, focus events, message box
 
 - Add `App.Window()` and `Window.Handle()`, so hosts no longer find their

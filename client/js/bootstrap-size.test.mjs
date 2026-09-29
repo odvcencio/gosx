@@ -684,7 +684,8 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_709_400, gzip: 474_100, brotli: 377_700 },
+  // Mip bloom measures 1780835/491981/394798 raw/gzip/brotli; only failing targets rise in 100-byte steps.
+  { file: "bootstrap.js", raw: 1_715_300, gzip: 475_600, brotli: 378_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1375,7 +1376,8 @@ const budgets = [
   // all three caps raised with narrow rounding headroom.
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
+  // Mip bloom measures 408705/100597/84279 raw/gzip/brotli; only failing targets rise in 100-byte steps.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_896, brotli: 80_355 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1658,6 +1660,7 @@ const routeBudgets = [
   // monolith fraction the video route holds — Scene3D IS most of the monolith —
   // so maxMonolithFraction stays unset for them.
   {
+    // Mip bloom measures 1359992/368988/310696 raw/gzip/brotli; only failing targets rise in 100-byte steps.
     name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -1798,11 +1801,12 @@ const routeBudgets = [
     // The complete motion fix measures 1,355,038 / 367,463 / 309,371 on this
     // route. Raising gzip's target by 100 bytes leaves 1,247 / 1,121 / 1,219
     // bytes of hard-limit headroom for raw, gzip, and Brotli.
-    raw: 1_291_700,
-    gzip: 352_200,
-    brotli: 295_800,
+    raw: 1_295_300,
+    gzip: 352_700,
+    brotli: 296_000,
   },
   {
+    // Mip bloom measures 1208663/340820/287669 raw/gzip/brotli; only failing targets rise in 100-byte steps.
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -1967,8 +1971,8 @@ const routeBudgets = [
     // source below.
     // The complete motion fix measures 1,204,868 / 339,499 / 286,726 on this
     // route. Reviewed hard-limit headroom is 1,372 / 1,121 / 1,079 bytes.
-    raw: 1_148_800,
-    gzip: 324_400,
+    raw: 1_151_200,
+    gzip: 324_600,
     brotli: 274_100,
   },
   {
@@ -1981,6 +1985,7 @@ const routeBudgets = [
     // (1_341_708 / 355_135 / 298_285), and it is the same seam cost the WebGL
     // route pays. Only a page whose GPU device actually fails reaches it, and
     // the alternative was a page that renders nothing.
+    // Mip bloom measures 1617368/441417/371948 raw/gzip/brotli; only failing targets rise in 100-byte steps.
     name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2138,9 +2143,9 @@ const routeBudgets = [
     // 335_000 for headroom. Gzip headroom is unchanged.
     // The complete motion fix measures 1,608,681 / 438,588 / 369,624 on this
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
-    raw: 1_551_400,
-    gzip: 423_300,
-    brotli: 354_300,
+    raw: 1_551_900,
+    gzip: 425_100,
+    brotli: 355_600,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2157,6 +2162,7 @@ const routeBudgets = [
     // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
+    // Mip bloom measures 1207719/325664/272225 raw/gzip/brotli; only failing targets rise in 100-byte steps.
     name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2286,9 +2292,9 @@ const routeBudgets = [
     // 256_268.
     // The complete motion fix measures 1,202,669 / 324,104 / 270,997 on this
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
-    raw: 1_148_200,
-    gzip: 309_700,
-    brotli: 259_100,
+    raw: 1_150_300,
+    gzip: 310_200,
+    brotli: 259_300,
   },
 
 ];

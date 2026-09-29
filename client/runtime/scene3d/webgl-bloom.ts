@@ -15,7 +15,7 @@ function createSceneWebGLMipBloom(host) {
     "  fragColor = vec4(color * contribution, 1.0);",
     "}",
   ].join("\n");
-  // Jimenez 13 bilinear taps: center, outer corners/axes, inner diagonals.
+  // 13 bilinear taps: center, outer corners/axes, inner diagonals.
   // Weights sum to one: 1/8 + 4/32 + 4/16 + 4/8.
   var downsampleSource = header + [
     "uniform vec2 u_texelSize;",
