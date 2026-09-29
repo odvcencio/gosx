@@ -74,6 +74,9 @@ image writable.
 The optional redirect manifest `deploy/gosx-demo.yaml` uses the same
 `__NAMESPACE__` placeholder. Render it before applying:
 `sed "s/__NAMESPACE__/$GOSX_DOCS_NAMESPACE/g" deploy/gosx-demo.yaml | kubectl apply -f -`.
+This command and the rollback commands below read `GOSX_DOCS_NAMESPACE` from
+your current shell. If you keep it only in `deploy.env`, load it first with
+`set -a; . "$HOME/.config/gosx/deploy.env"; set +a`.
 
 For an image-only rollout, build `Dockerfile.runtime` with
 `GOSX_DOCS_IMAGE_REVISION` and `GOSX_DOCS_IMAGE_BUILT_AT` build arguments from
