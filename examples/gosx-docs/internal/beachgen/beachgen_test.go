@@ -306,7 +306,7 @@ func checkRockMaterial(t *testing.T, data []byte) {
 	}
 	material := root.Materials[0]
 	transform := material.Normal.Extensions["KHR_texture_transform"].Scale
-	if !contains(root.ExtensionsUsed, "KHR_texture_transform") || material.PBR.Metallic != 0 || material.PBR.Roughness != .6 || material.Normal.Scale != 1.5 || len(transform) != 2 || transform[0] != 6 || transform[1] != 6 {
+	if !contains(root.ExtensionsUsed, "KHR_texture_transform") || material.PBR.Metallic != 0 || material.PBR.Roughness != .85 || material.Normal.Scale != .9 || len(transform) != 2 || transform[0] != 3 || transform[1] != 3 {
 		t.Errorf("unexpected rock material: %+v with normal transform %v", material, transform)
 	}
 }

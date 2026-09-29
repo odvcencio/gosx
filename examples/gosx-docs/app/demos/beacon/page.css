@@ -44,9 +44,9 @@
 .bgb__reveal-kicker { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 .bgb__reveal-body { margin: 0 0 8px; font-size: 13px; line-height: 1.5; color: rgba(255, 255, 255, 0.8); }
 .bgb__reveal-body output { color: #fff; font-variant-numeric: tabular-nums; }
-/* The demos layout hides renderer diagnostics; the reveal is the one place
-   they belong on this page. */
-.demos-shell .bgb__reveal output[data-gosx-scene3d-status]:not([hidden]) { display: inline !important; }
+/* The demos layout hides renderer diagnostics with !important at (0,2,0);
+   the reveal is the one place they belong on this page. */
+.bgb .bgb__reveal .bgb__reveal-body output[data-gosx-scene3d-status]:not([hidden]) { display: inline !important; }
 .bgb__reveal-link { font-size: 13px; color: #f2c38c; }
 @keyframes bgb-reveal { to { opacity: 1; transform: none; } }
 @media (max-width: 640px) {

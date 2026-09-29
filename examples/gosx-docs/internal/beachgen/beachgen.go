@@ -360,9 +360,9 @@ func rockMaterial() map[string]any {
 		"pbrMetallicRoughness": map[string]any{
 			"baseColorFactor": []float64{srgbLinear(28.0 / 255), srgbLinear(29.0 / 255), srgbLinear(31.0 / 255), 1},
 			"metallicFactor":  0,
-			"roughnessFactor": .6,
+			"roughnessFactor": .85,
 		},
-		"normalTexture": map[string]any{"index": 0, "scale": 1.5, "extensions": map[string]any{"KHR_texture_transform": map[string]any{"scale": []float64{6, 6}}}},
+		"normalTexture": map[string]any{"index": 0, "scale": .9, "extensions": map[string]any{"KHR_texture_transform": map[string]any{"scale": []float64{3, 3}}}},
 	}
 }
 
@@ -453,6 +453,18 @@ func noiseValue3(n noiseField, x, y, z float64) float64 {
 	return lerp(zLow, zHigh, tz)
 }
 
+// fbm3 sums octaves of 3D value noise, roughly in [-1, 1].
+func fbm3(n noiseField, x, y, z float64, octaves int) float64 {
+	amplitude, frequency, total, weight := 1.0, 1.0, 0.0, 0.0
+	for octave := 0; octave < octaves; octave++ {
+		total += amplitude * noiseValue3(n, x*frequency, y*frequency, z*frequency)
+		weight += amplitude
+		amplitude *= .5
+		frequency *= 2.03
+	}
+	return total / weight
+}
+
 func ridgeFbm3(n noiseField, x, y, z float64, octaves int) float64 {
 	amplitude, frequency, total, weight := 1.0, 1.0, 0.0, 0.0
 	for octave := 0; octave < octaves; octave++ {
@@ -491,12 +503,20 @@ func addStack(g *geometry, stack stackSpec) {
 		for side := 0; side < sides; side++ {
 			angle := 2 * math.Pi * float64(side) / sides
 			dx, dz := math.Cos(angle), math.Sin(angle)
-			worldY := y
-			wavelength := stack.radius * .35
-			trough := ridgeFbm3(noise, dx*stack.radius/wavelength, worldY/wavelength, dz*stack.radius/wavelength, 5)
-			strataNoise := noise.value(stack.x*.13+dx*2.1, stack.z*.13+dz*2.1) * .3
-			radius := stack.radius * profile * (1 + .06*math.Sin(worldY*2.3+strataNoise))
-			radius *= 1 + .16*trough
+			// A jagged crown: notch the top rows by noise around the circumference.
+			worldY := y - dome*stack.radius*.35*math.Abs(noiseValue3(noise, dx*1.7+stack.x, 3.3, dz*1.7+stack.z))
+			// Weathered basalt: broad lumps, sharper ridges, vertical fissures
+			// (noise stretched along Y), a gentle taper and faint irregular strata.
+			px, pz := dx*stack.radius, dz*stack.radius
+			r := stack.radius
+			lumps := fbm3(noise, px/(r*1.3), worldY/(r*1.1), pz/(r*1.3), 4)
+			ridges := ridgeFbm3(noise, px/(r*.45)+5, worldY/(r*.45), pz/(r*.45)+9, 4)
+			cracks := fbm3(noise, px/(r*.22)+11, worldY*.07, pz/(r*.22)+7, 3)
+			strata := .03 * math.Sin(worldY*1.1+2.5*noiseValue3(noise, px*.1, worldY*.05, pz*.1))
+			taper := 1 - .22*(worldY-baseY)/(topY-baseY)
+			// Bulges and waists that change with height break the bottle outline.
+			girth := noiseValue3(noise, stack.x*.31, worldY/(r*.9), stack.z*.31) + .5*noiseValue3(noise, stack.x*.7, worldY/(r*.4), stack.z*.7)
+			radius := r * profile * taper * (1 + .22*girth + .32*lumps + .16*ridges - .14*math.Abs(cracks) + strata)
 			notch := smoothstep(-1, -.6, worldY) * (1 - smoothstep(1.2, 1.6, worldY))
 			radius *= 1 - .18*notch
 			leanFactor := (worldY - baseY) * stack.lean
@@ -529,7 +549,7 @@ func addStack(g *geometry, stack stackSpec) {
 func addBoulder(g *geometry, boulder boulderSpec, noise, terrainNoise noiseField) {
 	const sides, rings = 16, 12
 	ground := terrainHeight(terrainNoise, boulder.x, boulder.z)
-	center := vec3{boulder.x, ground + boulder.radius*(2.0/3), boulder.z}
+	center := vec3{boulder.x, ground + boulder.radius*.3, boulder.z}
 	first := len(g.positions) / 3
 	for row := 0; row <= rings; row++ {
 		latitude := math.Pi * float64(row) / rings
@@ -538,9 +558,10 @@ func addBoulder(g *geometry, boulder boulderSpec, noise, terrainNoise noiseField
 			nx := math.Sin(latitude) * math.Cos(longitude)
 			ny := math.Cos(latitude)
 			nz := math.Sin(latitude) * math.Sin(longitude)
-			trough := ridgeFbm3(noise, nx*6, ny*6, nz*6, 5)
-			radius := boulder.radius * (1 + .16*trough)
-			p := vec3{center.x + nx*radius, center.y + ny*radius, center.z + nz*radius}
+			lumps := fbm3(noise, nx*1.6+boulder.x, ny*1.6, nz*1.6+boulder.z, 4)
+			ridges := ridgeFbm3(noise, nx*4, ny*4, nz*4, 4)
+			radius := boulder.radius * (1 + .22*lumps + .07*ridges)
+			p := vec3{center.x + nx*radius, center.y + ny*radius*.72, center.z + nz*radius}
 			appendVertex(g, p, longitude/(2*math.Pi), latitude/math.Pi)
 		}
 	}
@@ -647,7 +668,7 @@ func scaleVec(a vec3, scale float64) vec3 { return vec3{a.x * scale, a.y * scale
 // beyond the mesh edges still read correctly. R = (h - BathymetryMinHeight) /
 // (BathymetryMaxHeight - BathymetryMinHeight), row 0 at BathymetryMinZ.
 const (
-	BathymetrySize      = 256
+	BathymetrySize      = 512
 	BathymetryMinX      = -80.0
 	BathymetryMaxX      = 80.0
 	BathymetryMinZ      = -60.0
@@ -668,16 +689,17 @@ func makeBathymetry(n noiseField) ([]byte, error) {
 			height := terrainHeight(n, wx, z)
 			for _, stack := range stacks {
 				centerX := stack.x + 6*stack.lean
-				radius := stack.radius * .82 * (1 + .06*math.Sin(stack.x*.13+stack.z*.13))
-				if math.Hypot(wx-centerX, z-stack.z) <= radius {
-					height = math.Max(height, stack.height)
-				}
+				// A smooth mound, not a disk: the shallow-water and foam bands
+				// then ring the rock instead of drawing texel squares.
+				d := math.Hypot(wx-centerX, z-stack.z)
+				rise := 1 - smoothstep(stack.radius*.7, stack.radius*1.2, d)
+				height = math.Max(height, lerp(height, stack.height, rise))
 			}
 			for _, boulder := range boulders {
-				if math.Hypot(wx-boulder.x, z-boulder.z) <= boulder.radius+.35 {
-					top := terrainHeight(n, boulder.x, boulder.z) + boulder.radius*1.35
-					height = math.Max(height, top)
-				}
+				d := math.Hypot(wx-boulder.x, z-boulder.z)
+				rise := 1 - smoothstep(boulder.radius*.6, boulder.radius*1.45, d)
+				top := terrainHeight(n, boulder.x, boulder.z) + boulder.radius
+				height = math.Max(height, lerp(height, top, rise))
 			}
 			v := BathymetryEncode(height)
 			img.Pix[y*img.Stride+x] = uint8(math.Round(math.Max(0, math.Min(1, v)) * 255))
