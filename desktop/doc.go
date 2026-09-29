@@ -33,6 +33,11 @@
 // The executable's first icon resource is used for the window's large and
 // small icons when present.
 //
+// Use Options.InitialPlacement and App.WindowPlacement to persist a window's
+// normal bounds and maximized state. Windows clamps restored bounds to
+// monitor work areas, and Options.OnBeforeClose reports the placement before
+// the native window is destroyed.
+//
 // App.Window returns the primary window once it exists, and Window.Handle
 // returns its native handle (an HWND on Windows). Options.OnFocusChanged
 // reports when the window gains or loses focus; with NativeBridge it also

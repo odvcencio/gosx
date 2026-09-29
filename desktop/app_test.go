@@ -233,17 +233,20 @@ func (a *recordingPlatformApp) Clipboard() (string, error)                      
 func (a *recordingPlatformApp) SetClipboard(text string) error                   { a.clipboard = text; return nil }
 func (a *recordingPlatformApp) OpenURL(string) error                             { return nil }
 func (a *recordingPlatformApp) SetFullscreen(bool) error                         { return nil }
-func (a *recordingPlatformApp) SetMinSize(int, int) error                        { return nil }
-func (a *recordingPlatformApp) SetMaxSize(int, int) error                        { return nil }
-func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)         { return nil, ErrUnsupported }
-func (a *recordingPlatformApp) RegisterProtocol(string) error                    { return nil }
-func (a *recordingPlatformApp) RegisterFileType(string, string, string) error    { return nil }
-func (a *recordingPlatformApp) SetMenuBar(Menu) error                            { return nil }
-func (a *recordingPlatformApp) SetTray(TrayOptions) error                        { return nil }
-func (a *recordingPlatformApp) CloseTray() error                                 { return nil }
-func (a *recordingPlatformApp) Notify(Notification) error                        { return nil }
-func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error          { return nil }
-func (a *recordingPlatformApp) PrimaryWindow() *Window                           { return nil }
+func (a *recordingPlatformApp) WindowPlacement() (WindowPlacement, error) {
+	return WindowPlacement{}, nil
+}
+func (a *recordingPlatformApp) SetMinSize(int, int) error                     { return nil }
+func (a *recordingPlatformApp) SetMaxSize(int, int) error                     { return nil }
+func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)      { return nil, ErrUnsupported }
+func (a *recordingPlatformApp) RegisterProtocol(string) error                 { return nil }
+func (a *recordingPlatformApp) RegisterFileType(string, string, string) error { return nil }
+func (a *recordingPlatformApp) SetMenuBar(Menu) error                         { return nil }
+func (a *recordingPlatformApp) SetTray(TrayOptions) error                     { return nil }
+func (a *recordingPlatformApp) CloseTray() error                              { return nil }
+func (a *recordingPlatformApp) Notify(Notification) error                     { return nil }
+func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error       { return nil }
+func (a *recordingPlatformApp) PrimaryWindow() *Window                        { return nil }
 
 func TestNewUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {

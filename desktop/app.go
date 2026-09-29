@@ -29,6 +29,9 @@ var (
 	// needed by the desktop backend cannot be found. The more specific loader
 	// and runtime errors also match this sentinel.
 	ErrWebView2Unavailable = errors.New("webview2 unavailable")
+
+	// ErrWindowNotReady reports that the native desktop window does not exist.
+	ErrWindowNotReady = errors.New("desktop window not ready")
 	// ErrWebView2LoaderUnavailable reports that the loader is missing or lacks
 	// a required entry point.
 	ErrWebView2LoaderUnavailable = fmt.Errorf("%w: loader unavailable", ErrWebView2Unavailable)
@@ -38,14 +41,17 @@ var (
 
 // Options configures a native desktop window.
 type Options struct {
-	Title      string
-	Width      int
-	Height     int
-	AppID      string
-	Version    string
-	UpdateFeed string
-	URL        string
-	HTML       string
+	Title  string
+	Width  int
+	Height int
+	// InitialPlacement restores a previous window's bounds and maximized state.
+	// Zero keeps the normal Width and Height startup behavior.
+	InitialPlacement WindowPlacement
+	AppID            string
+	Version          string
+	UpdateFeed       string
+	URL              string
+	HTML             string
 	// BrowserExecutableFolder selects a Fixed Version WebView2 runtime. The
 	// empty value selects the installed Evergreen runtime.
 	BrowserExecutableFolder string
@@ -143,6 +149,10 @@ type Options struct {
 	// the OS. Use it for graceful shutdown: flushing state, disposing
 	// background workers, etc. Nil disables the callback.
 	OnClose func()
+
+	// OnBeforeClose runs on the window thread before the native window is
+	// destroyed, with its current placement. Keep the callback short.
+	OnBeforeClose func(WindowPlacement)
 }
 
 // App is a native desktop host for a GoSX application or HTML document.
@@ -178,6 +188,7 @@ type platformApp interface {
 	SetClipboard(text string) error
 	OpenURL(url string) error
 	SetFullscreen(enabled bool) error
+	WindowPlacement() (WindowPlacement, error)
 	SetMinSize(width, height int) error
 	SetMaxSize(width, height int) error
 	NewWindow(options WindowOptions) (*Window, error)
@@ -311,6 +322,16 @@ func (a *App) Close() error {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
 	return a.impl.Close()
+}
+
+// WindowPlacement reports the window's restored bounds and maximized state.
+// It returns ErrWindowNotReady before the native window exists or after it
+// has been destroyed.
+func (a *App) WindowPlacement() (WindowPlacement, error) {
+	if a == nil || a.impl == nil {
+		return WindowPlacement{}, fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.WindowPlacement()
 }
 
 // Reload reloads the current page in the hosted webview.

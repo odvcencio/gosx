@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added: desktop window placement
+
+- Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
+  bounds and maximized state across launches.
+- Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
+  provides the placement before the window is destroyed.
+
 ### Added: desktop window handle, focus events, message box
 
 - Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
