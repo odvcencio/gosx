@@ -158,6 +158,39 @@ func TestCrawlCountsTheLoadPath(t *testing.T) {
 	}
 }
 
+func TestCrawlCountsEveryRedirectHop(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "hop", Value: "1"})
+		http.Redirect(w, r, "/page/", http.StatusFound)
+	})
+	mux.HandleFunc("/page/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<!doctype html><link rel="stylesheet" href="/old.css"><p>hi</p>`))
+	})
+	mux.HandleFunc("/old.css", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/new.css", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/new.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("p{}"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// start (302) + page + old.css (301) + new.css
+	if r.Requests != 4 {
+		t.Fatalf("requests = %d, want 4 (%+v)", r.Requests, r.Resources)
+	}
+	if r.WireBytes[KindRedirect] == 0 {
+		t.Fatalf("redirect bodies not counted: %v", r.WireBytes)
+	}
+	if r.EvaluatePolicies()[PolicyNoCookie].Pass {
+		t.Fatal("a cookie set on a redirect hop passed no-cookie")
+	}
+}
+
 func TestCheckUpdateAndRatchet(t *testing.T) {
 	srv := testServer(t)
 	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/page")

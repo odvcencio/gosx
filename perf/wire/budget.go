@@ -179,7 +179,7 @@ func (r Route) EvaluatePolicies() map[string]PolicyResult {
 
 	var bad []string
 	for _, res := range r.Resources {
-		if res.Kind == KindOther || res.Kind == KindImage || res.Kind == KindFont || res.DecodedBytes <= 1024 {
+		if res.Kind == KindOther || res.Kind == KindRedirect || res.Kind == KindImage || res.Kind == KindFont || res.DecodedBytes <= 1024 {
 			continue
 		}
 		if !compressed(res.ContentEncoding) {

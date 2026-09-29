@@ -43,6 +43,8 @@ const (
 	KindProgram  = "program"
 	KindImage    = "image"
 	KindFont     = "font"
+	// KindRedirect is a 3xx hop on the way to a document or resource.
+	KindRedirect = "redirect"
 	KindOther    = "other"
 )
 
@@ -124,18 +126,18 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	if client == nil {
 		client = &http.Client{}
 	}
-	// Measure the wire: never let the transport decode for us.
-	if t, ok := client.Transport.(*http.Transport); ok {
+	// Measure the wire: never let the transport decode for us, and follow
+	// redirects by hand so each hop is counted.
+	c := *client
+	if t, ok := c.Transport.(*http.Transport); ok {
 		t = t.Clone()
 		t.DisableCompression = true
-		c := *client
 		c.Transport = t
-		client = &c
-	} else if client.Transport == nil {
-		c := *client
+	} else if c.Transport == nil {
 		c.Transport = &http.Transport{DisableCompression: true}
-		client = &c
 	}
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &c
 	ua := opts.UserAgent
 	if ua == "" {
 		ua = MobileUserAgent
@@ -147,18 +149,24 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	}
 	out := Route{App: app, Route: route, URL: pageURL.String(), WireBytes: map[string]int64{}}
 
-	doc, body, finalURL, err := fetch(ctx, client, ua, pageURL.String(), "navigation")
+	doc, docHops, body, finalURL, err := fetch(ctx, client, ua, pageURL.String(), "navigation")
 	if err != nil {
 		return Route{}, err
-	}
-	if doc.Status != http.StatusOK {
-		return Route{}, fmt.Errorf("%s: status %d", pageURL, doc.Status)
 	}
 	doc.Kind = KindDocument
 	out.Document = doc
 	out.Requests = 1
 	out.WireBytes[KindDocument] += doc.WireBytes
 	out.TotalWireBytes += doc.WireBytes
+	add := func(hops []Resource) {
+		for _, h := range hops {
+			out.Resources = append(out.Resources, h)
+			out.Requests++
+			out.WireBytes[h.Kind] += h.WireBytes
+			out.TotalWireBytes += h.WireBytes
+		}
+	}
+	add(docHops)
 
 	refs, inline, err := scanHTML(body)
 	if err != nil {
@@ -184,7 +192,8 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 			continue
 		}
 		seen[key] = true
-		res, _, _, err := fetch(ctx, client, ua, key, r.initiator)
+		res, hops, _, _, err := fetch(ctx, client, ua, key, r.initiator)
+		add(hops)
 		if err != nil {
 			return Route{}, err
 		}
@@ -379,10 +388,36 @@ func textOf(n *html.Node) string {
 	return b.String()
 }
 
-func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) (Resource, []byte, *url.URL, error) {
+// fetch follows up to 10 redirects by hand, so every hop is measured: each
+// redirect response is returned in hops with its bytes, cookies and cache
+// headers, and counts as a request.
+func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) (Resource, []Resource, []byte, *url.URL, error) {
+	var hops []Resource
+	current := raw
+	for hop := 0; ; hop++ {
+		res, body, reqURL, location, err := fetchOnce(ctx, client, ua, current, initiator)
+		if err != nil {
+			return Resource{}, hops, nil, nil, err
+		}
+		if location == nil {
+			if res.Status != http.StatusOK {
+				return res, hops, body, reqURL, fmt.Errorf("GET %s: status %d", current, res.Status)
+			}
+			return res, hops, body, reqURL, nil
+		}
+		if hop >= 10 {
+			return Resource{}, hops, nil, nil, fmt.Errorf("GET %s: more than 10 redirects", raw)
+		}
+		res.Kind = KindRedirect
+		hops = append(hops, res)
+		current = reqURL.ResolveReference(location).String()
+	}
+}
+
+func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator string) (Resource, []byte, *url.URL, *url.URL, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return Resource{}, nil, nil, err
+		return Resource{}, nil, nil, nil, err
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept-Encoding", AcceptEncoding)
@@ -394,21 +429,21 @@ func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Resource{}, nil, nil, fmt.Errorf("GET %s: %w", raw, err)
+		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: %w", raw, err)
 	}
 	defer resp.Body.Close()
 	wire, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Resource{}, nil, nil, fmt.Errorf("GET %s: read: %w", raw, err)
+		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: read: %w", raw, err)
 	}
 	enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
 	decoded, err := decode(enc, wire)
 	if err != nil {
-		return Resource{}, nil, nil, fmt.Errorf("GET %s: decode %s: %w", raw, enc, err)
+		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: decode %s: %w", raw, enc, err)
 	}
 	cc := resp.Header.Get("Cache-Control")
 	res := Resource{
-		URL:             resp.Request.URL.RequestURI(),
+		URL:             req.URL.RequestURI(),
 		Initiator:       initiator,
 		Status:          resp.StatusCode,
 		WireBytes:       int64(len(wire)),
@@ -416,13 +451,22 @@ func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) 
 		ContentEncoding: enc,
 		CacheControl:    cc,
 		Immutable:       strings.Contains(strings.ToLower(cc), "immutable"),
-		Hashed:          IsHashedURL(resp.Request.URL.String()),
+		Hashed:          IsHashedURL(req.URL.String()),
 		SetCookie:       len(resp.Header.Values("Set-Cookie")) > 0,
 	}
-	if res.Status != http.StatusOK {
-		return res, decoded, resp.Request.URL, fmt.Errorf("GET %s: status %d", raw, res.Status)
+	var location *url.URL
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		loc := resp.Header.Get("Location")
+		if loc == "" {
+			return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: status %d without Location", raw, resp.StatusCode)
+		}
+		location, err = url.Parse(loc)
+		if err != nil {
+			return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: bad Location %q: %w", raw, loc, err)
+		}
 	}
-	return res, decoded, resp.Request.URL, nil
+	return res, decoded, req.URL, location, nil
 }
 
 func decode(enc string, body []byte) ([]byte, error) {
