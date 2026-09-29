@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added: desktop window handle, focus events, message box
+
+- Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
+  own window by title to call Win32 APIs.
+- Add `Options.OnFocusChanged(focused bool)`, fired from `WM_ACTIVATE` when
+  focus changes. With `NativeBridge`, the page also receives a
+  `gosx.window.focus` event with `{focused}`.
+- Add `desktop.ShowMessage` (works before `New`) and `App.ShowMessage`
+  (owned by the app window): info, warning, error, and question icons;
+  OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
+  it as `gosxDesktop.dialog.message`.
 ### Fixed and added: desktop single instance
 
 - Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every

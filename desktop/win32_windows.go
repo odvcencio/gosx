@@ -29,6 +29,8 @@ const (
 	swShowDefault    = 10
 	swRestore        = 9
 
+	wmActivate       = 0x0006
+	waInactive       = 0
 	wmClose          = 0x0010
 	wmDestroy        = 0x0002
 	wmCommand        = 0x0111
@@ -497,6 +499,10 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 	windowMu.Unlock()
 
 	switch message {
+	case wmActivate:
+		if app != nil {
+			app.onFocusChanged(uint16(wparam) != waInactive)
+		}
 	case wmCommand:
 		if app != nil && app.handleMenuCommand(wparam) {
 			return 0
@@ -577,6 +583,7 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 			app.releaseWindowIcons(hwnd)
 			app.releaseWebView()
 			app.stopDispatch()
+			app.clearPrimaryWindow()
 		}
 		windowMu.Lock()
 		delete(windowApps, hwnd)

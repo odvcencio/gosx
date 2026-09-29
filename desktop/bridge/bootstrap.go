@@ -262,6 +262,9 @@ const bootstrapScript = `(function () {
     openFile: function (options) {
       return call("gosx.desktop.dialog.openFile", options || {});
     },
+    message: function (options) {
+      return call("gosx.desktop.dialog.message", options || {});
+    },
     saveFile: function (options) {
       return call("gosx.desktop.dialog.saveFile", options || {});
     }

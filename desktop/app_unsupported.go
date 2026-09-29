@@ -9,6 +9,10 @@ import (
 
 type unsupportedApp struct{}
 
+func showPlatformMessage(MessageOptions, uintptr) (MessageResult, error) {
+	return "", ErrUnsupported
+}
+
 func newPlatformApp(Options) (platformApp, error) {
 	return nil, ErrUnsupported
 }
@@ -139,3 +143,5 @@ func (unsupportedApp) Notify(Notification) error {
 func (unsupportedApp) SetFileDropHandler(func([]string)) error {
 	return ErrUnsupported
 }
+
+func (unsupportedApp) PrimaryWindow() *Window { return nil }

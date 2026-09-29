@@ -33,6 +33,13 @@
 // The executable's first icon resource is used for the window's large and
 // small icons when present.
 //
+// App.Window returns the primary window once it exists, and Window.Handle
+// returns its native handle (an HWND on Windows). Options.OnFocusChanged
+// reports when the window gains or loses focus; with NativeBridge it also
+// sends the page a "gosx.window.focus" event. ShowMessage shows a native
+// message box and works before New; App.ShowMessage owns the box by the app
+// window.
+//
 // macOS and Linux currently return ErrUnsupported; darwin/amd64 and
 // darwin/arm64 are cross-compiled in CI so the unsupported path stays
 // buildable while the native macOS backend is developed.

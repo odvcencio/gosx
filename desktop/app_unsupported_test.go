@@ -73,6 +73,15 @@ func TestDesktopWebView2RuntimeVersionUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestShowMessageUnsupportedPlatform(t *testing.T) {
+	if _, err := ShowMessage(MessageOptions{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ShowMessage error = %v, want ErrUnsupported", err)
+	}
+	if _, err := (&App{}).ShowMessage(MessageOptions{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("App.ShowMessage error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestUnsupportedSingleInstanceAPI(t *testing.T) {
 	if lock, first, err := AcquireSingleInstance("com.example.test"); lock != nil || first || !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("AcquireSingleInstance() = (%v, %v, %v), want (nil, false, ErrUnsupported)", lock, first, err)
