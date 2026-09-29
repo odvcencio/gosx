@@ -126,7 +126,8 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 		UnsupportedMessage: "Interactive 3D is unavailable in this browser.",
 		ControlTarget:      view.Target, ControlMinDistance: 2, ControlMaxDistance: 80,
 		MaxFPS: 60, MaxDevicePixelRatio: 2, MaxPixels: scene.PostFXMaxPixels1440p,
-		AdaptiveQuality: scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 24, AdaptivePostFX: scene.Bool(true),
+		RenderBeforeModels: scene.Bool(true),
+		AdaptiveQuality:    scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 24, AdaptivePostFX: scene.Bool(true),
 		Camera: scene.PerspectiveCamera{Position: view.Position, FOV: 42, PortraitFOV: 70, Near: 0.1, Far: 900},
 		Environment: scene.Environment{
 			IBL: blackglassBeachPeriodIBL(period.ID), EnvIntensity: 1,
@@ -144,7 +145,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			},
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels1440p, Effects: []scene.PostEffect{
-			scene.Bloom{Threshold: 1.4, Strength: 0.22, Radius: 1.5, Scale: 0.5},
+			scene.Bloom{Mode: "mip", Threshold: 1.2, Strength: 0.28, Radius: 5, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: period.Exposure},
 			scene.Vignette{Intensity: 0.18},
 			scene.FXAA{},
