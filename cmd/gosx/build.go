@@ -711,6 +711,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := stageDeploymentBundleWithPolicy(dir, distDir, &manifest, builtServer, serverBinaryPath, cfg.Build.Bundle); err != nil {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
+	if !opts.Dev {
+		if err := writeTextSidecars(filepath.Join(distDir, "public"), cfg.Build.Bundle); err != nil {
+			return fmt.Errorf("compress public assets: %w", err)
+		}
+	}
 
 	// ── Build manifest ──────────────────────────────────────────────────
 	//
