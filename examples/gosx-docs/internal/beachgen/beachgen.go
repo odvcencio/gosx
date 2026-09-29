@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"math"
 	"os"
@@ -21,8 +22,8 @@ type geometry struct {
 	indices   []uint16
 }
 
-// Generate builds all six Blackglass Beach files using only deterministic code
-// and the supplied seed. The returned map is independent of the output path.
+// Generate builds all Blackglass Beach assets using deterministic code and the
+// supplied seed. The returned map is independent of the output path.
 func Generate(seed int64) (map[string][]byte, error) {
 	noise := newNoise(seed)
 	albedo, err := makeAlbedo(seed, noise)
@@ -37,11 +38,15 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	rockNormal, err := makeRockNormal(seed)
+	if err != nil {
+		return nil, err
+	}
 	beach, err := terrainGeometry(noise)
 	if err != nil {
 		return nil, err
 	}
-	beachGLB, err := writeGLB(beach, terrainMaterial(), []embeddedImage{{name: "albedo", data: albedo}, {name: "metallic-roughness", data: mr}, {name: "sand-normal", data: normal}})
+	beachGLB, err := writeGLB(beach, terrainMaterial(), []embeddedImage{{name: "albedo", data: albedo, mime: "image/jpeg"}, {name: "metallic-roughness", data: mr}, {name: "sand-normal", data: normal}})
 	if err != nil {
 		return nil, fmt.Errorf("beach GLB: %w", err)
 	}
@@ -49,7 +54,7 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	stacksGLB, err := writeGLB(stacks, solidMaterial([4]float64{srgbLinear(30.0 / 255), srgbLinear(32.0 / 255), srgbLinear(34.0 / 255), 1}, .55, 0), nil)
+	stacksGLB, err := writeGLB(stacks, rockMaterial(), []embeddedImage{{name: "rock-normal", data: rockNormal}})
 	if err != nil {
 		return nil, fmt.Errorf("stacks GLB: %w", err)
 	}
@@ -68,9 +73,10 @@ func Generate(seed int64) (map[string][]byte, error) {
 	return map[string][]byte{
 		"beach-v2-height.png": height,
 		"beach-v2.glb":        beachGLB,
-		"beach-v2-albedo.png": albedo,
+		"beach-v2-albedo.jpg": albedo,
 		"beach-v2-mr.png":     mr,
 		"sand-normal.png":     normal,
+		"rock-normal.png":     rockNormal,
 		"stacks-v2.glb":       stacksGLB,
 		"monolith-v2.glb":     monolithGLB,
 	}, nil
@@ -85,7 +91,7 @@ func Write(outDir string, seed int64) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.png", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "stacks-v2.glb", "monolith-v2.glb"} {
+	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "rock-normal.png", "stacks-v2.glb", "monolith-v2.glb"} {
 		if err := os.WriteFile(filepath.Join(outDir, name), files[name], 0o644); err != nil {
 			return err
 		}
@@ -165,43 +171,41 @@ func terrainGeometry(n noiseField) (*geometry, error) {
 }
 
 func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
-	palette := make(color.Palette, 16)
-	pigments := [4][3]int{{27, 26, 28}, {28, 27, 29}, {26, 25, 27}, {37, 39, 42}}
-	for pigment, base := range pigments {
-		for level := 0; level < 4; level++ {
-			factor := .45 + .55*float64(level)/3
-			palette[pigment*4+level] = color.RGBA{R: uint8(math.Round(float64(base[0]) * factor)), G: uint8(math.Round(float64(base[1]) * factor)), B: uint8(math.Round(float64(base[2]) * factor)), A: 255}
-		}
-	}
-	bayer := [4][4]float64{{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}}
-	img := image.NewPaletted(image.Rect(0, 0, 512, 512), palette)
-	for py := 0; py < 512; py++ {
-		z := -40 + 90*float64(py)/511
-		for px := 0; px < 512; px++ {
-			x := -60 + 120*float64(px)/511
+	img := image.NewNRGBA(image.Rect(0, 0, 1024, 1024))
+	for py := 0; py < 1024; py++ {
+		z := -40 + 90*float64(py)/1023
+		for px := 0; px < 1024; px++ {
+			x := -60 + 120*float64(px)/1023
 			h := terrainHeight(n, x, z)
-			dx := (terrainHeight(n, x+.5, z) - terrainHeight(n, x-.5, z))
-			dz := (terrainHeight(n, x, z+.5) - terrainHeight(n, x, z-.5))
-			slope := math.Hypot(dx, dz)
-			rock := slope > .6 || (math.Abs(x) > 34 && h > 2)
-			pigment := 0
+			dx := terrainHeight(n, x+.5, z) - terrainHeight(n, x-.5, z)
+			dz := terrainHeight(n, x, z+.5) - terrainHeight(n, x, z-.5)
+			rock := math.Hypot(dx, dz) > .6 || (math.Abs(x) > 34 && h > 2)
+			ao := ambientOcclusion(n, x, z, h)
+			factor := .45 + .55*ao
+			base := [3]float64{43, 41, 39}
 			if rock {
-				pigment = 3
+				base = [3]float64{37, 39, 42}
 			} else {
-				variation := n.value(x*.45+float64(seed%19), z*.45-float64(seed%23))
-				if variation > .35 {
-					pigment = 1
-				} else if variation < -.35 {
-					pigment = 2
+				mottle := n.fbm(x/3+float64(seed%19), z/3-float64(seed%23), 3) * .02
+				grain := n.value(x*18+float64(seed%19), z*18-float64(seed%23)) * .03
+				factor *= 1 + mottle + grain
+				if h > -.2 && h < .45 && z < 4 {
+					factor *= .65
 				}
 			}
-			ao := ambientOcclusion(n, x, z, h)
-			level := int(math.Round((ao-.45)/.55*3 + (bayer[py%4][px%4]-7.5)/16))
-			level = int(clamp(float64(level), 0, 3))
-			img.SetColorIndex(px, py, uint8(pigment*4+level))
+			img.SetNRGBA(px, py, color.NRGBA{
+				R: uint8(math.Round(base[0] * factor)),
+				G: uint8(math.Round(base[1] * factor)),
+				B: uint8(math.Round(base[2] * factor)), A: 255,
+			})
 		}
 	}
-	return encodePNG(img)
+	// Noisy sand compresses poorly as PNG; JPEG keeps the GLB small.
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 88}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func ambientOcclusion(n noiseField, x, z, origin float64) float64 {
@@ -238,7 +242,7 @@ func makeMetalRoughness(n noiseField) ([]byte, error) {
 				roughness = .70
 			} else if h < -.2 {
 				roughness = .25
-			} else if z < 4 && h < .45 {
+			} else if z < 4 && h > -.2 && h < .45 {
 				roughness = .1 + .7*smoothstep(-.2, .45, h)
 			}
 			img.SetColorIndex(px, py, uint8(math.Round(clamp(roughness, 0, 1)*15)))
@@ -266,7 +270,7 @@ func makeSandNormal() ([]byte, error) {
 			du := 1.0 / 512
 			dhdu := (rippleHeight(u+du, v) - rippleHeight(u-du, v)) / (2 * du * tileMeters)
 			dhdv := (rippleHeight(u, v+du) - rippleHeight(u, v-du)) / (2 * du * tileMeters)
-			normal := normalize(vec3{-dhdu, -dhdv, 1})
+			normal := normalize(vec3{-dhdu * .8, -dhdv * .8, 1})
 			ix := int(math.Round(clamp(normal.x/.32*.5+.5, 0, 1) * 7))
 			iy := int(math.Round(clamp(normal.y/.56*.5+.5, 0, 1) * 7))
 			img.SetColorIndex(x, y, uint8(ix*8+iy))
@@ -275,11 +279,56 @@ func makeSandNormal() ([]byte, error) {
 	return encodePNG(img)
 }
 
+func periodicRockHeight(n noiseField, u, v float64) float64 {
+	total, weight, amplitude := 0.0, 0.0, 1.0
+	for octave := 0; octave < 5; octave++ {
+		frequency := math.Exp2(float64(octave))
+		angleU, angleV := 2*math.Pi*u, 2*math.Pi*v
+		x := frequency * (math.Cos(angleU) + .73*math.Cos(angleV))
+		y := frequency * (math.Sin(angleU) + .73*math.Sin(angleV))
+		value := 1 - math.Abs(n.value(x, y))
+		total += amplitude * value
+		weight += amplitude
+		amplitude *= .5
+	}
+	return total/weight - .5
+}
+
+func makeRockNormal(seed int64) ([]byte, error) {
+	const size = 256
+	palette := make(color.Palette, 64)
+	for ix := 0; ix < 8; ix++ {
+		for iy := 0; iy < 8; iy++ {
+			normal := normalize(vec3{(float64(ix)/7*2 - 1) * .7, (float64(iy)/7*2 - 1) * .7, 1})
+			palette[ix*8+iy] = color.RGBA{
+				R: uint8(math.Round((normal.x*.5 + .5) * 255)),
+				G: uint8(math.Round((normal.y*.5 + .5) * 255)),
+				B: uint8(math.Round((normal.z*.5 + .5) * 255)), A: 255,
+			}
+		}
+	}
+	img := image.NewPaletted(image.Rect(0, 0, size, size), palette)
+	n := newNoise(seed + 0x70C)
+	const du = 1.0 / size
+	for y := 0; y < size; y++ {
+		v := float64(y) / size
+		for x := 0; x < size; x++ {
+			u := float64(x) / size
+			dhdu := (periodicRockHeight(n, u+du, v) - periodicRockHeight(n, u-du, v)) / (2 * du) * .025
+			dhdv := (periodicRockHeight(n, u, v+du) - periodicRockHeight(n, u, v-du)) / (2 * du) * .025
+			normal := normalize(vec3{-dhdu * 1.5, -dhdv * 1.5, 1})
+			ix := int(math.Round(clamp(normal.x/.7*.5+.5, 0, 1) * 7))
+			iy := int(math.Round(clamp(normal.y/.7*.5+.5, 0, 1) * 7))
+			img.SetColorIndex(x, y, uint8(ix*8+iy))
+		}
+	}
+	return encodePNG(img)
+}
 func rippleHeight(u, v float64) float64 {
 	warp := .045*math.Sin(2*math.Pi*3*u)*math.Sin(2*math.Pi*2*v) + .025*math.Sin(2*math.Pi*(5*u+4*v))
 	phase := 2 * math.Pi * 9 * (v + warp)
 	grain := .00018*math.Sin(2*math.Pi*(37*u+19*v)) + .00012*math.Sin(2*math.Pi*(23*u-41*v))
-	return .0028*math.Sin(phase) + grain
+	return .00224*math.Sin(phase) + grain
 }
 
 func encodePNG(img image.Image) ([]byte, error) {
@@ -292,7 +341,7 @@ func encodePNG(img image.Image) ([]byte, error) {
 }
 
 func terrainMaterial() map[string]any {
-	transform := map[string]any{"scale": []float64{48, 36}}
+	transform := map[string]any{"scale": []float64{60, 45}}
 	return map[string]any{
 		"name": "Black volcanic sand",
 		"pbrMetallicRoughness": map[string]any{
@@ -305,88 +354,223 @@ func terrainMaterial() map[string]any {
 	}
 }
 
+func rockMaterial() map[string]any {
+	return map[string]any{
+		"name": "Weathered basalt",
+		"pbrMetallicRoughness": map[string]any{
+			"baseColorFactor": []float64{srgbLinear(28.0 / 255), srgbLinear(29.0 / 255), srgbLinear(31.0 / 255), 1},
+			"metallicFactor":  0,
+			"roughnessFactor": .6,
+		},
+		"normalTexture": map[string]any{"index": 0, "scale": 1.5, "extensions": map[string]any{"KHR_texture_transform": map[string]any{"scale": []float64{6, 6}}}},
+	}
+}
+
 func solidMaterial(base [4]float64, roughness, metalness float64) map[string]any {
 	return map[string]any{"pbrMetallicRoughness": map[string]any{"baseColorFactor": base[:], "metallicFactor": metalness, "roughnessFactor": roughness}}
 }
 
 func stackGeometry(seed int64) (*geometry, error) {
 	g := &geometry{}
-	clusters := []struct {
-		center vec3
-		count  int
-		radius float64
-		maxTop float64
-		step   float64
-		seed   int64
-	}{{vec3{-14, 0, -30}, 30, 4.2, 16, 2.2, seed + 17}, {vec3{9, 0, -44}, 20, 3.45, 11, 1.7, seed + 31}, {vec3{26, 0, -22}, 12, 2.7, 6, 1.1, seed + 59}}
-	for _, cluster := range clusters {
-		if err := addCluster(g, cluster.center, cluster.count, cluster.radius, cluster.maxTop, cluster.step, cluster.seed); err != nil {
-			return nil, err
-		}
+	for _, stack := range stackSpecs(seed) {
+		addStack(g, stack)
 	}
+	for _, boulder := range boulderSpecs(seed) {
+		addBoulder(g, boulder, newNoise(seed+int64(boulder.id)*101), newNoise(seed))
+	}
+	averageVertexNormals(g)
 	return g, nil
 }
 
-type candidate struct{ x, z, distance float64 }
-
-func addCluster(g *geometry, center vec3, count int, spread, maxTop, step float64, seed int64) error {
-	spacing := 1.28
-	candidates := make([]candidate, 0, count+12)
-	for row := -8; row <= 8; row++ {
-		for column := -8; column <= 8; column++ {
-			x := (float64(column) + .5*float64(row&1)) * spacing
-			z := float64(row) * spacing * .8660254037844386
-			distance := math.Hypot(x, z)
-			if distance <= spread {
-				candidates = append(candidates, candidate{x: x, z: z, distance: distance})
-			}
-		}
-	}
-	if len(candidates) < count {
-		return fmt.Errorf("cluster at (%.1f, %.1f) has only %d column sites, need %d", center.x, center.z, len(candidates), count)
-	}
-	rng := newRandom(seed)
-	for i := len(candidates) - 1; i > 0; i-- {
-		j := rng.intn(i + 1)
-		candidates[i], candidates[j] = candidates[j], candidates[i]
-	}
-	noise := newNoise(seed)
-	for i := 0; i < count; i++ {
-		point := candidates[i]
-		radius := .45 + .25*rng.float64()
-		distanceTier := int(point.distance / (spread / 4))
-		jitter := (noise.value(point.x*1.7+3, point.z*1.7-9) + 1) * .22
-		top := maxTop - float64(distanceTier)*step - jitter
-		if top < -0.1 {
-			top = -.1
-		}
-		angle := rng.float64() * 2 * math.Pi
-		tilt := .10471975511965977 * rng.float64()
-		slopeX, slopeZ := math.Cos(angle)*tilt, math.Sin(angle)*tilt
-		addColumn(g, vec3{center.x + point.x, 0, center.z + point.z}, radius, top, slopeX, slopeZ)
-	}
-	return nil
+type stackSpec struct {
+	x, z, height, radius, lean float64
+	seed                       int64
 }
 
-func addColumn(g *geometry, center vec3, radius, top float64, slopeX, slopeZ float64) {
-	const sides = 6
-	bottom, upper, inset := make([]vec3, sides), make([]vec3, sides), make([]vec3, sides)
-	for i := 0; i < sides; i++ {
-		angle := 2*math.Pi*float64(i)/sides + math.Pi/6
-		dx, dz := math.Cos(angle), math.Sin(angle)
-		bottom[i] = vec3{center.x + dx*radius, -6, center.z + dz*radius}
-		y := top + slopeX*dx*radius + slopeZ*dz*radius
-		upper[i] = vec3{center.x + dx*radius, y - .04, center.z + dz*radius}
-		inset[i] = vec3{center.x + dx*(radius-.04), y, center.z + dz*(radius-.04)}
+type boulderSpec struct {
+	x, z, radius float64
+	id           int
+}
+
+func stackSpecs(seed int64) []stackSpec {
+	values := []struct{ x, z, height, radius float64 }{
+		{-16, -32, 18, 5}, {-10, -29, 6, 2}, {-21, -36, 9, 2.6},
+		{11, -46, 12, 4}, {26, -22, 2.5, 6},
 	}
-	for i := 0; i < sides; i++ {
-		next := (i + 1) % sides
-		outward := vec3{math.Cos(2*math.Pi*(float64(i)+.5)/sides + math.Pi/6), 0, math.Sin(2*math.Pi*(float64(i)+.5)/sides + math.Pi/6)}
-		addQuad(g, bottom[i], upper[i], upper[next], bottom[next], outward)
-		addQuad(g, upper[i], inset[i], inset[next], upper[next], outward)
-		centerTop := vec3{center.x, top, center.z}
-		topNormal := normalize(vec3{-slopeX, 1, -slopeZ})
-		addTriangle(g, centerTop, inset[next], inset[i], topNormal)
+	rng := newRandom(seed + 0x51ac)
+	out := make([]stackSpec, len(values))
+	for i, value := range values {
+		lean := (rng.float64()*2 - 1) * math.Tan(4*math.Pi/180)
+		out[i] = stackSpec{value.x, value.z, value.height, value.radius, lean, seed + int64(i+1)*7919}
+	}
+	return out
+}
+
+func boulderSpecs(seed int64) []boulderSpec {
+	rng := newRandom(seed + 0xB01D3)
+	out := make([]boulderSpec, 0, 14)
+	for attempt := 0; len(out) < 14 && attempt < 10000; attempt++ {
+		x := -18 + rng.float64()*36
+		z := -7 + rng.float64()*9.5
+		if math.Hypot(x+6.2, z-2.6) < 3 {
+			continue
+		}
+		spaced := true
+		for _, other := range out {
+			if math.Hypot(x-other.x, z-other.z) < 1.5 {
+				spaced = false
+				break
+			}
+		}
+		if !spaced {
+			continue
+		}
+		out = append(out, boulderSpec{x, z, .3 + rng.float64(), len(out)})
+	}
+	return out
+}
+
+func noiseLattice3(n noiseField, x, y, z int64) float64 {
+	h := n.seed ^ uint64(x)*0x9e3779b97f4a7c15 ^ uint64(y)*0xbf58476d1ce4e5b9 ^ uint64(z)*0x94d049bb133111eb
+	h += 0x9e3779b97f4a7c15
+	h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9
+	h = (h ^ (h >> 27)) * 0x94d049bb133111eb
+	h ^= h >> 31
+	return float64(h>>11)/float64(uint64(1)<<53)*2 - 1
+}
+
+func noiseValue3(n noiseField, x, y, z float64) float64 {
+	x0, y0, z0 := int64(math.Floor(x)), int64(math.Floor(y)), int64(math.Floor(z))
+	tx, ty, tz := fade(x-float64(x0)), fade(y-float64(y0)), fade(z-float64(z0))
+	zLow := lerp(
+		lerp(noiseLattice3(n, x0, y0, z0), noiseLattice3(n, x0+1, y0, z0), tx),
+		lerp(noiseLattice3(n, x0, y0+1, z0), noiseLattice3(n, x0+1, y0+1, z0), tx), ty,
+	)
+	zHigh := lerp(
+		lerp(noiseLattice3(n, x0, y0, z0+1), noiseLattice3(n, x0+1, y0, z0+1), tx),
+		lerp(noiseLattice3(n, x0, y0+1, z0+1), noiseLattice3(n, x0+1, y0+1, z0+1), tx), ty,
+	)
+	return lerp(zLow, zHigh, tz)
+}
+
+func ridgeFbm3(n noiseField, x, y, z float64, octaves int) float64 {
+	amplitude, frequency, total, weight := 1.0, 1.0, 0.0, 0.0
+	for octave := 0; octave < octaves; octave++ {
+		value := noiseValue3(n, x*frequency, y*frequency, z*frequency)
+		ridge := 1 - math.Abs(value)
+		total += amplitude * ridge
+		weight += amplitude
+		amplitude *= .5
+		frequency *= 2
+	}
+	if weight == 0 {
+		return 0
+	}
+	return total/weight - .5
+}
+
+func appendVertex(g *geometry, p vec3, u, v float64) uint16 {
+	index := uint16(len(g.positions) / 3)
+	g.positions = append(g.positions, p.x, p.y, p.z)
+	g.normals = append(g.normals, 0, 0, 0)
+	g.uvs = append(g.uvs, u, v)
+	return index
+}
+
+func addStack(g *geometry, stack stackSpec) {
+	const sides, rings = 48, 64
+	noise := newNoise(stack.seed)
+	baseY, topY := -6.0, stack.height
+	first := len(g.positions) / 3
+	for row := 0; row <= rings; row++ {
+		t := float64(row) / rings
+		y := lerp(baseY, topY, t)
+		domeStart := topY - math.Min((topY-baseY)*.16, stack.radius*.45)
+		dome := smoothstep(domeStart, topY, y)
+		profile := 1 - .45*dome
+		for side := 0; side < sides; side++ {
+			angle := 2 * math.Pi * float64(side) / sides
+			dx, dz := math.Cos(angle), math.Sin(angle)
+			worldY := y
+			wavelength := stack.radius * .35
+			trough := ridgeFbm3(noise, dx*stack.radius/wavelength, worldY/wavelength, dz*stack.radius/wavelength, 5)
+			strataNoise := noise.value(stack.x*.13+dx*2.1, stack.z*.13+dz*2.1) * .3
+			radius := stack.radius * profile * (1 + .06*math.Sin(worldY*2.3+strataNoise))
+			radius *= 1 + .16*trough
+			notch := smoothstep(-1, -.6, worldY) * (1 - smoothstep(1.2, 1.6, worldY))
+			radius *= 1 - .18*notch
+			leanFactor := (worldY - baseY) * stack.lean
+			p := vec3{stack.x + dx*radius + leanFactor, worldY, stack.z + dz*radius}
+			appendVertex(g, p, angle/(2*math.Pi), worldY/8-math.Floor(worldY/8))
+		}
+	}
+	for row := 0; row < rings; row++ {
+		for side := 0; side < sides; side++ {
+			a := uint16(first + row*sides + side)
+			b := uint16(first + row*sides + (side+1)%sides)
+			c := uint16(first + (row+1)*sides + (side+1)%sides)
+			d := uint16(first + (row+1)*sides + side)
+			g.indices = append(g.indices, a, d, c, a, c, b)
+		}
+	}
+	bottom := appendVertex(g, vec3{stack.x, baseY, stack.z}, .5, baseY/8-math.Floor(baseY/8))
+	top := appendVertex(g, vec3{stack.x + (topY-baseY)*stack.lean, topY, stack.z}, .5, topY/8-math.Floor(topY/8))
+	for side := 0; side < sides; side++ {
+		next := (side + 1) % sides
+		firstRing := uint16(first + side)
+		secondRing := uint16(first + next)
+		lastRing := uint16(first + rings*sides + side)
+		nextLast := uint16(first + rings*sides + next)
+		g.indices = append(g.indices, bottom, firstRing, secondRing)
+		g.indices = append(g.indices, top, nextLast, lastRing)
+	}
+}
+
+func addBoulder(g *geometry, boulder boulderSpec, noise, terrainNoise noiseField) {
+	const sides, rings = 16, 12
+	ground := terrainHeight(terrainNoise, boulder.x, boulder.z)
+	center := vec3{boulder.x, ground + boulder.radius*(2.0/3), boulder.z}
+	first := len(g.positions) / 3
+	for row := 0; row <= rings; row++ {
+		latitude := math.Pi * float64(row) / rings
+		for side := 0; side < sides; side++ {
+			longitude := 2 * math.Pi * float64(side) / sides
+			nx := math.Sin(latitude) * math.Cos(longitude)
+			ny := math.Cos(latitude)
+			nz := math.Sin(latitude) * math.Sin(longitude)
+			trough := ridgeFbm3(noise, nx*6, ny*6, nz*6, 5)
+			radius := boulder.radius * (1 + .16*trough)
+			p := vec3{center.x + nx*radius, center.y + ny*radius, center.z + nz*radius}
+			appendVertex(g, p, longitude/(2*math.Pi), latitude/math.Pi)
+		}
+	}
+	for row := 0; row < rings; row++ {
+		for side := 0; side < sides; side++ {
+			a := uint16(first + row*sides + side)
+			b := uint16(first + row*sides + (side+1)%sides)
+			c := uint16(first + (row+1)*sides + (side+1)%sides)
+			d := uint16(first + (row+1)*sides + side)
+			g.indices = append(g.indices, a, c, d, a, b, c)
+		}
+	}
+}
+
+func averageVertexNormals(g *geometry) {
+	for i := 0; i+2 < len(g.indices); i += 3 {
+		a, b, c := int(g.indices[i])*3, int(g.indices[i+1])*3, int(g.indices[i+2])*3
+		pa := vec3{g.positions[a], g.positions[a+1], g.positions[a+2]}
+		pb := vec3{g.positions[b], g.positions[b+1], g.positions[b+2]}
+		pc := vec3{g.positions[c], g.positions[c+1], g.positions[c+2]}
+		normal := cross(sub(pb, pa), sub(pc, pa))
+		for _, index := range [...]int{a, b, c} {
+			g.normals[index] += normal.x
+			g.normals[index+1] += normal.y
+			g.normals[index+2] += normal.z
+		}
+	}
+	for i := 0; i < len(g.normals); i += 3 {
+		normal := normalize(vec3{g.normals[i], g.normals[i+1], g.normals[i+2]})
+		g.normals[i], g.normals[i+1], g.normals[i+2] = normal.x, normal.y, normal.z
 	}
 }
 
@@ -474,13 +658,51 @@ const (
 
 func makeBathymetry(n noiseField) ([]byte, error) {
 	img := image.NewGray(image.Rect(0, 0, BathymetrySize, BathymetrySize))
+	seed := int64(n.seed)
+	stacks := stackSpecs(seed)
+	boulders := boulderSpecs(seed)
 	for y := 0; y < BathymetrySize; y++ {
 		z := BathymetryMinZ + (float64(y)+0.5)/BathymetrySize*(BathymetryMaxZ-BathymetryMinZ)
 		for x := 0; x < BathymetrySize; x++ {
 			wx := BathymetryMinX + (float64(x)+0.5)/BathymetrySize*(BathymetryMaxX-BathymetryMinX)
-			v := (terrainHeight(n, wx, z) - BathymetryMinHeight) / (BathymetryMaxHeight - BathymetryMinHeight)
+			height := terrainHeight(n, wx, z)
+			for _, stack := range stacks {
+				centerX := stack.x + 6*stack.lean
+				radius := stack.radius * .82 * (1 + .06*math.Sin(stack.x*.13+stack.z*.13))
+				if math.Hypot(wx-centerX, z-stack.z) <= radius {
+					height = math.Max(height, stack.height)
+				}
+			}
+			for _, boulder := range boulders {
+				if math.Hypot(wx-boulder.x, z-boulder.z) <= boulder.radius+.35 {
+					top := terrainHeight(n, boulder.x, boulder.z) + boulder.radius*1.35
+					height = math.Max(height, top)
+				}
+			}
+			v := BathymetryEncode(height)
 			img.Pix[y*img.Stride+x] = uint8(math.Round(math.Max(0, math.Min(1, v)) * 255))
 		}
 	}
 	return encodePNG(img)
+}
+
+// BathymetryEncoding is the scene.OceanBathymetry encoding of the heightmap.
+const BathymetryEncoding = "signed-sqrt"
+
+// BathymetryEncode maps a world height to the stored R value: signed-sqrt
+// spends the 8-bit steps near sea level, where the shoreline needs them.
+func BathymetryEncode(h float64) float64 {
+	r := math.Max(math.Abs(BathymetryMinHeight), math.Abs(BathymetryMaxHeight))
+	s := math.Sqrt(math.Min(1, math.Abs(h)/r))
+	if h < 0 {
+		s = -s
+	}
+	return 0.5 + 0.5*s
+}
+
+// BathymetryDecode inverts BathymetryEncode (the shader does the same).
+func BathymetryDecode(v float64) float64 {
+	r := math.Max(math.Abs(BathymetryMinHeight), math.Abs(BathymetryMaxHeight))
+	s := 2*v - 1
+	return math.Copysign(s*s*r, s)
 }

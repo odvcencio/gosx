@@ -11,6 +11,7 @@ import (
 type embeddedImage struct {
 	name string
 	data []byte
+	mime string // "image/png" when empty
 }
 
 type binaryBuilder struct {
@@ -51,7 +52,11 @@ func writeGLB(mesh *geometry, material map[string]any, images []embeddedImage) (
 	textureRecords := make([]map[string]any, 0, len(images))
 	for index, embedded := range images {
 		view := bin.addView(embedded.data, 0)
-		imageRecords = append(imageRecords, map[string]any{"name": embedded.name, "bufferView": view, "mimeType": "image/png"})
+		mime := embedded.mime
+		if mime == "" {
+			mime = "image/png"
+		}
+		imageRecords = append(imageRecords, map[string]any{"name": embedded.name, "bufferView": view, "mimeType": mime})
 		textureRecords = append(textureRecords, map[string]any{"sampler": 0, "source": index})
 	}
 	positionBytes, positionScale, positionTranslation := encodePositions(mesh.positions)
@@ -63,7 +68,7 @@ func writeGLB(mesh *geometry, material map[string]any, images []embeddedImage) (
 	accessors := []map[string]any{
 		{"bufferView": positionView, "componentType": 5122, "normalized": true, "count": vertexCount, "type": "VEC3"},
 		{"bufferView": normalView, "componentType": 5120, "normalized": true, "count": vertexCount, "type": "VEC3"},
-		{"bufferView": uvView, "componentType": 5123, "normalized": true, "count": vertexCount, "type": "VEC2"},
+		{"bufferView": uvView, "componentType": 5121, "normalized": true, "count": vertexCount, "type": "VEC2"},
 		{"bufferView": indexView, "componentType": 5123, "count": len(mesh.indices), "type": "SCALAR"},
 	}
 	primitive := map[string]any{"attributes": map[string]int{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 0, "mode": 4}
@@ -148,10 +153,10 @@ func encodeNormals(values []float64) []byte {
 }
 
 func encodeUVs(values []float64) []byte {
-	out := make([]byte, len(values)*2)
+	out := make([]byte, len(values))
 	for i, value := range values {
-		q := uint16(math.Round(clamp(value, 0, 1) * 65535))
-		binary.LittleEndian.PutUint16(out[i*2:], q)
+		q := uint8(math.Round(clamp(value, 0, 1) * 255))
+		out[i] = q
 	}
 	return out
 }

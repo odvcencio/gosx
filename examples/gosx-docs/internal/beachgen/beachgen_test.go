@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"image/color"
+	"image/jpeg"
 	"image/png"
 	"math"
 	"testing"
@@ -20,7 +22,7 @@ func TestGenerateAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"beach-v2.glb", "beach-v2-albedo.png", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "stacks-v2.glb", "monolith-v2.glb"}
+	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.png", "rock-normal.png", "stacks-v2.glb", "monolith-v2.glb"}
 	if len(first) != len(want) {
 		t.Fatalf("got %d output files, want %d", len(first), len(want))
 	}
@@ -46,12 +48,15 @@ func TestGenerateAssets(t *testing.T) {
 	if count := positionCount(t, beach); count != 161*161 {
 		t.Errorf("beach has %d vertices, want %d", count, 161*161)
 	}
-	if count := positionCount(t, stacks); count != 62*90 {
-		t.Errorf("stacks has %d vertices, want %d", count, 62*90)
+	t.Logf("beach-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, beach), len(first["beach-v2.glb"]))
+	if count := positionCount(t, stacks); count != 18522 {
+		t.Errorf("stacks and boulders have %d vertices, want 18522", count)
 	}
+	t.Logf("stacks-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, stacks), len(first["stacks-v2.glb"]))
 	if count := positionCount(t, monolith); count != 192 {
 		t.Errorf("monolith has %d vertices, want 192", count)
 	}
+	t.Logf("monolith-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, monolith), len(first["monolith-v2.glb"]))
 
 	beachLow, beachHigh := checkBounds(t, first["beach-v2.glb"], beach, [3]float64{-60.1, -7, -40.1}, [3]float64{60.1, 22, 50.1})
 	checkNear(t, "terrain west", beachLow[0], -60, .01)
@@ -61,10 +66,10 @@ func TestGenerateAssets(t *testing.T) {
 	if beachLow[1] < -5.1 || beachLow[1] > -4.5 || beachHigh[1] < 20.5 || beachHigh[1] > 21.5 {
 		t.Errorf("terrain vertical bounds are [%.3f, %.3f], expected the sea basin and ridged headlands", beachLow[1], beachHigh[1])
 	}
-	stackLow, stackHigh := checkBounds(t, first["stacks-v2.glb"], stacks, [3]float64{-20, -6.1, -50}, [3]float64{32, 16.2, -18})
+	stackLow, stackHigh := checkBounds(t, first["stacks-v2.glb"], stacks, [3]float64{-27, -6.1, -52}, [3]float64{34, 18.1, 2.5})
 	checkNear(t, "stack bottoms", stackLow[1], -6, .01)
-	if stackHigh[1] < 15.5 || stackHigh[1] > 16.2 {
-		t.Errorf("stack tops reach %.3f m; want a highest stack near 16 m", stackHigh[1])
+	if stackHigh[1] < 17.9 || stackHigh[1] > 18.1 {
+		t.Errorf("stack tops reach %.3f m; want the main stack near 18 m", stackHigh[1])
 	}
 	monoLow, monoHigh := checkBounds(t, first["monolith-v2.glb"], monolith, [3]float64{-.81, -.01, -.26}, [3]float64{.81, 3.75, .26})
 	checkNear(t, "monolith left", monoLow[0], -.8, .01)
@@ -74,6 +79,7 @@ func TestGenerateAssets(t *testing.T) {
 
 	checkGLBEncoding(t, first["beach-v2.glb"], beach, true)
 	checkGLBEncoding(t, first["stacks-v2.glb"], stacks, false)
+	checkRockMaterial(t, first["stacks-v2.glb"])
 	checkGLBEncoding(t, first["monolith-v2.glb"], monolith, false)
 	if h := TerrainHeight(0, 0, 0xB1AC6A55); math.Abs(h) > .1 {
 		t.Errorf("terrain height at (0,0) = %.4f, want within 0.1m of zero", h)
@@ -83,12 +89,12 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("terrain height at (0,-20) = %.4f, want below -2m", h)
 	}
 
-	for name, budget := range map[string]int{"beach-v2.glb": 700 << 10, "stacks-v2.glb": 250 << 10, "monolith-v2.glb": 20 << 10} {
+	for name, budget := range map[string]int{"beach-v2.glb": 700 << 10, "stacks-v2.glb": 450 << 10, "monolith-v2.glb": 20 << 10} {
 		if len(first[name]) > budget {
 			t.Errorf("%s is %d bytes, budget is %d", name, len(first[name]), budget)
 		}
 	}
-	for name, size := range map[string][2]int{"beach-v2-albedo.png": {512, 512}, "beach-v2-mr.png": {256, 256}, "sand-normal.png": {512, 512}} {
+	for name, size := range map[string][2]int{"beach-v2-mr.png": {256, 256}, "sand-normal.png": {512, 512}, "rock-normal.png": {256, 256}} {
 		decoded, err := png.Decode(bytes.NewReader(first[name]))
 		if err != nil {
 			t.Errorf("%s is not a decodable PNG: %v", name, err)
@@ -97,6 +103,41 @@ func TestGenerateAssets(t *testing.T) {
 		if bounds := decoded.Bounds(); bounds.Dx() != size[0] || bounds.Dy() != size[1] {
 			t.Errorf("%s is %dx%d, want %dx%d", name, bounds.Dx(), bounds.Dy(), size[0], size[1])
 		}
+	}
+}
+
+func TestBouldersAvoidMonolith(t *testing.T) {
+	boulders := boulderSpecs(generatorSeed)
+	if len(boulders) != 14 {
+		t.Fatalf("got %d boulders, want 14", len(boulders))
+	}
+	for i, boulder := range boulders {
+		if distance := math.Hypot(boulder.x+6.2, boulder.z-2.6); distance < 3 {
+			t.Errorf("boulder %d is %.3fm from the monolith, want at least 3m", i, distance)
+		}
+		for j := 0; j < i; j++ {
+			other := boulders[j]
+			if distance := math.Hypot(boulder.x-other.x, boulder.z-other.z); distance < 1.5 {
+				t.Errorf("boulders %d and %d are %.3fm apart, want at least 1.5m", j, i, distance)
+			}
+		}
+	}
+}
+
+func TestBathymetryIncludesStackA(t *testing.T) {
+	data, err := makeBathymetry(newNoise(generatorSeed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := int(math.Round((-16-BathymetryMinX)/(BathymetryMaxX-BathymetryMinX)*BathymetrySize - .5))
+	z := int(math.Round((-32-BathymetryMinZ)/(BathymetryMaxZ-BathymetryMinZ)*BathymetrySize - .5))
+	gray := color.GrayModel.Convert(img.At(x, z)).(color.Gray)
+	if BathymetryDecode(float64(gray.Y)/255) < 0 {
+		t.Errorf("bathymetry at stack A center encodes %.2fm, want at or above sea level", BathymetryDecode(float64(gray.Y)/255))
 	}
 }
 
@@ -179,7 +220,7 @@ func checkGLBEncoding(t *testing.T, data []byte, doc *gltfedit.Document, texture
 	for name, want := range map[string]struct {
 		component  int
 		normalized bool
-	}{"POSITION": {5122, true}, "NORMAL": {5120, true}, "TEXCOORD_0": {5123, true}} {
+	}{"POSITION": {5122, true}, "NORMAL": {5120, true}, "TEXCOORD_0": {5121, true}} {
 		accessor := doc.Accessors[primitive.Attributes[name]]
 		if accessor.ComponentType != want.component || accessor.Normalized != want.normalized {
 			t.Errorf("%s accessor is component %d normalized=%t; want %d normalized=true", name, accessor.ComponentType, accessor.Normalized, want.component)
@@ -227,13 +268,46 @@ func checkGLBEncoding(t *testing.T, data []byte, doc *gltfedit.Document, texture
 				t.Fatalf("terrain has %d materials, want 1", len(root.Materials))
 			}
 			transform := root.Materials[0].NormalTexture.Extensions["KHR_texture_transform"].Scale
-			if root.Materials[0].NormalTexture.Scale != .6 || len(transform) != 2 || transform[0] != 48 || transform[1] != 36 {
-				t.Errorf("normal map parameters are scale=%g transform=%v, want 0.6 and [48 36]", root.Materials[0].NormalTexture.Scale, transform)
+			if root.Materials[0].NormalTexture.Scale != .6 || len(transform) != 2 || transform[0] != 60 || transform[1] != 45 {
+				t.Errorf("normal map parameters are scale=%g transform=%v, want 0.6 and [60 45]", root.Materials[0].NormalTexture.Scale, transform)
 			}
-			if embedded.MIMEType != "image/png" || embedded.BufferView < 0 || embedded.BufferView >= len(root.BufferViews) {
-				t.Errorf("invalid embedded PNG image reference: %+v", embedded)
+			if (embedded.MIMEType != "image/png" && embedded.MIMEType != "image/jpeg") || embedded.BufferView < 0 || embedded.BufferView >= len(root.BufferViews) {
+				t.Errorf("invalid embedded image reference: %+v", embedded)
 			}
 		}
+	}
+}
+
+func checkRockMaterial(t *testing.T, data []byte) {
+	t.Helper()
+	var root struct {
+		ExtensionsUsed []string `json:"extensionsUsed"`
+		Images         []struct {
+			MIMEType string `json:"mimeType"`
+		} `json:"images"`
+		Materials []struct {
+			PBR struct {
+				Metallic  float64 `json:"metallicFactor"`
+				Roughness float64 `json:"roughnessFactor"`
+			} `json:"pbrMetallicRoughness"`
+			Normal struct {
+				Scale      float64 `json:"scale"`
+				Extensions map[string]struct {
+					Scale []float64 `json:"scale"`
+				} `json:"extensions"`
+			} `json:"normalTexture"`
+		} `json:"materials"`
+	}
+	if err := json.Unmarshal(glbJSON(t, data), &root); err != nil {
+		t.Fatal(err)
+	}
+	if len(root.Images) != 1 || root.Images[0].MIMEType != "image/png" || len(root.Materials) != 1 {
+		t.Fatalf("rock material has %d embedded images and %d materials", len(root.Images), len(root.Materials))
+	}
+	material := root.Materials[0]
+	transform := material.Normal.Extensions["KHR_texture_transform"].Scale
+	if !contains(root.ExtensionsUsed, "KHR_texture_transform") || material.PBR.Metallic != 0 || material.PBR.Roughness != .6 || material.Normal.Scale != 1.5 || len(transform) != 2 || transform[0] != 6 || transform[1] != 6 {
+		t.Errorf("unexpected rock material: %+v with normal transform %v", material, transform)
 	}
 }
 
@@ -256,4 +330,27 @@ func glbJSON(t *testing.T, data []byte) []byte {
 		t.Fatal("invalid GLB JSON chunk length")
 	}
 	return data[20 : 20+length]
+}
+
+func TestBathymetryEncodingRoundTripsNearSeaLevel(t *testing.T) {
+	for _, h := range []float64{-8, -2, -0.5, -0.05, 0, 0.05, 0.5, 3.9} {
+		v := math.Round(BathymetryEncode(h)*255) / 255
+		if got := BathymetryDecode(v); math.Abs(got-h) > 0.02+0.02*math.Abs(h) {
+			t.Errorf("height %.3f round-trips to %.3f", h, got)
+		}
+	}
+}
+
+func TestAlbedoIsJPEG(t *testing.T) {
+	files, err := Generate(generatorSeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(files["beach-v2-albedo.jpg"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 1024 || b.Dy() != 1024 {
+		t.Fatalf("albedo is %dx%d", b.Dx(), b.Dy())
+	}
 }
