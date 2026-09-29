@@ -19,6 +19,11 @@
 // --use-adapter-luid to pick the rendering adapter, and Options.MuteAudio
 // adds --mute-audio.
 //
+// Windows apps can call AcquireSingleInstance at the start of main to reserve
+// their app ID before desktop startup; close the returned InstanceLock when
+// the process exits. If first is false, call ForwardToFirstInstance with the
+// launch arguments and working directory, then exit.
+//
 // When Options.Debug is false, the backend disables browser accelerator keys,
 // browser zoom controls, and the WebView2 status bar. Debug mode leaves these
 // controls enabled. Options.OnProcessFailed reports the failed WebView2
