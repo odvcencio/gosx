@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added: desktop permission requests
+
+- Add `Options.OnPermissionRequested`. It receives each browser permission
+  request (kind, origin, and whether a user gesture started it) and returns
+  `PermissionAllow`, `PermissionDeny`, or `PermissionAsk` (WebView2's own
+  prompt, the behavior without a handler). WebView2 reports Web MIDI requests,
+  including `requestMIDIAccess({sysex: false})`, as `PermissionMIDISysex`;
+  before this, a desktop app's Web MIDI request waited on a prompt.
+
 ### Fixed: desktop WebView calls from goroutines
 
 - `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,

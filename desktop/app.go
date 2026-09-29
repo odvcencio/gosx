@@ -118,6 +118,15 @@ type Options struct {
 	// reports the first navigation's completion time.
 	OnNavigationCompleted func(NavigationCompleted)
 
+	// OnPermissionRequested decides browser permission requests from page
+	// content (Web MIDI, microphone, notifications, ...). It runs on the
+	// WebView2 dispatcher thread; keep it short. Return PermissionAllow or
+	// PermissionDeny to answer without a prompt, or PermissionAsk to let
+	// WebView2 show its own prompt. Nil keeps the WebView2 prompt for
+	// every request. Grant only to origins you trust, such as the app's own
+	// loopback server; check PermissionRequest.URI.
+	OnPermissionRequested func(PermissionRequest) PermissionDecision
+
 	// OnWindowCreated fires after a native window handle has been created.
 	// The initial Windows backend invokes it for the primary window.
 	OnWindowCreated func(window *Window)
