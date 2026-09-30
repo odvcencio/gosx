@@ -76,9 +76,17 @@ function sceneReflectOpaqueList(list, materials) {
   });
 }
 
-function sceneAtmosphereTier(state) {
-  if (!state || state.mode !== "ladder") return null;
-  return state.rungIndex === 0 ? "full" : state.rungIndex >= state.ladder.length-1 ? "survival" : "balanced";
+function sceneAtmosphereTier(state, deviceTier) {
+  const ladder = !state || state.mode !== "ladder" ? null
+    : state.rungIndex === 0 ? "full" : state.rungIndex >= state.ladder.length-1 ? "survival" : "balanced";
+  // GPU timing cannot see a CPU-bound device, so the capability tier caps the
+  // ladder: a balanced device never runs full atmosphere, a constrained one
+  // runs survival.
+  const cap = deviceTier === "constrained" ? "survival" : deviceTier === "balanced" ? "balanced" : null;
+  if (!cap) return ladder;
+  if (!ladder) return cap;
+  const rank = { full: 0, balanced: 1, survival: 2 };
+  return rank[ladder] >= rank[cap] ? ladder : cap;
 }
 
 function sceneSkyClouds(raw) {

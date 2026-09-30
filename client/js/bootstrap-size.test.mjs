@@ -689,7 +689,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 1_811_342 / 503_343 / 402_536; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap.js", raw: 1_819_200, gzip: 510_900, brotli: 403_500 },
+  { file: "bootstrap.js", raw: 1_819_400, gzip: 511_000, brotli: 403_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1829,8 +1829,8 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_366_700,
-    gzip: 378_200,
+    raw: 1_366_900,
+    gzip: 378_300,
     brotli: 315_900,
   },
   {
@@ -2011,7 +2011,7 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1_215_400,
-    gzip: 348_300,
+    gzip: 348_400,
     brotli: 293_000,
   },
   {
@@ -2188,8 +2188,8 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_656_400,
-    gzip: 461_400,
+    raw: 1_656_600,
+    gzip: 461_500,
     brotli: 384_800,
   },
   {
