@@ -40,6 +40,13 @@
   // exists. This is opt-in because pages may carry their own scripts that read
   // the element's text later; a page opts in only once every consumer goes
   // through the published parse.
+  // True when manifest JSON holds a Scene3D label (the text-layout user). A
+  // string "label" is an accessible name and must not fetch 42.7 KB. The
+  // server writes the manifest with json.Marshal, which emits no whitespace.
+  function gosxManifestTextHasSceneLabel(raw) {
+    return typeof raw === "string" && /"labels":\[\{|"label":\{|"kind":"label"/.test(raw);
+  }
+
   function loadManifest() {
     const el = document.getElementById("gosx-manifest");
     if (!el) return null;
@@ -55,7 +62,7 @@
       window.__gosx_manifest = {
         element: el,
         value: value,
-        textHasLabel: typeof raw === "string" && raw.indexOf('"label"') >= 0,
+        textHasLabel: gosxManifestTextHasSceneLabel(raw),
       };
       if (el.hasAttribute && el.hasAttribute("data-gosx-release")) {
         el.textContent = "";

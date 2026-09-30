@@ -32,6 +32,11 @@
     }
   }
 
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneWalkEnabled(props) {
+    return props && normalizeSceneControlsMode(props.controls) === "first-person" && props.walk && typeof props.walk === "object" && !Array.isArray(props.walk);
+  }
+
   // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
   function sceneRunFrameGuard(callback, args, shouldRecover, recover) {
     try { return callback.apply(null, args); } catch (error) { if (shouldRecover()) recover(); throw error; }
@@ -493,6 +498,7 @@
   }
 
   function syncSceneControlsFromCamera(controls, camera) {
+    if (controls && controls.syncCamera) { controls.syncCamera(camera); return; }
     if (!controls || controls.active || controls.touched) {
       return;
     }
@@ -504,6 +510,7 @@
   }
 
   function applySceneControlsCamera(controls, camera) {
+    if (controls && controls.applyCamera) { controls.applyCamera(camera); return; }
     if (!controls) {
       return;
     }
@@ -604,7 +611,10 @@
 
   function sceneCurrentControlCamera(controls, sourceCamera, scrollCamera) {
     var cam;
-    if (controls && controls.mode === "orbit") {
+    if (controls && controls.currentCamera) {
+      controls.syncCamera(sourceCamera);
+      return controls.currentCamera();
+    } else if (controls && controls.mode === "orbit") {
       syncSceneControlsFromCamera(controls, sourceCamera);
       cam = controls.orbit ? sceneOrbitCamera(controls.orbit, sourceCamera) : sceneRenderCamera(sourceCamera);
     } else if (controls && (controls.mode === "first-person" || controls.mode === "fly")) {
@@ -1021,6 +1031,12 @@
 
   // @ts-ignore TS7006 -- keep this call site JavaScript-compatible in the runtime bundle
   function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
+    if (sceneWalkEnabled(props)) {
+      return window.__gosx_scene3d_walk_api.setup(canvas, props, readSourceCamera, scheduleRender, sceneState, {
+        camera: sceneRenderCamera, requestLock: sceneRequestPointerLock, exitLock: sceneExitPointerLock,
+        locked: scenePointerLockActive, requestFrame: sceneMotionRequestFrame, cancelFrame: sceneMotionCancelFrame, now: sceneNowMilliseconds,
+      });
+    }
     const controls = createSceneControls(props);
     if (sceneState) sceneState._gosxMotionController = controls;
     if (!canvas || !controls) {

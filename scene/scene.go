@@ -107,6 +107,7 @@ type Props struct {
 	AriaLabel            string   `json:"ariaLabel,omitempty"`
 	Background           string   `json:"background,omitempty"`
 	Controls             string   `json:"controls,omitempty"`
+	Walk                 *Walk    `json:"walk,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
 	Responsive           *bool    `json:"responsive,omitempty"`
 	FillHeight           *bool    `json:"fillHeight,omitempty"`
@@ -1873,6 +1874,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "ariaLabel", p.AriaLabel)
 	setString(out, "background", p.Background)
 	setString(out, "controls", p.Controls)
+	if p.Walk != nil {
+		out["walk"] = p.Walk
+	}
 	setBool(out, "autoRotate", p.AutoRotate)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)

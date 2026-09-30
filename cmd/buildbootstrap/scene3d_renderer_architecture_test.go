@@ -13,6 +13,7 @@ import (
 )
 
 type rendererArchitectureBaseline struct {
+	GovernedModules    map[string]rendererSourceSetBaseline `json:"governedModules"`
 	SourceSets         map[string]rendererSourceSetBaseline `json:"sourceSets"`
 	FunctionDefaults   rendererSymbolMetric                 `json:"functionDefaults"`
 	FunctionExceptions []rendererSymbolMetric               `json:"functionExceptions"`
@@ -212,6 +213,29 @@ func rendererChunkRoleAuthorities(backend string, governedSources []string) map[
 	return authorities
 }
 
+// Standalone authorities stay outside renderer chunks and the monolith.
+func TestScene3DGovernedModulesAreLazy(t *testing.T) {
+	_, baseline := loadRendererArchitectureBaseline(t)
+	for name, module := range baseline.GovernedModules {
+		var roster []string
+		for _, output := range outputs {
+			for _, source := range output.sources {
+				for _, expected := range module.Sources {
+					if source.rel == expected && output.name != module.Chunk {
+						t.Errorf("%s ships eagerly in %s", name, output.name)
+					}
+				}
+				if output.name == module.Chunk {
+					roster = append(roster, source.rel)
+				}
+			}
+		}
+		if strings.Join(roster, "\x00") != strings.Join(module.Sources, "\x00") {
+			t.Errorf("%s source roster: %v", name, roster)
+		}
+	}
+}
+
 func TestRendererCompleteFunctionInventoryRatchetsOffline(t *testing.T) {
 	clientJS, baseline := loadRendererArchitectureBaseline(t)
 	defaults := baseline.FunctionDefaults
@@ -225,7 +249,14 @@ func TestRendererCompleteFunctionInventoryRatchetsOffline(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	neededExceptions := map[string]bool{}
-	for _, sourceSet := range baseline.SourceSets {
+	sourceSets := make([]rendererSourceSetBaseline, 0, len(baseline.SourceSets)+len(baseline.GovernedModules))
+	for _, set := range baseline.SourceSets {
+		sourceSets = append(sourceSets, set)
+	}
+	for _, set := range baseline.GovernedModules {
+		sourceSets = append(sourceSets, set)
+	}
+	for _, sourceSet := range sourceSets {
 		for _, source := range sourceSet.Sources {
 			raw, err := os.ReadFile(filepath.Join(clientJS, filepath.FromSlash(source)))
 			if err != nil {

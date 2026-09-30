@@ -1607,6 +1607,40 @@ func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
 	}
 }
 
+// TestScenePageNamesTheTextlayoutChunk guards the black-screen bug of
+// 2026-09-29. A Scene3D page can request the text-layout chunk (a label, or a
+// manifest the client's label test matches), so its summary must carry the
+// hashed URL. Without it the client loads an unhashed /gosx/ URL that a
+// hashed-only deployment does not serve.
+func TestScenePageNamesTheTextlayoutChunk(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                  buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:           buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:    buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: "bootstrap-feature-textlayout.c072.js", Hash: "c072"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{
+		Name:  "GoSXScene3D",
+		Kind:  engine.KindSurface,
+		Props: json.RawMessage(`{"label":"A beach","labels":[{"id":"sign","text":"Blackglass"}]}`),
+	}, gosx.Text(""))
+	summary := r.Summary()
+	if summary.BootstrapMode == "none" || !summary.Bootstrap {
+		t.Fatalf("scene page ships no bootstrap: %+v", summary)
+	}
+	if got, want := summary.BootstrapFeatureTextLayoutPath, "/gosx/assets/runtime/bootstrap-feature-textlayout.c072.js"; got != want {
+		t.Fatalf("summary text-layout chunk URL = %q, want %q", got, want)
+	}
+	if hints := gosx.RenderHTML(r.PreloadHints()); strings.Contains(hints, "bootstrap-feature-textlayout") {
+		t.Errorf("text-layout chunk emitted as a preload hint: %s", hints)
+	}
+}
+
 // scene3DChunkGateRenderer builds a renderer with every Scene3D chunk resolved
 // from a manifest, then registers one GoSXScene3D engine with the given props.
 // It returns the rendered bootstrap script markup.
@@ -1620,6 +1654,7 @@ func scene3DChunkGateRenderer(t *testing.T, props any) string {
 		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1759,6 +1794,7 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1793,5 +1829,28 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		if strings.Contains(hints, chunk) {
 			t.Errorf("%s is emitted as a preload hint, which downloads it on every page:\n%s", chunk, hints)
 		}
+	}
+}
+
+func TestScene3DWalkURLIsPropGated(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		props map[string]any
+		want  bool
+	}{
+		{"absent", map[string]any{"controls": "first-person"}, false},
+		{"null", map[string]any{"walk": nil}, false},
+		{"object", map[string]any{"controls": "first-person", "walk": map[string]any{}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			markup := scene3DChunkGateRenderer(t, tc.props)
+			attr := `data-gosx-scene3d-walk-url="/gosx/assets/runtime/bootstrap-feature-scene3d-walk.js"`
+			if strings.Contains(markup, attr) != tc.want {
+				t.Fatalf("walk URL gate: %s", markup)
+			}
+			if strings.Contains(markup, `src="/gosx/assets/runtime/bootstrap-feature-scene3d-walk.js"`) {
+				t.Fatal("walk chunk is eager")
+			}
+		})
 	}
 }

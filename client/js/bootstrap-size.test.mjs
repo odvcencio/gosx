@@ -684,9 +684,12 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  // The physical sky measures 1_787_265 / 494_518 / 397_055; targets rise by the
-  // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap.js", raw: 1_721_800, gzip: 478_200, brotli: 380_700 },
+  // Walking adds a small control hook; shared sub-feature loading reduces raw
+  // and gzip. The legacy monolith measures 1_781_215 / 492_868 / 395_925;
+  // Brotli's changed dictionary exceeds the old hard cap by 141 bytes. Raise
+  // only that target by 200 bytes. Selective routes use the smaller base chunk.
+  // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+  { file: "bootstrap.js", raw: 1_720_100, gzip: 478_200, brotli: 380_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1179,9 +1182,8 @@ const budgets = [
   // GPU-driven crowd motion adds motion-frame dispatch and telemetry. Frame
   // pacing also adds its governor and telemetry. The build with frame
   // caching measures 594_098 / 166_371 / 137_740.
-  // The physical sky measures 620_165 / 175_266 / 144_289; targets rise by the
-  // smallest 100-byte steps that clear the hard limits.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 167_000, brotli: 137_850 },
+  // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 166_900, brotli: 137_850 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1190,6 +1192,12 @@ const budgets = [
   // The host caps instance-buffer growth at the binding limit. Measured:
   // 61_176 / 17_826 / 16_072. Targets 61_100 / 17_800 / 16_100 ->
   // 61_200 / 17_900 / 16_100, rounded up to the next 100 bytes.
+  // Opt-in grounded first-person controls, physics, accessible inputs and DOM
+  // overlays live in a separate lazy chunk. Measured 11_013 / 4_596 / 4_116;
+  // caps round up by at most 100 bytes. Sharing sub-feature loaders keeps the
+  // base Scene3D chunk below its previous raw, gzip and Brotli sizes, so these
+  // bytes are excluded from every existing first-load route budget.
+  { file: "bootstrap-feature-scene3d-walk.js", raw: 11_100, gzip: 4_600, brotli: 4_200 },
   { file: "bootstrap-feature-scene3d-compute.js", raw: 61_200, gzip: 17_900, brotli: 16_100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount
@@ -1812,11 +1820,10 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    // The physical sky measures 1_369_726 / 372_535 / 313_438; targets rise by the
-    // smallest 100-byte steps that clear the hard limits.
-    raw: 1_304_800,
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_303_200,
     gzip: 356_200,
-    brotli: 298_600,
+    brotli: 298_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1990,11 +1997,14 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    // The physical sky measures 1_219_646 / 344_640 / 290_765; targets rise by the
-    // smallest 100-byte steps that clear the hard limits.
-    raw: 1_161_800,
+    // The feature-path fix (keep every bootstrapFeature*Path, match only real
+    // Scene3D labels, never let a failed text-layout load stop the mounts) adds
+    // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
+    // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_160_200,
     gzip: 328_400,
-    brotli: 277_000,
+    brotli: 277_200,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2165,11 +2175,10 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    // The physical sky measures 1_623_811 / 443_829 / 373_776; targets rise by the
-    // smallest 100-byte steps that clear the hard limits.
-    raw: 1_558_300,
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_556_700,
     gzip: 427_500,
-    brotli: 357_400,
+    brotli: 357_600,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2317,11 +2326,10 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
-    // smallest 100-byte steps that clear the hard limits.
-    raw: 1_159_600,
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_158_000,
     gzip: 313_600,
-    brotli: 261_900,
+    brotli: 262_100,
   },
 
 ];
