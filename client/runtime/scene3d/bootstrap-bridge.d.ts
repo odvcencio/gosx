@@ -253,3 +253,9 @@ declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;
 
 declare function createSceneWebGLMipBloom(host: any): any;
 declare function createSceneWebGPUMipBloom(host: any): any;
+
+interface Window {
+  __gosx_scene3d_ocean_waves: any;
+  __gosx_scene3d_ocean_query: any;
+  __gosx_scene3d_vessel_api: any;
+}

@@ -44,6 +44,7 @@
         "../runtime/scene3d/dom-regions.ts",
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
+        "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
@@ -206,6 +207,7 @@
         "bootstrap-src/15c-scene-backend-registry.ts",
         "bootstrap-src/15a-scene-postfx-shared.ts",
         "../runtime/scene3d/dom-regions.ts",
+        "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -275,6 +277,12 @@
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/26k-feature-scene3d-compute-suffix.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-ocean-query.js",
+      "sources": [
+        "../runtime/scene3d/ocean-query.ts"
       ]
     },
     {

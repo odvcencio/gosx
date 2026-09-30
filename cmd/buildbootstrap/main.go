@@ -162,6 +162,7 @@ var outputs = []output{
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
@@ -419,6 +420,7 @@ var outputs = []output{
 			// webgpu chunk carried a second copy until v0.35.8, which cost a
 			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
 			// the tiny stub + adapter probe.
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
@@ -537,6 +539,11 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.ts"),
 		},
+	},
+	{
+		// CPU surface query is optional and independently reusable.
+		name: "bootstrap-feature-scene3d-ocean-query.js",
+		sources: []source{sourceFile("../runtime/scene3d/ocean-query.ts")},
 	},
 	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
