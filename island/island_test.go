@@ -1620,6 +1620,7 @@ func scene3DChunkGateRenderer(t *testing.T, props any) string {
 		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1759,6 +1760,7 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1793,5 +1795,28 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		if strings.Contains(hints, chunk) {
 			t.Errorf("%s is emitted as a preload hint, which downloads it on every page:\n%s", chunk, hints)
 		}
+	}
+}
+
+func TestScene3DWalkURLIsPropGated(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		props map[string]any
+		want  bool
+	}{
+		{"absent", map[string]any{"controls": "first-person"}, false},
+		{"null", map[string]any{"walk": nil}, false},
+		{"object", map[string]any{"controls": "first-person", "walk": map[string]any{}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			markup := scene3DChunkGateRenderer(t, tc.props)
+			attr := `data-gosx-scene3d-walk-url="/gosx/assets/runtime/bootstrap-feature-scene3d-walk.js"`
+			if strings.Contains(markup, attr) != tc.want {
+				t.Fatalf("walk URL gate: %s", markup)
+			}
+			if strings.Contains(markup, `src="/gosx/assets/runtime/bootstrap-feature-scene3d-walk.js"`) {
+				t.Fatal("walk chunk is eager")
+			}
+		})
 	}
 }

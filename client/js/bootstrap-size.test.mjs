@@ -684,7 +684,11 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_400 },
+  // Walking adds a small control hook; shared sub-feature loading reduces raw
+  // and gzip. The legacy monolith measures 1_781_215 / 492_868 / 395_925;
+  // Brotli's changed dictionary exceeds the old hard cap by 141 bytes. Raise
+  // only that target by 200 bytes. Selective routes use the smaller base chunk.
+  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1186,6 +1190,12 @@ const budgets = [
   // The host caps instance-buffer growth at the binding limit. Measured:
   // 61_176 / 17_826 / 16_072. Targets 61_100 / 17_800 / 16_100 ->
   // 61_200 / 17_900 / 16_100, rounded up to the next 100 bytes.
+  // Opt-in grounded first-person controls, physics, accessible inputs and DOM
+  // overlays live in a separate lazy chunk. Measured 11_013 / 4_599 / 4_124;
+  // caps round up by at most 100 bytes. Sharing sub-feature loaders keeps the
+  // base Scene3D chunk below its previous raw, gzip and Brotli sizes, so these
+  // bytes are excluded from every existing first-load route budget.
+  { file: "bootstrap-feature-scene3d-walk.js", raw: 11_100, gzip: 4_600, brotli: 4_200 },
   { file: "bootstrap-feature-scene3d-compute.js", raw: 61_200, gzip: 17_900, brotli: 16_100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount

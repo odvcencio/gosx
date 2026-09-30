@@ -82,6 +82,8 @@ type Renderer struct {
 	// carries a compressed array, a generator descriptor or a compression
 	// policy.
 	bootstrapFeatureScene3dDecompressPath string
+	// Walk is advertised only when a Scene3D engine carries walk props.
+	bootstrapFeatureScene3dWalkPath string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -220,6 +222,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
 	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
+	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	// Cross-frame relay script. Default unversioned; SetRelayPath can
@@ -610,6 +613,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DComputePath(path string) {
 	r.bootstrapFeatureScene3dComputePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DWalkPath overrides the optional walking chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DWalkPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dWalkPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DDecompressPath overrides the lazy Scene3D
 // decompress sub-feature chunk URL. NOT emitted as a static <script> tag: the
 // base scene3d bundle inserts a script with this URL before it builds the
@@ -699,6 +710,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DCompute, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-decompress.js", r.bootstrapFeatureScene3dDecompressPath, r.runtimeAssets.BootstrapFeatureScene3DDecompress):
 		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-walk.js", r.bootstrapFeatureScene3dWalkPath, r.runtimeAssets.BootstrapFeatureScene3DWalk):
+		return r.runtimeAssets.BootstrapFeatureScene3DWalk, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
 		return r.runtimeAssets.BootstrapFeatureTextlayout, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
@@ -850,6 +863,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DAnimationPath(runtime.BootstrapFeatureScene3DAnimation)
 	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
+	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -1120,6 +1134,11 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		// cube and one directional light cannot fetch either chunk, and the
 		// bytes stay on the server.
 		needsCompute, needsDecompress := r.scene3DChunkNeeds()
+		if walkPath := r.bootstrapFeatureScene3dWalkPath; r.scene3DNeedsWalkChunk() && walkPath != "" {
+			b.WriteString(` data-gosx-scene3d-walk-url="`)
+			b.WriteString(html.EscapeString(walkPath))
+			b.WriteByte('"')
+		}
 		if computePath := r.bootstrapFeatureScene3dComputePath; needsCompute && computePath != "" {
 			b.WriteString(` data-gosx-scene3d-compute-url="`)
 			b.WriteString(html.EscapeString(computePath))
@@ -2366,6 +2385,22 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		}
 	}
 	return needsCompute, needsDecompress
+}
+
+// Walking depends on an object-valued top-level prop, not on SceneIR contents.
+func (r *Renderer) scene3DNeedsWalkChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			Walk map[string]json.RawMessage `json:"walk"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.Walk != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Renderer) hasSceneEngines() bool {
