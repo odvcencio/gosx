@@ -539,6 +539,11 @@ var outputs = []output{
 		},
 	},
 	{
+		// Grounded controls ship only for scenes with an authored Walk contract.
+		name:    "bootstrap-feature-scene3d-walk.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-walk.ts")},
+	},
+	{
 		// Decompress chunk: the quantized-array decoder, the progressive and
 		// level-of-detail ladders, and the procedural point generators. The two
 		// files call each other, so they share one chunk.

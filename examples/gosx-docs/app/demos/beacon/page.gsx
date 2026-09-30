@@ -11,7 +11,7 @@ func Page() Node {
 		data-gosx-scene3d-status-scope
 	>
 		<div class="bgb__canvas">
-			<Scene3D {...data.scene} />
+			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<a class="bgb__close" href="/demos" data-gosx-link="true" aria-label="Back to the demos">×</a>
 		<div class="bgb__controls">

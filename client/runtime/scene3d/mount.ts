@@ -18,6 +18,10 @@
     const props = ctx.props || {};
     const renderBeforeModels = props.renderBeforeModels === true;
     let handle = null;
+    if (sceneWalkEnabled(props)) {
+      await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -3575,6 +3579,8 @@
           scheduleRender("update-props");
         }
       },
+      // @ts-ignore TS7005 -- the handle grows authority-specific methods at installation
+      resetCamera() { return sceneControlHandle && sceneControlHandle.reset ? (sceneControlHandle.reset(), true) : false; },
       dispose: disposeMountedScene,
     };
 
