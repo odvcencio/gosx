@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
 ### Added: desktop window placement
 
 - Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
