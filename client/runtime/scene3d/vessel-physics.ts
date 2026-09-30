@@ -134,8 +134,8 @@
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function camera(s, previous, dt) {
     const wheel=s.cameraMode === "wheel", h=s.helm;
-    const p=localPoint(s,wheel?h.x:0,wheel?h.y:7,wheel?h.z:s.length*.78);
-    const target=localPoint(s,0,wheel?h.y:2.5,wheel?-s.length: -s.length*.15);
+    const p=localPoint(s,wheel?h.x:0,wheel?h.y:s.length*.45,wheel?h.z:s.length*1.8);
+    const target=localPoint(s,0,wheel?h.y:s.length*.4,wheel?-s.length: -s.length*.15);
     const yaw=Math.atan2(-(target.x-p.x),-(target.z-p.z)), pitch=Math.atan2(target.y-p.y,Math.hypot(target.x-p.x,target.z-p.z));
     const result=Object.assign({},previous,{x:p.x,y:p.y,z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel?s.roll*.35:0});
     if (!wheel && s.cameraReady && s.camera) {

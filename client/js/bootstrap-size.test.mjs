@@ -16,7 +16,7 @@ const budgets = [
   // Optional ocean query and vessel authorities: caps round measured sizes up to 100 bytes.
   // Public zero defaults and mounted normalized values: measured 2451 / 1293 / 1152.
   { file: "bootstrap-feature-scene3d-ocean-query.js", raw: 2500, gzip: 1300, brotli: 1200 },
-  // Includes grounded retreat, upward bow foam, wake reset, phone hints and imported LOD visibility: 17467 / 7116 / 6328.
+  // Includes grounded retreat, upward bow foam, wake reset, phone hints, LOD visibility and full-rig camera framing: 17486 / 7116 / 6329.
   { file: "bootstrap-feature-scene3d-vessel.js", raw: 17500, gzip: 7200, brotli: 6400 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli

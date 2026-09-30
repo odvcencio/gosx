@@ -60,6 +60,13 @@ test('touch steering and sail hold have independent pointer IDs and cancel only 
  touch.up(input,22);near(touch.value(input).rudder,1);near(touch.value(input).sail,0);touch.up(input,99);near(touch.value(input).rudder,1);
  touch.up(input,11);near(touch.value(input).rudder,0);input.keys.add('KeyA');input.keys.add('KeyW');near(touch.value(input).rudder,-1);touch.clear(input);near(touch.value(input).sail,0);
 });
+test('stern camera frames the full clipper rig and hull at the demo 42-degree field of view',()=>{
+ const s=ship(),camera=api.camera(s,{fov:42},1/60),halfFOV=21*radians;
+ for(const [height,z] of [[18.5,-6.3],[21,0],[17,6],[2.5,11],[-1.5,0]]) {
+  const p=api.localPoint(s,0,height,z),pitch=Math.atan2(p.y-camera.y,Math.hypot(p.x-camera.x,p.z-camera.z));
+  assert.ok(Math.abs(pitch-camera.rotationX)<halfFOV,'mastheads and keel fit in the stern view');
+ }
+});
 test('fixed steps are invariant to render batching and clamp background-tab elapsed time',()=>{
  const a=ship({heading:Math.PI/2}),b=ship({heading:Math.PI/2});a.mode=b.mode='sailing';a.trim=b.trim=1;
  for(let i=0;i<120;i++)api.advance(a,1/60,0,{rudder:.3},flat,deep);
