@@ -10,14 +10,14 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 995676,
+          "frameworkJsWireBytes": 998111,
           "htmlWireBytes": 189187,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 219028,
+          "jsWireBytes": 221825,
           "lazyJsWireBytes": 186021,
           "requests": 8,
-          "totalWireBytes": 1131525,
+          "totalWireBytes": 1133960,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -73,14 +73,14 @@
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 995676,
+          "frameworkJsWireBytes": 998111,
           "htmlWireBytes": 223953,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 219028,
+          "jsWireBytes": 221825,
           "lazyJsWireBytes": 169789,
           "requests": 6,
-          "totalWireBytes": 1129422,
+          "totalWireBytes": 1131857,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -94,14 +94,14 @@
       "/demos/water": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 995676,
+          "frameworkJsWireBytes": 998111,
           "htmlWireBytes": 746234,
           "imageWireBytes": 230728,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 233877,
+          "jsWireBytes": 236674,
           "lazyJsWireBytes": 169789,
           "requests": 13,
-          "totalWireBytes": 1897280,
+          "totalWireBytes": 1899715,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -134,15 +134,15 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 506236,
+          "frameworkJsWireBytes": 507247,
           "htmlWireBytes": 216679,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 61752,
+          "jsWireBytes": 62462,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 673445,
-          "wasmWireBytes": 336602
+          "totalWireBytes": 674456,
+          "wasmWireBytes": 336903
         },
         "require": [
           "no-cookie",
@@ -155,13 +155,13 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 178589,
+          "htmlWireBytes": 178600,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 236837,
+          "totalWireBytes": 236849,
           "wasmWireBytes": 256
         },
         "require": [
@@ -197,15 +197,15 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 506231,
+          "frameworkJsWireBytes": 507242,
           "htmlWireBytes": 114660,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 59192,
+          "jsWireBytes": 59902,
           "lazyJsWireBytes": 256,
           "requests": 8,
-          "totalWireBytes": 514577,
-          "wasmWireBytes": 336602
+          "totalWireBytes": 515588,
+          "wasmWireBytes": 336903
         },
         "require": [
           "no-cookie",
