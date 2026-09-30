@@ -252,6 +252,14 @@ interface SceneWalkState {
       if (disposed || frame) return;
       last = helpers.now(); frame = helpers.requestFrame(tick);
     }
+    // When scene content already animates (an ocean, particles), its paced
+    // loop renders every frame and reads the walk camera; scheduling more
+    // renders would draw out of phase with it and exceed MaxFPS.
+    let loopHost: any = null;
+    function sceneAnimates(): boolean {
+      if (!loopHost && typeof canvas.closest === "function") loopHost = canvas.closest("[data-gosx-scene3d-render-loop]");
+      return !!loopHost && loopHost.getAttribute("data-gosx-scene3d-render-loop") === "active" && loopHost.getAttribute("data-gosx-scene3d-render-loop-wants-animation") === "true";
+    }
     const capFPS = Number(props && props.maxFPS) || 0;
     const minRenderMS = capFPS > 0 ? 1000 / capFPS : 0;
     let renderDue = false, lastRender = -Infinity;
@@ -282,7 +290,8 @@ interface SceneWalkState {
       // Movement integrates every display frame, but renders honour the
       // scene's MaxFPS: a 120 Hz display must not double an authored 60 fps cap.
       if (changed || yaw || pitch) renderDue = true;
-      if (renderDue && now - lastRender >= minRenderMS - 1) { renderDue = false; lastRender = now; schedule("controls"); }
+      if (renderDue && sceneAnimates()) renderDue = false;
+      else if (renderDue && now - lastRender >= minRenderMS - 1) { renderDue = false; lastRender = now; schedule("controls"); }
       showHint();
       const navigating = strafe !== 0 || forward !== 0 || yaw !== 0 || pitch !== 0;
       if (navigating || renderDue || state.settling || state.bobWeight > 0 || pads.size) frame = helpers.requestFrame(tick);
