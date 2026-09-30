@@ -131,6 +131,9 @@ jobs:
       - name: Desktop tests and Windows cross-compile gate
         run: make test-desktop
 
+      - name: Desktop Artifact Signing provider with fake tool
+        run: GOWORK=off GOFLAGS=-p=1 go test -count=1 ./cmd/gosx -run '^TestDesktopPackageAzureFakeTool$'
+
   # go-race-tests: the race detector gates split out of go-tests so they run
   # in parallel instead of serializing after the unit lane. This lane needs
   # neither TinyGo nor Node. The pull-request path runs the focused
