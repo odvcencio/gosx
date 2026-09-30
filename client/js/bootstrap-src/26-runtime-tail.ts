@@ -452,9 +452,7 @@
     }
 
     const manifest = loadManifest();
-    if (!manifestHasEntries(manifest, "hubs") && gosxHost.hubs && typeof gosxHost.hubs.connectAll === "function") {
-      await gosxHost.hubs.connectAll(manifest);
-    }
+    if (!manifestHasEntries(manifest, "hubs")) await gosxHost.hubs?.connectAll?.(manifest);
     if (!manifest) {
       pendingManifest = null;
       // A page can hold text blocks and no manifest. Keep the text-layout load

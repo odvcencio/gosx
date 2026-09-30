@@ -689,7 +689,9 @@ const budgets = [
   // Brotli's changed dictionary exceeds the old hard cap by 141 bytes. Raise
   // only that target by 200 bytes. Selective routes use the smaller base chunk.
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap.js", raw: 1_720_100, gzip: 478_200, brotli: 380_800 },
+  // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
+  // exception under decision 0014).
+  { file: "bootstrap.js", raw: 1_722_102, gzip: 478_861, brotli: 381_317 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1521,7 +1523,9 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
+  // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
+  // hard limit had only 10 bytes left; targets grow by the measured change.
+  { file: "bootstrap-feature-hubs.js", raw: 47_903, gzip: 14_843, brotli: 13_361 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
