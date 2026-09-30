@@ -134,7 +134,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			IBL: blackglassBeachPeriodIBL(period.ID), EnvIntensity: 0.7,
 			Sky:      &sky,
 			FogColor: horizon, FogDensity: 0.0035,
-			Haze: &scene.Haze{Density: 0.006, HeightFalloff: 0.08, SunScatter: 0.6},
+			Haze: &scene.Haze{Density: 0.0015, HeightFalloff: 0.12, SunScatter: 0.35},
 			Ocean: &scene.Ocean{
 				WindDirection: 8, WaveHeight: 0.9, WaveLength: 17, Choppiness: 0.7, Speed: 1,
 				DeepColor: "#021019", ShallowColor: "#1b5d63", ScatterColor: "#1f8f7c", FoamColor: "#eef3f2",
@@ -150,7 +150,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels1440p, Effects: []scene.PostEffect{
 			scene.GodRays{Intensity: 0.22},
 			scene.Bloom{Mode: "mip", Threshold: 1.6, Strength: 0.08, Radius: 5, Scale: 0.5},
-			scene.Tonemap{Mode: scene.TonemapAgX, Exposure: period.Exposure},
+			scene.Tonemap{Mode: scene.TonemapACES, Exposure: period.Exposure},
 			scene.Vignette{Intensity: 0.18},
 			scene.FXAA{},
 			scene.Grain{Intensity: 0.012},
