@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added: opt-in Scene3D walking
+
+- Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
+  sliding, world bounds, slope and wading limits, sprint, and optional head bob.
+- Support pointer lock, focused keyboard navigation, simultaneous touch movement
+  and look, optional gamepads, and declarative camera reset buttons. Walking
+  loads a separate chunk only for scenes with walk props; existing controls keep
+  their behavior and browser defaults stay out of Go's JSON output.
+
 ### Added: Azure Artifact Signing for desktop packages
 
 - Add `gosx desktop package --sign-provider azure-artifact-signing` with

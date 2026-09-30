@@ -1191,7 +1191,7 @@ const budgets = [
   // 61_176 / 17_826 / 16_072. Targets 61_100 / 17_800 / 16_100 ->
   // 61_200 / 17_900 / 16_100, rounded up to the next 100 bytes.
   // Opt-in grounded first-person controls, physics, accessible inputs and DOM
-  // overlays live in a separate lazy chunk. Measured 11_013 / 4_599 / 4_124;
+  // overlays live in a separate lazy chunk. Measured 11_013 / 4_596 / 4_116;
   // caps round up by at most 100 bytes. Sharing sub-feature loaders keeps the
   // base Scene3D chunk below its previous raw, gzip and Brotli sizes, so these
   // bytes are excluded from every existing first-load route budget.
