@@ -9,9 +9,12 @@ func init() {
 		"GoSX",
 		"Build server-rendered apps, interactive tools, realtime systems, and GPU scenes in Go without a JavaScript app toolchain.",
 		route.FileModuleOptions{
+			Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+				return route.FileTemplateBindings{Components: map[string]any{"HomeHero": HomeHero}}
+			},
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				ctx.Runtime().EnableBootstrap()
 				return map[string]any{
-					"heroScene": HeroScene(),
 					"runtimeSurfaces": []map[string]string{
 						{"num": "01", "name": "Server", "purpose": "Pages, layouts, loaders, metadata, and streamed HTML.", "cost": "Component runtime: none"},
 						{"num": "02", "name": "Action", "purpose": "Typed mutations, validation, CSRF, redirects, and form state.", "cost": "Browser cost: native HTML"},

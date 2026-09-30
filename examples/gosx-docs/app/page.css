@@ -507,3 +507,80 @@
     animation: none;
   }
 }
+
+/* A static composition of the hero's gold torus and metallic primitives. */
+.hero__still,
+.hero__live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  pointer-events: none;
+}
+
+.hero__still {
+  overflow: hidden;
+  background: radial-gradient(ellipse at 75% 65%, #17150e 0, #000 58%);
+}
+
+.hero__still-orb,
+.hero__still-ring,
+.hero__still-box,
+.hero__still-pyramid {
+  position: absolute;
+  display: block;
+}
+
+.hero__still-orb {
+  left: 72%;
+  top: 43%;
+  width: clamp(7rem, 14vw, 15rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 25%, #fff1d6, #a9a9a4 16%, #33332d 38%, #070707 63%, #464435 85%, #000);
+  box-shadow: 0 2rem 3rem #000;
+  transform: translate(-50%, -50%);
+}
+
+.hero__still-ring {
+  left: 72%;
+  top: 43%;
+  width: clamp(18rem, 35vw, 38rem);
+  aspect-ratio: 1;
+  border: clamp(3px, .45vw, 7px) solid #9e812b;
+  border-top-color: #ead49a;
+  border-left-color: #d4af37;
+  border-radius: 50%;
+  box-shadow: inset 0 0 3px #fff1d6, 0 0 3px #80641f;
+  transform: translate(-50%, -50%) rotate(-18deg) scaleY(.78);
+}
+
+.hero__still-box {
+  left: 91%;
+  top: 56%;
+  width: clamp(2rem, 4vw, 4rem);
+  aspect-ratio: 1;
+  background: linear-gradient(120deg, #d1cdc0, #494943 55%, #181814 56%);
+  transform: rotate(-15deg) skewY(12deg);
+}
+
+.hero__still-pyramid {
+  left: 59%;
+  top: 68%;
+  width: clamp(3rem, 7vw, 7rem);
+  aspect-ratio: 1;
+  clip-path: polygon(50% 0, 100% 85%, 48% 100%, 0 80%);
+  background: conic-gradient(from 190deg at 50% 0, #4d3c11, #d4af37 100deg, #f0d796 150deg, #4d3c11 180deg);
+}
+
+.hero__live {
+  opacity: 0;
+  transition: opacity 800ms ease;
+}
+
+.hero__live--visible { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__live { display: none; transition: none; }
+}
