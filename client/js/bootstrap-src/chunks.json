@@ -279,6 +279,15 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-start.js",
+      "sources": [
+        "bootstrap-src/26m-feature-scene3d-start-prefix.ts",
+        "../runtime/scene3d/start-policy.ts",
+        "../runtime/scene3d/start-hubs.ts",
+        "bootstrap-src/26m-feature-scene3d-start-suffix.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-gltf.js",
       "sources": [
         "bootstrap-src/26f-feature-scene3d-gltf-prefix.ts",

@@ -82,6 +82,7 @@ type Renderer struct {
 	// carries a compressed array, a generator descriptor or a compression
 	// policy.
 	bootstrapFeatureScene3dDecompressPath string
+	bootstrapFeatureScene3dStartPath      string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -220,6 +221,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
 	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
+	renderer.bootstrapFeatureScene3dStartPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-start.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DStart.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	// Cross-frame relay script. Default unversioned; SetRelayPath can
@@ -622,6 +624,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DDecompressPath(path string) {
 	r.bootstrapFeatureScene3dDecompressPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DStartPath overrides the opt-in startup chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DStartPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dStartPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
 // video engine when native HLS playback is unavailable.
 func (r *Renderer) SetVideoHLSPath(path string) {
@@ -699,6 +709,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DCompute, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-decompress.js", r.bootstrapFeatureScene3dDecompressPath, r.runtimeAssets.BootstrapFeatureScene3DDecompress):
 		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-start.js", r.bootstrapFeatureScene3dStartPath, r.runtimeAssets.BootstrapFeatureScene3DStart):
+		return r.runtimeAssets.BootstrapFeatureScene3DStart, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
 		return r.runtimeAssets.BootstrapFeatureTextlayout, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
@@ -737,7 +749,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-scene3d-start.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -850,6 +862,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DAnimationPath(runtime.BootstrapFeatureScene3DAnimation)
 	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
+	r.SetBootstrapFeatureScene3DStartPath(runtime.BootstrapFeatureScene3DStart)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -1061,6 +1074,11 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	}
 	if plan.Patch && r.patchPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), r.runtimeScriptAttrs(r.patchPath, nonce)))
+		b.WriteByte('\n')
+	}
+	if r.scene3DNeedsStartChunk() && r.bootstrapFeatureScene3dStartPath != "" {
+		p := r.bootstrapFeatureScene3dStartPath
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="feature-scene3d-start" src="%s"%s></script>`, html.EscapeString(p), r.runtimeScriptAttrs(p, nonce)))
 		b.WriteByte('\n')
 	}
 	bootstrapPath := r.selectedBootstrapPath()
@@ -2371,6 +2389,23 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 func (r *Renderer) hasSceneEngines() bool {
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			return true
+		}
+	}
+	return false
+}
+
+// scene3DNeedsStartChunk selects deferred startup and hub readiness only for
+// scenes that request the idle-visible-hardware policy.
+func (r *Renderer) scene3DNeedsStartChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.Component != "GoSXScene3D" {
+			continue
+		}
+		var props struct {
+			StartPolicy string `json:"startPolicy"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.StartPolicy == "idle-visible-hardware" {
 			return true
 		}
 	}

@@ -394,13 +394,8 @@
   function hubInputCapturesKey(event) {
     const code = String(event && event.code || "");
     const key = String(event && event.key || "").toLowerCase();
-    return code === "KeyW" || code === "KeyA" || code === "KeyS" || code === "KeyD"
-      || code === "KeyU" || code === "KeyI" || code === "KeyJ" || code === "KeyK" || code === "KeyL"
-      || code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight"
-      || code === "Space"
-      || key === "w" || key === "a" || key === "s" || key === "d"
-      || key === "u" || key === "i" || key === "j" || key === "k" || key === "l"
-      || key === " ";
+    return /^(?:Key[WASDUIJKL]|Arrow(?:Up|Down|Left|Right)|Space)(?![\s\S])/.test(code)
+      || (key.length === 1 && "wasduijkl ".includes(key));
   }
 
   // connectHub's optional attempt parameter is the reconnect attempt
@@ -413,7 +408,7 @@
   function connectHub(entry, attempt) {
     if (!canConnectHub(entry)) return;
 
-    if (gosxHost.hubs && typeof gosxHost.hubs.disconnect === "function") {
+    if (typeof gosxHost.hubs?.disconnect === "function") {
       gosxHost.hubs.disconnect(entry.id);
     }
     const record = createHubRecord(entry, attempt);
@@ -631,7 +626,7 @@
     initializeClientIdentity(manifest && manifest.clientIdentity);
     if (!manifest || !manifest.hubs || manifest.hubs.length === 0) return;
     for (const entry of manifest.hubs) {
-      connectHub(entry);
+      if (!window.__gosx_scene3d_hub_policy?.defer(entry, connectHub)) connectHub(entry);
     }
   }
 
@@ -672,7 +667,7 @@
     window.addEventListener("pageshow", revalidateHubConnections);
   }
 
-  gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {
+  Object.assign(gosxHost.hubs ||= {}, {
     connect: connectHub,
     connectAll: connectAllHubs,
     revalidate: revalidateHubConnections,

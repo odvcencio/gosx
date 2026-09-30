@@ -1665,6 +1665,9 @@ func TestAppServesDirectBuildManifestAssets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(assetsDir, "Dashboard.3333.gxi"), []byte("island program"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeTestGzip(filepath.Join(assetsDir, "Dashboard.3333.gxi.gz"), []byte("island program")); err != nil {
+		t.Fatal(err)
+	}
 
 	app := New()
 	app.SetRuntimeRoot(root)
@@ -1682,6 +1685,20 @@ func TestAppServesDirectBuildManifestAssets(t *testing.T) {
 	}
 	if body := w.Body.String(); !strings.Contains(body, "island program") {
 		t.Fatalf("unexpected direct build asset body %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/assets/islands/Dashboard.3333.gxi", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for compressed island program, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("content encoding = %q, want gzip", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("compressed island content type = %q, want application/octet-stream", got)
 	}
 }
 

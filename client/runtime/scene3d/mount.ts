@@ -1,7 +1,6 @@
 // mount.ts — the GoSXScene3D engine factory.
 // @ts-check
 // Mount closure: canvas, render loop, live updates, teardown, and gateable authorities.
-
 /**
  * @typedef {object} GoSXSceneEngineMountContext
  * @property {HTMLElement} mount
@@ -14,8 +13,8 @@
       console.warn("[gosx] Scene3D requires a mount element");
       return {};
     }
-
     const props = ctx.props || {};
+    if (props.startPolicy === "idle-visible-hardware" && !(await window.__gosx_scene3d_start(mount, props, ctx, sceneProbeWebGLRenderer, setAttrValue))) return {};
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -54,7 +53,6 @@
       await applySceneCommands(sceneState, initialRuntimeCommands);
       if (!scene3DFactoryCurrent()) return {};
     }
-
     const sceneMountOwner = { m: mount };
     mount.__gosxScene3DOwner = sceneMountOwner;
     function scene3DFactoryOwned() {
@@ -131,7 +129,6 @@
     let sceneAnimationPaused = false;
     let sceneAnimationToggle = null;
     let sceneAnimationToggleBound = false;
-
     function sceneAnimationState() {
       if (motion.reducedMotion) {
         return { wants: false, reason: "reduced-motion" };
@@ -190,11 +187,9 @@
       }
       return { wants: false, reason: "static" };
     }
-
     function sceneShouldAnimate() {
       return sceneAnimationState().wants;
     }
-
     // A material that declares a `time` uniform is animated by the per-frame
     // clock the renderer feeds (WGSL user.time / GLSL uniform float time /
     // selena `param time`), even when nothing else in the scene moves. The
@@ -224,7 +219,6 @@
       }
       return false;
     }
-
     function sceneHasTimeDrivenMaterials(state) {
       // The normalized scene state strips authored-material fields (see
       // normalizeScenePointsEntry's whitelist), so the raw wire scene in

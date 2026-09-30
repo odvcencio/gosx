@@ -252,6 +252,8 @@ func setRuntimeContentType(h http.Header, fsPath string) {
 		h.Set("Content-Type", "text/css; charset=utf-8")
 	case ".json":
 		h.Set("Content-Type", "application/json; charset=utf-8")
+	case ".bin":
+		h.Set("Content-Type", "application/octet-stream")
 	}
 }
 
@@ -407,6 +409,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCompute.File)
 	case "bootstrap-feature-scene3d-decompress.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
+	case "bootstrap-feature-scene3d-start.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DStart.File)
 	case "bootstrap-feature-scene3d-instance-stream.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DInstanceStream.File)
 	case "patch.js":

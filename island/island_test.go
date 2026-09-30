@@ -1795,3 +1795,26 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		}
 	}
 }
+
+func TestScene3DStartChunkIsOptIn(t *testing.T) {
+	for _, policy := range []string{"", "idle-visible-hardware"} {
+		r := NewRenderer("main")
+		r.SetBootstrapFeatureScene3DStartPath("/gosx/bootstrap-feature-scene3d-start.js")
+		r.RenderEngine(engine.Config{
+			Name: "GoSXScene3D", Kind: engine.KindSurface,
+			Props: json.RawMessage(`{"startPolicy":"` + policy + `"}`),
+		}, gosx.Text(""))
+		html := gosx.RenderHTML(r.BootstrapScriptWithNonce("start-nonce"))
+		want := policy != ""
+		if strings.Contains(html, `data-gosx-script="feature-scene3d-start"`) != want {
+			t.Fatalf("policy %q: unexpected startup chunk selection", policy)
+		}
+		if want {
+			start := strings.Index(html, `data-gosx-script="feature-scene3d-start"`)
+			bootstrap := strings.Index(html, `data-gosx-script="bootstrap"`)
+			if start > bootstrap || !strings.Contains(html[:bootstrap], `nonce="start-nonce"`) {
+				t.Fatal("startup chunk must execute before bootstrap with the page nonce")
+			}
+		}
+	}
+}

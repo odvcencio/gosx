@@ -542,6 +542,15 @@ var outputs = []output{
 		},
 	},
 	{
+		name: "bootstrap-feature-scene3d-start.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26m-feature-scene3d-start-prefix.ts"),
+			sourceFile("../runtime/scene3d/start-policy.ts"),
+			sourceFile("../runtime/scene3d/start-hubs.ts"),
+			sourceFile("bootstrap-src/26m-feature-scene3d-start-suffix.ts"),
+		},
+	},
+	{
 		name: "bootstrap-feature-scene3d-gltf.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.ts"),

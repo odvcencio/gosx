@@ -18,6 +18,7 @@ import (
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	tabletop "m31labs.dev/gosx/examples/gosx-docs/app/demos/tabletop"
 	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
 	"m31labs.dev/gosx/route"
@@ -117,6 +118,7 @@ func buildDocsApp(root, port string) (*server.App, error) {
 	app.EnableNavigation()
 	app.Use(docsSecurityHeaders)
 	app.Use(canonicalDocsIndex)
+	app.Use(tabletop.RoomRouteMiddleware)
 	app.Use(limitDocsRequestBodies(1 << 20))
 	app.Use(sessions.Middleware)
 	app.Use(authn.Middleware)
@@ -159,6 +161,9 @@ func buildDocsApp(root, port string) (*server.App, error) {
 	if err != nil {
 		return nil, err
 	}
+	tabletop.StartRoomJanitor(context.Background())
+	app.Mount("/demos/tabletop/ws/", http.HandlerFunc(tabletop.ServeWebSocket))
+	app.Mount("/demos/tabletop", tabletop.PrivateRoomRedirect(rootHandler))
 	app.Mount("/", rootHandler)
 
 	return app, nil

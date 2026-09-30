@@ -13,6 +13,9 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
 const budgets = [
+  // New opt-in startup/readiness chunk: measured 4,958 raw / 1,926 gzip /
+  // 1,708 Brotli; limits add 42 / 24 / 12 bytes of rounding margin.
+  { file: "bootstrap-feature-scene3d-start.js", raw: 5_000, gzip: 1_950, brotli: 1_720 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.
