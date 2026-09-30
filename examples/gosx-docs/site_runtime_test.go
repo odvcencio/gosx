@@ -385,3 +385,25 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 		t.Fatalf("unexpected robots body %q", body)
 	}
 }
+
+func TestHomeHeroSandboxCanFetchOnlyPublicRuntimeScripts(t *testing.T) {
+	handler := docsSecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	for _, tc := range []struct {
+		method, path string
+		allow        bool
+	}{
+		{http.MethodGet, "/gosx/assets/runtime/bootstrap.hash.js", true},
+		{http.MethodHead, "/gosx/assets/runtime/bootstrap.hash.js", true},
+		{http.MethodPost, "/gosx/assets/runtime/bootstrap.hash.js", false},
+		{http.MethodGet, "/api/site", false},
+		{http.MethodGet, "/gosx/assets/runtime/private.json", false},
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+		for _, header := range []string{"Access-Control-Allow-Origin", "Timing-Allow-Origin"} {
+			if got := w.Header().Get(header); (got == "*") != tc.allow {
+				t.Errorf("%s %s: %s = %q", tc.method, tc.path, header, got)
+			}
+		}
+	}
+}

@@ -32,6 +32,20 @@ async function hardwareAvailable() {
   }
 }
 
+// Runs inside the sandbox; readiness means an actual hardware frame exists.
+function notifyReady() {
+  function check() {
+    const mount = document.querySelector('[data-gosx-scene3d]');
+    const backend = mount?.getAttribute('data-gosx-scene3d-backend');
+    if (mount?.getAttribute('data-gosx-scene3d-revealed') === 'true' &&
+        /^(webgl|webgpu)$/.test(backend) &&
+        (backend === 'webgpu' || mount.getAttribute('data-gosx-scene3d-software-webgl') !== 'true')) {
+      parent.postMessage('gosx-home-hero-ready', '*');
+    } else requestAnimationFrame(check);
+  }
+  requestAnimationFrame(check);
+}
+
 function init() {
   dispose();
   const template = document.querySelector('template[data-home-hero]');
@@ -46,6 +60,7 @@ function init() {
     cancelAnimationFrame(paint);
     if (idle !== undefined) window.cancelIdleCallback?.(idle);
     window.removeEventListener('load', afterLoad);
+    window.removeEventListener('message', revealed);
     motion.removeEventListener('change', stop);
     connection?.removeEventListener('change', preferencesChanged);
     frame?.remove();
@@ -68,26 +83,20 @@ function init() {
     frame.title = 'Decorative GoSX scene';
     frame.tabIndex = -1;
     frame.setAttribute('aria-hidden', 'true');
-    frame.srcdoc = '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>' + template.innerHTML + '</body></html>';
+    // An opaque sandbox lets Chrome isolate the scene's renderer from the page.
+    // Only scripts run in this decorative document; it cannot access the parent.
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.srcdoc = '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>' + template.innerHTML + '<script>(' + notifyReady.toString() + ')();<\/script></body></html>';
     hero.dataset.heroState = 'loading';
-    frame.addEventListener('load', () => {
-      function reveal() {
-        if (!current()) { stop(); return; }
-        const mount = frame.contentDocument?.querySelector('[data-gosx-scene3d]');
-        if (mount?.getAttribute('data-gosx-scene3d-revealed') === 'true' &&
-            /^(webgl|webgpu)$/.test(mount.getAttribute('data-gosx-scene3d-backend')) &&
-            (mount.getAttribute('data-gosx-scene3d-backend') === 'webgpu' ||
-             mount.getAttribute('data-gosx-scene3d-software-webgl') !== 'true')) {
-          clearTimeout(timer);
-          frame.classList.add('hero__live--visible');
-          hero.dataset.heroState = 'live';
-        } else {
-          paint = requestAnimationFrame(reveal);
-        }
-      }
-      paint = requestAnimationFrame(reveal);
-    }, { once: true });
+    window.addEventListener('message', revealed);
     hero.append(frame);
+  }
+  function revealed(event) {
+    if (event.source !== frame?.contentWindow || event.data !== 'gosx-home-hero-ready' || !current()) return;
+    clearTimeout(timer);
+    window.removeEventListener('message', revealed);
+    frame.classList.add('hero__live--visible');
+    hero.dataset.heroState = 'live';
   }
   function afterLoad() {
     // Two frames guarantee the still has crossed a paint boundary, even when

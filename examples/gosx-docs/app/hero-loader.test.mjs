@@ -62,13 +62,16 @@ test('motion changes, route removal, and probe timeout cancel upgrades', async (
 });
 test('fade waits for the runtime to publish an actual hardware frame', async () => {
   const b = browser(); await b.upgrade();
-  const frame = b.requests[0], attrs = { 'data-gosx-scene3d-backend': 'webgl' };
+  const frame = b.requests[0];
+  frame.contentWindow = {};
   let visible = false;
   frame.classList.add = () => { visible = true; };
-  frame.contentDocument = { querySelector: () => ({ getAttribute: name => attrs[name] }) };
-  b.events.get('iframeload')(); b.paint(); assert.equal(visible, false);
-  attrs['data-gosx-scene3d-revealed'] = 'true';
-  b.paint(); assert.equal(visible, true);
+  b.events.get('windowmessage')({ source: {}, data: 'gosx-home-hero-ready' });
+  assert.equal(visible, false);
+  b.events.get('windowmessage')({ source: frame.contentWindow, data: 'other' });
+  assert.equal(visible, false);
+  b.events.get('windowmessage')({ source: frame.contentWindow, data: 'gosx-home-hero-ready' });
+  assert.equal(visible, true);
   assert.equal(b.hero.dataset.heroState, 'live');
 });
 

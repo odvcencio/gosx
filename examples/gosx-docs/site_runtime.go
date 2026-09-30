@@ -89,6 +89,14 @@ func docsSecurityHeaders(next http.Handler) http.Handler {
 		// route out of ISR. canonicalDocsIndex runs immediately after this layer
 		// and adds the marker back only for the query-backed /docs index.
 		r.Header.Del(isrBypassHeader)
+		// Public JavaScript can be loaded by the home hero's opaque sandbox.
+		// Restrict this to read-only runtime assets; application routes keep their
+		// normal origin and credential policies.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			strings.HasPrefix(r.URL.Path, "/gosx/assets/runtime/") && strings.HasSuffix(r.URL.Path, ".js") {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Timing-Allow-Origin", "*")
+		}
 		w.Header().Set("Content-Security-Policy", "base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
