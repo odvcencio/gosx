@@ -185,22 +185,34 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	out.InlineScriptMax = inline.scriptMax
 	out.InlineDataBytes = inline.dataBytes
 
-	seen := map[string]bool{}
-	var pending []ref
-	pending = append(pending, refs...)
-	for len(pending) > 0 {
-		r := pending[0]
-		pending = pending[1:]
+	// Merge references by absolute URL before fetching. A resource the page
+	// loads eagerly counts as eager even when an on-demand attribute also
+	// names it, whatever the order in the HTML.
+	type target struct {
+		key string
+		abs *url.URL
+		ref ref
+	}
+	var targets []target
+	index := map[string]int{}
+	for _, r := range refs {
 		abs, err := finalURL.Parse(r.href)
 		if err != nil || (abs.Scheme != "http" && abs.Scheme != "https") {
 			continue
 		}
 		abs.Fragment = ""
 		key := abs.String()
-		if seen[key] {
+		if i, ok := index[key]; ok {
+			if targets[i].ref.kind == KindLazyScript && r.kind != KindLazyScript {
+				targets[i].ref = r
+			}
 			continue
 		}
-		seen[key] = true
+		index[key] = len(targets)
+		targets = append(targets, target{key: key, abs: abs, ref: r})
+	}
+	for _, t := range targets {
+		r, abs, key := t.ref, t.abs, t.key
 		res, hops, _, _, err := fetch(ctx, client, ua, key, r.initiator)
 		add(hops)
 		if err != nil {

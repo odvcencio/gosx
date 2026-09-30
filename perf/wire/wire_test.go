@@ -178,6 +178,26 @@ func TestCrawlCountsTheLoadPath(t *testing.T) {
 	}
 }
 
+func TestEagerReferenceWinsOverOnDemand(t *testing.T) {
+	for name, body := range map[string]string{
+		"lazy first":  `<div data-gosx-x-url="/gosx/a.js"></div><script src="/gosx/a.js"></script>`,
+		"eager first": `<script src="/gosx/a.js"></script><div data-gosx-x-url="/gosx/a.js"></div>`,
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/p", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) })
+		mux.HandleFunc("/gosx/a.js", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("a();")) })
+		srv := httptest.NewServer(mux)
+		r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/p")
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Requests != 2 || r.WireBytes[KindScript] != 4 || r.LazyWireBytes != 0 {
+			t.Errorf("%s: requests=%d js=%d lazy=%d, want 2, 4, 0", name, r.Requests, r.WireBytes[KindScript], r.LazyWireBytes)
+		}
+	}
+}
+
 func TestCrawlCountsEveryRedirectHop(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
