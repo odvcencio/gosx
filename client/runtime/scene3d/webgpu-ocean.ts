@@ -58,6 +58,7 @@ const WGSL_SCENE_OCEAN = [
   "  out.position = clip;",
   "  return out;",
   "}",
+  "//GOSX_REFLECTION",
   "fn oceanSky(d: vec3f) -> vec3f {",
   "  if (ocean.p[26].w == 4.0) { return gosxPhysicalSky(d, ocean.p[28], ocean.p[29], vec4f(ocean.p[30].xyz, 2.0), ocean.p[31].x) * ocean.p[24].w; }",
   "  return mix(ocean.p[25].xyz, select(ocean.p[26].xyz, ocean.p[24].xyz, d.y >= 0.0), abs(d.y)) * ocean.p[24].w;",
@@ -91,13 +92,15 @@ const WGSL_SCENE_OCEAN = [
   "  let L = normalize(ocean.p[34].xyz); let sunCol = ocean.p[33].xyz; let ambient = ocean.p[32].xyz;",
   "  let F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);",
   "  var R = reflect(-V, N); R.y = abs(R.y);",
-  "  let refl = oceanSky(normalize(R));",
+  "  var refl = oceanSky(normalize(R));",
+  "  //GOSX_REFLECTION_LOOKUP",
   "  let H = normalize(L + V);",
   "  let NdL = max(dot(N, L), 0.0); let NdH = max(dot(N, H), 0.0);",
   "  let al = rough * rough; let al2 = al * al; let dd = NdH * NdH * (al2 - 1.0) + 1.0;",
   "  let k = al * 0.5; let G = (NdL / (NdL * (1.0 - k) + k)) * (NdV / (NdV * (1.0 - k) + k));",
   "  let Fh = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);",
-  "  let spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4.0 * NdV, 1e-3), vec3f(64.0));",
+  "  var spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4.0 * NdV, 1e-3), vec3f(64.0));",
+  "  //GOSX_SUN_PATH",
   "  let crest = in.crest * in.crest;",
   "  let scatter = ocean.p[3].xyz * (sunCol * 0.18 * pow(clamp(dot(V, -L) * 0.5 + 0.5, 0.0, 1.0), 4.0) + ambient * 0.12) * crest;",
   "  let clarity = ocean.p[1].w;",
@@ -137,7 +140,7 @@ const WGSL_SCENE_OCEAN = [
 
 // wgpuCreateOceanRenderer builds the pass lazily; pipelines are cached per
 // target format and sample count, like the sky pass.
-function wgpuCreateOceanRenderer(device, textureCache) {
+function wgpuCreateOceanRenderer(device, textureCache, reflections) {
   // A deep-sea placeholder (R = 0) until the bathymetry map loads.
   const placeholder = device.createTexture({ label: "gosx-ocean-bathymetry-placeholder", size: [1, 1, 1], format: "rgba8unorm",
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -151,8 +154,13 @@ function wgpuCreateOceanRenderer(device, textureCache) {
     { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: {} },
     { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
   ] });
-  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-  const module = device.createShaderModule({ label: "gosx-ocean", code: WGSL_SCENE_OCEAN + "\n" + sceneSkyPhysicalSource("wgsl") });
+  const reflectLayout = reflections ? sceneReflectWebGPULayout(device) : null;
+  const dummyReflection = reflections ? sceneReflectWebGPUFallback(device, placeholderView) : null;
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: reflections ? [layout, reflectLayout] : [layout] });
+  const module = device.createShaderModule({ label: "gosx-ocean", code: WGSL_SCENE_OCEAN
+    .replace("//GOSX_REFLECTION", reflections ? sceneOceanReflectWGSL() : "")
+    .replace("//GOSX_REFLECTION_LOOKUP", reflections ? "refl = oceanGeometryReflection(in.world, normalize(R), N, rough, refl);" : "")
+    .replace("//GOSX_SUN_PATH", reflections ? "spec = mix(spec, oceanSunPath(N,H,L,V,rough,sunCol), 0.35);" : "") + "\n" + sceneSkyPhysicalSource("wgsl") });
   const pipelines = new Map();
   const blend = { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" };
   let group = null, groupView = null;
@@ -186,11 +194,12 @@ function wgpuCreateOceanRenderer(device, textureCache) {
       }
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, group);
+      if (reflections) pass.setBindGroup(1, sceneReflectWebGPUGroup(device, reflectLayout, opts.reflection || dummyReflection));
       pass.draw(data[16 + 32] * data[16 + 33] * 6);
       if (opts.frameBindGroup) pass.setBindGroup(0, opts.frameBindGroup);
       return state;
     },
-    dispose: function() { uniform.destroy(); placeholder.destroy(); pipelines.clear(); group = null; },
+    dispose: function() { uniform.destroy(); placeholder.destroy(); if (dummyReflection) dummyReflection.uniform.destroy(); pipelines.clear(); group = null; },
   };
 }
 
@@ -200,8 +209,11 @@ function wgpuOceanDraw(resources, pass, opts) {
   const env = opts.environment;
   let state = "none";
   if (env && env.ocean) {
+    const featureKey = Boolean(sceneOceanReflections(env.ocean.reflections));
+    if (resources.renderer && resources.featureKey !== featureKey) { resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }
     if (!resources.renderer && !resources.failed) {
-      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache);
+      resources.featureKey = featureKey;
+      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache, featureKey);
       resources.failed = !resources.renderer;
     }
     state = resources.renderer ? resources.renderer.draw(pass, opts) : "unavailable";

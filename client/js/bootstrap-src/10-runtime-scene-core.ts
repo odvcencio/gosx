@@ -3125,7 +3125,7 @@
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
       }
     }
-    return {
+    const out = {
       level: number("level"), windDirection,
       waveHeight: parameter("waveHeight", 0.8, 0.05, 6),
       waveLength: parameter("waveLength", 18, 2, 120),
@@ -3142,6 +3142,8 @@
       extent: parameter("extent", 4000, 100, 20000),
       bathymetry,
     };
+    if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
+    return out;
   }
 
   function normalizeSceneEnvironment(raw, fallback) {
@@ -7187,6 +7189,11 @@
     sceneSkyPhysicalParams: typeof sceneSkyPhysicalParams === "function" ? sceneSkyPhysicalParams : undefined,
     sceneSkyPhysicalShaderSource: typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource : undefined,
     sceneSkyPhysicalSource: typeof sceneSkyPhysicalSource === "function" ? sceneSkyPhysicalSource : undefined,
+    sceneAtmosphereQuality: typeof sceneAtmosphereQuality === "function" ? sceneAtmosphereQuality : undefined,
+    sceneOceanReflections: typeof sceneOceanReflections === "function" ? sceneOceanReflections : undefined,
+    sceneReflectDispose: typeof sceneReflectDispose === "function" ? sceneReflectDispose : undefined,
+    sceneReflectOpaqueList: typeof sceneReflectOpaqueList === "function" ? sceneReflectOpaqueList : undefined,
+    sceneReflectionMatrices: typeof sceneReflectionMatrices === "function" ? sceneReflectionMatrices : undefined,
     sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,

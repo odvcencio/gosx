@@ -8847,6 +8847,7 @@
         renderTarget = Object.assign({}, scaled, { linear: true });
       }
 
+      renderTarget = sceneReflectWebGLBegin(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, target: renderTarget, width: renderW, height: renderH });
       // Resize viewport to the render target (scaled when postfx caps are active).
       gl.viewport(0, 0, renderW, renderH);
 
@@ -8916,7 +8917,8 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
-      sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: usePostProcessing, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
+      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
         linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
 
       // Draw alpha pass.
@@ -8957,6 +8959,7 @@
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
+      sceneReflectWebGLEnd(oceanResources, renderW, renderH);
       // Complete the shared scene target before any post effect reads it.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
 
@@ -10878,7 +10881,7 @@
 
     function dispose() {
       if (skyResources.renderer) skyResources.renderer.dispose();
-      if (oceanResources.renderer) oceanResources.renderer.dispose();
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
       // dispose() first) and normal teardown alike.

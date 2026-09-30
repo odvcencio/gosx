@@ -253,3 +253,20 @@ declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;
 
 declare function createSceneWebGLMipBloom(host: any): any;
 declare function createSceneWebGPUMipBloom(host: any): any;
+
+declare function sceneAtmosphereQuality(meta: any): any;
+declare function sceneReflectionMatrices(view: any, proj: any, level: number, webgpu: boolean): any;
+declare function sceneReflectWebGL(resources: any, gl: any, opts: any): any;
+declare function sceneReflectWebGPU(resources: any, device: any, opts: any): any;
+declare function sceneReflectDispose(resources: any): void;
+declare function sceneOceanReflectGLSL(): string;
+declare function sceneOceanReflectWGSL(): string;
+
+declare function sceneReflectWebGLBegin(resources: any, gl: any, opts: any): any;
+declare function sceneReflectWebGLEnd(resources: any, width: number, height: number): void;
+declare function sceneReflectWebGLDrawOpaque(gl: any, ctx: any, view: any, proj: any): void;
+declare function sceneReflectOpaqueList(list: any, materials: any): any;
+
+declare function sceneReflectWebGLBind(gl: any, program: any, record: any): void;
+
+declare function sceneAtmosphereTier(state: any): any;

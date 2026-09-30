@@ -87,6 +87,11 @@
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
+  var sceneAtmosphereQuality = sceneApi.sceneAtmosphereQuality;
+  var sceneOceanReflections = sceneApi.sceneOceanReflections;
+  var sceneReflectDispose = sceneApi.sceneReflectDispose;
+  var sceneReflectOpaqueList = sceneApi.sceneReflectOpaqueList;
+  var sceneReflectionMatrices = sceneApi.sceneReflectionMatrices;
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in ocean geometry reflections on WebGL2 and WebGPU: bounded SSR, a reduced mirrored PBR fallback, an anisotropic sun path, and adaptive quality shedding.
+
 ### Added: desktop rotating log files
 
 - Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard

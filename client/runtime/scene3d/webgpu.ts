@@ -6583,6 +6583,7 @@
       var config = {
         device: device,
         format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         alphaMode: activePresentation.alphaMode,
         colorSpace: activePresentation.colorSpace,
       };
@@ -14756,11 +14757,11 @@
       return bindGroup;
     }
 
-    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView) {
+    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView, reflectionFrame = false) {
       return device.createBindGroup({
         layout: frameBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: frameUniformBuffer } },
+          { binding: 0, resource: { buffer: reflectionFrame || frameUniformBuffer } },
           { binding: 1, resource: { buffer: lightStorageBuffer } },
           { binding: 2, resource: { buffer: fogUniformBuffer } },
           { binding: 3, resource: { buffer: envUniformBuffer } },
@@ -18438,8 +18439,11 @@
       waterUpdateStats.waterObjectTextureCandidateProfile = waterObjectSceneTextureStats.waterObjectTextureCandidateProfile || waterUpdateStats.waterObjectTextureCandidateProfile;
 
       // --- Main Render Target ---
+      // @ts-ignore TS7034 -- target handles are nullable before the post/direct branch selects them.
       var mainColorView;
+      // @ts-ignore TS7034 -- the optional MSAA resolve handle is assigned by the target branch.
       var mainResolveView = null;
+      // @ts-ignore TS7034 -- depth handle follows the selected main target.
       var mainDepthTargetView;
       var postTarget = null;
 
@@ -18751,7 +18755,9 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
+      const prepareOceanReflection = () => { const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(getPBRPipeline("opaque", true, "cw")); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
@@ -18778,6 +18784,7 @@
         // draw the newly visible instances in a late pass that loads it.
         mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
 
+        prepareOceanReflection();
         // The water surface writes depth before translucent world surfaces.
         // A stele in front of the tide must remain visible after its HTML
         // texture is composited, while rocks behind the tide stay occluded.
@@ -18832,7 +18839,7 @@
       if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
         Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup), drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
       }
-      if (!oceanOpts.drawn) wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
+      if (!oceanOpts.drawn) { prepareOceanReflection(); wgpuOceanDraw(oceanResources, mainPass, oceanOpts); }
 
       // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
       // board fills so the alpha-blended glyphs composite over the rects. Lives
@@ -18912,7 +18919,7 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
-      if (skyResources.renderer) skyResources.renderer.dispose(); if (oceanResources.renderer) oceanResources.renderer.dispose();
+      if (skyResources.renderer) skyResources.renderer.dispose(); if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;
