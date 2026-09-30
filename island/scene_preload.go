@@ -94,9 +94,10 @@ func (p *scenePreloadProbe) backends() (webgpu, webgl bool) {
 	if p.Scene != nil && p.Scene.BackendCaps != nil {
 		caps = p.Scene.BackendCaps
 	}
-	if caps != nil {
+	if caps != nil && caps.Capable != nil {
 		gpuAllowed, glAllowed := false, false
 		for _, backend := range caps.Capable {
+			backend = strings.ToLower(backend)
 			gpuAllowed = gpuAllowed || backend == "webgpu"
 			glAllowed = glAllowed || backend == "webgl" || backend == "webgl2"
 		}
@@ -176,7 +177,7 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 			}
 		}
 		if r.usesSelectiveRuntimeBootstrap() {
-			for _, list := range [][]scenePreloadRecord{s.Objects, s.Models, s.InstancedMeshes, s.Points, s.Sprites} {
+			for _, list := range [][]scenePreloadRecord{s.Objects, s.Models, s.InstancedGLBMeshes, s.InstancedMeshes, s.Points, s.Sprites} {
 				for _, m := range list {
 					for _, src := range m.textures() {
 						parsed, err := url.Parse(src)
@@ -209,7 +210,7 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 		// Bound texture hints to the first material in each visible node class,
 		// plus the scene-wide lighting and first water system. Do not preload
 		// full progressive models, animation payloads, or later materials.
-		for _, list := range [][]scenePreloadRecord{s.Objects, s.Models, s.InstancedMeshes, s.Points, s.Sprites} {
+		for _, list := range [][]scenePreloadRecord{s.Objects, s.Models, s.InstancedGLBMeshes, s.InstancedMeshes, s.Points, s.Sprites} {
 			if len(list) == 0 {
 				continue
 			}

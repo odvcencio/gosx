@@ -18,7 +18,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -56,7 +59,7 @@ function run(context, expression) {
 test("cloned five-weight channel preserves componentCount and owns buffer copies", () => {
   const { context } = createMixerContext();
   vm.runInContext(readSource("10-runtime-scene-utils.ts"), context);
-  vm.runInContext(readSource("../runtime/scene3d/mount-webgl.ts"), context);
+  vm.runInContext(ts.transpileModule(readSource("../runtime/scene3d/mount-webgl.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   const out = run(context, `(() => {
     const times = new Float32Array([0, 1]);
     const values = new Float32Array(10);

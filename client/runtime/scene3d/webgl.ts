@@ -4555,7 +4555,7 @@
     // Custom post program cache: name → program | null (null = failed, skip).
     var customPostPrograms = {};
     // Failed custom post names (to warn once only).
-    var customPostFailed = {};
+    var customPostFailed: Record<string, boolean> = {};
 
     // Get or compile a post-processing program.
     function getProgram(name, fragmentSource) {
@@ -4655,6 +4655,10 @@
     //   vertex: attribute vec2 a_position (Selena-emitted vert); v_uv = a_position*0.5+0.5
     //   fragment: uniform sampler2D _sceneColor, sampler2D _sceneDepth + user params by name
     // On compile/link failure: skip once-warned, identity passthrough.
+    function customPostCompileFailed(name: string) {
+      scenePBRReportCustomPostFailure(name, customPostFailed, postProcessorRenderTruth());
+    }
+
     function applyCustomPost(inputTex, depthTex, effect, targetFBO, w, h, bounds) {
       var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
       if (customPostFailed[name]) return inputTex; // already failed → skip
@@ -4666,12 +4670,7 @@
       if (!customPostPrograms.hasOwnProperty(name)) {
         var prog = createSceneCustomPostProgram(gl, vertSrc, fragSrc);
         if (!prog) {
-          console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
-          // Journal it: a GLSL pass that Selena emitted and this driver
-          // rejected is the WebGL-side twin of a Tint/naga disagreement, and
-          // the console warning is lost by the time anyone reads a dump.
-          postProcessorRenderTruth().record("post-compile-failed", "webgl customPost " + name);
-          customPostFailed[name] = true;
+          customPostCompileFailed(name);
           customPostPrograms[name] = null;
           return inputTex;
         }
@@ -4679,7 +4678,7 @@
       }
 
       var p = customPostPrograms[name];
-      if (!scenePBRPassReady(gl, p)) return inputTex;
+      if (!scenePBRCustomPostPassReady(gl, p, name, customPostCompileFailed)) return inputTex;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO ? targetFBO.fbo : null);
       gl.viewport(0, 0, w, h);
@@ -4881,7 +4880,7 @@
 
     return {
       preparePrograms: function(effects) {
-        blitProg = scenePBRPreparePostPrograms(gl, effects, programs, customPostPrograms, customPostFailed, blitProg);
+        blitProg = scenePBRPreparePostPrograms(gl, effects, programs, customPostPrograms, customPostCompileFailed, blitProg);
       },
       // Prepare the offscreen FBO for the main scene render. Takes the canvas
       // backing-store dimensions and the postfx maxPixels cap from the bundle.
@@ -6906,7 +6905,7 @@
     return programs;
   }
 
-  function scenePBRPreparePostPrograms(gl: WebGL2RenderingContext, effects: any, programs: any, customPostPrograms: any, customPostFailed: any, blitProg: any) {
+  function scenePBRPreparePostPrograms(gl: WebGL2RenderingContext, effects: any, programs: any, customPostPrograms: any, reportFailure: any, blitProg: any) {
     for (const effect of effects || []) {
       switch (effect.kind) {
         case SCENE_POST_TONE_MAPPING: scenePBRGetPostProgram(gl, programs, "toneMapping", SCENE_POST_TONEMAPPING_SOURCE); break;
@@ -6925,7 +6924,7 @@
           const fragment = typeof effect.fragmentGLSL === "string" ? effect.fragmentGLSL.trim() : "";
           if (!Object.prototype.hasOwnProperty.call(customPostPrograms, name) && vertex && fragment) {
             customPostPrograms[name] = createSceneCustomPostProgram(gl, vertex, fragment);
-            if (!customPostPrograms[name]) customPostFailed[name] = true;
+            if (!customPostPrograms[name]) reportFailure(name);
           }
           break;
         }
@@ -6956,6 +6955,18 @@
 
   function scenePBRPassReady(gl: WebGL2RenderingContext, pass: any) {
     return Boolean(pass && scenePBRProgramReady(gl, pass.program));
+  }
+
+  function scenePBRReportCustomPostFailure(name: string, failures: Record<string, boolean>, truth: any) {
+    if (failures[name]) return;
+    console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
+    truth.record("post-compile-failed", "webgl customPost " + name);
+    failures[name] = true;
+  }
+
+  function scenePBRCustomPostPassReady(gl: WebGL2RenderingContext, pass: any, name: string, reportFailure: (name: string) => void) {
+    if (pass && scenePBRProgramFailed(pass.program)) reportFailure(name);
+    return scenePBRPassReady(gl, pass);
   }
 
   // All WebGL2 factories share this queue. Location queries run only after

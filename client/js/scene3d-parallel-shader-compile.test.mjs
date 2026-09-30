@@ -427,3 +427,24 @@ test("failed links and disposed queues never draw", () => {
     assert.equal(h.context.scenePBRProgramsPending(h.gl), false);
   }
 });
+
+test("custom post link failures report once after completion", () => {
+  const h = shaderHarness({ scheduler: true, linkOK: false });
+  const warnings = [];
+  const records = [];
+  h.context.console = { warn: (...args) => warnings.push(args) };
+  const program = submitProgram(h, "custom post");
+  const failures = {};
+  const truth = { record: (...args) => records.push(args) };
+  const report = name => h.context.scenePBRReportCustomPostFailure(name, failures, truth);
+  const pass = { program };
+  assert.equal(h.context.scenePBRCustomPostPassReady(h.gl, pass, "lens", report), false);
+  assert.equal(records.length, 0);
+  h.setComplete(true);
+  h.flushScheduled();
+  assert.equal(h.context.scenePBRCustomPostPassReady(h.gl, pass, "lens", report), false);
+  assert.equal(h.context.scenePBRCustomPostPassReady(h.gl, pass, "lens", report), false);
+  assert.deepEqual(records, [["post-compile-failed", "webgl customPost lens"]]);
+  assert.equal(warnings.filter(args => args[0].includes("custom post pass")).length, 1);
+  assert.equal(failures.lens, true);
+});
