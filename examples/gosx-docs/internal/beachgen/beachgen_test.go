@@ -50,8 +50,11 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("beach has %d vertices, want %d", count, 129*129)
 	}
 	t.Logf("beach-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, beach), len(first["beach-v2.glb"]))
-	if count := positionCount(t, stacks); count != 18847 {
-		t.Errorf("stacks and boulders have %d vertices, want 18847", count)
+	if count := positionCount(t, stacks); count != 22283 {
+		t.Errorf("stacks, boulders, and cliffs have %d vertices, want 22283", count)
+	}
+	if count := positionCount(t, stacks); count > 36000 {
+		t.Errorf("stacks and cliffs have %d vertices, exceeding the 36000-vertex budget", count)
 	}
 	t.Logf("stacks-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, stacks), len(first["stacks-v2.glb"]))
 	if count := positionCount(t, monolith); count < 150 || count > 400 {
@@ -67,10 +70,10 @@ func TestGenerateAssets(t *testing.T) {
 	if beachLow[1] < -5.1 || beachLow[1] > -4.5 || beachHigh[1] < 20.5 || beachHigh[1] > 21.5 {
 		t.Errorf("terrain vertical bounds are [%.3f, %.3f], expected the sea basin and ridged headlands", beachLow[1], beachHigh[1])
 	}
-	stackLow, stackHigh := checkBounds(t, first["stacks-v2.glb"], stacks, [3]float64{-27, -6.1, -52}, [3]float64{34, 18.1, 2.5})
+	stackLow, stackHigh := checkBounds(t, first["stacks-v2.glb"], stacks, [3]float64{-50, -6.1, -52}, [3]float64{54, 21.5, 51})
 	checkNear(t, "stack bottoms", stackLow[1], -6, .01)
-	if stackHigh[1] < 17.9 || stackHigh[1] > 18.1 {
-		t.Errorf("stack tops reach %.3f m; want the main stack near 18 m", stackHigh[1])
+	if stackHigh[1] < 20.5 || stackHigh[1] > 21.5 {
+		t.Errorf("stack and cliff tops reach %.3f m; want the left cliff near 21 m", stackHigh[1])
 	}
 	monoLow, monoHigh := checkBounds(t, first["monolith-v2.glb"], monolith, [3]float64{-1.2, -.01, -.6}, [3]float64{1.2, 3.5, .6})
 	checkNear(t, "monolith bottom", monoLow[1], 0, .01)
@@ -88,7 +91,7 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("terrain height at (0,-20) = %.4f, want below -2m", h)
 	}
 
-	for name, budget := range map[string]int{"beach-v2.glb": 560 << 10, "stacks-v2.glb": 450 << 10, "monolith-v2.glb": 20 << 10} {
+	for name, budget := range map[string]int{"beach-v2.glb": 560 << 10, "stacks-v2.glb": 520 << 10, "monolith-v2.glb": 20 << 10} {
 		if len(first[name]) > budget {
 			t.Errorf("%s is %d bytes, budget is %d", name, len(first[name]), budget)
 		}
@@ -102,6 +105,63 @@ func TestGenerateAssets(t *testing.T) {
 		if bounds := decoded.Bounds(); bounds.Dx() != size[0] || bounds.Dy() != size[1] {
 			t.Errorf("%s is %dx%d, want %dx%d", name, bounds.Dx(), bounds.Dy(), size[0], size[1])
 		}
+	}
+}
+
+func TestHeadlandCliffs(t *testing.T) {
+	seed := generatorSeed
+	if height := TerrainHeight(-45, 10, seed); height >= 3 {
+		t.Errorf("terrain at (-45,10) = %.3fm, want below 3m beneath the cliff mesh", height)
+	}
+	heightData, err := makeBathymetry(newNoise(seed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(heightData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := int(math.Round((-45-BathymetryMinX)/(BathymetryMaxX-BathymetryMinX)*BathymetrySize - .5))
+	z := int(math.Round((10-BathymetryMinZ)/(BathymetryMaxZ-BathymetryMinZ)*BathymetrySize - .5))
+	gray := color.GrayModel.Convert(img.At(x, z)).(color.Gray)
+	decoded := BathymetryDecode(float64(gray.Y) / 255)
+	if decoded < 4 {
+		t.Errorf("bathymetry at (-45,10) decodes to %.2fm, want at least 4m for the cliff", decoded)
+	}
+	assets, err := Generate(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := mustParse(t, assets["stacks-v2.glb"])
+	positions, _, err := doc.ReadAccessor(doc.Meshes[0].Primitives[0].Attributes["POSITION"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Nodes []struct {
+			Scale       []float64 `json:"scale"`
+			Translation []float64 `json:"translation"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(glbJSON(t, assets["stacks-v2.glb"]), &root); err != nil {
+		t.Fatal(err)
+	}
+	if len(root.Nodes) != 1 {
+		t.Fatalf("stacks GLB has %d nodes, want 1", len(root.Nodes))
+	}
+	node := root.Nodes[0]
+	scale := node.Scale[0]
+	foundLeftTop := false
+	for i := 0; i+2 < len(positions); i += 3 {
+		x := positions[i]*scale + node.Translation[0]
+		y := positions[i+1]*scale + node.Translation[1]
+		if x < -28 && y > 15 {
+			foundLeftTop = true
+			break
+		}
+	}
+	if !foundLeftTop {
+		t.Error("stacks-v2.glb has no left cliff-top vertex with x < -28 and y > 15")
 	}
 }
 
