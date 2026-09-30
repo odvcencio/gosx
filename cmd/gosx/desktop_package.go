@@ -33,12 +33,16 @@ const webView2BootstrapperURL = "https://go.microsoft.com/fwlink/p/?LinkId=21247
 var installerHostSource embed.FS
 
 type desktopPackageFlags struct {
-	input           string
-	config          string
-	output          string
-	signCommand     string
-	manifestSignCmd string
-	manifestKeyFile string
+	input            string
+	config           string
+	output           string
+	signCommand      string
+	manifestSignCmd  string
+	manifestKeyFile  string
+	signProvider     string
+	signing          installerhost.SigningConfig
+	verifySignatures bool
+	expectSubject    string
 }
 
 func cmdDesktopPackage() {
@@ -53,6 +57,7 @@ func cmdDesktopPackage() {
 	fs.StringVar(&options.config, "config", "", "desktop package JSON config")
 	fs.StringVar(&options.output, "output", "dist/desktop", "output directory")
 	fs.StringVar(&options.signCommand, "sign-cmd", "", "shell command template; supports {file}, {input}, and {output}")
+	desktopSigningFlags(fs, &options)
 	fs.StringVar(&options.manifestSignCmd, "manifest-sign-cmd", "", "shell command template that writes a detached signature to {output}")
 	fs.StringVar(&options.manifestKeyFile, "manifest-key", "", "Ed25519 private key file for signing latest.json")
 	if err := fs.Parse(os.Args[3:]); err != nil {
@@ -79,6 +84,16 @@ Flags:
   --config file            Package config JSON
   --output dir             Output directory (default dist/desktop)
   --sign-cmd template      Sign each staged PE and then Setup.exe
+  --sign-provider name     azure-artifact-signing; conflicts with --sign-cmd
+  --sign-endpoint url      Artifact Signing HTTPS endpoint
+  --sign-account name      Artifact Signing account name
+  --sign-profile name      Artifact Signing certificate profile name
+  --sign-tool name         signtool (Windows default) or jsign (other hosts)
+  --signtool-path file     SignTool executable (default PATH)
+  --dlib-path file         Azure.CodeSigning.Dlib.dll (required for signtool)
+  --jsign-path file        Jsign executable (default PATH)
+  --verify-signatures     Verify every signed PE before packaging
+  --expect-subject text    Required verified signer subject substring
   --manifest-key file      Ed25519 private key file for latest.json
   --manifest-sign-cmd cmd  Sign latest.json to {output}; conflicts with --manifest-key
 
@@ -90,6 +105,18 @@ the Microsoft Evergreen bootstrapper is downloaded while packaging.
 }
 
 func packageDesktopRelease(options desktopPackageFlags) error {
+	if options.signProvider != "" && options.signCommand != "" {
+		return fmt.Errorf("choose either --sign-cmd or --sign-provider")
+	}
+	if options.signProvider != "" && options.signProvider != azureArtifactSigningProvider {
+		return fmt.Errorf("--sign-provider must be azure-artifact-signing")
+	}
+	if options.verifySignatures && options.signProvider == "" && strings.TrimSpace(options.signCommand) == "" {
+		return fmt.Errorf("--verify-signatures requires --sign-provider or --sign-cmd")
+	}
+	if options.expectSubject != "" && !options.verifySignatures {
+		return fmt.Errorf("--expect-subject requires --verify-signatures")
+	}
 	if options.manifestKeyFile != "" && options.manifestSignCmd != "" {
 		return fmt.Errorf("choose either --manifest-key or --manifest-sign-cmd")
 	}
@@ -146,6 +173,53 @@ func packageDesktopRelease(options desktopPackageFlags) error {
 	if config.Channel != "stable" && config.Channel != "beta" && config.Channel != "preview" {
 		return fmt.Errorf("config channel must be stable, beta, or preview")
 	}
+	var signer *artifactSigner
+	if options.signProvider != "" {
+		signer, err = prepareArtifactSigner(options, config.Signing)
+		if err != nil {
+			return err
+		}
+		defer signer.close()
+	}
+	var verifier *authenticodeVerifier
+	if options.verifySignatures {
+		jsignPath := options.signing.JsignPath
+		if signer != nil {
+			jsignPath = signer.config.JsignPath
+		}
+		verifier, err = prepareAuthenticodeVerifier(runtime.GOOS, jsignPath, exec.LookPath)
+		if err != nil {
+			return err
+		}
+	}
+	verifiedSubject := ""
+	signFile := func(file, output string) error {
+		var err error
+		if signer != nil {
+			err = signer.sign(file)
+		} else {
+			err = runSignTemplate(options.signCommand, file, file, output)
+		}
+		if err != nil {
+			return err
+		}
+		if verifier != nil {
+			subject, err := verifier.verify(file, options.expectSubject)
+			if err != nil {
+				if signer != nil {
+					return fmt.Errorf("%s", redactSigningText(err.Error(), signer.token))
+				}
+				return err
+			}
+			if verifiedSubject != "" && verifiedSubject != subject {
+				return fmt.Errorf("verified signer subjects differ between packaged files")
+			}
+			verifiedSubject = subject
+		}
+		return nil
+	}
+	// Signing configuration belongs to the build, not the installed app.
+	config.Signing = installerhost.SigningConfig{}
 	bootstrapperPath, bootstrapperSource, err := resolveWebView2Bootstrapper(config.WebView2Bootstrapper)
 	if err != nil {
 		return err
@@ -174,8 +248,10 @@ func packageDesktopRelease(options desktopPackageFlags) error {
 		return err
 	}
 	installerSigned := "unsigned"
-	if strings.TrimSpace(options.signCommand) != "" {
-		if err := signStagePEFiles(stage, options.signCommand, workDir); err != nil {
+	if signer != nil || strings.TrimSpace(options.signCommand) != "" {
+		if err := forEachStagePEFile(stage, func(path string) error {
+			return signFile(path, filepath.Join(workDir, "signed-"+filepath.Base(path)))
+		}); err != nil {
 			return err
 		}
 		installerSigned = "signed"
@@ -202,8 +278,8 @@ func packageDesktopRelease(options desktopPackageFlags) error {
 	if err := buildWindowsUninstaller(uninstallerPath, config.AppID); err != nil {
 		return fmt.Errorf("build standalone uninstaller: %w", err)
 	}
-	if strings.TrimSpace(options.signCommand) != "" {
-		if err := runSignTemplate(options.signCommand, uninstallerPath, uninstallerPath, filepath.Join(workDir, "uninstaller-signed.exe")); err != nil {
+	if signer != nil || strings.TrimSpace(options.signCommand) != "" {
+		if err := signFile(uninstallerPath, filepath.Join(workDir, "uninstaller-signed.exe")); err != nil {
 			return fmt.Errorf("sign uninstaller: %w", err)
 		}
 	}
@@ -226,8 +302,8 @@ func packageDesktopRelease(options desktopPackageFlags) error {
 	if err := appendInstallerPayload(stubPath, setupPath, payloadPath); err != nil {
 		return err
 	}
-	if strings.TrimSpace(options.signCommand) != "" {
-		if err := runSignTemplate(options.signCommand, setupPath, setupPath, filepath.Join(workDir, "setup-signed.exe")); err != nil {
+	if signer != nil || strings.TrimSpace(options.signCommand) != "" {
+		if err := signFile(setupPath, filepath.Join(workDir, "setup-signed.exe")); err != nil {
 			return fmt.Errorf("sign Setup.exe: %w", err)
 		}
 	}
@@ -285,6 +361,10 @@ func packageDesktopRelease(options desktopPackageFlags) error {
 		Version: config.Version, WebView2SHA256: bootstrapperSHA,
 		InstallerSigning: installerSigned, ManifestSigning: manifestSigned,
 		BootstrapperSource: bootstrapperSource, GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		SigningProvider: options.signProvider, VerifiedSignerSubject: verifiedSubject,
+	}
+	if options.signCommand != "" {
+		metadata.SigningProvider = "command"
 	}
 	metadataBytes, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
@@ -534,7 +614,11 @@ func buildWindowsInstallerBinary(output, mainSource string) error {
 	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte(mainSource), 0644); err != nil {
 		return err
 	}
-	command := exec.Command("nice", "-n", "10", "go", "build", "-trimpath", "-ldflags=-H=windowsgui", "-o", output, ".")
+	args := []string{"build", "-trimpath", "-ldflags=-H=windowsgui", "-o", output, "."}
+	command := exec.Command("go", args...)
+	if runtime.GOOS != "windows" {
+		command = exec.Command("nice", append([]string{"-n", "10", "go"}, args...)...)
+	}
 	command.Dir = workDir
 	command.Env = setCommandEnvironment(os.Environ(), map[string]string{
 		"GOOS": "windows", "GOARCH": "amd64", "CGO_ENABLED": "0", "GOWORK": "off",
@@ -616,6 +700,12 @@ func writeUint64(w io.Writer, value uint64) error {
 }
 
 func signStagePEFiles(stage, template, workDir string) error {
+	return forEachStagePEFile(stage, func(path string) error {
+		return runSignTemplate(template, path, path, filepath.Join(workDir, "signed-"+filepath.Base(path)))
+	})
+}
+
+func forEachStagePEFile(stage string, sign func(string) error) error {
 	var paths []string
 	err := filepath.WalkDir(stage, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -641,8 +731,7 @@ func signStagePEFiles(stage, template, workDir string) error {
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		output := filepath.Join(workDir, "signed-"+filepath.Base(path))
-		if err := runSignTemplate(template, path, path, output); err != nil {
+		if err := sign(path); err != nil {
 			return fmt.Errorf("sign %s: %w", path, err)
 		}
 	}

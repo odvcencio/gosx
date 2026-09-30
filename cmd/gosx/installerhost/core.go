@@ -33,21 +33,34 @@ const (
 
 // PackageConfig describes a staged desktop app and its installer metadata.
 type PackageConfig struct {
-	AppID                string `json:"app_id"`
-	Name                 string `json:"name"`
-	Publisher            string `json:"publisher"`
-	Version              string `json:"version"`
-	Icon                 string `json:"icon"`
-	HostExe              string `json:"host_exe"`
-	WebView2Bootstrapper string `json:"webview2_bootstrapper,omitempty"`
-	WebView2SHA256       string `json:"webview2_sha256,omitempty"`
-	UpdatePublicKey      string `json:"update_public_key"`
-	DataDir              string `json:"data_dir,omitempty"`
-	Channel              string `json:"channel,omitempty"`
-	Released             string `json:"released,omitempty"`
-	Notes                string `json:"notes,omitempty"`
-	DownloadPage         string `json:"download_page,omitempty"`
-	DesktopShortcut      bool   `json:"desktop_shortcut,omitempty"`
+	AppID                string        `json:"app_id"`
+	Name                 string        `json:"name"`
+	Publisher            string        `json:"publisher"`
+	Version              string        `json:"version"`
+	Icon                 string        `json:"icon"`
+	HostExe              string        `json:"host_exe"`
+	WebView2Bootstrapper string        `json:"webview2_bootstrapper,omitempty"`
+	WebView2SHA256       string        `json:"webview2_sha256,omitempty"`
+	UpdatePublicKey      string        `json:"update_public_key"`
+	DataDir              string        `json:"data_dir,omitempty"`
+	Channel              string        `json:"channel,omitempty"`
+	Released             string        `json:"released,omitempty"`
+	Notes                string        `json:"notes,omitempty"`
+	DownloadPage         string        `json:"download_page,omitempty"`
+	DesktopShortcut      bool          `json:"desktop_shortcut,omitempty"`
+	Signing              SigningConfig `json:"signing,omitzero"`
+}
+
+// SigningConfig contains only non-secret packaging settings. Credentials are
+// supplied by the signing environment, never by the package config.
+type SigningConfig struct {
+	Endpoint     string `json:"endpoint,omitempty"`
+	Account      string `json:"account,omitempty"`
+	Profile      string `json:"profile,omitempty"`
+	Tool         string `json:"tool,omitempty"`
+	DlibPath     string `json:"dlib_path,omitempty"`
+	SigntoolPath string `json:"signtool_path,omitempty"`
+	JsignPath    string `json:"jsign_path,omitempty"`
 }
 
 // PayloadManifest binds every application file, the config and WebView2
@@ -70,15 +83,17 @@ type UpdateManifest struct {
 }
 
 type PackageMetadata struct {
-	AppID              string `json:"app_id"`
-	Name               string `json:"name"`
-	Publisher          string `json:"publisher"`
-	Version            string `json:"version"`
-	WebView2SHA256     string `json:"webview2_sha256"`
-	InstallerSigning   string `json:"installer_signing"`
-	ManifestSigning    string `json:"manifest_signing"`
-	BootstrapperSource string `json:"bootstrapper_source"`
-	GeneratedAt        string `json:"generated_at"`
+	AppID                 string `json:"app_id"`
+	Name                  string `json:"name"`
+	Publisher             string `json:"publisher"`
+	Version               string `json:"version"`
+	WebView2SHA256        string `json:"webview2_sha256"`
+	InstallerSigning      string `json:"installer_signing"`
+	ManifestSigning       string `json:"manifest_signing"`
+	BootstrapperSource    string `json:"bootstrapper_source"`
+	GeneratedAt           string `json:"generated_at"`
+	SigningProvider       string `json:"signing_provider,omitempty"`
+	VerifiedSignerSubject string `json:"verified_signer_subject,omitempty"`
 }
 
 type installationRecord struct {
