@@ -83,6 +83,13 @@ func TestHubSceneBindingsRoundTripInBrowser(t *testing.T) {
 	defer closeFirst()
 	secondCtx, closeSecond := hubBindingBrowser(t, chrome)
 	defer closeSecond()
+	// Starting the second Chrome can consume its startup budget. Start page
+	// deadlines only after both processes are bound, so it cannot expire the
+	// first browser's assertions before navigation even begins.
+	firstCtx, cancelFirst := context.WithTimeout(firstCtx, 25*time.Second)
+	defer cancelFirst()
+	secondCtx, cancelSecond := context.WithTimeout(secondCtx, 25*time.Second)
+	defer cancelSecond()
 
 	for _, ctx := range []context.Context{firstCtx, secondCtx} {
 		if err := chromedp.Run(ctx, chromedp.Navigate(web.URL)); err != nil {
@@ -122,11 +129,7 @@ func hubBindingBrowser(t *testing.T, chrome string) (context.Context, func()) {
 	if err != nil {
 		t.Fatalf("start browser for hub binding: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(browser.Context, 25*time.Second)
-	return ctx, func() {
-		cancel()
-		browser.Close()
-	}
+	return browser.Context, browser.Close
 }
 
 func waitForBrowserCondition(t *testing.T, ctx context.Context, expression string) {
