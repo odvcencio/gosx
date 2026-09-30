@@ -187,6 +187,7 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
+	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Kind               string      `json:"kind"`
 	Size               float64     `json:"size,omitempty"`
