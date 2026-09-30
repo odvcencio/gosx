@@ -272,6 +272,27 @@ func TestOnDemandRedirectStaysOutOfInitialLoad(t *testing.T) {
 	}
 }
 
+func TestFrameworkRedirectKeepsRuntimePolicy(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/p", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<!doctype html><script src="/gosx/boot.js"></script>`))
+	})
+	mux.HandleFunc("/gosx/boot.js", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/assets/boot.js", http.StatusFound)
+	})
+	mux.HandleFunc("/assets/boot.js", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("boot();")) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := r.EvaluatePolicies()[PolicyRuntimeHashed]
+	if got.Pass || !strings.Contains(got.Reason, "/assets/boot.js") {
+		t.Fatalf("framework script redirected to an unhashed URL passed runtime-hashed: %+v", got)
+	}
+}
+
 func TestCheckUpdateAndRatchet(t *testing.T) {
 	srv := testServer(t)
 	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/page")

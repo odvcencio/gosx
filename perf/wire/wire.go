@@ -66,6 +66,9 @@ type Resource struct {
 	Immutable       bool   `json:"immutable"`
 	Hashed          bool   `json:"hashed"`
 	SetCookie       bool   `json:"setCookie,omitempty"`
+	// Framework marks a response the page requested under the framework's
+	// /gosx/ prefix, even when a redirect served it from another path.
+	Framework bool `json:"framework,omitempty"`
 }
 
 // Route is the measurement of one page.
@@ -230,6 +233,7 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 			return Route{}, err
 		}
 		res.Kind = classify(abs.Path, res, r.kind)
+		res.Framework = isFramework(abs.Path) || isFramework(pathOf(res.URL))
 		if r.kind == KindLazyScript {
 			res.Kind = KindLazyScript
 			out.Resources = append(out.Resources, res)

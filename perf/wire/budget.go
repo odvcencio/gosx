@@ -213,7 +213,7 @@ func (r Route) EvaluatePolicies() map[string]PolicyResult {
 
 	bad = nil
 	for _, res := range r.Resources {
-		if !isFramework(pathOf(res.URL)) || (res.Kind != KindScript && res.Kind != KindWASM && res.Kind != KindLazyScript) {
+		if !(res.Framework || isFramework(pathOf(res.URL))) || (res.Kind != KindScript && res.Kind != KindWASM && res.Kind != KindLazyScript) {
 			continue
 		}
 		if !res.Hashed || !res.Immutable {
