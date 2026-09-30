@@ -118,12 +118,17 @@ type Summary struct {
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
 	BootstrapFeatureScene3DPath     string
-	HLSPath                         string
-	Islands                         int
-	ComputeIslands                  int
-	Engines                         int
-	Hubs                            int
-	Controllers                     int
+	// BootstrapFeatureTextLayoutPath is the content-hashed text-layout chunk
+	// URL, set on Scene3D pages. The client fetches that chunk on demand for
+	// a scene label; without this URL the loader falls back to an unhashed
+	// /gosx/ URL.
+	BootstrapFeatureTextLayoutPath string
+	HLSPath                        string
+	Islands                        int
+	ComputeIslands                 int
+	Engines                        int
+	Hubs                           int
+	Controllers                    int
 }
 
 type clientRuntimePlan struct {
@@ -2060,6 +2065,12 @@ func (r *Renderer) Summary() Summary {
 	}
 	if r.hasVideoEngines() {
 		summary.HLSPath = r.videoHLSPath
+	}
+	if plan.Bootstrap && r.hasSceneEngines() {
+		// A Scene3D label lays out through the text-layout chunk, and the
+		// client decides whether a scene needs it, so a scene page names the
+		// hashed URL. No preload: that would fetch the chunk on every page.
+		summary.BootstrapFeatureTextLayoutPath = r.bootstrapFeatureTextlayoutPath
 	}
 	if plan.Selective {
 		summary.BootstrapFeatureIslandsPath = r.selectedBootstrapFeaturePath("islands")

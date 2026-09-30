@@ -342,7 +342,17 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 	return "", false
 }
 
+// runtimeCompatBuiltPath maps an unhashed /gosx/ runtime name to its
+// content-hashed build output. It reads build.json from the runtime root, or
+// from root/dist when the app runs from its project root: the same order the
+// island renderer uses to pick hashed URLs, so every URL a page can fall back
+// to resolves through the manifest the page was rendered from.
 func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
+	if !isFile(filepath.Join(root, "build.json")) {
+		if distRoot := filepath.Join(root, "dist"); isFile(filepath.Join(distRoot, "build.json")) {
+			root = distRoot
+		}
+	}
 	manifest, ok := a.runtimeBuildManifest(root)
 	if !ok {
 		return "", false

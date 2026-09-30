@@ -45,6 +45,9 @@
 // message box and works before New; App.ShowMessage owns the box by the app
 // window.
 //
+// App.OfferSignedUpdate checks the signed update feed and asks before opening
+// a publisher's allowlisted download page; it never downloads or installs an update.
+//
 // macOS and Linux currently return ErrUnsupported; darwin/amd64 and
 // darwin/arm64 are cross-compiled in CI so the unsupported path stays
 // buildable while the native macOS backend is developed.
