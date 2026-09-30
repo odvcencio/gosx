@@ -154,6 +154,10 @@ func TestBoundedCandidateSetMatchesWholeStoreRerank(t *testing.T) {
 	)
 	encoder := embed.NewProviderEncoder(&hashProvider{dim: 128})
 	index := NewContentIndex(encoder, ContentOptions{})
+	// Match the quantizer seed used by the recall measurement above. The
+	// production constructor randomizes its projection, which otherwise makes
+	// this regression test sample a different approximation on every run.
+	index.index = vecdb.NewWithSeed(encoder.Dim(), 3, 42)
 	for i := 0; i < docs; i++ {
 		index.Add(fmt.Sprintf("page-%d", i), fmt.Sprintf("content about topic %d with details", i), ContentMeta{})
 	}
