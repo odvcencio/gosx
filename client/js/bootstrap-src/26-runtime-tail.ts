@@ -385,7 +385,7 @@
     return reusable;
   }
 
-  async function disposePage(reuseEngineIDs) {
+  async function disposePage(reuseEngineIDs, nextDoc) {
     const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     if (gosxHost.dom && typeof gosxHost.dom.dispose === "function") {
       gosxHost.dom.dispose(document.body || document.documentElement);
@@ -401,7 +401,7 @@
     }
     for (const feature of Array.from(activeBootstrapFeatures.values())) {
       if (feature && typeof feature.disposePage === "function") {
-        feature.disposePage(reuseIDs);
+        feature.disposePage(reuseIDs, nextDoc);
       }
     }
     pendingManifest = null;
@@ -452,6 +452,9 @@
     }
 
     const manifest = loadManifest();
+    if (!manifestHasEntries(manifest, "hubs") && gosxHost.hubs && typeof gosxHost.hubs.connectAll === "function") {
+      await gosxHost.hubs.connectAll(manifest);
+    }
     if (!manifest) {
       pendingManifest = null;
       // A page can hold text blocks and no manifest. Keep the text-layout load

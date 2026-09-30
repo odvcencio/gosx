@@ -2337,8 +2337,8 @@
   // window.__gosx_bootstrap_page/__gosx_dispose_page live at call time — would
   // then be silently skipped. Forwarding through
   // gosxHostCompatibility keeps every later installer live, matching main.
-  async function disposeCurrentPage(reuseIDs) {
-    await gosxHostCompatibility.forward("__gosx_dispose_page", [reuseIDs]);
+  async function disposeCurrentPage(reuseIDs, nextDoc) {
+    await gosxHostCompatibility.forward("__gosx_dispose_page", [reuseIDs, nextDoc]);
   }
 
   async function bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs) {
@@ -3207,7 +3207,7 @@
     // engines against the INCOMING manifest parsed from nextDoc.
     const reuseIDs = await reusableEngineIDs(nextDoc);
     if (isCurrent && !isCurrent()) return;
-    await disposeCurrentPage(reuseIDs);
+    await disposeCurrentPage(reuseIDs, nextDoc);
     if (isCurrent && !isCurrent()) return;
     // Head/body replacement adopts nodes out of the parsed document. Capture
     // managed scripts first so head-owned patch/lifecycle chunks are not lost
