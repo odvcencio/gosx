@@ -88,7 +88,7 @@ function controls(config = {}, options = {}) {
   env.context.atob = atob; runScript(walkSource, env.context, "walk.js");
   const canvas = env.document.createElement("canvas"); canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 400 }); mount.appendChild(canvas);
   const raf = installManualRAF(env.context), reasons = [], sceneState = {};
-  const handle = env.context.__gosx_scene3d_walk_api.setup(canvas, { controls: "first-person", walk: config }, () => camera, (r) => reasons.push(r), sceneState, {
+  const handle = env.context.__gosx_scene3d_walk_api.setup(canvas, { controls: "first-person", walk: config, ...(options.props || {}) }, () => camera, (r) => reasons.push(r), sceneState, {
     camera: (c) => c, requestLock: (c) => { c.requestPointerLock(); return true; },
     exitLock: () => env.document.exitPointerLock(), locked: (c) => env.document.pointerLockElement === c,
     requestFrame: (cb) => env.context.requestAnimationFrame(cb), cancelFrame: (id) => env.context.cancelAnimationFrame(id), now: () => 0,
@@ -200,4 +200,30 @@ test("walk scene fetches its advertised chunk, preserves the first pose, publish
   assert.equal(mounted.handle.resetCamera(), true);
   assert.deepEqual({ ...mounted.handle.getCamera() }, initial);
   mounted.handle.dispose();
+});
+
+test("walk renders honour MaxFPS on a fast display while movement still integrates every frame", () => {
+  const h = controls({ headBob: 0 }, { props: { maxFPS: 60 } });
+  h.canvas.focus(); h.event(h.env.document, "keydown", { code: "KeyW" });
+  for (let t = 0; t <= 1000; t += 1000 / 120) h.raf.flush(t);
+  const renders = h.reasons.filter((r) => r === "controls").length;
+  assert.ok(renders >= 55 && renders <= 62, "renders in one second at 120 Hz with MaxFPS 60: " + renders);
+  const z = h.handle.controller.currentCamera().z;
+  h.event(h.env.document, "keyup", { code: "KeyW" });
+  for (let t = 1008; t < 2500; t += 1000 / 120) h.raf.flush(t);
+  assert.ok(h.handle.controller.currentCamera().z <= z, "the final pose after release is rendered");
+  assert.equal(h.reasons.at(-1), "controls"); assert.equal(h.raf.count(), 0);
+  h.handle.dispose();
+});
+
+test("hint and joystick defaults live in one zero-specificity stylesheet so pages can restyle them", () => {
+  const h = controls({});
+  const hint = h.mount.children.find((c) => c.getAttribute && c.getAttribute("class") === "gosx-scene3d-walk-hint");
+  assert.ok(hint, "hint element");
+  assert.equal(hint.getAttribute("style") || "", "", "no inline default style on the hint");
+  const styles = (h.env.document.head.children || []).filter((c) => c.getAttribute && c.getAttribute("data-gosx-scene3d-walk-style") === "true");
+  assert.equal(styles.length, 1);
+  assert.match(styles[0].textContent, /:where\(\.gosx-scene3d-walk-hint\)/);
+  controls({}).handle.dispose();
+  h.handle.dispose();
 });
