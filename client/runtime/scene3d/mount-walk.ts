@@ -183,20 +183,34 @@ interface SceneWalkState {
     const magnitude = Math.abs(value);
     return magnitude <= 0.15 ? 0 : Math.sign(value) * (magnitude - 0.15) / 0.85;
   }
+  // Default look for the joystick and hint. The rules sit under :where() (zero
+  // specificity) in one runtime stylesheet, so any page rule restyles them.
+  const WALK_STYLE_ATTR = "data-gosx-scene3d-walk-style";
+  function ensureWalkStyles(): void {
+    const head = document.head;
+    if (!head || typeof document.createElement !== "function") return;
+    for (const child of Array.from(head.children || [])) if (child.hasAttribute && child.hasAttribute(WALK_STYLE_ATTR)) return;
+    const style = document.createElement("style");
+    style.setAttribute(WALK_STYLE_ATTR, "true"); style.setAttribute("data-gosx-css-layer", "runtime");
+    style.setAttribute("data-gosx-css-owner", "gosx-bootstrap"); style.setAttribute("data-gosx-css-source", "gosx-runtime");
+    style.textContent = ":where(.gosx-scene3d-walk-joystick){display:none;position:absolute;width:110px;height:110px;border-radius:50%;background:rgba(20,25,30,.35);border:1px solid rgba(255,255,255,.5);pointer-events:none;z-index:10}"
+      + ":where(.gosx-scene3d-walk-knob){position:absolute;left:31px;top:31px;width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.6);pointer-events:none}"
+      + ":where(.gosx-scene3d-walk-hint){position:absolute;left:50%;bottom:12px;transform:translateX(-50%);max-width:90%;padding:6px 10px;border-radius:6px;background:rgba(20,25,30,.65);color:white;font:12px/1.4 sans-serif;text-align:center;pointer-events:none;z-index:9}";
+    head.appendChild(style);
+  }
   function joystick(mount: HTMLElement): { base: HTMLDivElement; knob: HTMLDivElement } {
+    ensureWalkStyles();
     const base = document.createElement("div"), knob = document.createElement("div");
     base.setAttribute("class", "gosx-scene3d-walk-joystick"); knob.setAttribute("class", "gosx-scene3d-walk-knob");
     base.setAttribute("aria-hidden", "true");
-    base.style.cssText = "display:none;position:absolute;width:110px;height:110px;border-radius:50%;background:rgba(20,25,30,.35);border:1px solid rgba(255,255,255,.5);pointer-events:none;z-index:10";
-    knob.style.cssText = "position:absolute;left:31px;top:31px;width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.6);pointer-events:none";
     base.appendChild(knob); mount.appendChild(base);
     return { base, knob };
   }
   function hintElement(mount: HTMLElement, config: Record<string, any>): HTMLElement | null {
     if (config.hint === "none") return null;
+    ensureWalkStyles();
     const hint = document.createElement("div");
     hint.setAttribute("class", "gosx-scene3d-walk-hint"); hint.setAttribute("role", "note");
-    hint.style.cssText = "position:absolute;left:50%;bottom:12px;transform:translateX(-50%);max-width:90%;padding:6px 10px;border-radius:6px;background:rgba(20,25,30,.65);color:white;font:12px/1.4 sans-serif;text-align:center;pointer-events:none;z-index:9";
     const touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
     hint.textContent = config.hint || (touch ? "Left thumb to move · drag right side to look" : "Click to walk · WASD or arrows to move · mouse to look · Shift to sprint · Esc to release");
     mount.appendChild(hint);
@@ -238,6 +252,9 @@ interface SceneWalkState {
       if (disposed || frame) return;
       last = helpers.now(); frame = helpers.requestFrame(tick);
     }
+    const capFPS = Number(props && props.maxFPS) || 0;
+    const minRenderMS = capFPS > 0 ? 1000 / capFPS : 0;
+    let renderDue = false, lastRender = -Infinity;
     function tick(now: number): void {
       frame = 0;
       if (disposed) return;
@@ -246,7 +263,7 @@ interface SceneWalkState {
       if (focused()) {
         const k = controller.keys;
         strafe += Number(k.has("right")) - Number(k.has("left")); forward += Number(k.has("forward")) - Number(k.has("back"));
-        yaw = (Number(k.has("turnLeft")) - Number(k.has("turnRight"))) * 1.8 * dt;
+        yaw = (Number(k.has("turnLeft")) - Number(k.has("turnRight"))) * 1.3 * dt;
         pitch = (Number(k.has("pitchUp")) - Number(k.has("pitchDown"))) * 1.4 * dt;
         sprint = sprint || k.has("sprint");
       }
@@ -262,9 +279,13 @@ interface SceneWalkState {
       if (yaw || pitch) { look(state, yaw, pitch); controller.touched = true; }
       if (strafe || forward) controller.touched = true;
       const changed = advance(state, dt, strafe, forward, sprint);
-      showHint(); if (changed || yaw || pitch) schedule("controls");
+      // Movement integrates every display frame, but renders honour the
+      // scene's MaxFPS: a 120 Hz display must not double an authored 60 fps cap.
+      if (changed || yaw || pitch) renderDue = true;
+      if (renderDue && now - lastRender >= minRenderMS - 1) { renderDue = false; lastRender = now; schedule("controls"); }
+      showHint();
       const navigating = strafe !== 0 || forward !== 0 || yaw !== 0 || pitch !== 0;
-      if (navigating || state.settling || state.bobWeight > 0 || pads.size) frame = helpers.requestFrame(tick);
+      if (navigating || renderDue || state.settling || state.bobWeight > 0 || pads.size) frame = helpers.requestFrame(tick);
     }
     function pointerDown(event: PointerEvent): void {
       if (event.defaultPrevented && event.pointerType !== "touch") return;
