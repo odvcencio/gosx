@@ -89,6 +89,7 @@ func TestProtectOriginAndSessionToken(t *testing.T) {
 		{"foreign origin", "", "https://foreign.example", true, 403, 403},
 		{"contradictory origin", "same-origin", "https://foreign.example", true, 403, 403},
 		{"different scheme", "", "http://app.example", true, 403, 403},
+		{"browser facing scheme", "same-origin", "http://app.example", true, 204, 204},
 		{"null origin", "", "null", true, 403, 403},
 		{"no metadata or token", "", "", false, 403, 403},
 		{"legacy token", "", "", true, 403, 204},

@@ -63,9 +63,10 @@ func newOriginPolicy(opts Options) (*originPolicy, error) {
 	return p, nil
 }
 
-// check uses the standard browser origin guard, then checks Origin as well:
-// contradictory headers and HTTP-to-HTTPS origin changes fail closed. Missing
-// browser headers are not evidence of same origin; Protect requires a token.
+// check uses the standard browser origin guard, then checks Origin as well.
+// Sec-Fetch-Site establishes the browser-facing scheme even when a proxy
+// terminates TLS. Without it, Origin must match the resolved host and scheme.
+// Missing browser headers are not proof of same origin; Protect needs a token.
 func (p *originPolicy) check(r *http.Request) (bool, error) {
 	scheme, host := "http", r.Host
 	if r.TLS != nil {
@@ -92,7 +93,10 @@ func (p *originPolicy) check(r *http.Request) (bool, error) {
 	}
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		if !validOrigin(origin) || (!p.trusted[origin] && !strings.EqualFold(origin, scheme+"://"+host)) {
+		originURL, _ := url.Parse(origin)
+		matches := validOrigin(origin) && (strings.EqualFold(origin, scheme+"://"+host) ||
+			(r.Header.Get("Sec-Fetch-Site") == "same-origin" && strings.EqualFold(originURL.Host, host)))
+		if !matches && !p.trusted[origin] {
 			return false, fmt.Errorf("session: browser origin is not allowed")
 		}
 		return true, nil

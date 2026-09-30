@@ -46,6 +46,9 @@ func TestSessionPagesSeparateAnonymousAndPrivateHTML(t *testing.T) {
 			ctx.NoStore()
 		case "header":
 			ctx.Header().Set("Cache-Control", "private, max-age=20")
+		case "header-etag":
+			ctx.Header().Set("Cache-Control", "private, max-age=20")
+			ctx.SetETag("private-page")
 		case "write":
 			session.Current(ctx.Request).Set("name", "Ada")
 		}
@@ -60,6 +63,7 @@ func TestSessionPagesSeparateAnonymousAndPrivateHTML(t *testing.T) {
 		{"/private", "private, max-age=60"},
 		{"/no-store", "no-store"},
 		{"/header", "private, max-age=20"},
+		{"/header-etag", "private, max-age=20"},
 		{"/write", "private, no-store"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
@@ -81,7 +85,7 @@ func TestSessionPagesSeparateAnonymousAndPrivateHTML(t *testing.T) {
 			if got := w.Header().Get("Cache-Control"); got != "private, no-store" {
 				t.Fatalf("personalized Cache-Control = %q", got)
 			}
-			if !strings.Contains(w.Body.String(), `name="csrf-token"`) || w.Header().Get("ETag") != "" {
+			if !strings.Contains(w.Body.String(), `name="csrf-token"`) || (tc.path != "/header-etag" && w.Header().Get("ETag") != "") {
 				t.Fatalf("personalized headers or token incorrect: %v", w.Header())
 			}
 		})

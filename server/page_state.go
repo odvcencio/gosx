@@ -71,6 +71,7 @@ func (s *PageState) PrepareCache(r *http.Request) {
 	if s.cache != nil && s.cache.defaultPolicy && s.Header().Get("Cache-Control") != "" {
 		s.cache.policySet = false
 		s.cache.defaultPolicy = false
+		s.cache.policy = CachePolicy{}
 	}
 	if RequestNonce(r) != "" && (s.cache == nil || !s.cache.policySet) && s.Header().Get("Cache-Control") == "" {
 		s.CacheState().SetPolicy(NoStoreCache())
