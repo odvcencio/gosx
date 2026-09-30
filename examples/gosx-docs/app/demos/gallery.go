@@ -76,17 +76,14 @@ var demoSources = map[string][]string{
 		"examples/gosx-docs/public/checkers-client.js",
 	},
 	"beacon": {
-		"examples/gosx-docs/app/demos/beacon/blackglass-coast.scene3d",
-		"examples/gosx-docs/app/demos/beacon/contract.go",
+		"examples/gosx-docs/app/demos/beacon/beach.go",
+		"examples/gosx-docs/app/demos/beacon/ibl-beach/golden-hour.json",
+		"examples/gosx-docs/internal/beachgen/beachgen.go",
+		"examples/gosx-docs/internal/beachgen/skyibl.go",
 		"examples/gosx-docs/app/demos/beacon/page.css",
 		"examples/gosx-docs/app/demos/beacon/page.gsx",
 		"examples/gosx-docs/app/demos/beacon/page.server.go",
-		"examples/gosx-docs/app/demos/beacon/presentation.go",
-		"examples/gosx-docs/app/demos/beacon/program.go",
 		"examples/gosx-docs/app/demos/beacon/route.config.json",
-		"examples/gosx-docs/app/demos/beacon/ibl/daybreak.json",
-		"examples/gosx-docs/app/demos/beacon/ibl/ember-hour.json",
-		"examples/gosx-docs/app/demos/beacon/ibl/high-sun.json",
 	},
 	"water": {
 		"examples/gosx-docs/app/demos/water/cmd/generate-selena-fixtures/main.go",
@@ -319,7 +316,7 @@ func scenePropsForDemo(slug string) (scene.Props, bool) {
 	case "checkers":
 		return checkersDemo.ShowcaseScene(), true
 	case "beacon":
-		return beaconDemo.BlackglassCoastProgram("overlook", "daybreak"), true
+		return beaconDemo.BlackglassBeachProgram("shore", "golden-hour"), true
 	case "water":
 		// The Water page authors Scene3D with typed JSX elements. This matching
 		// capability probe carries the same WaterSystem passes into SceneIR.

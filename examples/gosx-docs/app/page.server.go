@@ -29,7 +29,7 @@ func init() {
 						{"surface": "Server", "title": "Strict typed route", "body": "This production route is authored with component syntax and checked against real Go props.", "href": "/docs/typed-live", "cta": "Inspect the rendered proof"},
 						{"surface": "Action + Island", "title": "Compiler playground", "body": "A protected server action compiles a focused legacy island program and the shared browser VM hydrates its preview.", "href": "/demos/playground", "cta": "Compile a component"},
 						{"surface": "Hub", "title": "Realtime collaboration", "body": "Open two tabs to watch one server-owned document, presence, and remote cursors converge over a GoSX hub.", "href": "/demos/collab", "cta": "Open the shared editor"},
-						{"surface": "Engine", "title": "Scene3D world", "body": "The server declares the scene; the managed runtime selects WebGPU, WebGL2, or an honest bounded fallback.", "href": "/demos/beacon", "cta": "Enter Blackglass Coast"},
+						{"surface": "Engine", "title": "Scene3D world", "body": "The server declares the scene; the managed runtime selects WebGPU, WebGL2, or an honest bounded fallback.", "href": "/demos/beacon", "cta": "Enter Blackglass Beach"},
 					},
 					"proofPoints": []map[string]string{
 						{"value": "5", "label": "Execution surfaces"},

@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": "physical-sky:noon",
+  "radiance": {
+    "uri": "/env/blackglass-beach/noon.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 7,
+    "width": 64,
+    "height": 64,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/env/blackglass-beach/noon.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 8,
+    "height": 8,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/env/blackglass-beach/noon.brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      1.7806563334265064,
+      2.653373483703021,
+      3.6231665366829104
+    ],
+    [
+      0.9188222314688766,
+      1.3795505540700561,
+      1.970971339842766
+    ],
+    [
+      -0.042442458362571676,
+      -0.11300132471404294,
+      -0.18320570346997278
+    ],
+    [
+      0.3213620139469187,
+      0.4175916557591547,
+      0.5126605259249093
+    ],
+    [
+      0.3461259248809207,
+      0.46248834874903966,
+      0.5827916497015017
+    ],
+    [
+      0.08796036937246678,
+      0.1712787671652087,
+      0.26419317958569
+    ],
+    [
+      0.14314478274762846,
+      0.16496527479601758,
+      0.11826766667976077
+    ],
+    [
+      0.06543281463775298,
+      0.08390497757295244,
+      0.09872759166071124
+    ],
+    [
+      0.6795884629845862,
+      0.8396620848225465,
+      0.8571432448730281
+    ]
+  ]
+}
