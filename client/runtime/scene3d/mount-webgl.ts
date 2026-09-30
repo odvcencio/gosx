@@ -1691,11 +1691,13 @@ function gosxConfigureSceneScript(script, role, src) {
     return fallback;
   }
 
+  var sceneGatedFeaturePromises = Object.create(null);
+
   // Cached promise for the WebGPU sub-feature chunk. Scene3D now treats
   // WebGPU as the default accelerated backend when the browser exposes it,
   // so the first mount awaits this before choosing its renderer. Failed or
   // unsupported probes still fall through to WebGL/canvas.
-  var sceneWebGPUFeaturePromise = null;
+
 
   function sceneHasNavigatorWebGPU() {
     return typeof navigator !== "undefined"
@@ -1713,31 +1715,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (window.__gosx_scene3d_webgpu_feature_promise) {
       return window.__gosx_scene3d_webgpu_feature_promise;
     }
-    if (sceneWebGPUFeaturePromise) {
-      return sceneWebGPUFeaturePromise;
-    }
-    sceneWebGPUFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-webgpu", resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_webgpu_api) {
-          resolve(window.__gosx_scene3d_webgpu_api);
-        } else {
-          sceneWebGPUFeaturePromise = null;
-          window.__gosx_scene3d_webgpu_feature_promise = null;
-          reject(new Error("scene3d-webgpu chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneWebGPUFeaturePromise = null;
-        window.__gosx_scene3d_webgpu_feature_promise = null;
-        reject(new Error("failed to load scene3d-webgpu chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    window.__gosx_scene3d_webgpu_feature_promise = sceneWebGPUFeaturePromise;
-    return sceneWebGPUFeaturePromise;
+    const promise = ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+    window.__gosx_scene3d_webgpu_feature_promise = promise;
+    return promise;
   }
 
   function sceneNextFrame() {
@@ -1786,7 +1766,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // never fetches it, which is the whole point of the split: it used to ride
   // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
-  var sceneWebGLFeaturePromise = null;
+
 
   function ensureWebGLFeatureLoaded() {
     // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
@@ -1799,31 +1779,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (window.__gosx_scene3d_webgl_feature_promise) {
       return window.__gosx_scene3d_webgl_feature_promise;
     }
-    if (sceneWebGLFeaturePromise) {
-      return sceneWebGLFeaturePromise;
-    }
-    sceneWebGLFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-webgl", resolveSceneSubFeatureURL("gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_webgl_api) {
-          resolve(window.__gosx_scene3d_webgl_api);
-        } else {
-          sceneWebGLFeaturePromise = null;
-          window.__gosx_scene3d_webgl_feature_promise = null;
-          reject(new Error("scene3d-webgl chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneWebGLFeaturePromise = null;
-        window.__gosx_scene3d_webgl_feature_promise = null;
-        reject(new Error("failed to load scene3d-webgl chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    window.__gosx_scene3d_webgl_feature_promise = sceneWebGLFeaturePromise;
-    return sceneWebGLFeaturePromise;
+    const promise = ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
+    window.__gosx_scene3d_webgl_feature_promise = promise;
+    return promise;
   }
 
   // sceneWebGLBackendRequest builds the same registry request
@@ -1930,33 +1888,10 @@ function gosxConfigureSceneScript(script, role, src) {
   // Cached promise for the GLTF sub-feature chunk. First call starts the
   // fetch; subsequent calls await the same promise. See 26f-feature-
   // scene3d-gltf-prefix.js for the split rationale.
-  var sceneGLTFFeaturePromise = null;
+
 
   function ensureGLTFFeatureLoaded() {
-    if (window.__gosx_scene3d_gltf_api) {
-      return Promise.resolve(window.__gosx_scene3d_gltf_api);
-    }
-    if (sceneGLTFFeaturePromise) {
-      return sceneGLTFFeaturePromise;
-    }
-    sceneGLTFFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-gltf", resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_gltf_api) {
-          resolve(window.__gosx_scene3d_gltf_api);
-        } else {
-          reject(new Error("scene3d-gltf chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneGLTFFeaturePromise = null; // allow retry on next attempt
-        reject(new Error("failed to load scene3d-gltf chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneGLTFFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
   }
 
   function scenePropsHasIBLProducts(props) {
@@ -2003,33 +1938,10 @@ function gosxConfigureSceneScript(script, role, src) {
   // Cached promise for the animation sub-feature chunk. Consumers that
   // want to drive keyframe or skeletal animations can await this helper
   // and then use window.__gosx_scene3d_animation_api.
-  var sceneAnimationFeaturePromise = null;
+
 
   function ensureAnimationFeatureLoaded() {
-    if (window.__gosx_scene3d_animation_api) {
-      return Promise.resolve(window.__gosx_scene3d_animation_api);
-    }
-    if (sceneAnimationFeaturePromise) {
-      return sceneAnimationFeaturePromise;
-    }
-    sceneAnimationFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-animation", resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_animation_api) {
-          resolve(window.__gosx_scene3d_animation_api);
-        } else {
-          reject(new Error("scene3d-animation chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneAnimationFeaturePromise = null;
-        reject(new Error("failed to load scene3d-animation chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneAnimationFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("animation", "gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
   }
 
   // Expose the animation lazy-loader for consumers that need to drive
@@ -2041,7 +1953,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // registry and the GPU instanced-cull system. A scene with one cube and one
   // directional light runs none of them, and used to pay 8_772 gzip bytes for
   // all of them. See 26k-feature-scene3d-compute-prefix.js.
-  var sceneComputeFeaturePromise = null;
+
 
   function ensureComputeFeatureLoaded() {
     if (window.__gosx_scene3d_compute_api) {
@@ -2053,37 +1965,7 @@ function gosxConfigureSceneScript(script, role, src) {
       && typeof window.__gosx_scene3d_api.createSceneParticleSystem === "function") {
       return Promise.resolve(window.__gosx_scene3d_api);
     }
-    if (sceneComputeFeaturePromise) {
-      return sceneComputeFeaturePromise;
-    }
-    sceneComputeFeaturePromise = new Promise(function(resolve, reject) {
-      var url = resolveSceneSubFeatureURL("gosxScene3dComputeUrl", "");
-      if (!url) {
-        // The server did not advertise the chunk, so this page's scene
-        // declared no particles and no instanced meshes. Refuse rather than
-        // guess a path: a 404 here would look like a broken deployment.
-        sceneComputeFeaturePromise = null;
-        reject(new Error("scene3d-compute chunk URL was not advertised"));
-        return;
-      }
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-compute", url);
-      s.onload = function() {
-        if (window.__gosx_scene3d_compute_api) {
-          resolve(window.__gosx_scene3d_compute_api);
-        } else {
-          sceneComputeFeaturePromise = null;
-          reject(new Error("scene3d-compute chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneComputeFeaturePromise = null; // allow retry on the next attempt
-        reject(new Error("failed to load scene3d-compute chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneComputeFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("compute", "gosxScene3dComputeUrl", "");
   }
 
   // Expose the compute lazy-loader so a runtime program that adds particles
@@ -2141,7 +2023,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // quantized-array decoder, the progressive and level-of-detail ladders, and
   // the procedural point generators. See
   // 26l-feature-scene3d-decompress-prefix.js.
-  var sceneDecompressFeaturePromise = null;
+
 
   // sceneDecompressAPIFunction resolves one decompress entry point. The
   // monolith keeps 11a and 11b inline, so the lookup finds the function on the
@@ -2153,43 +2035,42 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function ensureDecompressFeatureLoaded() {
-    if (sceneDecompressAPIFunction("sceneDecompressProps")) {
-      return Promise.resolve(window.__gosx_scene3d_api);
-    }
-    if (sceneDecompressFeaturePromise) {
-      return sceneDecompressFeaturePromise;
-    }
-    sceneDecompressFeaturePromise = new Promise(function(resolve, reject) {
-      var url = resolveSceneSubFeatureURL("gosxScene3dDecompressUrl", "");
-      if (!url) {
-        // The server did not advertise the chunk, so this page's scene carries
-        // no compressed array and no generator descriptor. Refuse rather than
-        // guess a path: a 404 here would look like a broken deployment.
-        sceneDecompressFeaturePromise = null;
-        reject(new Error("scene3d-decompress chunk URL was not advertised"));
-        return;
-      }
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-decompress", url);
-      s.onload = function() {
-        if (sceneDecompressAPIFunction("sceneDecompressProps")) {
-          resolve(window.__gosx_scene3d_api);
-        } else {
-          sceneDecompressFeaturePromise = null;
-          reject(new Error("scene3d-decompress chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneDecompressFeaturePromise = null; // allow retry on the next attempt
-        reject(new Error("failed to load scene3d-decompress chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneDecompressFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("decompress", "gosxScene3dDecompressUrl", "");
   }
 
   window.__gosx_ensure_scene3d_decompress_loaded = ensureDecompressFeatureLoaded;
+
+  // Share the URL, CSP, caching and retry path for content-gated authorities.
+  // No fallback URL: pages that do not advertise a feature cannot fetch it.
+
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneGatedFeatureAPI(kind) {
+    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : window["__gosx_scene3d_" + kind + "_api"];
+  }
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function ensureSceneGatedFeatureLoaded(kind, datasetKey, fallback) {
+    const api = sceneGatedFeatureAPI(kind);
+    if (api) return Promise.resolve(api);
+    if (sceneGatedFeaturePromises[kind]) return sceneGatedFeaturePromises[kind];
+    const name = "scene3d-" + kind, url = resolveSceneSubFeatureURL(datasetKey, fallback || "");
+    if (!url) return Promise.reject(new Error(name + " chunk URL was not advertised"));
+    const promise = new Promise(function(resolve, reject) {
+      const script = document.createElement("script"); script.async = false;
+      gosxConfigureSceneScript(script, "feature-" + name, url);
+      script.onload = function() {
+        const loaded = sceneGatedFeatureAPI(kind);
+        if (loaded) resolve(loaded); else reject(new Error(name + " chunk loaded but did not publish API"));
+      };
+      script.onerror = function() { reject(new Error("failed to load " + name + " chunk")); };
+      document.head.appendChild(script);
+    });
+    sceneGatedFeaturePromises[kind] = promise.catch(function(error) {
+      delete sceneGatedFeaturePromises[kind];
+      if (kind === "webgl" || kind === "webgpu") window["__gosx_scene3d_" + kind + "_feature_promise"] = null;
+      throw error;
+    });
+    return sceneGatedFeaturePromises[kind];
+  }
 
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can
@@ -3729,12 +3610,14 @@ function gosxConfigureSceneScript(script, role, src) {
     return models.concat(sceneInstancedGLBModelsFromBatches(instancedGLBMeshes));
   }
 
+  const sceneModelHydrationKinds = ["objects", "labels", "sprites", "html", "lights"];
+
   function sceneClearHydratedModelRecords(state) {
     if (!state || !state._hydratedModelRecords) {
       return;
     }
     const records = state._hydratedModelRecords;
-    for (const kind of ["objects", "labels", "sprites", "html", "lights"]) {
+    for (const kind of sceneModelHydrationKinds) {
       for (const id of (Array.isArray(records[kind]) ? records[kind] : [])) {
         state[kind].delete(sceneObjectKey(id));
       }
@@ -3788,6 +3671,15 @@ function gosxConfigureSceneScript(script, role, src) {
       stale: Boolean(stale),
       failureStage: String(failureStage || ""),
     });
+  }
+
+  function scenePublishCommittedModelHydration(state, generation, counts, event, summary = counts) {
+    state._modelsPending = false;
+    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+      generation, currentGeneration: generation, committed: true, counts,
+    });
+    gosxSceneEmit("info", event, Object.assign({ generation, committed: true, stale: false }, summary));
+    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
   }
 
   // Identity-root rigid stages share immutable primitive streams from the same
@@ -4004,15 +3896,16 @@ function gosxConfigureSceneScript(script, role, src) {
     }
   }
 
+  function sceneRigidModelPlaybackEligible(model) {
+    return !model.animation && !model.animationSeq && !model._inState && !model._outState &&
+      !(Array.isArray(model._live) && model._live.length) &&
+      !(model._transition && ["in", "out", "update"].some(function(kind) {
+        return model._transition[kind] && model._transition[kind].duration > 0;
+      }));
+  }
+
   function sceneStaticModelHydrationKey(state, model, modelIndex) {
-    if (!model || model.static !== true || model.animation || model.animationSeq ||
-        model._inState || model._outState ||
-        Array.isArray(model._live) && model._live.length > 0) {
-      return "";
-    }
-    if (model._transition && ["in", "out", "update"].some(function(kind) {
-      return model._transition[kind] && model._transition[kind].duration > 0;
-    })) return "";
+    if (!model || model.static !== true || !sceneRigidModelPlaybackEligible(model)) return "";
     // Normalized declarations include the asset, transform, fit and material
     // overrides. Texture variants are a separate asset-cache identity.
     const scope = state && state._modelTextureVariantScope;
@@ -4033,11 +3926,7 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneRigidInstanceHydrationEligible(model, matrix) {
-    if (!model || model.static === true && model._instancedGLB !== true || model.animation || model.animationSeq ||
-        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return false;
-    if (model._transition && ["in", "out", "update"].some(function(kind) {
-      return model._transition[kind] && model._transition[kind].duration > 0;
-    })) return false;
+    if (!model || model.static === true && model._instancedGLB !== true || !sceneRigidModelPlaybackEligible(model)) return false;
     // A singular or mirrored transform takes the established winding/bake
     // path. This fast path never silently changes reflection semantics.
     return sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001;
@@ -4072,11 +3961,15 @@ function gosxConfigureSceneScript(script, role, src) {
     // persist across commands and reuse their mutable matrix cache; retain the
     // defensive copy for those broader declarations.
     const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
-    return { staged, model, matrix: snapshotMatrix, crowdRows, poseRevision: staged._poseRevision || 0 };
+    return { staged, model, matrix: snapshotMatrix, crowdRows, poseRevision: staged._poseRevision };
   }
 
-  function sceneCommitRigidInstancePatch(patch) {
-    for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+  function sceneCommitRigidInstancePatch(patch, clearMotion = false) {
+    for (const object of patch.staged.objects) {
+      object.parentMatrix = patch.matrix;
+      if (!patch.crowdRows && object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
+      if (clearMotion && object._crowdMotion) delete object._crowdMotion;
+    }
     if (patch.crowdRows) {
       for (const update of patch.crowdRows) update.object._crowdSkin.rows.set(update.rows);
     }
@@ -4089,7 +3982,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const pendingBatches = arguments[2];
     const records = state && state._hydratedModelRecords;
     const cache = records && records.rigidInstances;
-    const pending = Boolean(state && (state._modelHydrationPromise || state._modelHydrationUncommitted));
+    const pending = Boolean(state && (state._modelHydrationPromise || state._modelsPending));
     if (!cache || pending && (!Array.isArray(pendingBatches) || !pendingBatches.length) || state._modelOwner && !state._modelOwner()) return false;
     const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
     if (!pending && models.length !== records.modelCount) return false;
@@ -4128,20 +4021,14 @@ function gosxConfigureSceneScript(script, role, src) {
         continue;
       }
       const staged = key && cache.get(key);
-      if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
+      if (keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
       keys.add(key);
       patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
     }
     if (pending && !patches.length) return false;
     // Validate every selected committed wrapper before changing any pose.
     for (const patch of patches) {
-      for (const object of patch.staged.objects) {
-        object.parentMatrix = patch.matrix;
-        if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
-        if (object._crowdMotion) delete object._crowdMotion;
-      }
-      patch.staged.model = patch.model;
-      patch.staged.rigidInstanceModel = patch.model;
+      sceneCommitRigidInstancePatch(patch, true);
       patch.staged._poseRevision = (patch.staged._poseRevision || 0) + 1;
     }
     return true;
@@ -4330,48 +4217,43 @@ function gosxConfigureSceneScript(script, role, src) {
     return changed ? { state, records, models, entries, keys, scope } : null;
   }
 
-  // Defaults provide JS-compatible types for this shared publication boundary.
-  function scenePublishCommittedModelHydration(state = Object.create(null), generation = 0,
-      counts = sceneModelHydrationCounts(0), event = "", summary = Object(counts)) {
-    state._modelHydrationUncommitted = false;
-    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
-      generation, currentGeneration: generation, committed: true, counts,
-    });
-    gosxSceneEmit("info", event, Object.assign({ generation, committed: true, stale: false }, summary));
-    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+  function sceneHydratedModelRecords(modelCount) {
+    return Object({ modelCount, objects: [], points: [], labels: [], sprites: [], html: [], lights: [],
+      staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() });
   }
 
   async function sceneCommitRigidInstanceMembership(plan) {
     const state = plan.state;
-    state._modelHydrationUncommitted = true;
+    state._modelsPending = true;
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
     const additions = plan.entries.filter(function(entry) { return entry.kind === "add"; });
     const results = await Promise.all(additions.map(function(entry) {
       return sceneStageModelHydration(state, entry.model, entry.modelIndex, generation);
     }));
+    function discard(outcome = "", failureStage = "") {
+      sceneDestroyStagedModelHydrations(results);
+      return outcome
+        ? sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, outcome, false, outcome === "stale", failureStage)
+        : hydrateSceneStateModels(state, null);
+    }
     if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
         sceneRigidMembershipScopeKey(state) !== plan.scope) {
-      sceneDestroyStagedModelHydrations(results);
-      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+      return discard("stale");
     }
     const failure = results.find(function(result) { return !result || result.ok !== true; });
     if (failure) {
-      sceneDestroyStagedModelHydrations(results);
-      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "failed", false, false,
-        failure && failure.stage || "unknown");
+      return discard("failed", failure && failure.stage || "unknown");
     }
     for (let index = 0; index < additions.length; index += 1) {
       const entry = additions[index];
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const staged = results[index].staged;
       const key = sceneRigidInstanceHydrationKey(state, entry.model);
       if (key !== entry.key || !sceneReusableRigidInstance(staged, null)) {
-        sceneDestroyStagedModelHydrations(results);
-        return hydrateSceneStateModels(state, null);
+        return discard();
       }
       const patch = scenePrepareRigidInstancePatch(null, staged, entry.model, sceneModelTransformMatrix(entry.model));
       if (!patch) {
-        sceneDestroyStagedModelHydrations(results);
-        return hydrateSceneStateModels(state, null);
+        return discard();
       }
       entry.staged = staged;
       entry.patch = patch;
@@ -4383,36 +4265,33 @@ function gosxConfigureSceneScript(script, role, src) {
     for (const entry of plan.entries) {
       if (entry.kind === "static") {
         if (!sceneReusableStaticModelHydration(entry.staged, state)) {
-          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+          return discard();
         }
       } else if (entry.kind === "rigid") {
         if (!sceneReusableRigidInstance(entry.staged, state)) {
-          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+          return discard();
         }
         // Keep poses advanced during loading instead of the plan snapshot.
-        if (entry.patch.poseRevision !== (entry.staged._poseRevision || 0)) {
+        if (entry.patch.poseRevision !== entry.staged._poseRevision) {
           const model = entry.staged.rigidInstanceModel;
           entry.patch = scenePrepareRigidInstancePatch(state, entry.staged, model, sceneModelTransformMatrix(model));
-          if (!entry.patch) { sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null); }
+          if (!entry.patch) { return discard(); }
         }
       }
       for (const object of entry.staged.objects) {
-        if (nextObjectIDs.has(object.id)) {
-          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
-        }
-        if (entry.kind === "add" && state.objects.has(object.id) && !oldObjectIDs.has(object.id)) {
-          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        if (nextObjectIDs.has(object.id) ||
+            entry.kind === "add" && state.objects.has(object.id) && !oldObjectIDs.has(object.id)) {
+          return discard();
         }
         nextObjectIDs.add(object.id);
       }
     }
     if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
         sceneRigidMembershipScopeKey(state) !== plan.scope) {
-      sceneDestroyStagedModelHydrations(results);
-      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+      return discard("stale");
     }
 
-    const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+    const hydrated = sceneHydratedModelRecords(plan.entries.length);
     for (const entry of plan.entries) {
       if (entry.kind === "static") hydrated.staticModels.set(entry.key, entry.staged);
       else {
@@ -4457,7 +4336,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
     state._modelHydrationGeneration = generation;
     // Failed replacements still allow compatible committed poses to advance.
-    state._modelHydrationUncommitted = true;
+    state._modelsPending = true;
     let models;
     try {
       // Commands can replace the declaration arrays while their assets are in
@@ -4477,7 +4356,7 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneModelHydrationOutcome(counts, generation, "failed", false, false, "declarations");
     }
 
-    const counts = sceneModelHydrationCounts(models.length);
+    const counts = Object(sceneModelHydrationCounts(models.length));
     publishSceneModelHydrationStatus(state._modelStatusMount, "loading", {
       generation,
       currentGeneration: generation,
@@ -4529,7 +4408,19 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneModelHydrationOutcome(counts, generation, "stale", false, true, "");
     }
 
-    const failure = results.find(function(result) { return !result || result.ok !== true; });
+    let failure;
+    // Refresh only transaction-local reuse snapshots while checking results.
+    results.some(function(result, index) {
+      if (!result || result.ok !== true) { failure = result; return true; }
+      const staged = result.staged;
+      const source = previousRigidInstances && previousRigidInstances.get(rigidKeys[index]);
+      if (source && staged.objects === source.objects && staged._poseRevision !== source._poseRevision) {
+        staged.model = source.rigidInstanceModel;
+        staged.rigidInstanceModel = source.rigidInstanceModel;
+        staged._pendingRigidMatrix = new Float32Array(sceneModelTransformMatrix(source.rigidInstanceModel));
+        staged._poseRevision = source._poseRevision;
+      }
+    });
     if (failure) {
       sceneDestroyStagedModelHydrations(results);
       const failedStage = failure && failure.stage ? failure.stage : "unknown";
@@ -4552,18 +4443,6 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneModelHydrationOutcome(counts, generation, "failed", false, false, failedStage);
     }
 
-    // Refresh reused wrappers from newer poses; replacements keep their snapshot.
-    for (const [index, result] of results.entries()) {
-      const staged = result.staged;
-      const source = previousRigidInstances && previousRigidInstances.get(rigidKeys[index]);
-      if (source && staged.objects === source.objects && (staged._poseRevision || 0) !== (source._poseRevision || 0)) {
-        staged.model = source.rigidInstanceModel;
-        staged.rigidInstanceModel = source.rigidInstanceModel;
-        staged._pendingRigidMatrix = new Float32Array(sceneModelTransformMatrix(source.rigidInstanceModel));
-        staged._poseRevision = source._poseRevision;
-      }
-    }
-
     // The entire generation is ready and still current. Replace the previous
     // model-derived records in one synchronous turn, preserving declaration
     // order regardless of network completion order.
@@ -4573,14 +4452,11 @@ function gosxConfigureSceneScript(script, role, src) {
     state._modelSkins = [];
     // Keep only this committed generation. Moving transforms and removed
     // models cannot accumulate a history of cached geometry.
-    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+    const hydrated = sceneHydratedModelRecords(results.length);
     for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
       const staged = results[modelIndex].staged;
       if (staged._pendingRigidMatrix) {
-        for (const object of staged.objects) {
-          object.parentMatrix = staged._pendingRigidMatrix;
-          if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows);
-        }
+        sceneCommitRigidInstancePatch({ staged, model: staged.model, matrix: staged._pendingRigidMatrix });
         delete staged._pendingRigidMatrix;
       }
       if (staticKeys[modelIndex] && sceneReusableStaticModelHydration(staged, null)) {
@@ -4594,16 +4470,10 @@ function gosxConfigureSceneScript(script, role, src) {
         const membership = sceneRigidMembershipDescriptor(state, rigidKeys[modelIndex], staged);
         if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
       }
-      for (const [entries, collection, ids] of [
-        [staged.objects, state.objects, hydrated.objects],
-        [staged.labels, state.labels, hydrated.labels],
-        [staged.sprites, state.sprites, hydrated.sprites],
-        [staged.html, state.html, hydrated.html],
-        [staged.lights, state.lights, hydrated.lights],
-      ]) {
-        for (const entry of entries) {
-          collection.set(entry.id, entry);
-          ids.push(entry.id);
+      for (const kind of sceneModelHydrationKinds) {
+        for (const entry of staged[kind]) {
+          state[kind].set(entry.id, entry);
+          hydrated[kind].push(entry.id);
         }
       }
       for (const point of staged.points) {
@@ -4614,12 +4484,8 @@ function gosxConfigureSceneScript(script, role, src) {
       Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
     }
     state._hydratedModelRecords = hydrated;
-    counts.objects = hydrated.objects.length;
     counts.points = hydrated.points.length;
-    counts.labels = hydrated.labels.length;
-    counts.sprites = hydrated.sprites.length;
-    counts.html = hydrated.html.length;
-    counts.lights = hydrated.lights.length;
+    for (const kind of sceneModelHydrationKinds) counts[kind] = hydrated[kind].length;
     return scenePublishCommittedModelHydration(state, generation, counts, "model-hydration-committed");
   }
 

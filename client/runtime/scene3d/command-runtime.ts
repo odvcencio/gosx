@@ -142,7 +142,7 @@
     return new Promise(function(resolve, reject) {
       var queue = poseQueues.get(queueKey);
       if (!queue) {
-        queue = { running: false, pending: null, stats: null, sequence: 0, progressed: 0, waitingForCommands: false };
+        queue = { running: false, pending: null, stats: null };
         poseQueues.set(queueKey, queue);
       }
       if (queue.pending) {
@@ -159,15 +159,15 @@
         poseStats(queue.pending.target, queue.pending.opts).superseded++;
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
-      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject, sequence: ++queue.sequence };
+      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject };
       // Advance compatible committed actors while assets load; keep the latest
       // frame queued behind its membership command for final replay.
-      if (queue.waitingForCommands) {
+      if (queue.waiting) {
         var rec = record(target, opts);
         if (rec && typeof rec.handle.applyPendingPoseFrame === "function") {
           try {
             var progress = rec.handle.applyPendingPoseFrame(decodePoseFrame(frame));
-            if (progress && progress.applied === true && progress.binary === true) queue.progressed = queue.pending.sequence;
+            if (progress && progress.applied === true && progress.binary === true) queue.advanced = true;
           } catch (_error) { /* The queued transaction remains authoritative. */ }
         }
       }
@@ -193,14 +193,15 @@
     if (!job) { queue.running = false; poseQueues.delete(queueKey); return; }
     queue.pending = null;
     queue.running = true;
+    queue.advanced = false;
     var operation;
     try {
-      queue.waitingForCommands = Array.isArray(job.opts.beforeCommands);
-      operation = queue.waitingForCommands
+      queue.waiting = Array.isArray(job.opts.beforeCommands);
+      operation = queue.waiting
         ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() {
-          queue.waitingForCommands = false;
+          queue.waiting = false;
           // Do not replay an older frame over poses advanced during loading.
-          return queue.progressed > job.sequence
+          return queue.advanced
             ? { applied: false, binary: true, superseded: true }
             : dispatchPoseFrameNow(job.target, job.frame, job.opts);
         })
@@ -221,7 +222,7 @@
       if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
         try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:pose-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
       }
-      queue.waitingForCommands = false;
+      queue.waiting = false;
       job.reject(error);
       runPoseQueue(queueKey, queue);
     });
@@ -262,7 +263,7 @@
     if (!state._hydratedModelRecords) reject("renderer-not-ready");
     var mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
     var targets = [];
-    var pending = Boolean(state._modelHydrationPromise || state._modelHydrationUncommitted);
+    var pending = Boolean(state._modelHydrationPromise || state._modelsPending);
     var selected = pending ? [] : batches;
     for (var batch of batches) {
       var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
