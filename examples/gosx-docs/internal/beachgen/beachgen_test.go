@@ -50,8 +50,8 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("beach has %d vertices, want %d", count, 129*129)
 	}
 	t.Logf("beach-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, beach), len(first["beach-v2.glb"]))
-	if count := positionCount(t, stacks); count != 18522 {
-		t.Errorf("stacks and boulders have %d vertices, want 18522", count)
+	if count := positionCount(t, stacks); count != 18847 {
+		t.Errorf("stacks and boulders have %d vertices, want 18847", count)
 	}
 	t.Logf("stacks-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, stacks), len(first["stacks-v2.glb"]))
 	if count := positionCount(t, monolith); count < 150 || count > 400 {

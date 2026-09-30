@@ -28,11 +28,11 @@ type blackglassBeachPeriod struct {
 func blackglassBeachPeriodFor(raw string) blackglassBeachPeriod {
 	switch raw {
 	case beachgen.PeriodBlue:
-		return blackglassBeachPeriod{beachgen.PeriodBlue, "Blue hour", "#9fb4ff", 0.35, 0.95}
+		return blackglassBeachPeriod{beachgen.PeriodBlue, "Blue hour", "#9fb4ff", 0.6, 0.95}
 	case beachgen.PeriodNoon:
-		return blackglassBeachPeriod{beachgen.PeriodNoon, "Noon", "#fff4e6", 3.2, 0.5}
+		return blackglassBeachPeriod{beachgen.PeriodNoon, "Noon", "#fff4e6", 9, 0.5}
 	default:
-		return blackglassBeachPeriod{beachgen.PeriodGolden, "Golden hour", "#ffc690", 2.6, 0.62}
+		return blackglassBeachPeriod{beachgen.PeriodGolden, "Golden hour", "#ffc690", 6.5, 0.62}
 	}
 }
 
@@ -130,7 +130,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 		AdaptiveQuality:    scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 24, AdaptivePostFX: scene.Bool(true),
 		Camera: scene.PerspectiveCamera{Position: view.Position, FOV: 42, PortraitFOV: 70, Near: 0.1, Far: 900},
 		Environment: scene.Environment{
-			IBL: blackglassBeachPeriodIBL(period.ID), EnvIntensity: 1,
+			IBL: blackglassBeachPeriodIBL(period.ID), EnvIntensity: 0.7,
 			Sky:      &sky,
 			FogColor: horizon, FogDensity: 0.0035,
 			Ocean: &scene.Ocean{

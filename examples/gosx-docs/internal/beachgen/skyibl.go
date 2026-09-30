@@ -27,7 +27,7 @@ func PeriodSky(period string) scene.Sky {
 	case PeriodBlue:
 		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(-1.5, -18), Turbidity: 3, Rayleigh: 3.2, MieCoefficient: 0.004, MieDirectionalG: 0.78}
 	case PeriodNoon:
-		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(52, -35), Turbidity: 3.5, Rayleigh: 1.2, MieCoefficient: 0.004, MieDirectionalG: 0.8}
+		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(50, 100), Turbidity: 3.5, Rayleigh: 1.2, MieCoefficient: 0.004, MieDirectionalG: 0.8}
 	default:
 		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(4.5, -14), Turbidity: 6, Rayleigh: 1.7, MieCoefficient: 0.006, MieDirectionalG: 0.82}
 	}

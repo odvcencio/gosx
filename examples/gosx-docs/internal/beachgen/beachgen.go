@@ -20,6 +20,9 @@ type geometry struct {
 	normals   []float64
 	uvs       []float64
 	indices   []uint16
+	// seams pairs vertices duplicated only to carry a UV seam; they share
+	// one averaged normal so lighting stays continuous across the seam.
+	seams [][2]int
 }
 
 // Generate builds all Blackglass Beach assets using deterministic code and the
@@ -184,9 +187,9 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 			rock := math.Hypot(dx, dz) > .6 || (math.Abs(x) > 34 && h > 2)
 			ao := ambientOcclusion(n, x, z, h)
 			factor := .45 + .55*ao
-			base := [3]float64{62, 58, 54}
+			base := [3]float64{80, 74, 68}
 			if rock {
-				base = [3]float64{40, 42, 45}
+				base = [3]float64{58, 60, 63}
 			} else {
 				mottle := n.fbm(x/3+float64(seed%19), z/3-float64(seed%23), 3) * .10
 				streaks := n.fbm(x/9+float64(seed%7), z*1.4, 3) * .08 // wind streaks run across the beach
@@ -359,7 +362,7 @@ func rockMaterial() map[string]any {
 	return map[string]any{
 		"name": "Weathered basalt",
 		"pbrMetallicRoughness": map[string]any{
-			"baseColorFactor": []float64{srgbLinear(28.0 / 255), srgbLinear(29.0 / 255), srgbLinear(31.0 / 255), 1},
+			"baseColorFactor": []float64{srgbLinear(62.0 / 255), srgbLinear(63.0 / 255), srgbLinear(66.0 / 255), 1},
 			"metallicFactor":  0,
 			"roughnessFactor": .85,
 		},
@@ -501,8 +504,8 @@ func addStack(g *geometry, stack stackSpec) {
 		domeStart := topY - math.Min((topY-baseY)*.16, stack.radius*.45)
 		dome := smoothstep(domeStart, topY, y)
 		profile := 1 - .45*dome
-		for side := 0; side < sides; side++ {
-			angle := 2 * math.Pi * float64(side) / sides
+		for side := 0; side <= sides; side++ { // the last column repeats the first with u = 1
+			angle := 2 * math.Pi * float64(side%sides) / sides
 			dx, dz := math.Cos(angle), math.Sin(angle)
 			// A jagged crown: notch the top rows by noise around the circumference.
 			worldY := y - dome*stack.radius*.35*math.Abs(noiseValue3(noise, dx*1.7+stack.x, 3.3, dz*1.7+stack.z))
@@ -522,26 +525,30 @@ func addStack(g *geometry, stack stackSpec) {
 			radius *= 1 - .18*notch
 			leanFactor := (worldY - baseY) * stack.lean
 			p := vec3{stack.x + dx*radius + leanFactor, worldY, stack.z + dz*radius}
-			appendVertex(g, p, angle/(2*math.Pi), worldY/8-math.Floor(worldY/8))
+			appendVertex(g, p, float64(side)/sides, worldY/8) // v repeats through the sampler, no fract seam
+			if side == sides {
+				g.seams = append(g.seams, [2]int{first + row*(sides+1), first + row*(sides+1) + sides})
+			}
 		}
 	}
 	for row := 0; row < rings; row++ {
 		for side := 0; side < sides; side++ {
-			a := uint16(first + row*sides + side)
-			b := uint16(first + row*sides + (side+1)%sides)
-			c := uint16(first + (row+1)*sides + (side+1)%sides)
-			d := uint16(first + (row+1)*sides + side)
+			stride := sides + 1
+			a := uint16(first + row*stride + side)
+			b := uint16(first + row*stride + side + 1)
+			c := uint16(first + (row+1)*stride + side + 1)
+			d := uint16(first + (row+1)*stride + side)
 			g.indices = append(g.indices, a, d, c, a, c, b)
 		}
 	}
-	bottom := appendVertex(g, vec3{stack.x, baseY, stack.z}, .5, baseY/8-math.Floor(baseY/8))
-	top := appendVertex(g, vec3{stack.x + (topY-baseY)*stack.lean, topY, stack.z}, .5, topY/8-math.Floor(topY/8))
+	bottom := appendVertex(g, vec3{stack.x, baseY, stack.z}, .5, baseY/8)
+	top := appendVertex(g, vec3{stack.x + (topY-baseY)*stack.lean, topY, stack.z}, .5, topY/8)
 	for side := 0; side < sides; side++ {
-		next := (side + 1) % sides
+		next := side + 1
 		firstRing := uint16(first + side)
 		secondRing := uint16(first + next)
-		lastRing := uint16(first + rings*sides + side)
-		nextLast := uint16(first + rings*sides + next)
+		lastRing := uint16(first + rings*(sides+1) + side)
+		nextLast := uint16(first + rings*(sides+1) + next)
 		g.indices = append(g.indices, bottom, firstRing, secondRing)
 		g.indices = append(g.indices, top, nextLast, lastRing)
 	}
@@ -588,6 +595,13 @@ func averageVertexNormals(g *geometry) {
 			g.normals[index] += normal.x
 			g.normals[index+1] += normal.y
 			g.normals[index+2] += normal.z
+		}
+	}
+	for _, pair := range g.seams {
+		a, b := pair[0]*3, pair[1]*3
+		for k := 0; k < 3; k++ {
+			sum := g.normals[a+k] + g.normals[b+k]
+			g.normals[a+k], g.normals[b+k] = sum, sum
 		}
 	}
 	for i := 0; i < len(g.normals); i += 3 {
