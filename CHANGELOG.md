@@ -29,6 +29,14 @@
   bounds and maximized state across launches.
 - Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
   provides the placement before the window is destroyed.
+### Added: opt-in Scene3D mip bloom
+
+- Set `scene.Bloom.Mode` to `"mip"` for soft-knee extraction, a bounded HDR
+  input, and up to six filtered bloom levels on WebGL2 and WebGPU. Additive
+  tent upsampling avoids the spaced blur copies around bright edges.
+- Empty and unknown modes preserve the existing bloom output and wire shape.
+  `Bloom.Scale` still controls prefilter resolution; resize and disposal free
+  the full level chain.
 
 ### Added: desktop window handle, focus events, message box
 
@@ -61,6 +69,22 @@
   `sky-physical`.
 
 
+### Added: Scene3D rendering before models
+
+- Add `scene.Props.RenderBeforeModels` to draw the first frame while model
+  assets load. Sky, water, lights, and other scene nodes can render first;
+  loaded models appear in a later render. Unset or false keeps the existing
+  wait for models.
+- Report the selected path in `data-gosx-scene3d-first-frame` as
+  `before-models` or `after-models`. Disposing a scene while models load
+  prevents late hydration from rendering it again.
+### Fixed: tiling normal maps from glTF
+
+- A `KHR_texture_transform` scale on `normalTexture` alone (a detail map that
+  tiles while base colour spans the mesh) now reaches the WebGL2 and WebGPU
+  shaders as `normalUVScale`. Before, the loader baked only the base colour
+  transform, so such normal maps stretched across the whole mesh. A transform
+  shared with base colour is still baked into the UVs once.
 
 ### Fixed and added: desktop single instance
 

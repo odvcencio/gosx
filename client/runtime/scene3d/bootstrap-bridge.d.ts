@@ -250,3 +250,6 @@ declare var sceneOceanUniformData: any;
 // The ocean passes ship in the same chunk as the renderer that calls them.
 declare function sceneOceanWebGLDraw(resources: any, gl: any, opts: any): void;
 declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;
+
+declare function createSceneWebGLMipBloom(host: any): any;
+declare function createSceneWebGPUMipBloom(host: any): any;

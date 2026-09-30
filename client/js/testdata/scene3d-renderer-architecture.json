@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2838,
-    "actualGovernanceLinesAtReview": 2838,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values."
+    "revisedGovernanceLineBudget": 2904,
+    "actualGovernanceLinesAtReview": 2868,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -35,7 +35,9 @@
     "webgl-ocean.ts",
     "webgl.ts",
     "webgpu-ocean.ts",
-    "webgpu.ts"
+    "webgpu.ts",
+    "webgl-bloom.ts",
+    "webgpu-bloom.ts"
   ],
   "intentionalDirectRendererReferences": [
     {
@@ -302,6 +304,26 @@
       "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
       "source": "webgpu.ts",
       "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl-bloom.ts",
+      "count": 2
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu-bloom.ts",
+      "count": 2
     }
   ],
   "sourceSets": {
@@ -314,6 +336,7 @@
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
         "../runtime/scene3d/webgl-ocean.ts",
+        "../runtime/scene3d/webgl-bloom.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -323,13 +346,15 @@
         "bootstrap-src/16e-scene-webgl-legacy.ts": "backend-support",
         "../runtime/scene3d/webgl.ts": "governed-renderer",
         "../runtime/scene3d/webgl-ocean.ts": "governed-renderer",
-        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper"
+        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts": "chunk-wrapper",
+        "../runtime/scene3d/webgl-bloom.ts": "governed-renderer"
       },
       "sources": [
         "../runtime/scene3d/webgl.ts",
-        "../runtime/scene3d/webgl-ocean.ts"
+        "../runtime/scene3d/webgl-ocean.ts",
+        "../runtime/scene3d/webgl-bloom.ts"
       ],
-      "maxLines": 11494,
+      "maxLines": 11600,
       "maxFileLines": 11270
     },
     "webgpu": {
@@ -340,6 +365,7 @@
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
+        "../runtime/scene3d/webgpu-bloom.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ],
       "chunkSourceRoles": {
@@ -348,14 +374,16 @@
         "../runtime/scene3d/webgpu.ts": "governed-renderer",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-ocean.ts": "governed-renderer",
-        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper"
+        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper",
+        "../runtime/scene3d/webgpu-bloom.ts": "governed-renderer"
       },
       "sources": [
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
-        "../runtime/scene3d/webgpu-ocean.ts"
+        "../runtime/scene3d/webgpu-ocean.ts",
+        "../runtime/scene3d/webgpu-bloom.ts"
       ],
-      "maxLines": 19744,
+      "maxLines": 19869,
       "maxFileLines": 19328
     }
   },
@@ -365,9 +393,11 @@
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5588,
-    "../runtime/scene3d/mount.ts": 3866,
+    "../runtime/scene3d/mount.ts": 3884,
     "../runtime/scene3d/webgl-ocean.ts": 224,
-    "../runtime/scene3d/webgpu-ocean.ts": 211
+    "../runtime/scene3d/webgpu-ocean.ts": 211,
+    "../runtime/scene3d/webgl-bloom.ts": 114,
+    "../runtime/scene3d/webgpu-bloom.ts": 125
   },
   "functionDefaults": {
     "lines": 200,
@@ -377,15 +407,6 @@
     "parameters": 8
   },
   "functionExceptions": [
-    {
-      "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4923:14",
-      "lines": 136,
-      "cyclomatic": 34,
-      "cognitive": 74,
-      "maxNesting": 5,
-      "parameters": 6
-    },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "applyPointsAuthoredCustomUniforms@10193:5",
@@ -408,18 +429,9 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@7470:3",
       "lines": 3434,
-      "cyclomatic": 1027,
-      "cognitive": 1626,
+      "cyclomatic": 1030,
+      "cognitive": 1631,
       "maxNesting": 7,
-      "parameters": 2
-    },
-    {
-      "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4521:3",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
-      "maxNesting": 5,
       "parameters": 2
     },
     {
@@ -550,15 +562,6 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "anonymous@4550:14",
-      "lines": 304,
-      "cyclomatic": 29,
-      "cognitive": 81,
-      "maxNesting": 8,
-      "parameters": 8
-    },
-    {
-      "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWaterSystem@10633:5",
       "lines": 202,
       "cyclomatic": 33,
@@ -579,8 +582,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6454:3",
       "lines": 12184,
-      "cyclomatic": 4106,
-      "cognitive": 5323,
+      "cyclomatic": 4108,
+      "cognitive": 5325,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -802,15 +805,6 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "wgpuCreatePostProcessor@4181:3",
-      "lines": 669,
-      "cyclomatic": 126,
-      "cognitive": 194,
-      "maxNesting": 8,
-      "parameters": 4
-    },
-    {
-      "source": "../runtime/scene3d/webgpu.ts",
       "name": "wgpuCreateSceneColorPipeline@3929:3",
       "lines": 26,
       "cyclomatic": 2,
@@ -826,6 +820,42 @@
       "cognitive": 88,
       "maxNesting": 5,
       "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "anonymous@4922:14",
+      "lines": 136,
+      "cyclomatic": 34,
+      "cognitive": 74,
+      "maxNesting": 5,
+      "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createScenePostProcessor@4521:3",
+      "lines": 554,
+      "cyclomatic": 141,
+      "cognitive": 201,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "anonymous@4548:14",
+      "lines": 305,
+      "cyclomatic": 29,
+      "cognitive": 81,
+      "maxNesting": 8,
+      "parameters": 8
+    },
+    {
+      "source": "../runtime/scene3d/webgpu.ts",
+      "name": "wgpuCreatePostProcessor@4181:3",
+      "lines": 673,
+      "cyclomatic": 126,
+      "cognitive": 194,
+      "maxNesting": 8,
+      "parameters": 4
     }
   ],
   "symbols": [
@@ -851,18 +881,9 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
       "lines": 3434,
-      "cyclomatic": 1027,
-      "cognitive": 1626,
+      "cyclomatic": 1030,
+      "cognitive": 1631,
       "maxNesting": 7,
-      "parameters": 2
-    },
-    {
-      "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
-      "maxNesting": 5,
       "parameters": 2
     },
     {
@@ -914,8 +935,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
       "lines": 12184,
-      "cyclomatic": 4106,
-      "cognitive": 5323,
+      "cyclomatic": 4108,
+      "cognitive": 5325,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -956,9 +977,18 @@
       "parameters": 10
     },
     {
+      "source": "../runtime/scene3d/webgl.ts",
+      "name": "createScenePostProcessor",
+      "lines": 554,
+      "cyclomatic": 141,
+      "cognitive": 201,
+      "maxNesting": 5,
+      "parameters": 2
+    },
+    {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "wgpuCreatePostProcessor",
-      "lines": 669,
+      "lines": 673,
       "cyclomatic": 126,
       "cognitive": 194,
       "maxNesting": 8,
@@ -971,9 +1001,9 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "raw": 845500,
-      "gzip": 240000,
-      "brotli": 199000,
+      "raw": 850100,
+      "gzip": 241400,
+      "brotli": 200200,
       "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 887738 / 251948 / 208858."
     },
     "base+webgpu": {
@@ -981,9 +1011,9 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "raw": 991100,
-      "gzip": 267100,
-      "brotli": 220600,
+      "raw": 995400,
+      "gzip": 268800,
+      "brotli": 222000,
       "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1039111 / 280381 / 231539."
     },
     "base+webgl+gltf+animation": {
@@ -993,9 +1023,9 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 908300,
-      "gzip": 261900,
-      "brotli": 218400,
+      "raw": 910100,
+      "gzip": 263400,
+      "brotli": 219600,
       "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 950560 / 274923 / 229285."
     },
     "base+webgpu+gltf+animation": {
@@ -1005,9 +1035,9 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 1053900,
-      "gzip": 289000,
-      "brotli": 240000,
+      "raw": 1055400,
+      "gzip": 290800,
+      "brotli": 241400,
       "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1101933 / 303356 / 251966."
     }
   },

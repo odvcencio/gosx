@@ -50,6 +50,17 @@ dashboards, and interactive scenes. Its supported boundary is:
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
   the existing JavaScript, network, WASM, and performance budgets.
 
+Set `scene.Props.RenderBeforeModels` to `scene.Bool(true)` to draw the first
+frame without waiting for glTF or other model assets. Sky, water, lights, and
+non-model nodes render while models load; hydration keeps its existing commit
+behavior and schedules a render with reason `models` when it settles, including
+failure. Transition priming and progressive-model setup still follow hydration.
+Disposal or mount replacement prevents late hydration from rendering the old
+scene. A nil prop emits no `renderBeforeModels` key and preserves existing wire
+bytes; nil or false keeps the wait for models. The mount reports the selected
+startup path as `before-models` or `after-models` in
+`data-gosx-scene3d-first-frame`.
+
 ## Executable corpus status
 
 | Corpus ID | Current state | Closure needed |
@@ -132,6 +143,8 @@ context loss invalidates GPU samples. Renderer replacement starts a new ring.
 When a WebGPU scene has post effects, the scene, auxiliary, bloom, and MSAA color targets use `rgba16float`. The canvas keeps its preferred presentation format. The final blit converts the last post target to that format. Resize and post-effect changes rebuild targets and pipelines with matching formats.
 
 The tone-map effect applies the same display transfer as WebGL. Linear, ACES, and Reinhard modes apply gamma 2.2 after the curve. Filmic already includes its output response and gets no second transfer. Put bloom before tone mapping to select radiance above one. An explicit tone-map effect remains required; an identity or custom-only chain does not gain an implicit curve. Custom shader color conventions remain the author’s responsibility.
+
+Set `scene.Bloom{Mode: "mip"}` to opt into mip-chain bloom on WebGL2 and WebGPU. The prefilter clamps linear RGB to 64, uses the maximum color channel for brightness, and applies a soft knee of half the threshold. `Scale` remains the prefilter resolution factor, defaulting to 0.5. Up to six levels halve each dimension, stopping before the short side would fall below eight pixels; a smaller initial target still works as one level. Each reduction uses 13 bilinear taps (outer offsets of two source texels and inner diagonals of one), with normalized weights. Upsampling adds a 3×3 tent with weights `[1, 2, 1] × [1, 2, 1] / 16` into separate scratch targets. The tent radius is `Radius / 5`, clamped to 0.25–2 source texels, with a default of one. The scene receives the resulting bloom multiplied by `Strength` in linear HDR before the following tone map. Resize and disposal release all levels and scratch targets. Empty and unknown modes retain the existing algorithm and emit no mode key from Go.
 
 ### Browser sky
 

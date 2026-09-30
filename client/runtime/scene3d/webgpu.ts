@@ -189,7 +189,7 @@
     // index 41 above carries the specular flag and index 43 stays
     // padding, keeping the struct at 208 bytes total (41 flag,
     // 42 cutoff, 43 pad).
-    "    alphaCutoff: f32,",
+    "    alphaCutoff: f32, normalUVScaleV: f32,",
     "    specularF0: vec3f,",
     "    specularF90: f32,",
     // Per-channel log2 of the authored dielectric specular coefficient
@@ -1909,7 +1909,7 @@
     "        let T = normalize(in.tangent);",
     "        let B = normalize(in.bitangent);",
     "        let TBN = mat3x3f(T, B, N);",
-    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv * select(vec2f(1.0), vec2f(material.modelScaleSigns.w, material.normalUVScaleV), material.modelScaleSigns.w > 0.0)).rgb * 2.0 - 1.0;",
     "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -4198,9 +4198,8 @@
     var depthTexView = null;
     var currentWidth = 0;
     var currentHeight = 0;
-
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
-
+    var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
     // Same memoization pattern as the renderer's wgpuCachedBindGroup: a bind
     // group stays valid while the layout and every bound resource identity
     // are unchanged, and per-frame recreation churns GPU wrapper objects.
@@ -4235,7 +4234,6 @@
       }
       return owner;
     }
-
     // Render-truth chain state, owned by apply() but hoisted here so
     // fullscreenPass -- the ONE function every post pass funnels through --
     // can attribute its dispatch to the effect currently being processed.
@@ -4244,7 +4242,6 @@
     // to add a new effect case that forgets to report itself.
     var activePostChain = null;
     var activePostIndex = -1;
-
     // Lazily compiled pipelines and layouts.
     var pipelines = {};
     var postParamsLayout = null;
@@ -4439,6 +4436,7 @@
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
+      mipBloom.dispose();
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
@@ -4604,6 +4602,7 @@
               break;
             }
             case SCENE_POST_BLOOM: {
+              if (effect.mode === "mip") { currentTexView = mipBloom.apply({ encoder: encoder, input: currentTexView, effect: effect, output: outputView, width: scaledW, height: scaledH, index: i }); break; }
               // Bloom ping-pong resolution is scaledW/H * Bloom.Scale.
               // Zero / out-of-range scale falls back to 0.5 (v0.14.0 default),
               // matching the WebGL helper in applyBloom.
@@ -4862,6 +4861,7 @@
       },
 
       dispose: function() {
+        mipBloom.dispose();
         disposed = true;
         if (sceneTex) sceneTex.destroy();
         if (auxTex) auxTex.destroy();
@@ -14527,7 +14527,7 @@
         f[20 + mi] = model ? sceneNumber(model[mi], mi % 5 === 0 ? 1 : 0) : (mi % 5 === 0 ? 1 : 0);
       }
       f[36] = f[37] = f[38] = 1;
-      f[39] = 0;
+      f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 0; // modelScaleSigns.w: normal-map U scale (0 = 1)
       // Dedicated trailing material scalars: normal-incidence dielectric F0
       // from the authored IOR, then the vec3f alignment word at index 41
       // reused as the hasSpecularIntensityMap flag (u[41], set by
@@ -14542,7 +14542,7 @@
       f[42] = (typeof alphaCutoff === "number" && Number.isFinite(alphaCutoff) && alphaCutoff >= 0)
         ? (alphaCutoff <= 1 ? Math.fround(alphaCutoff) : 2)
         : -1; // alphaCutoff, normalized the same way as the WebGL renderer
-      f[43] = 0;
+      f[43] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 0; // normalUVScaleV
       var specular = sceneWebGPUSpecularFactors(mat);
       f[44] = specular.f0[0];
       f[45] = specular.f0[1];

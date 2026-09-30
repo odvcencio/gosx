@@ -209,7 +209,7 @@
     "uniform float u_emissive;",
     "uniform vec3 u_emissiveColor;",
     "uniform bool u_hasEmissiveColor;",
-    "uniform float u_normalScale;",
+    "uniform float u_normalScale; uniform vec2 u_normalUVScale;",
     "uniform float u_occlusionStrength;",
     "uniform vec3 u_rimColor;",
     "uniform float u_rimPower;",
@@ -550,7 +550,7 @@
     "        vec3 T = normalize(v_tangent);",
     "        vec3 B = normalize(v_bitangent);",
     "        mat3 TBN = mat3(T, B, N);",
-    "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        vec3 mapNormal = texture(u_normalMap, v_uv * (u_normalUVScale.x > 0.0 ? u_normalUVScale : vec2(1.0))).rgb * 2.0 - 1.0;",
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -4524,18 +4524,16 @@
     var auxFBO = null;
     var scratchFBO = null;
     var pingPong = null;
+    var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     var currentWidth = 0;
     var currentHeight = 0;
     var hdrDegradationReported = false;
-
     // Lazily compiled shader programs, keyed by effect name.
     var programs = {};
-
     // Custom post program cache: name → program | null (null = failed, skip).
     var customPostPrograms = {};
     // Failed custom post names (to warn once only).
     var customPostFailed = {};
-
     // Get or compile a post-processing program.
     function getProgram(name, fragmentSource) {
       if (programs[name]) return programs[name];
@@ -4543,7 +4541,6 @@
       if (prog) programs[name] = prog;
       return prog;
     }
-
     // --- Render truth -------------------------------------------------------
     // createScenePostProcessor lives at module scope, a SIBLING of the renderer
     // closure, so it cannot see webglRenderTruth(). Resolve the shared helpers
@@ -4733,6 +4730,7 @@
     // (not the pass dims, which flip to canvas dims on the last pass when
     // the composite writes directly to the screen).
     function applyBloom(inputTex, effect, targetFBO, passW, passH, scaledW, scaledH) {
+      if (effect.mode === "mip") return mipBloom.apply({ input: inputTex, effect: effect, target: targetFBO, passWidth: passW, passHeight: passH, width: scaledW, height: scaledH });
       var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
       var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
       var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
@@ -4881,6 +4879,7 @@
         // Invalidation key is scaled dims so both canvas resize and maxPixels
         // change trigger reallocation.
         if (sw !== currentWidth || sh !== currentHeight) {
+          mipBloom.dispose();
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = createScenePostFBO(gl, sw, sh, true);
           if (!sceneFBO.hdrSupported && !hdrDegradationReported) {
@@ -5069,6 +5068,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
+        mipBloom.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = null;
@@ -5576,7 +5576,7 @@
       emissive: gl.getUniformLocation(program, "u_emissive"),
       emissiveColor: gl.getUniformLocation(program, "u_emissiveColor"),
       hasEmissiveColor: gl.getUniformLocation(program, "u_hasEmissiveColor"),
-      normalScale: gl.getUniformLocation(program, "u_normalScale"),
+      normalScale: gl.getUniformLocation(program, "u_normalScale"), normalUVScale: gl.getUniformLocation(program, "u_normalUVScale"),
       occlusionStrength: gl.getUniformLocation(program, "u_occlusionStrength"),
       rimColor: gl.getUniformLocation(program, "u_rimColor"),
       rimPower: gl.getUniformLocation(program, "u_rimPower"),
@@ -8518,7 +8518,7 @@
       var emissiveColor = scenePBREmissiveColor(mat);
       gl.uniform3f(uniforms.emissiveColor, emissiveColor[0], emissiveColor[1], emissiveColor[2]);
       gl.uniform1i(uniforms.hasEmissiveColor, scenePBRHasEmissiveColor(mat) ? 1 : 0);
-      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1));
+      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1)); if (uniforms.normalUVScale) gl.uniform2f(uniforms.normalUVScale, mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1, mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 1);
       gl.uniform1f(uniforms.occlusionStrength, clamp01(sceneNumber(mat.occlusionStrength, 1)));
       var rimColor = scenePBRRimColor(mat);
       gl.uniform3f(uniforms.rimColor, rimColor[0], rimColor[1], rimColor[2]);

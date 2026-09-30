@@ -16,6 +16,8 @@
     }
 
     const props = ctx.props || {};
+    const renderBeforeModels = props.renderBeforeModels === true;
+    let handle = null;
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -58,7 +60,9 @@
     const sceneMountOwner = { m: mount };
     mount.__gosxScene3DOwner = sceneMountOwner;
     function scene3DFactoryOwned() {
-      return scene3DFactoryCurrent() && mount.__gosxScene3DOwner === sceneMountOwner;
+      // The pending factory token retires when the handle is published.
+      const mounted = renderBeforeModels && handle && mount.__gosxScene3DHandle === handle;
+      return (mounted || scene3DFactoryCurrent()) && mount.__gosxScene3DOwner === sceneMountOwner;
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
@@ -3289,13 +3293,15 @@
     // safe even when loading, instantiation, skin setup, or status listeners
     // fail. The mount continues with the prior committed generation (or no
     // model-derived records on initial hydration).
-    let handle = null;
-    await sceneModelHydration;
-    if (!scene3DFactoryOwned()) {
-      disposeMountedScene();
-      return {};
+    if (!renderBeforeModels) {
+      await sceneModelHydration;
+      if (!scene3DFactoryOwned()) {
+        disposeMountedScene();
+        return {};
+      }
+      scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
     }
-    scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
+    setAttrValue(mount, sceneAttr("first-frame"), renderBeforeModels ? "before-models" : "after-models");
 
     // Defer the first Scene3D render until after a first-paint boundary.
     function scheduleInitialRender() {
@@ -3702,8 +3708,20 @@
     if (typeof mount.setAttribute === "function") {
       mount.setAttribute(sceneAttr("command-ready"), "true");
     }
-    scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
-    sceneState._modelOwner = null;
+    if (renderBeforeModels) {
+      // Hydration commits transactionally; retain ownership until it settles.
+      sceneModelHydration.then(function() {
+        if (disposed) return;
+        if (!scene3DFactoryOwned()) { disposeMountedScene(); return; }
+        scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
+        scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
+        sceneState._modelOwner = null;
+        scheduleRender("models");
+      });
+    } else {
+      scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
+      sceneState._modelOwner = null;
+    }
     return handle;
   });
 
