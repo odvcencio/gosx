@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added: desktop rotating log files
+
+- Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
+  rotating log file.
+- Rotate before writes exceed the configured size, keeping the newest rotated
+  files as `Name.1.log` through `Name.<Keep>.log`.
+### Added: Azure Artifact Signing for desktop packages
+
+- Add `gosx desktop package --sign-provider azure-artifact-signing` with
+  SignTool or jsign, non-secret configuration, Authenticode verification, and
+  signing metadata. Sign staged PE files, the uninstaller, and per-user Setup.
+- Add `gosx desktop verify-signature`, a fake-tool CI packaging test, a gated
+  Azure release signing check, and [desktop code-signing documentation](docs/desktop-code-signing.md).
+
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
 ### Added: desktop window placement
 
 - Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
