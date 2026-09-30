@@ -394,6 +394,9 @@ func TestHomeHeroSandboxCanFetchOnlyPublicRuntimeScripts(t *testing.T) {
 	}{
 		{http.MethodGet, "/gosx/assets/runtime/bootstrap.hash.js", true},
 		{http.MethodHead, "/gosx/assets/runtime/bootstrap.hash.js", true},
+		{http.MethodGet, "/gosx/bootstrap-feature-engines.js", true},
+		{http.MethodGet, "/gosx/bootstrap-feature-scene3d-webgl.js", true},
+		{http.MethodGet, "/gosx/bootstrap-feature-private/data.js", false},
 		{http.MethodPost, "/gosx/assets/runtime/bootstrap.hash.js", false},
 		{http.MethodGet, "/api/site", false},
 		{http.MethodGet, "/gosx/assets/runtime/private.json", false},

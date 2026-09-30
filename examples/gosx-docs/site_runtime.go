@@ -93,7 +93,9 @@ func docsSecurityHeaders(next http.Handler) http.Handler {
 		// Restrict this to read-only runtime assets; application routes keep their
 		// normal origin and credential policies.
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
-			strings.HasPrefix(r.URL.Path, "/gosx/assets/runtime/") && strings.HasSuffix(r.URL.Path, ".js") {
+			strings.HasSuffix(r.URL.Path, ".js") &&
+			(strings.HasPrefix(r.URL.Path, "/gosx/assets/runtime/") ||
+				path.Dir(r.URL.Path) == "/gosx" && strings.HasPrefix(r.URL.Path, "/gosx/bootstrap-feature-")) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Timing-Allow-Origin", "*")
 		}
