@@ -1984,8 +1984,12 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    // The feature-path fix (keep every bootstrapFeature*Path, match only real
+    // Scene3D labels, never let a failed text-layout load stop the mounts) adds
+    // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
+    // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     raw: 1_157_600,
-    gzip: 326_600,
+    gzip: 326_700,
     brotli: 275_700,
   },
   {
