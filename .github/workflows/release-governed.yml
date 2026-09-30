@@ -264,6 +264,16 @@ jobs:
     needs: [prepare, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GOSX_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.GOSX_ARTIFACT_SIGNING_ENDPOINT || vars.GOSX_ARTIFACT_SIGNING_ENDPOINT }}
+      GOSX_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.GOSX_ARTIFACT_SIGNING_ACCOUNT || vars.GOSX_ARTIFACT_SIGNING_ACCOUNT }}
+      GOSX_ARTIFACT_SIGNING_PROFILE: ${{ secrets.GOSX_ARTIFACT_SIGNING_PROFILE || vars.GOSX_ARTIFACT_SIGNING_PROFILE }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -292,6 +302,83 @@ jobs:
           mkdir -p release-artifacts
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
             -o "release-artifacts/gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
+
+      - name: Sign in to Azure for Artifact Signing
+        if: >-
+          matrix.goos == 'windows' &&
+          env.GOSX_ARTIFACT_SIGNING_ENDPOINT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_ACCOUNT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_PROFILE != '' &&
+          env.AZURE_CLIENT_ID != '' &&
+          env.AZURE_TENANT_ID != '' &&
+          env.AZURE_SUBSCRIPTION_ID != ''
+        uses: azure/login@v3
+        env:
+          AZURE_CORE_OUTPUT: none
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision jsign and Authenticode verification
+        if: >-
+          matrix.goos == 'windows' &&
+          env.GOSX_ARTIFACT_SIGNING_ENDPOINT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_ACCOUNT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_PROFILE != ''
+        env:
+          JSIGN_VERSION: '7.5'
+          # SHA-256 computed from jsign-7.5.jar at this release:
+          # https://github.com/ebourg/jsign/releases/tag/7.5
+          JSIGN_SHA256: 602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c
+        run: |
+          set -euo pipefail
+          # Java is preinstalled on ubuntu-latest:
+          # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#java
+          java -version
+          jsign_dir="${RUNNER_TEMP}/gosx-jsign"
+          mkdir -p "${jsign_dir}"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${jsign_dir}/jsign.jar" \
+            "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
+          printf '%s  %s\n' "${JSIGN_SHA256}" "${jsign_dir}/jsign.jar" | sha256sum --check --status
+          cat >"${jsign_dir}/jsign" <<'JSIGN'
+          #!/usr/bin/env bash
+          exec java -jar "$(dirname "$0")/jsign.jar" "$@"
+          JSIGN
+          chmod +x "${jsign_dir}/jsign"
+          printf '%s\n' "${jsign_dir}" >>"${GITHUB_PATH}"
+          "${jsign_dir}/jsign" --help
+          # Jsign 7.5 signs but has no verify command; GoSX prefers osslsigncode.
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends osslsigncode ca-certificates
+
+      - name: Package and verify Windows artifacts with Azure Artifact Signing
+        if: matrix.goos == 'windows'
+        working-directory: source
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -p=1
+          GOSX_ARTIFACT_SIGNING_TOOL: jsign
+        run: |
+          set -euo pipefail
+          configured=false
+          if [[ -n "${GOSX_ARTIFACT_SIGNING_ENDPOINT:-}" && -n "${GOSX_ARTIFACT_SIGNING_ACCOUNT:-}" && -n "${GOSX_ARTIFACT_SIGNING_PROFILE:-}" ]]; then
+            configured=true
+          fi
+          # Historical tags predate this script and the signing CLI. Keep
+          # their unsigned rerun path; refuse to publish them unsigned when
+          # signing is configured, so a rerun cannot silently drop signatures.
+          if [[ ! -f scripts/sign-desktop-release.sh ]]; then
+            if [[ "${configured}" == true ]]; then
+              echo "::error::This release source predates Azure Artifact Signing; rebuild from a revision that includes scripts/sign-desktop-release.sh, or clear the signing variables for an unsigned rerun."
+              exit 1
+            fi
+            echo "Azure Artifact Signing skipped: release source predates it and signing is not configured."
+            exit 0
+          fi
+          bash scripts/sign-desktop-release.sh "release-artifacts/gosx-windows-${{ matrix.goarch }}.exe" "${RELEASE_TAG#v}"
 
       - uses: actions/upload-artifact@v4
         with:
