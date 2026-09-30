@@ -684,7 +684,8 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_400 },
+  // Detail shader maths/defaults and lazy packed-atlas modules: measured 1803378 / 499518 / 400182; allowances stay fixed.
+  { file: "bootstrap.js", raw: 1803378, gzip: 499518, brotli: 400182 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1052,7 +1053,8 @@ const budgets = [
   // persistent-buffer upload path. The build with frame caching measures
   // 251_292 / 70_024 / 59_410;
   // retain narrow rounding headroom so later growth remains visible.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 70_100, brotli: 59_500 },
+  // Detail shader maths/defaults and lazy packed-atlas modules: measured 259807 / 73095 / 61732; allowances stay fixed.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 259807, gzip: 73095, brotli: 61732 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1177,7 +1179,8 @@ const budgets = [
   // GPU-driven crowd motion adds motion-frame dispatch and telemetry. Frame
   // pacing also adds its governor and telemetry. The build with frame
   // caching measures 594_098 / 166_371 / 137_740.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 166_500, brotli: 137_850 },
+  // Detail shader maths/defaults and lazy packed-atlas modules: measured 624533 / 176795 / 145740; allowances stay fixed.
+  { file: "bootstrap-feature-scene3d.js", raw: 624533, gzip: 176795, brotli: 145740 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1375,7 +1378,8 @@ const budgets = [
   // all three caps raised with narrow rounding headroom.
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
+  // Detail shader maths/defaults and lazy packed-atlas modules: measured 410043 / 101261 / 84405; allowances stay fixed.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 410043, gzip: 101261, brotli: 84405 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1808,9 +1812,10 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_300_500,
-    gzip: 354_500,
-    brotli: 297_400,
+    // Detail shaders/defaults and atlas modules: measured 1379988 / 376144 / 316373; policy unchanged.
+    raw: 1379988,
+    gzip: 376144,
+    brotli: 316373,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1984,9 +1989,10 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_157_600,
-    gzip: 326_600,
-    brotli: 275_700,
+    // Detail shaders/defaults and atlas modules: measured 1229736 / 347969 / 293660; policy unchanged.
+    raw: 1229736,
+    gzip: 347969,
+    brotli: 293660,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2157,9 +2163,10 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_553_800,
-    gzip: 425_700,
-    brotli: 356_000,
+    // Detail modules on both backend fallback paths: measured 1639779 / 449231 / 378015; policy unchanged.
+    raw: 1639779,
+    gzip: 449231,
+    brotli: 378015,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2307,9 +2314,10 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_155_300,
-    gzip: 311_900,
-    brotli: 260_700,
+    // Detail shared maths and WebGPU atlas module: measured 1227544 / 332743 / 277843; policy unchanged.
+    raw: 1227544,
+    gzip: 332743,
+    brotli: 277843,
   },
 
 ];
