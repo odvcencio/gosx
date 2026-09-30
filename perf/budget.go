@@ -64,6 +64,9 @@ type BudgetAssertionResult struct {
 	Found      bool    `json:"found"`
 	Optional   bool    `json:"optional,omitempty"`
 	Skipped    bool    `json:"skipped,omitempty"`
+	// Inconclusive marks a failed measurement taken while the renderer
+	// recovered; it does not fail the page (see exemptRecoveredMeasurements).
+	Inconclusive bool `json:"inconclusive,omitempty"`
 }
 
 // LoadBudgetFile reads a JSON perf budget file.
@@ -105,12 +108,7 @@ func EvaluateBudget(report *Report, budget *BudgetFile, forceProfile string) (Bu
 		pageResult.Renderer, pageResult.Backend = pageRenderer(page)
 		pageResult.Recovery = RendererRecovery(page)
 		if !pageResult.Passed && pageResult.Recovery != "" {
-			// A mid-load renderer swap re-fetches the fallback chunk and
-			// replaces the canvas, so load metrics (LCP, bytes, blocking
-			// time) describe the recovery, not the page. They are not
-			// evidence of a regression either way.
-			pageResult.Passed = true
-			pageResult.Inconclusive = true
+			exemptRecoveredMeasurements(&pageResult)
 		}
 		if !pageResult.Passed {
 			result.Passed = false
@@ -144,13 +142,13 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 			b.WriteString(fmt.Sprintf("    renderer %q backend=%s recovery=%s\n", page.Renderer, orNone(page.Backend), orNone(page.Recovery)))
 		}
 		if page.Inconclusive {
-			b.WriteString(fmt.Sprintf("    inconclusive: the renderer recovered (%s) while this page was measured, so its load metrics describe the recovery; failed assertions below do not fail the gate\n", page.Recovery))
+			b.WriteString(fmt.Sprintf("    inconclusive: the renderer recovered (%s) while this page was measured, so its measurements describe the recovery; assertions marked inc do not fail the gate\n", page.Recovery))
 		}
 		for _, assertion := range page.Assertions {
 			mark := "ok"
 			if !assertion.Passed {
 				mark = "fail"
-				if page.Inconclusive {
+				if assertion.Inconclusive {
 					mark = "inc"
 				}
 			}
@@ -311,6 +309,30 @@ func urlPath(raw string) string {
 
 func samePath(a, b string) bool {
 	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+}
+
+// exemptRecoveredMeasurements handles a failed page whose renderer recovered
+// mid-load. The swap re-fetches the fallback chunk and replaces the canvas, so
+// every measured value (LCP, bytes, blocking time, frames) describes the
+// recovery, not the page, and is no evidence of a regression either way. Such
+// failures become inconclusive. A malformed expression or a required metric
+// the report lacks is a budget or evidence error, not a measurement, and keeps
+// failing the page.
+func exemptRecoveredMeasurements(page *BudgetPageResult) {
+	passed := true
+	for i := range page.Assertions {
+		a := &page.Assertions[i]
+		if a.Passed {
+			continue
+		}
+		if a.Metric != "" && a.Found {
+			a.Inconclusive = true
+			page.Inconclusive = true
+			continue
+		}
+		passed = false
+	}
+	page.Passed = passed
 }
 
 func evalBudgetPage(page PageReport, profile string, expressions []string) BudgetPageResult {

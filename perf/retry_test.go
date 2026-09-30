@@ -150,3 +150,30 @@ func TestRetryThatRecoversAgainStaysInconclusive(t *testing.T) {
 		t.Fatalf("diagnostics:\n%s", log.String())
 	}
 }
+
+func TestRecoveryKeepsBudgetAndEvidenceErrorsAuthoritative(t *testing.T) {
+	for name, assertions := range map[string][]string{
+		"malformed expression":    {"lcp <= 2000", "lcp <=="},
+		"missing required metric": {"lcp <= 2000", "no_such_metric <= 1"},
+	} {
+		budget := &BudgetFile{
+			DefaultProfile: "p",
+			Profiles:       map[string]BudgetProfile{"p": {Assertions: assertions}},
+		}
+		result, err := EvaluateBudget(&Report{Pages: []PageReport{recoveredWaterPage("webgpu-device-lost")}}, budget, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := result.Pages[0]
+		if result.Passed || page.Passed {
+			t.Fatalf("%s: recovery hid a budget error: %+v", name, result)
+		}
+		if !page.Assertions[0].Inconclusive || page.Assertions[1].Inconclusive {
+			t.Fatalf("%s: only the measured lcp failure is inconclusive: %+v", name, page.Assertions)
+		}
+		out := FormatBudgetResult(result)
+		if !strings.Contains(out, "inc  lcp <= 2000") || !strings.Contains(out, "fail") {
+			t.Fatalf("%s: formatted result:\n%s", name, out)
+		}
+	}
+}
