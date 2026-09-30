@@ -32,14 +32,14 @@
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 25335,
-          "htmlWireBytes": 45468,
+          "frameworkJsWireBytes": 21605,
+          "htmlWireBytes": 38705,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 103716,
+          "totalWireBytes": 96953,
           "wasmWireBytes": 256
         },
         "require": [
