@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added: desktop update prompt
+
+- Add `App.OfferSignedUpdate` to check signed updates, prompt before opening
+  allowlisted download pages, and avoid host-specific check/confirm/open code.
+
 ### Added: desktop rotating log files
 
 - Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
