@@ -689,7 +689,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 1_811_342 / 503_343 / 402_536; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap.js", raw: 1_819_400, gzip: 511_000, brotli: 403_700 },
+  { file: "bootstrap.js", raw: 1_820_400, gzip: 511_300, brotli: 403_900 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1190,7 +1190,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 624_328 / 177_226 / 145_904; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d.js", raw: 609_700, gzip: 174_800, brotli: 144_250 },
+  { file: "bootstrap-feature-scene3d.js", raw: 610_500, gzip: 175_100, brotli: 144_350 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1829,8 +1829,8 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_366_900,
-    gzip: 378_300,
+    raw: 1_367_900,
+    gzip: 378_700,
     brotli: 315_900,
   },
   {
@@ -2011,7 +2011,7 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1_215_400,
-    gzip: 348_400,
+    gzip: 348_800,
     brotli: 293_000,
   },
   {
@@ -2188,9 +2188,9 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_656_600,
-    gzip: 461_500,
-    brotli: 384_800,
+    raw: 1_657_600,
+    gzip: 461_800,
+    brotli: 385_100,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2342,7 +2342,7 @@ const routeBudgets = [
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1_220_200,
-    gzip: 334_900,
+    gzip: 335_300,
     brotli: 279_200,
   },
 

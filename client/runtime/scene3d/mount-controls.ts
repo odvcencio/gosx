@@ -37,6 +37,11 @@
     return props && normalizeSceneControlsMode(props.controls) === "first-person" && props.walk && typeof props.walk === "object" && !Array.isArray(props.walk);
   }
 
+  // @ts-ignore TS7006 -- prop gate is also evaluated by plain JS tests
+  function sceneVesselEnabled(props) {
+    return props && props.vessel && typeof props.vessel === "object" && typeof props.vessel.nodeId === "string" && props.vessel.nodeId.length > 0;
+  }
+
   // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
   function sceneRunFrameGuard(callback, args, shouldRecover, recover) {
     try { return callback.apply(null, args); } catch (error) { if (shouldRecover()) recover(); throw error; }
@@ -1031,6 +1036,18 @@
 
   // @ts-ignore TS7006 -- keep this call site JavaScript-compatible in the runtime bundle
   function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
+    const base = setupSceneBaseControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState);
+    if (!sceneVesselEnabled(props)) return base;
+    return window.__gosx_scene3d_vessel_api.setup(canvas, props, base, sceneState, {
+      schedule: scheduleRender, current: sceneCurrentControlCamera,
+      // @ts-ignore TS7006 -- renderer-neutral creation seam for the lazy wake
+      addObject: (state, id, object) => state.objects.set(id, normalizeSceneObject(Object.assign({ id, kind: "mesh" }, object), id)),
+      // @ts-ignore TS2339 -- Chromium deviceMemory is also used by the ocean quality gate
+      lowHardware: () => gosxLowEndHardware(navigator.deviceMemory, navigator.hardwareConcurrency),
+    });
+  }
+  // @ts-ignore TS7006 -- shared JavaScript control entrypoint
+  function setupSceneBaseControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
     if (sceneWalkEnabled(props)) {
       return window.__gosx_scene3d_walk_api.setup(canvas, props, readSourceCamera, scheduleRender, sceneState, {
         camera: sceneRenderCamera, requestLock: sceneRequestPointerLock, exitLock: sceneExitPointerLock,

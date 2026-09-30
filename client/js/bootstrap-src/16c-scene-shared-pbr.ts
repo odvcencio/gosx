@@ -129,9 +129,6 @@
   // height Hs: sum(a^2) = Hs^2 / 8. quality "low" (default on low-end
   // hardware) halves the grid and uses four waves.
   var SCENE_OCEAN_VEC4S = 35;
-  var SCENE_OCEAN_WAVE_RATIO = [1, 0.73, 0.53, 0.39, 0.28, 0.21];
-  var SCENE_OCEAN_WAVE_ANGLE = [0, 0.38, -0.46, 0.83, -0.95, 1.4];
-  var SCENE_OCEAN_WAVE_WEIGHT = [1, 0.62, 0.42, 0.28, 0.19, 0.13];
   var sceneOceanSkyScratch = new Float32Array(44), sceneOceanViewScratch = new Float32Array(16);
 
   function sceneOceanLinear(hex, out, offset) {
@@ -190,19 +187,7 @@
     out[30] = sceneNumber(camera && camera.z, 0); out[31] = linear ? 1 : 0;
     var rings = low ? 96 : 192, segments = low ? 128 : 256, inner = 0.35;
     out[32] = rings; out[33] = segments; out[34] = inner; out[35] = Math.log(out[1] / inner + 1) / rings;
-    var height = sceneNumber(o.waveHeight, 0.8), length = sceneNumber(o.waveLength, 18);
-    var chop = sceneNumber(o.choppiness, 0.6), wind = sceneNumber(o.windDirection, 0) * Math.PI / 180;
-    var weights = 0;
-    for (var w = 0; w < waves; w++) weights += SCENE_OCEAN_WAVE_WEIGHT[w] * SCENE_OCEAN_WAVE_WEIGHT[w];
-    for (var i = 0; i < waves; i++) {
-      var base = 36 + i * 8, angle = wind + SCENE_OCEAN_WAVE_ANGLE[i];
-      var k = 2 * Math.PI / (length * SCENE_OCEAN_WAVE_RATIO[i]);
-      out[base] = Math.sin(angle); out[base + 1] = Math.cos(angle); out[base + 2] = k;
-      out[base + 3] = Math.sqrt(9.81 * k) * out[3];
-      out[base + 4] = SCENE_OCEAN_WAVE_WEIGHT[i] * height / Math.sqrt(8 * weights);
-      out[base + 5] = chop / (k * waves);
-      out[base + 6] = ((i * 0.6180339887) % 1) * 2 * Math.PI;
-    }
+    window.__gosx_scene3d_ocean_waves.write(o, quality, out);
     var sky = environment && environment.sky;
     var skyEnv = sky ? environment : { sky: { mode: "gradient", topColor: "#6d8fb0", horizonColor: "#c8d6e0", bottomColor: "#c8d6e0" } };
     sceneSkyUniformData(sceneOceanSkyScratch, skyEnv, sceneOceanViewScratch, { fov: 60 }, 1, true);

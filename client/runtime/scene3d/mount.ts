@@ -22,6 +22,11 @@
       await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
       if (!scene3DFactoryCurrent()) return {};
     }
+    if (sceneVesselEnabled(props)) {
+      await ensureSceneGatedFeatureLoaded("ocean-query", "gosxScene3dOceanQueryUrl", "");
+      await ensureSceneGatedFeatureLoaded("vessel", "gosxScene3dVesselUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -3031,6 +3036,12 @@
         sceneClockSeconds += frameDeltaSeconds;
       }
       const timeSeconds = sceneClockSeconds;
+      // @ts-ignore TS7005 -- the optional authority is installed after renderer creation
+      const advanceVessel = sceneControlHandle && sceneControlHandle.advance;
+      if (advanceVessel) {
+        advanceVessel(frameDeltaSeconds, frameStart / 1000,
+          sceneQualityLadderPointBudgetScale(adaptiveQuality), sceneAnimationPaused || motion.reducedMotion);
+      }
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.

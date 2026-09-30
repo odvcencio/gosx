@@ -34,9 +34,13 @@
 .bgb[data-view="shore"] .bgb__view-shore,
 .bgb[data-view="glass"] .bgb__view-glass,
 .bgb[data-view="cliff"] .bgb__view-cliff,
+.bgb[data-view="ship"] .bgb__view-ship,
 .bgb[data-period="golden-hour"] .bgb__period-golden-hour,
 .bgb[data-period="blue-hour"] .bgb__period-blue-hour,
 .bgb[data-period="noon"] .bgb__period-noon { color: #16130f; background: rgba(255, 244, 230, 0.92); }
 @media (max-width: 640px) {
   .bgb__controls { left: 10px; right: 10px; bottom: 10px; justify-content: center; }
 }
+
+.bgb__instructions { flex-basis: 100%; margin: 0 0 4px; font-size: 12px; color: rgba(255,255,255,.75); }
+@media (pointer: coarse) { .bgb__instructions { font-size: 11px; text-align: center; } }

@@ -16,6 +16,7 @@ func init() {
 				"shoreHref":  "?view=shore&period=" + period.ID,
 				"glassHref":  "?view=glass&period=" + period.ID,
 				"cliffHref":  "?view=cliff&period=" + period.ID,
+				"shipHref":   "?view=ship&period=" + period.ID,
 				"goldenHref": "?view=" + view.ID + "&period=golden-hour",
 				"blueHref":   "?view=" + view.ID + "&period=blue-hour",
 				"noonHref":   "?view=" + view.ID + "&period=noon",

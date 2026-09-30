@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 const generatorSeed int64 = 0xB1AC6A55
@@ -73,7 +74,7 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string][]byte{
+	files := map[string][]byte{
 		"beach-v2-height.png": height,
 		"beach-v2.glb":        beachGLB,
 		"beach-v2-albedo.jpg": albedo,
@@ -82,7 +83,15 @@ func Generate(seed int64) (map[string][]byte, error) {
 		"rock-normal.jpg":     rockNormal,
 		"stacks-v2.glb":       stacksGLB,
 		"monolith-v2.glb":     monolithGLB,
-	}, nil
+	}
+	ship, err := ShipAssets()
+	if err != nil {
+		return nil, err
+	}
+	for name, data := range ship {
+		files[name] = data
+	}
+	return files, nil
 }
 
 // Write writes the generated files into outDir.
@@ -94,7 +103,12 @@ func Write(outDir string, seed int64) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	for _, name := range []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb"} {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		if err := os.WriteFile(filepath.Join(outDir, name), files[name], 0o644); err != nil {
 			return err
 		}

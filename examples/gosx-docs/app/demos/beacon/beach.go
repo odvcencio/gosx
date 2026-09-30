@@ -45,10 +45,13 @@ func blackglassBeachViewFor(raw string) blackglassBeachView {
 	switch raw {
 	case "glass":
 		return blackglassBeachView{"glass", "The glass", scene.Vec3(-2.2, 1.6, 8.8), scene.Vec3(-6.2, 1.9, 2.6)}
+	case "ship":
+		// On the jetty deck beside the clipper's helm: press E to take it.
+		return blackglassBeachView{"ship", "At the helm", scene.Vec3(21, 4.2, -33.5), scene.Vec3(17, 5, -60)}
 	case "cliff":
 		return blackglassBeachView{"cliff", "From the cliff", scene.Vec3(-26, 17, 22), scene.Vec3(-2, 0, -18)}
 	default:
-		return blackglassBeachView{"shore", "The shore", scene.Vec3(0.5, 2.6, 13.5), scene.Vec3(-8, 1.0, -20)}
+		return blackglassBeachView{"shore", "The shore", scene.Vec3(0.5, 3, 22), scene.Vec3(5, 4, -25)}
 	}
 }
 
@@ -121,8 +124,8 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	return scene.Props{
 		Width: 1280, Height: 720,
 		Label:      "Blackglass Beach — " + view.Name + " at " + period.Name,
-		AriaLabel:  "A black sand beach at " + period.Name + ": waves run up the sand below basalt sea stacks, and an obsidian monolith stands at the waterline.",
-		Background: horizon, Controls: scene.ControlFirstPerson, Walk: blackglassBeachWalk(), PointerLock: scene.Bool(true),
+		AriaLabel:  "A black sand beach at " + period.Name + ": waves run up the sand below basalt sea stacks, and an obsidian monolith stands at the waterline and a three-masted clipper waits at the jetty.",
+		Background: horizon, Controls: scene.ControlFirstPerson, Walk: blackglassBeachWalk(), Vessel: blackglassBeachVessel(), PointerLock: scene.Bool(true),
 		AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
 		PreferWebGPU: scene.Bool(true), CanvasAlpha: scene.Bool(false), Stats: scene.Bool(false),
 		UnsupportedMessage: "Interactive 3D is unavailable in this browser.",
@@ -161,6 +164,10 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 				CastShadow: true, ShadowBias: -0.0018, ShadowSize: 2048, ShadowCascades: 3, ShadowSoftness: 1.5},
 			scene.Model{ID: "beach", Src: blackglassBeachModelRoot + "beach-v2.glb", Bounds: 90, CastShadow: true, ReceiveShadow: true, Detail: blackglassBeachDetail()},
 			scene.Model{ID: "sea-stacks", Src: blackglassBeachModelRoot + "stacks-v2.glb", Bounds: 60, CastShadow: true, ReceiveShadow: true, Detail: blackglassBeachRockDetail()},
+			scene.Model{ID: "jetty", Src: blackglassBeachModelRoot + "jetty.glb", CastShadow: true, ReceiveShadow: true},
+			scene.Model{ID: "clipper", Src: blackglassBeachModelRoot + "clipper-high.glb", CastShadow: true, ReceiveShadow: true},
+			scene.Model{ID: "clipper-mid", Src: blackglassBeachModelRoot + "clipper-mid.glb", Visible: scene.Bool(false), CastShadow: true, ReceiveShadow: true},
+			scene.Model{ID: "clipper-low", Src: blackglassBeachModelRoot + "clipper-low.glb", Visible: scene.Bool(false), CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
 				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: -1.16}, CastShadow: true, ReceiveShadow: true,
 				Material: scene.StandardMaterial{Color: "#050608", Roughness: 0.035, Metalness: 0, Clearcoat: 1}},

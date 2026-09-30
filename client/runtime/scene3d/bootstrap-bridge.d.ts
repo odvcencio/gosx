@@ -284,3 +284,8 @@ declare function sceneAtmosphereBundle(bundle: any, meta: any): any;
 declare function sceneAtmosphereEffects(effects: any, env: any, meta: any): any;
 declare function createSceneAtmospherePostWebGL(host: any): any;
 declare function createSceneAtmospherePostWebGPU(host: any): any;
+interface Window {
+  __gosx_scene3d_ocean_waves: any;
+  __gosx_scene3d_ocean_query: any;
+  __gosx_scene3d_vessel_api: any;
+}

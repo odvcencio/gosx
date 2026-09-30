@@ -111,6 +111,7 @@ type Props struct {
 	Background           string   `json:"background,omitempty"`
 	Controls             string   `json:"controls,omitempty"`
 	Walk                 *Walk    `json:"walk,omitempty"`
+	Vessel               *Vessel  `json:"vessel,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
 	Responsive           *bool    `json:"responsive,omitempty"`
 	FillHeight           *bool    `json:"fillHeight,omitempty"`
@@ -1884,6 +1885,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "controls", p.Controls)
 	if p.Walk != nil {
 		out["walk"] = p.Walk
+	}
+	if p.Vessel != nil {
+		out["vessel"] = p.Vessel
 	}
 	setBool(out, "autoRotate", p.AutoRotate)
 	setBool(out, "responsive", p.Responsive)

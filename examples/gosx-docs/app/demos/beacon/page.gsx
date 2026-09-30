@@ -15,10 +15,12 @@ func Page() Node {
 		</div>
 		<a class="bgb__close" href="/demos" data-gosx-link="true" aria-label="Back to the demos">×</a>
 		<div class="bgb__controls">
+			<p class="bgb__instructions">Walk out along the jetty · E to take the helm · A/D steer · W/S sail · V camera</p>
 			<nav class="bgb__group" aria-label="View">
 				<a class="bgb__link bgb__view-shore" href={data.shoreHref} data-gosx-link="true">Shore</a>
 				<a class="bgb__link bgb__view-glass" href={data.glassHref} data-gosx-link="true">Glass</a>
 				<a class="bgb__link bgb__view-cliff" href={data.cliffHref} data-gosx-link="true">Cliff</a>
+				<a class="bgb__link bgb__view-ship" href={data.shipHref} data-gosx-link="true">Ship</a>
 				<button class="bgb__link bgb__reset" type="button" data-gosx-scene3d-reset="">Reset view</button>
 			</nav>
 			<nav class="bgb__group" aria-label="Light">

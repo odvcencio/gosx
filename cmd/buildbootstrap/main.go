@@ -162,6 +162,7 @@ var outputs = []output{
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
@@ -427,6 +428,7 @@ var outputs = []output{
 			// webgpu chunk carried a second copy until v0.35.8, which cost a
 			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
 			// the tiny stub + adapter probe.
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
@@ -555,9 +557,24 @@ var outputs = []output{
 		},
 	},
 	{
+		// CPU surface query is optional and independently reusable.
+		name: "bootstrap-feature-scene3d-ocean-query.js",
+		sources: []source{sourceFile("../runtime/scene3d/ocean-query.ts")},
+	},
+	{
+		name: "bootstrap-feature-scene3d-vessel.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/vessel-physics.ts"),
+			sourceFile("../runtime/scene3d/vessel-input.ts"),
+			sourceFile("../runtime/scene3d/vessel-model.ts"),
+			sourceFile("../runtime/scene3d/vessel-wake.ts"),
+			sourceFile("../runtime/scene3d/mount-vessel.ts"),
+		},
+	},
+	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
 		name:    "bootstrap-feature-scene3d-walk.js",
-		sources: []source{sourceFile("../runtime/scene3d/mount-walk.ts")},
+		sources: []source{sourceFile("../runtime/scene3d/walk-surfaces.ts"), sourceFile("../runtime/scene3d/mount-walk.ts")},
 	},
 	{
 		// Decompress chunk: the quantized-array decoder, the progressive and
