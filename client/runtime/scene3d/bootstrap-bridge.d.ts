@@ -270,3 +270,7 @@ declare function sceneReflectOpaqueList(list: any, materials: any): any;
 declare function sceneReflectWebGLBind(gl: any, program: any, record: any): void;
 
 declare function sceneAtmosphereTier(state: any): any;
+
+declare function sceneCloudWebGLDraw(resources: any, gl: any, opts: any): void;
+declare function sceneCloudWebGPUDraw(resources: any, device: any, pass: any, opts: any): void;
+declare function sceneCloudDispose(resources: any): void;

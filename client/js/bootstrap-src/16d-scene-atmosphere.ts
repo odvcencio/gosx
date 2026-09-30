@@ -80,3 +80,27 @@ function sceneAtmosphereTier(state) {
   if (!state || state.mode !== "ladder") return null;
   return state.rungIndex === 0 ? "full" : state.rungIndex >= state.ladder.length-1 ? "survival" : "balanced";
 }
+
+function sceneSkyClouds(raw) {
+  if (!sceneIsPlainObject(raw)) return null;
+  return { coverage: sceneAtmosphereNumber(raw,"coverage",0.45,0,1),
+    altitude: sceneAtmosphereNumber(raw,"altitude",1500,100,12000),
+    scale: sceneAtmosphereNumber(raw,"scale",3000,100,20000),
+    speed: sceneAtmosphereNumber(raw,"speed",8,0,100),
+    direction: ((sceneNumber(raw.direction,0)%360)+360)%360,
+    opacity: sceneAtmosphereNumber(raw,"opacity",0.85,0,1) };
+}
+function sceneCloudUniformData(opts,out) {
+  const env=opts.environment, config=sceneSkyClouds(env.sky.clouds), quality=sceneAtmosphereQuality(opts.meta);
+  sceneSkyUniformData(out,env,opts.view,opts.camera,opts.aspect,opts.linear);
+  const angle=config.direction*Math.PI/180;
+  out.set([config.coverage,config.altitude,config.scale,config.opacity],44);
+  out.set([Math.sin(angle)*config.speed,Math.cos(angle)*config.speed,opts.timeSeconds||0,quality.cloudOctaves],48);
+  out.set([opts.camera.x||0,opts.camera.y||0,opts.camera.z||0,0],52);
+  const light=sceneOceanUniformData({},env,opts.camera,0,true,"low");
+  out.set([light[128],light[129],light[130],0],56);
+  out.set([light[132],light[133],light[134],0],60);
+  return out;
+}
+
+function sceneCloudDispose(resources) { if(resources.clouds)resources.clouds.dispose();resources.clouds=null; }

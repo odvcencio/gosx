@@ -59,8 +59,9 @@ const WGSL_SCENE_OCEAN = [
   "  return out;",
   "}",
   "//GOSX_REFLECTION",
+  "//GOSX_CLOUD_SOURCE",
   "fn oceanSky(d: vec3f) -> vec3f {",
-  "  if (ocean.p[26].w == 4.0) { return gosxPhysicalSky(d, ocean.p[28], ocean.p[29], vec4f(ocean.p[30].xyz, 2.0), ocean.p[31].x) * ocean.p[24].w; }",
+  "  if (ocean.p[26].w == 4.0) { var base = gosxPhysicalSky(d, ocean.p[28], ocean.p[29], vec4f(ocean.p[30].xyz, 2.0), ocean.p[31].x) * ocean.p[24].w; //GOSX_CLOUD_REFLECT\n return base; }",
   "  return mix(ocean.p[25].xyz, select(ocean.p[26].xyz, ocean.p[24].xyz, d.y >= 0.0), abs(d.y)) * ocean.p[24].w;",
   "}",
   "fn oceanHash(q: vec2f) -> f32 { var p = fract(q * vec2f(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }",
@@ -140,7 +141,7 @@ const WGSL_SCENE_OCEAN = [
 
 // wgpuCreateOceanRenderer builds the pass lazily; pipelines are cached per
 // target format and sample count, like the sky pass.
-function wgpuCreateOceanRenderer(device, textureCache, reflections) {
+function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
   // A deep-sea placeholder (R = 0) until the bathymetry map loads.
   const placeholder = device.createTexture({ label: "gosx-ocean-bathymetry-placeholder", size: [1, 1, 1], format: "rgba8unorm",
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -149,16 +150,22 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections) {
   const data = new Float32Array(16 + 140 /* sceneOceanUniformData: 35 vec4 */);
   const uniform = device.createBuffer({ label: "gosx-ocean", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
-  const layout = device.createBindGroupLayout({ entries: [
+  const entries = [
     { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
     { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: {} },
     { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-  ] });
+  ];
+  const cloudData = clouds ? new Float32Array(64) : null;
+  const cloudBuffer = clouds ? device.createBuffer({size: 256, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}) : null;
+  if (clouds) entries.push({binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: {type: "uniform"}});
+  const layout = device.createBindGroupLayout({entries});
   const reflectLayout = reflections ? sceneReflectWebGPULayout(device) : null;
   const dummyReflection = reflections ? sceneReflectWebGPUFallback(device, placeholderView) : null;
   const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: reflections ? [layout, reflectLayout] : [layout] });
   const module = device.createShaderModule({ label: "gosx-ocean", code: WGSL_SCENE_OCEAN
     .replace("//GOSX_REFLECTION", reflections ? sceneOceanReflectWGSL() : "")
+    .replace("//GOSX_CLOUD_SOURCE", clouds ? sceneOceanCloudWGSL() : "")
+    .replace("//GOSX_CLOUD_REFLECT", clouds ? "let c = gosxClouds(d,cloud.p[13].xyz,cloud.p[11],cloud.p[12],cloud.p[14].xyz,cloud.p[15].xyz,cloud.p[9].xyz); base = base*(1.0-c.a)+c.rgb;" : "")
     .replace("//GOSX_REFLECTION_LOOKUP", reflections ? "refl = oceanGeometryReflection(in.world, normalize(R), N, rough, refl);" : "")
     .replace("//GOSX_SUN_PATH", reflections ? "spec = mix(spec, oceanSunPath(N,H,L,V,rough,sunCol), 0.35);" : "") + "\n" + sceneSkyPhysicalSource("wgsl") });
   const pipelines = new Map();
@@ -176,6 +183,7 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections) {
         else { data[16 + 26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
       }
       device.queue.writeBuffer(uniform, 0, data);
+      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{view: opts.view, aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
       const key = opts.format + ":" + opts.samples;
       let pipeline = pipelines.get(key);
       if (!pipeline) {
@@ -187,9 +195,11 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections) {
         pipelines.set(key, pipeline);
       }
       if (!group || view !== groupView) {
-        group = device.createBindGroup({ layout: layout, entries: [
+        const bindings = [
           { binding: 0, resource: { buffer: uniform } }, { binding: 1, resource: sampler }, { binding: 2, resource: view },
-        ] });
+        ];
+        if (clouds) bindings.push({binding: 3, resource: {buffer: cloudBuffer}});
+        group = device.createBindGroup({layout,entries: bindings});
         groupView = view;
       }
       pass.setPipeline(pipeline);
@@ -199,7 +209,7 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections) {
       if (opts.frameBindGroup) pass.setBindGroup(0, opts.frameBindGroup);
       return state;
     },
-    dispose: function() { uniform.destroy(); placeholder.destroy(); if (dummyReflection) dummyReflection.uniform.destroy(); pipelines.clear(); group = null; },
+    dispose: function() { uniform.destroy(); placeholder.destroy(); if (dummyReflection) dummyReflection.uniform.destroy(); if (cloudBuffer) cloudBuffer.destroy(); pipelines.clear(); group = null; },
   };
 }
 
@@ -209,11 +219,11 @@ function wgpuOceanDraw(resources, pass, opts) {
   const env = opts.environment;
   let state = "none";
   if (env && env.ocean) {
-    const featureKey = Boolean(sceneOceanReflections(env.ocean.reflections));
+    const featureKey = (sceneOceanReflections(env.ocean.reflections) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0);
     if (resources.renderer && resources.featureKey !== featureKey) { resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }
     if (!resources.renderer && !resources.failed) {
       resources.featureKey = featureKey;
-      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache, featureKey);
+      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache, Boolean(featureKey & 1), Boolean(featureKey & 2));
       resources.failed = !resources.renderer;
     }
     state = resources.renderer ? resources.renderer.draw(pass, opts) : "unavailable";

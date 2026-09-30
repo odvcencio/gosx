@@ -174,6 +174,9 @@
   var sceneReflectDispose = sceneApi.sceneReflectDispose;
   var sceneReflectOpaqueList = sceneApi.sceneReflectOpaqueList;
   var sceneReflectionMatrices = sceneApi.sceneReflectionMatrices;
+  var sceneSkyClouds = sceneApi.sceneSkyClouds;
+  var sceneCloudDispose = sceneApi.sceneCloudDispose;
+  var sceneCloudUniformData = sceneApi.sceneCloudUniformData;
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;

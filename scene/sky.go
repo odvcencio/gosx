@@ -19,7 +19,8 @@ type Sky struct {
 	// form of Hoffman and Preetham (2002), with a sun disk. The same model is
 	// evaluated in Go by PhysicalRadiance, so build-time IBL bakes and
 	// fallback colors match what the browser draws.
-	Mode string `json:"mode,omitempty"`
+	Mode   string     `json:"mode,omitempty"`
+	Clouds *SkyClouds `json:"clouds,omitempty"`
 	// Gradient stops. HorizonColor also serves as the degrade target for
 	// backends that cannot draw the environment mode.
 	TopColor     string `json:"topColor,omitempty"`
@@ -64,6 +65,7 @@ func normalizeSky(s *Sky) *Sky {
 	}
 	out := Sky{
 		Mode:         strings.ToLower(strings.TrimSpace(s.Mode)),
+		Clouds:       normalizeSkyClouds(s.Clouds),
 		TopColor:     strings.TrimSpace(s.TopColor),
 		HorizonColor: strings.TrimSpace(s.HorizonColor),
 		BottomColor:  strings.TrimSpace(s.BottomColor),

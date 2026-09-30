@@ -14,10 +14,10 @@
     "totalSourceCoupledSitesMigrated": 103
   },
   "governanceBudgetRevision": {
-    "actualGovernanceLinesAtReview": 2898,
+    "actualGovernanceLinesAtReview": 2928,
     "originalAuthoredLineTarget": 600,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth. Ocean reflection hooks and new governed passes use measured physical lines and function metrics. Existing function exception locations move with the hooks; new orchestration growth is limited to reflection setup, pass splitting and disposal. Three nullable WebGPU target declarations and the optional pass callback retain plain-JS syntax; the typed bridge governs the new module interface without increasing the implicit-any ratchet.",
-    "revisedGovernanceLineBudget": 2898
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth. Ocean reflection hooks and new governed passes use measured physical lines and function metrics. Existing function exception locations move with the hooks; new orchestration growth is limited to reflection setup, pass splitting and disposal. Three nullable WebGPU target declarations and the optional pass callback retain plain-JS syntax; the typed bridge governs the new module interface without increasing the implicit-any ratchet. Living sky and atmosphere use governed pass modules with exact measured line caps; orchestration exceptions grow only for uniforms, quality shedding, and disposal. Shader variants depend on authored feature presence.",
+    "revisedGovernanceLineBudget": 2928
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -39,7 +39,9 @@
     "webgl-bloom.ts",
     "webgpu-bloom.ts",
     "webgl-reflect.ts",
-    "webgpu-reflect.ts"
+    "webgpu-reflect.ts",
+    "webgl-atmosphere.ts",
+    "webgpu-atmosphere.ts"
   ],
   "intentionalDirectRendererReferences": [
     {
@@ -346,12 +348,33 @@
       "count": 2,
       "file": "client/js/bootstrap-src/chunks.json",
       "source": "webgpu-reflect.ts"
+    },
+    {
+      "count": 2,
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgl-atmosphere.ts"
+    },
+    {
+      "count": 2,
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgl-atmosphere.ts"
+    },
+    {
+      "count": 2,
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu-atmosphere.ts"
+    },
+    {
+      "count": 2,
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-atmosphere.ts"
     }
   ],
   "sourceSets": {
     "webgl": {
       "chunk": "bootstrap-feature-scene3d-webgl.js",
       "chunkSourceRoles": {
+        "../runtime/scene3d/webgl-atmosphere.ts": "governed-renderer",
         "../runtime/scene3d/webgl-bloom.ts": "governed-renderer",
         "../runtime/scene3d/webgl-ocean.ts": "governed-renderer",
         "../runtime/scene3d/webgl-reflect.ts": "governed-renderer",
@@ -370,21 +393,24 @@
         "../runtime/scene3d/webgl.ts",
         "../runtime/scene3d/webgl-ocean.ts",
         "../runtime/scene3d/webgl-reflect.ts",
+        "../runtime/scene3d/webgl-atmosphere.ts",
         "../runtime/scene3d/webgl-bloom.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ],
-      "maxFileLines": 11265,
-      "maxLines": 11779,
+      "maxFileLines": 11266,
+      "maxLines": 11856,
       "sources": [
         "../runtime/scene3d/webgl.ts",
         "../runtime/scene3d/webgl-ocean.ts",
         "../runtime/scene3d/webgl-reflect.ts",
+        "../runtime/scene3d/webgl-atmosphere.ts",
         "../runtime/scene3d/webgl-bloom.ts"
       ]
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
       "chunkSourceRoles": {
+        "../runtime/scene3d/webgpu-atmosphere.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-bloom.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-ocean.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-reflect.ts": "governed-renderer",
@@ -401,16 +427,18 @@
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
         "../runtime/scene3d/webgpu-reflect.ts",
+        "../runtime/scene3d/webgpu-atmosphere.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ],
-      "maxFileLines": 19335,
-      "maxLines": 20069,
+      "maxFileLines": 19336,
+      "maxLines": 20153,
       "sources": [
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
         "../runtime/scene3d/webgpu-reflect.ts",
+        "../runtime/scene3d/webgpu-atmosphere.ts",
         "../runtime/scene3d/webgpu-bloom.ts"
       ]
     }
@@ -420,14 +448,16 @@
     "../runtime/scene3d/mount-webgl.ts": 5587,
     "../runtime/scene3d/mount.ts": 3884,
     "../runtime/scene3d/webgl-bloom.ts": 114,
-    "../runtime/scene3d/webgl-ocean.ts": 237,
+    "../runtime/scene3d/webgl-ocean.ts": 242,
     "../runtime/scene3d/webgl-reflect.ts": 163,
-    "../runtime/scene3d/webgl.ts": 11265,
+    "../runtime/scene3d/webgl.ts": 11266,
     "../runtime/scene3d/webgpu-bloom.ts": 125,
-    "../runtime/scene3d/webgpu-ocean.ts": 223,
+    "../runtime/scene3d/webgpu-ocean.ts": 233,
     "../runtime/scene3d/webgpu-reflect.ts": 181,
-    "../runtime/scene3d/webgpu.ts": 19335,
-    "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205
+    "../runtime/scene3d/webgpu.ts": 19336,
+    "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205,
+    "../runtime/scene3d/webgl-atmosphere.ts": 71,
+    "../runtime/scene3d/webgpu-atmosphere.ts": 73
   },
   "functionDefaults": {
     "cognitive": 60,
@@ -439,7 +469,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10196:5",
+      "name": "applyPointsAuthoredCustomUniforms@10197:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -458,7 +488,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@7470:3",
-      "lines": 3437,
+      "lines": 3438,
       "cyclomatic": 1031,
       "cognitive": 1632,
       "maxNesting": 7,
@@ -493,7 +523,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10673:5",
+      "name": "drawInstancedMeshes@10674:5",
       "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -502,7 +532,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9765:5",
+      "name": "drawPBRObjectList@9766:5",
       "lines": 283,
       "cyclomatic": 82,
       "cognitive": 196,
@@ -511,7 +541,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10372:5",
+      "name": "drawPointsEntries@10373:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -520,7 +550,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9495:5",
+      "name": "prepareRigidMeshBatches@9496:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -539,7 +569,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "render@8646:5",
-      "lines": 317,
+      "lines": 318,
       "cyclomatic": 92,
       "cognitive": 133,
       "maxNesting": 4,
@@ -611,7 +641,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6454:3",
-      "lines": 12191,
+      "lines": 12192,
       "cyclomatic": 4118,
       "cognitive": 5335,
       "maxNesting": 7,
@@ -628,7 +658,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@19175:5",
+      "name": "diagnostics@19176:5",
       "lines": 90,
       "cyclomatic": 49,
       "cognitive": 49,
@@ -746,7 +776,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "render@18163:5",
-      "lines": 703,
+      "lines": 704,
       "cyclomatic": 204,
       "cognitive": 259,
       "maxNesting": 4,
@@ -910,7 +940,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3437,
+      "lines": 3438,
       "cyclomatic": 1031,
       "cognitive": 1632,
       "maxNesting": 7,
@@ -964,7 +994,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
-      "lines": 12191,
+      "lines": 12192,
       "cyclomatic": 4118,
       "cognitive": 5335,
       "maxNesting": 7,
@@ -991,7 +1021,7 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "render",
-      "lines": 703,
+      "lines": 704,
       "cyclomatic": 204,
       "cognitive": 259,
       "maxNesting": 4,
@@ -1027,48 +1057,48 @@
   ],
   "rendererSets": {
     "base+webgl": {
-      "brotli": 213200,
+      "brotli": 214500,
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "gzip": 257000,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 887738 / 251948 / 208858. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes.",
-      "raw": 902800
+      "gzip": 258700,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 887738 / 251948 / 208858. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100.",
+      "raw": 907800
     },
     "base+webgl+gltf+animation": {
-      "brotli": 233600,
+      "brotli": 234900,
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js",
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "gzip": 280100,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 950560 / 274923 / 229285. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes.",
-      "raw": 965800
+      "gzip": 281700,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 950560 / 274923 / 229285. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100.",
+      "raw": 970800
     },
     "base+webgpu": {
-      "brotli": 236700,
+      "brotli": 238300,
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "gzip": 286300,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1039111 / 280381 / 231539. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes.",
-      "raw": 1057900
+      "gzip": 288300,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1039111 / 280381 / 231539. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100.",
+      "raw": 1063900
     },
     "base+webgpu+gltf+animation": {
-      "brotli": 257100,
+      "brotli": 258700,
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js",
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "gzip": 309300,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1101933 / 303356 / 251966. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes.",
-      "raw": 1120900
+      "gzip": 311300,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1101933 / 303356 / 251966. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100.",
+      "raw": 1126900
     }
   },
   "rendererABI": {

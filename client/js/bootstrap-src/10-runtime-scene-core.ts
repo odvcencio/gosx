@@ -3087,6 +3087,7 @@
     const sky = { mode, topColor, horizonColor, bottomColor,
       blur: Math.max(0, Math.min(1, sceneNumber(raw.blur, 0))),
       intensity: Math.max(0, sceneNumber(raw.intensity, 1) || 1) };
+    if (raw.clouds && mode === "physical") sky.clouds = sceneSkyClouds(raw.clouds);
     if (mode !== "physical") return sky;
     // Physical-sky parameters keep "zero means the default"; see scene/sky.go.
     const sun = sceneIsPlainObject(raw.sunDirection) ? raw.sunDirection : {};
@@ -7194,6 +7195,9 @@
     sceneReflectDispose: typeof sceneReflectDispose === "function" ? sceneReflectDispose : undefined,
     sceneReflectOpaqueList: typeof sceneReflectOpaqueList === "function" ? sceneReflectOpaqueList : undefined,
     sceneReflectionMatrices: typeof sceneReflectionMatrices === "function" ? sceneReflectionMatrices : undefined,
+    sceneSkyClouds: typeof sceneSkyClouds === "function" ? sceneSkyClouds : undefined,
+    sceneCloudDispose: typeof sceneCloudDispose === "function" ? sceneCloudDispose : undefined,
+    sceneCloudUniformData: typeof sceneCloudUniformData === "function" ? sceneCloudUniformData : undefined,
     sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
