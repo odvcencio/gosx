@@ -231,6 +231,9 @@ type ObjectIR struct {
 	ShaderSource          string            `json:"shaderSource,omitempty"`
 	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
 	Pickable              *bool             `json:"pickable,omitempty"`
+	Interactive           bool              `json:"interactive,omitempty"`
+	Label                 string            `json:"label,omitempty"`
+	InteractiveOrder      int               `json:"interactiveOrder,omitempty"`
 	Visible               *bool             `json:"visible,omitempty"`
 	Selected              bool              `json:"selected,omitempty"`
 	// GizmoRing marks a TransformControls rotate-mode ring helper mesh; see
@@ -463,6 +466,7 @@ type HTMLIR struct {
 	ID               string       `json:"id"`
 	Target           string       `json:"target,omitempty"`
 	Mode             string       `json:"mode,omitempty"`
+	Perspective      bool         `json:"perspective,omitempty"`
 	HTML             string       `json:"html"`
 	ClassName        string       `json:"className,omitempty"`
 	Fallback         string       `json:"fallback,omitempty"`
@@ -2010,6 +2014,16 @@ func (item ObjectIR) legacyProps() map[string]any {
 		if len(v.UVs) > 0 {
 			vert["uvs"] = append([]float64(nil), v.UVs...)
 		}
+		if len(v.Tangents) > 0 {
+			vert["tangents"] = append([]float64(nil), v.Tangents...)
+		}
+		// Indexed BufferGeometry keeps UNIQUE vertices in the streams above, so
+		// the index list must travel with them. Dropping it made the browser
+		// draw only the first count/3 triangles of the unique-vertex stream
+		// (a two-triangle quad lost one triangle).
+		if len(v.Indices) > 0 {
+			vert["indices"] = append([]uint32(nil), v.Indices...)
+		}
 		record["vertices"] = vert
 	}
 	setNumeric(record, "lineWidth", item.LineWidth)
@@ -3083,6 +3097,9 @@ func (item HTMLIR) legacyProps() map[string]any {
 	}
 	setString(record, "target", item.Target)
 	setString(record, "mode", item.Mode)
+	if item.Perspective {
+		record["perspective"] = true
+	}
 	setString(record, "className", item.ClassName)
 	setString(record, "fallback", item.Fallback)
 	setString(record, "fallbackReason", item.FallbackReason)

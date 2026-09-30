@@ -1,1 +1,8 @@
-examples/gosx-docs/public/env/blackglass/*.hdr binary
+# Built bootstrap bundles. Marked generated so diff viewers collapse them and
+# commit-message generators (buckley, GitHub linguist) do not read minified
+# output as source changes. Edit the sources under client/js/ and regenerate.
+client/js/bootstrap.js -diff linguist-generated=true
+client/js/bootstrap-lite.js -diff linguist-generated=true
+client/js/bootstrap-runtime.js -diff linguist-generated=true
+client/js/bootstrap-feature-*.js -diff linguist-generated=true
+client/js/*.js.map -diff linguist-generated=true

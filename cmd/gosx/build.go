@@ -648,6 +648,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation, "scene3d"},
 		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute, "scene3d"},
 		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress, "scene3d"},
+		{"bootstrap-feature-scene3d-start", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-start.js"), &manifest.Runtime.BootstrapFeatureScene3DStart, "scene3d"},
 		{"bootstrap-feature-scene3d-instance-stream", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-instance-stream.js"), &manifest.Runtime.BootstrapFeatureScene3DInstanceStream, "scene3d"},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch, ""},
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS, "video"},
@@ -1323,6 +1324,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCompute.File)
 	case "/gosx/bootstrap-feature-scene3d-decompress.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
+	case "/gosx/bootstrap-feature-scene3d-start.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DStart.File)
 	case "/gosx/bootstrap-feature-scene3d-instance-stream.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DInstanceStream.File)
 	case "/gosx/patch.js":

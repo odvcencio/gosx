@@ -1,6 +1,8 @@
 package performance
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -39,71 +42,72 @@ func TestCommittedPerformanceReceiptsMatchSchemaAndFreshness(t *testing.T) {
 	}
 }
 
-func TestCommittedPerformanceReceiptNamesItsMeasuredAncestor(t *testing.T) {
-	receipts, err := Read()
-	if err != nil {
-		t.Fatal(err)
-	}
+// The receipt names the files it measured by content, not by commit. A squash
+// merge deletes the branch commit the measurement ran on, so a commit ancestry
+// check breaks on every squash. The digest below covers the blob of every
+// measurement input at HEAD, so it only changes when an input changes.
+//
+// After re-measuring and committing receipts.json, refresh the digest with:
+//
+//	GOSX_WRITE_RECEIPT_INPUTS_DIGEST=1 go test ./examples/gosx-docs/app/performance -run TestCommittedPerformanceReceiptInputsMatchDigest
+const receiptInputsDigestFile = "receipts.inputs-digest"
+
+func TestCommittedPerformanceReceiptInputsMatchDigest(t *testing.T) {
 	root := gitOutput(t, "rev-parse", "--show-toplevel")
-	const squashedMeasurementCommit = "575eb7fce914bcfb1eb074072a12124587784d32"
-	const squashedMeasurementTree = "6b1e56742b48f21c63e30e65584501dea4209d63"
-
-	if err := measuredCommitIsAncestor(root, receipts.Commit); err != nil {
-		if gitOutputAt(t, root, "rev-parse", "--is-shallow-repository") == "true" {
-			// CI checks out one commit. Fetch every commit since one day before
-			// the measurement: if the measured commit is an ancestor of HEAD it
-			// was authored no later than the measurement, so this range holds it
-			// however many commits landed afterwards. A fixed --deepen count
-			// broke as soon as more than a few commits followed the receipt.
-			head := gitOutputAt(t, root, "rev-parse", "HEAD")
-			since := receipts.MeasuredAt.Add(-24 * time.Hour).UTC().Format(time.RFC3339)
-			fetch := exec.Command("git", "fetch", "--no-tags", "--shallow-since="+since, "origin", head)
-			fetch.Dir = root
-			if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
-				t.Fatalf("deepen shallow history to %s: %v: %s", since, fetchErr, output)
-			}
-		}
-		if err := measuredCommitIsAncestor(root, receipts.Commit); err != nil {
-			// PR #392 was squash-merged, so its measured source commit is not
-			// reachable from main even though the receipt still records that
-			// commit's exact tree. Fetch only this known source commit and accept
-			// it only when both receipt hashes match; the diff checks below still
-			// reject changes to the docs build and measurement inputs.
-			if receipts.Commit != squashedMeasurementCommit || receipts.Tree != squashedMeasurementTree {
-				t.Fatalf("measured commit %s is not an ancestor of HEAD: %v", receipts.Commit, err)
-			}
-			if !gitObjectExistsAt(root, receipts.Commit+"^{commit}") {
-				fetch := exec.Command("git", "fetch", "--no-tags", "--depth=1", "origin", receipts.Commit)
-				fetch.Dir = root
-				if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
-					t.Fatalf("fetch squashed measurement commit %s: %v: %s", receipts.Commit, fetchErr, output)
-				}
-			}
-		}
-	}
-
-	tree := gitOutputAt(t, root, "rev-parse", receipts.Commit+"^{tree}")
-	if tree != receipts.Tree {
-		t.Fatalf("measured commit tree = %s, receipt records %s", tree, receipts.Tree)
-	}
-
-	changed := strings.Fields(gitOutputAt(t, root, "diff", "--name-only", receipts.Commit, "HEAD"))
-	if len(changed) == 0 {
-		t.Fatal("receipt commit must follow the measured build commit")
-	}
 	inputs, err := docsPerformanceReceiptInputs(root)
 	if err != nil {
 		t.Fatalf("compute docs performance receipt inputs: %v", err)
 	}
-	for _, file := range changed {
-		var blob string
-		if _, pinned := performanceReceiptNeutralBlobs[file]; pinned {
-			blob = gitOutputAt(t, root, "rev-parse", "HEAD:"+file)
+	got := performanceReceiptInputsDigest(t, root, inputs)
+	path := filepath.Join(root, "examples", "gosx-docs", "app", "performance", receiptInputsDigestFile)
+	if os.Getenv("GOSX_WRITE_RECEIPT_INPUTS_DIGEST") == "1" {
+		if err := os.WriteFile(path, []byte(got+"\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		if receiptInputNeedsRemeasure(file, blob, inputs) {
-			t.Errorf("measurement input %q changed after the measured build; re-measure the docs performance receipt", file)
-		}
+		return
 	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", receiptInputsDigestFile, err)
+	}
+	if want := strings.TrimSpace(string(data)); want != got {
+		t.Fatalf("measurement inputs at HEAD have digest %s, receipt was measured at %s; re-measure the docs performance receipt, then run with GOSX_WRITE_RECEIPT_INPUTS_DIGEST=1 to record the new digest", got, want)
+	}
+}
+
+// performanceReceiptInputsDigest hashes "path blob" for every measurement input
+// tracked at HEAD. Pinned neutral blobs count as one constant so the reviewed
+// no-measurement edits stay accepted, as receiptInputNeedsRemeasure allows.
+func performanceReceiptInputsDigest(t *testing.T, root string, inputs performanceReceiptInputs) string {
+	t.Helper()
+	listing := gitOutputAt(t, root, "ls-tree", "-r", "-z", "HEAD")
+	type entry struct{ path, blob string }
+	var entries []entry
+	for _, record := range strings.Split(listing, "\x00") {
+		record = strings.TrimSpace(record)
+		if record == "" {
+			continue
+		}
+		meta, file, ok := strings.Cut(record, "\t")
+		if !ok {
+			t.Fatalf("unexpected git ls-tree record %q", record)
+		}
+		fields := strings.Fields(meta)
+		if len(fields) != 3 || fields[1] != "blob" || !inputs.contains(file) {
+			continue
+		}
+		blob := fields[2]
+		if want, pinned := performanceReceiptNeutralBlobs[file]; pinned && blob == want {
+			blob = "neutral"
+		}
+		entries = append(entries, entry{file, blob})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].path < entries[j].path })
+	hash := sha256.New()
+	for _, e := range entries {
+		fmt.Fprintf(hash, "%s %s\n", e.path, e.blob)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func TestPerformanceReceiptMeasurementInputScope(t *testing.T) {
@@ -137,10 +141,16 @@ type performanceReceiptInputs struct {
 var performanceReceiptNeutralBlobs = map[string]string{
 	// Preserve the reviewed CSS fallback and incomplete-capture checks without
 	// changing measured values. Exact blobs keep later edits to these inputs stale.
+	// The showcase-receipts.sh, showcase-gpu-capture.mjs, and freevars.mjs blobs
+	// changed only their machine-specific defaults (tools directory, evidence
+	// directory, CDP address, acorn fallback); no measured value or build output
+	// changed.
+	"cmd/buildbootstrap/freevars.mjs":              "e0b207b4743858c44f667dd7029734369cb66d1d",
 	"examples/gosx-docs/app/capabilities/page.css": "406f787b52c4d98bc86d5002ff4be02684803c57",
 	"scripts/showcase-gpu-cadence.mjs":             "b798f91d123dc4de3cb8c08a8008574420bfa926",
-	"scripts/showcase-gpu-capture.mjs":             "bb96528aa837899b5475a13da1fc6e5447323988",
+	"scripts/showcase-gpu-capture.mjs":             "9d6f85a038dda0e04a3bcd220ccdc95166b55876",
 	"scripts/showcase-receipts.mjs":                "c532380a3f9ef524ab9903089139d154e6315bf2",
+	"scripts/showcase-receipts.sh":                 "11fce1fa8d40e7865b3723d8e5a5225ba306c2f9",
 }
 
 func docsPerformanceReceiptInputs(root string) (performanceReceiptInputs, error) {
@@ -181,7 +191,7 @@ func environmentWithGOWORKOff(environment []string) []string {
 
 func (inputs performanceReceiptInputs) contains(file string) bool {
 	file = filepath.ToSlash(filepath.Clean(file))
-	if file == "examples/gosx-docs/app/performance/receipts.json" || strings.HasSuffix(file, "_test.go") {
+	if file == "examples/gosx-docs/app/performance/receipts.json" || file == "examples/gosx-docs/app/performance/"+receiptInputsDigestFile || strings.HasSuffix(file, "_test.go") {
 		return false
 	}
 	switch file {
@@ -255,21 +265,6 @@ func receiptInputNeedsRemeasure(file, blob string, inputs performanceReceiptInpu
 		return false
 	}
 	return true
-}
-
-func measuredCommitIsAncestor(root, commit string) error {
-	command := exec.Command("git", "merge-base", "--is-ancestor", commit, "HEAD")
-	command.Dir = root
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
-func gitObjectExistsAt(root, object string) bool {
-	command := exec.Command("git", "cat-file", "-e", object)
-	command.Dir = root
-	return command.Run() == nil
 }
 
 func TestPerformancePageRendersEveryListedPageAndDemo(t *testing.T) {
@@ -351,4 +346,49 @@ func gitOutputAt(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func TestPerformanceReceiptInputsDigestFollowsInputContentOnly(t *testing.T) {
+	repo := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		gitOutputAt(t, repo, args...)
+	}
+	write := func(name, content string) {
+		t.Helper()
+		path := filepath.Join(repo, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(message string) {
+		t.Helper()
+		run("add", "-A")
+		run("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", message)
+	}
+	run("init", "-q")
+	write("examples/gosx-docs/app/docs/page.gsx", "one")
+	write("README.md", "unrelated")
+	commit("measured")
+	inputs := performanceReceiptInputs{}
+	measured := performanceReceiptInputsDigest(t, repo, inputs)
+
+	// A squash merge rewrites history but keeps input content: same digest.
+	write("README.md", "still unrelated")
+	write("examples/gosx-docs/app/performance/receipts.json", "{}")
+	write("examples/gosx-docs/app/performance/"+receiptInputsDigestFile, measured)
+	write("examples/gosx-docs/app/docs/page_test.go", "package docs")
+	commit("squashed, non-input changes only")
+	if got := performanceReceiptInputsDigest(t, repo, inputs); got != measured {
+		t.Fatalf("digest changed for non-input edits: %s != %s", got, measured)
+	}
+
+	write("examples/gosx-docs/app/docs/page.gsx", "two")
+	commit("input change")
+	if got := performanceReceiptInputsDigest(t, repo, inputs); got == measured {
+		t.Fatal("digest did not change when a measurement input changed")
+	}
 }

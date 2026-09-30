@@ -29,6 +29,9 @@ var (
 	// needed by the desktop backend cannot be found. The more specific loader
 	// and runtime errors also match this sentinel.
 	ErrWebView2Unavailable = errors.New("webview2 unavailable")
+
+	// ErrWindowNotReady reports that the native desktop window does not exist.
+	ErrWindowNotReady = errors.New("desktop window not ready")
 	// ErrWebView2LoaderUnavailable reports that the loader is missing or lacks
 	// a required entry point.
 	ErrWebView2LoaderUnavailable = fmt.Errorf("%w: loader unavailable", ErrWebView2Unavailable)
@@ -38,14 +41,17 @@ var (
 
 // Options configures a native desktop window.
 type Options struct {
-	Title      string
-	Width      int
-	Height     int
-	AppID      string
-	Version    string
-	UpdateFeed string
-	URL        string
-	HTML       string
+	Title  string
+	Width  int
+	Height int
+	// InitialPlacement restores a previous window's bounds and maximized state.
+	// Zero keeps the normal Width and Height startup behavior.
+	InitialPlacement WindowPlacement
+	AppID            string
+	Version          string
+	UpdateFeed       string
+	URL              string
+	HTML             string
 	// BrowserExecutableFolder selects a Fixed Version WebView2 runtime. The
 	// empty value selects the installed Evergreen runtime.
 	BrowserExecutableFolder string
@@ -53,13 +59,26 @@ type Options struct {
 	// before the WebView2 environment is created. WebView2 reads this from the
 	// process environment, so it applies to every environment in this process.
 	AdditionalBrowserArguments string
-	Debug                      bool
-	UserDataDir                string
-	MuteAudio                  bool
-	SingleInstance             bool
-	DPIAwareness               DPIAwareness
-	Accessibility              AccessibilityOptions
-	CrashReporter              CrashReporterOptions
+	// GPU selects the adapter WebView2 renders on (high performance, low
+	// power, or one adapter by LUID). The switches are added to the
+	// process-wide browser arguments. An operator's
+	// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS value that names a GPU switch
+	// overrides this option.
+	GPU         GPUOptions
+	Debug       bool
+	UserDataDir string
+	// BackgroundColor ("#RGB" or "#RRGGBB") paints the native window and the
+	// WebView2 default background before the page draws, so a dark app does
+	// not flash white at startup. Empty keeps the system window color and
+	// the WebView2 default (white).
+	BackgroundColor string
+	// MuteAudio silences HTML media elements and passes --mute-audio to
+	// WebView2, which also silences Web Audio (AudioContext, AudioWorklet).
+	MuteAudio      bool
+	SingleInstance bool
+	DPIAwareness   DPIAwareness
+	Accessibility  AccessibilityOptions
+	CrashReporter  CrashReporterOptions
 	// DevTools enables the Chromium inspector. Independent of Debug so a
 	// production build can temporarily flip dev-tools on for field
 	// diagnosis without enabling the rest of the Debug surface (default
@@ -95,10 +114,28 @@ type Options struct {
 	OnSuspend func()
 	OnResume  func()
 
+	// OnFocusChanged fires when the primary native window changes focus.
+	// Callbacks run on the window procedure thread and should return quickly.
+	OnFocusChanged func(focused bool)
+
 	// OnProcessFailed reports a WebView2 process failure on the WebView2
 	// dispatcher thread. Keep the callback short; call App.Reload if the
 	// application decides that reloading is appropriate.
 	OnProcessFailed func(ProcessFailedKind)
+
+	// OnNavigationCompleted fires on the WebView2 dispatcher thread when a
+	// top-level navigation finishes. Keep it short. App.StartupTimeline
+	// reports the first navigation's completion time.
+	OnNavigationCompleted func(NavigationCompleted)
+
+	// OnPermissionRequested decides browser permission requests from page
+	// content (Web MIDI, microphone, notifications, ...). It runs on the
+	// WebView2 dispatcher thread; keep it short. Return PermissionAllow or
+	// PermissionDeny to answer without a prompt, or PermissionAsk to let
+	// WebView2 show its own prompt. Nil keeps the WebView2 prompt for
+	// every request. Grant only to origins you trust, such as the app's own
+	// loopback server; check PermissionRequest.URI.
+	OnPermissionRequested func(PermissionRequest) PermissionDecision
 
 	// OnWindowCreated fires after a native window handle has been created.
 	// The initial Windows backend invokes it for the primary window.
@@ -112,6 +149,10 @@ type Options struct {
 	// the OS. Use it for graceful shutdown: flushing state, disposing
 	// background workers, etc. Nil disables the callback.
 	OnClose func()
+
+	// OnBeforeClose runs on the window thread before the native window is
+	// destroyed, with its current placement. Keep the callback short.
+	OnBeforeClose func(WindowPlacement)
 }
 
 // App is a native desktop host for a GoSX application or HTML document.
@@ -147,6 +188,7 @@ type platformApp interface {
 	SetClipboard(text string) error
 	OpenURL(url string) error
 	SetFullscreen(enabled bool) error
+	WindowPlacement() (WindowPlacement, error)
 	SetMinSize(width, height int) error
 	SetMaxSize(width, height int) error
 	NewWindow(options WindowOptions) (*Window, error)
@@ -154,6 +196,7 @@ type platformApp interface {
 	RegisterFileType(ext, icon, handler string) error
 	SetMenuBar(menu Menu) error
 	SetTray(options TrayOptions) error
+	PrimaryWindow() *Window
 	CloseTray() error
 	Notify(notification Notification) error
 	SetFileDropHandler(handler func([]string)) error
@@ -171,6 +214,15 @@ func New(options Options) (*App, error) {
 	userCallback := normalized.OnWebMessage
 
 	app := &App{options: normalized}
+	userFocusCallback := normalized.OnFocusChanged
+	normalized.OnFocusChanged = func(focused bool) {
+		if userFocusCallback != nil {
+			userFocusCallback(focused)
+		}
+		if normalized.NativeBridge && app.bridge != nil {
+			_ = app.bridge.Emit("gosx.window.focus", map[string]bool{"focused": focused})
+		}
+	}
 
 	// Install the preprocessor wrapper. The wrapper is what the platform
 	// impl actually invokes; it fans the message out through the bridge
@@ -232,6 +284,14 @@ func (a *App) Options() Options {
 	return a.options
 }
 
+// Window returns the primary native window after it has been created.
+func (a *App) Window() *Window {
+	if a == nil || a.impl == nil {
+		return nil
+	}
+	return a.impl.PrimaryWindow()
+}
+
 // Bridge returns the typed IPC router for this app. Handlers register
 // via Bridge().Register; host→page events go out via Bridge().Emit.
 // Inbound chrome.webview.postMessage payloads are dispatched through
@@ -262,6 +322,16 @@ func (a *App) Close() error {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
 	return a.impl.Close()
+}
+
+// WindowPlacement reports the window's restored bounds and maximized state.
+// It returns ErrWindowNotReady before the native window exists or after it
+// has been destroyed.
+func (a *App) WindowPlacement() (WindowPlacement, error) {
+	if a == nil || a.impl == nil {
+		return WindowPlacement{}, fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.WindowPlacement()
 }
 
 // Reload reloads the current page in the hosted webview.
@@ -424,6 +494,17 @@ func (a *App) registerNativeBridgeMethods() error {
 			return err
 		}
 		return bridgeVoid(ctx, a.SetMinSize(req.Width, req.Height))
+	})
+	register("gosx.desktop.dialog.message", func(ctx *bridge.Context) error {
+		var options MessageOptions
+		if err := ctx.Decode(&options); err != nil {
+			return err
+		}
+		result, err := a.ShowMessage(options)
+		if err != nil {
+			return err
+		}
+		return ctx.Respond(result)
 	})
 	register("gosx.desktop.window.setMaxSize", func(ctx *bridge.Context) error {
 		var req struct {
@@ -786,6 +867,16 @@ func normalizeOptions(options Options) (Options, error) {
 		return Options{}, err
 	}
 	options.DPIAwareness = dpi
+	gpu, err := normalizeGPUOptions(options.GPU)
+	if err != nil {
+		return Options{}, err
+	}
+	options.GPU = gpu
+	_, background, _, err := parseBackgroundColor(options.BackgroundColor)
+	if err != nil {
+		return Options{}, err
+	}
+	options.BackgroundColor = background
 	if options.Accessibility.Enabled && options.Accessibility.Name == "" {
 		options.Accessibility.Name = options.Title
 	}

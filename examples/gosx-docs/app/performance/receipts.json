@@ -1,52 +1,52 @@
 {
   "schemaVersion": 1,
-  "measuredAt": "2026-09-28T04:49:52-07:00",
-  "commit": "510e51a868857b54580f177298bfe52cab20489c",
-  "tree": "b2a789c3a80ce9d0ba04af8a15d2133f13ff18ac",
+  "measuredAt": "2026-09-29T20:28:28-07:00",
+  "commit": "a2f6c150c6e36311fc1d0835174b8e6457100411",
+  "tree": "b69c2ed0aa473bf807a7249e284392407d324c18",
   "featuredPath": "/demos/water",
   "machine": {
     "name": "WSL2 VM · 20 vCPU",
     "os": "Linux 6.18.33.2-microsoft-standard-WSL2",
     "cpu": "Intel(R) Core(TM) Ultra 9 285",
-    "memoryGiB": 19.53,
-    "loadAverage": "start: 13.13 12.70 10.35; end: 9.33 7.61 8.50"
+    "memoryGiB": 17.56,
+    "loadAverage": "start: 1.35 3.56 5.06; end: 2.22 2.04 3.68"
   },
   "lighthouse": {
-    "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
+    "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
     "method": "Lighthouse mobile emulation against the local production-shaped build; fresh browser profile for each run; median of three cold runs.",
-    "loadAverageStart": "13.13 12.70 10.35",
-    "loadAverageEnd": "4.57 8.24 9.06",
+    "loadAverageStart": "1.35 3.56 5.06",
+    "loadAverageEnd": "2.06 2.34 4.15",
     "runCount": 3,
     "pages": [
       {
         "path": "/",
         "runs": [
           {
-            "performance": 66,
+            "performance": 65,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 68,
+            "performance": 64,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
-            "cls": 0.0183
+            "cls": 0
           },
           {
-            "performance": 76,
+            "performance": 64,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           }
         ],
         "median": {
-          "performance": 68,
+          "performance": 64,
           "accessibility": 100,
-          "bestPractices": 100,
+          "bestPractices": 96,
           "seo": 100,
           "cls": 0
         }
@@ -55,21 +55,21 @@
         "path": "/docs",
         "runs": [
           {
-            "performance": 97,
+            "performance": 96,
             "accessibility": 100,
             "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 97,
+            "performance": 96,
             "accessibility": 100,
             "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 97,
+            "performance": 96,
             "accessibility": 100,
             "bestPractices": 96,
             "seo": 100,
@@ -77,7 +77,7 @@
           }
         ],
         "median": {
-          "performance": 97,
+          "performance": 96,
           "accessibility": 100,
           "bestPractices": 96,
           "seo": 100,
@@ -90,21 +90,21 @@
           {
             "performance": 92,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
             "performance": 92,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
             "performance": 92,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           }
@@ -112,7 +112,7 @@
         "median": {
           "performance": 92,
           "accessibility": 100,
-          "bestPractices": 100,
+          "bestPractices": 96,
           "seo": 100,
           "cls": 0
         }
@@ -121,31 +121,31 @@
         "path": "/demos/",
         "runs": [
           {
-            "performance": 90,
+            "performance": 91,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 90,
+            "performance": 91,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 90,
+            "performance": 91,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           }
         ],
         "median": {
-          "performance": 90,
+          "performance": 91,
           "accessibility": 100,
-          "bestPractices": 100,
+          "bestPractices": 96,
           "seo": 100,
           "cls": 0
         }
@@ -154,21 +154,21 @@
         "path": "/demos/water",
         "runs": [
           {
-            "performance": 50,
+            "performance": 45,
             "accessibility": 100,
             "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 49,
+            "performance": 34,
             "accessibility": 100,
             "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
-            "performance": 52,
+            "performance": 38,
             "accessibility": 100,
             "bestPractices": 96,
             "seo": 100,
@@ -176,7 +176,7 @@
           }
         ],
         "median": {
-          "performance": 50,
+          "performance": 38,
           "accessibility": 100,
           "bestPractices": 96,
           "seo": 100,
@@ -187,31 +187,31 @@
         "path": "/capabilities/",
         "runs": [
           {
-            "performance": 97,
+            "performance": 98,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0.0022
           },
           {
-            "performance": 97,
+            "performance": 98,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0.0022
           },
           {
-            "performance": 97,
+            "performance": 98,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0.0022
           }
         ],
         "median": {
-          "performance": 97,
+          "performance": 98,
           "accessibility": 100,
-          "bestPractices": 100,
+          "bestPractices": 96,
           "seo": 100,
           "cls": 0.0022
         }
@@ -222,21 +222,21 @@
           {
             "performance": 96,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
             "performance": 96,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           },
           {
             "performance": 96,
             "accessibility": 100,
-            "bestPractices": 100,
+            "bestPractices": 96,
             "seo": 100,
             "cls": 0
           }
@@ -244,7 +244,7 @@
         "median": {
           "performance": 96,
           "accessibility": 100,
-          "bestPractices": 100,
+          "bestPractices": 96,
           "seo": 100,
           "cls": 0
         }
@@ -253,7 +253,7 @@
   },
   "gpu": {
     "label": "RTX 5070 Ti desktop, not a mid-range laptop",
-    "browser": "Chrome/153.0.8010.53",
+    "browser": "Chrome/154.0.8037.92 · NVIDIA GeForce RTX 5070 Ti, driver 32.0.15.8180, headless",
     "method": "Windows Chrome with ANGLE D3D11 at 1440x900; forced WebGL2 runs; each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled.",
     "scenes": [
       {
@@ -262,17 +262,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 897,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 5.7
+            "firstDrawMs": 965,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 4.3
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 595,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 6.2
+            "firstDrawMs": 408,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 4.6
           }
         ]
       },
@@ -282,17 +282,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 486,
-            "cadenceP50Ms": 33.3,
-            "cadenceP95Ms": 33.5,
-            "rafCpuP95Ms": 1.3
+            "firstDrawMs": 380,
+            "cadenceP50Ms": 20,
+            "cadenceP95Ms": 20.2,
+            "rafCpuP95Ms": 0.9
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 352,
-            "cadenceP50Ms": 33.3,
-            "cadenceP95Ms": 33.4,
-            "rafCpuP95Ms": 2
+            "firstDrawMs": 239,
+            "cadenceP50Ms": 20,
+            "cadenceP95Ms": 20.1,
+            "rafCpuP95Ms": 1.4
           }
         ]
       },
@@ -302,17 +302,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 463,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 1.1
+            "firstDrawMs": 332,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 0.6
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 376,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 2
+            "firstDrawMs": 233,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 1.3
           }
         ]
       },
@@ -322,17 +322,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 464,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 1.1
+            "firstDrawMs": 328,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 0.6
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 542,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 1.9
+            "firstDrawMs": 412,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 1.1
           }
         ]
       },
@@ -342,17 +342,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 473,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 1.4
+            "firstDrawMs": 337,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 0.9
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 335,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 2.1
+            "firstDrawMs": 226,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 1.3
           }
         ]
       },
@@ -362,17 +362,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 501,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 1
+            "firstDrawMs": 323,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 0.5
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 303,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 2.1
+            "firstDrawMs": 350,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 1.3
           }
         ]
       },
@@ -382,17 +382,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 445,
-            "cadenceP50Ms": 33.3,
-            "cadenceP95Ms": 33.5,
-            "rafCpuP95Ms": 0.9
+            "firstDrawMs": 685,
+            "cadenceP50Ms": 20,
+            "cadenceP95Ms": 20.1,
+            "rafCpuP95Ms": 0.7
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 325,
-            "cadenceP50Ms": 33.3,
-            "cadenceP95Ms": 33.5,
-            "rafCpuP95Ms": 2.1
+            "firstDrawMs": 513,
+            "cadenceP50Ms": 20,
+            "cadenceP95Ms": 20.1,
+            "rafCpuP95Ms": 1.4
           }
         ]
       },
@@ -402,17 +402,17 @@
         "backends": [
           {
             "backend": "WebGL2",
-            "firstDrawMs": 636,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 1.3
+            "firstDrawMs": 428,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 0.8
           },
           {
             "backend": "WebGPU",
-            "firstDrawMs": 530,
-            "cadenceP50Ms": 16.7,
-            "cadenceP95Ms": 16.8,
-            "rafCpuP95Ms": 2.5
+            "firstDrawMs": 456,
+            "cadenceP50Ms": 10,
+            "cadenceP95Ms": 10.1,
+            "rafCpuP95Ms": 1.5
           }
         ]
       }
@@ -511,80 +511,80 @@
       "brotliBytes": 82898
     },
     {
-      "name": "bootstrap-feature-scene3d.45a748d5dd74c071.js",
+      "name": "bootstrap-feature-scene3d.e4bf428a5859f282.js",
       "kind": "client-js",
-      "path": "assets/runtime/bootstrap-feature-scene3d.45a748d5dd74c071.js",
-      "rawBytes": 608160,
-      "brotliBytes": 141097
+      "path": "assets/runtime/bootstrap-feature-scene3d.e4bf428a5859f282.js",
+      "rawBytes": 616140,
+      "brotliBytes": 143163
     },
     {
-      "name": "bootstrap-feature-textlayout.c072a8fe39b7d2a5.js",
+      "name": "bootstrap-feature-textlayout.48fa31ca6b5a2618.js",
       "kind": "client-js",
-      "path": "assets/runtime/bootstrap-feature-textlayout.c072a8fe39b7d2a5.js",
-      "rawBytes": 42350,
-      "brotliBytes": 9613
+      "path": "assets/runtime/bootstrap-feature-textlayout.48fa31ca6b5a2618.js",
+      "rawBytes": 42521,
+      "brotliBytes": 9672
     },
     {
-      "name": "bootstrap-lite.f5aced6447ebe7fa.js",
+      "name": "bootstrap-lite.9e4f7ed116e0992e.js",
       "kind": "client-js",
-      "path": "assets/runtime/bootstrap-lite.f5aced6447ebe7fa.js",
-      "rawBytes": 147579,
-      "brotliBytes": 36544
+      "path": "assets/runtime/bootstrap-lite.9e4f7ed116e0992e.js",
+      "rawBytes": 149744,
+      "brotliBytes": 37370
     },
     {
-      "name": "bootstrap-runtime.ea9b6d52e2d52cbb.js",
+      "name": "bootstrap-runtime.d90c9e04fb745d0b.js",
       "kind": "client-js",
-      "path": "assets/runtime/bootstrap-runtime.ea9b6d52e2d52cbb.js",
-      "rawBytes": 190792,
-      "brotliBytes": 46905
+      "path": "assets/runtime/bootstrap-runtime.d90c9e04fb745d0b.js",
+      "rawBytes": 192952,
+      "brotliBytes": 47608
     },
     {
-      "name": "bootstrap.776cb46322da3775.js",
+      "name": "bootstrap.e7b73312bc9f9bc3.js",
       "kind": "client-js",
-      "path": "assets/runtime/bootstrap.776cb46322da3775.js",
-      "rawBytes": 1772255,
-      "brotliBytes": 392618
+      "path": "assets/runtime/bootstrap.e7b73312bc9f9bc3.js",
+      "rawBytes": 1782819,
+      "brotliBytes": 395629
     },
     {
-      "name": "gosx-runtime-collab.15e68ddaeba7c4be.wasm",
+      "name": "gosx-runtime-collab.f4d2bc4934735cc8.wasm",
       "kind": "wasm",
-      "path": "assets/runtime/gosx-runtime-collab.15e68ddaeba7c4be.wasm",
+      "path": "assets/runtime/gosx-runtime-collab.f4d2bc4934735cc8.wasm",
       "rawBytes": 1263502,
-      "brotliBytes": 405572
+      "brotliBytes": 405832
     },
     {
-      "name": "gosx-runtime-core.66862a08b7bdfc82.wasm",
+      "name": "gosx-runtime-core.4884141a65d9439a.wasm",
       "kind": "wasm",
-      "path": "assets/runtime/gosx-runtime-core.66862a08b7bdfc82.wasm",
+      "path": "assets/runtime/gosx-runtime-core.4884141a65d9439a.wasm",
       "rawBytes": 1025412,
-      "brotliBytes": 334962
+      "brotliBytes": 334759
     },
     {
-      "name": "gosx-runtime-engine.a1809e34d28ab9ff.wasm",
+      "name": "gosx-runtime-engine.0924df4f65ab71ee.wasm",
       "kind": "wasm",
-      "path": "assets/runtime/gosx-runtime-engine.a1809e34d28ab9ff.wasm",
+      "path": "assets/runtime/gosx-runtime-engine.0924df4f65ab71ee.wasm",
       "rawBytes": 1771651,
-      "brotliBytes": 543288
+      "brotliBytes": 543151
     },
     {
-      "name": "gosx-runtime-islands.149320982316e7ec.wasm",
+      "name": "gosx-runtime-islands.385e67bf0cde5cf0.wasm",
       "kind": "wasm",
-      "path": "assets/runtime/gosx-runtime-islands.149320982316e7ec.wasm",
+      "path": "assets/runtime/gosx-runtime-islands.385e67bf0cde5cf0.wasm",
       "rawBytes": 846667,
-      "brotliBytes": 282692
+      "brotliBytes": 282676
     },
     {
-      "name": "gosx-runtime.98584b7267019ed6.wasm",
+      "name": "gosx-runtime.da5bfd8e8618abc9.wasm",
       "kind": "wasm",
-      "path": "assets/runtime/gosx-runtime.98584b7267019ed6.wasm",
+      "path": "assets/runtime/gosx-runtime.da5bfd8e8618abc9.wasm",
       "rawBytes": 2253623,
-      "brotliBytes": 658078
+      "brotliBytes": 658386
     }
   ],
   "quickstart": {
     "command": "go install m31labs.dev/gosx/cmd/gosx@latest",
     "method": "Cold run used fresh isolated GOMODCACHE and GOCACHE directories. Warm run reused both caches. Times include compilation and module download.",
-    "coldSeconds": 35.71,
-    "warmSeconds": 1.65
+    "coldSeconds": 60.4,
+    "warmSeconds": 1.87
   }
 }

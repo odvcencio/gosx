@@ -725,17 +725,14 @@
   function sceneWebGLRendererLooksSoftware(metadata) {
     const vendor = metadata && typeof metadata.vendor === "string" ? metadata.vendor : "";
     const renderer = metadata && typeof metadata.renderer === "string" ? metadata.renderer : "";
-    const text = (vendor + " " + renderer).trim().toLowerCase();
-    if (!text) {
-      return false;
-    }
-    return text.indexOf("swiftshader") !== -1
-      || text.indexOf("llvmpipe") !== -1
-      || text.indexOf("softpipe") !== -1
-      || text.indexOf("lavapipe") !== -1
-      || text.indexOf("software") !== -1
-      || text.indexOf("microsoft basic render") !== -1
-      || text.indexOf("basic render driver") !== -1;
+    const text = (vendor + " " + renderer).toLowerCase();
+    return text.includes("swiftshader")
+      || text.includes("llvmpipe")
+      || text.includes("softpipe")
+      || text.includes("lavapipe")
+      || text.includes("software")
+      || text.includes("microsoft basic render")
+      || text.includes("basic render driver");
   }
 
   function sceneProbeWebGLRenderer() {

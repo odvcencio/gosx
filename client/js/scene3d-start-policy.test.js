@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount-viewport.ts"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/start-policy.ts"), "utf8");
 const mountSource = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount.ts"), "utf8");
 
 function extractFunction(name, nextName) {
@@ -135,7 +135,7 @@ function paintPosterTwice(window) {
 }
 
 test("the Scene3D factory applies declarative start policy before creating scene state", () => {
-  const gate = mountSource.indexOf('if (props.startPolicy === "idle-visible-hardware" && !(await sceneRunStartPolicy(mount, props, ctx))) return {};');
+  const gate = mountSource.indexOf('if (props.startPolicy === "idle-visible-hardware" && !(await window.__gosx_scene3d_start(mount, props, ctx, sceneProbeWebGLRenderer, setAttrValue))) return {};');
   const sceneState = mountSource.indexOf("const runtimeScene =", gate);
   assert.notEqual(gate, -1);
   assert.ok(sceneState > gate);

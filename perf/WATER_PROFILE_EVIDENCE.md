@@ -50,10 +50,10 @@ export GOSX_BROWSER_EXECUTABLE=/absolute/path/to/chrome
 
 ## Exact command
 
-The repository's direct Node runtime can run the complete matrix:
+Node can run the complete matrix:
 
 ```sh
-/home/draco/.vscode-server/bin/1b6a188127eeaf9194f945eb6eb89a657e93c54c/node \
+node \
   scripts/water-profile-evidence.mjs \
   --url http://127.0.0.1:3100/demos/water \
   --out-dir build/water-profile-evidence \
@@ -66,7 +66,7 @@ The equivalent Make target is:
 
 ```sh
 make water-profile-evidence \
-  NODE=/home/draco/.vscode-server/bin/1b6a188127eeaf9194f945eb6eb89a657e93c54c/node \
+  NODE="$(command -v node)" \
   WATER_EVIDENCE_URL=http://127.0.0.1:3100/demos/water
 ```
 
@@ -75,7 +75,7 @@ browser:
 
 ```sh
 make test-water-profile-evidence \
-  NODE=/home/draco/.vscode-server/bin/1b6a188127eeaf9194f945eb6eb89a657e93c54c/node
+  NODE="$(command -v node)"
 ```
 
 ## Hardware certification
@@ -84,7 +84,7 @@ Use `--environment hardware --enforce-hardware` only when the browser is
 actually running on the GPU being certified:
 
 ```sh
-/home/draco/.vscode-server/bin/1b6a188127eeaf9194f945eb6eb89a657e93c54c/node \
+node \
   scripts/water-profile-evidence.mjs \
   --url http://127.0.0.1:3100/demos/water \
   --out-dir build/water-profile-evidence-apple-m3 \

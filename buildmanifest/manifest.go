@@ -67,6 +67,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DAnimation  HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitzero"`
 	BootstrapFeatureScene3DCompute    HashedAsset `json:"bootstrapFeatureScene3dCompute,omitzero"`
 	BootstrapFeatureScene3DDecompress HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitzero"`
+	BootstrapFeatureScene3DStart      HashedAsset `json:"bootstrapFeatureScene3dStart,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
 	// instance-transform fast path (see client/runtime/scene3d/
 	// instance-stream.ts and scene/instance_stream.go). It is opt-in in the
@@ -200,6 +201,7 @@ type RuntimePaths struct {
 	BootstrapFeatureScene3DAnimation      string
 	BootstrapFeatureScene3DCompute        string
 	BootstrapFeatureScene3DDecompress     string
+	BootstrapFeatureScene3DStart          string
 	BootstrapFeatureScene3DInstanceStream string
 	Patch                                 string
 	VideoHLS                              string
@@ -253,6 +255,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureScene3DAnimation:      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DAnimation.File),
 		BootstrapFeatureScene3DCompute:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCompute.File),
 		BootstrapFeatureScene3DDecompress:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DDecompress.File),
+		BootstrapFeatureScene3DStart:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DStart.File),
 		BootstrapFeatureScene3DInstanceStream: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DInstanceStream.File),
 		Patch:                                 AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
 		VideoHLS:                              AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),

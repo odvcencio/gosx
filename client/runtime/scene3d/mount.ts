@@ -1,7 +1,6 @@
 // mount.ts — the GoSXScene3D engine factory.
 // @ts-check
 // Mount closure: canvas, render loop, live updates, teardown, and gateable authorities.
-
 /**
  * @typedef {object} GoSXSceneEngineMountContext
  * @property {HTMLElement} mount
@@ -14,9 +13,8 @@
       console.warn("[gosx] Scene3D requires a mount element");
       return {};
     }
-
     const props = ctx.props || {};
-    if (props.startPolicy === "idle-visible-hardware" && !(await sceneRunStartPolicy(mount, props, ctx))) return {};
+    if (props.startPolicy === "idle-visible-hardware" && !(await window.__gosx_scene3d_start(mount, props, ctx, sceneProbeWebGLRenderer, setAttrValue))) return {};
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -55,7 +53,6 @@
       await applySceneCommands(sceneState, initialRuntimeCommands);
       if (!scene3DFactoryCurrent()) return {};
     }
-
     const sceneMountOwner = { m: mount };
     mount.__gosxScene3DOwner = sceneMountOwner;
     function scene3DFactoryOwned() {
@@ -132,7 +129,6 @@
     let sceneAnimationPaused = false;
     let sceneAnimationToggle = null;
     let sceneAnimationToggleBound = false;
-
     function sceneAnimationState() {
       if (motion.reducedMotion) {
         return { wants: false, reason: "reduced-motion" };
@@ -191,11 +187,9 @@
       }
       return { wants: false, reason: "static" };
     }
-
     function sceneShouldAnimate() {
       return sceneAnimationState().wants;
     }
-
     // A material that declares a `time` uniform is animated by the per-frame
     // clock the renderer feeds (WGSL user.time / GLSL uniform float time /
     // selena `param time`), even when nothing else in the scene moves. The
@@ -225,7 +219,6 @@
       }
       return false;
     }
-
     function sceneHasTimeDrivenMaterials(state) {
       // The normalized scene state strips authored-material fields (see
       // normalizeScenePointsEntry's whitelist), so the raw wire scene in
@@ -387,7 +380,9 @@
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute(sceneAttr("label-layer"), "true");
     labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.pointerEvents = "none";
     mount.appendChild(labelLayer);
+    const sceneFocusProxies = setupSceneNodeFocusProxies(mount);
     const statsOverlay = createSceneStatsOverlay(mount, sceneBool(props.stats, false));
     let inspectorOverlay = null;
 
@@ -445,6 +440,7 @@
       if (labelLayer.parentNode === mount) {
         mount.removeChild(labelLayer);
       }
+      disposeSceneNodeFocusProxies(sceneFocusProxies);
       if (statsOverlay) {
         statsOverlay.dispose();
       }
@@ -624,6 +620,7 @@
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
         renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+        syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
         renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       });
     });
@@ -1807,6 +1804,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       return true;
     }
@@ -2242,7 +2240,7 @@
 	            : { type: "gosx:scene3d:input", detail: inputDetail };
 	          mount.dispatchEvent(inputEvent);
 	        }
-	      });
+	      }, sceneFocusEnabled.call(null, sceneState), sceneFocusPointerHandler.call(null, sceneFocusProxies));
 	      // Gizmo drags own pointer-down near an active TransformControls form.
 	      // Registered before the camera controls so stopImmediatePropagation can
 	      // reserve the gesture; presses away from the gizmo fall through.
@@ -3054,6 +3052,7 @@
           recordSceneWaterFrame(mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+          syncSceneNodeFocusProxies.call(null, sceneFocusProxies, effectiveBundle, sceneState);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
@@ -3170,6 +3169,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);

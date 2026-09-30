@@ -394,13 +394,8 @@
   function hubInputCapturesKey(event) {
     const code = String(event && event.code || "");
     const key = String(event && event.key || "").toLowerCase();
-    return code === "KeyW" || code === "KeyA" || code === "KeyS" || code === "KeyD"
-      || code === "KeyU" || code === "KeyI" || code === "KeyJ" || code === "KeyK" || code === "KeyL"
-      || code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight"
-      || code === "Space"
-      || key === "w" || key === "a" || key === "s" || key === "d"
-      || key === "u" || key === "i" || key === "j" || key === "k" || key === "l"
-      || key === " ";
+    return /^(?:Key[WASDUIJKL]|Arrow(?:Up|Down|Left|Right)|Space)(?![\s\S])/.test(code)
+      || (key.length === 1 && "wasduijkl ".includes(key));
   }
 
   // connectHub's optional attempt parameter is the reconnect attempt
@@ -413,7 +408,7 @@
   function connectHub(entry, attempt) {
     if (!canConnectHub(entry)) return;
 
-    if (gosxHost.hubs && typeof gosxHost.hubs.disconnect === "function") {
+    if (typeof gosxHost.hubs?.disconnect === "function") {
       gosxHost.hubs.disconnect(entry.id);
     }
     const record = createHubRecord(entry, attempt);
@@ -627,74 +622,12 @@
     }, current.reconnectDelay);
   }
 
-  const pendingSceneHubs = new Map();
-  let pendingSceneHubObserver = null;
-
-  function stopPendingSceneHubObserverIfIdle() {
-    if (pendingSceneHubs.size !== 0 || !pendingSceneHubObserver) return;
-    pendingSceneHubObserver.disconnect();
-    pendingSceneHubObserver = null;
-  }
-
-  function cancelPendingSceneHub(hubID) {
-    if (hubID == null) return;
-    pendingSceneHubs.delete(String(hubID));
-    stopPendingSceneHubObserverIfIdle();
-  }
-
-  function cancelAllPendingSceneHubs() {
-    pendingSceneHubs.clear();
-    stopPendingSceneHubObserverIfIdle();
-  }
-
-  function connectPendingSceneHubs() {
-    if (pendingSceneHubs.size === 0) return;
-    for (const entry of Array.from(pendingSceneHubs.values())) {
-      if (!hubSceneBindingsReady(entry)) continue;
-      pendingSceneHubs.delete(entry.id);
-      connectHub(entry);
-    }
-    stopPendingSceneHubObserverIfIdle();
-  }
-
-  function waitForHubSceneBindings(entry) {
-    pendingSceneHubs.set(entry.id, entry);
-    if (!pendingSceneHubObserver && typeof MutationObserver === "function" && document.documentElement) {
-      pendingSceneHubObserver = new MutationObserver(connectPendingSceneHubs);
-      pendingSceneHubObserver.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["data-gosx-scene3d-command-ready"],
-        childList: true,
-        subtree: true,
-      });
-    }
-    // Check after observing to cover a scene that became ready between the
-    // initial manifest pass and observer registration.
-    connectPendingSceneHubs();
-  }
-
   async function connectAllHubs(manifest) {
     initializeClientIdentity(manifest && manifest.clientIdentity);
     if (!manifest || !manifest.hubs || manifest.hubs.length === 0) return;
     for (const entry of manifest.hubs) {
-      if (hubSceneBindingsReady(entry)) {
-        connectHub(entry);
-      } else {
-        waitForHubSceneBindings(entry);
-      }
+      if (!window.__gosx_scene3d_hub_policy?.defer(entry, connectHub)) connectHub(entry);
     }
-  }
-
-  function hubSceneBindingsReady(entry) {
-    const bindings = entry && Array.isArray(entry.bindings) ? entry.bindings : [];
-    for (let i = 0; i < bindings.length; i += 1) {
-      const binding = bindings[i];
-      if (!binding || (!binding.sceneCommands && !binding.sceneInput)) continue;
-      const mountID = String(binding.sceneMountId || "").trim();
-      const mount = mountID ? document.getElementById(mountID) : null;
-      if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return false;
-    }
-    return true;
   }
 
   // revalidateHubConnections repairs sockets the page lost while it was not
@@ -734,11 +667,9 @@
     window.addEventListener("pageshow", revalidateHubConnections);
   }
 
-  gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {
+  Object.assign(gosxHost.hubs ||= {}, {
     connect: connectHub,
     connectAll: connectAllHubs,
-    cancelPending: cancelPendingSceneHub,
-    cancelAllPending: cancelAllPendingSceneHubs,
     revalidate: revalidateHubConnections,
     reconnectDelayMs: reconnectDelayMs,
   });

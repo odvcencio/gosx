@@ -29,6 +29,8 @@ const (
 	swShowDefault    = 10
 	swRestore        = 9
 
+	wmActivate       = 0x0006
+	waInactive       = 0
 	wmClose          = 0x0010
 	wmDestroy        = 0x0002
 	wmCommand        = 0x0111
@@ -37,6 +39,7 @@ const (
 	wmDropFiles      = 0x0233
 	wmGetObject      = 0x003D
 	wmSize           = 0x0005
+	wmEraseBkgnd     = 0x0014
 	wmGetMinMaxInfo  = 0x0024
 	wmKeyDown        = 0x0100
 	wmPowerBroadcast = 0x0218
@@ -84,28 +87,31 @@ var (
 
 	procGetModuleHandleW = modKernel.NewProc("GetModuleHandleW")
 
-	procRegisterClassExW    = modUser32.NewProc("RegisterClassExW")
-	procCreateWindowExW     = modUser32.NewProc("CreateWindowExW")
-	procDefWindowProcW      = modUser32.NewProc("DefWindowProcW")
-	procDestroyWindow       = modUser32.NewProc("DestroyWindow")
-	procDispatchMessageW    = modUser32.NewProc("DispatchMessageW")
-	procGetClientRect       = modUser32.NewProc("GetClientRect")
-	procGetMessageW         = modUser32.NewProc("GetMessageW")
-	procLoadCursorW         = modUser32.NewProc("LoadCursorW")
-	procPostMessageW        = modUser32.NewProc("PostMessageW")
-	procPostQuitMessage     = modUser32.NewProc("PostQuitMessage")
-	procShowWindow          = modUser32.NewProc("ShowWindow")
-	procTranslateMessage    = modUser32.NewProc("TranslateMessage")
-	procUpdateWindow        = modUser32.NewProc("UpdateWindow")
-	procSetWindowTextW      = modUser32.NewProc("SetWindowTextW")
-	procSetForegroundWindow = modUser32.NewProc("SetForegroundWindow")
-	procSetPropW            = modUser32.NewProc("SetPropW")
-	procRemovePropW         = modUser32.NewProc("RemovePropW")
-	procGetPropW            = modUser32.NewProc("GetPropW")
-	procEnumWindows         = modUser32.NewProc("EnumWindows")
-	procSendMessageTimeoutW = modUser32.NewProc("SendMessageTimeoutW")
-	procSendMessageW        = modUser32.NewProc("SendMessageW")
-	procExtractIconExW      = modShell32.NewProc("ExtractIconExW")
+	procRegisterClassExW         = modUser32.NewProc("RegisterClassExW")
+	procCreateWindowExW          = modUser32.NewProc("CreateWindowExW")
+	procDefWindowProcW           = modUser32.NewProc("DefWindowProcW")
+	procDestroyWindow            = modUser32.NewProc("DestroyWindow")
+	procDispatchMessageW         = modUser32.NewProc("DispatchMessageW")
+	procGetClientRect            = modUser32.NewProc("GetClientRect")
+	procGetMessageW              = modUser32.NewProc("GetMessageW")
+	procLoadCursorW              = modUser32.NewProc("LoadCursorW")
+	procPostMessageW             = modUser32.NewProc("PostMessageW")
+	procPostQuitMessage          = modUser32.NewProc("PostQuitMessage")
+	procShowWindow               = modUser32.NewProc("ShowWindow")
+	procIsIconic                 = modUser32.NewProc("IsIconic")
+	procGetWindowThreadProcessId = modUser32.NewProc("GetWindowThreadProcessId")
+	procAllowSetForegroundWindow = modUser32.NewProc("AllowSetForegroundWindow")
+	procTranslateMessage         = modUser32.NewProc("TranslateMessage")
+	procUpdateWindow             = modUser32.NewProc("UpdateWindow")
+	procSetWindowTextW           = modUser32.NewProc("SetWindowTextW")
+	procSetForegroundWindow      = modUser32.NewProc("SetForegroundWindow")
+	procSetPropW                 = modUser32.NewProc("SetPropW")
+	procRemovePropW              = modUser32.NewProc("RemovePropW")
+	procGetPropW                 = modUser32.NewProc("GetPropW")
+	procEnumWindows              = modUser32.NewProc("EnumWindows")
+	procSendMessageTimeoutW      = modUser32.NewProc("SendMessageTimeoutW")
+	procSendMessageW             = modUser32.NewProc("SendMessageW")
+	procExtractIconExW           = modShell32.NewProc("ExtractIconExW")
 
 	// SetProcessDpiAwarenessContext is Win10 1703+. NewLazyProc resolves
 	// at first .Call(), so older systems silently fall back when the Find()
@@ -113,13 +119,15 @@ var (
 	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
 	procSetProcessDPIAware            = modUser32.NewProc("SetProcessDPIAware")
 
-	procSetWindowLongPtrW = modUser32.NewProc("SetWindowLongPtrW")
-	procGetWindowLongPtrW = modUser32.NewProc("GetWindowLongPtrW")
-	procSetWindowPos      = modUser32.NewProc("SetWindowPos")
-	procGetWindowRect     = modUser32.NewProc("GetWindowRect")
-	procMonitorFromWindow = modUser32.NewProc("MonitorFromWindow")
-	procGetMonitorInfoW   = modUser32.NewProc("GetMonitorInfoW")
-	procGetSystemMetrics  = modUser32.NewProc("GetSystemMetrics")
+	procSetWindowLongPtrW   = modUser32.NewProc("SetWindowLongPtrW")
+	procGetWindowLongPtrW   = modUser32.NewProc("GetWindowLongPtrW")
+	procSetWindowPos        = modUser32.NewProc("SetWindowPos")
+	procGetWindowRect       = modUser32.NewProc("GetWindowRect")
+	procGetWindowPlacement  = modUser32.NewProc("GetWindowPlacement")
+	procEnumDisplayMonitors = modUser32.NewProc("EnumDisplayMonitors")
+	procMonitorFromWindow   = modUser32.NewProc("MonitorFromWindow")
+	procGetMonitorInfoW     = modUser32.NewProc("GetMonitorInfoW")
+	procGetSystemMetrics    = modUser32.NewProc("GetSystemMetrics")
 )
 
 type point struct {
@@ -132,6 +140,15 @@ type rect struct {
 	Top    int32
 	Right  int32
 	Bottom int32
+}
+
+type windowPlacement struct {
+	Length           uint32
+	Flags            uint32
+	ShowCmd          uint32
+	PtMinPosition    point
+	PtMaxPosition    point
+	RcNormalPosition rect
 }
 
 type msg struct {
@@ -159,8 +176,12 @@ type wndClassEx struct {
 }
 
 var (
-	windowClassName = syscall.StringToUTF16Ptr("GoSXDesktopWindow")
-	windowProc      = syscall.NewCallback(desktopWndProc)
+	windowClassName  = syscall.StringToUTF16Ptr("GoSXDesktopWindow")
+	windowProc       = syscall.NewCallback(desktopWndProc)
+	monitorEnumAreas []screenRect
+
+	monitorEnumProc = syscall.NewCallback(enumDisplayMonitor)
+	monitorEnumMu   sync.Mutex
 	registerOnce    sync.Once
 	registerErr     error
 
@@ -180,7 +201,29 @@ func coUninitialize() {
 	procCoUninitialize.Call()
 }
 
-func createDesktopWindow(title string, width, height int, app *windowsApp) (uintptr, error) {
+func monitorWorkAreas() []screenRect {
+	monitorEnumMu.Lock()
+	defer monitorEnumMu.Unlock()
+	monitorEnumAreas = nil
+	if ok, _, _ := procEnumDisplayMonitors.Call(0, 0, monitorEnumProc, 0); ok == 0 {
+		return nil
+	}
+	return append([]screenRect(nil), monitorEnumAreas...)
+}
+
+func enumDisplayMonitor(monitor, _, _, _ uintptr) uintptr {
+	var info monitorInfo
+	info.cbSize = uint32(unsafe.Sizeof(info))
+	if ok, _, _ := procGetMonitorInfoW.Call(monitor, uintptr(unsafe.Pointer(&info))); ok != 0 {
+		area := info.rcWork
+		monitorEnumAreas = append(monitorEnumAreas, screenRect{
+			Left: int(area.Left), Top: int(area.Top), Right: int(area.Right), Bottom: int(area.Bottom),
+		})
+	}
+	return 1
+}
+
+func createDesktopWindow(title string, width, height int, placement WindowPlacement, app *windowsApp) (uintptr, error) {
 	if err := registerWindowClass(); err != nil {
 		return 0, err
 	}
@@ -194,15 +237,20 @@ func createDesktopWindow(title string, width, height int, app *windowsApp) (uint
 		return 0, err
 	}
 
+	x, y, windowWidth, windowHeight := int(cwUseDefault), int(cwUseDefault), width, height
+	if !placement.IsZero() {
+		x, y = placement.X, placement.Y
+		windowWidth, windowHeight = placement.Width, placement.Height
+	}
 	hwnd, _, callErr := procCreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(windowClassName)),
 		uintptr(unsafe.Pointer(titlePtr)),
 		wsOverlappedWindow,
-		cwUseDefault,
-		cwUseDefault,
-		uintptr(width),
-		uintptr(height),
+		uintptr(x),
+		uintptr(y),
+		uintptr(windowWidth),
+		uintptr(windowHeight),
 		0,
 		0,
 		instance,
@@ -299,8 +347,12 @@ func moduleHandle() (uintptr, error) {
 	return instance, nil
 }
 
-func showWindow(hwnd uintptr) {
-	procShowWindow.Call(hwnd, swShowDefault)
+func showWindow(hwnd uintptr, maximized bool) {
+	command := uintptr(swShowDefault)
+	if maximized {
+		command = swShowMaximized
+	}
+	procShowWindow.Call(hwnd, command)
 	procUpdateWindow.Call(hwnd)
 }
 
@@ -313,6 +365,35 @@ func showWindowState(hwnd uintptr, state int) {
 		return
 	}
 	procShowWindow.Call(hwnd, uintptr(state))
+}
+
+func getWindowPlacement(hwnd uintptr) (WindowPlacement, error) {
+	var placement windowPlacement
+	placement.Length = uint32(unsafe.Sizeof(placement))
+	if ok, _, callErr := procGetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&placement))); ok == 0 {
+		return WindowPlacement{}, fmt.Errorf("GetWindowPlacement: %w", callErr)
+	}
+	area := placement.RcNormalPosition
+	// rcNormalPosition uses workspace coordinates: relative to the work
+	// area of the window's monitor. Convert to screen coordinates, which
+	// CreateWindowExW and InitialPlacement use; they differ when a taskbar
+	// sits on the top or left edge.
+	var dx, dy int32
+	if monitor, _, _ := procMonitorFromWindow.Call(hwnd, monitorDefaultToNearest); monitor != 0 {
+		var info monitorInfo
+		info.cbSize = uint32(unsafe.Sizeof(info))
+		if ok, _, _ := procGetMonitorInfoW.Call(monitor, uintptr(unsafe.Pointer(&info))); ok != 0 {
+			dx = info.rcWork.Left - info.rcMonitor.Left
+			dy = info.rcWork.Top - info.rcMonitor.Top
+		}
+	}
+	const wpfRestoreToMaximized = 0x2
+	return WindowPlacement{
+		X: int(area.Left + dx), Y: int(area.Top + dy),
+		Width: int(area.Right - area.Left), Height: int(area.Bottom - area.Top),
+		Maximized: placement.ShowCmd == swShowMaximized ||
+			(placement.ShowCmd == swShowMinimized && placement.Flags&wpfRestoreToMaximized != 0),
+	}, nil
 }
 
 // focusWindow brings hwnd to the foreground. No-op when the OS refuses
@@ -415,6 +496,7 @@ func applyFullscreen(hwnd uintptr, state *fullscreenState, enabled bool) error {
 		procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
 		state.savedStyle = uint32(style)
 		state.savedBounds = r
+		state.savedPlacement, _ = getWindowPlacement(hwnd)
 		state.active = true
 
 		procSetWindowLongPtrW.Call(hwnd, uintptr(gwlStyle), uintptr(wsPopup))
@@ -450,9 +532,10 @@ func applyFullscreen(hwnd uintptr, state *fullscreenState, enabled bool) error {
 // fullscreen restores the user's window instead of producing a maximized-
 // looking popup.
 type fullscreenState struct {
-	active      bool
-	savedStyle  uint32
-	savedBounds rect
+	savedPlacement WindowPlacement
+	active         bool
+	savedStyle     uint32
+	savedBounds    rect
 }
 
 func destroyWindow(hwnd uintptr) {
@@ -493,6 +576,10 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 	windowMu.Unlock()
 
 	switch message {
+	case wmActivate:
+		if app != nil {
+			app.onFocusChanged(uint16(wparam) != waInactive)
+		}
 	case wmCommand:
 		if app != nil && app.handleMenuCommand(wparam) {
 			return 0
@@ -525,6 +612,10 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 				return ret
 			}
 		}
+	case wmEraseBkgnd:
+		if app != nil && app.paintBackground(hwnd, wparam) {
+			return 1
+		}
 	case wmSize:
 		if app != nil {
 			_ = app.resizeWebView()
@@ -549,15 +640,42 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 		}
 	case wmClose:
 		if hwnd != 0 {
+			if app != nil {
+				app.mu.Lock()
+				callback := app.options.OnBeforeClose
+				app.mu.Unlock()
+				if callback != nil {
+					placement, _ := app.WindowPlacement()
+					callback(placement)
+				}
+			}
 			destroyWindow(hwnd)
+			return 0
+		}
+	case wmAppDispatch:
+		if app != nil {
+			app.drainDispatchQueue()
 			return 0
 		}
 	case wmDestroy:
 		if app != nil {
+			// Run calls already queued while the WebView still exists,
+			// release it on this thread, and only then let later calls run
+			// on their own threads: by then they find no WebView and
+			// return "not ready" instead of touching it off-thread.
+			app.drainDispatchQueue()
 			removeAppWindowProperty(hwnd, app.options.AppID)
 			app.disposeNativeUI()
 			app.releaseWindowIcons(hwnd)
 			app.releaseWebView()
+			app.stopDispatch()
+			// Forget the handle last: the cleanup above (tray removal)
+			// still needs it; later WindowPlacement calls report
+			// ErrWindowNotReady.
+			app.mu.Lock()
+			app.hwnd = 0
+			app.mu.Unlock()
+			app.clearPrimaryWindow()
 		}
 		windowMu.Lock()
 		delete(windowApps, hwnd)

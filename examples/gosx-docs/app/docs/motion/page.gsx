@@ -17,7 +17,9 @@ func Page() Node {
 			class="motion-demo__layout"
 			aria-labelledby={docScene.HeadingID}
 			data-gosx-motion-program={data.motionProgram}
+			data-gosx-motion-scope={data.motionScope}
 		>
+			{motionStyle}
 			<div
 				id={docScene.SurfaceID}
 				class="motion-demo__surface"

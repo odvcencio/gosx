@@ -141,6 +141,7 @@ test("bootstrap connects Scene3D-bound hubs when the mount becomes command-ready
     },
   });
 
+  runScript(fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-start.js"), "utf8"), env.context, "scene3d-start.js");
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
@@ -182,6 +183,7 @@ test("bootstrap cancels pending Scene3D hubs when the page is disposed", async (
     },
   });
 
+  runScript(fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-start.js"), "utf8"), env.context, "scene3d-start.js");
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
   const observer = env.mutationObservers.find((candidate) => candidate.options.some(({ options }) =>
@@ -223,6 +225,7 @@ test("bootstrap connects Scene3D-bound hubs after the mount is command-ready", a
     },
   });
 
+  runScript(fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-start.js"), "utf8"), env.context, "scene3d-start.js");
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 

@@ -83,6 +83,60 @@
     return motionNumber(a, 0) + (motionNumber(b, 0) - motionNumber(a, 0)) * t;
   }
 
+  // Piecewise scalar curve used by "curve" signals and camera rails. The math
+  // mirrors motion.CurveValue in Go; motion/testdata/curve_golden.json pins both.
+  function motionCurveStops(frames) {
+    const stops = [];
+    for (const frame of Array.isArray(frames) ? frames : []) {
+      const at = frame && typeof frame.at === "number" ? frame.at : NaN;
+      const value = frame && typeof frame.value === "number" ? frame.value : NaN;
+      if (!Number.isFinite(at) || !Number.isFinite(value)) return [];
+      if (stops.length && !(at > stops[stops.length - 1].at)) return [];
+      stops.push({ at: at, value: value });
+    }
+    return stops.length >= 2 ? stops : [];
+  }
+
+  // Monotone-cubic (Fritsch-Carlson) tangent at stop k; mirrors curveTangent in Go.
+  function motionCurveTangent(stops, k) {
+    const n = stops.length;
+    if (n < 2) return 0;
+    const delta = function(i) { return (stops[i + 1].value - stops[i].value) / (stops[i + 1].at - stops[i].at); };
+    if (n === 2) return delta(0);
+    if (k > 0 && k < n - 1) {
+      const d0 = delta(k - 1), d1 = delta(k);
+      if (d0 * d1 <= 0) return 0;
+      const h0 = stops[k].at - stops[k - 1].at, h1 = stops[k + 1].at - stops[k].at;
+      const w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
+      return (w1 + w2) / (w1 / d0 + w2 / d1);
+    }
+    let h0, h1, d0, d1;
+    if (k === 0) {
+      h0 = stops[1].at - stops[0].at; h1 = stops[2].at - stops[1].at; d0 = delta(0); d1 = delta(1);
+    } else {
+      h0 = stops[n - 1].at - stops[n - 2].at; h1 = stops[n - 2].at - stops[n - 3].at; d0 = delta(n - 2); d1 = delta(n - 3);
+    }
+    const m = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+    if (m * d0 <= 0) return 0;
+    if (d0 * d1 <= 0 && Math.abs(m) > 3 * Math.abs(d0)) return 3 * d0;
+    return m;
+  }
+
+  function motionCurveValue(stops, smooth, x) {
+    const n = stops.length;
+    if (n === 0) return 0;
+    if (x <= stops[0].at) return stops[0].value;
+    if (x >= stops[n - 1].at) return stops[n - 1].value;
+    let i = 0;
+    while (i < n - 2 && x >= stops[i + 1].at) i++;
+    const a = stops[i], b = stops[i + 1];
+    const h = b.at - a.at, t = (x - a.at) / h;
+    if (!smooth) return a.value + (b.value - a.value) * t;
+    const ma = motionCurveTangent(stops, i), mb = motionCurveTangent(stops, i + 1);
+    const t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * a.value + (t3 - 2 * t2 + t) * h * ma + (-2 * t3 + 3 * t2) * b.value + (t3 - t2) * h * mb;
+  }
+
   function createMotionScheduler() {
     const phases = { read: new Set(), evaluate: new Set(), write: new Set() };
     const rectRecords = new Map();
@@ -1137,6 +1191,14 @@
       input.subscribe(compute);
       return value;
     }
+    if (kind === "curve") {
+      const input = getValue(spec.input);
+      const stops = motionCurveStops(spec.frames);
+      const smooth = spec.smooth === true;
+      const value = createSignal(stops.length ? stops[0].value : 0, name);
+      input.subscribe(function(next) { value.set(motionCurveValue(stops, smooth, motionNumber(next, 0))); });
+      return value;
+    }
     if (kind === "mix") {
       const a = getValue(spec.a), b = getValue(spec.b), weight = getValue(spec.weight);
       const value = createSignal(motionMix(a.get(), b.get(), motionClamp(motionNumber(weight.get(), 0), 0, 1)), name);
@@ -1147,8 +1209,41 @@
     return createSignal(0, name);
   }
 
+  function motionScrollTimelinesSupported() {
+    try {
+      return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("animation-timeline: scroll()");
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // The server compiles fixed page-scroll bindings to CSS and lists them in
+  // program.cssCompiled. When the browser supports scroll timelines the CSS
+  // owns them, so drop those bindings and any signal only they used. Otherwise
+  // the program runs whole, which is the fallback.
+  function motionWithoutCSSCompiled(program) {
+    const listed = Array.isArray(program.cssCompiled) ? program.cssCompiled : [];
+    if (!listed.length || !Array.isArray(program.bindings) || !motionScrollTimelinesSupported()) return program;
+    const skip = new Set(listed.filter(function(index) { return Number.isInteger(index); }));
+    const bindings = program.bindings.filter(function(_binding, index) { return !skip.has(index); });
+    const specs = new Map();
+    for (const spec of program.signals) if (spec && spec.id) specs.set(String(spec.id), spec);
+    const needed = new Set();
+    const visit = function(id) {
+      const key = String(id || "");
+      if (!key || needed.has(key)) return;
+      needed.add(key);
+      const spec = specs.get(key);
+      if (spec) for (const ref of [spec.input, spec.a, spec.b, spec.weight]) visit(ref);
+    };
+    for (const binding of bindings) visit(binding && binding.signal);
+    const signals = program.signals.filter(function(spec) { return spec && needed.has(String(spec.id)); });
+    return Object.assign({}, program, { signals: signals, bindings: bindings });
+  }
+
   function createProgram(root, raw) {
-    const program = raw && typeof raw === "object" ? raw : {};
+    const parsed = raw && typeof raw === "object" ? raw : {};
+    const program = motionNumber(parsed.version, 0) === 1 && Array.isArray(parsed.signals) ? motionWithoutCSSCompiled(parsed) : parsed;
     if (motionNumber(program.version, 0) !== 1 || !Array.isArray(program.signals)) return null;
     const programID = String(program.id || "motion");
     const record = { root: root, id: programID, signals: new Map(), specs: new Map(), bindings: [], pins: [], stops: [], values: [], adapters: new Set(), disposed: false };

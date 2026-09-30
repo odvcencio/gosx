@@ -66,6 +66,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount.ts",
@@ -214,6 +215,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
@@ -274,6 +276,15 @@
         "bootstrap-src/11a-scene-decompress.ts",
         "bootstrap-src/11b-scene-points-generate.ts",
         "bootstrap-src/26l-feature-scene3d-decompress-suffix.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-start.js",
+      "sources": [
+        "bootstrap-src/26m-feature-scene3d-start-prefix.ts",
+        "../runtime/scene3d/start-policy.ts",
+        "../runtime/scene3d/start-hubs.ts",
+        "bootstrap-src/26m-feature-scene3d-start-suffix.ts"
       ]
     },
     {

@@ -11,14 +11,19 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 type windowsApp struct {
 	options Options
 
-	mu              sync.Mutex
-	hwnd            uintptr
+	mu            sync.Mutex
+	primaryWindow *Window
+	hwnd          uintptr
+
+	// dispatch runs WebView2 calls on the window thread (see onUIThread).
+	dispatch        uiDispatcher
 	iconLarge       uintptr
 	iconSmall       uintptr
 	env             *coreWebView2Environment
@@ -31,7 +36,7 @@ type windowsApp struct {
 	settingsRef     *comReference
 	runErr          error
 	webviewReleased bool
-	singleLock      *singleInstanceLock
+	singleLock      *InstanceLock
 
 	envHandler           *environmentCompletedHandler
 	envHandlerRef        *comReference
@@ -49,6 +54,21 @@ type windowsApp struct {
 	fullscreenRef        *comReference
 	fullscreenToken      int64
 	fullscreenAdded      bool
+	navCompletedHandler  *navigationCompletedEventHandler
+	navCompletedRef      *comReference
+	navCompletedToken    int64
+	navCompletedAdded    bool
+	permissionHandler    *permissionRequestedEventHandler
+	permissionRef        *comReference
+	permissionToken      int64
+	permissionAdded      bool
+
+	// created is when New built this app; timeline durations are measured
+	// from it. backgroundBrush paints WM_ERASEBKGND when BackgroundColor is
+	// set.
+	created              time.Time
+	timeline             StartupTimeline
+	backgroundBrush      uintptr
 	resHandler           *webResourceRequestedHandler
 	resHandlerRef        *comReference
 	resHandlerToken      int64
@@ -83,13 +103,40 @@ type windowsApp struct {
 	menuBar             uintptr
 	contextMenus        map[uintptr]uintptr
 	pendingTray         *TrayOptions
+	focusTracker        focusStateTracker
 	tray                *windowsTray
 	nextNativeCommandID uint16
 	menuActions         map[uint16]func()
 }
 
 func newPlatformApp(options Options) (platformApp, error) {
-	return &windowsApp{options: options}, nil
+	return &windowsApp{options: options, created: time.Now()}, nil
+}
+
+// markStartup records the first time a startup phase finished.
+func (a *windowsApp) markStartup(phase *time.Duration) {
+	a.mu.Lock()
+	if *phase == 0 {
+		*phase = time.Since(a.created)
+	}
+	a.mu.Unlock()
+}
+
+// StartupTimeline implements startupTimelineReporter.
+func (a *windowsApp) StartupTimeline() StartupTimeline {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.timeline
+}
+
+func (a *windowsApp) onNavigationCompleted(event NavigationCompleted) {
+	a.markStartup(&a.timeline.FirstNavigationCompleted)
+	a.mu.Lock()
+	cb := a.options.OnNavigationCompleted
+	a.mu.Unlock()
+	if cb != nil {
+		cb(event)
+	}
 }
 
 func platformAvailable() error {
@@ -105,7 +152,7 @@ func (a *windowsApp) Run() error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	if a.options.SingleInstance {
+	if a.options.SingleInstance && !instanceLockHeld(a.options.AppID) {
 		lock, owned, err := acquireSingleInstanceLock(a.options.AppID)
 		if err != nil {
 			return err
@@ -114,8 +161,9 @@ func (a *windowsApp) Run() error {
 			defer lock.Close()
 			return forwardCurrentLaunch(a.options.AppID)
 		}
+		heldLock := newInstanceLock(a.options.AppID, lock.Close)
 		a.mu.Lock()
-		a.singleLock = lock
+		a.singleLock = heldLock
 		a.mu.Unlock()
 		defer func() {
 			a.mu.Lock()
@@ -143,13 +191,36 @@ func (a *windowsApp) Run() error {
 	}
 	defer coUninitialize()
 
-	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, a)
+	if color, _, ok, _ := parseBackgroundColor(a.options.BackgroundColor); ok {
+		brush, err := createSolidBrush(color)
+		if err != nil {
+			return err
+		}
+		a.mu.Lock()
+		a.backgroundBrush = brush
+		a.mu.Unlock()
+		defer func() {
+			a.mu.Lock()
+			brush := a.backgroundBrush
+			a.backgroundBrush = 0
+			a.mu.Unlock()
+			deleteGDIObject(brush)
+		}()
+	}
+
+	placement := a.options.InitialPlacement
+	if !placement.IsZero() {
+		placement = clampPlacement(placement, monitorWorkAreas())
+	}
+	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, placement, a)
 	if err != nil {
 		return err
 	}
+	a.markStartup(&a.timeline.WindowCreated)
 	a.mu.Lock()
 	a.hwnd = hwnd
 	a.mu.Unlock()
+	a.startDispatch(hwnd)
 	large, small := setExecutableWindowIcons(hwnd)
 	a.mu.Lock()
 	a.iconLarge = large
@@ -167,7 +238,8 @@ func (a *windowsApp) Run() error {
 	}
 	a.fireWindowCreated(hwnd)
 
-	showWindow(hwnd)
+	showWindow(hwnd, placement.Maximized)
+	a.markStartup(&a.timeline.WindowShown)
 	if err := a.createWebView(); err != nil {
 		destroyWindow(hwnd)
 		return err
@@ -200,7 +272,7 @@ func (a *windowsApp) Close() error {
 	return nil
 }
 
-func (a *windowsApp) Navigate(url string) error {
+func (a *windowsApp) navigateOnUI(url string) error {
 	normalized, err := normalizeOptions(Options{Title: a.options.Title, Width: a.options.Width, Height: a.options.Height, URL: url})
 	if err != nil {
 		return err
@@ -217,7 +289,7 @@ func (a *windowsApp) Navigate(url string) error {
 	return webview.navigate(normalized.URL)
 }
 
-func (a *windowsApp) SetHTML(html string) error {
+func (a *windowsApp) setHTMLOnUI(html string) error {
 	if _, err := normalizeOptions(Options{Title: a.options.Title, Width: a.options.Width, Height: a.options.Height, HTML: html}); err != nil {
 		return err
 	}
@@ -232,7 +304,7 @@ func (a *windowsApp) SetHTML(html string) error {
 	return webview.navigateToString(html)
 }
 
-func (a *windowsApp) Reload() error {
+func (a *windowsApp) reloadOnUI() error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -255,10 +327,12 @@ func (a *windowsApp) createWebView() error {
 	if err != nil {
 		return err
 	}
-	if a.options.AdditionalBrowserArguments != "" {
-		if err := os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", a.options.AdditionalBrowserArguments); err != nil {
-			return fmt.Errorf("set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: %w", err)
-		}
+	// Merge the app's switches with any value the operator already set, so
+	// field and test overrides (for example a GPU adapter) still apply.
+	// Write the composed value every time: an earlier app in this process
+	// may have left its own switches in the process-wide variable.
+	if err := setBrowserArgumentsEnv(composeBrowserArguments(a.options, operatorBrowserArguments())); err != nil {
+		return err
 	}
 
 	handler := newEnvironmentCompletedHandler(a)
@@ -305,6 +379,9 @@ func (a *windowsApp) onEnvironmentCreated(hr uintptr, env *coreWebView2Environme
 	}
 	a.env = env
 	a.envRef = envRef
+	if a.timeline.EnvironmentReady == 0 {
+		a.timeline.EnvironmentReady = time.Since(a.created)
+	}
 	hwnd := a.hwnd
 	handler := newControllerCompletedHandler(a)
 	a.controllerHandler = handler
@@ -386,9 +463,27 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	fullscreenRef := ownCOMReference(unsafe.Pointer(fullscreenHandler), func(ptr unsafe.Pointer) {
 		fullscreenChangedRelease(uintptr(ptr))
 	})
-	var msgToken, resToken, processFailedToken, fullscreenToken int64
-	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded bool
+	navCompletedHandler := newNavigationCompletedEventHandler(a)
+	navCompletedRef := ownCOMReference(unsafe.Pointer(navCompletedHandler), func(ptr unsafe.Pointer) {
+		navigationCompletedRelease(uintptr(ptr))
+	})
+	var permissionHandler *permissionRequestedEventHandler
+	var permissionRef *comReference
+	if a.options.OnPermissionRequested != nil {
+		permissionHandler = newPermissionRequestedEventHandler(a)
+		permissionRef = ownCOMReference(unsafe.Pointer(permissionHandler), func(ptr unsafe.Pointer) {
+			permissionRequestedRelease(uintptr(ptr))
+		})
+	}
+	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken, permissionToken int64
+	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded, permissionAdded bool
 	cleanupLocal := func() {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
+		if navCompletedAdded {
+			_ = webview.removeNavigationCompleted(navCompletedToken)
+		}
 		if fullscreenAdded {
 			_ = webview.removeFullscreenChanged(fullscreenToken)
 		}
@@ -402,6 +497,8 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 			_ = webview.removeWebMessageReceived(msgToken)
 		}
 		controller.close()
+		permissionRef.Release()
+		navCompletedRef.Release()
 		fullscreenRef.Release()
 		processFailedRef.Release()
 		resHandlerRef.Release()
@@ -446,6 +543,20 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		return
 	}
 	fullscreenAdded = true
+	navCompletedToken, err = webview.addNavigationCompleted(navCompletedHandler)
+	if err != nil {
+		failLocal(err)
+		return
+	}
+	navCompletedAdded = true
+	if permissionHandler != nil {
+		permissionToken, err = webview.addPermissionRequested(permissionHandler)
+		if err != nil {
+			failLocal(err)
+			return
+		}
+		permissionAdded = true
+	}
 	// Replay any filters registered before the webview came up.
 	a.mu.Lock()
 	pendingRoutes := append([]*servedRoute(nil), a.servedRoutes...)
@@ -476,6 +587,14 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	a.fullscreenRef = fullscreenRef
 	a.fullscreenToken = fullscreenToken
 	a.fullscreenAdded = fullscreenAdded
+	a.navCompletedHandler = navCompletedHandler
+	a.navCompletedRef = navCompletedRef
+	a.navCompletedToken = navCompletedToken
+	a.navCompletedAdded = navCompletedAdded
+	a.permissionHandler = permissionHandler
+	a.permissionRef = permissionRef
+	a.permissionToken = permissionToken
+	a.permissionAdded = permissionAdded
 	a.resHandler = resHandler
 	a.resHandlerRef = resHandlerRef
 	a.resHandlerToken = resToken
@@ -499,10 +618,16 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		a.failSetup(err)
 		return
 	}
+	if color, _, ok, _ := parseBackgroundColor(a.options.BackgroundColor); ok {
+		// Older runtimes lack ICoreWebView2Controller2; the window brush
+		// still covers the area until the page paints.
+		_ = controller.setDefaultBackgroundColor(color)
+	}
 	if err := controller.setVisible(true); err != nil {
 		a.failSetup(err)
 		return
 	}
+	a.markStartup(&a.timeline.ControllerReady)
 	if html != "" {
 		err = webview.navigateToString(html)
 	} else {
@@ -564,6 +689,18 @@ func (a *windowsApp) releaseWebView() {
 	resHandlerToken, resHandlerRegistered := a.resHandlerToken, a.resHandlerRegistered
 	processFailedToken, processFailedAdded := a.processFailedToken, a.processFailedAdded
 	fullscreenToken, fullscreenAdded := a.fullscreenToken, a.fullscreenAdded
+	navCompletedRef := a.navCompletedRef
+	navCompletedToken, navCompletedAdded := a.navCompletedToken, a.navCompletedAdded
+	permissionRef := a.permissionRef
+	permissionToken, permissionAdded := a.permissionToken, a.permissionAdded
+	a.permissionHandler = nil
+	a.permissionRef = nil
+	a.permissionToken = 0
+	a.permissionAdded = false
+	a.navCompletedHandler = nil
+	a.navCompletedRef = nil
+	a.navCompletedToken = 0
+	a.navCompletedAdded = false
 	a.controller = nil
 	a.controllerRef = nil
 	a.webview = nil
@@ -593,6 +730,12 @@ func (a *windowsApp) releaseWebView() {
 	a.mu.Unlock()
 
 	if webview != nil {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
+		if navCompletedAdded {
+			_ = webview.removeNavigationCompleted(navCompletedToken)
+		}
 		if fullscreenAdded {
 			_ = webview.removeFullscreenChanged(fullscreenToken)
 		}
@@ -613,6 +756,8 @@ func (a *windowsApp) releaseWebView() {
 	webviewRef.Release()
 	controllerRef.Release()
 	envRef.Release()
+	permissionRef.Release()
+	navCompletedRef.Release()
 	fullscreenRef.Release()
 	processFailedRef.Release()
 	resHandlerRef.Release()
@@ -674,7 +819,7 @@ func configureDefaultSettings(s *coreWebView2Settings, o Options) error {
 // PostMessage sends a string payload to the webview's chrome.webview event
 // listener. Falls back silently when the webview hasn't finished creation
 // — the caller can retry after OnWebMessage confirms the bridge is live.
-func (a *windowsApp) PostMessage(message string) error {
+func (a *windowsApp) postMessageOnUI(message string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -687,7 +832,7 @@ func (a *windowsApp) PostMessage(message string) error {
 // ExecuteScript runs arbitrary JavaScript in the top-level frame. The
 // completion handler form is ignored for simplicity — callers that need
 // the return value can use PostMessage to round-trip through JS.
-func (a *windowsApp) ExecuteScript(script string) error {
+func (a *windowsApp) executeScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -700,7 +845,7 @@ func (a *windowsApp) ExecuteScript(script string) error {
 // OpenDevTools pops the Chromium dev-tools inspector in a separate
 // window. Requires Options.Debug or Options.DevTools; otherwise returns
 // an error because the underlying setting disables the call.
-func (a *windowsApp) OpenDevTools() error {
+func (a *windowsApp) openDevToolsOnUI() error {
 	if !devToolsEnabled(a.options) {
 		return fmt.Errorf("%w: Options.Debug or Options.DevTools must be true to open dev tools",
 			ErrInvalidOptions)
@@ -724,7 +869,7 @@ func (a *windowsApp) openDevToolsFromShortcut() {
 // PrependBootstrapScript queues a JS snippet that will run before every
 // document load inside the webview. Calls queued before Run are stored
 // in pendingBootstrap and registered once the controller completes.
-func (a *windowsApp) PrependBootstrapScript(script string) error {
+func (a *windowsApp) prependBootstrapScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.pendingBootstrap = script
@@ -801,7 +946,7 @@ func (a *windowsApp) SetTitle(title string) error {
 // matches everything rooted at "app://assets/". Registrations are
 // first-match-wins in insertion order, so specific prefixes should be
 // registered before generic ones.
-func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+func (a *windowsApp) serveOnUI(prefix string, handler http.Handler) error {
 	if strings.TrimSpace(prefix) == "" {
 		return fmt.Errorf("%w: serve prefix must be non-empty", ErrInvalidOptions)
 	}
@@ -828,6 +973,21 @@ func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
 // can land here without touching callers.
 func filterURI(prefix string) string {
 	return prefix
+}
+
+func (a *windowsApp) WindowPlacement() (WindowPlacement, error) {
+	a.mu.Lock()
+	hwnd := a.hwnd
+	a.mu.Unlock()
+	if hwnd == 0 {
+		return WindowPlacement{}, fmt.Errorf("%w: window handle is not available", ErrWindowNotReady)
+	}
+	a.fullscreenMu.Lock()
+	defer a.fullscreenMu.Unlock()
+	if a.fullscreen.active {
+		return a.fullscreen.savedPlacement, nil
+	}
+	return getWindowPlacement(hwnd)
 }
 
 // SetFullscreen toggles borderless-fullscreen mode for the hosted window.
@@ -935,11 +1095,43 @@ func (a *windowsApp) fireWindowCreated(hwnd uintptr) {
 	a.mu.Lock()
 	cb := a.options.OnWindowCreated
 	options := a.options
+	window := a.primaryWindow
+	if window == nil {
+		window = newPrimaryWindow(hwnd, options, func(menu Menu) error {
+			return a.setWindowContextMenu(hwnd, menu)
+		})
+		a.primaryWindow = window
+	}
 	a.mu.Unlock()
 	if cb != nil {
-		cb(newPrimaryWindow(hwnd, options, func(menu Menu) error {
-			return a.setWindowContextMenu(hwnd, menu)
-		}))
+		cb(window)
+	}
+}
+
+// clearPrimaryWindow forgets the destroyed primary window, so App.Window
+// returns nil and App.ShowMessage (for example from OnClose) does not use a
+// handle Windows may reuse.
+func (a *windowsApp) clearPrimaryWindow() {
+	a.mu.Lock()
+	a.primaryWindow = nil
+	a.mu.Unlock()
+}
+
+func (a *windowsApp) PrimaryWindow() *Window {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.primaryWindow
+}
+
+func (a *windowsApp) onFocusChanged(focused bool) {
+	if !a.focusTracker.Update(focused) {
+		return
+	}
+	a.mu.Lock()
+	cb := a.options.OnFocusChanged
+	a.mu.Unlock()
+	if cb != nil {
+		cb(focused)
 	}
 }
 
@@ -985,4 +1177,44 @@ func resolveUserDataDir(configured string) (string, error) {
 		return "", fmt.Errorf("create WebView2 user data dir: %w", err)
 	}
 	return dir, nil
+}
+
+// Navigate runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Navigate(url string) error {
+	return a.onUIThread(func() error { return a.navigateOnUI(url) })
+}
+
+// SetHTML runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) SetHTML(html string) error {
+	return a.onUIThread(func() error { return a.setHTMLOnUI(html) })
+}
+
+// Reload runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Reload() error {
+	return a.onUIThread(a.reloadOnUI)
+}
+
+// PostMessage runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) PostMessage(message string) error {
+	return a.onUIThread(func() error { return a.postMessageOnUI(message) })
+}
+
+// ExecuteScript runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) ExecuteScript(script string) error {
+	return a.onUIThread(func() error { return a.executeScriptOnUI(script) })
+}
+
+// OpenDevTools runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) OpenDevTools() error {
+	return a.onUIThread(a.openDevToolsOnUI)
+}
+
+// PrependBootstrapScript runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) PrependBootstrapScript(script string) error {
+	return a.onUIThread(func() error { return a.prependBootstrapScriptOnUI(script) })
+}
+
+// Serve runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+	return a.onUIThread(func() error { return a.serveOnUI(prefix, handler) })
 }

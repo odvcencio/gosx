@@ -1,10 +1,30 @@
 package sim
 
 import (
+	"fmt"
 	"testing"
 
 	"m31labs.dev/gosx/hub"
 )
+
+func TestRunnerDisableReplay(t *testing.T) {
+	s := &mockSim{}
+	r := New(hub.New("no-replay"), s, Options{DisableReplay: true})
+	const ticks = 10000
+	for i := 0; i < ticks; i++ {
+		r.ReceiveInput(fmt.Sprintf("player-%d", i), Input{Data: []byte("attack")})
+		r.tickOnce()
+	}
+	if r.recorder != nil || len(r.Replay().Frames) != 0 {
+		t.Fatal("disabled replay retained an input log")
+	}
+	if s.ticks != ticks || r.Frame() != ticks {
+		t.Fatalf("simulation stopped advancing: ticks=%d frame=%d", s.ticks, r.Frame())
+	}
+	if _, ok := r.snapshots.Get(ticks); !ok {
+		t.Fatal("disabled replay stopped recording rollback snapshots")
+	}
+}
 
 func TestReplayRecordAndPlayback(t *testing.T) {
 	// Record 2 frames with inputs

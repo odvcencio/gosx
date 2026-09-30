@@ -375,10 +375,12 @@ type Mesh struct {
 	// geometry. The zero value means unit scale so existing scenes are
 	// unaffected. Mesh scale does not propagate to Mesh.Children; Group.Scale
 	// is the hierarchical scale contract.
-	Scale    Vector3
-	Pickable *bool
-	Visible  *bool
-	Selected bool
+	Scale       Vector3
+	Pickable    *bool
+	Interactive bool
+	Label       string
+	Visible     *bool
+	Selected    bool
 	// GizmoRing marks this mesh as a TransformControls rotate-mode ring helper.
 	// When Props.GizmoInputSignal is set, the engine shows GizmoRing meshes only
 	// while the signal reads "rotate" (mirrors how Selected is driven live by
@@ -1059,9 +1061,15 @@ type HTML struct {
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Position         Vector3
+	// Perspective renders a DOM-mode overlay as a flat plane of SurfaceWidth by
+	// SurfaceHeight world units in the local XY plane, positioned and rotated in
+	// world space and drawn with a CSS matrix3d, so real focusable HTML sits on
+	// a 3D plane. Both surface dimensions must be positive when it is set.
+	Perspective bool
 	// Rotation orients a texture surface in world space, in radians, applied
 	// X then Y then Z. The quad starts in the XZ plane; Rotation.X = -math.Pi/2
-	// stands it upright. DOM-mode overlays ignore this field.
+	// stands it upright. DOM-mode overlays use it only when Perspective is true,
+	// and then the plane starts in the XY plane facing +Z.
 	Rotation Euler
 	// Spin adds constant angular velocity in radians per second.
 	Spin          Euler
@@ -1136,6 +1144,8 @@ type Model struct {
 	CastShadow         bool
 	ReceiveShadow      bool
 	Pickable           *bool
+	Interactive        bool
+	Label              string
 	Visible            *bool
 	Static             *bool
 	Animation          string
@@ -1608,22 +1618,23 @@ type graphLowerer struct {
 	// write, which interleaves lights, points, clips, and other node kinds), so
 	// lowerAnimationClip resolves each TargetNode back to its stable node ID
 	// here instead of letting consumers guess from flattened renderable arrays.
-	rootNodes          []Node
-	pending            []pendingLabel
-	pendingSprites     []pendingSprite
-	pendingHTML        []pendingHTML
-	lights             []LightIR
-	anchors            map[string]worldTransform
-	nextObjectID       int
-	nextLabelID        int
-	nextSpriteID       int
-	nextHTMLID         int
-	nextLightID        int
-	nextModelID        int
-	nextPointsID       int
-	nextInstancedID    int
-	nextInstancedGLBID int
-	nextParticlesID    int
+	rootNodes            []Node
+	pending              []pendingLabel
+	pendingSprites       []pendingSprite
+	pendingHTML          []pendingHTML
+	lights               []LightIR
+	anchors              map[string]worldTransform
+	nextObjectID         int
+	nextLabelID          int
+	nextSpriteID         int
+	nextInteractiveOrder int
+	nextHTMLID           int
+	nextLightID          int
+	nextModelID          int
+	nextPointsID         int
+	nextInstancedID      int
+	nextInstancedGLBID   int
+	nextParticlesID      int
 	// spinTracks accumulates one GenSpin MotionIR Track per spinning node;
 	// surfaced via SceneIR.SpinTracks (json:"-") as an in-memory facade.
 	spinTracks []motion.Track
@@ -2873,6 +2884,15 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	// by this mesh's id (per-mesh material). Malformed specs are skipped.
 	l.materialTracks = append(l.materialTracks, materialMotionTracks(mesh.MaterialAnims, id)...)
 	record.Pickable = mesh.Pickable
+	if mesh.Interactive {
+		record.Pickable = Bool(true)
+	}
+	record.Interactive = mesh.Interactive
+	if mesh.Interactive {
+		l.nextInteractiveOrder++
+		record.InteractiveOrder = l.nextInteractiveOrder
+	}
+	record.Label = strings.TrimSpace(mesh.Label)
 	record.Visible = mesh.Visible
 	record.Selected = mesh.Selected
 	record.GizmoRing = mesh.GizmoRing
@@ -3522,8 +3542,17 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.ReceiveShadow = model.ReceiveShadow
 	record.Static = model.Static
 	record.Pickable = model.Pickable
+	if model.Interactive {
+		record.Pickable = Bool(true)
+	}
+	record.Interactive = model.Interactive
+	record.Label = strings.TrimSpace(model.Label)
 	record.Visible = model.Visible
 	record.Animation = strings.TrimSpace(model.Animation)
+	if model.Interactive {
+		l.nextInteractiveOrder++
+		record.InteractiveOrder = l.nextInteractiveOrder
+	}
 	record.AnimationSeq = strings.TrimSpace(model.AnimationSeq)
 	record.AnimationSpeed = nonNegativeFloatPtr(model.AnimationSpeed)
 	record.AnimationWeight = nonNegativeFloatPtr(model.AnimationWeight)
@@ -3934,6 +3963,7 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		MaxTexturePixels: item.html.MaxTexturePixels,
 		SurfaceWidth:     item.html.SurfaceWidth,
 		SurfaceHeight:    item.html.SurfaceHeight,
+		Perspective:      item.html.Perspective,
 		X:                position.X,
 		Y:                position.Y,
 		Z:                position.Z,

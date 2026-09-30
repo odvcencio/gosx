@@ -204,6 +204,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
+			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
@@ -440,6 +441,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
+			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.ts"),
@@ -537,6 +539,15 @@ var outputs = []output{
 			sourceFile("bootstrap-src/11a-scene-decompress.ts"),
 			sourceFile("bootstrap-src/11b-scene-points-generate.ts"),
 			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-suffix.ts"),
+		},
+	},
+	{
+		name: "bootstrap-feature-scene3d-start.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26m-feature-scene3d-start-prefix.ts"),
+			sourceFile("../runtime/scene3d/start-policy.ts"),
+			sourceFile("../runtime/scene3d/start-hubs.ts"),
+			sourceFile("bootstrap-src/26m-feature-scene3d-start-suffix.ts"),
 		},
 	},
 	{

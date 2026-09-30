@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -174,6 +175,27 @@ func TestNativeBridgeMethodsDispatchToApp(t *testing.T) {
 	}
 }
 
+func TestNativeBridgeMessageBoxMethodRegistered(t *testing.T) {
+	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+		t.Skip("message box test must not open a native dialog")
+	}
+	var sent []string
+	app := &App{options: Options{NativeBridge: true}, impl: &recordingPlatformApp{}}
+	app.bridge = bridge.NewRouter(func(raw string) error {
+		sent = append(sent, raw)
+		return nil
+	}, bridge.Limit{})
+	if err := app.registerNativeBridgeMethods(); err != nil {
+		t.Fatalf("register native methods: %v", err)
+	}
+	if err := app.bridge.Dispatch(`{"op":"req","id":"message","method":"gosx.desktop.dialog.message","payload":{}}`); err != nil {
+		t.Fatalf("dispatch message dialog: %v", err)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "desktop backend unsupported") {
+		t.Fatalf("message dialog response = %#v, want registered method returning unsupported", sent)
+	}
+}
+
 func TestRunUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		t.Skip("windows desktop backend is supported on this architecture")
@@ -211,16 +233,20 @@ func (a *recordingPlatformApp) Clipboard() (string, error)                      
 func (a *recordingPlatformApp) SetClipboard(text string) error                   { a.clipboard = text; return nil }
 func (a *recordingPlatformApp) OpenURL(string) error                             { return nil }
 func (a *recordingPlatformApp) SetFullscreen(bool) error                         { return nil }
-func (a *recordingPlatformApp) SetMinSize(int, int) error                        { return nil }
-func (a *recordingPlatformApp) SetMaxSize(int, int) error                        { return nil }
-func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)         { return nil, ErrUnsupported }
-func (a *recordingPlatformApp) RegisterProtocol(string) error                    { return nil }
-func (a *recordingPlatformApp) RegisterFileType(string, string, string) error    { return nil }
-func (a *recordingPlatformApp) SetMenuBar(Menu) error                            { return nil }
-func (a *recordingPlatformApp) SetTray(TrayOptions) error                        { return nil }
-func (a *recordingPlatformApp) CloseTray() error                                 { return nil }
-func (a *recordingPlatformApp) Notify(Notification) error                        { return nil }
-func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error          { return nil }
+func (a *recordingPlatformApp) WindowPlacement() (WindowPlacement, error) {
+	return WindowPlacement{}, nil
+}
+func (a *recordingPlatformApp) SetMinSize(int, int) error                     { return nil }
+func (a *recordingPlatformApp) SetMaxSize(int, int) error                     { return nil }
+func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)      { return nil, ErrUnsupported }
+func (a *recordingPlatformApp) RegisterProtocol(string) error                 { return nil }
+func (a *recordingPlatformApp) RegisterFileType(string, string, string) error { return nil }
+func (a *recordingPlatformApp) SetMenuBar(Menu) error                         { return nil }
+func (a *recordingPlatformApp) SetTray(TrayOptions) error                     { return nil }
+func (a *recordingPlatformApp) CloseTray() error                              { return nil }
+func (a *recordingPlatformApp) Notify(Notification) error                     { return nil }
+func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error       { return nil }
+func (a *recordingPlatformApp) PrimaryWindow() *Window                        { return nil }
 
 func TestNewUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
@@ -229,5 +255,130 @@ func TestNewUnsupportedPlatform(t *testing.T) {
 	_, err := New(Options{})
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestComposeBrowserArguments(t *testing.T) {
+	tests := []struct {
+		name     string
+		options  Options
+		operator string
+		want     string
+	}{
+		{name: "empty", want: ""},
+		{name: "app only", options: Options{AdditionalBrowserArguments: " --no-first-run "}, want: "--no-first-run"},
+		{name: "operator kept last", options: Options{AdditionalBrowserArguments: "--no-first-run"}, operator: "--use-angle=d3d11", want: "--no-first-run --use-angle=d3d11"},
+		{name: "operator only", operator: "--use-angle=d3d11", want: "--use-angle=d3d11"},
+		{name: "high performance", options: Options{GPU: GPUOptions{Preference: GPUPreferenceHighPerformance}}, want: "--force_high_performance_gpu"},
+		{name: "low power", options: Options{GPU: GPUOptions{Preference: GPUPreferenceLowPower}}, want: "--force_low_power_gpu"},
+		{name: "adapter wins over preference", options: Options{GPU: GPUOptions{Preference: GPUPreferenceLowPower, AdapterLUID: GPUAdapterLUID{High: 0, Low: 81115}}}, want: "--use-adapter-luid=0,81115"},
+		{name: "negative high part", options: Options{GPU: GPUOptions{AdapterLUID: GPUAdapterLUID{High: -1, Low: 4294967295}}}, want: "--use-adapter-luid=-1,4294967295"},
+		{name: "operator GPU switch drops app GPU switch", options: Options{AdditionalBrowserArguments: "--no-first-run", GPU: GPUOptions{Preference: GPUPreferenceHighPerformance}}, operator: "--force_low_power_gpu --use-adapter-luid=0,90433", want: "--no-first-run --force_low_power_gpu --use-adapter-luid=0,90433"},
+		{name: "mute audio", options: Options{MuteAudio: true}, want: "--mute-audio"},
+		{name: "mute audio not repeated", options: Options{MuteAudio: true, AdditionalBrowserArguments: "--mute-audio"}, want: "--mute-audio"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := composeBrowserArguments(tt.options, tt.operator); got != tt.want {
+				t.Fatalf("composeBrowserArguments() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewRejectsUnknownGPUPreference(t *testing.T) {
+	_, err := normalizeOptions(Options{GPU: GPUOptions{Preference: "fastest"}})
+	if !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("normalizeOptions error = %v, want ErrInvalidOptions", err)
+	}
+	options, err := normalizeOptions(Options{GPU: GPUOptions{Preference: GPUPreferenceHighPerformance}})
+	if err != nil || options.GPU.Preference != GPUPreferenceHighPerformance {
+		t.Fatalf("normalizeOptions = %+v, %v", options.GPU, err)
+	}
+}
+
+func TestSetBrowserArgumentsEnvReplacesEarlierValue(t *testing.T) {
+	t.Setenv(webView2BrowserArgumentsEnv, "--from-an-earlier-app")
+	if err := setBrowserArgumentsEnv(""); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := os.LookupEnv(webView2BrowserArgumentsEnv); ok {
+		t.Fatalf("empty composition left %q in the environment", value)
+	}
+	if err := setBrowserArgumentsEnv("--force_low_power_gpu"); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv(webView2BrowserArgumentsEnv); got != "--force_low_power_gpu" {
+		t.Fatalf("environment = %q", got)
+	}
+}
+
+func TestParseBackgroundColor(t *testing.T) {
+	tests := []struct {
+		in        string
+		canonical string
+		color     rgbColor
+		set       bool
+		wantErr   bool
+	}{
+		{in: "", set: false},
+		{in: "#131007", canonical: "#131007", color: rgbColor{0x13, 0x10, 0x07}, set: true},
+		{in: " #ABCDEF ", canonical: "#abcdef", color: rgbColor{0xab, 0xcd, 0xef}, set: true},
+		{in: "#fff", canonical: "#ffffff", color: rgbColor{0xff, 0xff, 0xff}, set: true},
+		{in: "131007", wantErr: true},
+		{in: "#12345", wantErr: true},
+		{in: "#gggggg", wantErr: true},
+		{in: "#1234567", wantErr: true},
+	}
+	for _, tt := range tests {
+		color, canonical, set, err := parseBackgroundColor(tt.in)
+		if tt.wantErr {
+			if !errors.Is(err, ErrInvalidOptions) {
+				t.Fatalf("parseBackgroundColor(%q) error = %v, want ErrInvalidOptions", tt.in, err)
+			}
+			continue
+		}
+		if err != nil || color != tt.color || canonical != tt.canonical || set != tt.set {
+			t.Fatalf("parseBackgroundColor(%q) = %+v, %q, %v, %v", tt.in, color, canonical, set, err)
+		}
+	}
+	options, err := normalizeOptions(Options{BackgroundColor: "#ABC"})
+	if err != nil || options.BackgroundColor != "#aabbcc" {
+		t.Fatalf("normalizeOptions background = %q, %v", options.BackgroundColor, err)
+	}
+	if _, err := normalizeOptions(Options{BackgroundColor: "dark"}); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("normalizeOptions(dark) error = %v", err)
+	}
+}
+
+func TestStartupTimelineWithoutReporter(t *testing.T) {
+	var nilApp *App
+	if got := nilApp.StartupTimeline(); got != (StartupTimeline{}) {
+		t.Fatalf("nil app timeline = %+v", got)
+	}
+	if got := (&App{}).StartupTimeline(); got != (StartupTimeline{}) {
+		t.Fatalf("app without backend timeline = %+v", got)
+	}
+}
+
+func TestPermissionKindMapping(t *testing.T) {
+	cases := map[int32]PermissionKind{
+		-1: PermissionUnknown, 0: PermissionUnknown, 1: PermissionMicrophone, 2: PermissionCamera,
+		4: PermissionNotifications, 9: PermissionAutoplay, 11: PermissionMIDISysex, 13: PermissionPersistentStorage, 99: PermissionUnknown,
+	}
+	for value, want := range cases {
+		if got := permissionKindFromWebView2(value); got != want {
+			t.Fatalf("permissionKindFromWebView2(%d) = %q, want %q", value, got, want)
+		}
+	}
+	for decision, want := range map[PermissionDecision]int32{PermissionAllow: 1, PermissionDeny: 2} {
+		if got, ok := webView2PermissionState(decision); !ok || got != want {
+			t.Fatalf("webView2PermissionState(%q) = %d, %v", decision, got, ok)
+		}
+	}
+	for _, decision := range []PermissionDecision{PermissionAsk, "maybe"} {
+		if _, ok := webView2PermissionState(decision); ok {
+			t.Fatalf("webView2PermissionState(%q) changed the state", decision)
+		}
 	}
 }

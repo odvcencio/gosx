@@ -261,10 +261,10 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    // 68 + 4 (bootstrap-feature-scene3d-instance-stream.js and its
-    // .map/.gz/.br siblings) since the opt-in instance-stream fast path
-    // chunk joined the manifest.
-    assert.equal(generated.length, 72);
+    // Each of the 19 generated bundles has raw, map, gzip and Brotli outputs.
+    // Deferred startup adds one opt-in bundle to the original inventory.
+    assert.equal(generated.length, 76);
+    assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-start.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));

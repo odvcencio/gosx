@@ -81,6 +81,18 @@ func TestValidateJSONTextureHTMLRequiresFallbackInStrictMode(t *testing.T) {
 	}
 }
 
+func TestValidatePerspectiveHTMLRequiresPositiveSurfaceDimensions(t *testing.T) {
+	report := ValidateJSON([]byte(`{
+		"html":[{"id":"panel","mode":"dom","html":"<button>Open</button>","perspective":true,"surfaceWidth":1.5}]
+	}`), Options{Strict: true})
+	if report.Valid {
+		t.Fatal("expected perspective HTML without surfaceHeight to fail validation")
+	}
+	if !hasCode(report, "scene.html.perspective_size_missing") {
+		t.Fatalf("expected perspective surface-size diagnostic: %+v", report.Diagnostics)
+	}
+}
+
 func TestValidateHTMLRejectsNonFiniteRotationAndSpin(t *testing.T) {
 	fields := []struct {
 		name string
