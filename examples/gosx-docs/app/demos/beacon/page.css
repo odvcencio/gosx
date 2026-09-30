@@ -27,6 +27,8 @@
   color: rgba(255, 255, 255, 0.72); text-decoration: none; white-space: nowrap;
 }
 .bgb__link:hover, .bgb__link:focus-visible { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.bgb__link:focus-visible, .bgb canvas:focus-visible { outline: 2px solid #f2c38c; outline-offset: 2px; }
+.bgb__reset { border: 0; background: transparent; font: inherit; cursor: pointer; }
 .bgb[data-view="shore"] .bgb__view-shore,
 .bgb[data-view="glass"] .bgb__view-glass,
 .bgb[data-view="cliff"] .bgb__view-cliff,

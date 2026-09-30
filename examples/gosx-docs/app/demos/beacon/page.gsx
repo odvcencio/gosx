@@ -19,6 +19,7 @@ func Page() Node {
 				<a class="bgb__link bgb__view-shore" href={data.shoreHref} data-gosx-link="true">Shore</a>
 				<a class="bgb__link bgb__view-glass" href={data.glassHref} data-gosx-link="true">Glass</a>
 				<a class="bgb__link bgb__view-cliff" href={data.cliffHref} data-gosx-link="true">Cliff</a>
+				<button class="bgb__link bgb__reset" type="button" data-gosx-scene3d-reset="">Reset view</button>
 			</nav>
 			<nav class="bgb__group" aria-label="Light">
 				<a class="bgb__link bgb__period-golden-hour" href={data.goldenHref} data-gosx-link="true">Golden hour</a>

@@ -209,6 +209,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
+			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
@@ -445,6 +446,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
+			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.ts"),
@@ -535,6 +537,11 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.ts"),
 		},
+	},
+	{
+		// Grounded controls ship only for scenes with an authored Walk contract.
+		name:    "bootstrap-feature-scene3d-walk.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-walk.ts")},
 	},
 	{
 		// Decompress chunk: the quantized-array decoder, the progressive and

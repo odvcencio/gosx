@@ -903,7 +903,12 @@
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
         texture === "",
       ),
-      pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable,
+      interactive: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false),
+      label: typeof item.label === "string" ? item.label.trim() : (typeof current.label === "string" ? current.label.trim() : ""),
+      interactiveOrder: Math.max(0, Math.floor(sceneNumber(item.interactiveOrder, sceneNumber(current.interactiveOrder, 0)))),
+      pickable: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false)
+        ? true
+        : (Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable),
       visible: Object.prototype.hasOwnProperty.call(item, "visible")
         ? sceneBool(item.visible, true)
         : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
@@ -1243,6 +1248,7 @@
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const id = item.id || current.id || ("scene-html-" + index);
     const mode = normalizeSceneHTMLMode(item.mode, normalizeSceneHTMLMode(current.mode, "dom"));
+    const perspective = sceneBool(Object.prototype.hasOwnProperty.call(item, "perspective") ? item.perspective : current.perspective, false);
     const fallbackMode = sceneHTMLStringField(item, current, ["fallback", "fallbackMode"]);
     const fallbackReason = sceneHTMLStringField(item, current, ["fallbackReason", "degradeReason", "degradationReason"]);
     const textureWidth = sceneHTMLTextureDimension(item.textureWidth, current.textureWidth, mode === "texture" ? 512 : 0);
@@ -1252,6 +1258,7 @@
       id,
       target: sceneHTMLStringField(item, current, ["target", "targetID"]),
       mode,
+      perspective,
       html: sceneHTMLMarkup(item, current),
       className: sceneLabelClassName(item) || sceneLabelClassName(current),
       fallback: fallbackMode || (mode === "texture" ? "dom-overlay" : ""),
@@ -1261,8 +1268,8 @@
       textureHeight,
       maxTexturePixels,
       textureReady: sceneBool(Object.prototype.hasOwnProperty.call(item, "textureReady") ? item.textureReady : current.textureReady, false),
-      surfaceWidth: Math.max(0.05, sceneNumber(item.surfaceWidth, sceneNumber(current.surfaceWidth, width))),
-      surfaceHeight: Math.max(0.05, sceneNumber(item.surfaceHeight, sceneNumber(current.surfaceHeight, height))),
+      surfaceWidth: perspective ? sceneNumber(item.surfaceWidth, sceneNumber(current.surfaceWidth, 0)) : Math.max(0.05, sceneNumber(item.surfaceWidth, sceneNumber(current.surfaceWidth, width))),
+      surfaceHeight: perspective ? sceneNumber(item.surfaceHeight, sceneNumber(current.surfaceHeight, 0)) : Math.max(0.05, sceneNumber(item.surfaceHeight, sceneNumber(current.surfaceHeight, height))),
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
@@ -1528,7 +1535,12 @@
       animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
-      pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
+      interactive: sceneBool(current.interactive, false),
+      label: typeof current.label === "string" ? current.label.trim() : "",
+      interactiveOrder: Math.max(0, Math.floor(sceneNumber(current.interactiveOrder, 0))),
+      pickable: sceneBool(current.interactive, false)
+        ? true
+        : (hasPickable ? sceneBool(current.pickable, false) : undefined),
       visible: hasVisible ? sceneBool(current.visible, true) : true,
       static: hasStatic ? sceneBool(current.static, false) : null,
       castShadow: hasCastShadow ? sceneBool(current.castShadow, false) : undefined,
@@ -6862,28 +6874,49 @@
     });
   }
 
+  function sceneHTMLPerspectiveCorners(entry, camera, width, height, timeSeconds, position) {
+    const sw = sceneNumber(entry && entry.surfaceWidth, 0), sh = sceneNumber(entry && entry.surfaceHeight, 0);
+    if (sw <= 0 || sh <= 0) return null;
+    const t = sceneNumber(timeSeconds, 0), rx = sceneNumber(entry.rotationX, 0) + sceneNumber(entry.spinX, 0) * t;
+    const ry = sceneNumber(entry.rotationY, 0) + sceneNumber(entry.spinY, 0) * t, rz = sceneNumber(entry.rotationZ, 0) + sceneNumber(entry.spinZ, 0) * t;
+    const origin = position && typeof position === "object" ? position : { x: sceneNumber(entry.x, 0), y: sceneNumber(entry.y, 0), z: sceneNumber(entry.z, 0) };
+    const hw = sw / 2, hh = sh / 2;
+    return [
+      { x: -hw, y: hh, z: 0 }, { x: hw, y: hh, z: 0 },
+      { x: -hw, y: -hh, z: 0 }, { x: hw, y: -hh, z: 0 },
+    ].map(function(local) {
+      const rotated = sceneRotatePoint(local, rx, ry, rz);
+      return sceneProjectPoint({ x: origin.x + rotated.x, y: origin.y + rotated.y, z: origin.z + rotated.z }, camera, width, height);
+    });
+  }
+
   function appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds) {
+    const mode = normalizeSceneHTMLMode(entry.mode, "dom");
+    const perspective = mode === "dom" && Boolean(entry.perspective);
     const point = sceneSpritePoint(entry, timeSeconds);
     const projected = sceneProjectPoint(point, camera, width, height);
-    if (!projected) {
+    const perspectiveCorners = perspective ? sceneHTMLPerspectiveCorners(entry, camera, width, height, timeSeconds, point) : null;
+    if (!perspective && !projected) {
       return;
     }
-    const size = sceneProjectedSpriteSize(camera, width, height, entry, projected.depth);
-    if (size.width <= 0 || size.height <= 0) {
+    const size = perspective ? { width: 0, height: 0 } : sceneProjectedSpriteSize(camera, width, height, entry, projected.depth);
+    if (!perspective && (size.width <= 0 || size.height <= 0)) {
       return;
     }
     const marginX = Math.max(24, size.width);
     const marginY = Math.max(24, size.height);
-    if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
+    if (!perspective && (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY)) {
       return;
     }
-    const mode = normalizeSceneHTMLMode(entry.mode, "dom");
     const texture = sceneHTMLTextureMetadata(entry);
     appendSceneHTMLTextureSurfaceToBundle(bundle, materialLookup, camera, entry, point, texture, timeSeconds);
     bundle.html.push({
       id: entry.id,
       target: entry.target,
       mode,
+      perspective: Boolean(entry.perspective),
+      perspectiveCorners,
+      perspectiveError: entry.perspective && mode !== "dom" ? "Perspective positioning applies only to DOM mode" : (perspective && !perspectiveCorners ? "perspective requires positive surfaceWidth and surfaceHeight" : ""),
       html: entry.html,
       className: entry.className,
       fallback: entry.fallback,
@@ -6903,8 +6936,8 @@
       spinX: sceneNumber(entry.spinX, 0),
       spinY: sceneNumber(entry.spinY, 0),
       spinZ: sceneNumber(entry.spinZ, 0),
-      position: { x: projected.x, y: projected.y },
-      depth: projected.depth,
+      position: projected ? { x: projected.x, y: projected.y } : { x: 0, y: 0 },
+      depth: projected ? projected.depth : 0,
       priority: sceneNumber(entry.priority, 0),
       width: size.width,
       height: size.height,

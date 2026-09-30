@@ -28,6 +28,36 @@
 - Empty and unknown modes preserve the existing bloom output and wire shape.
   `Bloom.Scale` still controls prefilter resolution; resize and disposal free
   the full level chain.
+### Added: opt-in Scene3D walking
+
+- Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
+  sliding, world bounds, slope and wading limits, sprint, and optional head bob.
+- Support pointer lock, focused keyboard navigation, simultaneous touch movement
+  and look, optional gamepads, and declarative camera reset buttons. Walking
+  loads a separate chunk only for scenes with walk props; existing controls keep
+  their behavior and browser defaults stay out of Go's JSON output.
+
+### Added: Azure Artifact Signing for desktop packages
+
+- Add `gosx desktop package --sign-provider azure-artifact-signing` with
+  SignTool or jsign, non-secret configuration, Authenticode verification, and
+  signing metadata. Sign staged PE files, the uninstaller, and per-user Setup.
+- Add `gosx desktop verify-signature`, a fake-tool CI packaging test, a gated
+  Azure release signing check, and [desktop code-signing documentation](docs/desktop-code-signing.md).
+
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
+### Added: desktop window placement
+
+- Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
+  bounds and maximized state across launches.
+- Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
+  provides the placement before the window is destroyed.
 
 ### Added: desktop window handle, focus events, message box
 

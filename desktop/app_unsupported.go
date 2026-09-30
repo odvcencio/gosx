@@ -108,7 +108,10 @@ func (unsupportedApp) OpenURL(string) error {
 	return ErrUnsupported
 }
 
-func (unsupportedApp) SetFullscreen(bool) error  { return ErrUnsupported }
+func (unsupportedApp) SetFullscreen(bool) error { return ErrUnsupported }
+func (unsupportedApp) WindowPlacement() (WindowPlacement, error) {
+	return WindowPlacement{}, ErrUnsupported
+}
 func (unsupportedApp) SetMinSize(int, int) error { return ErrUnsupported }
 func (unsupportedApp) SetMaxSize(int, int) error { return ErrUnsupported }
 

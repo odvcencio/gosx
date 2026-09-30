@@ -426,6 +426,7 @@ type IRLabelNode struct {
 type IRHTMLNode struct {
 	Target           string  `json:"target,omitempty"`
 	Mode             string  `json:"mode,omitempty"`
+	Perspective      bool    `json:"perspective,omitempty"`
 	HTML             string  `json:"html"`
 	ClassName        string  `json:"className,omitempty"`
 	Fallback         string  `json:"fallback,omitempty"`
@@ -1282,6 +1283,7 @@ func htmlToIRNode(html HTMLIR) IRNode {
 		HTML: &IRHTMLNode{
 			Target:           html.Target,
 			Mode:             html.Mode,
+			Perspective:      html.Perspective,
 			HTML:             html.HTML,
 			ClassName:        html.ClassName,
 			Fallback:         html.Fallback,

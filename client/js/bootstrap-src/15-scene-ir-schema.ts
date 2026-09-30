@@ -29,7 +29,7 @@
    * @property {object[]} [instancedMeshes]
    * @property {SceneComputeParticles[]} [computeParticles]
    * @property {SceneWaterSystem[]} [waterSystems]
-   * @property {object[]} [html]
+   * @property {SceneHTML[]} [html]
    */
 
   /**
@@ -44,6 +44,19 @@
    * @property {string} [computeEntry] - Entry point for computeWGSL (default "simulate").
    * @property {string} [computeBackend] - Kernel authoring back-end name (e.g. "elio").
    * @property {string} [computeWGSLRef] - shaderLib ref replacing computeWGSL when deduplicated.
+   */
+
+  /**
+   * @typedef {object} SceneHTML
+   * @property {string} [id]
+   * @property {string} [mode]
+   * @property {boolean} [perspective] Project a DOM HTML surface onto its world-space XY plane.
+   * @property {number} [surfaceWidth] Positive world-space width required by perspective mode.
+   * @property {number} [surfaceHeight] Positive world-space height required by perspective mode.
+   * @property {number} [rotationX]
+   * @property {number} [rotationY]
+   * @property {number} [rotationZ]
+   * @property {string} [html]
    */
 
   /**
@@ -301,6 +314,9 @@
       if (expectedPayload && !node[expectedPayload]) {
         errors.push("nodes[" + index + "]." + expectedPayload + " is required");
       }
+      if (node.html) {
+        validateSceneIRHTML(node.html, "nodes[" + index + "].html", errors);
+      }
       if (node.points) {
         validateSceneIRNonNegativeInteger(node.points.count, "nodes[" + index + "].points.count", errors);
       }
@@ -333,7 +349,22 @@
     validateSceneIRArray(bundle, "labels", errors);
     validateSceneIRArray(bundle, "sprites", errors);
     validateSceneIRArray(bundle, "html", errors);
+    (Array.isArray(bundle.html) ? bundle.html : []).forEach(function(entry, index) {
+      validateSceneIRHTML(entry, "html[" + index + "]", errors);
+    });
     if (!bundle.objects && !bundle.meshObjects && !bundle.points && !bundle.instancedMeshes && !bundle.computeParticles && !bundle.waterSystems && !bundle.labels && !bundle.sprites && !bundle.html) {
       errors.push("scene IR must include nodes or render-bundle arrays");
+    }
+  }
+
+  function validateSceneIRHTML(entry, label, errors) {
+    if (!entry || typeof entry !== "object") return;
+    if (entry.perspective != null && typeof entry.perspective !== "boolean") {
+      errors.push(label + ".perspective must be a boolean");
+    }
+    if (entry.perspective === true && String(entry.mode || "dom").toLowerCase() === "dom") {
+      if (!(typeof entry.surfaceWidth === "number" && Number.isFinite(entry.surfaceWidth) && entry.surfaceWidth > 0) || !(typeof entry.surfaceHeight === "number" && Number.isFinite(entry.surfaceHeight) && entry.surfaceHeight > 0)) {
+        errors.push(label + " perspective requires positive surfaceWidth and surfaceHeight");
+      }
     }
   }

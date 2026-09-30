@@ -48,6 +48,9 @@ type Options struct {
 	// StateEncoding selects the state/snapshot representation in hub payloads.
 	// Leave empty for StateEncodingBytes compatibility.
 	StateEncoding StateEncoding
+	// DisableReplay skips the unbounded input log for long-running simulations.
+	// Replay returns an empty log when recording is disabled.
+	DisableReplay bool
 }
 
 // Runner drives a Simulation at a fixed tick rate over a hub.
@@ -71,13 +74,17 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 	if rate <= 0 {
 		rate = 60
 	}
+	var recorder *replayRecorder
+	if !opts.DisableReplay {
+		recorder = newReplayRecorder()
+	}
 	return &Runner{
 		hub:       h,
 		sim:       s,
 		tickRate:  rate,
 		inputs:    make(map[string]Input),
 		snapshots: newSnapshotRing(128),
-		recorder:  newReplayRecorder(),
+		recorder:  recorder,
 		encoding:  normalizeStateEncoding(opts.StateEncoding),
 	}
 }
@@ -118,7 +125,11 @@ func (r *Runner) DrainInputs() map[string]Input {
 }
 
 // Replay returns the complete replay log of all recorded frames.
+// It returns an empty log if Options.DisableReplay is set.
 func (r *Runner) Replay() ReplayLog {
+	if r.recorder == nil {
+		return ReplayLog{}
+	}
 	return r.recorder.Finish()
 }
 

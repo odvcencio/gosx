@@ -234,6 +234,12 @@ declare var setStyleValue: any;
 declare var setupSceneDragInteractions: any;
 declare var setupSceneGizmoDragInteractions: any;
 declare var setupScenePickInteractions: any;
+declare var setupSceneNodeFocusProxies: any;
+declare var syncSceneNodeFocusProxies: any;
+declare var dispatchSceneNodeFocusPointer: any;
+declare var disposeSceneNodeFocusProxies: any;
+declare var sceneFocusEnabled: any;
+declare var sceneFocusPointerHandler: any;
 declare var webGPUObjectModelMatrix: any;
 
 declare var sceneSkyUniformData: any;
