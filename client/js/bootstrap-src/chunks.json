@@ -270,6 +270,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-walk.js",
+      "sources": [
+        "../runtime/scene3d/mount-walk.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-decompress.js",
       "sources": [
         "bootstrap-src/26l-feature-scene3d-decompress-prefix.ts",
