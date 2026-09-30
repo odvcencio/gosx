@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -161,16 +162,30 @@ func TestCompressionPlatformMetadata(t *testing.T) {
 		}
 	}
 	for key, value := range map[string]string{
-		"/(.*):Vary":                 "Accept-Encoding",
-		"/(.*).br:Content-Encoding":  "br",
-		"/(.*).gz:Content-Encoding":  "gzip",
-		"/(.*).html.br:Content-Type": "text/html; charset=utf-8",
-		"/(.*).html.gz:Content-Type": "text/html; charset=utf-8",
-		"/gosx/(.*):Cache-Control":   "public, max-age=31536000, immutable",
-		"/assets/(.*):Cache-Control": "public, max-age=31536000, immutable",
+		"/(.*):Vary":                     "Accept-Encoding",
+		"/(.*).html.br:Content-Encoding": "br",
+		"/(.*).html.gz:Content-Encoding": "gzip",
+		"/(.*).wasm.br:Content-Encoding": "br",
+		"/(.*).html.br:Content-Type":     "text/html; charset=utf-8",
+		"/(.*).html.gz:Content-Type":     "text/html; charset=utf-8",
+		"/gosx/(.*):Cache-Control":       "public, max-age=31536000, immutable",
+		"/assets/(.*):Cache-Control":     "public, max-age=31536000, immutable",
 	} {
 		if got[key] != value {
 			t.Errorf("%s = %q, want %q", key, got[key], value)
+		}
+	}
+	// A standalone archive must not be served with Content-Encoding: no rule
+	// may match it and set the header.
+	for _, rule := range config.Headers {
+		pattern := "^" + strings.ReplaceAll(strings.ReplaceAll(rule.Source, ".", `\.`), `(\.*)`, "(.*)") + "$"
+		if !regexp.MustCompile(pattern).MatchString("/downloads/app.tar.gz") {
+			continue
+		}
+		for _, header := range rule.Headers {
+			if header.Key == "Content-Encoding" {
+				t.Errorf("rule %q sets Content-Encoding on a standalone .tar.gz download", rule.Source)
+			}
 		}
 	}
 }

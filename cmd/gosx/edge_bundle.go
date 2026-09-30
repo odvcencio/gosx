@@ -215,6 +215,22 @@ func edgeWorkerSource(manifest exportManifest) string {
 	}, "\n")
 }
 
+// vercelSidecarMedia lists the file types whose .br and .gz sidecars the
+// production build writes (text types, plus the runtime WASM).
+var vercelSidecarMedia = []struct{ ext, contentType string }{
+	{"html", "text/html; charset=utf-8"},
+	{"css", "text/css; charset=utf-8"},
+	{"js", "application/javascript; charset=utf-8"},
+	{"mjs", "application/javascript; charset=utf-8"},
+	{"json", "application/json; charset=utf-8"},
+	{"map", "application/json; charset=utf-8"},
+	{"webmanifest", "application/manifest+json; charset=utf-8"},
+	{"xml", "application/xml; charset=utf-8"},
+	{"svg", "image/svg+xml"},
+	{"txt", "text/plain; charset=utf-8"},
+	{"wasm", "application/wasm"},
+}
+
 func vercelConfigSource() string {
 	type header struct {
 		Key   string `json:"key"`
@@ -229,18 +245,16 @@ func vercelConfigSource() string {
 		{"/gosx/(.*)", []header{{"Cache-Control", "public, max-age=31536000, immutable"}}},
 		{"/(.*)", []header{{"Vary", "Accept-Encoding"}}},
 	}
+	// Content-Encoding is declared only for sidecars of the media types the
+	// build precompresses. A standalone archive such as /downloads/app.tar.gz
+	// must keep its bytes: a blanket "/(.*).gz" rule would make browsers
+	// decode it on download.
 	for _, variant := range []struct{ encoding, suffix string }{{"br", ".br"}, {"gzip", ".gz"}} {
-		rules = append(rules, rule{"/(.*)" + variant.suffix, []header{{"Content-Encoding", variant.encoding}}})
-		for _, media := range []struct{ ext, contentType string }{
-			{"html", "text/html; charset=utf-8"},
-			{"css", "text/css; charset=utf-8"},
-			{"js", "application/javascript; charset=utf-8"},
-			{"json", "application/json; charset=utf-8"},
-			{"webmanifest", "application/manifest+json; charset=utf-8"},
-			{"xml", "application/xml; charset=utf-8"},
-			{"txt", "text/plain; charset=utf-8"},
-		} {
-			rules = append(rules, rule{"/(.*)." + media.ext + variant.suffix, []header{{"Content-Type", media.contentType}}})
+		for _, media := range vercelSidecarMedia {
+			rules = append(rules, rule{"/(.*)." + media.ext + variant.suffix, []header{
+				{"Content-Encoding", variant.encoding},
+				{"Content-Type", media.contentType},
+			}})
 		}
 	}
 	config := struct {
