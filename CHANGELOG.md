@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added: desktop rotating log files
+
+- Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
+  rotating log file.
+- Rotate before writes exceed the configured size, keeping the newest rotated
+  files as `Name.1.log` through `Name.<Keep>.log`.
 ### Added: Azure Artifact Signing for desktop packages
 
 - Add `gosx desktop package --sign-provider azure-artifact-signing` with
