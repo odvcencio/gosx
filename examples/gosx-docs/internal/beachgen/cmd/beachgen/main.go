@@ -25,7 +25,7 @@ func main() {
 }
 
 func run(out, env, descriptors string) error {
-	if err := beachgen.Write(out, 0xB1AC6A55); err != nil {
+	if err := beachgen.Write(out, beachgen.Seed); err != nil {
 		return err
 	}
 	for _, dir := range []string{env, descriptors} {
