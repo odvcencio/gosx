@@ -115,6 +115,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	period := blackglassBeachPeriodFor(periodID)
 	view := blackglassBeachViewFor(viewID)
 	sky := beachgen.PeriodSky(period.ID)
+	sky.Clouds = &scene.SkyClouds{Coverage: 0.42, Opacity: 0.9, Direction: 20}
 	sun := sky.SunDirection
 	horizon := blackglassBeachHorizon(sky)
 	return scene.Props{
@@ -133,10 +134,12 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			IBL: blackglassBeachPeriodIBL(period.ID), EnvIntensity: 0.7,
 			Sky:      &sky,
 			FogColor: horizon, FogDensity: 0.0035,
+			Haze: &scene.Haze{Density: 0.006, HeightFalloff: 0.08, SunScatter: 0.6},
 			Ocean: &scene.Ocean{
 				WindDirection: 8, WaveHeight: 0.9, WaveLength: 17, Choppiness: 0.7, Speed: 1,
 				DeepColor: "#021019", ShallowColor: "#1b5d63", ScatterColor: "#1f8f7c", FoamColor: "#eef3f2",
 				Clarity: 3.5, Roughness: 0.05, Foam: 0.7, Surf: 0.6, Extent: 4000,
+				Reflections: &scene.OceanReflections{Mode: "ssr+planar", Resolution: 0.5, Strength: 1},
 				Bathymetry: &scene.OceanBathymetry{
 					Src:  blackglassBeachModelRoot + "beach-v2-height.png",
 					MinX: beachgen.BathymetryMinX, MinZ: beachgen.BathymetryMinZ, MaxX: beachgen.BathymetryMaxX, MaxZ: beachgen.BathymetryMaxZ,
@@ -145,10 +148,12 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			},
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels1440p, Effects: []scene.PostEffect{
+			scene.GodRays{Intensity: 0.22},
 			scene.Bloom{Mode: "mip", Threshold: 1.6, Strength: 0.08, Radius: 5, Scale: 0.5},
-			scene.Tonemap{Mode: scene.TonemapACES, Exposure: period.Exposure},
+			scene.Tonemap{Mode: scene.TonemapAgX, Exposure: period.Exposure},
 			scene.Vignette{Intensity: 0.18},
 			scene.FXAA{},
+			scene.Grain{Intensity: 0.012},
 		}},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels2048},
 		Graph: scene.NewGraph(
