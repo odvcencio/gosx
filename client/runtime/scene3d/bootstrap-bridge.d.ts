@@ -246,3 +246,7 @@ declare var sceneSkyUniformData: any;
 declare var sceneSkyPhysicalParams: any;
 declare var sceneSkyPhysicalShaderSource: any;
 declare var sceneSkyPhysicalSource: any;
+declare var sceneOceanUniformData: any;
+// The ocean passes ship in the same chunk as the renderer that calls them.
+declare function sceneOceanWebGLDraw(resources: any, gl: any, opts: any): void;
+declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;

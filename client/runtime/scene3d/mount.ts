@@ -137,9 +137,7 @@
     let sceneAnimationToggleBound = false;
 
     function sceneAnimationState() {
-      if (motion.reducedMotion) {
-        return { wants: false, reason: "reduced-motion" };
-      }
+      if (motion.reducedMotion) return { wants: false, reason: "reduced-motion" };
       // A user-paused declarative scene stops the loop outright: wants
       // flips false with reason "paused", so the settle render scheduled by
       // the toggle is the last frame until resume and the mount reports
@@ -169,6 +167,7 @@
         }
         return { wants: true, reason: "water-simulation" };
       }
+      if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
       if (sceneHasActiveModelAnimations(sceneState)) {
         return { wants: true, reason: "model-animation" };
       }
