@@ -183,3 +183,24 @@ func TestOriginOptionsRejectInvalidTrust(t *testing.T) {
 		}
 	}
 }
+func TestSessionFreeResponsesKeepTheirCacheHeaders(t *testing.T) {
+	m := MustNew("lazy-session-test-secret", Options{})
+	cookie := issueCookie(t, m, "name", "Ada")
+	h := m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Write([]byte("asset"))
+	}))
+	r := httptest.NewRequest(http.MethodGet, "/gosx/assets/runtime/app.0123456789abcdef.js", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("asset Cache-Control = %q, want the handler's value", got)
+	}
+	if vary := strings.Join(w.Header().Values("Vary"), ","); strings.Contains(vary, "Cookie") {
+		t.Fatalf("asset Vary = %q; a response that never read the session must not vary by Cookie", vary)
+	}
+	if len(w.Result().Cookies()) != 0 {
+		t.Fatal("asset response rewrote the session cookie")
+	}
+}

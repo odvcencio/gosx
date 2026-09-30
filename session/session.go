@@ -146,6 +146,11 @@ type Store struct {
 	writeErr        error
 	existing        bool
 	cookiePresent   bool
+	// accessed records that the handler read or wrote session state, so the
+	// response can depend on the visitor's session. Only such responses get
+	// Vary: Cookie and private caching; a handler that never touches the
+	// session (static and runtime assets) keeps its own cache headers.
+	accessed bool
 }
 
 // New creates a new cookie-backed session manager.
@@ -325,7 +330,17 @@ func (m *Manager) Token(r *http.Request) string {
 }
 
 // Current returns the request-scoped session store loaded by Middleware.
+// Calling it marks the response as session-dependent (Vary: Cookie, and
+// private caching when the visitor has a session).
 func Current(r *http.Request) *Store {
+	store := currentStore(r)
+	if store != nil {
+		store.accessed = true
+	}
+	return store
+}
+
+func currentStore(r *http.Request) *Store {
 	if r == nil {
 		return nil
 	}
@@ -951,11 +966,16 @@ func (w *responseWriter) commitCookie() {
 		return
 	}
 	w.committed = true
-	// Both anonymous and personalized variants must vary by Cookie. Otherwise
-	// a shared cache could replay anonymous HTML to a visitor with a session.
-	addCookieVary(w.Header())
-	if w.store != nil && (w.store.cookiePresent || w.store.dirty) {
-		w.Header().Set("Cache-Control", "private, no-store")
+	// A response that read or wrote the session must vary by Cookie in both
+	// its anonymous and personalized variants; otherwise a shared cache could
+	// replay anonymous HTML to a visitor with a session. A response that never
+	// touched the session (for example a hashed runtime asset) is the same for
+	// every visitor, so its cache headers are left alone.
+	if w.store != nil && (w.store.accessed || w.store.dirty) {
+		addCookieVary(w.Header())
+		if w.store.cookiePresent || w.store.dirty {
+			w.Header().Set("Cache-Control", "private, no-store")
+		}
 	}
 	if w.store == nil || !w.store.dirty {
 		return
