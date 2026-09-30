@@ -13,5 +13,6 @@
   "rect-area-specular": false,
   "light-probe-sh": false,
   "sky-environment": true,
-  "sky-gradient": true
+  "sky-gradient": true,
+  "sky-physical": true
 }

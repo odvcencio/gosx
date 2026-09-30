@@ -5,7 +5,7 @@ import "testing"
 func TestGPUBackendsDrawSky(t *testing.T) {
 	webgpu := readRenderer(t, webgpuRendererPath)
 	webgl := readRenderer(t, webglRendererPath)
-	for _, feature := range []Feature{FeatureSkyEnvironment, FeatureSkyGradient} {
+	for _, feature := range []Feature{FeatureSkyEnvironment, FeatureSkyGradient, FeatureSkyPhysical} {
 		evidenceFor(t, feature, BackendWebGPU).
 			needs(webgpuRendererPath, webgpu, "WGSL_SCENE_SKY", "wgpuCreateSkyRenderer", "skyResources.renderer.draw(mainPass").
 			assertAgrees("WebGPU draws the sky before world geometry")
@@ -21,4 +21,15 @@ func TestGPUBackendsDrawSky(t *testing.T) {
 			t.Fatalf("unexpected sky capabilities: %+v", got)
 		}
 	}
+}
+
+func TestGPUBackendsDrawPhysicalSky(t *testing.T) {
+	webgpu := readRenderer(t, webgpuRendererPath)
+	webgl := readRenderer(t, webglRendererPath)
+	evidenceFor(t, FeatureSkyPhysical, BackendWebGPU).
+		needs(webgpuRendererPath, webgpu, "sceneSkyPhysicalSource(\"wgsl\")", "gosxPhysicalSky(ray, sky.betaR", "sky.bottom.w == 4").
+		assertAgrees("WebGPU evaluates the physical sky in the sky pass")
+	evidenceFor(t, FeatureSkyPhysical, BackendWebGL).
+		needs(webglRendererPath, webgl, "sceneSkyPhysicalSource(\"glsl\")", "gosxPhysicalSky(ray, u_sky[7]", "u_sky[5].w == 4.").
+		assertAgrees("WebGL2 evaluates the physical sky in the sky pass")
 }
