@@ -227,3 +227,14 @@ test("hint and joystick defaults live in one zero-specificity stylesheet so page
   controls({}).handle.dispose();
   h.handle.dispose();
 });
+
+test("walk leaves rendering to an animating scene's paced loop", () => {
+  const h = controls({ headBob: 0 }, { props: { maxFPS: 60 } });
+  h.mount.setAttribute("data-gosx-scene3d-render-loop", "active");
+  h.mount.setAttribute("data-gosx-scene3d-render-loop-wants-animation", "true");
+  h.canvas.focus(); h.event(h.env.document, "keydown", { code: "KeyW" });
+  for (let t = 0; t <= 500; t += 1000 / 120) h.raf.flush(t);
+  assert.equal(h.reasons.filter((r) => r === "controls").length, 0);
+  assert.ok(h.handle.controller.currentCamera().z < 0, "the camera still moves for the animation loop to draw");
+  h.event(h.env.document, "keyup", { code: "KeyW" }); h.handle.dispose();
+});
