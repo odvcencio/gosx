@@ -102,6 +102,14 @@ func Write(outDir string, seed int64) error {
 // TerrainHeight evaluates the deterministic terrain surface at x,z.
 func TerrainHeight(x, z float64, seed int64) float64 { return terrainHeight(newNoise(seed), x, z) }
 
+type cliffPoint struct{ x, z float64 }
+type cliffSpec struct {
+	front  [3]cliffPoint
+	height float64
+	seed   int64
+	face   float64
+}
+
 func terrainHeight(n noiseField, x, z float64) float64 {
 	var h float64
 	switch {
@@ -115,21 +123,40 @@ func terrainHeight(n noiseField, x, z float64) float64 {
 	sand := n.fbm(x*.17+19, z*.17-7, 4) * .08
 	h += sand
 	zGate := smoothstep(-40, -30, z)
-	left := (1 - smoothstep(-34, -28, x)) * zGate
-	right := smoothstep(34, 40, x) * zGate
-	if left > 0 {
-		base := h
-		cliff := n.fbm(x/4.8+47, z/7.2-11, 5)
-		ridge := (1 - 2*math.Abs(cliff)) * 3
-		h = lerp(base, 18+ridge, left)
+	leftFront := [3]cliffPoint{{-28, -30}, {-30, 10}, {-36, 50}}
+	leftDistance := cliffFrontX(leftFront, z) - x
+	leftTarget := lerp(h, 1.5, smoothstep(-6, 0, leftDistance))
+	if leftDistance > 0 {
+		leftTarget = lerp(1.5, headlandHeight(n, x, z, true), smoothstep(20, 30, leftDistance))
 	}
-	if right > 0 {
-		base := h
-		cliff := n.fbm(x/4.8-31, z/7.2+23, 5)
-		ridge := (1 - 2*math.Abs(cliff)) * 3
-		h = lerp(base, 12+ridge, right)
+	h = lerp(h, leftTarget, zGate)
+	rightFront := [3]cliffPoint{{34, -30}, {35, 12}, {40, 50}}
+	rightDistance := x - cliffFrontX(rightFront, z)
+	rightTarget := lerp(h, 1.5, smoothstep(-6, 0, rightDistance))
+	if rightDistance > 0 {
+		rightTarget = lerp(1.5, headlandHeight(n, x, z, false), smoothstep(20, 30, rightDistance))
 	}
+	h = lerp(h, rightTarget, zGate)
 	return h
+}
+
+func headlandHeight(n noiseField, x, z float64, left bool) float64 {
+	base, offsetX, offsetZ := 18.0, 47.0, -11.0
+	if !left {
+		base, offsetX, offsetZ = 12, -31, 23
+	}
+	value := n.fbm(x/4.8+offsetX, z/7.2+offsetZ, 5)
+	return base + (1-2*math.Abs(value))*3
+}
+
+func cliffFrontX(front [3]cliffPoint, z float64) float64 {
+	for segment := 0; segment < 2; segment++ {
+		a, b := front[segment], front[segment+1]
+		if z <= b.z {
+			return lerp(a.x, b.x, clamp((z-a.z)/(b.z-a.z), 0, 1))
+		}
+	}
+	return front[2].x
 }
 
 func terrainGeometry(n noiseField) (*geometry, error) {
@@ -181,7 +208,10 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 			h := terrainHeight(n, x, z)
 			dx := terrainHeight(n, x+.5, z) - terrainHeight(n, x-.5, z)
 			dz := terrainHeight(n, x, z+.5) - terrainHeight(n, x, z-.5)
-			rock := math.Hypot(dx, dz) > .6 || (math.Abs(x) > 34 && h > 2)
+			leftDistance := cliffFrontX([3]cliffPoint{{-28, -30}, {-30, 10}, {-36, 50}}, z) - x
+			rightDistance := x - cliffFrontX([3]cliffPoint{{34, -30}, {35, 12}, {40, 50}}, z)
+			headland := (leftDistance > -2 || rightDistance > -2) && z > -35
+			rock := math.Hypot(dx, dz) > .6 || headland
 			ao := ambientOcclusion(n, x, z, h)
 			factor := .45 + .55*ao
 			base := [3]float64{62, 58, 54}
@@ -376,11 +406,21 @@ func stackGeometry(seed int64) (*geometry, error) {
 	for _, stack := range stackSpecs(seed) {
 		addStack(g, stack)
 	}
+	for _, cliff := range cliffSpecs(seed) {
+		addCliffWall(g, cliff)
+	}
 	for _, boulder := range boulderSpecs(seed) {
 		addBoulder(g, boulder, newNoise(seed+int64(boulder.id)*101), newNoise(seed))
 	}
 	averageVertexNormals(g)
 	return g, nil
+}
+
+func cliffSpecs(seed int64) []cliffSpec {
+	return []cliffSpec{
+		{front: [3]cliffPoint{{-28, -30}, {-30, 10}, {-36, 50}}, height: 18, seed: seed + 0xC11F, face: 1},
+		{front: [3]cliffPoint{{34, -30}, {35, 12}, {40, 50}}, height: 12, seed: seed + 0xC12F, face: -1},
+	}
 }
 
 type stackSpec struct {
@@ -491,7 +531,7 @@ func appendVertex(g *geometry, p vec3, u, v float64) uint16 {
 }
 
 func addStack(g *geometry, stack stackSpec) {
-	const sides, rings = 48, 64
+	const sides, rings = 40, 52
 	noise := newNoise(stack.seed)
 	baseY, topY := -6.0, stack.height
 	first := len(g.positions) / 3
@@ -703,6 +743,11 @@ func makeBathymetry(n noiseField) ([]byte, error) {
 		for x := 0; x < BathymetrySize; x++ {
 			wx := BathymetryMinX + (float64(x)+0.5)/BathymetrySize*(BathymetryMaxX-BathymetryMinX)
 			height := terrainHeight(n, wx, z)
+			leftDistance := cliffFrontX([3]cliffPoint{{-28, -30}, {-30, 10}, {-36, 50}}, z) - wx
+			rightDistance := wx - cliffFrontX([3]cliffPoint{{34, -30}, {35, 12}, {40, 50}}, z)
+			if z >= -30 && (leftDistance > 0 || rightDistance > 0) {
+				height = math.Max(height, 8)
+			}
 			for _, stack := range stacks {
 				centerX := stack.x + 6*stack.lean
 				// A smooth mound, not a disk: the shallow-water and foam bands
