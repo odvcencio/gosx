@@ -160,9 +160,8 @@
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
       queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject, sequence: ++queue.sequence };
-      // Membership commands retain their transaction ordering. While their
-      // assets are pending, a mounted renderer may synchronously advance only
-      // compatible committed identities; keep the latest job for final replay.
+      // Advance compatible committed actors while assets load; keep the latest
+      // frame queued behind its membership command for final replay.
       if (queue.waitingForCommands) {
         var rec = record(target, opts);
         if (rec && typeof rec.handle.applyPendingPoseFrame === "function") {
@@ -200,8 +199,7 @@
       operation = queue.waitingForCommands
         ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() {
           queue.waitingForCommands = false;
-          // A newer compatible pose already reached the committed wrappers.
-          // Replaying this captured frame would roll them back after loading.
+          // Do not replay an older frame over poses advanced during loading.
           return queue.progressed > job.sequence
             ? { applied: false, binary: true, superseded: true }
             : dispatchPoseFrameNow(job.target, job.frame, job.opts);
@@ -270,9 +268,7 @@
       var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
       if (!Array.isArray(batch.instances)) reject("membership-changed");
       if (pending) {
-        // The next queued declaration can add or reorder members while this
-        // transaction loads. Advance only identities in its current snapshot;
-        // their committed template, scope and wrapper are checked by the renderer.
+        // Filter future membership; the renderer checks committed ownership.
         if (!current) continue;
         var instances = [];
         var poses = [];
