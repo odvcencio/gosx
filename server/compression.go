@@ -146,11 +146,24 @@ func (w *compressionWriter) start(compress bool) error {
 		}
 	}
 	// WriteHeader takes a snapshot even though we may delay sending it until
-	// the size is known. Later handler mutations must not change that snapshot.
+	// the size is known. Later handler mutations must not change that snapshot,
+	// except trailers: net/http reads trailer values from the header map after
+	// the handler returns, so values set after the first Write must survive.
+	trailers := declaredTrailers(h)
 	for key := range w.Header() {
+		if isTrailerKey(key, trailers) {
+			continue
+		}
 		delete(w.Header(), key)
 	}
-	copyHeaders(w.Header(), h)
+	for key, values := range h {
+		if isTrailerKey(key, trailers) {
+			if _, set := w.Header()[key]; set {
+				continue
+			}
+		}
+		w.Header()[key] = append([]string(nil), values...)
+	}
 	w.started = true
 	w.ResponseWriter.WriteHeader(w.status)
 	if len(w.buffer) > 0 {
@@ -204,6 +217,23 @@ func (w *compressionFlushWriter) FlushError() error {
 		}
 	}
 	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// declaredTrailers returns the canonical names listed in the Trailer header.
+func declaredTrailers(h http.Header) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range h.Values("Trailer") {
+		for _, name := range strings.Split(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				out[http.CanonicalHeaderKey(name)] = true
+			}
+		}
+	}
+	return out
+}
+
+func isTrailerKey(key string, declared map[string]bool) bool {
+	return strings.HasPrefix(key, http.TrailerPrefix) || declared[http.CanonicalHeaderKey(key)]
 }
 
 func addAcceptEncodingVary(h http.Header) {

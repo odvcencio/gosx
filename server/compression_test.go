@@ -355,3 +355,44 @@ func BenchmarkDynamicBrotli(b *testing.B) {
 		}
 	}
 }
+
+func TestCompressionPreservesTrailersSetAfterWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name, accept, body, wantEncoding string
+	}{
+		{"identity small body", "identity", "hello", ""},
+		{"brotli large body", "br", strings.Repeat("hello trailer ", 200), "br"},
+		{"gzip large body", "gzip", strings.Repeat("hello trailer ", 200), "gzip"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.Header().Set("Trailer", "X-Checksum")
+				w.Write([]byte(tc.body))
+				w.Header().Set("X-Checksum", "abc")
+				w.Header().Set(http.TrailerPrefix+"X-Late", "late")
+			}))
+			srv := httptest.NewServer(handler)
+			defer srv.Close()
+			req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+			req.Header.Set("Accept-Encoding", tc.accept)
+			resp, err := (&http.Client{Transport: &http.Transport{DisableCompression: true}}).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if _, err := io.ReadAll(resp.Body); err != nil {
+				t.Fatal(err)
+			}
+			if got := resp.Header.Get("Content-Encoding"); got != tc.wantEncoding {
+				t.Fatalf("Content-Encoding = %q, want %q", got, tc.wantEncoding)
+			}
+			if got := resp.Trailer.Get("X-Checksum"); got != "abc" {
+				t.Fatalf("declared trailer = %q, want abc (trailers %v)", got, resp.Trailer)
+			}
+			if got := resp.Trailer.Get("X-Late"); got != "late" {
+				t.Fatalf("prefixed trailer = %q, want late (trailers %v)", got, resp.Trailer)
+			}
+		})
+	}
+}
