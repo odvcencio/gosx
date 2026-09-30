@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -327,6 +327,20 @@ perf-budget:
 
 perf-budget-ci:
 	$(SHELL) ./scripts/perf-budget-ci.sh
+
+# wire-gate builds a fresh `gosx init` app (plus one counter island) and the
+# docs site for production, serves both, and checks every route in
+# perf/budgets/wire.json: bytes on the wire by type, request count, largest
+# inline script, and the compression, cache and cookie policies. No browser is
+# involved, so the numbers are deterministic for a given build.
+wire-gate:
+	$(SHELL) ./scripts/wire-gate.sh
+
+# wire-gate-update rewrites perf/budgets/wire.json to the current measurements.
+# Limits only move down; a raise needs `-allow-raise` and a reason in the
+# route's raise map, which the CI ratchet check enforces.
+wire-gate-update:
+	WIRE_GATE_MODE=update $(SHELL) ./scripts/wire-gate.sh
 
 test-water-profile-evidence:
 	$(NODE) --test scripts/water-profile-evidence.test.mjs
