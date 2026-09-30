@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -438,7 +439,27 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	if receipt.Count != 209 || receipt.NameSetHash != compatibilityReceiptHash {
 		t.Fatalf("receipt count/hash = %d/%s", receipt.Count, receipt.NameSetHash)
 	}
-	root := findRepoRoot(t)
+	// Exercise the pinned receipt against a controlled source tree. Scanning the
+	// live repository made unrelated runtime exports change this expectation
+	// and paid for two full-tree parsing/compression passes on every run.
+	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
+	wantFullOnly := []string{"__gosx_fixture_embedded", "__gosx_fixture_sidecar"}
+	root := t.TempDir()
+	var source strings.Builder
+	for _, name := range receipt.Names {
+		if !slices.Contains(wantReceiptOnly, name) {
+			source.WriteString("window." + name + " = true;\n")
+		}
+	}
+	writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", source.String())
+	writeFile(t, root, "client/js/patch.js", "window.__gosx_fixture_sidecar = true;\n")
+	writeFile(t, root, "server/embed.go", "package server\nimport _ \"embed\"\n//go:embed navigation_runtime.js\nvar navigationRuntime string\n")
+	writeFile(t, root, "server/navigation_runtime.js", "window.__gosx_fixture_embedded = true;\n")
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.invalid")
+	runGit(t, root, "config", "user.name", "test")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "compatibility anchor")
 	inv, err := Collect(context.Background(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -456,23 +477,6 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	if len(audit.Reconciliation.AddedSinceAnchor) != 0 || len(audit.Reconciliation.RemovedSinceAnchor) != 0 {
 		t.Fatalf("anchor/current changed unexpectedly: %+v", audit.Reconciliation)
 	}
-	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
-	// __gosx_manifest: the memoized manifest parse published by loadManifest
-	// (see 10-runtime-scene-utils.ts) so other bundles reuse the parse instead
-	// of re-reading the DOM text.
-	// __gosx_scene3d_instance_stream_apply / __gosx_scene3d_instance_stream_bridge:
-	// the lazily fetched Scene3D binary instance-transform fast path's apply
-	// function and dispatch bridge (client/runtime/scene3d/instance-stream.ts).
-	// __gosx_scene3d_apply_instance_stream_frame: the base-bundle-resident
-	// lazy-load wrapper mount.ts's handle.applyInstanceStream forwards to
-	// (client/runtime/scene3d/instance-stream-bridge.ts). It lazy-loads the
-	// chunk above on first use instead of requiring a caller to already have
-	// it loaded, the same way __gosx_scene3d_command_bridge's own dispatch
-	// wrappers lazy-load the command chunk.
-	// __gosx_scene3d_walk_api: the first-person walk controller published by
-	// the lazily loaded bootstrap-feature-scene3d-walk.js chunk
-	// (client/runtime/scene3d/mount-walk.ts); only walk scenes fetch it.
-	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_scene3d_walk_api", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}
@@ -487,6 +491,22 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	}
 	if !audit.CanonicalAvailable || audit.Status != "pass" {
 		t.Fatalf("canonical availability = %v/%s, want pass with receipt/full scope differences recorded", audit.CanonicalAvailable, audit.Status)
+	}
+	if want := receipt.Count - len(wantReceiptOnly) + len(wantFullOnly); audit.Anchor.Count != want || audit.Current.Count != want {
+		t.Fatalf("anchor/current counts = %d/%d, want %d", audit.Anchor.Count, audit.Current.Count, want)
+	}
+	writeFile(t, root, "client/js/patch.js", "window.__gosx_fixture_added = true;\n")
+	changed, err := Collect(t.Context(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
+	if err != nil {
+		t.Fatalf("Collect changed overlay: %v", err)
+	}
+	changedAudit := changed.Surface.CompatibilityAudit
+	if !equalStrings(changedAudit.Reconciliation.AddedSinceAnchor, []string{"__gosx_fixture_added"}) ||
+		!equalStrings(changedAudit.Reconciliation.RemovedSinceAnchor, []string{"__gosx_fixture_sidecar"}) {
+		t.Fatalf("changed overlay reconciliation = %+v", changedAudit.Reconciliation)
+	}
+	if changedAudit.CanonicalAvailable || changedAudit.Status != "fail-closed" {
+		t.Fatalf("changed overlay availability = %v/%s, want fail-closed", changedAudit.CanonicalAvailable, changedAudit.Status)
 	}
 }
 

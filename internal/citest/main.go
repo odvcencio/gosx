@@ -79,7 +79,6 @@ var ouroborosRaceSkips = []raceSkipTarget{
 	{"TestBuildSizeEvidenceRecordsNoncanonicalUnsafeManifestPaths", "recomputes the real-repository source inventory before checking unsafe paths"},
 	{"TestBuildSizeEvidenceRecordsNoncanonicalSymlinkEscapedAsset", "recomputes the real-repository source inventory before checking symlink escapes"},
 	{"TestBuildSizeEvidenceRejectsInventoryOverlayMismatch", "recomputes the real-repository source inventory to construct and reject a stale receipt"},
-	{"TestCompatibilityAuditReceiptAndReconciliation", "recomputes and parses the real-repository compatibility inventory"},
 	{"TestRunBrowserBaselineRemoteDialErrorRedactedInArtifacts", "recomputes real-repository source identity before exercising the remote dial boundary"},
 }
 
