@@ -1,5 +1,4 @@
-/* Blackglass Beach: the scene fills the window above the docs chrome, with
-   a small panel that names the renderer and its measured frame cost. */
+/* Blackglass Beach: the scene fills the window above the docs chrome. */
 .bgb {
   position: fixed;
   inset: 0;
@@ -34,26 +33,6 @@
 .bgb[data-period="golden-hour"] .bgb__period-golden-hour,
 .bgb[data-period="blue-hour"] .bgb__period-blue-hour,
 .bgb[data-period="noon"] .bgb__period-noon { color: #16130f; background: rgba(255, 244, 230, 0.92); }
-.bgb__info {
-  position: absolute; right: 16px; bottom: 16px; z-index: 2; max-width: 360px;
-  padding: 14px 16px; border-radius: 14px;
-  background: rgba(10, 12, 14, 0.46); backdrop-filter: blur(14px);
-  opacity: 0; transform: translateY(14px);
-  animation: bgb-info-in 600ms cubic-bezier(0.2, 0.7, 0.2, 1) 1s forwards;
-}
-.bgb__info-kicker { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
-.bgb__info-body { margin: 0 0 8px; font-size: 13px; line-height: 1.5; color: rgba(255, 255, 255, 0.8); }
-.bgb__info-body output { color: #fff; font-variant-numeric: tabular-nums; }
-/* The demos layout hides renderer diagnostics with !important at (0,2,0);
-   the info panel is the one place they belong on this page. */
-.bgb .bgb__info .bgb__info-body output[data-gosx-scene3d-status]:not([hidden]) { display: inline !important; }
-.bgb__info-link { font-size: 13px; color: #f2c38c; }
-@keyframes bgb-info-in { to { opacity: 1; transform: none; } }
 @media (max-width: 640px) {
   .bgb__controls { left: 10px; right: 10px; bottom: 10px; justify-content: center; }
-  .bgb__info { left: 10px; right: 58px; top: 12px; bottom: auto; max-width: none; padding: 10px 12px; }
-  .bgb__info-body { font-size: 12px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .bgb__info { transform: none; animation-duration: 1ms; }
 }

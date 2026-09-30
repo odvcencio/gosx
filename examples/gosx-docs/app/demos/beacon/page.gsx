@@ -26,17 +26,5 @@ func Page() Node {
 				<a class="bgb__link bgb__period-noon" href={data.noonHref} data-gosx-link="true">Noon</a>
 			</nav>
 		</div>
-		<aside class="bgb__info" aria-label="How this is rendered">
-			<p class="bgb__info-kicker">Blackglass Beach</p>
-			<p class="bgb__info-body">
-				A GoSX Scene3D scene, drawing with
-				<output data-gosx-scene3d-status="renderer">starting…</output>
-				<output data-gosx-scene3d-status="fallback" hidden></output>
-				with
-				<output data-gosx-scene3d-status="frame-p95">measuring…</output>
-				of render work per frame (p95). The sky, sea, sand, glass and light are generated in Go.
-			</p>
-			<a class="bgb__info-link" href="/docs/scene3d" data-gosx-link="true">How it works</a>
-		</aside>
 	</section>
 }
