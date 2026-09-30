@@ -212,8 +212,7 @@
     if (node && memo && memo.element === node) {
       return memo.textHasLabel === true;
     }
-    const raw = node ? String(node.textContent || "") : "";
-    return raw.indexOf('"label"') >= 0;
+    return gosxManifestTextHasSceneLabel(node ? String(node.textContent || "") : "");
   }
 
   function manifestFeatureNames(manifest) {
@@ -266,7 +265,12 @@
       return Promise.resolve([]);
     }
     return Promise.all(names.map(function(name) {
-      return ensureBootstrapFeature(name);
+      const load = ensureBootstrapFeature(name);
+      // Optional: without it the browser wraps label text. Never block mounts.
+      return name !== "textlayout" ? load : load.catch(function(error) {
+        console.warn("[gosx] textlayout:", error);
+        return null;
+      });
     })).then(function(features) {
       return features.filter(Boolean);
     });
