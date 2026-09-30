@@ -79,6 +79,8 @@ const (
 	TonemapReinhard
 	// TonemapFilmic is a compact filmic curve with a softer shoulder.
 	TonemapFilmic
+	// TonemapAgX uses the AgX log-space sigmoid, with colour-preserving highlights.
+	TonemapAgX
 )
 
 // Tonemap maps HDR scene colors into the displayable [0,1] range.
@@ -311,3 +313,20 @@ func migrateEnvironmentTonemap(env Environment, existing []PostEffectIR) PostEff
 	}
 	return TonemapIR{Mode: mode, Exposure: exposure}
 }
+
+// GodRays adds depth-occluded radial sun scattering before bloom and tonemap.
+type GodRays struct {
+	Intensity float32 `json:"intensity,omitempty"` // 0..2; default 0.18
+	Decay     float32 `json:"decay,omitempty"`     // 0..1; default 0.96
+	Density   float32 `json:"density,omitempty"`   // 0..2; default 0.9
+	Samples   int     `json:"samples,omitempty"`   // 8..64; default 32
+}
+
+func (GodRays) isPostEffect() {}
+
+// Grain adds a stable, subtle display-space film grain. Place after Tonemap.
+type Grain struct {
+	Intensity float32 `json:"intensity,omitempty"` // 0..0.1; default 0.015
+}
+
+func (Grain) isPostEffect() {}

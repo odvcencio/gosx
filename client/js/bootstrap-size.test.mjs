@@ -689,7 +689,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 1_811_342 / 503_343 / 402_536; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap.js", raw: 1_774_900, gzip: 496_900, brotli: 393_300 },
+  { file: "bootstrap.js", raw: 1_819_200, gzip: 510_900, brotli: 403_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1060,7 +1060,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 263_410 / 74_722 / 62_954; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 260_700, gzip: 74_300, brotli: 62_400 },
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 276_700, gzip: 79_500, brotli: 66_800 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1190,7 +1190,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 624_328 / 177_226 / 145_904; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d.js", raw: 602_300, gzip: 172_100, brotli: 141_950 },
+  { file: "bootstrap-feature-scene3d.js", raw: 609_700, gzip: 174_800, brotli: 144_250 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1391,7 +1391,7 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 414_783 / 103_155 / 85_635; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 406_166, gzip: 101_896, brotli: 84_355 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 426_766, gzip: 107_996, brotli: 89_655 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1829,9 +1829,9 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_338_100,
-    gzip: 369_100,
-    brotli: 308_300,
+    raw: 1_366_700,
+    gzip: 378_200,
+    brotli: 315_900,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -2010,9 +2010,9 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_191_900,
-    gzip: 340_200,
-    brotli: 286_400,
+    raw: 1_215_400,
+    gzip: 348_300,
+    brotli: 293_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2188,9 +2188,9 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_611_500,
-    gzip: 447_000,
-    brotli: 372_600,
+    raw: 1_656_400,
+    gzip: 461_400,
+    brotli: 384_800,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2341,9 +2341,9 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_192_200,
-    gzip: 326_100,
-    brotli: 271_600,
+    raw: 1_220_200,
+    gzip: 334_900,
+    brotli: 279_200,
   },
 
 ];

@@ -1101,6 +1101,7 @@ type EnvironmentIR struct {
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
 	Sky              *Sky           `json:"sky,omitempty"`
 	Ocean            *Ocean         `json:"ocean,omitempty"`
+	Haze             *Haze          `json:"haze,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -3219,7 +3220,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.GroundIntensity == 0 &&
 		item.EnvMap == "" &&
 		item.IBL.IsZero() &&
-		item.Sky == nil &&
+		item.Sky == nil && item.Haze == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -3250,6 +3251,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	if item.Sky != nil {
 		record["sky"] = item.Sky
 	}
+	if item.Haze != nil {
+		record["haze"] = item.Haze
+	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
@@ -3272,6 +3276,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		Sky:              normalizeSky(environment.Sky),
 		Ocean:            normalizeOcean(environment.Ocean),
+		Haze:             normalizeHaze(environment.Haze),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,

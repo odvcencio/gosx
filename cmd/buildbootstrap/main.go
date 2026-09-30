@@ -164,6 +164,7 @@ var outputs = []output{
 			// it, so both files ship here and neither declares a name twice.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
+			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
@@ -172,6 +173,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// The Environment.Ocean passes ship beside the renderer that calls them.
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgl-atmosphere.ts"),
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
@@ -188,6 +191,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgpu-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgpu-atmosphere.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
@@ -424,6 +429,7 @@ var outputs = []output{
 			// the tiny stub + adapter probe.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
+			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
 			sourceFile("bootstrap-src/18-scene-canvas.ts"),
@@ -482,6 +488,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgl-atmosphere.ts"),
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
@@ -527,6 +535,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgpu-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgpu-atmosphere.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},

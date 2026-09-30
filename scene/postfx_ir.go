@@ -39,6 +39,8 @@ const (
 	PostEffectKindDOF        = "dof"
 	PostEffectKindFXAA       = "fxaa"
 	PostEffectKindCustomPost = "customPost"
+	PostEffectKindGodRays    = "godRays"
+	PostEffectKindGrain      = "grain"
 )
 
 // ErrUnknownPostEffectKind reports a postEffects entry whose "kind" field no
@@ -59,6 +61,8 @@ var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
 	PostEffectKindDOF:        decodePostEffectIRAs[DOFIR],
 	PostEffectKindFXAA:       decodePostEffectIRAs[FXAAIR],
 	PostEffectKindCustomPost: decodePostEffectIRAs[CustomPostIR],
+	PostEffectKindGodRays:    decodePostEffectIRAs[GodRaysIR],
+	PostEffectKindGrain:      decodePostEffectIRAs[GrainIR],
 }
 
 // decodePostEffectIRAs decodes one entry into the concrete IR type T. The
@@ -123,7 +127,7 @@ func decodePostEffectIRList(raw []json.RawMessage) ([]PostEffectIR, error) {
 //
 //	{kind: "toneMapping", exposure: 1.0}
 type TonemapIR struct {
-	Mode     string  // "aces" | "reinhard" | "filmic"
+	Mode     string  // "aces" | "reinhard" | "filmic" | "agx"
 	Exposure float64 // multiplier applied before the curve
 }
 
@@ -612,6 +616,14 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Aperture:      float64(ev.Aperture),
 				MaxBlur:       float64(ev.MaxBlur),
 			})
+		case GodRays:
+			samples := ev.Samples
+			if samples != 0 {
+				samples = max(8, min(64, samples))
+			}
+			out = append(out, GodRaysIR{Intensity: clampAtmosphereParam(float64(ev.Intensity), 0, 2), Decay: clampAtmosphereParam(float64(ev.Decay), 0, 1), Density: clampAtmosphereParam(float64(ev.Density), 0, 2), Samples: samples})
+		case Grain:
+			out = append(out, GrainIR{Intensity: clampAtmosphereParam(float64(ev.Intensity), 0, 0.1)})
 		case FXAA:
 			out = append(out, FXAAIR{})
 		case CustomPost:
@@ -751,6 +763,8 @@ func tonemapModeString(m TonemapMode) string {
 	switch m {
 	case TonemapReinhard:
 		return "reinhard"
+	case TonemapAgX:
+		return "agx"
 	case TonemapFilmic:
 		return "filmic"
 	case TonemapACES:
@@ -758,4 +772,43 @@ func tonemapModeString(m TonemapMode) string {
 	default:
 		return "aces"
 	}
+}
+
+type GodRaysIR struct {
+	Intensity float64 `json:"intensity,omitempty"`
+	Decay     float64 `json:"decay,omitempty"`
+	Density   float64 `json:"density,omitempty"`
+	Samples   int     `json:"samples,omitempty"`
+}
+
+func (ir GodRaysIR) MarshalJSON() ([]byte, error) {
+	type wire GodRaysIR
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		wire
+	}{PostEffectKindGodRays, wire(ir)})
+}
+func (ir GodRaysIR) legacyProps() map[string]any {
+	b, _ := ir.MarshalJSON()
+	out := map[string]any{}
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
+type GrainIR struct {
+	Intensity float64 `json:"intensity,omitempty"`
+}
+
+func (ir GrainIR) MarshalJSON() ([]byte, error) {
+	type wire GrainIR
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		wire
+	}{PostEffectKindGrain, wire(ir)})
+}
+func (ir GrainIR) legacyProps() map[string]any {
+	b, _ := ir.MarshalJSON()
+	out := map[string]any{}
+	_ = json.Unmarshal(b, &out)
+	return out
 }

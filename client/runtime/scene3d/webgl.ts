@@ -4524,6 +4524,7 @@
     var auxFBO = null;
     var scratchFBO = null;
     var pingPong = null;
+    var atmospherePost = createSceneAtmospherePostWebGL({ gl, quad, getProgram, beginPostPass });
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     var currentWidth = 0;
     var currentHeight = 0;
@@ -4879,7 +4880,7 @@
         // Invalidation key is scaled dims so both canvas resize and maxPixels
         // change trigger reallocation.
         if (sw !== currentWidth || sh !== currentHeight) {
-          mipBloom.dispose();
+          mipBloom.dispose(); atmospherePost.dispose();
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = createScenePostFBO(gl, sw, sh, true);
           if (!sceneFBO.hdrSupported && !hdrDegradationReported) {
@@ -4919,7 +4920,8 @@
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
       // blit to the default framebuffer).
-      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera) {
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, atmosphereContext = {}) {
+        atmospherePost.begin(effects);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -4951,7 +4953,7 @@
           var targetFBO = null;
           if (!isLast) {
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
-            if (effect.kind === SCENE_POST_DOF && targetFBO === sceneFBO) {
+            if ((effect.kind === SCENE_POST_DOF || effect.kind === "atmosphere") && targetFBO === sceneFBO) {
               if (!scratchFBO || scratchFBO.width !== scaledW || scratchFBO.height !== scaledH) {
                 /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
                 scratchFBO = createScenePostFBO(gl, scaledW, scaledH);
@@ -4969,6 +4971,8 @@
           var forcedDispatch = null;
 
           switch (effect.kind) {
+            // @ts-ignore TS7005 -- the optional depth target is owned by the post processor; the pass bridge accepts its handle.
+            case "atmosphere": currentTexture = atmospherePost.apply({input: currentTexture, effect, target: targetFBO, width: scaledW, height: scaledH, passWidth: passW, passHeight: passH, depth: sceneFBO.depthTex, context: atmosphereContext}); break;
             case SCENE_POST_TONE_MAPPING:
               currentTexture = applyToneMapping(currentTexture, effect, targetFBO, passW, passH);
               break;
@@ -5068,7 +5072,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
-        mipBloom.dispose();
+        mipBloom.dispose(); atmospherePost.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = null;
@@ -8698,6 +8702,7 @@
           canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
         }
       }
+      bundle = sceneAtmosphereBundle(bundle, frameMeta);
       beginWebGLDirectMeshBufferFrame(bundle);
       if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
@@ -8854,6 +8859,7 @@
         renderTarget = Object.assign({}, scaled, { linear: true });
       }
 
+      renderTarget = sceneReflectWebGLBegin(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, target: renderTarget, width: renderW, height: renderH });
       // Resize viewport to the render target (scaled when postfx caps are active).
       gl.viewport(0, 0, renderW, renderH);
 
@@ -8872,6 +8878,7 @@
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
           camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
       }
+      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: usePostProcessing, timeSeconds: performance.now()/1000 });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
@@ -8923,8 +8930,9 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
-      sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
-        linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: usePostProcessing, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
+      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+        meta: frameMeta, aspect, linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
 
       // Draw alpha pass.
       if (drawList && drawList.alpha.length > 0) {
@@ -8964,12 +8972,13 @@
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
+      sceneReflectWebGLEnd(oceanResources, renderW, renderH);
       // Complete the shared scene target before any post effect reads it.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera);
+        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera, { environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
         }
@@ -10905,8 +10914,8 @@
 
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
-      if (skyResources.renderer) skyResources.renderer.dispose();
-      if (oceanResources.renderer) oceanResources.renderer.dispose();
+      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
       // dispose() first) and normal teardown alike.

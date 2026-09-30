@@ -259,3 +259,28 @@ declare function sceneDetailUniformData(detail: any, masks: any, enabled: any): 
 declare function sceneDetailTextureRecords(detail: any, load: any): any;
 declare function sceneDetailShaderSource(language: any): any;
 declare function sceneDetailQualityEnabled(state: any): any;
+declare function sceneAtmosphereQuality(meta: any): any;
+declare function sceneReflectionMatrices(view: any, proj: any, level: number, webgpu: boolean): any;
+declare function sceneReflectWebGL(resources: any, gl: any, opts: any): any;
+declare function sceneReflectWebGPU(resources: any, device: any, opts: any): any;
+declare function sceneReflectDispose(resources: any): void;
+declare function sceneOceanReflectGLSL(): string;
+declare function sceneOceanReflectWGSL(): string;
+
+declare function sceneReflectWebGLBegin(resources: any, gl: any, opts: any): any;
+declare function sceneReflectWebGLEnd(resources: any, width: number, height: number): void;
+declare function sceneReflectWebGLDrawOpaque(gl: any, ctx: any, view: any, proj: any): void;
+declare function sceneReflectOpaqueList(list: any, materials: any): any;
+
+declare function sceneReflectWebGLBind(gl: any, program: any, record: any): void;
+
+declare function sceneAtmosphereTier(state: any): any;
+
+declare function sceneCloudWebGLDraw(resources: any, gl: any, opts: any): void;
+declare function sceneCloudWebGPUDraw(resources: any, device: any, pass: any, opts: any): void;
+declare function sceneCloudDispose(resources: any): void;
+
+declare function sceneAtmosphereBundle(bundle: any, meta: any): any;
+declare function sceneAtmosphereEffects(effects: any, env: any, meta: any): any;
+declare function createSceneAtmospherePostWebGL(host: any): any;
+declare function createSceneAtmospherePostWebGPU(host: any): any;

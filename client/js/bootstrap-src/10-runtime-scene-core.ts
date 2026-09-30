@@ -2773,6 +2773,8 @@
     ssao: "ssao",
     dof: "dof",
     fxaa: "fxaa",
+    godrays: "godRays",
+    grain: "grain",
     custompost: "customPost",
     "custom-post": "customPost",
   };
@@ -2821,6 +2823,7 @@
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     };
     if (kind === SCENE_POST_BLOOM) normalized.mode = normalized.mode.trim().toLowerCase() === "mip" ? "mip" : "";
+    if (kind === "godRays" || kind === "grain") return sceneAtmospherePostEffect(Object.assign({}, current, item, {kind}));
     return Object.assign({}, current, item, normalized);
   }
 
@@ -3092,6 +3095,7 @@
     const sky = { mode, topColor, horizonColor, bottomColor,
       blur: Math.max(0, Math.min(1, sceneNumber(raw.blur, 0))),
       intensity: Math.max(0, sceneNumber(raw.intensity, 1) || 1) };
+    if (raw.clouds && mode === "physical") sky.clouds = sceneSkyClouds(raw.clouds);
     if (mode !== "physical") return sky;
     // Physical-sky parameters keep "zero means the default"; see scene/sky.go.
     const sun = sceneIsPlainObject(raw.sunDirection) ? raw.sunDirection : {};
@@ -3130,7 +3134,7 @@
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
       }
     }
-    return {
+    const out = {
       level: number("level"), windDirection,
       waveHeight: parameter("waveHeight", 0.8, 0.05, 6),
       waveLength: parameter("waveLength", 18, 2, 120),
@@ -3147,12 +3151,15 @@
       extent: parameter("extent", 4000, 100, 20000),
       bathymetry,
     };
+    if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
+    return out;
   }
 
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
     const lifecycle = sceneNormalizeLifecycle(source, base);
+    const haze = Object.prototype.hasOwnProperty.call(source, "haze") ? source.haze : base.haze;
     const environment = {
       ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
       ambientIntensity: sceneClampNumberOrCSSVar(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0), 0, 4),
@@ -3164,6 +3171,7 @@
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
       ocean: normalizeSceneOcean(Object.prototype.hasOwnProperty.call(source, "ocean") ? source.ocean : base.ocean),
+      haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
@@ -3216,6 +3224,7 @@
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
         ocean: environment.ocean || null,
+        haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
@@ -7193,6 +7202,19 @@
     sceneSkyPhysicalParams: typeof sceneSkyPhysicalParams === "function" ? sceneSkyPhysicalParams : undefined,
     sceneSkyPhysicalShaderSource: typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource : undefined,
     sceneSkyPhysicalSource: typeof sceneSkyPhysicalSource === "function" ? sceneSkyPhysicalSource : undefined,
+    sceneAtmosphereQuality: typeof sceneAtmosphereQuality === "function" ? sceneAtmosphereQuality : undefined,
+    sceneOceanReflections: typeof sceneOceanReflections === "function" ? sceneOceanReflections : undefined,
+    sceneReflectDispose: typeof sceneReflectDispose === "function" ? sceneReflectDispose : undefined,
+    sceneReflectOpaqueList: typeof sceneReflectOpaqueList === "function" ? sceneReflectOpaqueList : undefined,
+    sceneReflectionMatrices: typeof sceneReflectionMatrices === "function" ? sceneReflectionMatrices : undefined,
+    sceneSkyClouds: typeof sceneSkyClouds === "function" ? sceneSkyClouds : undefined,
+    sceneCloudDispose: typeof sceneCloudDispose === "function" ? sceneCloudDispose : undefined,
+    sceneCloudUniformData: typeof sceneCloudUniformData === "function" ? sceneCloudUniformData : undefined,
+    sceneAtmosphereBundle: typeof sceneAtmosphereBundle === "function" ? sceneAtmosphereBundle : undefined,
+    sceneAtmosphereEffects: typeof sceneAtmosphereEffects === "function" ? sceneAtmosphereEffects : undefined,
+    sceneAtmospherePostUniforms: typeof sceneAtmospherePostUniforms === "function" ? sceneAtmospherePostUniforms : undefined,
+    sceneAgXSource: typeof sceneAgXSource === "function" ? sceneAgXSource : undefined,
+    sceneAtmospherePostKey: typeof sceneAtmospherePostKey === "function" ? sceneAtmospherePostKey : undefined,
     sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,

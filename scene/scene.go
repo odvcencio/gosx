@@ -84,6 +84,7 @@ type Environment struct {
 	// keeps the flat Props.Background clear color. See sky.go.
 	Sky *Sky
 	// Ocean describes the open-ocean surface. See ocean.go.
+	Haze         *Haze
 	Ocean        *Ocean
 	EnvIntensity float64
 	EnvRotation  float64

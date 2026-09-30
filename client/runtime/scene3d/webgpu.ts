@@ -4199,6 +4199,7 @@
     var currentWidth = 0;
     var currentHeight = 0;
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
     var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
     // Same memoization pattern as the renderer's wgpuCachedBindGroup: a bind
     // group stays valid while the layout and every bound resource identity
@@ -4436,7 +4437,7 @@
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
-      mipBloom.dispose();
+      mipBloom.dispose(); atmospherePost.dispose();
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
@@ -4545,7 +4546,8 @@
         return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
-      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera, atmosphereContext = {}) {
+        atmospherePost.begin(effects);
         ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
@@ -4585,6 +4587,7 @@
           activePostIndex = i;
 
           switch (effect.kind) {
+            case "atmosphere": currentTexView = atmospherePost.apply({encoder, input: currentTexView, effect, output: outputView, width: scaledW, height: scaledH, context: atmosphereContext}); break;
             case SCENE_POST_TONE_MAPPING: {
               var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout());
               var buf = getParamBuffer("toneMapping", 16);
@@ -4861,7 +4864,7 @@
       },
 
       dispose: function() {
-        mipBloom.dispose();
+        mipBloom.dispose(); atmospherePost.dispose();
         disposed = true;
         if (sceneTex) sceneTex.destroy();
         if (auxTex) auxTex.destroy();
@@ -6583,6 +6586,7 @@
       var config = {
         device: device,
         format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         alphaMode: activePresentation.alphaMode,
         colorSpace: activePresentation.colorSpace,
       };
@@ -14758,11 +14762,11 @@
       return bindGroup;
     }
 
-    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView) {
+    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView, reflectionFrame = false) {
       return device.createBindGroup({
         layout: frameBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: frameUniformBuffer } },
+          { binding: 0, resource: { buffer: reflectionFrame || frameUniformBuffer } },
           { binding: 1, resource: { buffer: lightStorageBuffer } },
           { binding: 2, resource: { buffer: fogUniformBuffer } },
           { binding: 3, resource: { buffer: envUniformBuffer } },
@@ -18277,6 +18281,7 @@
       // instance — a scene that persistently fails post-FX allocation/
       // validation retries RAW rendering instead of drawing dead frames
       // forever with a poisoned post-FX target.
+      bundle = sceneAtmosphereBundle(bundle, frameMeta);
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
@@ -18456,8 +18461,11 @@
       waterUpdateStats.waterObjectTextureCandidateProfile = waterObjectSceneTextureStats.waterObjectTextureCandidateProfile || waterUpdateStats.waterObjectTextureCandidateProfile;
 
       // --- Main Render Target ---
+      // @ts-ignore TS7034 -- target handles are nullable before the post/direct branch selects them.
       var mainColorView;
+      // @ts-ignore TS7034 -- the optional MSAA resolve handle is assigned by the target branch.
       var mainResolveView = null;
+      // @ts-ignore TS7034 -- depth handle follows the selected main target.
       var mainDepthTargetView;
       var postTarget = null;
 
@@ -18522,6 +18530,7 @@
         if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
         skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
       }
+      sceneCloudWebGPUDraw(skyResources, device, mainPass, { environment: bundle.environment, meta: frameMeta, view: scratchViewMatrix, camera: cam, aspect: scaledW/scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount, timeSeconds: frameTimeSeconds });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
 
@@ -18769,7 +18778,9 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
+      const prepareOceanReflection = () => { const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(getPBRPipeline("opaque", true, "cw")); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
@@ -18796,6 +18807,7 @@
         // draw the newly visible instances in a late pass that loads it.
         mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
 
+        prepareOceanReflection();
         // The water surface writes depth before translucent world surfaces.
         // A stele in front of the tide must remain visible after its HTML
         // texture is composited, while rocks behind the tide stay occluded.
@@ -18850,7 +18862,7 @@
       if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
         Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup), drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
       }
-      if (!oceanOpts.drawn) wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
+      if (!oceanOpts.drawn) { prepareOceanReflection(); wgpuOceanDraw(oceanResources, mainPass, oceanOpts); }
 
       // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
       // board fills so the alpha-blended glyphs composite over the rects. Lives
@@ -18894,7 +18906,7 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera));
+        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, { environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);
@@ -18930,7 +18942,7 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
-      if (skyResources.renderer) skyResources.renderer.dispose(); if (oceanResources.renderer) oceanResources.renderer.dispose();
+      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;

@@ -75,8 +75,10 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   "in vec3 v_world; in vec3 v_normal; in float v_jacobian; in float v_crest; in float v_depth0;",
   "out vec4 fragColor;",
   "//GOSX_SKY_PHYSICAL",
+  "//GOSX_REFLECTION",
+  "//GOSX_CLOUD_SOURCE",
   "vec3 oceanSky(vec3 d) {",
-  "  if (u_ocean[26].w == 4.) return gosxPhysicalSky(d, u_ocean[28], u_ocean[29], vec4(u_ocean[30].xyz, 2.), u_ocean[31].x) * u_ocean[24].w;",
+  "  if (u_ocean[26].w == 4.)  { vec3 base = gosxPhysicalSky(d, u_ocean[28], u_ocean[29], vec4(u_ocean[30].xyz, 2.), u_ocean[31].x) * u_ocean[24].w; //GOSX_CLOUD_REFLECT\n return base; }",
   "  return mix(u_ocean[25].xyz, d.y >= 0. ? u_ocean[24].xyz : u_ocean[26].xyz, abs(d.y)) * u_ocean[24].w;",
   "}",
   "float oceanHash(vec2 p) { p = fract(p * vec2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }",
@@ -112,12 +114,14 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   // GGX glint with a roughness that widens for unresolved slopes (distance and
   // normal variation across the pixel), so the sun path stays a streak.
   "  float rough = clamp(u_ocean[2].w + 0.6 * length(fwidth(N)) + dist * 0.0003, u_ocean[2].w, 0.5);",
+  "  //GOSX_REFLECTION_LOOKUP",
   "  vec3 H = normalize(L + V);",
   "  float NdL = max(dot(N, L), 0.), NdH = max(dot(N, H), 0.);",
   "  float al = rough * rough, al2 = al * al, dd = NdH * NdH * (al2 - 1.) + 1.;",
   "  float k = al * 0.5, G = (NdL / (NdL * (1. - k) + k)) * (NdV / (NdV * (1. - k) + k));",
   "  float Fh = 0.02 + 0.98 * pow(1. - max(dot(H, V), 0.), 5.);",
   "  vec3 spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4. * NdV, 1e-3), vec3(64.));",
+  "  //GOSX_SUN_PATH",
   "  float crest = v_crest * v_crest;",
   "  vec3 scatter = u_ocean[3].xyz * (sunCol * 0.18 * pow(clamp(dot(V, -L) * 0.5 + 0.5, 0., 1.), 4.) + ambient * 0.12) * crest;",
   "  float depth = max(v_world.y - oceanFloor(v_world.xz), 0.);",
@@ -154,6 +158,7 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   "    vec3 c = color / max(alpha, 1e-4);",
   "    color = mix(1.055 * pow(c, vec3(1. / 2.4)) - 0.055, c * 12.92, lessThanEqual(c, vec3(0.0031308))) * alpha;",
   "  }",
+  "  //GOSX_REFLECTION_APPLY",
   "  fragColor = vec4(color, alpha);",
   "}",
 ].join("\n");
@@ -162,10 +167,15 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
 // frame. draw() returns the state the mount reports as
 // data-gosx-scene3d-ocean: "surface", "shore", "bathymetry-pending",
 // "bathymetry-failed" or "unavailable".
-function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
+function createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflections, clouds) {
   const vertex = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_OCEAN_VERTEX_GLSL);
   const fragment = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER,
-    SCENE_OCEAN_FRAGMENT_GLSL.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl")));
+    SCENE_OCEAN_FRAGMENT_GLSL.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl"))
+      .replace("//GOSX_REFLECTION", reflections ? sceneOceanReflectGLSL() : "")
+      .replace("//GOSX_CLOUD_SOURCE", clouds ? sceneOceanCloudGLSL() : "")
+      .replace("//GOSX_CLOUD_REFLECT", clouds ? "vec4 cloud = gosxClouds(d,u_cloud[13].xyz,u_cloud[11],u_cloud[12],u_cloud[14].xyz,u_cloud[15].xyz,u_cloud[9].xyz); base = base*(1.-cloud.a)+cloud.rgb;" : "")
+      .replace("//GOSX_REFLECTION_LOOKUP", reflections ? "refl = oceanGeometryReflection(v_world, normalize(R), N, rough, refl);" : "")
+      .replace("//GOSX_SUN_PATH", reflections ? "spec = mix(spec, oceanSunPath(N,H,L,V,rough,sunCol), 0.35);" : ""));
   if (!vertex || !fragment) return null;
   const program = scenePBRLinkProgram(gl, vertex, fragment, "Scene ocean");
   if (!program) return null;
@@ -173,6 +183,7 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
   const oceanLoc = gl.getUniformLocation(program, "u_ocean[0]");
   const bathymetryLoc = gl.getUniformLocation(program, "u_bathymetry");
   const vao = gl.createVertexArray();
+  const cloudData = clouds ? new Float32Array(64) : null;
   const data = new Float32Array(140 /* sceneOceanUniformData: 35 vec4 */), viewProj = new Float32Array(16);
   return {
     draw: function(opts) {
@@ -189,6 +200,8 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
       gl.useProgram(program);
       gl.uniformMatrix4fv(viewProjLoc, false, viewProj);
       gl.uniform4fv(oceanLoc, data);
+      if (reflections) sceneReflectWebGLBind(gl, program, opts.reflection);
+      if (clouds) sceneOceanCloudWebGL(gl, program, opts, cloudData);
       scenePBRBindTexture(gl, 0, bathymetry, gl.TEXTURE_2D);
       gl.uniform1i(bathymetryLoc, 0);
       gl.enable(gl.BLEND);
@@ -214,11 +227,16 @@ function sceneOceanWebGLDraw(resources, gl, opts) {
   const env = opts.environment;
   let state = "none";
   if (env && env.ocean) {
+    const featureKey = (sceneOceanReflections(oceanReflections(env)) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0);
+    if (resources.renderer && resources.featureKey !== featureKey) { resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }
     if (!resources.renderer && !resources.failed) {
-      resources.renderer = createSceneOceanWebGLRenderer(gl, opts.textureCache, opts.placeholder);
+      resources.featureKey = featureKey;
+      resources.renderer = createSceneOceanWebGLRenderer(gl, opts.textureCache, opts.placeholder, Boolean(featureKey & 1), Boolean(featureKey & 2));
       resources.failed = !resources.renderer;
     }
     state = resources.renderer ? resources.renderer.draw(opts) : "unavailable";
   }
   if (opts.mount && opts.mount.setAttribute) opts.mount.setAttribute("data-gosx-scene3d-ocean", state);
 }
+
+function oceanReflections(env) { return env && env.ocean && env.ocean.reflections; }

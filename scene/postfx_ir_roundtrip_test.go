@@ -45,6 +45,8 @@ const (
 // PostEffect type has no entry here, so a new effect cannot ship without a
 // decoder and a round-trip proof.
 var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
+	"GodRays": {effect: GodRays{Intensity: 0.5, Decay: 0.75, Density: 0.5, Samples: 24}, wantIR: GodRaysIR{Intensity: 0.5, Decay: 0.75, Density: 0.5, Samples: 24}},
+	"Grain":   {effect: Grain{Intensity: 0.03125}, wantIR: GrainIR{Intensity: 0.03125}},
 	"Tonemap": {
 		effect: Tonemap{Mode: TonemapFilmic, Exposure: rtExposure},
 		wantIR: TonemapIR{Mode: "filmic", Exposure: float64(rtExposure)},
