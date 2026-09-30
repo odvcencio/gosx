@@ -2008,7 +2008,7 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_160_200,
     gzip: 328_400,
-    brotli: 277_200,
+    brotli: 277_295, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2180,9 +2180,9 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_556_700,
+    raw: 1_556_800, // +100: persistent hub connections (approved exception, decision 0014)
     gzip: 427_500,
-    brotli: 357_600,
+    brotli: 357_695, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2333,7 +2333,7 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_158_000,
     gzip: 313_600,
-    brotli: 262_100,
+    brotli: 262_195, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
