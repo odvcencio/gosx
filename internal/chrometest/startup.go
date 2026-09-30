@@ -259,6 +259,14 @@ func launchAttempt(ctx context.Context, executable string, deadline time.Time, e
 		)
 		result := make(chan error, 1)
 		go func() {
+			// DevTools can publish its endpoint before Chrome creates the initial
+			// window. RemoteAllocator's first Run creates another tab immediately,
+			// which then fails with "no browser is open". Wait for a page target on
+			// this same process, within the existing startup/cleanup budget.
+			if err := waitForInitialPage(browserContext); err != nil {
+				result <- err
+				return
+			}
 			result <- chromedp.Run(browserContext, chromedp.ActionFunc(func(ctx context.Context) error {
 				// RemoteAllocator creates a new tab beside Chrome's initial
 				// about:blank. Activate it before returning: an inactive tab
@@ -340,6 +348,27 @@ func launchAttempt(ctx context.Context, executable string, deadline time.Time, e
 
 	case <-ctx.Done():
 		return fail(ctx.Err(), false)
+	}
+}
+
+func waitForInitialPage(ctx context.Context) error {
+	for {
+		infos, err := chromedp.Targets(ctx)
+		if err != nil {
+			return err
+		}
+		for _, info := range infos {
+			if info.Type == "page" {
+				return nil
+			}
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			stopTimer(timer)
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 

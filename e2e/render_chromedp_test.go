@@ -39,14 +39,6 @@ func TestChromedpWebGLShaderPixelSmoke(t *testing.T) {
 		chromedp.Navigate(server.URL),
 		chromedp.WaitReady("#scene", chromedp.ByID),
 	); err != nil {
-		if browserUnavailable(err) {
-			// Headless CI runners frequently can't launch Chrome (no usable
-			// D-Bus session / GPU stack), so the process exits before exposing
-			// a DevTools endpoint. That's an environment limitation, not a
-			// regression in the render path — skip, consistent with the
-			// no-Chrome and no-WebGL skips elsewhere in this test.
-			t.Skipf("chrome could not start in this environment: %v", err)
-		}
 		t.Fatalf("navigate render smoke page: %v", err)
 	}
 
@@ -70,6 +62,9 @@ func TestChromedpWebGLShaderPixelSmoke(t *testing.T) {
 	}
 	if !result.Supported {
 		t.Skipf("browser WebGL unavailable: %s", result.Error)
+	}
+	if result.Error != "" {
+		t.Fatalf("WebGL shader/readback failed: %s", result.Error)
 	}
 	if len(result.Pixels) != 16 {
 		t.Fatalf("expected 16 RGBA bytes, got %d: %v", len(result.Pixels), result.Pixels)
@@ -204,7 +199,7 @@ const renderSmokeHTML = `<!doctype html>
     }
     window.__renderSmoke = { done: true, supported: true, pixels: out };
   } catch (error) {
-    window.__renderSmoke = { done: true, supported: false, error: String(error && error.message || error) };
+    window.__renderSmoke = { done: true, supported: true, error: String(error && error.message || error) };
   }
 })();
 </script>`

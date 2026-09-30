@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -278,9 +279,15 @@ func fakeCDP(t *testing.T, stall bool) (string, <-chan struct{}, <-chan struct{}
 }
 
 func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool) (string, <-chan struct{}, <-chan struct{}) {
+	endpoint, calls, closed, _ := fakeCDPWithInitialPage(t, stall, beforeUpgrade, 0)
+	return endpoint, calls, closed
+}
+
+func fakeCDPWithInitialPage(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool, emptyTargets int32) (string, <-chan struct{}, <-chan struct{}, *atomic.Int32) {
 	t.Helper()
 	calls := make(chan struct{}, 1)
 	closed := make(chan struct{})
+	var targetQueries atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if beforeUpgrade != nil && !beforeUpgrade(w, r) {
 			return
@@ -310,7 +317,19 @@ func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.Resp
 			}
 			result := any(map[string]any{})
 			switch request.Method {
+			case "Target.getTargets":
+				infos := []any{}
+				if targetQueries.Add(1) > emptyTargets {
+					infos = append(infos, map[string]any{"targetId": "initial-page", "type": "page", "url": "about:blank"})
+				}
+				result = map[string]any{"targetInfos": infos}
 			case "Target.createTarget":
+				if emptyTargets > 0 && targetQueries.Load() <= emptyTargets {
+					if err := conn.WriteJSON(map[string]any{"id": request.ID, "error": map[string]any{"code": -32000, "message": "Failed to open new tab - no browser is open"}}); err != nil {
+						return
+					}
+					continue
+				}
 				result = map[string]any{"targetId": "page"}
 			case "Target.attachToTarget":
 				result = map[string]any{"sessionId": "session"}
@@ -327,7 +346,21 @@ func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.Resp
 		}
 	}))
 	t.Cleanup(server.Close)
-	return "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/browser/test", calls, closed
+	return "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/browser/test", calls, closed, &targetQueries
+}
+
+func TestStartWaitsForInitialPageBeforeCreatingTab(t *testing.T) {
+	requirePOSIXShell(t)
+	endpoint, _, _, queries := fakeCDPWithInitialPage(t, false, nil, 3)
+	executable, logPath := handshakeChrome(t, endpoint)
+	browser, err := startWithPolicy(t.Context(), executable, fastPolicy(1))
+	if err != nil {
+		t.Fatalf("startup raced the initial browser window: %v", err)
+	}
+	defer browser.Close()
+	if queries.Load() != 4 || countLogLines(t, logPath) != 1 {
+		t.Fatalf("target queries=%d launches=%d, want readiness on the same process", queries.Load(), countLogLines(t, logPath))
+	}
 }
 
 func TestStartAllowsDelayedWebSocketHandshakeWithinAttempt(t *testing.T) {
