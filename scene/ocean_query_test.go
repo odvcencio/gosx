@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+func TestOceanQueryZeroValuesUsePublicDefaults(t *testing.T) {
+	zero := NewOceanQuery(Ocean{}, "high", nil)
+	explicit := NewOceanQuery(Ocean{WaveHeight: .8, WaveLength: 18, Choppiness: .6, Speed: 1, Surf: .5}, "high", nil)
+	if zero.data != explicit.data {
+		t.Fatal("zero-valued Ocean does not match public defaults")
+	}
+}
+
 func TestOceanQueryCrossLanguageParity(t *testing.T) {
 	data, err := os.ReadFile("testdata/ocean-query-parity.json")
 	if err != nil {

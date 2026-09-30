@@ -546,9 +546,19 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/ocean-query.ts")},
 	},
 	{
+		name: "bootstrap-feature-scene3d-vessel.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/vessel-physics.ts"),
+			sourceFile("../runtime/scene3d/vessel-input.ts"),
+			sourceFile("../runtime/scene3d/vessel-model.ts"),
+			sourceFile("../runtime/scene3d/vessel-wake.ts"),
+			sourceFile("../runtime/scene3d/mount-vessel.ts"),
+		},
+	},
+	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
 		name:    "bootstrap-feature-scene3d-walk.js",
-		sources: []source{sourceFile("../runtime/scene3d/mount-walk.ts")},
+		sources: []source{sourceFile("../runtime/scene3d/walk-surfaces.ts"), sourceFile("../runtime/scene3d/mount-walk.ts")},
 	},
 	{
 		// Decompress chunk: the quantized-array decoder, the progressive and

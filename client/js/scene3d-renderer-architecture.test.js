@@ -262,7 +262,7 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
     // Walking and ocean querying each add a lazy chunk and three sidecars.
-    assert.equal(generated.length, 80);
+    assert.equal(generated.length, 84);
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));

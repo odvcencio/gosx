@@ -2,7 +2,7 @@
 
 `scene.NewOceanQuery(ocean, "high", floor).Sample(x, z, seconds)` returns the water above a world XZ coordinate: position, shading normal and water-particle velocity. Use `"low"` for the renderer's four-wave quality; high uses six waves. `Evaluate` takes the undisplaced grid coordinate instead.
 
-The browser module `client/runtime/scene3d/ocean-query.ts` exposes `window.__gosx_scene3d_ocean_query.create`, `sample`, `evaluate` and `bathymetry`. Load the shared `ocean-waves.ts` first. Browser Ocean records use the normalized SceneIR properties. Go accepts the public Ocean zero-value defaults.
+The browser module `client/runtime/scene3d/ocean-query.ts` exposes `window.__gosx_scene3d_ocean_query.create`, `sample`, `evaluate` and `bathymetry`. Load the shared `ocean-waves.ts` first. JS and Go accept the public Ocean zero-value defaults. For already normalized SceneIR properties, call `create(ocean, quality, floor, true)` to retain explicit zeros, such as stopped waves.
 
 Both implementations use the same table in `scene/ocean_waves.json`. The Go implementation embeds it; `node scripts/generate-ocean-waves.mjs` writes the module used by the GPU uniform packer and the JS query. Coefficients and time round to float32, as the GPU uniform block does. Amplitude follows significant height: sum(a²) = Hs²/8. Gravity is 9.81 m/s².
 

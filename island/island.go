@@ -83,7 +83,9 @@ type Renderer struct {
 	// policy.
 	bootstrapFeatureScene3dDecompressPath string
 	// Walk is advertised only when a Scene3D engine carries walk props.
-	bootstrapFeatureScene3dWalkPath string
+	bootstrapFeatureScene3dWalkPath       string
+	bootstrapFeatureScene3dVesselPath     string
+	bootstrapFeatureScene3dOceanQueryPath string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -228,6 +230,8 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
 	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
+	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
+	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	// Cross-frame relay script. Default unversioned; SetRelayPath can
@@ -626,6 +630,22 @@ func (r *Renderer) SetBootstrapFeatureScene3DWalkPath(path string) {
 	r.bootstrapFeatureScene3dWalkPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DVesselPath overrides the optional sailing chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DVesselPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dVesselPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DOceanQueryPath overrides the optional ocean query chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DOceanQueryPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dOceanQueryPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DDecompressPath overrides the lazy Scene3D
 // decompress sub-feature chunk URL. NOT emitted as a static <script> tag: the
 // base scene3d bundle inserts a script with this URL before it builds the
@@ -717,6 +737,10 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-walk.js", r.bootstrapFeatureScene3dWalkPath, r.runtimeAssets.BootstrapFeatureScene3DWalk):
 		return r.runtimeAssets.BootstrapFeatureScene3DWalk, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
+		return r.runtimeAssets.BootstrapFeatureScene3DVessel, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-ocean-query.js", r.bootstrapFeatureScene3dOceanQueryPath, r.runtimeAssets.BootstrapFeatureScene3DOceanQuery):
+		return r.runtimeAssets.BootstrapFeatureScene3DOceanQuery, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
 		return r.runtimeAssets.BootstrapFeatureTextlayout, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
@@ -869,6 +893,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
 	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
+	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
+	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -1143,6 +1169,18 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(` data-gosx-scene3d-walk-url="`)
 			b.WriteString(html.EscapeString(walkPath))
 			b.WriteByte('"')
+		}
+		if r.scene3DNeedsVesselChunk() {
+			for _, optional := range []struct{ name, path string }{
+				{"vessel", r.bootstrapFeatureScene3dVesselPath},
+				{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
+			} {
+				if optional.path != "" {
+					b.WriteString(` data-gosx-scene3d-` + optional.name + `-url="`)
+					b.WriteString(html.EscapeString(optional.path))
+					b.WriteByte('"')
+				}
+			}
 		}
 		if computePath := r.bootstrapFeatureScene3dComputePath; needsCompute && computePath != "" {
 			b.WriteString(` data-gosx-scene3d-compute-url="`)
@@ -2649,4 +2687,22 @@ func scenePosterCSSURL(value string) string {
 		"</", `<\/`,
 	)
 	return `"` + replacer.Replace(value) + `"`
+}
+
+// A named model is required before advertising either sailing authority.
+func (r *Renderer) scene3DNeedsVesselChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			Vessel *struct {
+				NodeID string `json:"nodeId"`
+			} `json:"vessel"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.Vessel != nil && props.Vessel.NodeID != "" {
+			return true
+		}
+	}
+	return false
 }

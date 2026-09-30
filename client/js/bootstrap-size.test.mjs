@@ -13,6 +13,11 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
 const budgets = [
+  // Optional ocean query and vessel authorities: caps round measured sizes up to 100 bytes.
+  // Public zero defaults and mounted normalized values: measured 2451 / 1293 / 1152.
+  { file: "bootstrap-feature-scene3d-ocean-query.js", raw: 2500, gzip: 1300, brotli: 1200 },
+  // Includes grounded retreat, upward bow foam, wake reset, phone hints and imported LOD visibility: 17467 / 7116 / 6328.
+  { file: "bootstrap-feature-scene3d-vessel.js", raw: 17500, gzip: 7200, brotli: 6400 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.
@@ -689,7 +694,8 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 1_811_342 / 503_343 / 402_536; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap.js", raw: 1_755_900, gzip: 490_100, brotli: 388_600 },
+  // Shared wave packing and vessel gate hooks: measured {"raw":1820754,"gzip":506768,"brotli":405135}.
+  { file: "bootstrap.js", raw: 1755900, gzip: 490400, brotli: 388800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1190,7 +1196,8 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 624_328 / 177_226 / 145_904; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d.js", raw: 595_600, gzip: 169_100, brotli: 139_250 },
+  // Shared wave packing and vessel gate hooks: measured {"raw":624688,"gzip":177872,"brotli":146643}.
+  { file: "bootstrap-feature-scene3d.js", raw: 595600, gzip: 169500, brotli: 139750 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1676,6 +1683,7 @@ const routeBudgets = [
   // monolith fraction the video route holds — Scene3D IS most of the monolith —
   // so maxMonolithFraction stays unset for them.
   {
+    // Shared wave packing and vessel lazy hooks: measured {"raw":1389979,"gzip":380706,"brotli":319626}.
     name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -1829,11 +1837,12 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_325_000,
-    gzip: 364_000,
-    brotli: 304_000,
+    raw: 1325000,
+    gzip: 364400,
+    brotli: 304500,
   },
   {
+    // Shared wave packing and vessel lazy hooks: measured {"raw":1237426,"gzip":351945,"brotli":296742}.
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2010,9 +2019,9 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_179_300,
-    gzip: 335_200,
-    brotli: 282_200,
+    raw: 1179300,
+    gzip: 335600,
+    brotli: 282700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2024,6 +2033,7 @@ const routeBudgets = [
     // (1_341_708 / 355_135 / 298_285), and it is the same seam cost the WebGL
     // route pays. Only a page whose GPU device actually fails reaches it, and
     // the alternative was a page that renders nothing.
+    // Shared wave packing and vessel lazy hooks: measured {"raw":1657300,"gzip":456642,"brotli":383575}.
     name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2188,9 +2198,9 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_592_400,
-    gzip: 439_900,
-    brotli: 366_800,
+    raw: 1592400,
+    gzip: 440300,
+    brotli: 367200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2207,6 +2217,7 @@ const routeBudgets = [
     // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
+    // Shared wave packing and vessel lazy hooks: measured {"raw":1237535,"gzip":337305,"brotli":281096}.
     name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2341,9 +2352,9 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_179_400,
-    gzip: 321_000,
-    brotli: 267_400,
+    raw: 1179400,
+    gzip: 321300,
+    brotli: 267800,
   },
 
 ];

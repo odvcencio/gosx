@@ -286,8 +286,19 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-vessel.js",
+      "sources": [
+        "../runtime/scene3d/vessel-physics.ts",
+        "../runtime/scene3d/vessel-input.ts",
+        "../runtime/scene3d/vessel-model.ts",
+        "../runtime/scene3d/vessel-wake.ts",
+        "../runtime/scene3d/mount-vessel.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-walk.js",
       "sources": [
+        "../runtime/scene3d/walk-surfaces.ts",
         "../runtime/scene3d/mount-walk.ts"
       ]
     },

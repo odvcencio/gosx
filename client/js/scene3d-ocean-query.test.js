@@ -60,3 +60,10 @@ test('bathymetry filters R before signed-sqrt decoding and clamps texel centres'
   const mapping={minX:0,minZ:0,maxX:2,maxZ:2,minHeight:-6,maxHeight:6,encoding:'signed-sqrt'};
   const floor=api.bathymetry(image,mapping);near(floor(1,1),0);near(floor(.75,1),-1.5);near(floor(-4,8),-6);
 });
+test('public zero-valued Ocean props match omitted defaults; normalized values retain zeros', () => {
+  const defaults=api.create({},'high'),zero=api.create({waveHeight:0,waveLength:0,choppiness:0,speed:0,surf:0},'high');
+  assert.deepEqual(Array.from(zero.data),Array.from(defaults.data));
+  const stopped=api.create({waveHeight:.8,waveLength:18,choppiness:0,speed:0,surf:0},'high',undefined,true);
+  near(api.evaluate(stopped,3,-2,0).y,api.evaluate(stopped,3,-2,5).y);
+  for (let i=0;i<6;i++) near(stopped.data[36+i*8+5],0);
+});

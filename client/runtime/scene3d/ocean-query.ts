@@ -5,8 +5,13 @@
   // @ts-ignore TS7006 -- plain JS query is also evaluated by Node without transpilation.
   const slope = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return 6 * t * (1 - t) / (b - a); };
   // @ts-ignore TS7006 -- plain JS query is also evaluated by Node without transpilation.
-  function create(ocean, quality, floor) {
-    const o = ocean || {}, data = new Float32Array(84);
+  function create(ocean, quality, floor, normalized = false) {
+    // Public Ocean props use zero as the default marker. Mounted scenes have
+    // already applied defaults; retain explicit zero values in that form.
+    const o = Object.assign({}, ocean), data = new Float32Array(84);
+    if (!normalized) for (const [key, fallback] of Object.entries({waveHeight:.8, waveLength:18, choppiness:.6, speed:1, surf:.5})) {
+      if (!Number.isFinite(o[key]) || o[key] === 0) o[key] = fallback;
+    }
     data[0] = o.level || 0; data[3] = Number.isFinite(o.speed) ? o.speed : 1;
     data[19] = Number.isFinite(o.surf) ? o.surf : 0.5;
     window.__gosx_scene3d_ocean_waves.write(o, quality, data);
@@ -75,4 +80,5 @@
     };
   }
   window.__gosx_scene3d_ocean_query = { create, evaluate, sample, bathymetry };
+  window.__gosx_scene3d_ocean_query_api = window.__gosx_scene3d_ocean_query;
 })();
