@@ -689,7 +689,9 @@ const budgets = [
   // Brotli's changed dictionary exceeds the old hard cap by 141 bytes. Raise
   // only that target by 200 bytes. Selective routes use the smaller base chunk.
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap.js", raw: 1_720_100, gzip: 478_200, brotli: 380_800 },
+  // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
+  // exception under decision 0014).
+  { file: "bootstrap.js", raw: 1_722_102, gzip: 478_861, brotli: 381_317 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1521,7 +1523,9 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
+  // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
+  // hard limit had only 10 bytes left; targets grow by the measured change.
+  { file: "bootstrap-feature-hubs.js", raw: 47_903, gzip: 14_843, brotli: 13_361 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -2004,7 +2008,7 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_160_200,
     gzip: 328_400,
-    brotli: 277_200,
+    brotli: 277_295, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2176,9 +2180,9 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_556_700,
+    raw: 1_556_800, // +100: persistent hub connections (approved exception, decision 0014)
     gzip: 427_500,
-    brotli: 357_600,
+    brotli: 357_695, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2329,7 +2333,7 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_158_000,
     gzip: 313_600,
-    brotli: 262_100,
+    brotli: 262_195, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
