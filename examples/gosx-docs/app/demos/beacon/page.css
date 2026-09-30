@@ -28,7 +28,9 @@
 }
 .bgb__link:hover, .bgb__link:focus-visible { color: #fff; background: rgba(255, 255, 255, 0.1); }
 .bgb__link:focus-visible, .bgb canvas:focus-visible { outline: 2px solid #f2c38c; outline-offset: 2px; }
-.bgb__reset { border: 0; background: transparent; font: inherit; cursor: pointer; }
+.bgb__reset { border: 0; background: transparent; font-family: inherit; cursor: pointer; }
+/* The walk hint sits at the top so it never covers the controls bar. */
+.bgb .gosx-scene3d-walk-hint { top: 16px; bottom: auto; }
 .bgb[data-view="shore"] .bgb__view-shore,
 .bgb[data-view="glass"] .bgb__view-glass,
 .bgb[data-view="cliff"] .bgb__view-cliff,
