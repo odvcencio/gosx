@@ -28,7 +28,13 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       },
       "/capabilities/": {
         "limits": {
@@ -51,7 +57,13 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       },
       "/demos/": {
         "limits": {
@@ -74,7 +86,13 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       },
       "/demos/scene3d/": {
         "limits": {
@@ -97,7 +115,13 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       },
       "/demos/water": {
         "limits": {
@@ -120,7 +144,12 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)"
+        }
       },
       "/docs/getting-started/": {
         "limits": {
@@ -143,7 +172,12 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)"
+        }
       },
       "/docs/islands/": {
         "limits": {
@@ -166,7 +200,12 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)"
+        }
       },
       "/performance/": {
         "limits": {
@@ -189,7 +228,13 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       }
     },
     "scaffold": {
@@ -214,7 +259,12 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       },
       "/counter/": {
         "limits": {
@@ -237,7 +287,12 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       },
       "/stack/": {
         "limits": {
@@ -260,7 +315,13 @@
           "runtime-hashed",
           "no-inline-runtime",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "the external navigation runtime is counted at its own brotli size instead of its share of the compressed HTML",
+          "jsWireBytes": "the navigation runtime moved from an inline script to an external, hashed, cached file; HTML shrank by about the same bytes",
+          "requests": "one request for the external cached navigation runtime (a cache hit after the first page view)",
+          "totalWireBytes": "the navigation runtime compresses slightly worse alone than inside the HTML; it is cached after the first page view"
+        }
       }
     }
   }
