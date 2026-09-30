@@ -649,7 +649,7 @@
   const sceneObjectMaterialProfiles = new WeakMap();
   const sceneSharedMaterialProfiles = new Map();
   const sceneObjectMaterialInputKeys = [
-    "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
+    "detail", "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
     "emissive", "emissiveColor", "normalScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
     "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineDash",
     "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
@@ -754,6 +754,7 @@
       shaderLayout: object && object.shaderLayout && typeof object.shaderLayout === "object" ? sceneCloneData(object.shaderLayout) : null,
       shaderSource: typeof (object && object.shaderSource) === "string" ? object.shaderSource.trim() : "",
       shaderSourceFiles: object && object.shaderSourceFiles && typeof object.shaderSourceFiles === "object" ? sceneCloneData(object.shaderSourceFiles) : null,
+      detail: sceneNormalizeDetail(object && object.detail),
       normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
       roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
       metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
@@ -869,6 +870,7 @@
       String(profile && profile.emissiveMap || ""),
       JSON.stringify(profile && profile.textureDescriptors || null),
     ];
+    if (profile && profile.detail) parts.push("detail:" + JSON.stringify(profile.detail));
     if (registryProfile) {
       parts.push("profile:" + registryProfile.version + ":" + String(registryProfile.key || ""));
     }
@@ -1089,4 +1091,31 @@
     }
     hash = Math.imul(hash ^ text.length, 16777619) >>> 0;
     return Math.imul(hash ^ digest, 16777619) >>> 0;
+  }
+
+  // Detail defaults live here so typed and prop-bag scenes share the contract.
+  function sceneNormalizeDetailLayer(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return {
+      albedo: typeof raw.albedo === "string" ? raw.albedo.trim() : "",
+      normal: typeof raw.normal === "string" ? raw.normal.trim() : "",
+      roughness: typeof raw.roughness === "string" ? raw.roughness.trim() : "",
+      scale: Math.max(0.001, sceneNumber(raw.scale, 2)),
+      normalScale: Math.max(0, sceneNumber(raw.normalScale, 1)),
+      albedoMix: clamp01(sceneNumber(raw.albedoMix, 0.6)),
+      roughnessMix: clamp01(sceneNumber(raw.roughnessMix, 0.5)),
+    };
+  }
+
+  function sceneNormalizeDetail(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const slopeStart = Math.max(0, Math.min(90, sceneNumber(raw.slopeStart, 30)));
+    const fadeStart = Math.max(0, sceneNumber(raw.fadeStart, 8));
+    return {
+      ground: sceneNormalizeDetailLayer(raw.ground), steep: sceneNormalizeDetailLayer(raw.steep),
+      slopeStart: slopeStart, slopeEnd: Math.max(slopeStart + 0.001, Math.min(90, sceneNumber(raw.slopeEnd, 45))),
+      fadeStart: fadeStart, fadeEnd: Math.max(fadeStart + 0.001, sceneNumber(raw.fadeEnd, 14)),
+      triplanar: raw.triplanar == null ? null : sceneBool(raw.triplanar, true),
+      stochastic: sceneBool(raw.stochastic, true),
+    };
   }

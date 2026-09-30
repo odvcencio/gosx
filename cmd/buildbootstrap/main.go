@@ -163,10 +163,12 @@ var outputs = []output{
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
@@ -415,6 +417,7 @@ var outputs = []output{
 			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
 			// the tiny stub + adapter probe.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
 			sourceFile("bootstrap-src/18-scene-canvas.ts"),
@@ -470,6 +473,7 @@ var outputs = []output{
 			// factory ships in this same chunk, so a WebGPU page can never
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},

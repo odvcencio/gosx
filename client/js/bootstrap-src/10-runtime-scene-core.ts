@@ -867,6 +867,7 @@
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
+      detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -1492,6 +1493,7 @@
     if (sceneObjectMaterialValue(current, "alphaCutoff") !== undefined) {
       override.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(current, "alphaCutoff"), null);
     }
+    if (sceneObjectMaterialHasValue(current, "detail")) override.detail = sceneNormalizeDetail(sceneObjectMaterialValue(current, "detail"));
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
@@ -2184,6 +2186,7 @@
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
+      detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -2872,6 +2875,7 @@
         if (scale === 0) return 1;
         return Math.max(0, Math.min(1, scale));
       })(),
+      detail: item.detail == null ? undefined : sceneBool(item.detail, true),
       pointBudgetScale: (function() {
         const scale = sceneNumber(item.pointBudgetScale, 0);
         if (scale === 0) return 1;
@@ -3395,6 +3399,7 @@
       iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
       anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
       alphaCutoff: material.alphaCutoff !== undefined ? material.alphaCutoff : object.alphaCutoff,
+      detail: material.detail || object.detail,
       normalMap: material.normalMap || object.normalMap,
       roughnessMap: material.roughnessMap || object.roughnessMap,
       metalnessMap: material.metalnessMap || object.metalnessMap,

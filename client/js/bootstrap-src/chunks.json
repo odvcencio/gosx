@@ -45,7 +45,9 @@
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16c1-scene-detail.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl-detail.ts",
         "../runtime/scene3d/webgl.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu.ts",
@@ -203,6 +205,7 @@
         "bootstrap-src/15a-scene-postfx-shared.ts",
         "../runtime/scene3d/dom-regions.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16c1-scene-detail.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "bootstrap-src/17-scene-input.ts",
         "bootstrap-src/18-scene-canvas.ts",
@@ -228,6 +231,7 @@
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl-detail.ts",
         "../runtime/scene3d/webgl.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]

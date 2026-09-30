@@ -45,7 +45,7 @@ func TestSkinningImplementedOnBothGPUBackends(t *testing.T) {
 		`"in vec4 a_weights;",`,
 		`"uniform mat4 u_jointMatrices[64];",`,
 		`"mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",`,
-		"function createScenePBRSkinnedProgram(gl) {",
+		"function createScenePBRSkinnedProgram(gl, detail = false) {",
 	} {
 		if !strings.Contains(webgl, symbol) {
 			t.Errorf("Matrix[skinning][webgl] is true but %q is missing from %s; "+

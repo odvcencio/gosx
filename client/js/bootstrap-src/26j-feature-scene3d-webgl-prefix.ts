@@ -39,6 +39,10 @@
   }
 
   var sceneApi = window.__gosx_scene3d_api;
+  var sceneDetailVariantKey = sceneApi.sceneDetailVariantKey;
+  var sceneDetailUniformData = sceneApi.sceneDetailUniformData;
+  var sceneDetailTextureRecords = sceneApi.sceneDetailTextureRecords;
+  var sceneDetailShaderSource = sceneApi.sceneDetailShaderSource;
 
   // --- Primitives and scalar helpers (10-runtime-primitives.js,
   // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).

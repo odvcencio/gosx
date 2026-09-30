@@ -1992,6 +1992,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 		"id":   item.ID,
 		"kind": item.Kind,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
@@ -2162,6 +2165,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	record := map[string]any{
 		"id":  item.ID,
 		"src": src,
+	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
 	}
 	setString(record, "previewSrc", item.PreviewSrc)
 	setString(record, "fullSrc", item.FullSrc)

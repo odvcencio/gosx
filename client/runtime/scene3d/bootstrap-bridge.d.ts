@@ -243,3 +243,9 @@ declare var sceneFocusPointerHandler: any;
 declare var webGPUObjectModelMatrix: any;
 
 declare var sceneSkyUniformData: any;
+
+declare function sceneDetailVariantKey(kind: any, detail: any): any;
+declare function sceneDetailUniformData(detail: any, masks: any, enabled: any): any;
+declare function sceneDetailTextureRecords(detail: any, load: any): any;
+declare function sceneDetailShaderSource(language: any): any;
+declare function sceneDetailQualityEnabled(state: any): any;

@@ -28,6 +28,9 @@ func TestDetailLowersCamelCaseAndPreservesAuthoredValues(t *testing.T) {
 			t.Fatalf("detail wire = %s (%v), want %s", wire, err, want)
 		}
 	}
+	if ir.Objects[0].legacyProps()["detail"] == nil || ir.Models[0].legacyProps()["detail"] == nil {
+		t.Fatal("legacy prop lowering dropped detail")
+	}
 	detail.Ground.Scale = 99
 	if ir.Models[0].Detail.Ground.Scale != 3 {
 		t.Fatal("lowered detail aliases authored data")
