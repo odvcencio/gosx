@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added: Scene3D material detail layers
+
+- Add opt-in detail layers to standard materials and glTF models on WebGL2 and
+  WebGPU, with world-space stochastic tiling, slope-selected layers, triplanar
+  projection, distance fading, and adaptive quality controls. Existing materials
+  retain their shaders and base maps.
+
 ### Added: desktop rotating log files
 
 - Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
