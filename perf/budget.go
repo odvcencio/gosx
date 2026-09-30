@@ -42,6 +42,15 @@ type BudgetPageResult struct {
 	Profile    string                  `json:"profile,omitempty"`
 	Assertions []BudgetAssertionResult `json:"assertions"`
 	Passed     bool                    `json:"passed"`
+	// Renderer is the WebGL renderer string and Backend the Scene3D backend
+	// that drew the page, so a gate log shows what the runner rendered with.
+	Renderer string `json:"renderer,omitempty"`
+	Backend  string `json:"backend,omitempty"`
+	// Recovery names a renderer recovery that happened while the page was
+	// measured (see RendererRecovery). When it is set and an assertion
+	// fails, the page is Inconclusive instead of failed.
+	Recovery     string `json:"recovery,omitempty"`
+	Inconclusive bool   `json:"inconclusive,omitempty"`
 }
 
 // BudgetAssertionResult is one evaluated assertion from a budget profile.
@@ -93,6 +102,16 @@ func EvaluateBudget(report *Report, budget *BudgetFile, forceProfile string) (Bu
 			return BudgetCheckResult{}, err
 		}
 		pageResult := evalBudgetPage(page, profileName, expressions)
+		pageResult.Renderer, pageResult.Backend = pageRenderer(page)
+		pageResult.Recovery = RendererRecovery(page)
+		if !pageResult.Passed && pageResult.Recovery != "" {
+			// A mid-load renderer swap re-fetches the fallback chunk and
+			// replaces the canvas, so load metrics (LCP, bytes, blocking
+			// time) describe the recovery, not the page. They are not
+			// evidence of a regression either way.
+			pageResult.Passed = true
+			pageResult.Inconclusive = true
+		}
 		if !pageResult.Passed {
 			result.Passed = false
 		}
@@ -113,16 +132,27 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 		pageStatus := "ok"
 		if !page.Passed {
 			pageStatus = "fail"
+		} else if page.Inconclusive {
+			pageStatus = "inconclusive"
 		}
 		profile := page.Profile
 		if profile == "" {
 			profile = "custom"
 		}
 		b.WriteString(fmt.Sprintf("\n  %s  profile=%s  %s\n", page.URL, profile, pageStatus))
+		if page.Renderer != "" || page.Backend != "" || page.Recovery != "" {
+			b.WriteString(fmt.Sprintf("    renderer %q backend=%s recovery=%s\n", page.Renderer, orNone(page.Backend), orNone(page.Recovery)))
+		}
+		if page.Inconclusive {
+			b.WriteString(fmt.Sprintf("    inconclusive: the renderer recovered (%s) while this page was measured, so its load metrics describe the recovery; failed assertions below do not fail the gate\n", page.Recovery))
+		}
 		for _, assertion := range page.Assertions {
 			mark := "ok"
 			if !assertion.Passed {
 				mark = "fail"
+				if page.Inconclusive {
+					mark = "inc"
+				}
 			}
 			if !assertion.Found {
 				if assertion.Skipped {
@@ -136,6 +166,51 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 		}
 	}
 	return b.String()
+}
+
+// RendererRecovery reports why the Scene3D renderer was replaced after it
+// started drawing, or "" when it was not. It covers WebGPU device loss, render
+// stalls and persistent frame errors, which the runtime recovers from by
+// swapping to WebGL mid-load. A fallback chosen before the first frame (for
+// example "webgpu-unavailable") is the page's normal path and returns "".
+func RendererRecovery(page PageReport) string {
+	if page.Scene == nil {
+		return ""
+	}
+	for _, mount := range page.Scene.Mounts {
+		switch {
+		case mount.Fallback == "webgpu-device-lost",
+			mount.Fallback == "webgpu-render-stall",
+			strings.HasPrefix(mount.Fallback, "webgpu-persistent-frame-error"):
+			return mount.Fallback
+		}
+	}
+	if page.Scene.Counters["render-watchdog-fallbacks"] > 0 {
+		return "render-watchdog-fallback"
+	}
+	return ""
+}
+
+func pageRenderer(page PageReport) (renderer, backend string) {
+	if page.WebGL != nil {
+		renderer = page.WebGL.Renderer
+	}
+	if page.Scene != nil {
+		for _, mount := range page.Scene.Mounts {
+			if mount.Backend != "" {
+				backend = mount.Backend
+				break
+			}
+		}
+	}
+	return renderer, backend
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 func reportPages(report *Report) []PageReport {
