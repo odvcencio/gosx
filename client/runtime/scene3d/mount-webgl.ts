@@ -819,7 +819,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "detail", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -881,6 +881,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (namedMaterialOverride) {
       next.material = override.material.trim();
     }
+    sceneAssignMaterialOverride(next, material, "detail", "detail", override);
     sceneAssignMaterialOverride(next, material, "color", "color", override);
     sceneAssignMaterialOverride(next, material, "texture", "texture", override);
     sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
@@ -5103,6 +5104,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const fallback = defaults[tier];
       profiles[tier] = {
         tier,
+        detail: sceneBool(source.detail, tier !== "survival"),
         dprCap: Math.max(1, Math.min(3, sceneNumber(source.dprCap, fallback.dprCap))),
         surfaceResolution: Math.max(32, Math.floor(sceneNumber(source.surfaceResolution, fallback.surfaceResolution))),
         causticsResolution: Math.max(64, Math.floor(sceneNumber(source.causticsResolution, fallback.causticsResolution))),

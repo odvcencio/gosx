@@ -546,6 +546,7 @@
         qualityTier: adaptiveQuality && adaptiveQuality.tier ? adaptiveQuality.tier : "fixed",
         qualityRevision: Math.max(0, Math.floor(sceneNumber(adaptiveQuality && adaptiveQuality.qualityRevision, 0))),
         qualityProfile: qualityProfile,
+        detailEnabled: sceneDetailQualityEnabled(adaptiveQuality),
         qualityRequestedTier: adaptiveQuality.requestedTier,
         qualityActiveTier: adaptiveQuality.activeTier,
         performanceMeasurement: adaptiveQuality.lastMeasurement,

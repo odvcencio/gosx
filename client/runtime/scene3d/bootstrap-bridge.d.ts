@@ -253,3 +253,9 @@ declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;
 
 declare function createSceneWebGLMipBloom(host: any): any;
 declare function createSceneWebGPUMipBloom(host: any): any;
+
+declare function sceneDetailVariantKey(kind: any, detail: any): any;
+declare function sceneDetailUniformData(detail: any, masks: any, enabled: any): any;
+declare function sceneDetailTextureRecords(detail: any, load: any): any;
+declare function sceneDetailShaderSource(language: any): any;
+declare function sceneDetailQualityEnabled(state: any): any;

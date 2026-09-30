@@ -1134,6 +1134,8 @@ type HTMLSurface struct {
 // Model instances a framework-owned scene model asset with a transform and
 // optional material/static overrides.
 type Model struct {
+	// Detail augments every imported primitive without replacing its material.
+	Detail             *Detail
 	ID                 string
 	Src                string
 	PreviewSrc         string
@@ -1534,6 +1536,7 @@ type MatteMaterial MaterialStyle
 
 // StandardMaterial is a PBR material using the roughness/metalness workflow.
 type StandardMaterial struct {
+	Detail            *Detail
 	Color             string
 	Texture           string
 	Roughness         float64
@@ -3037,6 +3040,9 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if mk, ok := mapStringValue(materialProps["materialKind"]); ok {
 			record.MaterialKind = mk
 		}
+		if detail, ok := materialProps["detail"].(*Detail); ok {
+			record.Detail = cloneDetail(detail)
+		}
 		if c, ok := materialProps["color"].(string); ok {
 			record.Color = strings.TrimSpace(c)
 		}
@@ -3547,6 +3553,9 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	}
 	applyLoweredObjectTransform(&record.ObjectIR, parent, world, model.Position, model.Rotation)
 	applyMaterialProps(&record.ObjectIR, legacyMaterial(model.Material))
+	if model.Detail != nil {
+		record.Detail = cloneDetail(model.Detail)
+	}
 	record.CastShadow = model.CastShadow
 	record.ReceiveShadow = model.ReceiveShadow
 	record.Static = model.Static
@@ -3622,6 +3631,7 @@ func applyMaterialToInstancedGLBIR(record *InstancedGLBMeshIR, material Material
 	}
 	var object ObjectIR
 	applyMaterialToObjectIR(&object, material)
+	record.Detail = cloneDetail(object.Detail)
 	record.MaterialKind = object.MaterialKind
 	record.Color = object.Color
 	record.Texture = object.Texture
@@ -4100,6 +4110,9 @@ func applyGeometryProps(record *ObjectIR, props map[string]any) {
 func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if record == nil || len(props) == 0 {
 		return
+	}
+	if detail, ok := props["detail"].(*Detail); ok {
+		record.Detail = cloneDetail(detail)
 	}
 	if kind, ok := mapStringValue(props["materialKind"]); ok {
 		record.MaterialKind = kind
@@ -4594,6 +4607,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 }
 
 func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial) {
+	record.Detail = cloneDetail(material.Detail)
 	record.MaterialKind = "standard"
 	record.Color = strings.TrimSpace(material.Color)
 	record.Texture = strings.TrimSpace(material.Texture)
@@ -4719,6 +4733,9 @@ func (m MatteMaterial) legacyMaterial() map[string]any {
 
 func (m StandardMaterial) legacyMaterial() map[string]any {
 	out := map[string]any{}
+	if m.Detail != nil {
+		out["detail"] = cloneDetail(m.Detail)
+	}
 	setString(out, "materialKind", "standard")
 	setString(out, "color", m.Color)
 	setString(out, "texture", m.Texture)

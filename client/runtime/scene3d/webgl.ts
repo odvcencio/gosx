@@ -5940,8 +5940,8 @@
   // Compile PBR vertex + fragment shaders and return a program object with
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
-  function createScenePBRProgram(gl) {
-    const warmed = scenePBRTakeInitialProgram(gl, "base");
+  function createScenePBRProgram(gl, detail = false) {
+    const warmed = detail ? null : scenePBRTakeInitialProgram(gl, "base");
     if (warmed === false) return null;
     if (warmed) {
       return scenePBRFinalizeBaseProgram(gl, warmed);
@@ -5950,7 +5950,7 @@
     if (!vertexShader) {
       return null;
     }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6328,10 +6328,10 @@
   // Compile the skinned PBR vertex shader with the same PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
-  function createScenePBRSkinnedProgram(gl) {
+  function createScenePBRSkinnedProgram(gl, detail = false) {
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6418,15 +6418,15 @@
 
   // Compile the instanced PBR vertex shader with the shared PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations, or null.
-  function createScenePBRInstancedProgram(gl, crowd) {
-    var warmed = crowd ? scenePBRTakeInitialProgram(gl, "crowd") : null;
+  function createScenePBRInstancedProgram(gl, crowd = false, detail = false) {
+    var warmed = crowd && !detail ? scenePBRTakeInitialProgram(gl, "crowd") : null;
     if (warmed === false) return null;
     if (warmed) {
       return scenePBRFinalizeInstancedProgram(gl, warmed, true);
     }
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6476,10 +6476,10 @@
   // before that optimization existed -- a one-time first-use cost, not a
   // per-frame one.
   // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
-  function createScenePBRCrowdMotionProgram(gl) {
+  function createScenePBRCrowdMotionProgram(gl, detail = false) {
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -7487,6 +7487,8 @@
 	    // Skinned PBR program — compiled lazily on first skinned object.
 	    var skinnedProgram = null;
 	    var skinnedProgramFailed = false;
+    var detailResources = { programs: new Map(), atlases: new Map(), materials: new Map(), bake: null };
+    var detailEnabled = true;
     var customProgramCache = new Map();
     var selenaProgramCache = new Map();
 
@@ -8648,6 +8650,11 @@
         return;
       }
 
+      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      for (const material of bundle.materials || []) {
+        if (material && material.detail) sceneWebGLPrepareDetail(gl, detailResources, material, textureCache);
+      }
+
       // Opt-in perf instrumentation for the browser bench overlay at
       // /demos/scene3d-bench. The page sets window.__gosx_scene3d_perf
       // before bootstrap runs; when it's truthy we bracket the render
@@ -9701,12 +9708,15 @@
 
     function drawRigidPBRBatch(batch, bundle, mat, uploadFrameUniforms) {
       if (batch.motion) prepareCrowdMotionShaders();
-      const ip = batch.motion ? crowdMotionProgram : batch.atlas ? crowdProgram : ensureInstancedProgram();
+      const ip = mat && mat.detail
+        ? sceneWebGLDetailProgram(gl, detailResources, batch.motion ? "motion" : batch.atlas ? "crowd" : "instanced")
+        : batch.motion ? crowdMotionProgram : batch.atlas ? crowdProgram : ensureInstancedProgram();
       if (!ip || !batch.motion && ip.attributes.instanceMatrix < 0) return false;
       const obj = batch.objects[0];
       gl.useProgram(ip.program);
       uploadFrameUniforms(ip.uniforms);
       uploadMaterial(gl, ip.uniforms, mat, textureCache);
+      if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
       gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
       gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
       gl.depthMask(obj.depthWrite !== false);
@@ -9714,7 +9724,7 @@
       for (const [name, size, fallback] of [
         ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
         ["uv", 2, [0, 0]], ["tangent", 4, [1, 0, 0, 1]],
-      /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ ]) {
+      /* @ts-expect-error TS2538 -- plain JS tuple rows infer a union for the attribute name; runtime checks the location before binding */ ]) {
         const location = ip.attributes[name];
         if (!(location >= 0)) continue;
         /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ allowed[location] = true;
@@ -9886,6 +9896,14 @@
             uploadFrameUniformsForProgram(currentUniforms);
             lastMaterialIndex = -1;
           }
+        } else if (mat && mat.detail) {
+          var dp = sceneWebGLDetailProgram(gl, detailResources, isSkinned ? "skinned" : "base");
+          if (!dp) continue;
+          if (currentProgram !== dp.program) {
+            gl.useProgram(dp.program); currentProgram = dp.program;
+            currentAttribs = dp.attributes; currentUniforms = dp.uniforms;
+            uploadFrameUniformsForProgram(currentUniforms); lastMaterialIndex = -1;
+          }
         } else if (isSkinned) {
           var sp = ensureSkinnedProgram();
           if (sp && currentProgram !== sp.program) {
@@ -9912,6 +9930,8 @@
           uploadMaterial(gl, currentUniforms, mat, textureCache);
           lastMaterialIndex = matIndex;
         }
+
+        if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, currentUniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
@@ -10584,7 +10604,7 @@
 	    // Ensure the instanced PBR program is compiled (lazy init).
 	    function ensureInstancedProgram() {
 	      if (instancedProgram) return instancedProgram;
-	      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (instancedProgramFailed) return null;
+	      if (instancedProgramFailed) return null;
 	      instancedProgram = createScenePBRInstancedProgram(gl);
 	      if (!instancedProgram) {
 	        instancedProgramFailed = true;
@@ -10685,6 +10705,7 @@
       applyBlendMode(gl, renderPass);
       applyDepthMode(gl, renderPass);
 
+      function uploadInstancedFrame(ip) {
       // Upload per-frame uniforms (camera, lights, fog, shadows).
       gl.uniformMatrix4fv(ip.uniforms.viewMatrix, false, viewMatrix);
       gl.uniformMatrix4fv(ip.uniforms.projectionMatrix, false, projMatrix);
@@ -10697,6 +10718,8 @@
       scenePBRUploadEnvironmentMap(gl, ip.uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
       scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
 
+      }
+      uploadInstancedFrame(ip);
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
       for (var i = 0; i < meshes.length; i++) {
@@ -10726,7 +10749,11 @@
           };
         }
         if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
+        ip = mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram();
+        if (!ip) continue;
+        gl.useProgram(ip.program); uploadInstancedFrame(ip);
         uploadMaterial(gl, ip.uniforms, mat, textureCache);
+        if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
         gl.uniform1i(ip.uniforms.receiveShadow, mesh.receiveShadow ? 1 : 0);
@@ -10877,6 +10904,7 @@
     }
 
     function dispose() {
+      sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose();
       if (oceanResources.renderer) oceanResources.renderer.dispose();
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;

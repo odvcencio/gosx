@@ -6633,8 +6633,8 @@
     }
 
     // GPU resources (initialized after device is ready).
-    var frameBindGroupLayout = null;
-    var materialBindGroupLayout = null;
+    var frameBindGroupLayout = new Map().get("handle");
+    var materialBindGroupLayout = new Map().get("handle");
     var elioSkinBindGroupLayout = null;
     var computedMorphBindGroupLayout = null;
     var pointsBindGroupLayout = null;
@@ -6724,6 +6724,8 @@
     var pointsFragmentModule = null;
 
     // Pipeline cache.
+    var detailResources = new Map().get("active");
+    var detailEnabled = true;
     var pipelineCache = {};
     var activeSampleCount = 1;
 
@@ -7383,7 +7385,7 @@
 
     // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
-    var placeholderView = null;
+    var placeholderView = new Map().get("handle");
     var placeholderCubeTex = null;
     var placeholderCubeView = null;
 
@@ -8114,11 +8116,11 @@
     }
 
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite, frontFace) {
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
       var reflected = frontFace === "cw";
-      var key = wgpuPipelineKey(sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
+      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8136,18 +8138,18 @@
       return pipeline;
     }
 
-    function getPBRInstancedPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    function getPBRInstancedPipeline(blendMode, depthWrite, detail = false) {
+      var key = wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedPipeline(device, pbrPipelineLayout, pbrInstancedVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
 
-    function getPBRInstancedCullPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    function getPBRInstancedCullPipeline(blendMode, depthWrite, detail = false) {
+      var key = wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, pbrPipelineLayout, pbrInstancedCullVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -15926,10 +15928,11 @@
         return false;
       }
 
-      function bindPBRPipeline(reflected) {
-        var kind = sceneWebGPUPipelineKind(reflected, "pbr");
+      function bindPBRPipeline(reflected, material = Object.create(null)) {
+        var hasDetail = Boolean(material && material.detail);
+        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(getPBRPipeline(blendMode, depthWrite, reflected ? "cw" : "ccw"));
+        pass.setPipeline(getPBRPipeline(blendMode, depthWrite, reflected ? "cw" : "ccw", hasDetail));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -16026,8 +16029,10 @@
           }
         }
 
+        if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
+
         if (isSkinned) {
-          bindPBRPipeline(reflectedDirect);
+          bindPBRPipeline(reflectedDirect, mat);
           var skinnedOwner = mat || obj;
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
             var skinnedMatBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
@@ -16045,7 +16050,7 @@
           continue;
         }
 
-        bindPBRPipeline(reflectedDirect);
+        bindPBRPipeline(reflectedDirect, mat);
 
         // Recreate material bind group when material or receiveShadow changes.
         var materialOwner = obj.retainedGeometry ? webGPURetainedMaterialOwner(obj) : (mat || obj);
@@ -16324,6 +16329,7 @@
 
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var mat = instancedMeshMaterial(mesh, materials);
         pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh));
+        if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, depthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
@@ -16337,7 +16343,7 @@
           // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
           // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
           // standard pipeline (loc 8 = instanceColor vec4f).
-          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, depthWrite));
+          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, depthWrite, Boolean(mat && mat.detail)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -16346,7 +16352,7 @@
           pass.drawIndirect(cullSys.drawArgsBuf, 0);
         } else {
           // Draw-all path (not-ready, no kernel, or capability absent).
-          pass.setPipeline(getPBRInstancedPipeline(blendMode, depthWrite));
+          pass.setPipeline(getPBRInstancedPipeline(blendMode, depthWrite, Boolean(mat && mat.detail)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -18311,6 +18317,15 @@
       pollGPUPassTimingReadback();
       beginGPUPassTimingFrame();
       var scopedFrameErrors = beginWebGPUErrorScope();
+      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      for (const material of bundle.materials || []) {
+        if (material && material.detail) {
+          if (!detailResources) detailResources = sceneWebGPUCreateDetailResources(device, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
+          sceneWebGPUPrepareDetail(device, detailResources, material, textureCache, placeholderView);
+          sceneWebGPUUploadDetail(device, detailResources, material, detailEnabled);
+        }
+      }
+
       var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
         ? frameMeta.nowMS
         : performance.now();
@@ -18351,7 +18366,10 @@
         ? buildInstancedDrawList(bundle, materials)
         : { opaque: [], alpha: [], additive: [] };
       var gpuDriven = webGPUGPUDrivenHost();
-      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: instancedDrawList.opaque });
+      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: detailResources ? instancedDrawList.opaque.filter(function(mesh = Object.create(null)) {
+        var material = instancedMeshMaterial(mesh, bundle.materials);
+        return !material || !material.detail;
+      }) : instancedDrawList.opaque });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -19029,6 +19047,7 @@
           destroyRendererGPUResource(record.texture);
         }
       }
+      sceneWebGPUDisposeDetail(detailResources); detailResources = null;
       textureCache.clear();
       selenaPipelineCache.clear();
       selenaComputePipelineCache.clear();

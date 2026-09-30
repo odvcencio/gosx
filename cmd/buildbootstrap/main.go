@@ -163,10 +163,12 @@ var outputs = []output{
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// The Environment.Ocean passes ship beside the renderer that calls them.
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
@@ -182,6 +184,7 @@ var outputs = []output{
 			// from wgpuCreatePostProcessor, which sits outside the renderer
 			// closure, so the packer cannot live inside that closure. It ships
 			// right after 16a because that placement compresses best.
+			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -420,6 +423,7 @@ var outputs = []output{
 			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
 			// the tiny stub + adapter probe.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
 			sourceFile("bootstrap-src/18-scene-canvas.ts"),
@@ -475,6 +479,7 @@ var outputs = []output{
 			// factory ships in this same chunk, so a WebGPU page can never
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
@@ -518,6 +523,7 @@ var outputs = []output{
 			// It now ships once, in the base scene3d chunk, and this bridge
 			// hands 16a the two symbols it reads lexically.
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
+			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),

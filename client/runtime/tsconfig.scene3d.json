@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "allowJs": false,
-    "lib": ["DOM", "ES2022"],
+    "lib": [
+      "DOM",
+      "ES2022"
+    ],
     "module": "none",
     "noEmit": true,
     "skipLibCheck": true,
@@ -10,7 +13,9 @@
   },
   "files": [
     "scene3d/bootstrap-bridge.d.ts",
+    "scene3d/webgl-detail.ts",
     "scene3d/webgl.ts",
+    "scene3d/webgpu-detail.ts",
     "scene3d/webgpu.ts",
     "scene3d/mount-webgl.ts",
     "scene3d/gltf.ts",

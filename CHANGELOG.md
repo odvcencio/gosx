@@ -15,6 +15,12 @@
 
 - Add `App.OfferSignedUpdate` to check signed updates, prompt before opening
   allowlisted download pages, and avoid host-specific check/confirm/open code.
+### Added: Scene3D material detail layers
+
+- Add opt-in detail layers to standard materials and glTF models on WebGL2 and
+  WebGPU, with world-space stochastic tiling, slope-selected layers, triplanar
+  projection, distance fading, and adaptive quality controls. Existing materials
+  retain their shaders and base maps.
 
 ### Added: desktop rotating log files
 

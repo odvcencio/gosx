@@ -21,6 +21,43 @@ by typed test evidence with an exact CI job, step, and command owner.
 
 ## v1 boundary
 
+### Material detail layers
+
+`StandardMaterial.Detail` and `Model.Detail` add world-space albedo, normal, and
+roughness maps on WebGL2/WebGPU. Model detail preserves each glTF primitive's
+base material. Nil detail emits nothing and retains the existing shader.
+PNG/JPEG/KTX2 use the existing loaders; missing, pending, or failed channels are
+neutral. Canvas and preview renderers show the base material.
+
+Browser defaults: 2 metres per tile, normal scale 1, albedo mix 0.6, roughness mix
+0.5, slope blend 30–45 degrees, fade 8–14 metres, stochastic tiling enabled.
+Go omits zero numeric settings; prop-bag scenes can express explicit zero mixes.
+Ground uses world XZ; Steep uses triplanar `abs(baseNormal)^4` weights and signed
+axis bases. Nil Steep uses Ground everywhere. `Triplanar` overrides both layers.
+Three hashed patches receive random offsets/quarter turns and normalized cubic
+barycentric blending. Explicit unrotated gradients prevent mip seams. Use
+tileable natural detail maps; the sampler does not synthesize missing edges.
+Albedo applies clamped `base * mix(1, 2*detail, AlbedoMix)`; roughness blends from
+base to the detail map's red channel; UDN normal blending preserves the base map.
+
+`1 - smoothstep(FadeStart, FadeEnd, cameraDistance)` controls all channels.
+Gradients precede the fade branch: zero detail samples beyond FadeEnd or when
+quality disables detail. Programs/pipelines append `-detail` to the existing
+PBR variant; camera/quality changes update uniforms without recompilation.
+
+Packed 512×512 mipmapped arrays cost one sampler and about 5.33 MiB per atlas,
+plus cached source textures. All maps present: at most 6 samples for Ground,
+18 for Steep, 24 during their blend (36 if Ground is also triplanar). Axis-aligned
+surfaces cost 6; missing channels reduce samples; disabling stochastic divides
+bounds by three. Oblique surfaces exceed the 12-sample target to preserve all
+projections and patches. Packing resamples larger maps and runs when textures
+change. Detail instances use the existing per-mesh GPU culling fallback.
+
+Adaptive survival disables detail by default; `qualityProfiles.*.detail` can
+override it. `QualityRung.Detail` overrides off at rung zero/on above it.
+`node scripts/validate-scene-detail-shaders.mjs` validates GLSL/WGSL without a
+browser. These tests cover contracts and shader validity, not visual acceptance.
+
 Scene3D v1 targets common browser product viewers, configurators, simulation
 dashboards, and interactive scenes. Its supported boundary is:
 

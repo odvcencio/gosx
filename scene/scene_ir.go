@@ -127,6 +127,7 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
+	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Src                string      `json:"src"`
 	MaterialKind       string      `json:"materialKind,omitempty"`
@@ -187,6 +188,7 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
+	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Kind               string      `json:"kind"`
 	Size               float64     `json:"size,omitempty"`
@@ -626,6 +628,7 @@ type PointsIR struct {
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
+	Detail               *Detail                    `json:"detail,omitempty"`
 	ID                   string                     `json:"id"`
 	Count                int                        `json:"count"`
 	Kind                 string                     `json:"kind"`
@@ -1992,6 +1995,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 		"id":   item.ID,
 		"kind": item.Kind,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
@@ -2162,6 +2168,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	record := map[string]any{
 		"id":  item.ID,
 		"src": src,
+	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
 	}
 	setString(record, "previewSrc", item.PreviewSrc)
 	setString(record, "fullSrc", item.FullSrc)
@@ -2384,6 +2393,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		"count": item.Count,
 		"kind":  item.Kind,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
@@ -2481,6 +2493,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	record := map[string]any{
 		"id":  item.ID,
 		"src": src,
+	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
 	}
 	setString(record, "materialKind", item.MaterialKind)
 	setString(record, "color", item.Color)
