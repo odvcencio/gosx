@@ -293,6 +293,26 @@ func TestFrameworkRedirectKeepsRuntimePolicy(t *testing.T) {
 	}
 }
 
+func TestRedirectIntoFrameworkCountsFrameworkBytes(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/p", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<!doctype html><script src="/app.js"></script>`))
+	})
+	mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/gosx/runtime.js", http.StatusFound)
+	})
+	mux.HandleFunc("/gosx/runtime.js", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("runtime();")) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.FrameworkJSWireBytes != int64(len("runtime();")) {
+		t.Fatalf("framework bytes = %d, want %d", r.FrameworkJSWireBytes, len("runtime();"))
+	}
+}
+
 func TestCheckUpdateAndRatchet(t *testing.T) {
 	srv := testServer(t)
 	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/page")

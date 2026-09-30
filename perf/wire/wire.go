@@ -244,7 +244,7 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 		out.Requests++
 		out.WireBytes[res.Kind] += res.WireBytes
 		out.TotalWireBytes += res.WireBytes
-		if isFramework(abs.Path) && (res.Kind == KindScript || res.Kind == KindWASM || res.Kind == KindProgram) {
+		if res.Framework && (res.Kind == KindScript || res.Kind == KindWASM || res.Kind == KindProgram) {
 			out.FrameworkJSWireBytes += res.WireBytes
 		}
 	}
