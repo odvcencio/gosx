@@ -3031,6 +3031,9 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if mk, ok := mapStringValue(materialProps["materialKind"]); ok {
 			record.MaterialKind = mk
 		}
+		if detail, ok := materialProps["detail"].(*Detail); ok {
+			record.Detail = cloneDetail(detail)
+		}
 		if c, ok := materialProps["color"].(string); ok {
 			record.Color = strings.TrimSpace(c)
 		}
@@ -3619,6 +3622,7 @@ func applyMaterialToInstancedGLBIR(record *InstancedGLBMeshIR, material Material
 	}
 	var object ObjectIR
 	applyMaterialToObjectIR(&object, material)
+	record.Detail = cloneDetail(object.Detail)
 	record.MaterialKind = object.MaterialKind
 	record.Color = object.Color
 	record.Texture = object.Texture

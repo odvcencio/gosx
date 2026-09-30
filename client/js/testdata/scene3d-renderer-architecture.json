@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2833,
-    "actualGovernanceLinesAtReview": 2833,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Detail layers add governed atlas/program helpers and opt-in draw hooks. Function exceptions and physical line limits track measured integration growth; default limits stay fixed."
+    "revisedGovernanceLineBudget": 2853,
+    "actualGovernanceLinesAtReview": 2853,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Detail layers add governed atlas/program helpers and opt-in draw hooks. Function exceptions and physical line limits track measured integration growth; default limits stay fixed. WebGPU detail adds a governed atlas module and cached pipeline/binding hooks. Limits reflect measured source and function growth."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -34,6 +34,7 @@
     "mount-webgl.ts",
     "webgl-detail.ts",
     "webgl.ts",
+    "webgpu-detail.ts",
     "webgpu.ts"
   ],
   "intentionalDirectRendererReferences": [
@@ -70,6 +71,11 @@
     {
       "file": "client/js/bootstrap-src/chunks.json",
       "source": "webgl.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-detail.ts",
       "count": 2
     },
     {
@@ -249,6 +255,11 @@
     },
     {
       "file": "client/runtime/tsconfig.scene3d.json",
+      "source": "webgpu-detail.ts",
+      "count": 1
+    },
+    {
+      "file": "client/runtime/tsconfig.scene3d.json",
       "source": "webgpu.ts",
       "count": 1
     },
@@ -273,14 +284,19 @@
       "count": 2
     },
     {
+      "count": 2,
       "file": "cmd/buildbootstrap/main.go",
-      "source": "webgl.ts",
-      "count": 2
+      "source": "webgl.ts"
     },
     {
+      "count": 2,
       "file": "cmd/buildbootstrap/main.go",
-      "source": "webgpu.ts",
-      "count": 2
+      "source": "webgpu-detail.ts"
+    },
+    {
+      "count": 2,
+      "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu.ts"
     },
     {
       "count": 1,
@@ -328,7 +344,7 @@
         "../runtime/scene3d/webgl-detail.ts",
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 11397,
+      "maxLines": 11399,
       "maxFileLines": 11285
     },
     "webgpu": {
@@ -336,6 +352,7 @@
       "chunkSources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
@@ -345,24 +362,27 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts": "backend-support",
         "../runtime/scene3d/webgpu.ts": "governed-renderer",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": "governed-renderer",
-        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper"
+        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts": "chunk-wrapper",
+        "../runtime/scene3d/webgpu-detail.ts": "governed-renderer"
       },
       "sources": [
+        "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"
       ],
-      "maxLines": 19533,
-      "maxFileLines": 19328
+      "maxLines": 19668,
+      "maxFileLines": 19347
     }
   },
   "files": {
     "../runtime/scene3d/webgl.ts": 11285,
-    "../runtime/scene3d/webgpu.ts": 19328,
+    "../runtime/scene3d/webgpu.ts": 19347,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 205,
     "../runtime/scene3d/hydrate-input.ts": 89,
     "../runtime/scene3d/mount-webgl.ts": 5589,
     "../runtime/scene3d/mount.ts": 3867,
-    "../runtime/scene3d/webgl-detail.ts": 112
+    "../runtime/scene3d/webgl-detail.ts": 114,
+    "../runtime/scene3d/webgpu-detail.ts": 116
   },
   "functionDefaults": {
     "lines": 200,
@@ -554,7 +574,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "createSceneWaterSystem@10633:5",
+      "name": "createSceneWaterSystem@10635:5",
       "lines": 202,
       "cyclomatic": 33,
       "cognitive": 32,
@@ -573,15 +593,15 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6454:3",
-      "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "lines": 12201,
+      "cyclomatic": 4126,
+      "cognitive": 5348,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "createSelenaBindGroup@8729:5",
+      "name": "createSelenaBindGroup@8731:5",
       "lines": 124,
       "cyclomatic": 48,
       "cognitive": 70,
@@ -590,7 +610,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@19168:5",
+      "name": "diagnostics@19187:5",
       "lines": 90,
       "cyclomatic": 49,
       "cognitive": 49,
@@ -599,7 +619,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawBoardLabels@17927:5",
+      "name": "drawBoardLabels@17933:5",
       "lines": 117,
       "cyclomatic": 39,
       "cognitive": 76,
@@ -608,7 +628,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawComputeParticleEntries@17031:5",
+      "name": "drawComputeParticleEntries@17037:5",
       "lines": 155,
       "cyclomatic": 44,
       "cognitive": 60,
@@ -617,16 +637,16 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPBRObjects@15897:5",
-      "lines": 192,
-      "cyclomatic": 89,
-      "cognitive": 177,
+      "name": "drawPBRObjects@15899:5",
+      "lines": 194,
+      "cyclomatic": 93,
+      "cognitive": 182,
       "maxNesting": 6,
       "parameters": 9
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPointsEntries@16856:5",
+      "name": "drawPointsEntries@16862:5",
       "lines": 158,
       "cyclomatic": 51,
       "cognitive": 86,
@@ -635,7 +655,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawWaterPoolEntries@13452:5",
+      "name": "drawWaterPoolEntries@13454:5",
       "lines": 104,
       "cyclomatic": 34,
       "cognitive": 79,
@@ -644,7 +664,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawWaterSurfaceSide@13600:5",
+      "name": "drawWaterSurfaceSide@13602:5",
       "lines": 104,
       "cyclomatic": 34,
       "cognitive": 84,
@@ -653,7 +673,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "ingestManifestText@10145:7",
+      "name": "ingestManifestText@10147:7",
       "lines": 22,
       "cyclomatic": 22,
       "cognitive": 41,
@@ -662,7 +682,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "ingestManifestValue@10125:7",
+      "name": "ingestManifestValue@10127:7",
       "lines": 20,
       "cyclomatic": 19,
       "cognitive": 38,
@@ -671,7 +691,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "initGPUResources@7668:6",
+      "name": "initGPUResources@7670:6",
       "lines": 395,
       "cyclomatic": 26,
       "cognitive": 34,
@@ -680,7 +700,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "instancedMeshColorData@16132:5",
+      "name": "instancedMeshColorData@16137:5",
       "lines": 48,
       "cyclomatic": 20,
       "cognitive": 35,
@@ -689,7 +709,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "publishWebGPUFrameStats@17254:5",
+      "name": "publishWebGPUFrameStats@17260:5",
       "lines": 313,
       "cyclomatic": 257,
       "cognitive": 257,
@@ -707,16 +727,16 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "render@18162:5",
-      "lines": 697,
-      "cyclomatic": 191,
-      "cognitive": 246,
+      "name": "render@18168:5",
+      "lines": 708,
+      "cyclomatic": 199,
+      "cognitive": 257,
       "maxNesting": 4,
       "parameters": 3
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderShadowPass@15778:116",
+      "name": "renderShadowPass@15780:116",
       "lines": 102,
       "cyclomatic": 31,
       "cognitive": 61,
@@ -725,7 +745,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderWaterObjectMeshTargetPass@11436:5",
+      "name": "renderWaterObjectMeshTargetPass@11438:5",
       "lines": 27,
       "cyclomatic": 14,
       "cognitive": 13,
@@ -734,7 +754,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderWaterObjectSceneTexturePasses@11773:5",
+      "name": "renderWaterObjectSceneTexturePasses@11775:5",
       "lines": 147,
       "cyclomatic": 39,
       "cognitive": 60,
@@ -743,7 +763,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "sceneSelenaPipelineAttributes@8413:5",
+      "name": "sceneSelenaPipelineAttributes@8415:5",
       "lines": 57,
       "cyclomatic": 28,
       "cognitive": 59,
@@ -752,7 +772,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "sceneWaterManifestShaderSources@10099:5",
+      "name": "sceneWaterManifestShaderSources@10101:5",
       "lines": 85,
       "cyclomatic": 74,
       "cognitive": 121,
@@ -761,7 +781,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "sceneWaterObjectState@9819:5",
+      "name": "sceneWaterObjectState@9821:5",
       "lines": 95,
       "cyclomatic": 39,
       "cognitive": 57,
@@ -770,7 +790,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "syncEnvironmentIBL@14201:5",
+      "name": "syncEnvironmentIBL@14203:5",
       "lines": 60,
       "cyclomatic": 31,
       "cognitive": 63,
@@ -779,7 +799,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "updateInstancedCullSystems@13761:5",
+      "name": "updateInstancedCullSystems@13763:5",
       "lines": 164,
       "cyclomatic": 69,
       "cognitive": 114,
@@ -788,7 +808,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "updateWaterSystems@11924:5",
+      "name": "updateWaterSystems@11926:5",
       "lines": 507,
       "cyclomatic": 168,
       "cognitive": 280,
@@ -908,18 +928,18 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer",
-      "lines": 12184,
-      "cyclomatic": 4101,
-      "cognitive": 5318,
+      "lines": 12201,
+      "cyclomatic": 4126,
+      "cognitive": 5348,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "drawPBRObjects",
-      "lines": 192,
-      "cyclomatic": 89,
-      "cognitive": 177,
+      "lines": 194,
+      "cyclomatic": 93,
+      "cognitive": 182,
       "maxNesting": 6,
       "parameters": 9
     },
@@ -935,9 +955,9 @@
     {
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "render",
-      "lines": 697,
-      "cyclomatic": 191,
-      "cognitive": 246,
+      "lines": 708,
+      "cyclomatic": 199,
+      "cognitive": 257,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -966,20 +986,20 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "raw": 883475,
-      "gzip": 249694,
-      "brotli": 207272,
-      "ledger": "Detail layers add shared shader maths, browser defaults and a lazy WebGL atlas/program module. Targets equal measured bytes; policy allowances stay fixed."
+      "raw": 884340,
+      "gzip": 249890,
+      "brotli": 207472,
+      "ledger": "Detail layers add shared shader maths/defaults and lazy WebGL/WebGPU atlas/program modules. Targets equal measured bytes; policy allowances stay fixed."
     },
     "base+webgpu": {
       "chunks": [
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "raw": 1028244,
-      "gzip": 275870,
-      "brotli": 228699,
-      "ledger": "Detail layers add shared shader maths, browser defaults and a lazy WebGL atlas/program module. Targets equal measured bytes; policy allowances stay fixed."
+      "raw": 1034576,
+      "gzip": 278056,
+      "brotli": 230145,
+      "ledger": "Detail layers add shared shader maths/defaults and lazy WebGL/WebGPU atlas/program modules. Targets equal measured bytes; policy allowances stay fixed."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -988,10 +1008,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 946297,
-      "gzip": 272669,
-      "brotli": 227699,
-      "ledger": "Detail layers add shared shader maths, browser defaults and a lazy WebGL atlas/program module. Targets equal measured bytes; policy allowances stay fixed."
+      "raw": 947162,
+      "gzip": 272865,
+      "brotli": 227899,
+      "ledger": "Detail layers add shared shader maths/defaults and lazy WebGL/WebGPU atlas/program modules. Targets equal measured bytes; policy allowances stay fixed."
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -1000,10 +1020,10 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 1091066,
-      "gzip": 298845,
-      "brotli": 249126,
-      "ledger": "Detail layers add shared shader maths, browser defaults and a lazy WebGL atlas/program module. Targets equal measured bytes; policy allowances stay fixed."
+      "raw": 1097398,
+      "gzip": 301031,
+      "brotli": 250572,
+      "ledger": "Detail layers add shared shader maths/defaults and lazy WebGL/WebGPU atlas/program modules. Targets equal measured bytes; policy allowances stay fixed."
     }
   },
   "rendererABI": {

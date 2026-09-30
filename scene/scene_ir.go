@@ -127,6 +127,7 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
+	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Src                string      `json:"src"`
 	MaterialKind       string      `json:"materialKind,omitempty"`
@@ -627,6 +628,7 @@ type PointsIR struct {
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
+	Detail               *Detail                    `json:"detail,omitempty"`
 	ID                   string                     `json:"id"`
 	Count                int                        `json:"count"`
 	Kind                 string                     `json:"kind"`
@@ -2390,6 +2392,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		"count": item.Count,
 		"kind":  item.Kind,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
@@ -2487,6 +2492,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	record := map[string]any{
 		"id":  item.ID,
 		"src": src,
+	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
 	}
 	setString(record, "materialKind", item.MaterialKind)
 	setString(record, "color", item.Color)

@@ -15,6 +15,7 @@
     "scene3d/bootstrap-bridge.d.ts",
     "scene3d/webgl-detail.ts",
     "scene3d/webgl.ts",
+    "scene3d/webgpu-detail.ts",
     "scene3d/webgpu.ts",
     "scene3d/mount-webgl.ts",
     "scene3d/gltf.ts",

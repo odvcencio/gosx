@@ -5950,7 +5950,7 @@
     if (!vertexShader) {
       return null;
     }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, detail)));
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6331,7 +6331,7 @@
   function createScenePBRSkinnedProgram(gl, detail = false) {
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, detail)));
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6426,7 +6426,7 @@
     }
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, detail)));
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6479,7 +6479,7 @@
   function createScenePBRCrowdMotionProgram(gl, detail = false) {
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, detail)));
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -9720,7 +9720,7 @@
       for (const [name, size, fallback] of [
         ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
         ["uv", 2, [0, 0]], ["tangent", 4, [1, 0, 0, 1]],
-      ]) {
+      /* @ts-expect-error TS2538 -- plain JS tuple rows infer a union for the attribute name; runtime checks the location before binding */ ]) {
         const location = ip.attributes[name];
         if (!(location >= 0)) continue;
         /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ allowed[location] = true;

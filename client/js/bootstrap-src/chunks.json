@@ -50,6 +50,7 @@
         "../runtime/scene3d/webgl-detail.ts",
         "../runtime/scene3d/webgl.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
+        "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/compute.ts",
@@ -259,6 +260,7 @@
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"

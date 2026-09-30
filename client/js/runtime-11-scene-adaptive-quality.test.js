@@ -90,7 +90,7 @@ test("Scene3D adaptive profiles start balanced and expose exact frame contract",
   assert.equal(state.requestedTier, "balanced");
   assert.equal(state.activeTier, "balanced");
   assert.deepEqual(JSON.parse(JSON.stringify(state.activeProfile)), {
-    tier: "balanced", dprCap: 1.25, surfaceResolution: 128,
+    tier: "balanced", detail: true, dprCap: 1.25, surfaceResolution: 128,
     causticsResolution: 384, objectShadowResolution: 384,
     objectTextureMaxSide: 384, objectTexturePixelBudget: 442368,
     expensivePassCadence: 2,

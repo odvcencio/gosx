@@ -44,3 +44,23 @@ func TestDetailDefaultsRemainBrowserOwnedAndModelWins(t *testing.T) {
 		t.Fatalf("Go baked defaults or ignored Model.Detail: %s, %v", wire, err)
 	}
 }
+
+func TestDetailStandardMaterialAppliesToInstancesAndNamedLegacyProps(t *testing.T) {
+	detail := &Detail{Ground: &DetailLayer{Albedo: "/grain.png"}}
+	material := StandardMaterial{Detail: detail}
+	ir := (Props{Graph: NewGraph(InstancedMesh{Count: 1, Geometry: CubeGeometry{Size: 1}, Material: material}, InstancedGLBMesh{Src: "/a.glb", Material: material, Instances: []MeshInstance{{ID: "a"}}})}).SceneIR()
+	if ir.InstancedMeshes[0].Detail == nil || ir.InstancedGLBMeshes[0].Detail == nil {
+		t.Fatal("standard detail lost on an instanced material")
+	}
+	if ir.InstancedMeshes[0].legacyProps()["detail"] == nil || ir.InstancedGLBMeshes[0].legacyProps()["detail"] == nil {
+		t.Fatal("instanced legacy props dropped detail")
+	}
+}
+
+func TestDetailQualityFlagPreservesExplicitFalse(t *testing.T) {
+	rung := resolveQualityRung(QualityRung{Name: "floor", Detail: Bool(false)}, 0)
+	wire, err := json.Marshal(rung)
+	if err != nil || !strings.Contains(string(wire), `"detail":false`) || rung.legacyProps()["detail"] != false {
+		t.Fatalf("quality detail flag lost: %s, %v", wire, err)
+	}
+}

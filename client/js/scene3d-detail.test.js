@@ -72,6 +72,52 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   assert.equal(c.sceneDetailVariantKey("base", null), "base");
 });
 
+test("WebGPU detail preserves the nil shader and uses a separate array binding", () => {
+  const c = detailContext("webgpu"); const base = vm.runInContext("WGSL_PBR_FRAGMENT", c);
+  assert.equal(c.sceneWebGPUDetailFragment(base, null), base);
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "8b4c410f8517bf274adf5fa26bdcc4a888d95be4fb22e87b224dc37d81b122f6");
+  const shader = c.sceneWebGPUDetailFragment(base, true);
+  assert.match(shader, /textureSampleGrad\(detailAtlas/);
+  assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);
+  assert.ok(shader.indexOf("dpdx(in.worldPos)") < shader.indexOf("detailApply(in.worldPos"));
+  assert.match(shader, /fade > 0\.0 && detail.data\[4\]\.w > 0\.5/);
+  assert.equal(c.wgpuPipelineKey(c.sceneDetailVariantKey("pbr", true), "opaque", true, "rgba8unorm", "depth24plus", 1), "pbr-detail|opaque|1|rgba8unorm|depth24plus|1");
+  assert.equal(c.sceneDetailVariantKey("pbr", null), "pbr");
+  const layouts = [], modules = [];
+  c.GPUShaderStage = { FRAGMENT: 2 };
+  const device = { createBindGroupLayout: d => (layouts.push(d), d), createPipelineLayout: d => d,
+    createShaderModule: d => (modules.push(d), d), createSampler: d => d };
+  const r = c.sceneWebGPUCreateDetailResources(device, "frame", "material", base);
+  assert.equal(layouts[0].entries[1].texture.viewDimension, "2d-array");
+  assert.deepEqual(Array.from(r.pipelineLayout.bindGroupLayouts.slice(0, 2)), ["frame", "material"]);
+  assert.equal(modules.length, 1); assert.equal(modules[0].code, shader);
+});
+
+test("WebGL uploads detail controls and the atlas without rebinding base maps", () => {
+  const c = detailContext("webgl"), calls = [];
+  const material = { detail: { ground: { scale: 3 }, fadeStart: 5, fadeEnd: 12, slopeStart: 20, slopeEnd: 50 } };
+  const atlas = { texture: {}, masks: [1, 1, 1, 0, 0, 0] };
+  const gl = { TEXTURE0: 100, TEXTURE_2D_ARRAY: 7, uniform4fv: (_, data) => calls.push(Array.from(data)),
+    activeTexture: unit => calls.push(unit), bindTexture: (target, texture) => calls.push([target, texture]), uniform1i: (_, unit) => calls.push(unit) };
+  c.sceneWebGLUploadDetail(gl, { materials: new Map([[material, atlas]]) }, { detail: "params", detailAtlas: "atlas" }, material, true);
+  assert.equal(calls[0][0], 3); assert.equal(calls[0][8], 5); assert.equal(calls[0][9], 12);
+  assert.ok(Math.abs(calls[0][10] - 20 * Math.PI / 180) < 1e-7);
+  assert.equal(calls[1], 114); assert.deepEqual(calls[2], [7, atlas.texture]); assert.equal(calls[3], 14);
+});
+
+test("WebGPU updates a stable detail group when quality changes", () => {
+  const c = detailContext("webgpu"), writes = [];
+  const material = { detail: { ground: { scale: 4 }, fadeStart: 6, fadeEnd: 13 } };
+  const entry = { buffer: {}, group: {}, atlas: { masks: [1, 1, 0, 0, 0, 0] } };
+  const resources = { materials: new Map([[material, entry]]) };
+  const device = { queue: { writeBuffer: (buffer, offset, data) => writes.push({ buffer, offset, data: Array.from(data) }) } };
+  assert.equal(c.sceneWebGPUUploadDetail(device, resources, material, true), entry.group);
+  assert.equal(c.sceneWebGPUUploadDetail(device, resources, material, false), entry.group);
+  assert.equal(writes[0].buffer, entry.buffer); assert.equal(writes[0].data[0], 4);
+  assert.deepEqual(writes[0].data.slice(8, 10), [6, 13]);
+  assert.equal(writes[0].data[19], 1); assert.equal(writes[1].data[19], 0);
+});
+
 test("Model.Detail reaches every imported primitive without replacing glTF maps", () => {
   const c = detailContext();
   const mount = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");
@@ -80,13 +126,16 @@ test("Model.Detail reaches every imported primitive without replacing glTF maps"
   assert.ok(start >= 0 && end > start);
   vm.runInContext(mount.slice(start, end), c);
   const detail = { ground: { albedo: "/detail.png" } };
+  const model = c.normalizeSceneModel({ src: "/asset.glb", detail: detail }, 0);
+  assert.equal(model.materialOverride.detail.ground.albedo, "/detail.png");
   for (const texture of ["/a.png", "/b.ktx2"]) {
     const raw = { material: { kind: "standard", texture: texture, normalMap: "/base-normal.png", roughnessMap: "/base-rough.png" } };
-    const primitive = c.sceneApplyMaterialOverride(raw, { detail: detail });
+    const primitive = c.sceneApplyMaterialOverride(raw, model);
     assert.equal(primitive.material.texture, texture);
     assert.equal(primitive.material.normalMap, "/base-normal.png");
     assert.equal(primitive.material.roughnessMap, "/base-rough.png");
-    assert.equal(primitive.detail, detail); assert.equal(primitive.material.detail, detail);
+    assert.equal(primitive.detail.ground.albedo, detail.ground.albedo);
+    assert.equal(primitive.material.detail, model.materialOverride.detail);
     assert.equal(raw.material.detail, undefined);
   }
 });

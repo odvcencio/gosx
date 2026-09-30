@@ -517,7 +517,7 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   );
   assert.match(
     webgpuSource,
-    /wgpuPipelineKey\(sceneWebGPUPipelineKind\(reflected, "pbr"\), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
+    /wgpuPipelineKey\(detail \? sceneDetailVariantKey\(sceneWebGPUPipelineKind\(reflected, "pbr"\), true\) : sceneWebGPUPipelineKind\(reflected, "pbr"\), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
   );
 });
 

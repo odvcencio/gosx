@@ -1,5 +1,5 @@
 // Opt-in WebGL detail programs and packed texture arrays. Plain JS for harnesses.
-function sceneWebGLDetailFragment(source, detail) {
+function sceneWebGLDetailFragment(source = "", detail = false) {
   if (!detail) return source;
   return source.replace("void main() {", sceneDetailShaderSource("glsl") + "\nvoid main() {\n    vec3 detailDx = dFdx(v_worldPosition);\n    vec3 detailDy = dFdy(v_worldPosition);")
     .replace("    vec3 V = normalize(u_cameraPosition - v_worldPosition);", `    DetailResult detailResult = detailApply(v_worldPosition, normalize(v_normal), detailDx, detailDy, u_cameraPosition, albedo, N, roughness);
@@ -7,17 +7,17 @@ function sceneWebGLDetailFragment(source, detail) {
     vec3 V = normalize(u_cameraPosition - v_worldPosition);`);
 }
 
-function sceneWebGLDetailProgram(gl, resources, kind) {
+function sceneWebGLDetailProgram(gl = Object.create(null), resources = Object.create(null), kind = "base") {
   const key = sceneDetailVariantKey(kind, true);
   if (resources.programs.has(key)) return resources.programs.get(key);
-  const factories = {
+  const factories = new Map(Object.entries({
     base: function() { return createScenePBRProgram(gl, true); },
     skinned: function() { return createScenePBRSkinnedProgram(gl, true); },
     instanced: function() { return createScenePBRInstancedProgram(gl, false, true); },
     crowd: function() { return createScenePBRInstancedProgram(gl, true, true); },
     motion: function() { return createScenePBRCrowdMotionProgram(gl, true); },
-  };
-  const program = factories[kind]();
+  }));
+  const program = factories.get(kind)();
   if (program) {
     Object.assign(program.uniforms, { detail: gl.getUniformLocation(program.program, "u_detail[0]"),
       detailAtlas: gl.getUniformLocation(program.program, "u_detailAtlas") });
@@ -26,7 +26,7 @@ function sceneWebGLDetailProgram(gl, resources, kind) {
   return program;
 }
 
-function sceneWebGLDetailBakeResources(gl, resources) {
+function sceneWebGLDetailBakeResources(gl = Object.create(null), resources = Object.create(null)) {
   if (resources.bake) return resources.bake;
   const vertex = "#version 300 es\nprecision highp float;\nout vec2 uv;\nvoid main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));uv=p;gl_Position=vec4(p*2.0-1.0,0,1);}";
   const fragment = "#version 300 es\nprecision highp float;\nin vec2 uv;\nout vec4 color;\nuniform sampler2D src;\nuniform sampler2D rough;\nuniform vec3 flags;\nuniform bool normalPass;\nvoid main(){color=vec4(0.5);if(normalPass){color=vec4(0.5,0.5,1,1);if(flags.y>0.5)color=texture(src,uv);}else{if(flags.x>0.5)color.rgb=texture(src,uv).rgb;if(flags.z>0.5)color.a=texture(rough,uv).r;}}";
@@ -41,7 +41,7 @@ function sceneWebGLDetailBakeResources(gl, resources) {
   return resources.bake;
 }
 
-function sceneWebGLBakeDetailAtlas(gl, resources, atlas, records, masks) {
+function sceneWebGLBakeDetailAtlas(gl = Object.create(null), resources = Object.create(null), atlas = Object.create(null), records = Object.create(null), masks = Object.create(null)) {
   const bake = sceneWebGLDetailBakeResources(gl, resources);
   const previous = {
     program: gl.getParameter(gl.CURRENT_PROGRAM), vao: gl.getParameter(gl.VERTEX_ARRAY_BINDING),
@@ -69,12 +69,12 @@ function sceneWebGLBakeDetailAtlas(gl, resources, atlas, records, masks) {
   gl.activeTexture(previous.active);
 }
 
-function sceneWebGLPrepareDetail(gl, resources, material, textureCache) {
+function sceneWebGLPrepareDetail(gl = Object.create(null), resources = Object.create(null), material = Object.create(null), textureCache = Object.create(null)) {
   const detail = material.detail;
   const key = JSON.stringify([detail.ground, detail.steep]);
   let atlas = resources.atlases.get(key);
   if (!atlas) {
-    atlas = { texture: gl.createTexture(), signature: "", masks: [] };
+    atlas = { texture: gl.createTexture(), signature: "", masks: [], sources: [] };
     scenePBRBindTexture(gl, 14, atlas.texture, gl.TEXTURE_2D_ARRAY);
     gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 10, gl.RGBA8, 512, 512, 4);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -83,18 +83,20 @@ function sceneWebGLPrepareDetail(gl, resources, material, textureCache) {
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
     resources.atlases.set(key, atlas);
   }
-  const inputs = sceneDetailTextureRecords(detail, function(url, role) {
+  const inputs = sceneDetailTextureRecords(detail, function(url = "", role = "") {
     return scenePBRLoadTexture(gl, url, textureCache, null, role === "albedo" ? "base-color" : role, "linear");
   });
   const signature = inputs.masks.join("");
-  if (signature !== atlas.signature) {
+  const sources = inputs.records.map(function(record = Object.create(null)) { return record && record.loaded ? record.texture : null; });
+  if (signature !== atlas.signature || sources.some(function(texture = Object.create(null), i = 0) { return !atlas.sources || atlas.sources[i] !== texture; })) {
     sceneWebGLBakeDetailAtlas(gl, resources, atlas, inputs.records, inputs.masks);
     atlas.signature = signature; atlas.masks = inputs.masks;
+    atlas.sources = sources;
   }
   resources.materials.set(material, atlas);
 }
 
-function sceneWebGLUploadDetail(gl, resources, uniforms, material, enabled) {
+function sceneWebGLUploadDetail(gl = Object.create(null), resources = Object.create(null), uniforms = Object.create(null), material = Object.create(null), enabled = true) {
   if (!uniforms.detail || !material || !material.detail) return;
   const atlas = resources.materials.get(material);
   gl.uniform4fv(uniforms.detail, sceneDetailUniformData(material.detail, atlas.masks, enabled));
@@ -102,7 +104,7 @@ function sceneWebGLUploadDetail(gl, resources, uniforms, material, enabled) {
   gl.uniform1i(uniforms.detailAtlas, 14);
 }
 
-function sceneWebGLDisposeDetail(gl, resources) {
+function sceneWebGLDisposeDetail(gl = Object.create(null), resources = Object.create(null)) {
   for (const atlas of resources.atlases.values()) gl.deleteTexture(atlas.texture);
   for (const program of resources.programs.values()) {
     if (program) { gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader); }

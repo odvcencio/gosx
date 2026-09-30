@@ -47,8 +47,11 @@ function sceneDetailTextureRecords(detail, load) {
 function sceneDetailShaderFunction(language, name, args, result, body) {
   if (language === "glsl") return result + " " + name + "(" + args + ") {\n" + body + "\n}\n";
   const params = args.split(", ").filter(Boolean).map(function(arg) {
-    const parts = arg.split(" "); return parts[1] + ": " + parts[0];
+    const parts = arg.split(" "); return parts[1] + "In: " + parts[0];
   }).join(", ");
+  body = args.split(", ").filter(Boolean).map(function(arg) {
+    const parts = arg.split(" "); return "var " + parts[1] + ": " + parts[0] + " = " + parts[1] + "In;";
+  }).join("\n") + "\n" + body;
   body = body.replace(/\b(vec[234]|mat2|float|int|DetailTap|DetailResult)\s+(\w+)\s*=/g, "var $2: $1 =")
     .replace(/for \(int (\w+) =/g, "for (var $1: int =");
   return ("fn " + name + "(" + params + ") -> " + result + " {\n" + body + "\n}\n")
@@ -147,7 +150,7 @@ function sceneDetailShaderSource(language) {
           r += (tap.ar.a - roughness) * params.w * mask.z * w;
         }
       }
-      albedo *= vec3(1.0) + modulation * fade;
+      albedo = clamp(albedo * (vec3(1.0) + modulation * fade), vec3(0.0), vec3(1.0));
       roughness = clamp(mix(roughness, r, fade), 0.04, 1.0);
       offset -= baseN * dot(offset, baseN);
       normal = normalize(normal + offset * fade);
