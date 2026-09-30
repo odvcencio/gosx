@@ -14,18 +14,23 @@ import (
 func blackglassBeachWalk() *scene.Walk {
 	grid := beachgen.WalkHeightfield(beachgen.Seed)
 	ground := scene.NewWalkGround(grid.MinX, grid.MinZ, grid.SizeX, grid.SizeZ, grid.Cols, grid.Rows, grid.Heights)
-	shapes := beachgen.WalkColliders(beachgen.Seed)
+	shapes := append(beachgen.WalkColliders(beachgen.Seed), beachgen.JettyColliders()...)
 	colliders := make([]scene.WalkCollider, 0, len(shapes))
 	for _, s := range shapes {
 		colliders = append(colliders, scene.WalkCollider{Kind: s.Kind, X: s.X, Y: s.Y, Z: s.Z, Radius: s.Radius, Height: s.Height})
 	}
+	var surfaces []scene.WalkSurface
+	for _, s := range beachgen.JettySurfaces() {
+		surfaces = append(surfaces, scene.WalkSurface{X: s[0], Y: s[1], Z: s[2], SizeX: s[3], SizeZ: s[4], SlopeX: s[5], SlopeZ: s[6]})
+	}
 	return &scene.Walk{
+		Surfaces:  surfaces,
 		EyeHeight: 1.7,
 		MaxSlope:  34,
 		Ground:    &ground,
 		Water:     &scene.WalkWater{Level: 0, MaxDepth: 0.55},
 		Colliders: colliders,
-		Bounds:    &scene.WalkBounds{MinX: -44, MinZ: -30, MaxX: 44, MaxZ: 46},
+		Bounds:    &scene.WalkBounds{MinX: -115, MinZ: -180, MaxX: 115, MaxZ: 46},
 	}
 }
 

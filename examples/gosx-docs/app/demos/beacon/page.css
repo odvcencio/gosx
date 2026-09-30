@@ -40,3 +40,6 @@
 @media (max-width: 640px) {
   .bgb__controls { left: 10px; right: 10px; bottom: 10px; justify-content: center; }
 }
+
+.bgb__instructions { flex-basis: 100%; margin: 0 0 4px; font-size: 12px; color: rgba(255,255,255,.75); }
+@media (pointer: coarse) { .bgb__instructions { font-size: 11px; text-align: center; } }
