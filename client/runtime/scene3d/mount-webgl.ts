@@ -4088,7 +4088,7 @@ function gosxConfigureSceneScript(script, role, src) {
     // persist across commands and reuse their mutable matrix cache; retain the
     // defensive copy for those broader declarations.
     const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
-    return { staged, model, matrix: snapshotMatrix, crowdRows };
+    return { staged, model, matrix: snapshotMatrix, crowdRows, poseRevision: staged._poseRevision || 0 };
   }
 
   function sceneCommitRigidInstancePatch(patch) {
@@ -4101,28 +4101,46 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
+    // The binary bridge supplies an optional third argument with its exact
+    // batches. Ordinary declaration commands omit it and retain atomic staging.
+    const pendingBatches = arguments[2];
     const records = state && state._hydratedModelRecords;
     const cache = records && records.rigidInstances;
-    if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    const pending = Boolean(state && (state._modelHydrationPromise || state._modelHydrationUncommitted));
+    if (!cache || pending && (!Array.isArray(pendingBatches) || !pendingBatches.length) || state._modelOwner && !state._modelOwner()) return false;
     const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
-    if (models.length !== records.modelCount) return false;
+    if (!pending && models.length !== records.modelCount) return false;
+    // Only the explicit binary frame can advance committed poses during a
+    // declaration transaction. JSON membership/material replacement remains
+    // atomic and does not move unrelated actors before its assets are ready.
+    const requested = pending ? new Set() : null;
+    if (requested) {
+      for (const batch of pendingBatches) {
+        for (const instance of batch.instances) requested.add(batch.id + "/" + instance.id);
+      }
+    }
     const memberships = records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
     const scope = sceneRigidMembershipScopeKey(state);
     const patches = [];
     const keys = new Set();
     for (let index = 0; index < models.length; index++) {
       const model = models[index];
-      const matrix = sceneModelTransformMatrix(model);
       const id = sceneRigidMembershipModelID(model);
+      if (requested && !requested.has(id)) continue;
+      const matrix = sceneModelTransformMatrix(model);
       const template = id && sceneInstancedGLBHydrationTemplates.get(model);
       const membership = id && memberships && memberships.get(id);
       let key = "";
       if (membership) {
         if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
             membership.template !== template || membership.scope !== scope ||
-            membership.staged !== cache.get(membership.key)) return false;
+            membership.staged !== cache.get(membership.key)) {
+          if (pending) continue; // A different asset/template has no committed authority yet.
+          return false;
+        }
         key = membership.key;
       } else if (id) {
+        if (pending) continue; // New identities stay staged until commit.
         return false;
       } else {
         key = sceneRigidInstanceHydrationKey(state, model, matrix);
@@ -4137,7 +4155,8 @@ function gosxConfigureSceneScript(script, role, src) {
       keys.add(key);
       patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
     }
-    // Validate the complete collection before changing the committed scene.
+    if (pending && !patches.length) return false;
+    // Validate every selected committed wrapper before changing any pose.
     for (const patch of patches) {
       for (const object of patch.staged.objects) {
         object.parentMatrix = patch.matrix;
@@ -4146,6 +4165,7 @@ function gosxConfigureSceneScript(script, role, src) {
       }
       patch.staged.model = patch.model;
       patch.staged.rigidInstanceModel = patch.model;
+      patch.staged._poseRevision = (patch.staged._poseRevision || 0) + 1;
     }
     return true;
   }
@@ -4335,6 +4355,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   async function sceneCommitRigidInstanceMembership(plan) {
     const state = plan.state;
+    state._modelHydrationUncommitted = true;
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
     const additions = plan.entries.filter(function(entry) { return entry.kind === "add"; });
     const results = await Promise.all(additions.map(function(entry) {
@@ -4376,8 +4397,17 @@ function gosxConfigureSceneScript(script, role, src) {
         if (!sceneReusableStaticModelHydration(entry.staged, state)) {
           sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
         }
-      } else if (entry.kind === "rigid" && !sceneReusableRigidInstance(entry.staged, state)) {
-        sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+      } else if (entry.kind === "rigid") {
+        if (!sceneReusableRigidInstance(entry.staged, state)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        // Independent binary poses may have advanced this committed identity
+        // while an addition loaded. Keep that newer pose, not the plan snapshot.
+        if (entry.patch.poseRevision !== (entry.staged._poseRevision || 0)) {
+          const model = entry.staged.rigidInstanceModel;
+          entry.patch = scenePrepareRigidInstancePatch(state, entry.staged, model, sceneModelTransformMatrix(model));
+          if (!entry.patch) { sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null); }
+        }
       }
       for (const object of entry.staged.objects) {
         if (nextObjectIDs.has(object.id)) {
@@ -4423,6 +4453,7 @@ function gosxConfigureSceneScript(script, role, src) {
       }
     }
     state._hydratedModelRecords = hydrated;
+    state._modelHydrationUncommitted = false;
     const counts = sceneModelHydrationCounts(plan.entries.length);
     counts.objects = hydrated.objects.length;
     publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
@@ -4446,6 +4477,9 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
     state._modelHydrationGeneration = generation;
+    // A failed replacement leaves these declarations uncommitted. Compatible
+    // binary poses may still advance the last committed generation afterward.
+    state._modelHydrationUncommitted = true;
     let models;
     try {
       // Commands can replace the declaration arrays while their assets are in
@@ -4477,6 +4511,7 @@ function gosxConfigureSceneScript(script, role, src) {
       sceneClearHydratedModelRecords(state);
       state._modelAnimations = [];
       state._modelSkins = [];
+      state._modelHydrationUncommitted = false;
       publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
         generation,
         currentGeneration: generation,
@@ -4513,6 +4548,8 @@ function gosxConfigureSceneScript(script, role, src) {
         return { ok: true, staged: Object.assign({}, rigid, { model, modelIndex,
           rigidInstanceModel: model,
           _pendingRigidMatrix: matrix,
+          _pendingRigidSource: rigid,
+          _pendingRigidPoseRevision: rigid._poseRevision || 0,
         }) };
       }
       return sceneStageModelHydration(state, model, modelIndex, generation);
@@ -4558,6 +4595,22 @@ function gosxConfigureSceneScript(script, role, src) {
         error: failedError && failedError.message ? String(failedError.message) : String(failedError || ""),
       });
       return sceneModelHydrationOutcome(counts, generation, "failed", false, false, failedStage);
+    }
+
+    // Reused wrappers may have received independent binary poses while this
+    // generation loaded. Refresh only those exact cached identities; new or
+    // replaced templates retain this generation's transaction snapshot.
+    for (const result of results) {
+      const staged = result.staged;
+      const source = staged._pendingRigidSource;
+      if (source && staged._pendingRigidPoseRevision !== (source._poseRevision || 0)) {
+        staged.model = source.rigidInstanceModel;
+        staged.rigidInstanceModel = source.rigidInstanceModel;
+        staged._pendingRigidMatrix = new Float32Array(sceneModelTransformMatrix(source.rigidInstanceModel));
+        staged._poseRevision = source._poseRevision;
+      }
+      delete staged._pendingRigidSource;
+      delete staged._pendingRigidPoseRevision;
     }
 
     // The entire generation is ready and still current. Replace the previous
@@ -4624,6 +4677,7 @@ function gosxConfigureSceneScript(script, role, src) {
       Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
     }
     state._hydratedModelRecords = hydrated;
+    state._modelHydrationUncommitted = false;
     counts.objects = hydrated.objects.length;
     counts.points = hydrated.points.length;
     counts.labels = hydrated.labels.length;
