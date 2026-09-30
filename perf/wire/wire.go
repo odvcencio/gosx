@@ -90,7 +90,8 @@ type Route struct {
 	FrameworkJSWireBytes int64 `json:"frameworkJsWireBytes"`
 
 	// LazyWireBytes sums the on-demand runtime chunks the page advertises
-	// (KindLazyScript). They are not in TotalWireBytes or Requests.
+	// (KindLazyScript) and any redirect hops in front of them. They are not
+	// in TotalWireBytes, WireBytes or Requests.
 	LazyWireBytes int64 `json:"lazyWireBytes"`
 
 	InlineScriptBytes int64 `json:"inlineScriptBytes"`
@@ -214,7 +215,17 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	for _, t := range targets {
 		r, abs, key := t.ref, t.abs, t.key
 		res, hops, _, _, err := fetch(ctx, client, ua, key, r.initiator)
-		add(hops)
+		if r.kind == KindLazyScript {
+			// Redirects in front of an on-demand chunk are on-demand too:
+			// list them for the cookie and cache policies, but count their
+			// bytes with the chunk, not in the initial load.
+			for _, h := range hops {
+				out.Resources = append(out.Resources, h)
+				out.LazyWireBytes += h.WireBytes
+			}
+		} else {
+			add(hops)
+		}
 		if err != nil {
 			return Route{}, err
 		}

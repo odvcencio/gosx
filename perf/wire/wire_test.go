@@ -231,6 +231,47 @@ func TestCrawlCountsEveryRedirectHop(t *testing.T) {
 	}
 }
 
+func TestOnDemandRedirectStaysOutOfInitialLoad(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/p", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<!doctype html><div data-gosx-x-url="/gosx/old.js"></div>`))
+	})
+	mux.HandleFunc("/gosx/old.js", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "hop", Value: "1"})
+		http.Redirect(w, r, "/gosx/new.js", http.StatusFound)
+	})
+	mux.HandleFunc("/gosx/new.js", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("lazy();")) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Requests != 1 || r.TotalWireBytes != r.Document.WireBytes || r.WireBytes[KindRedirect] != 0 {
+		t.Fatalf("on-demand redirect counted in initial load: requests=%d total=%d doc=%d redirect=%d",
+			r.Requests, r.TotalWireBytes, r.Document.WireBytes, r.WireBytes[KindRedirect])
+	}
+	var hop *Resource
+	var chunk int64
+	for i := range r.Resources {
+		switch r.Resources[i].Kind {
+		case KindRedirect:
+			hop = &r.Resources[i]
+		case KindLazyScript:
+			chunk = r.Resources[i].WireBytes
+		}
+	}
+	if hop == nil || !hop.SetCookie {
+		t.Fatalf("on-demand redirect hop not listed for policies: %+v", r.Resources)
+	}
+	if r.LazyWireBytes != chunk+hop.WireBytes || hop.WireBytes == 0 {
+		t.Fatalf("lazy bytes = %d, want chunk %d + hop %d", r.LazyWireBytes, chunk, hop.WireBytes)
+	}
+	if r.EvaluatePolicies()[PolicyNoCookie].Pass {
+		t.Fatal("a cookie set on an on-demand redirect hop passed no-cookie")
+	}
+}
+
 func TestCheckUpdateAndRatchet(t *testing.T) {
 	srv := testServer(t)
 	r, err := Crawl(context.Background(), Options{}, "app", srv.URL, "/page")
