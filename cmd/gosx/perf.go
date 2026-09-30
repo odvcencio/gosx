@@ -93,6 +93,11 @@ func cmdPerf() {
 		}
 		fatal("gosx perf: %v", err)
 	}
+	if strings.TrimSpace(*budgetPath) != "" {
+		// A budget gate must not judge a page by a mid-load renderer
+		// recovery; measure such a page once more before evaluating.
+		perf.RetryRecoveredPages(scenario, report)
+	}
 
 	if *jsonOut {
 		data, err := perf.FormatJSON(report)
@@ -149,8 +154,24 @@ func cmdPerf() {
 			fatal("gosx perf: budget: %v", err)
 		}
 		fmt.Fprint(os.Stderr, perf.FormatBudgetResult(result))
+		annotateInconclusiveBudgetPages(result)
 		if !result.Passed {
 			os.Exit(1)
+		}
+	}
+}
+
+// annotateInconclusiveBudgetPages raises a GitHub Actions warning for each
+// page whose budget was inconclusive, so a skipped verdict shows on the check
+// summary instead of only in the log.
+func annotateInconclusiveBudgetPages(result perf.BudgetCheckResult) {
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
+		return
+	}
+	for _, page := range result.Pages {
+		if page.Inconclusive {
+			fmt.Fprintf(os.Stderr, "::warning title=perf budget inconclusive::%s: the renderer recovered (%s) while the page was measured (and on its retry, when one ran), so failed load budgets were not enforced (renderer %q)\n",
+				page.URL, page.Recovery, page.Renderer)
 		}
 	}
 }
@@ -244,6 +265,7 @@ func cmdPerfBudget() {
 	} else {
 		fmt.Print(perf.FormatBudgetResult(result))
 	}
+	annotateInconclusiveBudgetPages(result)
 
 	if !result.Passed {
 		os.Exit(1)
