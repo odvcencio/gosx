@@ -1607,6 +1607,40 @@ func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
 	}
 }
 
+// TestScenePageNamesTheTextlayoutChunk guards the black-screen bug of
+// 2026-09-29. A Scene3D page can request the text-layout chunk (a label, or a
+// manifest the client's label test matches), so its summary must carry the
+// hashed URL. Without it the client loads an unhashed /gosx/ URL that a
+// hashed-only deployment does not serve.
+func TestScenePageNamesTheTextlayoutChunk(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                  buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:           buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:    buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: "bootstrap-feature-textlayout.c072.js", Hash: "c072"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{
+		Name:  "GoSXScene3D",
+		Kind:  engine.KindSurface,
+		Props: json.RawMessage(`{"label":"A beach","labels":[{"id":"sign","text":"Blackglass"}]}`),
+	}, gosx.Text(""))
+	summary := r.Summary()
+	if summary.BootstrapMode == "none" || !summary.Bootstrap {
+		t.Fatalf("scene page ships no bootstrap: %+v", summary)
+	}
+	if got, want := summary.BootstrapFeatureTextLayoutPath, "/gosx/assets/runtime/bootstrap-feature-textlayout.c072.js"; got != want {
+		t.Fatalf("summary text-layout chunk URL = %q, want %q", got, want)
+	}
+	if hints := gosx.RenderHTML(r.PreloadHints()); strings.Contains(hints, "bootstrap-feature-textlayout") {
+		t.Errorf("text-layout chunk emitted as a preload hint: %s", hints)
+	}
+}
+
 // scene3DChunkGateRenderer builds a renderer with every Scene3D chunk resolved
 // from a manifest, then registers one GoSXScene3D engine with the given props.
 // It returns the rendered bootstrap script markup.
