@@ -69,3 +69,99 @@ function sceneOceanCloudWebGL(gl,program,opts,data) {
   if(!sceneAtmosphereQuality(opts.meta).clouds)data[44]=0;
   gl.uniform4fv(gl.getUniformLocation(program,"u_cloud[0]"),data);
 }
+
+const SCENE_ATMOSPHERE_GLSL_COMMON = [
+ "float atmosphereHash(vec2 p) { return fract(52.9829189*fract(dot(p,vec2(0.06711056,0.00583715)))); }",
+ "vec3 atmosphereWorld(vec2 uv,float depth) {",
+ " vec4 p=mat4(u_atmo[0],u_atmo[1],u_atmo[2],u_atmo[3])*vec4(uv*2.-1.,depth*2.-1.,1.); return p.xyz/p.w;",
+ "}"
+].join("\n");
+
+const SCENE_ATMOSPHERE_GLSL_HAZE = [
+ "float depth=texture(u_depth,v_uv).r;",
+ " if(depth<0.999999) {",
+ "  vec3 world=atmosphereWorld(v_uv,depth),delta=world-u_atmo[4].xyz;",
+ "  float distance=length(delta);vec3 ray=delta/max(distance,1e-4);",
+ "  float h=clamp(u_atmo[5].y*delta.y,-40.,40.);",
+ "  float integral=abs(h)<0.001?1.-h*0.5:(1.-exp(-h))/h;",
+ "  float optical=u_atmo[5].x*distance*exp(-u_atmo[5].y*max(u_atmo[4].y,0.))*integral;",
+ "  float transmittance=exp(-min(optical,40.));",
+ "  vec3 horizon=gosxPhysicalSky(normalize(vec3(ray.x,0.025,ray.z)),u_atmo[6],u_atmo[7],vec4(u_atmo[8].xyz,2.),u_atmo[9].x)*u_atmo[12].z;",
+ "  float mu=max(dot(ray,u_atmo[8].xyz),0.);",
+ "  float forward=pow(mu,12.)*u_atmo[5].z;",
+ "  vec3 scatter=mix(horizon,u_atmo[14].xyz*0.7,forward);",
+ "  color=mix(scatter,color,transmittance);",
+ "  color+=vec3(atmosphereHash(gl_FragCoord.xy)-0.5)*(1.-transmittance)/1024.;",
+ " }"
+].join("\n");
+
+const SCENE_ATMOSPHERE_GLSL_RAYS = [
+ "vec3 shafts=vec3(0.);",
+ " if(u_atmo[10].z>0.5 && u_atmo[11].x>0.) {",
+ "  vec2 stepUV=(v_uv-u_atmo[10].xy)*u_atmo[11].z/max(u_atmo[11].w,1.);",
+ "  vec2 sampleUV=v_uv-stepUV*(0.5+atmosphereHash(gl_FragCoord.xy)*0.25);",
+ "  float weight=1.,sum=0.,normalization=0.;",
+ "  for(int i=0;i<64;i++) {",
+ "   if(float(i)>=u_atmo[11].w)break;",
+ "   float mask=0.;",
+ "   if(all(greaterThan(sampleUV,vec2(0.))) && all(lessThan(sampleUV,vec2(1.)))) {",
+ "    float visible=step(0.999999,texture(u_depth,sampleUV).r);",
+ "    vec2 r=sampleUV-u_atmo[10].xy;",
+ "    mask=visible*exp(-dot(r,r)/0.012);",
+ "   }",
+ "   sum+=mask*weight;normalization+=weight;weight*=u_atmo[11].y;sampleUV-=stepUV;",
+ "  }",
+ "  float lowSun=1.-smoothstep(0.15,0.8,u_atmo[8].y);",
+ "  shafts=u_atmo[14].xyz*u_atmo[11].x*sum/max(normalization,1e-3)*(0.15+0.85*lowSun);",
+ " }",
+ " color+=shafts;"
+].join("\n");
+
+const SCENE_ATMOSPHERE_GLSL_GRAIN = [
+ "float grain=(atmosphereHash(gl_FragCoord.xy)-0.5)*u_atmo[12].y;",
+ " color=clamp(color+grain*(0.4+0.6*sqrt(max(dot(color,vec3(0.2126,0.7152,0.0722)),0.))),0.,1.);"
+].join("\n");
+function sceneAtmospherePostGLSL(effect,rayOnly) {
+ const needsDepth=rayOnly || effect.haze;
+ return ["#version 300 es","precision highp float; precision highp sampler2D;",
+   "in vec2 v_uv; out vec4 fragColor; uniform sampler2D u_texture; uniform vec4 u_atmo[15];",
+   needsDepth?"uniform sampler2D u_depth;":"",
+   !rayOnly && effect.rays?"uniform sampler2D u_shafts;":"",
+   SCENE_ATMOSPHERE_GLSL_COMMON,
+   effect.haze?sceneSkyPhysicalSource("glsl"):"",effect.agx?sceneAgXSource("glsl"):"",
+   "void main(){",rayOnly?"vec3 color=vec3(0.);":"vec3 color=texture(u_texture,v_uv).rgb;",
+   !rayOnly && effect.haze?SCENE_ATMOSPHERE_GLSL_HAZE:"",
+   rayOnly?SCENE_ATMOSPHERE_GLSL_RAYS:effect.rays?"color+=texture(u_shafts,v_uv).rgb;":"",
+   effect.agx?"color=gosxAgX(color*u_atmo[12].x); color=mix(1.055*pow(color,vec3(1./2.4))-.055,color*12.92,lessThanEqual(color,vec3(.0031308)));":"",
+   effect.grain?SCENE_ATMOSPHERE_GLSL_GRAIN:"",
+   effect.agx || effect.grain?"color+=vec3(atmosphereHash(gl_FragCoord.xy)-0.5)/255.;":"",
+   "fragColor=vec4(max(color,vec3(0.)),1.);}",
+ ].join("\n");
+}
+function createSceneAtmospherePostWebGL(host) {
+ const gl=host.gl,data=new Float32Array(60);let rays=null;
+ function release(){if(rays)disposeScenePostFBO(gl,rays);rays=null;}
+ function pass(args,effect,target,w,h,rayOnly) {
+   const key="atmosphere:"+(rayOnly?"rays":sceneAtmospherePostKey(effect));
+   const program=host.getProgram(key,sceneAtmospherePostGLSL(effect,rayOnly));
+   if(!program)return args.input;
+   host.beginPostPass(program,args.input,target?target.fbo:null,w,h);
+   gl.uniform4fv(gl.getUniformLocation(program.program,"u_atmo[0]"),data);
+   if(rayOnly || effect.haze){scenePBRBindTexture(gl,1,args.depth,gl.TEXTURE_2D);gl.uniform1i(gl.getUniformLocation(program.program,"u_depth"),1);}
+   if(!rayOnly && effect.rays){scenePBRBindTexture(gl,2,rays.colorTex,gl.TEXTURE_2D);gl.uniform1i(gl.getUniformLocation(program.program,"u_shafts"),2);}
+   drawSceneFullscreenQuad(gl,host.quad.vao);return target?target.colorTex:null;
+ }
+ return {
+   begin:function(effects){if(!effects.some(e=>e.rays))release();},
+   apply:function(args){
+     sceneAtmospherePostUniforms(args.effect,args.context,false,data);
+     if(args.effect.rays){
+       const scale=sceneAtmosphereQuality(args.context.meta).raySamples<=12?0.25:0.5;
+       const w=Math.max(1,Math.round(args.width*scale)),h=Math.max(1,Math.round(args.height*scale));
+       if(!rays || rays.width!==w || rays.height!==h){release();rays=createScenePostFBO(gl,w,h,false);}
+       pass(args,{rays:args.effect.rays},rays,w,h,true);
+     }
+     return pass(args,args.effect,args.target,args.passWidth,args.passHeight,false);
+   },dispose:release,
+ };
+}

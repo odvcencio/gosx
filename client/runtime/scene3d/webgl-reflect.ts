@@ -146,18 +146,27 @@ function sceneReflectWebGLBind(gl, program, record) {
   });
 }
 function sceneReflectWebGLDrawOpaque(gl, ctx, view, proj) {
-  const cull = gl.isEnabled(gl.CULL_FACE);
-  gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
-  gl.useProgram(ctx.program);
-  gl.uniformMatrix4fv(ctx.uniforms.viewMatrix,false,view);
-  gl.uniformMatrix4fv(ctx.uniforms.projectionMatrix,false,proj);
-  const level = ctx.bundle.environment.ocean.level || 0;
-  gl.uniform3f(ctx.uniforms.cameraPosition,ctx.camera.x,2*level-ctx.camera.y,ctx.camera.z);
-  const list = ctx.list;
-  ctx.draw(sceneReflectOpaqueList(list.opaque,ctx.materials));
-  gl.useProgram(ctx.program);
-  gl.uniformMatrix4fv(ctx.uniforms.viewMatrix,false,ctx.view);
-  gl.uniformMatrix4fv(ctx.uniforms.projectionMatrix,false,ctx.proj);
-  gl.uniform3f(ctx.uniforms.cameraPosition,ctx.camera.x,ctx.camera.y,ctx.camera.z);
-  if (cull) gl.enable(gl.CULL_FACE);
+  const cull = gl.isEnabled(gl.CULL_FACE), level = ctx.bundle.environment.ocean.level || 0;
+  const originalView = new Float32Array(ctx.view), originalProj = new Float32Array(ctx.proj), cameraY = ctx.camera.y;
+  // Frame uploads in skinned/rigid programs read these retained arrays. Use
+  // the mirrored camera for every program, then restore before the ocean.
+  const maps = [ctx.visibility,ctx.batches].filter(Boolean), entries = maps.map(m => Array.from(m.entries()));
+  maps.forEach(m => m.clear());
+  ctx.view.set(view); ctx.proj.set(proj); ctx.camera.y = 2*level-cameraY;
+  try {
+    gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+    gl.useProgram(ctx.program);
+    gl.uniformMatrix4fv(ctx.uniforms.viewMatrix,false,ctx.view);
+    gl.uniformMatrix4fv(ctx.uniforms.projectionMatrix,false,ctx.proj);
+    gl.uniform3f(ctx.uniforms.cameraPosition,ctx.camera.x,ctx.camera.y,ctx.camera.z);
+    ctx.draw(sceneReflectOpaqueList(ctx.list.opaque,ctx.materials));
+  } finally {
+    ctx.view.set(originalView); ctx.proj.set(originalProj); ctx.camera.y = cameraY;
+    maps.forEach((m,i) => entries[i].forEach(([key,value]) => m.set(key,value)));
+    gl.useProgram(ctx.program);
+    gl.uniformMatrix4fv(ctx.uniforms.viewMatrix,false,ctx.view);
+    gl.uniformMatrix4fv(ctx.uniforms.projectionMatrix,false,ctx.proj);
+    gl.uniform3f(ctx.uniforms.cameraPosition,ctx.camera.x,ctx.camera.y,ctx.camera.z);
+    if (cull) gl.enable(gl.CULL_FACE);
+  }
 }

@@ -274,3 +274,8 @@ declare function sceneAtmosphereTier(state: any): any;
 declare function sceneCloudWebGLDraw(resources: any, gl: any, opts: any): void;
 declare function sceneCloudWebGPUDraw(resources: any, device: any, pass: any, opts: any): void;
 declare function sceneCloudDispose(resources: any): void;
+
+declare function sceneAtmosphereBundle(bundle: any, meta: any): any;
+declare function sceneAtmosphereEffects(effects: any, env: any, meta: any): any;
+declare function createSceneAtmospherePostWebGL(host: any): any;
+declare function createSceneAtmospherePostWebGPU(host: any): any;

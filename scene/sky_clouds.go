@@ -21,11 +21,11 @@ func normalizeSkyClouds(c *SkyClouds) *SkyClouds {
 		return nil
 	}
 	out := *c
-	out.Coverage = clampSkyParam(c.Coverage, 0, 1)
-	out.Altitude = clampSkyParam(c.Altitude, 100, 12000)
-	out.Scale = clampSkyParam(c.Scale, 100, 20000)
-	out.Speed = clampSkyParam(c.Speed, 0, 100)
+	out.Coverage = clampAtmosphereParam(c.Coverage, 0, 1)
+	out.Altitude = clampAtmosphereParam(c.Altitude, 100, 12000)
+	out.Scale = clampAtmosphereParam(c.Scale, 100, 20000)
+	out.Speed = clampAtmosphereParam(c.Speed, 0, 100)
 	out.Direction = normalizeOceanWindDirection(c.Direction)
-	out.Opacity = clampSkyParam(c.Opacity, 0, 1)
+	out.Opacity = clampAtmosphereParam(c.Opacity, 0, 1)
 	return &out
 }

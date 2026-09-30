@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in height haze, depth-occluded sun shafts, AgX tone mapping and stable film grain on both Scene3D GPU backends. Shafts and haze compose before bloom; adaptive quality reduces shaft samples before shedding atmosphere targets.
+
 - Add optional drifting, physically lit clouds to Scene3D physical skies and ocean sky reflections on both GPU backends, with filtered noise and adaptive shedding.
 
 - Add opt-in ocean geometry reflections on WebGL2 and WebGPU: bounded SSR, a reduced mirrored PBR fallback, an anisotropic sun path, and adaptive quality shedding.

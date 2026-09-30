@@ -4199,6 +4199,7 @@
     var currentWidth = 0;
     var currentHeight = 0;
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
     var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
     // Same memoization pattern as the renderer's wgpuCachedBindGroup: a bind
     // group stays valid while the layout and every bound resource identity
@@ -4436,7 +4437,7 @@
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
-      mipBloom.dispose();
+      mipBloom.dispose(); atmospherePost.dispose();
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
@@ -4545,7 +4546,8 @@
         return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
-      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera, atmosphereContext = {}) {
+        atmospherePost.begin(effects);
         ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
@@ -4585,6 +4587,7 @@
           activePostIndex = i;
 
           switch (effect.kind) {
+            case "atmosphere": currentTexView = atmospherePost.apply({encoder, input: currentTexView, effect, output: outputView, width: scaledW, height: scaledH, context: atmosphereContext}); break;
             case SCENE_POST_TONE_MAPPING: {
               var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout());
               var buf = getParamBuffer("toneMapping", 16);
@@ -4861,7 +4864,7 @@
       },
 
       dispose: function() {
-        mipBloom.dispose();
+        mipBloom.dispose(); atmospherePost.dispose();
         disposed = true;
         if (sceneTex) sceneTex.destroy();
         if (auxTex) auxTex.destroy();
@@ -18272,6 +18275,7 @@
       // instance — a scene that persistently fails post-FX allocation/
       // validation retries RAW rendering instead of drawing dead frames
       // forever with a poisoned post-FX target.
+      bundle = sceneAtmosphereBundle(bundle, frameMeta);
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
@@ -18884,7 +18888,7 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera));
+        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, { environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);

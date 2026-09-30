@@ -23,7 +23,7 @@ func normalizeOceanReflections(r *OceanReflections) *OceanReflections {
 	default:
 		return nil
 	}
-	out.Resolution = clampSkyParam(r.Resolution, 0.125, 1)
-	out.Strength = clampSkyParam(r.Strength, 0, 1)
+	out.Resolution = clampAtmosphereParam(r.Resolution, 0.125, 1)
+	out.Strength = clampAtmosphereParam(r.Strength, 0, 1)
 	return &out
 }

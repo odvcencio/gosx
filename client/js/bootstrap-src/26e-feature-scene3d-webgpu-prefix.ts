@@ -95,6 +95,11 @@
   var sceneSkyClouds = sceneApi.sceneSkyClouds;
   var sceneCloudDispose = sceneApi.sceneCloudDispose;
   var sceneCloudUniformData = sceneApi.sceneCloudUniformData;
+  var sceneAtmosphereBundle = sceneApi.sceneAtmosphereBundle;
+  var sceneAtmosphereEffects = sceneApi.sceneAtmosphereEffects;
+  var sceneAtmospherePostUniforms = sceneApi.sceneAtmospherePostUniforms;
+  var sceneAgXSource = sceneApi.sceneAgXSource;
+  var sceneAtmospherePostKey = sceneApi.sceneAtmospherePostKey;
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;

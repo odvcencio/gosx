@@ -43,3 +43,9 @@ test("WebGL allocates reflections only when enabled and disposes snapshots",() =
  h.renderer.render(b,{width:320,height:180},{qualityEnabled:true,qualityProfile:{tier:"survival"}});assert.ok(gl.ops.some(x=>x[0]==="deleteFramebuffer"));h.renderer.dispose();assert.deepEqual(h.warnLog,[]);
 });
 module.exports={glSupport,scene};
+
+test("WebGL planar fallback draws built-in PBR outside the walking camera cull",()=>{
+ const h=createWebGLRendererForPost({fresh:true}),gl=h.canvas.getContext("webgl2");glSupport(gl);const b=scene();b.camera.y=1.7;
+ b.meshObjects=[{id:"reflection-quad",kind:"box",materialIndex:0,directVertices:true,vertexOffset:0,vertexCount:4,bounds:{minX:99,minY:0,minZ:0,maxX:101,maxY:2,maxZ:0},vertices:{count:4,positions:new Float32Array([99,0,0,101,0,0,101,2,0,99,2,0]),normals:new Float32Array([0,0,1,0,0,1,0,0,1,0,0,1]),uvs:new Float32Array([0,0,1,0,1,1,0,1]),indices:new Uint32Array([0,1,2,0,2,3])}}];b.materials=[{baseColor:"#ffffff",roughness:0.5}];
+ h.renderer.render(b,{width:320,height:180});assert.ok(gl.ops.some(op=>op[0]==="drawElements"));assert.equal(b.camera.y,1.7);h.renderer.dispose();assert.deepEqual(h.warnLog,[]);
+});

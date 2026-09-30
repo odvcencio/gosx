@@ -118,6 +118,7 @@ type IREnvironment struct {
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
 	Sky              *Sky           `json:"sky,omitempty"`
 	Ocean            *Ocean         `json:"ocean,omitempty"`
+	Haze             *Haze          `json:"haze,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Background       string         `json:"background,omitempty"`
@@ -944,6 +945,7 @@ func environmentToIR(background string, environment EnvironmentIR) IREnvironment
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		Sky:              normalizeSky(environment.Sky),
 		Ocean:            normalizeOcean(environment.Ocean),
+		Haze:             normalizeHaze(environment.Haze),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Background:       strings.TrimSpace(background),
