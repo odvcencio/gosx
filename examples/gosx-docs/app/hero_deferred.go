@@ -22,13 +22,13 @@ func HomeHero() gosx.Node {
 	renderer := island.NewRenderer("docs-home-hero")
 	mount := renderer.RenderEngine(HeroScene().EngineConfig(), gosx.Text(""))
 	return gosx.Fragment(
-		gosx.El("div", gosx.Attrs("class", "hero__still"),
-			gosx.El("span", gosx.Attrs("class", "hero__still-ring")),
-			gosx.El("span", gosx.Attrs("class", "hero__still-orb")),
-			gosx.El("span", gosx.Attrs("class", "hero__still-box")),
-			gosx.El("span", gosx.Attrs("class", "hero__still-pyramid")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "hero__still")),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "hero__still-ring"))),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "hero__still-orb"))),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "hero__still-box"))),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "hero__still-pyramid"))),
 		),
-		gosx.El("template", gosx.Attrs("data-home-hero", ""),
+		gosx.El("template", gosx.Attrs(gosx.BoolAttr("data-home-hero")),
 			gosx.RawHTML(`<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}body>div{width:100%;height:100%}</style>`),
 			mount, renderer.ManifestScript(), renderer.BootstrapScript(),
 		),

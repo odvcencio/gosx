@@ -14,12 +14,18 @@ func TestHomeHeroKeepsSceneScriptsInsideInertTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var eager, deferred, mounts int
+	var eager, deferred, mounts, templates, stills int
 	var walk func(*html.Node, bool)
 	walk = func(n *html.Node, inert bool) {
 		inert = inert || n.Type == html.ElementNode && n.Data == "template"
 		if n.Type == html.ElementNode {
 			for _, attr := range n.Attr {
+				if attr.Key == "class" && attr.Val == "hero__still" {
+					stills++
+				}
+				if n.Data == "template" && attr.Key == "data-home-hero" {
+					templates++
+				}
 				if n.Data == "script" && attr.Key == "src" {
 					if inert {
 						deferred++
@@ -40,8 +46,8 @@ func TestHomeHeroKeepsSceneScriptsInsideInertTemplate(t *testing.T) {
 		}
 	}
 	walk(doc, false)
-	if eager != 0 || deferred == 0 || mounts != 1 {
-		t.Fatalf("script/mount contract: eager=%d deferred=%d mounts=%d", eager, deferred, mounts)
+	if eager != 0 || deferred == 0 || mounts != 1 || templates != 1 || stills != 1 {
+		t.Fatalf("script/mount contract: eager=%d deferred=%d mounts=%d templates=%d stills=%d", eager, deferred, mounts, templates, stills)
 	}
 }
 
