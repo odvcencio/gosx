@@ -11,7 +11,7 @@
  * @property {number} drawWidth
  * @property {number} drawHeight
  */
-  function scenePhoneDevicePixelRatioCap(capability) {
+  function scenePhoneDevicePixelRatioCap(capability: any) {
     const environment = sceneEnvironmentState() || {};
     const coarse = Boolean(capability && capability.coarsePointer) || sceneMediaQueryMatches("(pointer: coarse)");
     const display = typeof window !== "undefined" && window.screen;

@@ -963,7 +963,7 @@ func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 
 	preloads := gosx.RenderHTML(r.PreloadHints())
-	if strings.Contains(preloads, "bootstrap-feature-scene3d") {
+	if strings.Contains(preloads, `href="`+r.selectedBootstrapFeaturePath("scene3d")+`"`) {
 		t.Fatalf("scene3d bundle must not be preloaded — it is already a same-document <script defer> tag: %s", preloads)
 	}
 	if !strings.Contains(preloads, "bootstrap-feature-engines") {
@@ -1746,11 +1746,9 @@ func TestCompressionPolicyAloneReceivesTheDecompressURL(t *testing.T) {
 	}
 }
 
-// TestGatedScene3DChunksAreNeverEmittedEagerly is the sibling of
-// TestTextlayoutChunkIsNeverEmittedEagerly. An eager script tag or a preload
-// hint would download the chunk on every page and cancel the saving silently:
-// no size budget measures per-page transfer, so nothing else can see it.
-func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
+// Required chunks download through scene-driven hints but execute only when
+// the runtime needs them. Unrelated pages are covered by TestSceneDrivenPreloads.
+func TestRequiredScene3DChunksPreloadWithoutEagerScriptTags(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                         buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -1790,8 +1788,8 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		if strings.Contains(scripts, `src="/gosx/assets/runtime/`+chunk+`"`) {
 			t.Errorf("%s is loaded eagerly as a script tag, which cancels the split:\n%s", chunk, scripts)
 		}
-		if strings.Contains(hints, chunk) {
-			t.Errorf("%s is emitted as a preload hint, which downloads it on every page:\n%s", chunk, hints)
+		if !strings.Contains(hints, chunk) {
+			t.Errorf("%s must be preloaded for this scene:\n%s", chunk, hints)
 		}
 	}
 }
@@ -1810,6 +1808,8 @@ func TestSceneDrivenPreloads(t *testing.T) {
 		{"compute and decompress", `{"compression":{},"scene":{"computeParticles":[{}]}}`, true, []string{"scene3d-compute.js", "scene3d-decompress.js"}, nil},
 		{"instanced GLB", `{"scene":{"instancedGLBMeshes":[{"src":"/crowd.glb"}]}}`, true, []string{"scene3d-gltf.js", `href="/crowd.glb" as="fetch"`}, nil},
 		{"IBL", `{"scene":{"environment":{"ibl":{"radiance":{"uri":"/radiance.ktx2"},"irradiance":{"uri":"/irradiance.ktx2"},"brdfLUT":{"uri":"/brdf.ktx2"}}}}}`, true, []string{"scene3d-gltf.js", `href="/radiance.ktx2" as="fetch"`}, nil},
+		{"texture containers", `{"forceWebGL":true,"scene":{"objects":[{"texture":"/unused.jpg","textureDescriptors":{"baseColor":{"uri":"/albedo.ktx2?v=1"}}}],"environment":{"envMap":"/lighting.hdr"}}}`, true, []string{"scene3d-gltf.js", `href="/albedo.ktx2?v=1" as="fetch"`, `href="/lighting.hdr" as="fetch"`}, []string{"/unused.jpg"}},
+		{"animated crowd", `{"scene":{"instancedGLBMeshes":[{"src":"/crowd.glb","instances":[{"animation":"walk"}]}]}}`, true, []string{"scene3d-animation.js"}, nil},
 		{"water", `{"scene":{"waterSystems":[{"tileTexture":"/tile.jpg","cubeMap":"/sky/{face}.jpg"}]}}`, true, []string{`href="/tile.jpg" as="image"`, `href="/sky/ypos.jpg" as="image"`}, []string{"yneg.jpg"}},
 	}
 	for _, tc := range cases {
@@ -1831,6 +1831,11 @@ func TestSceneDrivenPreloads(t *testing.T) {
 			r.RenderEngine(cfg, gosx.Text(""))
 			r.RenderEngine(cfg, gosx.Text(""))
 			hints := gosx.RenderHTML(r.PreloadHints())
+			for _, absent := range tc.absent {
+				if absent == "scene3d-webgpu.js" && strings.Contains(gosx.RenderHTML(r.BootstrapScript()), `data-gosx-script="feature-scene3d-webgpu-loader"`) {
+					t.Error("WebGL-only scene emitted an eager WebGPU loader")
+				}
+			}
 			for _, want := range tc.want {
 				if !strings.Contains(hints, want) {
 					t.Errorf("missing %q: %s", want, hints)

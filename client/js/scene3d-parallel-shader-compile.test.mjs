@@ -5,6 +5,11 @@ import vm from "node:vm";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
+const requireRuntime = createRequire(new URL("../runtime/package.json", import.meta.url));
+const ts = requireRuntime("typescript");
+function runSource(source, context) {
+  return vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+}
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 const webglSource = readSceneRendererBackendSrc("webgl");
 
@@ -41,7 +46,7 @@ const rendererFactorySource = sourceBetween(
   "if (typeof window !== \"undefined\")",
 );
 
-function shaderHarness({ extension = true, linkOK = true } = {}) {
+function shaderHarness({ extension = true, linkOK = true, scheduler = false } = {}) {
   let sequence = 0;
   let complete = false;
   let current = true;
@@ -50,6 +55,7 @@ function shaderHarness({ extension = true, linkOK = true } = {}) {
   let scheduleID = 0;
   const completionStatus = 91;
   const gl = {
+    canvas: { dispatchEvent(event) { calls.push(["programReadyEvent", event.type, event.bubbles]); } },
     VERTEX_SHADER: 1,
     FRAGMENT_SHADER: 2,
     LINK_STATUS: 3,
@@ -101,6 +107,7 @@ function shaderHarness({ extension = true, linkOK = true } = {}) {
     WeakMap,
     Promise,
     Date,
+    Event,
     SCENE_PBR_VERTEX_SOURCE: "base vertex",
     SCENE_PBR_CROWD_VERTEX_SOURCE: "crowd vertex",
     SCENE_PBR_INSTANCED_VERTEX_SOURCE: "instanced vertex",
@@ -120,9 +127,12 @@ function shaderHarness({ extension = true, linkOK = true } = {}) {
     },
     clearTimeout(id) { scheduled.delete(id); },
   });
-  vm.runInContext(initialProgramSource, context);
-  vm.runInContext(baseFactorySource, context);
-  vm.runInContext(instancedFactorySource, context);
+  runSource(initialProgramSource, context);
+  runSource(baseFactorySource, context);
+  runSource(instancedFactorySource, context);
+  if (scheduler) {
+    runSource(sourceBetween(webglSource, "function scenePBRCompileShader", "// --- Light Uniform Upload"), context);
+  } else {
   context.scenePBRCompileShader = (targetGL, type) => {
     calls.push(["syncCompile", type]);
     return targetGL.createShader(type);
@@ -131,6 +141,7 @@ function shaderHarness({ extension = true, linkOK = true } = {}) {
     calls.push(["syncLink"]);
     return targetGL.createProgram();
   };
+  }
   return {
     context,
     gl,
@@ -237,7 +248,7 @@ test("constructor failure after base consume releases all warm records", async (
     assert.ok(h.context.scenePBRTakeInitialProgram(targetGL, "base"));
     throw new Error("constructor failed after consume");
   };
-  vm.runInContext(rendererFactorySource, h.context);
+  runSource(rendererFactorySource, h.context);
   assert.equal(h.context.createScenePBRRendererOrFallback(h.gl, {}, {}), null);
   assert.equal(callsNamed(h, "deleteProgram").length, 2);
   assert.equal(callsNamed(h, "deleteShader").length, 4);
@@ -295,7 +306,7 @@ test("initial context options are reused and crowd warming is narrowly requested
     sceneCanvasAlpha: props => Boolean(props && props.alpha),
     prepareScenePBRInitialPrograms: async gl => ({ gl }),
   });
-  vm.runInContext(contextSource, context);
+  runSource(contextSource, context);
 
   const gl = {};
   const requests = [];
@@ -330,4 +341,89 @@ test("mount fences private hydration state at the new async abandonment boundary
   const mountSource = fs.readFileSync(new URL("../runtime/scene3d/mount.ts", import.meta.url), "utf8");
   assert.match(mountSource, /await prepareSceneInitialWebGLRenderer\([\s\S]*?if \(!scene3DFactoryOwned\(\)\) \{[\s\S]*?discardSceneInitialWebGLRenderer\(initialShaderPreparation\);[\s\S]*?invalidateSceneModelHydration\(sceneState\);[\s\S]*?settleSceneModelTextureVariantScope/);
   assert.match(mountSource, /catch \(error\) \{\s*discardSceneInitialWebGLRenderer\(initialShaderPreparation\);/);
+});
+
+function submitProgram(h, label) {
+  const vertex = h.context.scenePBRCompileShader(h.gl, h.gl.VERTEX_SHADER, label + " vertex");
+  const fragment = h.context.scenePBRCompileShader(h.gl, h.gl.FRAGMENT_SHADER, label + " fragment");
+  return h.context.scenePBRLinkProgram(h.gl, vertex, fragment, label);
+}
+
+function waterPassHarness(h, program) {
+  for (const name of ["bindFramebuffer", "viewport", "disable", "useProgram", "activeTexture", "bindTexture", "bindVertexArray", "drawArrays"]) {
+    h.gl[name] = (...args) => h.calls.push([name, ...args]);
+  }
+  Object.assign(h.context, {
+    gl: h.gl, programs: { simulation: { program, descriptor: {} } },
+    states: [{ tex: {}, fbo: {} }, { tex: {}, fbo: {} }], current: 0,
+    resolution: 64, emptyVAO: {}, sceneWaterApplyPassUniforms() {},
+  });
+  runSource(sourceBetween(webglSource, "function runPass(name, values)", "var normalDirty"), h.context);
+}
+
+test("all programs submit before polling and defer locations until completion", () => {
+  const h = shaderHarness({ scheduler: true });
+  const programs = ["shadow", "points", "Selena"].map(label => submitProgram(h, label));
+  const info = h.context.scenePBRDeferredProgramInfo(h.gl, programs[1], () => ({
+    program: programs[1], attributes: { position: h.gl.getAttribLocation(programs[1], "a_position") },
+    uniforms: { model: h.gl.getUniformLocation(programs[1], "u_model") },
+  }));
+  const attributes = info.attributes, uniforms = info.uniforms;
+  assert.equal(callsNamed(h, "linkProgram").length, 3);
+  assert.equal(callsNamed(h, "getProgramParameter").length, 0);
+  assert.equal(callsNamed(h, "getShaderParameter").length, 0);
+  assert.equal(callsNamed(h, "getAttribLocation").length, 0);
+  h.flushScheduled();
+  assert.equal(callsNamed(h, "getProgramParameter").length, 3);
+  assert.ok(callsNamed(h, "getProgramParameter").every(call => call[2] === 91));
+  assert.ok(programs.every(program => !h.context.scenePBRProgramReady(h.gl, program)));
+  assert.equal(callsNamed(h, "programReadyEvent").length, 0);
+  h.setComplete(true);
+  h.flushScheduled();
+  assert.ok(programs.every(program => h.context.scenePBRProgramReady(h.gl, program)));
+  assert.equal(info.attributes, attributes);
+  assert.equal(info.uniforms, uniforms);
+  assert.equal(info.attributes.position, 1);
+  assert.ok(info.uniforms.model);
+  assert.equal(h.context.scenePBRProgramsPending(h.gl), false);
+  assert.deepEqual(callsNamed(h, "programReadyEvent"), [["programReadyEvent", "gosx:scene3d:program-ready", true]]);
+});
+
+test("water does not bind or draw an unfinished program and draws after ready polling", () => {
+  const h = shaderHarness({ scheduler: true });
+  const program = submitProgram(h, "water");
+  waterPassHarness(h, program);
+  assert.equal(h.context.runPass("simulation", {}), false);
+  assert.equal(callsNamed(h, "useProgram").length, 0);
+  assert.equal(callsNamed(h, "drawArrays").length, 0);
+  h.flushScheduled();
+  assert.equal(h.context.runPass("simulation", {}), false);
+  h.setComplete(true);
+  h.flushScheduled();
+  assert.equal(h.context.runPass("simulation", {}), true);
+  assert.equal(callsNamed(h, "drawArrays").length, 1);
+});
+
+test("scheduler retains synchronous compilation without the extension", () => {
+  const h = shaderHarness({ scheduler: true, extension: false });
+  const program = submitProgram(h, "fallback");
+  assert.equal(callsNamed(h, "getShaderParameter").length, 2);
+  assert.equal(callsNamed(h, "getProgramParameter").filter(call => call[2] === h.gl.LINK_STATUS).length, 1);
+  assert.equal(h.context.scenePBRProgramReady(h.gl, program), true);
+  assert.equal(h.context.scenePBRProgramsPending(h.gl), false);
+  waterPassHarness(h, program);
+  assert.equal(h.context.runPass("simulation", {}), true);
+});
+
+test("failed links and disposed queues never draw", () => {
+  for (const dispose of [false, true]) {
+    const h = shaderHarness({ scheduler: true, linkOK: false });
+    const program = submitProgram(h, "failure");
+    waterPassHarness(h, program);
+    if (dispose) h.context.scenePBRDisposeProgramQueue(h.gl);
+    else { h.setComplete(true); h.flushScheduled(); }
+    assert.equal(h.context.runPass("simulation", {}), false);
+    assert.equal(callsNamed(h, "drawArrays").length, 0);
+    assert.equal(h.context.scenePBRProgramsPending(h.gl), false);
+  }
 });

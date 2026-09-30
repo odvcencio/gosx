@@ -9,33 +9,86 @@ import (
 )
 
 // Decode only preload-relevant fields; geometry and shader payloads stay raw.
+type scenePreloadTexture struct{ URI string }
+
 type scenePreloadRecord struct {
-	Src, PreviewSrc, FullSrc, Animation                                       string
-	Progressive                                                               bool
-	Texture, NormalMap, RoughnessMap, MetalnessMap, OcclusionMap, EmissiveMap string
-	TileTexture, CubeMap                                                      string
+	Src, PreviewSrc, FullSrc                                          string
+	Progressive                                                       bool
+	Animation, AnimationSeq                                           string
+	Instances                                                         []struct{ Animation string }
+	Texture, NormalMap, RoughnessMap, MetalnessMap                    string
+	OcclusionMap, EmissiveMap, SpecularIntensityMap, SpecularColorMap string
+	TileTexture, CubeMap                                              string
+	TextureDescriptors                                                struct {
+		BaseColor, Normal, Roughness, Metalness, Occlusion, Emissive scenePreloadTexture
+		SpecularIntensity, SpecularColor                             scenePreloadTexture
+	}
+}
+
+func (m scenePreloadRecord) textures() []string {
+	descriptors := m.TextureDescriptors
+	sources := []string{m.Texture, m.NormalMap, m.RoughnessMap, m.MetalnessMap, m.OcclusionMap, m.EmissiveMap, m.SpecularIntensityMap, m.SpecularColorMap}
+	for i, descriptor := range []scenePreloadTexture{descriptors.BaseColor, descriptors.Normal, descriptors.Roughness, descriptors.Metalness, descriptors.Occlusion, descriptors.Emissive, descriptors.SpecularIntensity, descriptors.SpecularColor} {
+		if strings.TrimSpace(descriptor.URI) != "" {
+			sources[i] = descriptor.URI
+		}
+	}
+	return sources
 }
 
 type scenePreloadProbe struct {
-	Scene                                                                               *scenePreloadProbe
-	ForceWebGL, RequireWebGL, PreferCanvas                                              bool
-	PreferWebGL                                                                         *bool
-	BackendCaps                                                                         *struct{ Capable []string }
-	Models, InstancedGLBMeshes, Objects, InstancedMeshes, Points, Sprites, WaterSystems []scenePreloadRecord
-	Animations                                                                          []json.RawMessage
-	Environment                                                                         struct {
+	Scene                                  *scenePreloadProbe
+	ForceWebGL, RequireWebGL, PreferCanvas bool
+	PreferWebGL                            *bool
+	BackendCaps                            *struct{ Capable []string }
+	Models                                 []scenePreloadRecord
+	InstancedGLBMeshes                     []scenePreloadRecord
+	Objects                                []scenePreloadRecord
+	InstancedMeshes                        []scenePreloadRecord
+	Points                                 []scenePreloadRecord
+	Sprites                                []scenePreloadRecord
+	WaterSystems                           []scenePreloadRecord
+	Animations                             []json.RawMessage
+	Environment                            struct {
 		EnvMap string
-		IBL    struct{ Radiance, Irradiance, BRDFLUT struct{ URI string } }
+		IBL    struct{ Radiance, Irradiance, BRDFLUT scenePreloadTexture }
 	}
+}
+
+func scenePreloadTextureDestination(src string) string {
+	parsed, err := url.Parse(src)
+	if err == nil {
+		lower := strings.ToLower(parsed.Path)
+		if strings.HasSuffix(lower, ".hdr") || strings.HasSuffix(lower, ".ktx2") {
+			return "fetch"
+		}
+	}
+	return "image"
+}
+
+func (r *Renderer) scene3DCanUseWebGPU() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props scenePreloadProbe
+		if len(entry.Props) != 0 && json.Unmarshal(entry.Props, &props) != nil {
+			return true
+		}
+		if gpu, _ := props.backends(); gpu {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *scenePreloadProbe) backends() (webgpu, webgl bool) {
 	webgpu, webgl = true, p.PreferWebGL == nil || *p.PreferWebGL
 	if p.ForceWebGL || p.RequireWebGL {
-		webgpu, webgl = false, true
+		return false, true
 	}
 	if p.PreferCanvas {
-		webgpu, webgl = false, false
+		return false, false
 	}
 	caps := p.BackendCaps
 	if p.Scene != nil && p.Scene.BackendCaps != nil {
@@ -81,6 +134,9 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 		}
 		gpu, gl := props.backends()
 		if r.usesSelectiveRuntimeBootstrap() {
+			if entry.ProgramRef != "" {
+				add(r.bootstrapFeatureScene3dCommandPath, "script")
+			}
 			if gpu {
 				add(r.bootstrapFeatureScene3dWebGPUPath, "script")
 			}
@@ -107,13 +163,36 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 				add(r.bootstrapFeatureScene3dGLTFPath, "script")
 			}
 			animated := len(s.Animations) > 0
-			for _, model := range s.Models {
-				animated = animated || model.Animation != ""
+			for _, list := range [][]scenePreloadRecord{s.Models, s.InstancedGLBMeshes} {
+				for _, model := range list {
+					animated = animated || model.Animation != "" || model.AnimationSeq != ""
+					for _, instance := range model.Instances {
+						animated = animated || instance.Animation != ""
+					}
+				}
 			}
 			if animated {
 				add(r.bootstrapFeatureScene3dAnimationPath, "script")
 			}
 		}
+		if r.usesSelectiveRuntimeBootstrap() {
+			for _, list := range [][]scenePreloadRecord{s.Objects, s.Models, s.InstancedMeshes, s.Points, s.Sprites} {
+				for _, m := range list {
+					for _, src := range m.textures() {
+						parsed, err := url.Parse(src)
+						if err == nil && strings.HasSuffix(strings.ToLower(parsed.Path), ".ktx2") {
+							add(r.bootstrapFeatureScene3dGLTFPath, "script")
+						}
+					}
+				}
+			}
+		}
+
+		parsedEnv, envErr := url.Parse(s.Environment.EnvMap)
+		if r.usesSelectiveRuntimeBootstrap() && envErr == nil && strings.HasSuffix(strings.ToLower(parsedEnv.Path), ".ktx2") {
+			add(r.bootstrapFeatureScene3dGLTFPath, "script")
+		}
+
 		// Preload one model per scene, preferring the initial progressive asset.
 		models := s.Models
 		if len(models) == 0 {
@@ -135,11 +214,14 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 				continue
 			}
 			m := list[0]
-			for _, src := range []string{m.Texture, m.NormalMap, m.RoughnessMap, m.MetalnessMap, m.OcclusionMap, m.EmissiveMap} {
-				add(src, "image")
+			for _, src := range m.textures() {
+				add(src, scenePreloadTextureDestination(src))
 			}
 		}
-		add(s.Environment.EnvMap, "image")
+		if len(s.Sprites) > 0 {
+			add(s.Sprites[0].Src, "image")
+		}
+		add(s.Environment.EnvMap, scenePreloadTextureDestination(s.Environment.EnvMap))
 		if ibl.Radiance.URI != "" && ibl.Irradiance.URI != "" && ibl.BRDFLUT.URI != "" {
 			for _, src := range []string{ibl.Radiance.URI, ibl.Irradiance.URI, ibl.BRDFLUT.URI} {
 				add(src, "fetch")

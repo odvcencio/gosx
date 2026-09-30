@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { createRequire } from "node:module";
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const source = fs.readFileSync(new URL("../runtime/scene3d/mount-viewport.ts", import.meta.url), "utf8");
 function viewport({ width = 390, height = 844, coarse = true, dpr = 3, max = 0, props = {}, screen = true } = {}) {
@@ -14,7 +16,7 @@ function viewport({ width = 390, height = 844, coarse = true, dpr = 3, max = 0, 
     sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
     defaultSceneMaxDevicePixelRatio: () => 2,
   });
-  vm.runInContext(source, context);
+  vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return context.sceneViewportFromMount(null, props, {
     baseWidth: 300, baseHeight: 200, responsive: false, explicitMaxDevicePixelRatio: max,
   }, null, { tier: "full", coarsePointer: coarse }, null);

@@ -132,6 +132,11 @@
     let sceneAnimationToggle = null;
     let sceneAnimationToggleBound = false;
 
+    function onSceneProgramsReady() { scheduleRender("shader-ready"); }
+    if (typeof mount.addEventListener === "function") {
+      mount.addEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
+    }
+
     function sceneAnimationState() {
       if (motion.reducedMotion) {
         return { wants: false, reason: "reduced-motion" };
@@ -3637,6 +3642,7 @@
       dragHandle.dispose();
       pickHandle.dispose();
       sceneControlHandle.dispose();
+      if (typeof mount.removeEventListener === "function") mount.removeEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
       renderer.dispose();
       disposeSceneHTMLTextureState(htmlTextureState);
       if (typeof releaseTextureLoadListener === "function") releaseTextureLoadListener();
