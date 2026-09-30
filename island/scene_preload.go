@@ -138,10 +138,14 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 			if entry.ProgramRef != "" {
 				add(r.bootstrapFeatureScene3dCommandPath, "script")
 			}
-			if gpu {
+			// Hint a renderer chunk only when the scene allows one backend.
+			// With both candidates the browser picks at runtime, and a hint
+			// for each would make every page download a renderer it never
+			// runs; the chosen chunk then loads on demand.
+			if gpu && !gl {
 				add(r.bootstrapFeatureScene3dWebGPUPath, "script")
 			}
-			if gl {
+			if gl && !gpu {
 				add(r.bootstrapFeatureScene3dWebGLPath, "script")
 			}
 			var chunks scene3DChunkProbe

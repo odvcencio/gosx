@@ -8,7 +8,7 @@ func Page() Node {
 				Scene3D starts downloading its first resources while the browser parses the page. You do not need app JavaScript or hand-written preload links.
 			</p>
 			<p>
-				The server reads each engine's scene data and emits script preloads for the WebGPU and WebGL2 backend candidates. A forced WebGL scene preloads WebGL2. A scene whose backend verdict allows only WebGPU preloads WebGPU. When both backends are candidates, both are preloaded so fallback can start sooner.
+				The server reads each engine's scene data and emits script preloads for the WebGPU and WebGL2 backend candidates. A forced WebGL scene preloads WebGL2. A scene whose backend verdict allows only WebGPU preloads WebGPU. When both backends are candidates, neither is preloaded: the browser chooses its backend at runtime and downloads only that renderer, so a WebGPU page does not pay for the WebGL2 renderer.
 			</p>
 			<p>
 				Scenes with models preload the glTF chunk. Authored animation, compute particles or instanced meshes, and compressed arrays or generated points preload their corresponding chunks. Image-based lighting products and authored KTX2 textures also preload the glTF chunk that carries the KTX2 reader. Shared scene programs preload the command chunk. Pages without Scene3D receive no Scene3D preloads.

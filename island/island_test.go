@@ -1803,8 +1803,11 @@ func TestSceneDrivenPreloads(t *testing.T) {
 		{"no scene", `{}`, false, nil, []string{"bootstrap-feature-scene3d", "as=\"image\"", "as=\"fetch\""}},
 		{"WebGL only", `{"forceWebGL":true,"scene":{"objects":[{"texture":"/albedo.jpg?x=1&y=2"}]}}`, true, []string{"scene3d-webgl.js", `href="/albedo.jpg?x=1&amp;y=2" as="image" crossorigin="anonymous"`}, []string{"scene3d-webgpu.js", "scene3d-gltf.js", "scene3d-compute.js"}},
 		{"WebGPU only", `{"scene":{"backendCaps":{"capable":["webgpu"]}}}`, true, []string{"scene3d-webgpu.js"}, []string{"scene3d-webgl.js", "scene3d-gltf.js"}},
-		{"GPU fallback", `{"scene":{}}`, true, []string{"scene3d-webgpu.js", "scene3d-webgl.js"}, []string{"scene3d-gltf.js"}},
-		{"unspecified backend verdict", `{"scene":{"backendCaps":{}}}`, true, []string{"scene3d-webgpu.js", "scene3d-webgl.js"}, nil},
+		// With both backends possible the browser chooses at runtime, so
+		// neither renderer chunk is hinted (each page downloads only the one
+		// it runs).
+		{"GPU fallback", `{"scene":{}}`, true, nil, []string{`scene3d-webgpu.js" as="script"`, `scene3d-webgl.js" as="script"`, "scene3d-gltf.js"}},
+		{"unspecified backend verdict", `{"scene":{"backendCaps":{}}}`, true, nil, []string{`scene3d-webgpu.js" as="script"`, `scene3d-webgl.js" as="script"`}},
 		{"backend aliases", `{"scene":{"backendCaps":{"capable":["WebGL2"]}}}`, true, []string{"scene3d-webgl.js"}, []string{"scene3d-webgpu.js"}},
 		{"glTF preview", `{"scene":{"models":[{"src":"/full.glb","progressive":true,"previewSrc":"/preview.glb","fullSrc":"/full.glb","animation":"walk"},{"src":"/later.glb"}]}}`, true, []string{"scene3d-gltf.js", "scene3d-animation.js", `href="/preview.glb" as="fetch" crossorigin="anonymous"`}, []string{"href=\"/full.glb\"", "href=\"/later.glb\""}},
 		{"compute and decompress", `{"compression":{},"scene":{"computeParticles":[{}]}}`, true, []string{"scene3d-compute.js", "scene3d-decompress.js"}, nil},
