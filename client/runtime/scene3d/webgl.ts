@@ -333,10 +333,20 @@
     // penumbra from the receiver-to-blocker distance, and then PCF with a
     // filter radius scaled to the penumbra. When softness is 0 we skip the
     // extra samples and just return a hard comparison.
+    // Receiver-plane depth bias. main() stores the world-position screen
+    // derivatives (gSdx/gSdy) in uniform control flow; shadowFactor projects
+    // them into this cascade's shadow UV and depth (rS = d depth / d uv), so
+    // every PCSS tap compares at the receiver's own depth under that tap. Wide
+    // kernels on sloped ground (sand under a low sun) then stop shadowing
+    // themselves in bands. Shaders that never set the globals keep rS = 0.
+    "vec3 gSdx=vec3(0),gSdy=vec3(0);",
     "float shadowFactor(highp sampler2DArray shadowMap, int layer, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    if (lightSpacePos.w <= 0.0) return 1.0;",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
+    "vec4 rX=lightSpaceMatrix*vec4(gSdx,0),rY=lightSpaceMatrix*vec4(gSdy,0);",
+    "vec3 dX=(rX.xyz-projCoords*rX.w)/lightSpacePos.w,dY=(rY.xyz-projCoords*rY.w)/lightSpacePos.w;",
+    "float rD=dX.x*dY.y-dX.y*dY.x;vec2 rS=abs(rD)>1e-14?clamp(vec2(dY.y*dX.z-dX.y*dY.z,dX.x*dY.z-dY.x*dX.z)/rD,-16.,16.):vec2(0);",
     "    if (projCoords.x < -1.0 || projCoords.x > 1.0 ||",
     "        projCoords.y < -1.0 || projCoords.y > 1.0 ||",
     "        projCoords.z < -1.0 || projCoords.z > 1.0) return 1.0;",
@@ -361,7 +371,7 @@
     "    for (int i = 0; i < 8; i++) {",
     "        vec2 offset = kPoissonDisk8[i] * texelSize * blockerRadius;",
     "        float d = texture(shadowMap, vec3(projCoords.xy + offset, float(layer))).r;",
-    "        if (receiverDepth - bias > d) {",
+    "        if (receiverDepth+dot(rS,offset) - bias > d) {",
     "            blockerDepthSum += d;",
     "            blockerCount += 1.0;",
     "        }",
@@ -385,7 +395,7 @@
     "    for (int i = 0; i < 8; i++) {",
     "        vec2 offset = kPoissonDisk8[i] * texelSize * filterRadius;",
     "        float d = texture(shadowMap, vec3(projCoords.xy + offset, float(layer))).r;",
-    "        shadow += (receiverDepth - bias > d) ? 0.0 : 1.0;",
+    "        shadow += (receiverDepth+dot(rS,offset) - bias > d) ? 0.0 : 1.0;",
     "    }",
     "    return shadow / 8.0;",
     "}",
@@ -469,6 +479,7 @@
     "}",
     "",
     "void main() {",
+    "gSdx=dFdx(v_worldPosition);gSdy=dFdy(v_worldPosition);",
     // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
     "    albedo *= v_instanceColor.rgb;",

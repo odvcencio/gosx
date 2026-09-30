@@ -684,7 +684,10 @@ const budgets = [
   // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
   // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
   // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
-  { file: "bootstrap.js", raw: 1_717_500, gzip: 476_600, brotli: 379_400 },
+  // WebGL receiver-plane shadow bias (per-tap depth slope for the PCSS
+  // blocker search and filter) adds 418 raw bytes of GLSL; raw target +500,
+  // gzip target +200.
+  { file: "bootstrap.js", raw: 1_718_000, gzip: 476_800, brotli: 379_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1984,9 +1987,11 @@ const routeBudgets = [
     // supported) adds about 840 raw bytes to the shared motion core.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_157_600,
-    gzip: 326_600,
-    brotli: 275_700,
+    // WebGL receiver-plane shadow bias adds 418 raw bytes to the WebGL chunk
+    // this route loads; raw target +500, gzip and Brotli targets +300.
+    raw: 1_158_100,
+    gzip: 326_900,
+    brotli: 276_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2157,9 +2162,10 @@ const routeBudgets = [
     // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
-    raw: 1_553_800,
-    gzip: 425_700,
-    brotli: 356_000,
+    // WebGL receiver-plane shadow bias: +418 raw bytes in the WebGL chunk; raw target +500, gzip +100, Brotli +300.
+    raw: 1_554_300,
+    gzip: 425_800,
+    brotli: 356_300,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
