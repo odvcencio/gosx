@@ -1,7 +1,9 @@
 package route
 
 import (
+	"compress/gzip"
 	"html"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/perf/wire"
 	"m31labs.dev/gosx/server"
 )
 
@@ -44,6 +47,9 @@ func Page() Node {
 		t.Fatalf("expected CSS link without inline rules: %s", page)
 	}
 	link[1] = html.UnescapeString(link[1])
+	if !wire.IsHashedURL(link[1]) {
+		t.Fatal("stylesheet URL must satisfy the immutable asset policy")
+	}
 	css := get(link[1])
 	if css.Code != http.StatusOK || !strings.Contains(css.Body.String(), "seagreen") ||
 		!strings.Contains(css.Body.String(), "data-gosx-s=") {
@@ -51,6 +57,23 @@ func Page() Node {
 	}
 	if css.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
 		t.Fatal("content-addressed stylesheet must be immutable")
+	}
+	compressedRequest := httptest.NewRequest(http.MethodGet, link[1], nil)
+	compressedRequest.Header.Set("Accept-Encoding", "br, gzip")
+	compressed := httptest.NewRecorder()
+	handler.ServeHTTP(compressed, compressedRequest)
+	if compressed.Header().Get("Content-Encoding") != "gzip" ||
+		!strings.Contains(compressed.Header().Get("Vary"), "Accept-Encoding") {
+		t.Fatal("stylesheet must negotiate compression for supported clients")
+	}
+	reader, err := gzip.NewReader(compressed.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(decoded) != css.Body.String() {
+		t.Fatalf("compressed stylesheet differs: %v", err)
 	}
 	conditional := httptest.NewRequest(http.MethodGet, link[1], nil)
 	conditional.Header.Set("If-None-Match", css.Header().Get("ETag"))

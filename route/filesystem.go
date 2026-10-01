@@ -13,6 +13,7 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/server"
 )
 
 // FilePage describes a discovered file-based page route.
@@ -293,7 +294,7 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 			return fmt.Errorf("ExternalCSS must be a local URL path prefix")
 		}
 		registrar.cssAssets = newFileCSSAssets(opts.ExternalCSS)
-		r.Handle(registrar.cssAssets.prefix+"{asset}", registrar.cssAssets)
+		r.Handle(registrar.cssAssets.prefix+"{asset}", server.GzipMiddleware()(registrar.cssAssets))
 	}
 	if err := registrar.registerSpecialPages(bundle); err != nil {
 		return err

@@ -42,7 +42,7 @@ func newFileCSSAssets(prefix string) *fileCSSAssets {
 }
 
 func (a *fileCSSAssets) put(text, source, path, scope string) string {
-	key := fmt.Sprintf("%x.css", sha256.Sum256([]byte(text)))
+	key := fmt.Sprintf("styles.%x.css", sha256.Sum256([]byte(text)))
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.files[source] = path
@@ -98,7 +98,7 @@ func restoreFileCSSAsset(file, key, scope string) ([]byte, bool) {
 	if scope != "" {
 		text = gosxcss.ScopeCSS(text, scope)
 	}
-	if fmt.Sprintf("%x.css", sha256.Sum256([]byte(text))) != key {
+	if fmt.Sprintf("styles.%x.css", sha256.Sum256([]byte(text))) != key {
 		return nil, false
 	}
 	return []byte(text), true
