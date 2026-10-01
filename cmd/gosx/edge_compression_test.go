@@ -47,9 +47,22 @@ const files = new Map([
   ["/styles.css.br", [br, "application/octet-stream"]],
   ["/small.txt", [Buffer.from("small"), "text/plain"]],
   ["/small.txt.br", [br, "application/octet-stream"]],
-  ["/app.wasm", [raw, "application/wasm"]],
-  ["/app.wasm.br", [br, "application/octet-stream"]],
 ]);
+// A valid WASM module with a custom section exceeds the sidecar size threshold.
+const wasm = Buffer.concat([
+  Buffer.from([0, 97, 115, 109, 1, 0, 0, 0, 0, 0x81, 0x10, 0]),
+  Buffer.alloc(2048),
+]);
+assert.equal(WebAssembly.validate(wasm), true);
+const binaryAssets = new Map([
+  ["/gosx/runtime.wasm", [wasm, "application/wasm"]],
+  ["/data.bin", [Buffer.alloc(4096, 0x80), "application/octet-stream"]],
+]);
+for (const [path, [body, type]] of binaryAssets) {
+  files.set(path, [body, type]);
+  files.set(path + ".br", [brotliCompressSync(body), "application/octet-stream"]);
+  files.set(path + ".gz", [gzipSync(body), "application/gzip"]);
+}
 let paths = [];
 const env = { ASSETS: { async fetch(request) {
   assert.equal(request.headers.get("Accept-Encoding"), "identity");
@@ -162,13 +175,45 @@ for (const [method, extra, status, body] of [
   assert.deepEqual(paths, ["/index.html"]);
 }
 
-for (const path of ["/small.txt", "/app.wasm"]) {
+for (const path of ["/small.txt"]) {
   paths = [];
   response = await worker.fetch(new Request("https://example.test" + path, { headers: { "Accept-Encoding": "br" } }), env);
   assert.equal(response.headers.get("Content-Encoding"), null);
   await response.arrayBuffer();
   assert.deepEqual(paths, [path]);
 }
+// Sidecar metadata verifies binary assets without sniffing compressed bytes or
+// requiring the original asset to have a text media type.
+for (const [path, [body, type]] of binaryAssets) {
+  for (const [accept, want] of [["br, gzip", "br"], ["gzip", "gzip"], ["br;q=0, gzip", "gzip"], ["identity", null], ["br;q=0, gzip;q=0", null]]) {
+    paths = [];
+    response = await worker.fetch(new Request("https://example.test" + path, { headers: { "Accept-Encoding": accept } }), env);
+    const expected = want ? files.get(path + (want === "br" ? ".br" : ".gz"))[0] : body;
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Content-Encoding"), want, path + " " + accept);
+    assert.equal(response.headers.get("Content-Type"), type);
+    assert.equal(response.headers.get("Content-Length"), String(expected.length));
+    assert.equal(response.headers.get("Vary"), "Origin, Accept-Encoding");
+    assert.equal(response.encodeBody, "manual");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
+    assert.deepEqual(paths, want ? [path, path + (want === "br" ? ".br" : ".gz")] : [path]);
+  }
+  // Successful HTML fallback responses are never treated as binary sidecars.
+  paths = [];
+  response = await worker.fetch(new Request("https://example.test" + path, { headers: { "Accept-Encoding": "br, gzip" } }), spaEnv);
+  assert.equal(response.headers.get("Content-Encoding"), null);
+  assert.equal(response.headers.get("Content-Type"), type);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), body);
+  assert.deepEqual(paths, [path, path + ".br", path + ".gz"]);
+  // Reject the Brotli HTML fallback, then serve the verified gzip sidecar.
+  paths = [];
+  response = await worker.fetch(new Request("https://example.test" + path, { headers: { "Accept-Encoding": "br, gzip" } }), mixedEnv);
+  assert.equal(response.headers.get("Content-Encoding"), "gzip");
+  assert.equal(response.headers.get("Content-Type"), type);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), files.get(path + ".gz")[0]);
+  assert.deepEqual(paths, [path, path + ".br", path + ".gz"]);
+}
+
 response = await worker.fetch(new Request("https://example.test/styles.css", { headers: { "Accept-Encoding": "br" } }), env);
 assert.equal(response.headers.get("Content-Encoding"), "br");
 assert.equal(response.headers.get("Content-Type"), "text/css");
