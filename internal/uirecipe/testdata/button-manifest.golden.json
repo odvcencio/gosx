@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "1.0.0",
+  "source": "https://github.com/odvcencio/gosx/tree/main/internal/uirecipe/recipes/v1",
+  "license": "MIT",
+  "provenance": "GoSX source-owned UI recipe catalog",
+  "recipes": [
+    {
+      "name": "button",
+      "version": "1.0.0",
+      "files": [
+        {
+          "path": "app/ui/button.gsx",
+          "sha256": "20c0f3ba37ec333d0054716963e5641cd7e1f3cab534a423fecc773c1dcf267c"
+        },
+        {
+          "path": "public/ui/button.css",
+          "sha256": "84d4eba6fd20ecc981902c9f1272c46138805e62d88109a31e6840f2236d2899"
+        }
+      ]
+    },
+    {
+      "name": "tokens",
+      "version": "1.0.0",
+      "files": [
+        {
+          "path": "public/ui/tokens.css",
+          "sha256": "83f9c6126bdc10ec305ab4a17a80aca6e768d9d2fd90d3e04f7e8b9462c81962"
+        }
+      ]
+    }
+  ]
+}
