@@ -6,7 +6,7 @@ set -euo pipefail
 # real-GPU frame, bundle, and install measurements into one checked-in JSON.
 
 repo_root=$(git rev-parse --show-toplevel)
-tools_dir=${SHOWCASE_TOOLS_DIR:?set SHOWCASE_TOOLS_DIR to a directory holding lh.sh and node_modules/{lighthouse,playwright}}
+tools_dir=${SHOWCASE_TOOLS_DIR:?set SHOWCASE_TOOLS_DIR to a directory holding lh.sh plus node_modules with lighthouse and playwright}
 base_url=${SHOWCASE_BASE_URL:-http://localhost:8118}
 evidence_dir=${SHOWCASE_EVIDENCE_DIR:-${TMPDIR:-/tmp}/gosx-showcase-receipts}
 dist_dir=${SHOWCASE_DIST_DIR:-$repo_root/examples/gosx-docs/dist}

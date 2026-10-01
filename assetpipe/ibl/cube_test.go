@@ -126,3 +126,30 @@ func TestBuildChainHalvesEachLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestCubeFromRadianceSamplesTexelCenters(t *testing.T) {
+	cube := CubeFromRadiance(4, func(d Vec3) (float64, float64, float64) {
+		if d.Y > 0.9 {
+			return math.NaN(), -1, 2
+		}
+		return d.X, d.Y, d.Z
+	})
+	for face := 0; face < 6; face++ {
+		for y := 0; y < 4; y++ {
+			for x := 0; x < 4; x++ {
+				d := FaceDirection(face, x, y, 4)
+				got := cube.Get(face, x, y)
+				if d.Y > 0.9 {
+					if got != (Vec3{0, 0, 2}) {
+						t.Fatalf("non-finite and negative samples must clamp to zero: %v", got)
+					}
+					continue
+				}
+				want := Vec3{math.Max(d.X, 0), math.Max(d.Y, 0), math.Max(d.Z, 0)}
+				if math.Abs(got.X-want.X) > 1e-6 || math.Abs(got.Y-want.Y) > 1e-6 || math.Abs(got.Z-want.Z) > 1e-6 {
+					t.Fatalf("face %d texel %d,%d = %v, want %v", face, x, y, got, want)
+				}
+			}
+		}
+	}
+}

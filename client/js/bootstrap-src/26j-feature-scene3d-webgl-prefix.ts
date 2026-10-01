@@ -167,6 +167,9 @@
   var SCENE_POST_FXAA = sceneApi.SCENE_POST_FXAA || "fxaa";
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
+  var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
+  var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
+  var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;

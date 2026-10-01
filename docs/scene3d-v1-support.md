@@ -50,6 +50,42 @@ dashboards, and interactive scenes. Its supported boundary is:
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
   the existing JavaScript, network, WASM, and performance budgets.
 
+## Opt-in walking
+
+Set `Props.Controls: scene.ControlFirstPerson` and `Props.Walk: &scene.Walk{}`
+for grounded browser navigation. Omitting Walk keeps the existing free camera.
+`scene.NewWalkGround(minX, minZ, sizeX, sizeZ, cols, rows, heights)` encodes a
+row-major heightfield (columns along +X, rows along +Z); invalid dimensions or
+sample counts panic. Sampling is bilinear and clamps at grid edges. Without a
+heightfield, the ground is the Y=0 plane.
+
+The browser defaults to a 1.7m eye height, 0.35m body radius, 1.6m/s walking,
+2.2× sprint, a 38° slope limit, 0.3m steps, 0.03m head bob, and 2.2 radians per
+1000px of look movement. Ground following starts on movement and eases from
+the authored pose over about 0.15s. Collision queries use the body's circle at
+feet height against cylinders, rotated boxes, and sphere slices. Bounded travel
+steps prevent tunneling; rejected movement slides along each horizontal axis.
+An uphill probe distinguishes short ledges from continuous steep slopes. Bounds
+limit the feet position; water defaults to a 0.55m maximum depth. These authored
+collision shapes are independent of visible scene geometry.
+
+Click for pointer lock, use WASD or up/down arrows to move, left/right arrows to
+turn, PageUp/PageDown to pitch, Shift to sprint, and Home to reset. Keyboard input
+requires canvas focus or pointer lock. Touch uses a left-side joystick and
+right-side drag; connected gamepads use the two sticks. Set `Gamepad` to false
+to disable pads, `HeadBob` to zero to disable bob, and `Hint` to `"none"` to hide
+the hint. Reduced motion always disables bob. The joystick and hint have
+`gosx-scene3d-walk-*` classes for styling.
+
+A button with `data-gosx-scene3d-reset="mount-id"` restores the start pose; an empty
+value targets the only Scene3D mount on the page. The mounted handle exposes
+`resetCamera()`, and `window.__gosx.scene3d.resetCamera(mountId)` is available
+once walking loads. Camera output signals and telemetry use the existing control
+path. The controls frame loop stops when idle, except while a gamepad is connected.
+`bootstrap-feature-scene3d-walk.js` is advertised only when a scene carries walk
+props and fetched only for first-person walking. Evidence lives in
+`scene/walk_test.go`, `island/island_test.go`, and `client/js/scene3d-walk.test.js`.
+
 ## Executable corpus status
 
 | Corpus ID | Current state | Closure needed |
@@ -138,5 +174,7 @@ The tone-map effect applies the same display transfer as WebGL. Linear, ACES, an
 WebGPU and WebGL2 draw `Environment.Sky` behind the scene. Gradient stops are sRGB colors, blended in linear light by the world-space view direction. Camera translation does not move the sky. A sky by itself does not replace default environment lighting. Nil sky keeps the existing clear color.
 
 Environment mode uses the IBL radiance cube when it is ready, then the legacy environment image. `EnvRotation` turns the sky around world Y. `Sky.Intensity` scales linear radiance; zero means one. `Sky.Blur` selects the available radiance mip range. WebGL2 generates mips for legacy images. WebGPU legacy images currently have one mip and stay sharp. Pending, failed, or absent maps use `HorizonColor`. The mount reports `data-gosx-scene3d-sky`: `none`, `gradient`, `environment-cube`, `environment-map`, `environment-pending`, or `environment-unavailable`. A shader setup failure reports `unavailable` on WebGL2. Canvas2D retains its flat background fallback.
+
+Physical mode (`Sky{Mode: "physical"}`) draws an analytic daylight sky: Rayleigh and Mie single scattering after Preetham, Shirley and Smits (1999) in the real-time form of Hoffman and Preetham (2002), with a sun disk. `SunDirection` points toward the sun; `scene.SunDirectionFromAngles(elevation, azimuth)` builds it in degrees, with azimuth 0 facing -Z. Give the key `DirectionalLight` the opposite direction so shadows agree with the drawn sun. `Turbidity` (1-20, default 10), `Rayleigh` (0-8, default 2), `MieCoefficient` (0-0.1, default 0.005), `MieDirectionalG` (0-0.999, default 0.8) and `SunDiskRadius` (degrees, default 0.53; negative hides the disk) shape it; zero means the default. The output suits the ACES tone mapper at an exposure near 0.5. The server fills any unset gradient stop from the same model, so Canvas2D shows matching colors. `Sky.PhysicalRadiance` evaluates the model in Go; with `ibl.CubeFromRadiance` it bakes IBL that matches the drawn sky. The mount reports `data-gosx-scene3d-sky="physical"`.
 
 Sky draws share the scene target and post chain. They do not write depth. A water scene with a sky uses the world composite even when it has no imported models.

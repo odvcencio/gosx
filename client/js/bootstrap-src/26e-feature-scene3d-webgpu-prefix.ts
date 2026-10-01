@@ -85,6 +85,9 @@
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
+  var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
+  var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
+  var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
