@@ -76,8 +76,6 @@ const SCHEMA_VERSION = 2;
 const DEFAULT_URL = "https://m31labs.dev/";
 const DEFAULT_OUT = "scene3d-probe";
 const DEFAULT_OFFSETS = [8, 10, 12];
-const DEFAULT_PLAYWRIGHT_CORE =
-  "C:/Users/odvce/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/.pnpm/playwright-core@1.61.0/node_modules/playwright-core/index.mjs";
 
 const BROWSER_CANDIDATES = {
   edge: [
@@ -594,8 +592,10 @@ function browserExecutablePath(name) {
 }
 
 function playwrightCoreURL() {
+  // GOSX_PLAYWRIGHT_CORE points at a playwright-core index.mjs. Without it, the
+  // installed `playwright-core` package is resolved by name.
   const override = process.env.GOSX_PLAYWRIGHT_CORE;
-  return pathToFileURL(override || DEFAULT_PLAYWRIGHT_CORE).href;
+  return override ? pathToFileURL(override).href : "playwright-core";
 }
 
 // ---------------------------------------------------------------------------

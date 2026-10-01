@@ -5,6 +5,7 @@ package desktop
 import (
 	"errors"
 	"net/http"
+	"runtime"
 	"testing"
 )
 
@@ -27,6 +28,7 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 		err  error
 	}{
 		{"PostMessage", stub.PostMessage("noop")},
+		{"Reload", stub.Reload()},
 		{"ExecuteScript", stub.ExecuteScript("1")},
 		{"OpenDevTools", stub.OpenDevTools()},
 		{"PrependBootstrapScript", stub.PrependBootstrapScript("noop")},
@@ -59,5 +61,42 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 	}
 	if _, err := stub.NewWindow(WindowOptions{}); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("NewWindow: err = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDesktopWebView2RuntimeVersionUnsupportedPlatform(t *testing.T) {
+	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+		t.Skip("windows desktop backend is supported on this architecture")
+	}
+	if _, err := WebView2RuntimeVersion(""); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("WebView2RuntimeVersion error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestUnsupportedWindowPlacement(t *testing.T) {
+	if _, err := (unsupportedApp{}).WindowPlacement(); err != ErrUnsupported {
+		t.Fatalf("WindowPlacement() error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestShowMessageUnsupportedPlatform(t *testing.T) {
+	if _, err := ShowMessage(MessageOptions{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ShowMessage error = %v, want ErrUnsupported", err)
+	}
+	if _, err := (&App{}).ShowMessage(MessageOptions{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("App.ShowMessage error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestUnsupportedSingleInstanceAPI(t *testing.T) {
+	if lock, first, err := AcquireSingleInstance("com.example.test"); lock != nil || first || !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("AcquireSingleInstance() = (%v, %v, %v), want (nil, false, ErrUnsupported)", lock, first, err)
+	}
+	if err := ForwardToFirstInstance("com.example.test", nil, ""); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ForwardToFirstInstance() error = %v, want ErrUnsupported", err)
+	}
+	var lock *InstanceLock
+	if err := lock.Close(); err != nil {
+		t.Fatalf("Close() on nil InstanceLock error = %v, want nil", err)
 	}
 }

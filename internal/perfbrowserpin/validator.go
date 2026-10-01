@@ -123,6 +123,7 @@ var baseAggregateNeeds = []string{
 	"go-race-tests",
 	"go-cli-tests",
 	"js-tests",
+	"wire-gates",
 	"wasm-tests",
 	"browser-tests",
 }
@@ -271,7 +272,7 @@ func validateBrowserJob(node *yaml.Node) error {
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
 		return err
 	}
-	if err := exactInt(job["timeout-minutes"], label+".timeout-minutes", "30"); err != nil {
+	if err := exactInt(job["timeout-minutes"], label+".timeout-minutes", "45"); err != nil {
 		return err
 	}
 

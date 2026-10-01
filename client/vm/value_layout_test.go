@@ -201,9 +201,19 @@ func TestValueTagRoundTrips(t *testing.T) {
 				if got.Control() != ctrl {
 					t.Errorf("Control() = %d, want %d", got.Control(), ctrl)
 				}
-				if got.Truth() != truth {
-					t.Errorf("WithControl(%d) changed Truth() to %v, want %v",
-						ctrl, got.Truth(), truth)
+				// Read the raw bit, not Truth(): Truth() derives real
+				// per-kind truthiness now (see truth()'s doc comment —
+				// IntVal/StringVal/ArrayVal/ObjectVal never set
+				// tagTruthBit, so a plain bit read answered "false" for
+				// every nonzero int and non-empty string/array/map, not
+				// just bool false). This loop pokes the bit directly onto
+				// non-bool kinds specifically to test packing, a
+				// combination truth()'s real semantics no longer echoes
+				// back verbatim; round-tripping the raw bit is still the
+				// right thing to pin here.
+				if gotBit := got.tag&tagTruthBit != 0; gotBit != truth {
+					t.Errorf("WithControl(%d) changed the raw truth bit to %v, want %v",
+						ctrl, gotBit, truth)
 				}
 				if got.kind() != base.kind() {
 					t.Errorf("WithControl(%d) changed kind() to %d, want %d",

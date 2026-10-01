@@ -7,8 +7,8 @@ import (
 	"m31labs.dev/gosx/signal"
 )
 
-// TestStoreSetSurfaceEventReadableViaSceneAlias is the ADR 0007 C1.1
-// acceptance: writes to $surface.event.<X> are readable via $scene.event.<X>
+// TestStoreSetSurfaceEventReadableViaSceneAlias verifies that
+// writes to $surface.event.<X> are readable via $scene.event.<X>
 // because the Store routes both names through ResolveAlias to the same
 // underlying signal. Phase 1 consumers that still subscribe to
 // $scene.event.* keep working — that's the whole point of the alias.
@@ -56,7 +56,7 @@ func TestStoreSignalAliasNotifiesLegacySubscriber(t *testing.T) {
 	unsub := legacySig.Subscribe(func() { fired++ })
 	defer unsub()
 
-	// Renderer writes via $surface.event.* (the post-ADR-0007 canonical name).
+	// Renderer writes via $surface.event.* (the canonical name).
 	store.Set("$surface.event.selectedID", vm.StringVal("hit"))
 
 	if fired == 0 {

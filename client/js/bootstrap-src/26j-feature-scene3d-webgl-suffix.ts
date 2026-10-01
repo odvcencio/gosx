@@ -10,6 +10,9 @@
   // from now on.
   window.__gosx_scene3d_webgl_api = {
     createScenePBRRendererOrFallback: typeof createScenePBRRendererOrFallback === "function" ? createScenePBRRendererOrFallback : null,
+    createScenePBRContext: typeof createScenePBRContext === "function" ? createScenePBRContext : null,
+    prepareScenePBRInitialRenderer: typeof prepareScenePBRInitialRenderer === "function" ? prepareScenePBRInitialRenderer : null,
+    discardScenePBRInitialPrograms: typeof discardScenePBRInitialPrograms === "function" ? discardScenePBRInitialPrograms : null,
     createSceneWaterRendererWebGL: typeof createSceneWaterRendererWebGL === "function" ? createSceneWaterRendererWebGL : null,
   };
 

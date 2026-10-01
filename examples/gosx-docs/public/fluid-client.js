@@ -1,7 +1,7 @@
 // examples/gosx-docs/public/fluid-client.js
 // Particle advection renderer for the Fluid demo.
 // Subscribes to the "fluid" hub, decodes Quantized frames from field.PublishField,
-// and drives 8000 CPU particles against the decoded velocity slice each rAF tick.
+// and drives 4000 CPU particles against the decoded velocity slice each rAF tick.
 //
 // Rendering: particles are trilinearly sampled against the decoded field (see
 // sampleXYMiddleSlice) and drawn as small additive "glow" dots — a low-alpha
@@ -9,7 +9,7 @@
 // globalCompositeOperation "lighter" so overlapping fast-moving particles
 // visibly brighten. Draws are batched by a quantized speed→color bucket
 // (built into one canvas path per bucket, then a single fill()/stroke() call)
-// rather than per-particle fillStyle churn or save/restore, to keep 8000
+// rather than per-particle fillStyle churn or save/restore, to keep 4000
 // particles/frame cheap.
 (function () {
   "use strict";
@@ -43,7 +43,7 @@
 
   // ── Particles ────────────────────────────────────────────────────────────────
 
-  var PARTICLE_COUNT = 8000;
+  var PARTICLE_COUNT = 4000;
   var SPEED_SCALE = 60; // pixels per (world unit / second)
   var SMOOTHING = 0.6;  // EMA weight kept from the previous sampled velocity
 
@@ -63,8 +63,8 @@
   var BUCKETS = 24;
   var DOT_SIZE = 2;
   var HALO_SIZE = 4;
-  var DOT_ALPHA = 0.85;
-  var HALO_ALPHA = 0.16;
+  var DOT_ALPHA = 0.72;
+  var HALO_ALPHA = 0.08;
   var STREAK_ALPHA = 0.5;
   var HIGH_SPEED_THRESHOLD = 0.55; // normalized 0..1; above this a particle draws as a short streak instead of a dot
 
@@ -105,12 +105,11 @@
       streakX1[b] = new Float32Array(PARTICLE_COUNT);
       streakY1[b] = new Float32Array(PARTICLE_COUNT);
 
-      // Color by speed: cyan (slow) → violet (fast) — same formula as before,
-      // just precomputed once per bucket instead of per particle.
+      // A warm luminance scale reports speed without adding a second UI accent.
       var frac = b / (BUCKETS - 1);
-      var r = Math.round(122 + frac * 50); // 122 → 172
-      var g = Math.round(200 - frac * 80); // 200 → 120
-      var bl = 255;
+      var r = Math.round(178 + frac * 66);
+      var g = Math.round(124 + frac * 74);
+      var bl = Math.round(78 + frac * 74);
       PALETTE_CORE[b] = "rgba(" + r + "," + g + "," + bl + "," + DOT_ALPHA + ")";
       PALETTE_HALO[b] = "rgba(" + r + "," + g + "," + bl + "," + HALO_ALPHA + ")";
       PALETTE_STREAK[b] = "rgba(" + r + "," + g + "," + bl + "," + STREAK_ALPHA + ")";

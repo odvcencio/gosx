@@ -2972,7 +2972,7 @@ test("navigation runtime remounts Scene3D when a command-diff application fails"
   assert.notStrictEqual(env.context.__gosx.engines.get("failed-diff-scene"), recordBefore);
 });
 
-test("navigation runtime reuses an engine while hub subscriptions disconnect and re-arm cleanly", async () => {
+test("navigation runtime reuses an engine and its hub connection", async () => {
   function makeSocket(url) {
     return {
       url,
@@ -3065,16 +3065,15 @@ test("navigation runtime reuses an engine while hub subscriptions disconnect and
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/hub-next");
   await flushAsyncWork();
 
-  // Engine reuse is unaffected by a hub reconnecting alongside it.
+  // The engine and hub both survive the navigation.
   assert.equal(disposed, false, "identical-scene navigation must not dispose the engine even with a hub present");
   assert.strictEqual(env.document.getElementById("bg-scene-3").children[0], canvasBefore);
 
-  // Hub disconnect+reconnect is unchanged behavior — it must keep working
-  // cleanly (exactly one re-arm, no double-connect) alongside engine reuse.
-  assert.equal(socketBefore.closeCalled, true, "the outgoing hub socket must be closed on navigation");
-  assert.equal(env.context.__gosx.hubs.size, 1, "the hub must be reconnected after navigation");
-  assert.equal(env.sockets.length, 2, "exactly one new socket must be opened for the re-armed hub");
-  assert.notStrictEqual(env.sockets[1], socketBefore);
+  assert.equal(socketBefore.closeCalled, false, "the wanted hub socket must stay open on navigation");
+  assert.equal(env.context.__gosx.hubs.size, 1);
+  assert.equal(env.sockets.length, 1, "navigation must not recreate the hub socket");
+  assert.strictEqual(env.context.__gosx.hubs.get("gosx-hub-nav").socket, socketBefore);
+  assert.deepEqual(env.consoleLogs.error, []);
 });
 
 test("navigation runtime marks current and ancestor links and exposes navigation state", async () => {

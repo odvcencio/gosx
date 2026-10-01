@@ -33,6 +33,10 @@ func Page() Node {
 				<span class="inline-code">server.Image</span>
 				. The source is a checked-in PNG rendered by the GoSX native scene harness.
 			</p>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/images/page.server.go"
+				rel="noopener"
+			>View the image helper source</a>
 		</div>
 		<h2 id="builtin">The &lt;Image&gt; builtin</h2>
 		<p>
@@ -122,7 +126,7 @@ func Page() Node {
 		</p>
 		<h2 id="art-direction">Art direction</h2>
 		<CodeBlock lang="go" source={data.artDirectionSample} />
-		<CodeBlock lang="go" source={data.builtinArtDirectionSample} />
+		<CodeBlock lang="gosx" source={data.builtinArtDirectionSample} />
 		<p>
 			Use ordered
 			<span class="inline-code">server.ImageSource</span>

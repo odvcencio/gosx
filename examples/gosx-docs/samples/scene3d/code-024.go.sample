@@ -1,0 +1,13 @@
+scene.Mesh{
+	    ID:       "featured",
+	    Geometry: scene.CubeGeometry{Size: 1},
+	    Material: scene.StandardMaterial{Color: "#d4af37"},
+	    Transition: scene.Transition{
+	        In:     scene.TransitionTiming{Duration: 400 * time.Millisecond, Easing: scene.EaseOut},
+	        Out:    scene.TransitionTiming{Duration: 250 * time.Millisecond, Easing: scene.EaseIn},
+	        Update: scene.TransitionTiming{Duration: 300 * time.Millisecond, Easing: scene.EaseInOut},
+	    },
+	    InState:  &scene.MeshProps{Opacity: scene.Float(0), Scale: &smallScale},
+	    OutState: &scene.MeshProps{Opacity: scene.Float(0)},
+	    Live:     scene.Live("inventory:update"),
+	}

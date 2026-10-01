@@ -1,0 +1,13 @@
+props.QualityLadder = []scene.QualityRung{
+	    {Name: "raw", PostEffects: nil, LayerGroups: []string{"core"}},
+	    {Name: "lit", PostEffects: []string{"toneMapping"}, LayerGroups: []string{"core", "detail"}},
+	    {Name: "full", PostEffects: []string{"bloom", "toneMapping", "fxaa"},
+	        LayerGroups: []string{"core", "detail", "dust"}},
+	}
+	props.QualityStartRung = 1
+
+	// Tag a mesh or a points layer into a rung group.
+	scene.Mesh{QualityGroup: "dust", /* ... */ }
+
+	// Map a GLB-baked points layer by name when the layer cannot carry a tag.
+	props.PointQualityGroups = map[string]string{"nebula-dust": "dust"}

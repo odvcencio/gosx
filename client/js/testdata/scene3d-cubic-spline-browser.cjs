@@ -600,11 +600,19 @@ window.__affineInputEvents = [];
   }
   wrapGL(typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext.prototype : null);
   wrapGL(typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext.prototype : null);
-  if (mutation === 'webgpu-no-draw' && typeof GPURenderPassEncoder !== 'undefined' &&
-      GPURenderPassEncoder.prototype) {
-    ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'].forEach(function (name) {
-      if (!GPURenderPassEncoder.prototype[name]) return;
-      GPURenderPassEncoder.prototype[name] = function () {};
+  if (mutation === 'webgpu-no-draw') {
+    // Draw commands can be recorded directly on a pass or indirectly in a
+    // render bundle. Chrome exposes those command-mixin methods on separate
+    // prototypes, so the causal negative control must suppress both paths.
+    [
+      typeof GPURenderPassEncoder !== 'undefined' ? GPURenderPassEncoder.prototype : null,
+      typeof GPURenderBundleEncoder !== 'undefined' ? GPURenderBundleEncoder.prototype : null,
+    ].forEach(function (prototype) {
+      if (!prototype) return;
+      ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'].forEach(function (name) {
+        if (!prototype[name]) return;
+        prototype[name] = function () {};
+      });
     });
   }
 

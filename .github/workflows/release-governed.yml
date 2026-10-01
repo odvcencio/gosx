@@ -110,8 +110,12 @@ jobs:
           cache: true
 
       # Keep release verification aligned with the CI package partition.
+      # A release also requires a docs performance receipt measured with the
+      # current inputs (pull requests skip that check; decision 0014).
       - name: Partition validation and unit tests
         working-directory: source
+        env:
+          GOSX_REQUIRE_FRESH_RECEIPT: "1"
         run: |
           set -euo pipefail
           make test-ci-partitions
@@ -172,6 +176,65 @@ jobs:
           make test-cli
           CGO_ENABLED=0 go build ./cmd/gosx
 
+  # build-runtime-release builds this release's prebuilt runtime WASM
+  # variants with a real TinyGo toolchain and publishes them, plus a hashed
+  # integrity manifest, as release assets. cmd/gosx (cmd/gosx/runtime_
+  # prebuilt.go) fetches and verifies these for a consumer with no TinyGo
+  # installed — see docs/deployment or README's "Prebuilt runtime" section.
+  build-runtime-release:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install TinyGo
+        working-directory: source
+        env:
+          TINYGO_VERSION: 0.41.1
+          TINYGO_GO_VERSION: 1.25.5
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Build runtime WASM variants
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/runtime-dist"
+          go run ./cmd/gosx build-runtime "${RUNNER_TEMP}/runtime-dist"
+
+      - name: Generate runtime release manifest
+        working-directory: source
+        run: |
+          set -euo pipefail
+          python3 scripts/build-runtime-release-manifest.py \
+            "${RUNNER_TEMP}/runtime-dist" \
+            "${RUNNER_TEMP}/runtime-dist/gosx-runtime-artifacts.json"
+
+      - name: Stage runtime release assets
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/runtime-dist-release"
+          cd "${RUNNER_TEMP}/runtime-dist"
+          cp gosx-runtime-core.wasm gosx-runtime-engine.wasm gosx-runtime-collab.wasm \
+            gosx-runtime.wasm gosx-runtime-islands.wasm gosx-runtime-artifacts.json \
+            "${RUNNER_TEMP}/runtime-dist-release/"
+          cp wasm_exec.js "${RUNNER_TEMP}/runtime-dist-release/gosx-runtime-wasm_exec.js"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-runtime
+          retention-days: 7
+          path: ${{ runner.temp }}/runtime-dist-release/
+
   vet:
     needs: [prepare, validate]
     runs-on: ubuntu-latest
@@ -205,6 +268,16 @@ jobs:
     needs: [prepare, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GOSX_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.GOSX_ARTIFACT_SIGNING_ENDPOINT || vars.GOSX_ARTIFACT_SIGNING_ENDPOINT }}
+      GOSX_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.GOSX_ARTIFACT_SIGNING_ACCOUNT || vars.GOSX_ARTIFACT_SIGNING_ACCOUNT }}
+      GOSX_ARTIFACT_SIGNING_PROFILE: ${{ secrets.GOSX_ARTIFACT_SIGNING_PROFILE || vars.GOSX_ARTIFACT_SIGNING_PROFILE }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -234,14 +307,136 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
             -o "release-artifacts/gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
 
+      - name: Sign in to Azure for Artifact Signing
+        if: >-
+          matrix.goos == 'windows' &&
+          env.GOSX_ARTIFACT_SIGNING_ENDPOINT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_ACCOUNT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_PROFILE != '' &&
+          env.AZURE_CLIENT_ID != '' &&
+          env.AZURE_TENANT_ID != '' &&
+          env.AZURE_SUBSCRIPTION_ID != ''
+        uses: azure/login@v3
+        env:
+          AZURE_CORE_OUTPUT: none
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision jsign and Authenticode verification
+        if: >-
+          matrix.goos == 'windows' &&
+          env.GOSX_ARTIFACT_SIGNING_ENDPOINT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_ACCOUNT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_PROFILE != ''
+        env:
+          JSIGN_VERSION: '7.5'
+          # SHA-256 computed from jsign-7.5.jar at this release:
+          # https://github.com/ebourg/jsign/releases/tag/7.5
+          JSIGN_SHA256: 602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c
+        run: |
+          set -euo pipefail
+          # Java is preinstalled on ubuntu-latest:
+          # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#java
+          java -version
+          jsign_dir="${RUNNER_TEMP}/gosx-jsign"
+          mkdir -p "${jsign_dir}"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${jsign_dir}/jsign.jar" \
+            "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
+          printf '%s  %s\n' "${JSIGN_SHA256}" "${jsign_dir}/jsign.jar" | sha256sum --check --status
+          cat >"${jsign_dir}/jsign" <<'JSIGN'
+          #!/usr/bin/env bash
+          exec java -jar "$(dirname "$0")/jsign.jar" "$@"
+          JSIGN
+          chmod +x "${jsign_dir}/jsign"
+          printf '%s\n' "${jsign_dir}" >>"${GITHUB_PATH}"
+          "${jsign_dir}/jsign" --help
+          # Jsign 7.5 signs but has no verify command; GoSX prefers osslsigncode.
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends osslsigncode ca-certificates
+
+      - name: Package and verify Windows artifacts with Azure Artifact Signing
+        if: matrix.goos == 'windows'
+        working-directory: source
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -p=1
+          GOSX_ARTIFACT_SIGNING_TOOL: jsign
+        run: |
+          set -euo pipefail
+          configured=false
+          if [[ -n "${GOSX_ARTIFACT_SIGNING_ENDPOINT:-}" && -n "${GOSX_ARTIFACT_SIGNING_ACCOUNT:-}" && -n "${GOSX_ARTIFACT_SIGNING_PROFILE:-}" ]]; then
+            configured=true
+          fi
+          # Historical tags predate this script and the signing CLI. Keep
+          # their unsigned rerun path; refuse to publish them unsigned when
+          # signing is configured, so a rerun cannot silently drop signatures.
+          if [[ ! -f scripts/sign-desktop-release.sh ]]; then
+            if [[ "${configured}" == true ]]; then
+              echo "::error::This release source predates Azure Artifact Signing; rebuild from a revision that includes scripts/sign-desktop-release.sh, or clear the signing variables for an unsigned rerun."
+              exit 1
+            fi
+            echo "Azure Artifact Signing skipped: release source predates it and signing is not configured."
+            exit 0
+          fi
+          bash scripts/sign-desktop-release.sh "release-artifacts/gosx-windows-${{ matrix.goarch }}.exe" "${RELEASE_TAG#v}"
+
       - uses: actions/upload-artifact@v4
         with:
           name: gosx-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 7
           path: source/release-artifacts/
 
+  browser-runtime:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install pinned TinyGo toolchain
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Build and package browser runtime
+        run: |
+          set -euo pipefail
+          runtime_dir="${RUNNER_TEMP}/gosx-browser-runtime"
+          mkdir -p runtime-release-artifacts
+          (cd source && go run ./cmd/gosx build-runtime "${runtime_dir}")
+          python3 scripts/package-browser-runtime.py pack \
+            --source source \
+            --wasm-dir "${runtime_dir}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.prepare.outputs.commit }}" \
+            --output "runtime-release-artifacts/gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-browser-runtime-${{ inputs.tag }}
+          retention-days: 7
+          path: runtime-release-artifacts/
+
   publish:
-    needs: [prepare, validate, test-unit, test-cli, vet, build]
+    needs: [prepare, validate, test-unit, test-cli, vet, build, browser-runtime, build-runtime-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: governed-release
@@ -328,7 +523,19 @@ jobs:
             gosx-darwin-arm64
             gosx-windows-amd64.exe
             gosx-windows-arm64.exe
+            "gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
+            gosx-runtime-core.wasm
+            gosx-runtime-engine.wasm
+            gosx-runtime-collab.wasm
+            gosx-runtime.wasm
+            gosx-runtime-islands.wasm
+            gosx-runtime-wasm_exec.js
+            gosx-runtime-artifacts.json
           )
+          python3 ../scripts/package-browser-runtime.py verify \
+            --archive "gosx-browser-runtime-${RELEASE_TAG}.tar.gz" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.prepare.outputs.commit }}"
           for artifact in "${expected[@]}"; do
             test -f "${artifact}"
           done
@@ -346,6 +553,14 @@ jobs:
             artifacts/gosx-darwin-arm64
             artifacts/gosx-windows-amd64.exe
             artifacts/gosx-windows-arm64.exe
+            artifacts/gosx-browser-runtime-${{ env.RELEASE_TAG }}.tar.gz
+            artifacts/gosx-runtime-core.wasm
+            artifacts/gosx-runtime-engine.wasm
+            artifacts/gosx-runtime-collab.wasm
+            artifacts/gosx-runtime.wasm
+            artifacts/gosx-runtime-islands.wasm
+            artifacts/gosx-runtime-wasm_exec.js
+            artifacts/gosx-runtime-artifacts.json
             artifacts/checksums.txt
           generate_release_notes: true
 

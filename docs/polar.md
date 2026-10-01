@@ -8,8 +8,9 @@ client secret, or app-authored JavaScript in this path.
 
 ## Render the form
 
-Use the existing session token. Product IDs, customer data, pricing choices,
-and provider credentials do not enter the DOM.
+Use the existing session token. Anonymous token reads return an empty string;
+establish session state before rendering an enabled checkout form. Product IDs,
+customer data, pricing choices, and provider credentials do not enter the DOM.
 
 ```go
 func checkoutButton(r *http.Request) gosx.Node {

@@ -4,7 +4,7 @@ import "testing"
 
 // Tests for parsePreviewModeQuery — a non-js-wasm pure function so a
 // regular `go test` invocation can exercise it without a wasm runtime.
-// See cross_frame_parse.go for the function and ADR 0009 for context.
+// See cross_frame_parse.go for the function.
 
 func TestParsePreviewModeQueryEmpty(t *testing.T) {
 	if _, _, ok := parsePreviewModeQuery(""); ok {

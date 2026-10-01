@@ -1,0 +1,13 @@
+props.Compression = &scene.Compression{
+	    BitWidth: 12, // 1-8 for point clouds; 12 for transforms
+
+	    // Progressive: ship a 2-bit preview beside the full payload. The client
+	    // renders the preview at once and upgrades when the full data arrives.
+	    Progressive:        true,
+	    PreviewBitWidth:    2,
+	    ProgressiveDelayMS: 400, // spend upgrade CPU after first paint
+
+	    // LOD: keep both payloads and pick per object by camera distance.
+	    LOD:          true,
+	    LODThreshold: 20,
+	}

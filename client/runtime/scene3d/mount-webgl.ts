@@ -96,6 +96,21 @@ function gosxConfigureSceneScript(script, role, src) {
       : null;
   }
 
+  function sceneWebGLInitialProgramAPI() {
+    const api = sceneWebGLChunkAPI();
+    return {
+      createContext: typeof createScenePBRContext === "function"
+        ? createScenePBRContext
+        : (api && typeof api.createScenePBRContext === "function" ? api.createScenePBRContext : null),
+      prepare: typeof prepareScenePBRInitialRenderer === "function"
+        ? prepareScenePBRInitialRenderer
+        : (api && typeof api.prepareScenePBRInitialRenderer === "function" ? api.prepareScenePBRInitialRenderer : null),
+      discard: typeof discardScenePBRInitialPrograms === "function"
+        ? discardScenePBRInitialPrograms
+        : (api && typeof api.discardScenePBRInitialPrograms === "function" ? api.discardScenePBRInitialPrograms : null),
+    };
+  }
+
   function createSceneWebGLResult(canvas, props, capability, fallbackReason) {
     // Water scenes that land on WebGL (e.g. after a WebGPU device loss /
     // watchdog fallback, or any inline webgl selection) must render via the
@@ -117,13 +132,16 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     const pbrFactory = sceneWebGLRendererFactory();
     if (pbrFactory) {
-      const useCanvasAlpha = sceneCanvasAlpha(props);
-      const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-        alpha: useCanvasAlpha,
-        premultipliedAlpha: useCanvasAlpha,
-        antialias: sceneWebGLAntialias(props, capability),
-        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
-      }) : null;
+      const initialAPI = sceneWebGLInitialProgramAPI();
+      const gl = initialAPI.createContext
+        ? initialAPI.createContext(canvas, props, capability)
+        : (typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+            alpha: sceneCanvasAlpha(props),
+            premultipliedAlpha: sceneCanvasAlpha(props),
+            antialias: sceneWebGLAntialias(props, capability),
+            depth: true,
+            powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+          }) : null);
       if (gl) {
         const pbrRenderer = pbrFactory(gl, canvas, {});
         if (pbrRenderer) { return { renderer: pbrRenderer, fallbackReason: fallbackReason, degraded: [] }; }
@@ -147,6 +165,27 @@ function gosxConfigureSceneScript(script, role, src) {
     return systems[0] || null;
   }
 
+  async function prepareSceneInitialWebGLRenderer(canvas, props, capability, state, isCurrent) {
+    if (sceneFirstWaterEntry(props) || !sceneMountWantsWebGLFirst(props, capability)) return null;
+    const api = sceneWebGLInitialProgramAPI();
+    if (!api.prepare) return null;
+    try {
+      return await api.prepare(canvas, props, capability, {
+        state,
+        isCurrent,
+      });
+    } catch (error) {
+      console.warn("[gosx] failed to prepare initial Scene3D shaders:", error && error.message ? error.message : error);
+      return null;
+    }
+  }
+
+  function discardSceneInitialWebGLRenderer(preparation) {
+    if (!preparation || !preparation.gl || !preparation.owner) return;
+    const api = sceneWebGLInitialProgramAPI();
+    if (api.discard) api.discard(preparation.gl, preparation.owner);
+  }
+
   function sceneWebGLAntialias(props, capability) {
     var caps = capability || {};
     var requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
@@ -156,10 +195,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  // createSceneWaterWebGLResult builds the WebGL2 water runtime for a water
-  // scene. It is the single construction point shared by (a) the real A3
-  // capability-gate fallback (WebGPU unavailable / lost) and (b) the
-  // device-loss recovery path.
+  // Build water after capability fallback or device loss.
   function createSceneWaterWebGLResult(canvas, props, capability, fallbackReason) {
     var waterFactory = sceneWaterWebGLRendererFactory();
     if (!waterFactory) return null;
@@ -178,11 +214,68 @@ function gosxConfigureSceneScript(script, role, src) {
       return null;
     }
     if (!renderer) return null;
+    // Water and authored models share color and depth before post processing.
+    var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    var environment = sceneDoc && sceneDoc.environment || props && props.environment;
+    if (sceneDoc && ((Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) || (environment && environment.sky))) {
+      var pbrFactory = sceneWebGLRendererFactory();
+      var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
+      if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
+        renderer.dispose();
+        if (worldRenderer) worldRenderer.dispose();
+        return null;
+      }
+      var waterRenderer = renderer;
+      var compositeMS = 0;
+      var compositeAtMS = 0;
+      renderer = Object.assign({}, waterRenderer, {
+        isWaterWorldComposite: true,
+        // @ts-ignore TS7006 -- the bundle builder ships this JavaScript signature as written.
+        render: function(bundle, viewport, frameMeta) {
+          var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+          // The world owns the color/depth target and runs post effects once,
+          // after water and world surfaces have used that same target.
+          worldRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+            compositeOverWater: false,
+            // @ts-ignore TS7006 -- raw-source mount tests parse this signature as JavaScript.
+            compositeBeforePost: function(target) {
+              waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+                compositeWorld: true, clearComposite: false, background: bundle.background,
+                renderTarget: target,
+              }));
+              worldRenderer.renderSurfaces(bundle, target);
+            },
+          }));
+          compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+          compositeMS = Math.max(0.01, compositeAtMS - started);
+        },
+        // The world timer encloses water, surfaces, and the post chain.
+        pollPerformanceSample: worldRenderer.pollPerformanceSample,
+        getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
+        getFrameTiming: worldRenderer.getFrameTiming,
+        diagnostics: function() {
+          var world = typeof worldRenderer.diagnostics === "function" ? worldRenderer.diagnostics() : {};
+          return Object.assign({}, typeof waterRenderer.diagnostics === "function" ? waterRenderer.diagnostics() : {}, {
+            world: world, ibl: world.ibl || null,
+            compositeCPUFrameMS: compositeMS,
+          });
+        },
+        resize: function(viewport) {
+          if (typeof worldRenderer.resize === "function") worldRenderer.resize(viewport);
+          if (typeof waterRenderer.resize === "function") waterRenderer.resize(viewport);
+        },
+        dispose: function() {
+          waterRenderer.dispose();
+          worldRenderer.dispose();
+        },
+      });
+    }
     try {
       if (typeof window !== "undefined") {
         window.__gosx_scene3d_webgl_water = true;
       }
     } catch (_e) {}
+    // @ts-ignore TS7018 -- an empty degradation list has no inferred element type.
     return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: [] };
   }
 
@@ -208,7 +301,12 @@ function gosxConfigureSceneScript(script, role, src) {
     if (verdict.backend === "webgpu" && webgpuAvail) return null;
     // Only intercept when WebGL2 is the active backend for this water scene.
     if (verdict.backend !== "webgl") return null;
-    return createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable") || {
+    var result = createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable");
+    if (result) {
+      result.degraded = (verdict.degraded || []).concat(result.degraded || []);
+      return result;
+    }
+    return {
       renderer: null,
       fallbackReason: verdict.fallbackReason || "webgpu-unavailable",
       unsupportedReason: "water-webgl2-unavailable",
@@ -250,7 +348,8 @@ function gosxConfigureSceneScript(script, role, src) {
       }
       if (verdict.backend === "webgl" || (verdict.backend === "webgpu" && !webgpuAvail)) {
         const fallback = verdict.backend === "webgpu" ? "webgpu-unavailable" : (verdict.fallbackReason || "");
-        return createSceneWebGLResult(canvas, props, capability, fallback);
+        const result = createSceneWebGLResult(canvas, props, capability, fallback);
+        return result ? Object.assign({}, result, { degraded: verdict.degraded || [] }) : null;
       }
       if (verdict.backend === "canvas2d") {
         if (sceneRequiresWebGL(props)) { return null; }
@@ -355,7 +454,7 @@ function gosxConfigureSceneScript(script, role, src) {
         return {
           renderer,
           fallbackReason,
-          degraded: verdict && renderer.kind === "webgpu" ? (verdict.degraded || []) : [],
+          degraded: verdict ? (verdict.degraded || []) : [],
         };
       }
     }
@@ -720,7 +819,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -729,23 +828,25 @@ function gosxConfigureSceneScript(script, role, src) {
     return null;
   }
 
-  // The specular tint is a freshly authored RGB array on the override bag;
-  // snapshot it per target so later mutation of the override RGB (or of one
-  // copied target) can never alias through to the other copy.
+  // The specular/emissive/rim tints are freshly authored RGB arrays on the
+  // override bag; snapshot per target so later mutation of the override RGB
+  // (or of one copied target) can never alias through to the other copy.
   function sceneSnapshotSpecularOverrideColor(value) {
     if (Array.isArray(value)) return value.slice();
-    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    /* @ts-expect-error TS2351 -- ArrayBuffer.isView narrows value to ArrayBufferView, whose .constructor loses its concrete construct signature */ if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
       return new value.constructor(value);
     }
     return value;
   }
+
+  const SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS = new Set(["specularColor", "emissiveColor", "rimColor"]);
 
   function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
     if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
       return;
     }
     const key = targetKey || sourceKey;
-    if (sourceKey === "specularColor") {
+    if (SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS.has(sourceKey)) {
       next[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
       if (material) {
         material[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
@@ -784,6 +885,9 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "texture", "texture", override);
     sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
     sceneAssignMaterialOverride(next, material, "emissive", "emissive", override);
+    sceneAssignMaterialOverride(next, material, "emissiveColor", "emissiveColor", override);
+    sceneAssignMaterialOverride(next, material, "normalScale", "normalScale", override);
+    sceneAssignMaterialOverride(next, material, "occlusionStrength", "occlusionStrength", override);
     sceneAssignMaterialOverride(next, material, "blendMode", "blendMode", override);
     sceneAssignMaterialOverride(next, material, "renderPass", "renderPass", override);
     sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
@@ -810,6 +914,9 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
     sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
     sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
+    sceneAssignMaterialOverride(next, material, "rimColor", "rimColor", override);
+    sceneAssignMaterialOverride(next, material, "rimPower", "rimPower", override);
+    sceneAssignMaterialOverride(next, material, "rimStrength", "rimStrength", override);
     sceneAssignMaterialOverride(next, material, "customVertex", "customVertex", override);
     sceneAssignMaterialOverride(next, material, "customFragment", "customFragment", override);
     sceneAssignMaterialOverride(next, material, "customVertexWGSL", "customVertexWGSL", override);
@@ -1047,9 +1154,21 @@ function gosxConfigureSceneScript(script, role, src) {
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
-    const normalized = normalizeSceneObject(source, index);
+    const sharedGeometry = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
+      !(source && source.skin) && rawObject && rawObject.vertices
+      ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
+    // The shared primitive was already normalized and validated on first
+    // hydration. Normalize only instance metadata; cloning its normal/UV/
+    // tangent arrays again is proportional to the whole incoming swarm.
+    const normalized = sharedGeometry
+      ? normalizeSceneObject(Object.assign({}, source, {vertices: null}), index, {vertices: sharedGeometry})
+      : normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
-      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource);
+      // Normalization creates a new vertices wrapper. The cache belongs to
+      // the decoded asset's original primitive, not that temporary wrapper.
+      // Looking up the latter rebakes every new actor before throwing its
+      // geometry away in favor of the shared stream during staging.
+      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
     }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
@@ -1091,8 +1210,9 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneModelTransformTangents(values, normals, model, orientation) {
+    const modelMatrix = sceneModelTransformMatrix(model);
     const out = sceneModelTransformMeshFloats(values, 4, function(x, y, z, w) {
-      const tangent = sceneModelTransform({ x: x, y: y, z: z }, model, 1);
+      const tangent = sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, false);
       return { x: tangent.x, y: tangent.y, z: tangent.z, w: sceneNumber(w, 1) * orientation };
     });
     for (let i = 0; i + 3 < out.length; i += 4) {
@@ -1104,7 +1224,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return out;
   }
 
-  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource) {
+  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry) {
     const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
     if (!vertices || !vertices.positions || !vertices.count) {
       return null;
@@ -1129,8 +1249,17 @@ function gosxConfigureSceneScript(script, role, src) {
     });
     const hasSkin = instanced.skin && typeof instanced.skin === "object";
     const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
-    const modelOrientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
-    if (hasSkin) {
+    // Model TRS and its inverse-transpose are constant across this snapshot.
+    // Rebuilding them inside the attribute mapper paid trigonometry and a
+    // matrix inversion for every corner of every imported triangle.
+    const modelMatrix = sceneModelTransformMatrix(model);
+    const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
+    const modelOrientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
+    const sharedRigidGeometry = !hasSkin && !morphMeta && !nodeAnimSource && model && model._shareRigidGeometry
+      ? sharedGeometry || sceneRigidPrimitiveGeometry.get(vertices) : null;
+    if (sharedRigidGeometry) {
+      instanced.vertices = sharedRigidGeometry;
+    } else if (hasSkin) {
       instanced.vertices = {
         count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
@@ -1138,17 +1267,17 @@ function gosxConfigureSceneScript(script, role, src) {
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
-        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
         indices: sceneCloneModelMeshIndices(vertices.indices),
       };
     } else {
       const transformedNormals = sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
-        return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
+        return sceneNormalizeDirection(sceneMatrixTransformInto({}, normalMatrix, x, y, z, 3, false));
       });
       instanced.vertices = {
         count: vertexCount,
         positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
-          return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
+          return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
         }),
         normals: transformedNormals,
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
@@ -1184,14 +1313,27 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneApplyModelMaterialName(instanced, model);
     sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
-    const normalized = normalizeSceneObject(instanced, prefix);
+    const normalized = sharedRigidGeometry
+      ? normalizeSceneObject(Object.assign({}, instanced, {vertices: null}), prefix, {vertices: sharedRigidGeometry})
+      : normalizeSceneObject(instanced, prefix);
     sceneApplyModelMaterialName(normalized, model);
-    if (!hasSkin && normalized && normalized.vertices) {
+    if (!hasSkin && !morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
+      // A rigid imported mesh owns a complete, immutable geometry snapshot.
+      // Mark it explicitly so the renderer can retain its attribute buffers
+      // instead of rebuilding every triangle and hashing all vertices each
+      // frame. Live model transforms advance the revision when rebaked.
+      normalized.vertices.immutable = true;
+      normalized.vertices.revision = 0;
+    }
+    if (sharedRigidGeometry && normalized) {
+      normalized.vertices = sharedRigidGeometry;
+      normalized._modelLocalVertices = sharedRigidGeometry;
+    } else if (!hasSkin && normalized && normalized.vertices) {
       normalized._modelLocalVertices = {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
-        tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         indices: sceneCloneModelMeshIndices(vertices.indices),
         count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
       };
@@ -1541,19 +1683,21 @@ function gosxConfigureSceneScript(script, role, src) {
   // renderer, etc.).
   function resolveSceneSubFeatureURL(datasetKey, fallback) {
     try {
-      var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
-      if (tag && tag.dataset && tag.dataset[datasetKey]) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (tag && tag.dataset && tag.dataset[datasetKey]) {
         return tag.dataset[datasetKey];
       }
     } catch (_e) {}
     return fallback;
   }
 
+  var sceneGatedFeaturePromises = Object.create(null);
+
   // Cached promise for the WebGPU sub-feature chunk. Scene3D now treats
   // WebGPU as the default accelerated backend when the browser exposes it,
   // so the first mount awaits this before choosing its renderer. Failed or
   // unsupported probes still fall through to WebGL/canvas.
-  var sceneWebGPUFeaturePromise = null;
+
 
   function sceneHasNavigatorWebGPU() {
     return typeof navigator !== "undefined"
@@ -1571,39 +1715,16 @@ function gosxConfigureSceneScript(script, role, src) {
     if (window.__gosx_scene3d_webgpu_feature_promise) {
       return window.__gosx_scene3d_webgpu_feature_promise;
     }
-    if (sceneWebGPUFeaturePromise) {
-      return sceneWebGPUFeaturePromise;
-    }
-    sceneWebGPUFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-webgpu", resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_webgpu_api) {
-          resolve(window.__gosx_scene3d_webgpu_api);
-        } else {
-          sceneWebGPUFeaturePromise = null;
-          window.__gosx_scene3d_webgpu_feature_promise = null;
-          reject(new Error("scene3d-webgpu chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneWebGPUFeaturePromise = null;
-        window.__gosx_scene3d_webgpu_feature_promise = null;
-        reject(new Error("failed to load scene3d-webgpu chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    window.__gosx_scene3d_webgpu_feature_promise = sceneWebGPUFeaturePromise;
-    return sceneWebGPUFeaturePromise;
+    const promise = ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+    window.__gosx_scene3d_webgpu_feature_promise = promise;
+    return promise;
   }
 
   function sceneNextFrame() {
     return new Promise(function(resolve) {
-      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-        window.requestAnimationFrame(function() { resolve(); });
-        return;
-      }
+      const frameRequest = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler && typeof window.__gosx.motion.scheduler.request === "function" ? window.__gosx.motion.scheduler.request.bind(window.__gosx.motion.scheduler) : typeof window !== "undefined" && typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame.bind(window) : null;
+      /* @ts-expect-error TS2794 -- Promise<T> is inferred from the bare resolve() call inside; T is really void */
+      if (frameRequest) { frameRequest(function() { resolve(); }); return; }
       setTimeout(resolve, 0);
     });
   }
@@ -1645,7 +1766,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // never fetches it, which is the whole point of the split: it used to ride
   // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
-  var sceneWebGLFeaturePromise = null;
+
 
   function ensureWebGLFeatureLoaded() {
     // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
@@ -1658,31 +1779,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (window.__gosx_scene3d_webgl_feature_promise) {
       return window.__gosx_scene3d_webgl_feature_promise;
     }
-    if (sceneWebGLFeaturePromise) {
-      return sceneWebGLFeaturePromise;
-    }
-    sceneWebGLFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-webgl", resolveSceneSubFeatureURL("gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_webgl_api) {
-          resolve(window.__gosx_scene3d_webgl_api);
-        } else {
-          sceneWebGLFeaturePromise = null;
-          window.__gosx_scene3d_webgl_feature_promise = null;
-          reject(new Error("scene3d-webgl chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneWebGLFeaturePromise = null;
-        window.__gosx_scene3d_webgl_feature_promise = null;
-        reject(new Error("failed to load scene3d-webgl chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    window.__gosx_scene3d_webgl_feature_promise = sceneWebGLFeaturePromise;
-    return sceneWebGLFeaturePromise;
+    const promise = ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
+    window.__gosx_scene3d_webgl_feature_promise = promise;
+    return promise;
   }
 
   // sceneWebGLBackendRequest builds the same registry request
@@ -1789,33 +1888,10 @@ function gosxConfigureSceneScript(script, role, src) {
   // Cached promise for the GLTF sub-feature chunk. First call starts the
   // fetch; subsequent calls await the same promise. See 26f-feature-
   // scene3d-gltf-prefix.js for the split rationale.
-  var sceneGLTFFeaturePromise = null;
+
 
   function ensureGLTFFeatureLoaded() {
-    if (window.__gosx_scene3d_gltf_api) {
-      return Promise.resolve(window.__gosx_scene3d_gltf_api);
-    }
-    if (sceneGLTFFeaturePromise) {
-      return sceneGLTFFeaturePromise;
-    }
-    sceneGLTFFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-gltf", resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_gltf_api) {
-          resolve(window.__gosx_scene3d_gltf_api);
-        } else {
-          reject(new Error("scene3d-gltf chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneGLTFFeaturePromise = null; // allow retry on next attempt
-        reject(new Error("failed to load scene3d-gltf chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneGLTFFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
   }
 
   function scenePropsHasIBLProducts(props) {
@@ -1862,33 +1938,10 @@ function gosxConfigureSceneScript(script, role, src) {
   // Cached promise for the animation sub-feature chunk. Consumers that
   // want to drive keyframe or skeletal animations can await this helper
   // and then use window.__gosx_scene3d_animation_api.
-  var sceneAnimationFeaturePromise = null;
+
 
   function ensureAnimationFeatureLoaded() {
-    if (window.__gosx_scene3d_animation_api) {
-      return Promise.resolve(window.__gosx_scene3d_animation_api);
-    }
-    if (sceneAnimationFeaturePromise) {
-      return sceneAnimationFeaturePromise;
-    }
-    sceneAnimationFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-animation", resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_animation_api) {
-          resolve(window.__gosx_scene3d_animation_api);
-        } else {
-          reject(new Error("scene3d-animation chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneAnimationFeaturePromise = null;
-        reject(new Error("failed to load scene3d-animation chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneAnimationFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("animation", "gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
   }
 
   // Expose the animation lazy-loader for consumers that need to drive
@@ -1900,7 +1953,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // registry and the GPU instanced-cull system. A scene with one cube and one
   // directional light runs none of them, and used to pay 8_772 gzip bytes for
   // all of them. See 26k-feature-scene3d-compute-prefix.js.
-  var sceneComputeFeaturePromise = null;
+
 
   function ensureComputeFeatureLoaded() {
     if (window.__gosx_scene3d_compute_api) {
@@ -1912,37 +1965,7 @@ function gosxConfigureSceneScript(script, role, src) {
       && typeof window.__gosx_scene3d_api.createSceneParticleSystem === "function") {
       return Promise.resolve(window.__gosx_scene3d_api);
     }
-    if (sceneComputeFeaturePromise) {
-      return sceneComputeFeaturePromise;
-    }
-    sceneComputeFeaturePromise = new Promise(function(resolve, reject) {
-      var url = resolveSceneSubFeatureURL("gosxScene3dComputeUrl", "");
-      if (!url) {
-        // The server did not advertise the chunk, so this page's scene
-        // declared no particles and no instanced meshes. Refuse rather than
-        // guess a path: a 404 here would look like a broken deployment.
-        sceneComputeFeaturePromise = null;
-        reject(new Error("scene3d-compute chunk URL was not advertised"));
-        return;
-      }
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-compute", url);
-      s.onload = function() {
-        if (window.__gosx_scene3d_compute_api) {
-          resolve(window.__gosx_scene3d_compute_api);
-        } else {
-          sceneComputeFeaturePromise = null;
-          reject(new Error("scene3d-compute chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneComputeFeaturePromise = null; // allow retry on the next attempt
-        reject(new Error("failed to load scene3d-compute chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneComputeFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("compute", "gosxScene3dComputeUrl", "");
   }
 
   // Expose the compute lazy-loader so a runtime program that adds particles
@@ -2000,7 +2023,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // quantized-array decoder, the progressive and level-of-detail ladders, and
   // the procedural point generators. See
   // 26l-feature-scene3d-decompress-prefix.js.
-  var sceneDecompressFeaturePromise = null;
+
 
   // sceneDecompressAPIFunction resolves one decompress entry point. The
   // monolith keeps 11a and 11b inline, so the lookup finds the function on the
@@ -2012,43 +2035,42 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function ensureDecompressFeatureLoaded() {
-    if (sceneDecompressAPIFunction("sceneDecompressProps")) {
-      return Promise.resolve(window.__gosx_scene3d_api);
-    }
-    if (sceneDecompressFeaturePromise) {
-      return sceneDecompressFeaturePromise;
-    }
-    sceneDecompressFeaturePromise = new Promise(function(resolve, reject) {
-      var url = resolveSceneSubFeatureURL("gosxScene3dDecompressUrl", "");
-      if (!url) {
-        // The server did not advertise the chunk, so this page's scene carries
-        // no compressed array and no generator descriptor. Refuse rather than
-        // guess a path: a 404 here would look like a broken deployment.
-        sceneDecompressFeaturePromise = null;
-        reject(new Error("scene3d-decompress chunk URL was not advertised"));
-        return;
-      }
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-decompress", url);
-      s.onload = function() {
-        if (sceneDecompressAPIFunction("sceneDecompressProps")) {
-          resolve(window.__gosx_scene3d_api);
-        } else {
-          sceneDecompressFeaturePromise = null;
-          reject(new Error("scene3d-decompress chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneDecompressFeaturePromise = null; // allow retry on the next attempt
-        reject(new Error("failed to load scene3d-decompress chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneDecompressFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("decompress", "gosxScene3dDecompressUrl", "");
   }
 
   window.__gosx_ensure_scene3d_decompress_loaded = ensureDecompressFeatureLoaded;
+
+  // Share the URL, CSP, caching and retry path for content-gated authorities.
+  // No fallback URL: pages that do not advertise a feature cannot fetch it.
+
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneGatedFeatureAPI(kind) {
+    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : window["__gosx_scene3d_" + kind + "_api"];
+  }
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function ensureSceneGatedFeatureLoaded(kind, datasetKey, fallback) {
+    const api = sceneGatedFeatureAPI(kind);
+    if (api) return Promise.resolve(api);
+    if (sceneGatedFeaturePromises[kind]) return sceneGatedFeaturePromises[kind];
+    const name = "scene3d-" + kind, url = resolveSceneSubFeatureURL(datasetKey, fallback || "");
+    if (!url) return Promise.reject(new Error(name + " chunk URL was not advertised"));
+    const promise = new Promise(function(resolve, reject) {
+      const script = document.createElement("script"); script.async = false;
+      gosxConfigureSceneScript(script, "feature-" + name, url);
+      script.onload = function() {
+        const loaded = sceneGatedFeatureAPI(kind);
+        if (loaded) resolve(loaded); else reject(new Error(name + " chunk loaded but did not publish API"));
+      };
+      script.onerror = function() { reject(new Error("failed to load " + name + " chunk")); };
+      document.head.appendChild(script);
+    });
+    sceneGatedFeaturePromises[kind] = promise.catch(function(error) {
+      delete sceneGatedFeaturePromises[kind];
+      if (kind === "webgl" || kind === "webgpu") window["__gosx_scene3d_" + kind + "_feature_promise"] = null;
+      throw error;
+    });
+    return sceneGatedFeaturePromises[kind];
+  }
 
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can
@@ -2518,6 +2540,19 @@ function gosxConfigureSceneScript(script, role, src) {
               await gltfApi.sceneLoadGLTFModel(key, variantContext),
               key
             ), key);
+            // Explicit WebGL scene prewarms include palette/bounds work before
+            // the decoded asset is marked ready; all actor waiters share this promise.
+            if (hydrationMeta && hydrationMeta.crowd && hydrationMeta.state && hydrationMeta.state._crowdWebGLRequested &&
+                asset.objects.length && asset.objects.every(o => o.skin && !o._morphAnim && !o._nodeAnim)) {
+              try {
+                const animationAPI = await ensureAnimationFeatureLoaded();
+                const skins = new Set(asset.objects.map(o => o.skinIndex));
+                for (const skin of skins) animationAPI.buildCrowdAtlas(asset, skin);
+              } catch (error) {
+                /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Unsupported ordinary Model assets retain their existing playback.
+                asset._crowdUnsupported = String(error && error.message || error);
+              }
+            }
             sceneModelAssetReady.add(cacheKey);
             return { asset, error: null };
           }
@@ -2570,7 +2605,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // resolves to the parsed asset ({objects, points, labels, sprites, html,
   // lights, ...}, all empty arrays on failure) so callers can verify the load
   // actually produced content before committing to a swap.
-  window.__gosx_scene3d_preload_model = function(src) {
+  /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ window.__gosx_scene3d_preload_model = function(src) {
     return loadSceneModelAsset(String(src || "").trim(), null);
   };
   if (typeof window !== "undefined") {
@@ -2706,7 +2741,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (animatedTransforms && typeof animatedTransforms.clear === "function") {
       animatedTransforms.clear();
     }
-    if (sceneModelWasmMixerActive(record)) {
+    if (record.explicitClips) {
+      record.animationApi.sampleExplicitAnimation(record.explicitClips, record.model._crowdPose, animatedTransforms);
+    } else if (sceneModelWasmMixerActive(record)) {
       sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
     } else if (record.mixer) {
       record.mixer.update(deltaTime, function(targetNode, property, value) {
@@ -2923,8 +2960,8 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
     }
-    if (morphTargets.length > 0) {
-      record.morphTargets = morphTargets;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (morphTargets.length > 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.morphTargets = morphTargets;
       record.morphApi = typeof window !== "undefined" ? (window.__gosx_scene3d_gltf_api || null) : null;
     }
     // Rigid node TRS playback entries: one live record per emitted geometry
@@ -2948,14 +2985,19 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
     }
-    if (nodeAnimTargets.length > 0) {
-      record.nodeAnimTargets = nodeAnimTargets;
-      if (!record.morphApi && typeof window !== "undefined") {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (nodeAnimTargets.length > 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.nodeAnimTargets = nodeAnimTargets;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!record.morphApi && typeof window !== "undefined") {
         record.morphApi = window.__gosx_scene3d_gltf_api || null;
       }
     }
 
     const clips = sceneCloneModelAnimations(asset.animations);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
+      record.explicitClips = clips;
+      sceneApplyModelSkinPose(record, 0, false);
+      return;
+    }
     const wantWasmMixer = clips.length > 0
       && typeof window !== "undefined"
       && window.__gosx_motion_wasm
@@ -2964,8 +3006,8 @@ function gosxConfigureSceneScript(script, role, src) {
     if (wantWasmMixer) {
       // P4-M3: route glTF clip playback through the Go WASM motion mixer.
       const handle = window.__gosx_motion_mixer_create();
-      if (handle >= 1) {
-        record.wasmMixer = handle;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (handle >= 1) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.wasmMixer = handle;
         record.wasmMixerActive = true;
         for (let index = 0; index < clips.length; index += 1) {
           const clip = clips[index];
@@ -3143,19 +3185,21 @@ function gosxConfigureSceneScript(script, role, src) {
       return false;
     }
     let changed = false;
+    const modelMatrix = sceneModelTransformMatrix(record.model);
+    const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
+    const orientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
     for (let index = 0; index < record.objectIDs.length; index += 1) {
       const object = state.objects && state.objects.get ? state.objects.get(record.objectIDs[index]) : null;
       const local = object && object._modelLocalVertices;
       if (!object || !object.vertices || !local || !local.positions) {
         continue;
       }
-      const orientation = sceneAffineDeterminant(sceneModelTransformMatrix(record.model), 0) < 0 ? -1 : 1;
       object.vertices.positions = sceneModelTransformMeshFloats(local.positions, 3, function(x, y, z) {
-        return sceneModelTransform({ x: x, y: y, z: z }, record.model, 0);
+        return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
       });
       if (local.normals && local.normals.length) {
         object.vertices.normals = sceneModelTransformMeshFloats(local.normals, 3, function(x, y, z) {
-          return sceneNormalizeDirection(sceneObjectTransformNormal(record.model, { x: x, y: y, z: z }, 0));
+          return sceneNormalizeDirection(sceneMatrixTransformInto({}, normalMatrix, x, y, z, 3, false));
         });
       }
       if (local.tangents && local.tangents.length) {
@@ -3164,6 +3208,9 @@ function gosxConfigureSceneScript(script, role, src) {
       object.vertices.uvs = local.uvs;
       object.vertices.indices = sceneCloneModelMeshIndices(local.indices, orientation < 0, local.count);
       object.vertices.count = local.count;
+      if (object.vertices.immutable === true) {
+        object.vertices.revision = Math.max(0, sceneNumber(object.vertices.revision, 0)) + 1;
+      }
       object.static = false;
       sceneApplyModelObjectHiddenState(object, record.model);
       changed = true;
@@ -3285,6 +3332,14 @@ function gosxConfigureSceneScript(script, role, src) {
     return current;
   }
 
+  function sceneComputedPosePriorArray(object, cacheKey, sourceArray) {
+    const cached = object ? object[cacheKey] : null;
+    if (cached && typeof cached.length === "number" && cached.length === sourceArray.length) {
+      return new Float32Array(cached);
+    }
+    return new Float32Array(sourceArray);
+  }
+
   function sceneComputedPoseApplyObjectMorph(object, sourceLocal, targetLocal, model, alpha) {
     if (!object || !object.vertices || !sourceLocal || !targetLocal) {
       return 0;
@@ -3301,31 +3356,28 @@ function gosxConfigureSceneScript(script, role, src) {
     const targetPositions = targetLocal.positions.length === count * 3
       ? targetLocal.positions
       : targetLocal.positions.subarray(0, count * 3);
+    const priorPositions = sceneComputedPosePriorArray(object, "_computedPoseLocalPositions", sourcePositions);
     const morphedPositions = sceneComputedPoseBlendArray(object, "_computedPoseLocalPositions", sourcePositions, targetPositions, 3, alpha, false);
     if (!morphedPositions) {
       return 0;
     }
 
-    object.computedMorph = {
-      sourcePositions,
-      targetPositions,
-      sourceNormals: sourceLocal.normals && sourceLocal.normals.length >= count * 3
-        ? (sourceLocal.normals.subarray ? sourceLocal.normals.subarray(0, count * 3) : sourceLocal.normals)
-        : null,
-      targetNormals: targetLocal.normals && targetLocal.normals.length >= count * 3
-        ? (targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals)
-        : null,
-      sourceTangents: sourceLocal.tangents && sourceLocal.tangents.length >= count * 4
-        ? (sourceLocal.tangents.subarray ? sourceLocal.tangents.subarray(0, count * 4) : sourceLocal.tangents)
-        : null,
-      targetTangents: targetLocal.tangents && targetLocal.tangents.length >= count * 4
-        ? (targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents)
-        : null,
-      uvs: sourceLocal.uvs,
-      count,
-      alpha: Math.max(0, Math.min(1, sceneNumber(alpha, 0.45))),
-      modelMatrix: sceneModelTransformMatrix(model),
-    };
+    // Reuse the existing plain object instead of replacing it on every event,
+    // so renderer-owned caches hanging off computedMorph (packed GPU data
+    // buffers, output buffers, bind groups) remain reusable across events.
+    // Every public morph data field is reassigned each event so no stale
+    // source/target/count/alpha/model data leaks through the reused object.
+    let morphData = object.computedMorph;
+    if (!morphData || typeof morphData !== "object") {
+      morphData = {};
+      object.computedMorph = morphData;
+    }
+    morphData.sourcePositions = priorPositions;
+    morphData.targetPositions = targetPositions;
+    morphData.uvs = sourceLocal.uvs;
+    morphData.count = count;
+    morphData.alpha = Math.max(0, Math.min(1, sceneNumber(alpha, 0.45)));
+    morphData.modelMatrix = sceneModelTransformMatrix(model);
 
     const orientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
     object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
@@ -3338,9 +3390,16 @@ function gosxConfigureSceneScript(script, role, src) {
     const targetNormals = targetLocal.normals && targetLocal.normals.length >= count * 3
       ? targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals
       : null;
+    const priorNormals = sourceNormals
+      ? sceneComputedPosePriorArray(object, "_computedPoseLocalNormals", sourceNormals)
+      : null;
     const morphedNormals = sourceNormals
       ? sceneComputedPoseBlendArray(object, "_computedPoseLocalNormals", sourceNormals, targetNormals || sourceNormals, 3, alpha, true)
       : null;
+    if (object.computedMorph) {
+      object.computedMorph.sourceNormals = priorNormals;
+      object.computedMorph.targetNormals = sourceNormals ? (targetNormals || sourceNormals) : null;
+    }
     if (morphedNormals) {
       object.vertices.normals = sceneModelTransformMeshFloats(morphedNormals, 3, function(x, y, z) {
         return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
@@ -3353,9 +3412,16 @@ function gosxConfigureSceneScript(script, role, src) {
     const targetTangents = targetLocal.tangents && targetLocal.tangents.length >= count * 4
       ? targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents
       : null;
+    const priorTangents = sourceTangents
+      ? sceneComputedPosePriorArray(object, "_computedPoseLocalTangents", sourceTangents)
+      : null;
     const morphedTangents = sourceTangents
       ? sceneComputedPoseBlendArray(object, "_computedPoseLocalTangents", sourceTangents, targetTangents || sourceTangents, 4, alpha, true)
       : null;
+    if (object.computedMorph) {
+      object.computedMorph.sourceTangents = priorTangents;
+      object.computedMorph.targetTangents = sourceTangents ? (targetTangents || sourceTangents) : null;
+    }
     if (morphedTangents) {
       object.vertices.tangents = sceneModelTransformTangents(morphedTangents, object.vertices.normals, model, orientation);
     }
@@ -3620,6 +3686,31 @@ function gosxConfigureSceneScript(script, role, src) {
     });
   }
 
+  // Identity-root rigid stages share immutable primitive streams from the same
+  // decoded asset. The asset's vertex identity also scopes texture variants and
+  // node transforms; animated/morph/live stages never enter this cache.
+  const sceneRigidPrimitiveGeometry = new WeakMap();
+
+  function sceneCrowdPrimitiveMaterialEligible(raw, model) {
+    const source = sceneApplyMaterialOverride(raw, model);
+    // Read through the same nested/top-level precedence as normalization.
+    // A primitive-authored custom shader must not lose its skin before the
+    // renderer discovers that it cannot use the crowd PBR program.
+    if (normalizeSceneMaterialKind(sceneObjectMaterialKindValue(source)) !== "standard") return false;
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "shaderBackend", "shaderSource"]) {
+      const value = sceneObjectMaterialValue(source, key);
+      if (typeof value === "string" && value.trim()) return false;
+    }
+    const uniforms = sceneObjectMaterialValue(source, "customUniforms");
+    if (uniforms && typeof uniforms === "object" && Object.keys(uniforms).length) return false;
+    const opacity = sceneObjectMaterialValue(source, "opacity");
+    if (opacity != null && (!Number.isFinite(Number(opacity)) || Number(opacity) < 1)) return false;
+    const blend = sceneObjectMaterialValue(source, "blendMode");
+    if (blend && blend !== "opaque" && blend !== "normal") return false;
+    const pass = sceneObjectMaterialValue(source, "renderPass");
+    return (!pass || pass === "opaque") && source.wireframe !== true;
+  }
+
   async function sceneStageModelHydration(state, model, modelIndex, generation) {
     const staged = {
       model,
@@ -3642,6 +3733,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const asset = await loadSceneModelAsset(model.src, state && state._modelStatusMount, {
         state,
         generation,
+        crowd: model._instancedGLB === true,
         modelID: model.id || "",
         modelIndex,
         stage: "load",
@@ -3656,14 +3748,94 @@ function gosxConfigureSceneScript(script, role, src) {
       stage = "fit";
       const instanceModel = sceneModelWithAssetFit(model, asset);
       const prefix = model.id || ("scene-model-" + modelIndex);
+      let crowdCandidate = !asset._crowdUnsupported && model._instancedGLB === true && model._crowdPose && model._crowdPose.animation &&
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ state._crowdWebGLRequested && state._crowdRenderer && state._crowdRenderer.prepareCrowdAtlas &&
+        Boolean(sceneRigidInstanceHydrationKey(state, model)) && !sceneModelHasWeightAnimations(asset) &&
+        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+        (!model.materialKind || model.materialKind === "standard") &&
+        asset.objects.length > 0 && asset.objects.every(function(object) {
+          return object.skin && object.vertices && object.vertices.joints && object.vertices.weights &&
+            !object._morphAnim && !object._nodeAnim && object.renderPass !== "alpha" &&
+            sceneCrowdPrimitiveMaterialEligible(object, model);
+        });
+      let crowdAPI = null;
+      if (crowdCandidate) {
+        try {
+          crowdAPI = await ensureAnimationFeatureLoaded();
+          for (const skin of new Set(asset.objects.map(o => o.skinIndex))) {
+            state._crowdRenderer.prepareCrowdAtlas(crowdAPI.buildCrowdAtlas(asset, skin));
+          }
+        } catch (error) {
+          // Preserve the explicit clock through ordinary skin/morph playback.
+          // Never silently submit bind geometry to a missing palette shader.
+          crowdCandidate = false;
+          if (!state._crowdFallbackReason) console.warn("[gosx] crowd skin fallback:", error && error.message || error);
+          state._crowdFallbackReason = String(error && error.message || error);
+        }
+      }
+      if (crowdCandidate) {
+        stage = "crowd-palette";
+        const api = crowdAPI;
+        const geometryModel = Object.assign({}, instanceModel, { x: 0, y: 0, z: 0,
+          rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1,
+          parentMatrix: null, _shareRigidGeometry: true });
+        for (let i = 0; i < asset.objects.length; i++) {
+          const raw = asset.objects[i];
+          const atlas = api.buildCrowdAtlas(asset, raw.skinIndex);
+          const primitive = atlas.primitives.get(raw.vertices);
+          sceneRigidPrimitiveGeometry.set(primitive.vertices, primitive.vertices);
+          const source = Object.assign({}, raw, { skin: null, skinIndex: null, vertices: primitive.vertices });
+          const object = sceneInstantiateModelObject(source, geometryModel, prefix, i, null);
+          object.vertices = primitive.vertices;
+          object._modelLocalVertices = primitive.vertices;
+          object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows };
+          object.static = false;
+          staged.objects.push(object);
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        staged.rigidInstanceModel = instanceModel;
+        return { ok: true, staged };
+      }
+      const rigidInstance = (model.static !== true || model._instancedGLB === true) &&
+        !sceneModelHasSkins(asset.skins) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) &&
+        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+        asset.objects.length > 0 && asset.objects.every(function(object) {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return object.vertices && object.vertices.count > 0 && !object._morphAnim && !object._nodeAnim;
+        }) && Boolean(sceneRigidInstanceHydrationKey(state, model));
+      // glTF node transforms are already folded into the asset vertices. Keep
+      // those vertices in model-local space and apply the instance TRS once
+      // in the GPU (or through the existing canvas fallback transform).
+      const geometryModel = rigidInstance ? Object.assign({}, instanceModel, {
+        x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+        scaleX: 1, scaleY: 1, scaleZ: 1, parentMatrix: null,
+        _shareRigidGeometry: true,
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }) : instanceModel;
+      if (rigidInstance) staged.rigidInstanceModel = instanceModel;
       stage = "skin-clone";
       const skinInstances = sceneCloneModelSkins(asset.skins);
       const objectIDs = [];
       stage = "object";
       for (let i = 0; i < asset.objects.length; i += 1) {
-        const object = sceneInstantiateModelObject(asset.objects[i], instanceModel, prefix, i, skinInstances);
+        const object = sceneInstantiateModelObject(asset.objects[i], geometryModel, prefix, i, skinInstances);
         if (!object) {
           continue;
+        }
+        if (rigidInstance) {
+          const sourceVertices = asset.objects[i].vertices;
+          let shared = sceneRigidPrimitiveGeometry.get(sourceVertices);
+          if (!shared) {
+            shared = object.vertices;
+            // The decoded asset owns immutable streams shared by its entire
+            // swarm. A short bounded GPU residency window can reuse them
+            // across an empty wave without retaining any actor identities.
+            shared._rigidPool = true;
+            sceneRigidPrimitiveGeometry.set(sourceVertices, shared);
+          }
+          object.vertices = shared;
+          object._modelLocalVertices = shared;
+          object._rigidSharedAppearance = model._instancedGLBSharedAppearance === true;
+          object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
+          object.static = false;
         }
         staged.objects.push(object);
         objectIDs.push(object.id);
@@ -3728,6 +3900,426 @@ function gosxConfigureSceneScript(script, role, src) {
     }
   }
 
+  function sceneStaticModelHydrationKey(state, model, modelIndex) {
+    if (!model || model.static !== true || model.animation || model.animationSeq ||
+        model._inState || model._outState ||
+        Array.isArray(model._live) && model._live.length > 0) {
+      return "";
+    }
+    if (model._transition && ["in", "out", "update"].some(function(kind) {
+      return model._transition[kind] && model._transition[kind].duration > 0;
+    })) return "";
+    // Normalized declarations include the asset, transform, fit and material
+    // overrides. Texture variants are a separate asset-cache identity.
+    const scope = state && state._modelTextureVariantScope;
+    return JSON.stringify([modelIndex, model, scope && scope.key || ""]);
+  }
+
+  function sceneReusableStaticModelHydration(staged, state) {
+    // Reuse only rigid mesh stages with no playback or auxiliary lifecycle
+    // owners. Animated, live-bound and non-mesh models keep full staging.
+    if (!staged || !staged.objects.length || staged.modelSkins.length ||
+        staged.modelAnimations.length || staged.points.length || staged.labels.length ||
+        staged.sprites.length || staged.html.length || staged.lights.length) return false;
+    return staged.objects.every(function(object) {
+      const vertices = object && object.vertices;
+      return vertices && vertices.immutable === true && vertices.revision === 0 &&
+        (!state || state.objects.get(object.id) === object);
+    });
+  }
+
+  function sceneRigidInstanceHydrationEligible(model, matrix) {
+    if (!model || model.static === true && model._instancedGLB !== true || model.animation || model.animationSeq ||
+        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return false;
+    if (model._transition && ["in", "out", "update"].some(function(kind) {
+      return model._transition[kind] && model._transition[kind].duration > 0;
+    })) return false;
+    // A singular or mirrored transform takes the established winding/bake
+    // path. This fast path never silently changes reflection semantics.
+    return sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001;
+  }
+
+  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+    if (!sceneRigidInstanceHydrationEligible(model, matrix)) return "";
+    const template = sceneInstancedGLBHydrationTemplates.get(model);
+    if (template) return '["instanced-glb",' + template + ',' + JSON.stringify([model.id,
+      state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]) + ']';
+    const declaration = Object.assign({}, model);
+    for (const key of ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
+    return JSON.stringify([declaration, state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]);
+  }
+
+  function sceneReusableRigidInstance(staged, state) {
+    return Boolean(staged && staged.rigidInstanceModel && sceneReusableStaticModelHydration(staged, state));
+  }
+
+  function scenePrepareRigidInstancePatch(state, staged, model, matrix) {
+    if (!sceneReusableRigidInstance(staged, state)) return null;
+    let crowdRows = null;
+    for (const object of staged.objects) {
+      if (!object._crowdSkin) continue;
+      const rows = object._crowdSkin.poseRows(object._crowdSkin.atlas, model._crowdPose, new Float32Array(3));
+      if (!rows || rows.length !== object._crowdSkin.rows.length) return null;
+      if (!crowdRows) crowdRows = [];
+      crowdRows.push({ object, rows });
+    }
+    // InstancedGLB expansion creates an immutable command-owned model, so its
+    // cached matrix is already a transaction snapshot. Ordinary Model entries
+    // persist across commands and reuse their mutable matrix cache; retain the
+    // defensive copy for those broader declarations.
+    const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
+    return { staged, model, matrix: snapshotMatrix, crowdRows };
+  }
+
+  function sceneCommitRigidInstancePatch(patch) {
+    for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+    if (patch.crowdRows) {
+      for (const update of patch.crowdRows) update.object._crowdSkin.rows.set(update.rows);
+    }
+    patch.staged.model = patch.model;
+    patch.staged.rigidInstanceModel = patch.model;
+  }
+
+  function sceneUpdateRigidInstancePoses(state, hydrationModels) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
+    if (models.length !== records.modelCount) return false;
+    const memberships = records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const scope = sceneRigidMembershipScopeKey(state);
+    const patches = [];
+    const keys = new Set();
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index];
+      const matrix = sceneModelTransformMatrix(model);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const membership = id && memberships && memberships.get(id);
+      let key = "";
+      if (membership) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            membership.template !== template || membership.scope !== scope ||
+            membership.staged !== cache.get(membership.key)) return false;
+        key = membership.key;
+      } else if (id) {
+        return false;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
+      if (!key) {
+        const staticKey = sceneStaticModelHydrationKey(state, model, index);
+        if (!staticKey || !sceneReusableStaticModelHydration(records.staticModels.get(staticKey), state)) return false;
+        continue;
+      }
+      const staged = key && cache.get(key);
+      if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
+      keys.add(key);
+      patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
+    }
+    // Validate the complete collection before changing the committed scene.
+    for (const patch of patches) {
+      for (const object of patch.staged.objects) {
+        object.parentMatrix = patch.matrix;
+        if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
+        if (object._crowdMotion) delete object._crowdMotion;
+      }
+      patch.staged.model = patch.model;
+      patch.staged.rigidInstanceModel = patch.model;
+    }
+    return true;
+  }
+
+  // sceneUpdateRigidInstanceMotion applies a decoded GSP3 MotionFrame (see
+  // command-runtime.ts's decodeMotionFrame/applyMountedMotionFrame) to the
+  // retained crowd render objects a MotionBatch's instances name. Unlike
+  // sceneUpdateRigidInstancePoses, it never rebuilds a CPU-side transform
+  // matrix or atlas pose row: it writes the instance's motion key and
+  // animation state straight into object._crowdMotion.record, and the GPU
+  // vertex shader (SCENE_CROWD_SKIN_MOTION_GLSL) derives the transform and
+  // pose from that record and the per-frame u_now uniform. Because of that,
+  // this function needs no positional re-derivation from state.models the
+  // way sceneUpdateRigidInstancePoses does: an instance ID resolves straight
+  // to its hydrated render objects through
+  // state._hydratedModelRecords.rigidInstancesByID.
+  //
+  // A qualifying object must already carry _crowdSkin -- the SAME crowd
+  // hydration PoseFrame/legacy playback uses (see sceneStageModelHydration's
+  // "crowd" branch) -- so a MotionFrame targets an actor that was declared
+  // with an initial animation, exactly like PoseFrame requires. _crowdMotion
+  // is created lazily, on an object's FIRST motion frame, reusing that same
+  // atlas: hydration does not need to know in advance which driving channel
+  // (PoseFrame or MotionFrame) an actor will use.
+  //
+  // Fails closed (returns false, no partial writes) when: the hydration
+  // cache is not ready, an instance ID has no crowd-skinned hydration, or
+  // the WebGL crowd renderer has no prepareCrowdMotionShaders (any other
+  // backend, or WebGL before its first crowd draw ever ran) -- see
+  // scene/motion_frame.go's DispatchMotionFrame doc comment for how a caller
+  // routes around that with options.fallbackPoseFrame or
+  // options.fallbackCommands.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneUpdateRigidInstanceMotion(state, batches) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const memberships = records && records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const api = typeof window !== "undefined" ? window.__gosx_scene3d_animation_api : null;
+    if (!cache || !memberships || !api || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    if (!state._crowdRenderer || typeof state._crowdRenderer.prepareCrowdMotionShaders !== "function") return false;
+    const resolved = [];
+    for (const batch of batches) {
+      for (const instance of batch.instances) {
+        // InstancedGLB expansion stores hydrated models under batch/id.
+        const membership = memberships.get(batch.id + "/" + instance.id);
+        const staged = membership && membership.staged === cache.get(membership.key) ? membership.staged : null;
+        // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+        const skinned = staged ? staged.objects.filter(function(object) { return Boolean(object._crowdSkin); }) : null;
+        if (!skinned || !skinned.length) return false;
+        for (const object of skinned) {
+          if (api.crowdMotionClipTable(object._crowdSkin.atlas).count > api.crowdMotionMaxClips) return false;
+        }
+        resolved.push({ skinned, instance });
+      }
+    }
+    try {
+      state._crowdRenderer.prepareCrowdMotionShaders();
+    } catch (_error) {
+      return false;
+    }
+    for (const entry of resolved) {
+      for (const object of entry.skinned) {
+        if (!object._crowdMotion) {
+          object._crowdMotion = {
+            atlas: object._crowdSkin.atlas,
+            clipTable: api.crowdMotionClipTable(object._crowdSkin.atlas),
+            record: new Float32Array(api.crowdMotionRecordFloats),
+            localRadius: api.crowdMotionLocalRadius(object._crowdSkin.bounds),
+            bounds: { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity },
+            dirty: true,
+          };
+        }
+        const motion = object._crowdMotion;
+        const clipRow = api.crowdMotionClipIndex(motion.atlas, entry.instance.animation);
+        api.crowdMotionWriteRecord(motion.record, entry.instance, clipRow);
+        const bounds = motion.bounds;
+        bounds.minX = bounds.minY = bounds.minZ = Infinity;
+        bounds.maxX = bounds.maxY = bounds.maxZ = -Infinity;
+        api.crowdMotionSweptBoundsInto(bounds, motion.record, motion.localRadius);
+        motion.dirty = true;
+      }
+    }
+    return true;
+  }
+
+  function sceneRigidMembershipModelID(model) {
+    return model && model._instancedGLB === true ? String(model.id || "") : "";
+  }
+
+  function sceneRigidMembershipScopeKey(state) {
+    return state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || "";
+  }
+
+  function sceneRigidMembershipDescriptor(state, key, staged) {
+    const model = staged && staged.model;
+    const id = sceneRigidMembershipModelID(model);
+    const template = model && sceneInstancedGLBHydrationTemplates.get(model);
+    return id && template ? { id, key, staged, template, scope: sceneRigidMembershipScopeKey(state) } : null;
+  }
+
+  function sceneRigidMembershipSnapshotModel(model) {
+    // InstancedGLB models are freshly expanded from a command-owned normalized
+    // batch. normalizeSceneInstancedGLBMeshEntry already deep-snapshots every
+    // nested authored shader/material field once per batch, and expansion
+    // creates a new pose record per instance. Later commands replace the
+    // batch array, so this record is already an immutable async snapshot.
+    // Ordinary Model declarations retain the established deep clone because
+    // their broader mutable/lifecycle contract is unchanged.
+    return sceneInstancedGLBHydrationTemplates.has(model)
+      ? model
+      : sceneCloneHydrationModel(model);
+  }
+
+  function scenePlanRigidInstanceMembership(state, hydrationModels) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const statics = records && records.staticModels;
+    if (!cache || !statics || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return null;
+    // Only reusable rigid/static collections enter this path. Animated,
+    // auxiliary, lifecycle-bound and specialized records keep full hydration.
+    if (records.modelCount !== cache.size + statics.size) return null;
+    let models;
+    try {
+      const expanded = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
+      models = expanded.map(sceneRigidMembershipSnapshotModel);
+    } catch (_error) {
+      return null;
+    }
+    const previousByID = records.rigidInstancesByID;
+    if (!(previousByID instanceof Map)) return null;
+    const scope = sceneRigidMembershipScopeKey(state);
+    const keys = new Set();
+    const staticKeys = new Set();
+    const nextIDs = new Set();
+    const entries = [];
+    let changed = models.length !== records.modelCount;
+    for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+      const model = models[modelIndex];
+      const matrix = sceneModelTransformMatrix(model);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const previous = id && previousByID.get(id);
+      let key = "";
+      if (previous) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            previous.template !== template || previous.scope !== scope ||
+            previous.staged !== cache.get(previous.key)) return null;
+        key = previous.key;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
+      if (!key) {
+        const staticKey = sceneStaticModelHydrationKey(state, model, modelIndex);
+        const staged = staticKey && statics.get(staticKey);
+        if (!staticKey || staticKeys.has(staticKey) || !sceneReusableStaticModelHydration(staged, state)) return null;
+        staticKeys.add(staticKey);
+        entries.push({ kind: "static", key: staticKey, staged, model, modelIndex });
+        continue;
+      }
+      if (keys.has(key)) return null;
+      keys.add(key);
+      const staged = cache.get(key);
+      if (staged) {
+        if (previous && previous.staged !== staged) return null;
+        const patch = scenePrepareRigidInstancePatch(state, staged, model, matrix);
+        if (!patch) return null;
+        entries.push({ kind: "rigid", key, staged, model, modelIndex, patch, membership: previous || null });
+        continue;
+      }
+      // A changed key for the same actor means its template, appearance or
+      // texture scope changed and retains full-hydration semantics.
+      if (!id || nextIDs.has(id) || previous) return null;
+      nextIDs.add(id);
+      changed = true;
+      entries.push({ kind: "add", key, staged: null, model, modelIndex, patch: null });
+    }
+    for (const [key, staged] of cache) {
+      if (keys.has(key)) continue;
+      if (!sceneRigidMembershipModelID(staged && staged.model)) return null;
+      changed = true;
+    }
+    // Static membership/order changes take full hydration to prevent orphaned derived objects.
+    if (staticKeys.size !== statics.size) return null;
+    for (const key of statics.keys()) if (!staticKeys.has(key)) return null;
+    return changed ? { state, records, models, entries, keys, scope } : null;
+  }
+
+  async function sceneCommitRigidInstanceMembership(plan) {
+    const state = plan.state;
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+    const additions = plan.entries.filter(function(entry) { return entry.kind === "add"; });
+    const results = await Promise.all(additions.map(function(entry) {
+      return sceneStageModelHydration(state, entry.model, entry.modelIndex, generation);
+    }));
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+    }
+    const failure = results.find(function(result) { return !result || result.ok !== true; });
+    if (failure) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "failed", false, false,
+        failure && failure.stage || "unknown");
+    }
+    for (let index = 0; index < additions.length; index += 1) {
+      const entry = additions[index];
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const staged = results[index].staged;
+      const key = sceneRigidInstanceHydrationKey(state, entry.model);
+      if (key !== entry.key || !sceneReusableRigidInstance(staged, null)) {
+        sceneDestroyStagedModelHydrations(results);
+        return hydrateSceneStateModels(state, null);
+      }
+      const patch = scenePrepareRigidInstancePatch(null, staged, entry.model, sceneModelTransformMatrix(entry.model));
+      if (!patch) {
+        sceneDestroyStagedModelHydrations(results);
+        return hydrateSceneStateModels(state, null);
+      }
+      entry.staged = staged;
+      entry.patch = patch;
+    }
+    // Revalidate every retained wrapper and all object IDs after asynchronous
+    // staging. No committed matrix or membership changes before this point.
+    const nextObjectIDs = new Set();
+    const oldObjectIDs = new Set(Array.isArray(plan.records.objects) ? plan.records.objects : []);
+    for (const entry of plan.entries) {
+      if (entry.kind === "static") {
+        if (!sceneReusableStaticModelHydration(entry.staged, state)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+      } else if (entry.kind === "rigid" && !sceneReusableRigidInstance(entry.staged, state)) {
+        sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+      }
+      for (const object of entry.staged.objects) {
+        if (nextObjectIDs.has(object.id)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        if (entry.kind === "add" && state.objects.has(object.id) && !oldObjectIDs.has(object.id)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        nextObjectIDs.add(object.id);
+      }
+    }
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+    }
+
+    const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+    for (const entry of plan.entries) {
+      if (entry.kind === "static") hydrated.staticModels.set(entry.key, entry.staged);
+      else {
+        for (const object of entry.staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
+        hydrated.rigidInstances.set(entry.key, entry.staged);
+        const membership = entry.membership || sceneRigidMembershipDescriptor(state, entry.key, entry.staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
+      }
+      for (const object of entry.staged.objects) hydrated.objects.push(object.id);
+    }
+    // Commit in one synchronous turn after complete validation. Removed model
+    // wrappers are dropped only when they are still the committed object.
+    for (const [key, staged] of plan.records.rigidInstances) {
+      if (hydrated.rigidInstances.has(key)) continue;
+      for (const object of staged.objects) {
+        if (state.objects.get(object.id) === object) state.objects.delete(object.id);
+      }
+    }
+    for (const entry of plan.entries) {
+      if (entry.patch) sceneCommitRigidInstancePatch(entry.patch);
+      if (entry.kind === "add") {
+        for (const object of entry.staged.objects) state.objects.set(object.id, object);
+      }
+    }
+    state._hydratedModelRecords = hydrated;
+    const counts = sceneModelHydrationCounts(plan.entries.length);
+    counts.objects = hydrated.objects.length;
+    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+      generation,
+      currentGeneration: generation,
+      committed: true,
+      counts,
+    });
+    gosxSceneEmit("info", "model-membership-committed", Object.assign({ generation, committed: true, stale: false }, counts));
+    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+  }
+
+  function sceneReconcileRigidInstanceMembership(state, hydrationModels) {
+    const plan = scenePlanRigidInstanceMembership(state, hydrationModels);
+    return plan ? sceneCommitRigidInstanceMembership(plan) : null;
+  }
+
   async function hydrateSceneStateModels(state, props) {
     if (!state) {
       return sceneModelHydrationOutcome(sceneModelHydrationCounts(0), 0, "failed", false, false, "state");
@@ -3739,7 +4331,7 @@ function gosxConfigureSceneScript(script, role, src) {
       // Commands can replace the declaration arrays while their assets are in
       // flight. Clone the fully-expanded list once so this generation has an
       // immutable, deterministic declaration order.
-      models = sceneHydrationModels(state, props).map(sceneCloneData);
+      models = sceneHydrationModels(state, props).map(sceneCloneHydrationModel);
     } catch (error) {
       const counts = sceneModelHydrationCounts(0);
       publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
@@ -3780,7 +4372,29 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
     }
 
+    const previousStaticModels = state._hydratedModelRecords && state._hydratedModelRecords.staticModels;
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const previousRigidInstances = state._hydratedModelRecords && state._hydratedModelRecords.rigidInstances;
+    const rigidKeys = models.map(function(model) { return sceneRigidInstanceHydrationKey(state, model); });
+    const staticKeys = models.map(function(model, modelIndex) {
+      return sceneStaticModelHydrationKey(state, model, modelIndex);
+    });
     const results = await Promise.all(models.map(function(model, modelIndex) {
+      const key = staticKeys[modelIndex];
+      const cached = key && previousStaticModels && previousStaticModels.get(key);
+      if (cached && sceneReusableStaticModelHydration(cached, state)) {
+        return { ok: true, staged: cached };
+      }
+      const rigid = rigidKeys[modelIndex] && previousRigidInstances && previousRigidInstances.get(rigidKeys[modelIndex]);
+      if (sceneReusableRigidInstance(rigid, state)) {
+        const matrix = new Float32Array(sceneModelTransformMatrix(model));
+        // Keep the live wrappers and their material/cache identities when
+        // another actor spawns or dies. Defer pose mutation until the entire
+        // generation is ready and current, preserving transaction isolation.
+        return { ok: true, staged: Object.assign({}, rigid, { model, modelIndex,
+          rigidInstanceModel: model,
+          _pendingRigidMatrix: matrix,
+        }) };
+      }
       return sceneStageModelHydration(state, model, modelIndex, generation);
     }));
 
@@ -3833,9 +4447,29 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneClearHydratedModelRecords(state);
     state._modelAnimations = [];
     state._modelSkins = [];
-    const hydrated = { objects: [], points: [], labels: [], sprites: [], html: [], lights: [] };
+    // Keep only this committed generation. Moving transforms and removed
+    // models cannot accumulate a history of cached geometry.
+    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
     for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
       const staged = results[modelIndex].staged;
+      if (staged._pendingRigidMatrix) {
+        for (const object of staged.objects) {
+          object.parentMatrix = staged._pendingRigidMatrix;
+          if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows);
+        }
+        delete staged._pendingRigidMatrix;
+      }
+      if (staticKeys[modelIndex] && sceneReusableStaticModelHydration(staged, null)) {
+        hydrated.staticModels.set(staticKeys[modelIndex], staged);
+      }
+      if (rigidKeys[modelIndex] && sceneReusableRigidInstance(staged, null)) {
+        for (const object of staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
+        hydrated.rigidInstances.set(rigidKeys[modelIndex], staged);
+        const membership = sceneRigidMembershipDescriptor(state, rigidKeys[modelIndex], staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
+      }
       for (let index = 0; index < staged.objects.length; index += 1) {
         const object = staged.objects[index];
         state.objects.set(object.id, object);
@@ -3962,8 +4596,8 @@ function gosxConfigureSceneScript(script, role, src) {
     const hover = environment ? Boolean(environment.hover) : (sceneMediaQueryMatches("(hover: hover)") || sceneMediaQueryMatches("(any-hover: hover)"));
     const reducedData = environment ? Boolean(environment.reducedData) : sceneMediaQueryMatches("(prefers-reduced-data: reduce)");
     const lowPower = (environment ? Boolean(environment.lowPower) : false) || softwareWebGL;
-    const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
-    const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
     // Device-capability gate via the single source of truth gosxLowEndHardware
     // (05-document-env), preferring the value already computed in the environment
@@ -4154,7 +4788,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const api = sceneRenderTruthAPI();
     const kind = renderer && renderer.kind ? renderer.kind : "";
     const diag = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
-    const adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {};
+    let adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {}; const probe = typeof window !== "undefined" && window.__gosx && window.__gosx.scene3dWebGLProbe; if (kind === "webgl" && probe) adapterInfo = Object.assign({}, adapterInfo, { vendor: adapterInfo.vendor || probe.vendor || "", device: adapterInfo.device || probe.renderer || "", description: adapterInfo.description || probe.renderer || "" });
     const truth = {
       backend: kind,
       // gpu is the assertion a deploy gate wants: did a shader run at all?
@@ -4214,6 +4848,9 @@ function gosxConfigureSceneScript(script, role, src) {
     // data-gosx-scene3d-dropped lists features skipped per the backendCaps degraded verdict.
     setAttrValue(mount, "data-gosx-scene3d-dropped",
       Array.isArray(degraded) && degraded.length > 0 ? degraded.join(",") : "");
+    if (Array.isArray(degraded) && degraded.indexOf("postfx") >= 0) {
+      setAttrValue(mount, "data-gosx-scene3d-postfx", "dropped");
+    }
     const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
       ? renderer.diagnostics()
       : null;
@@ -4364,7 +5001,6 @@ function gosxConfigureSceneScript(script, role, src) {
       return (dash ? " " : "") + letter.toUpperCase();
     });
   }
-
   // Declarative status bindings keep Scene3D diagnostics visible without
   // requiring demo-specific scripts or CSS parent selectors. A status scope
   // owns one scene mount and any number of renderer/fallback/quality outputs.
@@ -4379,6 +5015,7 @@ function gosxConfigureSceneScript(script, role, src) {
     const backend = mount.getAttribute("data-gosx-scene3d-renderer") || "starting";
     const fallback = mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "";
     const quality = mount.getAttribute("data-gosx-scene3d-quality-active") || "measuring";
+    const frameP95 = Number(mount.getAttribute("data-gosx-scene3d-quality-p95-ms"));
     for (let i = 0; i < bindings.length; i++) {
       const output = bindings[i];
       const kind = output.getAttribute("data-gosx-scene3d-status") || "";
@@ -4395,10 +5032,27 @@ function gosxConfigureSceneScript(script, role, src) {
         value = quality === "measuring" ? "measuring…" : sceneStatusBindingLabel(quality);
         output.hidden = false;
         setAttrValue(output, "data-state", quality);
+      } else if (kind === "frame-p95") {
+        value = Number.isFinite(frameP95) && frameP95 > 0 ? frameP95.toFixed(1) + " ms" : "measuring…";
+        output.hidden = false;
+        setAttrValue(output, "data-state", value === "measuring…" ? "measuring" : "ready");
       } else {
         continue;
       }
-      if (output.textContent !== value) output.textContent = value;
+      if (output.textContent !== value) {
+        output.textContent = value;
+        // A texture-mode HTML surface holds a raster of this DOM mirror.
+        // Status changes must invalidate that raster, or its renderer and
+        // quality text remains frozen at the first frame.
+        let parent = output.parentNode;
+        while (parent && (!parent.hasAttribute || !parent.hasAttribute("data-gosx-scene-html"))) {
+          parent = parent.parentNode;
+        }
+        if (parent && typeof window !== "undefined" && window.__gosx_scene3d_html &&
+            typeof window.__gosx_scene3d_html.invalidate === "function") {
+          window.__gosx_scene3d_html.invalidate(parent.getAttribute("data-gosx-scene-html"));
+        }
+      }
     }
   }
 
@@ -4526,21 +5180,21 @@ function gosxConfigureSceneScript(script, role, src) {
       baseExplicitMaxDevicePixelRatio: sceneNumber(base && base.explicitMaxDevicePixelRatio, 0),
       mode: hasLadder ? "ladder" : "tier",
     };
-    if (hasLadder) {
-      state.ladder = ladder.rungs;
-      state.rungIndex = ladder.startRung;
-      state.rungRevision = 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (hasLadder) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.ladder = ladder.rungs;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungIndex = ladder.startRung;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungRevision = 0;
       state.rungReason = "initial";
       // PROMOTE after N (default 120) consecutive frames with headroom below
       // promoteThreshold (default 0.7) × the frame budget. DEMOTE reuses the
       // dprCap-tier governor's sustained-miss condition verbatim (badFrames
-      // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
-      state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
       state.rungPromoteThreshold = Math.max(0.05, Math.min(0.95, sceneNumber(props && props.qualityLadderPromoteThreshold, 0.7)));
       // rungPromoteRule: which promotion rule the last measurement used —
       // "gpu-headroom" (real GPU timing) or "raf-cadence" (cpu-raf fallback,
       // no timestamp-query support). Set fresh every sampled frame in
-      // sceneUpdateQualityLadder; this is just the pre-first-sample default.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // sceneUpdateQualityLadder; this is just the pre-first-sample default.
       state.rungPromoteRule = "gpu-headroom";
     }
     return state;

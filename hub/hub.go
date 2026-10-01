@@ -11,11 +11,13 @@
 package hub
 
 import (
+	"compress/flate"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +35,20 @@ const (
 	// that may push CRDT sync. A full document bootstrap can be large, so the
 	// allowance is much larger than maxMessageSize.
 	defaultSyncMessageSize = 16 * 1024 * 1024
+
+	// defaultCompressionLevel is the flate level a hub uses when
+	// EnableCompression is true and CompressionLevel is left at zero. Level 6
+	// trades a moderate CPU cost for good ratio on repetitive JSON, well above
+	// gorilla/websocket's own default of 1 (fastest, weakest).
+	defaultCompressionLevel = 6
+
+	// minCompressionLevel and maxCompressionLevel bound CompressionLevel.
+	// They match compress/flate's accepted range: HuffmanOnly (-2) through
+	// BestCompression (9). gorilla/websocket validates the same range
+	// internally; a hub checks it up front so a bad config fails at Serve
+	// time with a clear log line instead of a silent per-connection error.
+	minCompressionLevel = flate.HuffmanOnly
+	maxCompressionLevel = flate.BestCompression
 )
 
 // Hub is a long-lived server-side coordinator for realtime state.
@@ -93,6 +109,32 @@ type Hub struct {
 	// defaultSyncMessageSize, which is 16 MiB. Set it before the first
 	// connection; a change does not reach an accepted connection.
 	MaxSyncMessageSize int
+
+	// EnableCompression opts a hub into negotiating permessage-deflate
+	// (RFC 7692) on WebSocket upgrade. Off by default: compression buys back
+	// bandwidth at a CPU cost on every send, so it is a per-hub choice, not a
+	// package default. A client that does not offer the extension connects
+	// uncompressed regardless of this setting.
+	//
+	// gorilla/websocket's server only implements the no-context-takeover mode
+	// of permessage-deflate: every message resets the deflate window instead
+	// of carrying a dictionary forward from the previous message. That still
+	// compresses well for a single JSON message with repeated keys and
+	// structure — the dominant shape for a broadcast snapshot — but it does
+	// not get the cross-message reuse that context takeover would add.
+	//
+	// Configure before the first connection; a later change does not reach
+	// already-accepted clients.
+	EnableCompression bool
+
+	// CompressionLevel selects the flate level used when EnableCompression is
+	// true, from -2 (flate.HuffmanOnly, cheapest) to 9 (flate.BestCompression,
+	// smallest output, most CPU). Zero selects defaultCompressionLevel (6),
+	// tuned for repetitive JSON. Ignored when EnableCompression is false. A
+	// value outside the valid range is rejected at Serve time and falls back
+	// to the default, with a log line — it never panics or drops a
+	// connection.
+	CompressionLevel int
 }
 
 // ConnectionMetadata contains server-supplied values associated with one
@@ -266,6 +308,39 @@ type Context struct {
 	Data   json.RawMessage
 }
 
+// invokeHandler calls a registered HandlerFunc under a panic boundary.
+//
+// WHY: ServeHTTPWithMetadata starts readPump and writePump on their own
+// goroutines (`go client.readPump()`), and every handler this package calls
+// — join, leave, and per-event — runs from inside one of those. net/http
+// recovers a panic inside the synchronous call to a request's own
+// http.Handler, but that recovery never reaches a goroutine the handler
+// spawned and returned from: an unrecovered panic on ANY goroutine
+// terminates the whole process, not just the offending connection. Before
+// this boundary, one client sending a message that panicked a handler could
+// take down every other client's connection along with it.
+//
+// Recovering here, at the single call site every handler invocation shares,
+// means one misbehaving handler drops only the message or lifecycle event
+// that triggered it — the client's connection, and the rest of the hub,
+// keep running.
+func (h *Hub) invokeHandler(handler HandlerFunc, ctx *Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			clientID := ""
+			if ctx != nil && ctx.Client != nil {
+				clientID = ctx.Client.ID
+			}
+			event := ""
+			if ctx != nil {
+				event = ctx.Event
+			}
+			log.Printf("[hub/%s] recovered panic in handler (client=%q event=%q): %v\n%s", h.name, clientID, event, r, debug.Stack())
+		}
+	}()
+	handler(ctx)
+}
+
 // Presence tracks connected clients.
 type Presence struct {
 	mu      sync.RWMutex
@@ -305,6 +380,22 @@ func sameOrigin(r *http.Request, require bool) bool {
 // SetCheckOrigin overrides the default origin check for WebSocket upgrades.
 func SetCheckOrigin(fn func(*http.Request) bool) {
 	upgrader.CheckOrigin = fn
+}
+
+// resolvedCompressionLevel returns the flate level a hub applies to a
+// compressed connection: h.CompressionLevel when it is set and in range,
+// otherwise defaultCompressionLevel. It never returns a level rejected by
+// gorilla/websocket's own validation.
+func (h *Hub) resolvedCompressionLevel() int {
+	level := h.CompressionLevel
+	if level == 0 {
+		return defaultCompressionLevel
+	}
+	if level < minCompressionLevel || level > maxCompressionLevel {
+		log.Printf("[hub/%s] CompressionLevel %d out of range [%d, %d]; using default %d", h.name, level, minCompressionLevel, maxCompressionLevel, defaultCompressionLevel)
+		return defaultCompressionLevel
+	}
+	return level
 }
 
 // generateClientID produces a cryptographically random client ID.
@@ -492,10 +583,16 @@ func (h *Hub) Disconnect(clientID, reason string) bool {
 		client.mu.Unlock()
 		return false
 	}
-	_ = client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	client.mu.Unlock()
+
+	// writePump is the sole normal writer and the sole owner of the
+	// connection write deadline. Gorilla permits WriteControl and Close to
+	// run concurrently with every other connection method. In particular,
+	// do not hold client.mu here: WriteControl can wait for an in-flight
+	// normal write until its deadline, while client.mu must remain available
+	// to the non-blocking trySend and channel-close lifecycle.
 	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason), time.Now().Add(writeWait))
 	_ = client.conn.Close()
-	client.mu.Unlock()
 	return true
 }
 
@@ -615,10 +712,20 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	if h.RequireOrigin {
 		connectionUpgrader.CheckOrigin = func(r *http.Request) bool { return sameOrigin(r, true) }
 	}
+	connectionUpgrader.EnableCompression = h.EnableCompression
 	conn, err := connectionUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
+	}
+	if h.EnableCompression {
+		if err := conn.SetCompressionLevel(h.resolvedCompressionLevel()); err != nil {
+			// SetCompressionLevel only rejects an out-of-range level, which
+			// resolvedCompressionLevel already guards against. Treat a
+			// rejection as non-fatal: the connection still works, just
+			// uncompressed or at gorilla's own default.
+			log.Printf("[hub/%s] compression level error: %v", h.name, err)
+		}
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
 		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
@@ -689,7 +796,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 
 	// Fire join handler (may broadcast to all clients including this one)
 	if handler, ok := h.handlers["join"]; ok {
-		handler(&Context{
+		h.invokeHandler(handler, &Context{
 			Client: client,
 			Hub:    h,
 			Event:  "join",
@@ -753,6 +860,16 @@ func (c *Client) readPump() {
 		c.Hub.removeClient(c)
 		c.conn.Close()
 	}()
+	// Defense in depth: invokeHandler already recovers every handler call
+	// below, but this outer recover keeps a panic anywhere else in the loop
+	// (a future change, a third-party dependency) from crashing the process
+	// too — readPump runs on its own goroutine, so an unrecovered panic here
+	// is not a per-connection failure, it is a whole-server outage.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[hub/%s] recovered panic in readPump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
+		}
+	}()
 
 	for {
 		if err := c.conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
@@ -785,7 +902,7 @@ func (c *Client) readPump() {
 		c.Hub.mu.RUnlock()
 
 		if ok {
-			handler(&Context{
+			c.Hub.invokeHandler(handler, &Context{
 				Client: c,
 				Hub:    c.Hub,
 				Event:  msg.Event,
@@ -796,6 +913,14 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
+	// writePump runs on its own goroutine and calls no hub-registered
+	// handler, but the same whole-process-crash risk applies to any panic
+	// here (see readPump's matching recover), so it gets the same boundary.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[hub/%s] recovered panic in writePump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
+		}
+	}()
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -806,38 +931,30 @@ func (c *Client) writePump() {
 		select {
 		case msg, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			if !ok {
 				// The send channel was closed.
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
 
 			err := c.conn.WriteMessage(websocket.TextMessage, msg)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
 		case msg, ok := <-c.binarySend:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			if !ok {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
 
 			err := c.conn.WriteMessage(websocket.BinaryMessage, msg)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
 			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			c.mu.Unlock()
 			if err != nil {
 				return
 			}
@@ -866,7 +983,7 @@ func (h *Hub) removeClient(c *Client) {
 
 	// Fire leave handler
 	if handler, ok := h.handlers["leave"]; ok {
-		handler(&Context{
+		h.invokeHandler(handler, &Context{
 			Client: c,
 			Hub:    h,
 			Event:  "leave",

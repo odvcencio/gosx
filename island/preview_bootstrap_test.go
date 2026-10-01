@@ -7,9 +7,7 @@ import (
 	"m31labs.dev/gosx"
 )
 
-// preview-bootstrap tests cover the new island.EnablePreviewBootstrap() flag
-// introduced by ADR 0009 + plan section C of
-// plans/2026-05-26-iframe-cross-frame-signal-transport.md.
+// preview-bootstrap tests cover the island.EnablePreviewBootstrap() flag.
 //
 // EnablePreviewBootstrap() is a process-level idempotent flag. When set, any
 // Renderer constructed AFTER the call (or already constructed) emits a

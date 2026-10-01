@@ -59,6 +59,32 @@ test("Scene3D declarative status bindings expose backend fallback and quality wi
   assert.equal(fallback.hidden, true);
 });
 
+test("Scene3D status changes invalidate a keeper ledger texture once per changed value", () => {
+  const { api, context } = loadSceneAdaptiveQualityAPI();
+  const invalidated = [];
+  context.window = { __gosx_scene3d_html: { invalidate: (id) => invalidated.push(id) } };
+  const scope = new FakeElement("section", null);
+  const mount = new FakeElement("div", null);
+  const surface = new FakeElement("div", null);
+  const renderer = new FakeElement("output", null);
+  scope.setAttribute("data-gosx-scene3d-status-scope", "");
+  surface.setAttribute("data-gosx-scene-html", "keeper-ledger");
+  renderer.setAttribute("data-gosx-scene3d-status", "renderer");
+  scope.appendChild(mount);
+  scope.appendChild(surface);
+  surface.appendChild(renderer);
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgpu");
+  api.sceneSyncStatusBindings(mount);
+  api.sceneSyncStatusBindings(mount);
+  assert.deepEqual(invalidated, ["keeper-ledger"]);
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgl");
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(renderer.textContent, "WebGL2");
+  assert.deepEqual(invalidated, ["keeper-ledger", "keeper-ledger"]);
+});
+
 test("Scene3D adaptive profiles start balanced and expose exact frame contract", () => {
   const { state, mount } = createAdaptiveQualityHarness();
   assert.equal(state.requestedTier, "balanced");

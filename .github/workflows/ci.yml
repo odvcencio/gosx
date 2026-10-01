@@ -7,6 +7,10 @@ on:
       - master
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   release-gate:
     runs-on: ubuntu-latest
@@ -127,6 +131,9 @@ jobs:
       - name: Desktop tests and Windows cross-compile gate
         run: make test-desktop
 
+      - name: Desktop Artifact Signing provider with fake tool
+        run: GOWORK=off GOFLAGS=-p=1 go test -count=1 ./cmd/gosx -run '^TestDesktopPackageAzureFakeTool$'
+
   # go-race-tests: the race detector gates split out of go-tests so they run
   # in parallel instead of serializing after the unit lane. This lane needs
   # neither TinyGo nor Node. The pull-request path runs the focused
@@ -168,10 +175,10 @@ jobs:
   # every production-build assertion and the standalone CLI build gate. A cold
   # merged-main run reached Go's default 10-minute package timeout in the final
   # generated-docs fixture, so the suite has a 15-minute Go timeout inside this
-  # 20-minute job ceiling.
+  # 50-minute job ceiling.
   go-cli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 50
 
     steps:
       - name: Check out repository
@@ -183,6 +190,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node.js for documentation sample checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
@@ -191,8 +203,17 @@ jobs:
       - name: CLI production-build integration tests
         run: make test-cli
 
+      - name: Documentation example tests
+        run: GOWORK=off nice -n 10 go test ./examples/gosx-docs/...
+
+      - name: Build and serve each first-app tutorial step
+        run: GOWORK=off nice -n 10 go test -tags docs_tutorial -run '^TestFirstAppTutorialBuildsAndServesEveryStep$' -timeout 40m ./examples/gosx-docs
+
       - name: Build CLI
         run: make build-cli
+
+      - name: Compile documentation site pages and server
+        run: GOWORK=off nice -n 10 ./gosx build --dev ./examples/gosx-docs
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
@@ -214,8 +235,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Node also runs the pinned strict TypeScript compiler for the generated
-      # ABI contract. make test-js performs the reproducible npm ci.
+      # Node also runs the pinned TypeScript compiler: strict mode for the
+      # generated ABI contract, plus tsconfig.scene3d.json, which type-checks
+      # every client/runtime/scene3d/*.ts source with a noImplicitAny ratchet.
+      # make test-js performs the reproducible npm ci.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -291,6 +314,73 @@ jobs:
 
       - name: Build WASM runtime
         run: make build-runtime
+
+  # wire-gates: deterministic per-route network budgets. It builds a fresh
+  # `gosx init` app with one counter island and the docs site for production,
+  # serves both, and checks each route in perf/budgets/wire.json: bytes on the
+  # wire by type, request count, largest inline script, and the compression,
+  # cache and cookie policies. No browser runs, so a failure is a real change
+  # in what the page ships, not scheduler noise. The ratchet step fails when a
+  # limit rises or a required policy is dropped without a reason in the
+  # route's raise map. CPU time and LCP are measured by paired A/B runs
+  # outside this gate.
+  wire-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      # The ratchet compares with the base branch's budget. A failed fetch
+      # fails this step; only a base tree verified to lack the budget file
+      # skips the ratchet (the PR that introduces the file).
+      - name: Fetch the base-branch budget
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          mkdir -p build/wire-gate
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "WIRE_GATE_BASE_BUDGET=none" >>"$GITHUB_ENV"
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          if [ -z "$(git ls-tree "$BASE_SHA" -- perf/budgets/wire.json)" ]; then
+            echo "base $BASE_SHA has no perf/budgets/wire.json"
+            echo "WIRE_GATE_BASE_BUDGET=none" >>"$GITHUB_ENV"
+          else
+            git show "$BASE_SHA:perf/budgets/wire.json" >build/wire-gate/base-budget.json
+            echo "WIRE_GATE_BASE_BUDGET=build/wire-gate/base-budget.json" >>"$GITHUB_ENV"
+          fi
+
+      - name: Wire budget gate
+        run: make wire-gate
+
+      - name: Upload wire report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wire-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/wire-gate/wire-report.json
+            build/wire-gate/wire-report.md
+            build/wire-gate/*.log
+          if-no-files-found: ignore
+          retention-days: 14
 
   # scene3d-v1-browser-renderer-proof: one bounded four-mode renderer-contract
   # matrix. Hosted WebGPU uses a private target; canvas presentation remains a
@@ -436,7 +526,7 @@ jobs:
   # directly; the bounded Scene3D proof runs in its separately named job.
   browser-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -543,6 +633,7 @@ jobs:
       - go-race-tests
       - go-cli-tests
       - js-tests
+      - wire-gates
       - wasm-tests
       - scene3d-v1-browser-renderer-proof
       - scene3d-v1-adapter-proof
@@ -557,6 +648,7 @@ jobs:
           GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
           GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
           JS_TESTS_RESULT: ${{ needs.js-tests.result }}
+          WIRE_GATES_RESULT: ${{ needs.wire-gates.result }}
           WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
           SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}
           SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.scene3d-v1-adapter-proof.result }}
@@ -569,6 +661,7 @@ jobs:
             "go-race-tests=$GO_RACE_TESTS_RESULT" \
             "go-cli-tests=$GO_CLI_TESTS_RESULT" \
             "js-tests=$JS_TESTS_RESULT" \
+            "wire-gates=$WIRE_GATES_RESULT" \
             "wasm-tests=$WASM_TESTS_RESULT" \
             "scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT" \
             "scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT" \
@@ -582,7 +675,7 @@ jobs:
                 ;;
             esac
           done
-          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

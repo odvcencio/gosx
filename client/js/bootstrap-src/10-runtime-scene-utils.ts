@@ -40,6 +40,13 @@
   // exists. This is opt-in because pages may carry their own scripts that read
   // the element's text later; a page opts in only once every consumer goes
   // through the published parse.
+  // True when manifest JSON holds a Scene3D label (the text-layout user). A
+  // string "label" is an accessible name and must not fetch 42.7 KB. The
+  // server writes the manifest with json.Marshal, which emits no whitespace.
+  function gosxManifestTextHasSceneLabel(raw) {
+    return typeof raw === "string" && /"labels":\[\{|"label":\{|"kind":"label"/.test(raw);
+  }
+
   function loadManifest() {
     const el = document.getElementById("gosx-manifest");
     if (!el) return null;
@@ -55,7 +62,7 @@
       window.__gosx_manifest = {
         element: el,
         value: value,
-        textHasLabel: typeof raw === "string" && raw.indexOf('"label"') >= 0,
+        textHasLabel: gosxManifestTextHasSceneLabel(raw),
       };
       if (el.hasAttribute && el.hasAttribute("data-gosx-release")) {
         el.textContent = "";
@@ -108,6 +115,11 @@
     { collection: "models",           field: "customFragment" },
     { collection: "models",           field: "customVertexWGSL" },
     { collection: "models",           field: "customFragmentWGSL" },
+    // Instanced GLB authored-material fields.
+    { collection: "instancedGLBMeshes", field: "customVertex" },
+    { collection: "instancedGLBMeshes", field: "customFragment" },
+    { collection: "instancedGLBMeshes", field: "customVertexWGSL" },
+    { collection: "instancedGLBMeshes", field: "customFragmentWGSL" },
     // Points authored-material fields (S2).
     { collection: "points",           field: "customVertex" },
     { collection: "points",           field: "customFragment" },
@@ -768,6 +780,10 @@
   }
 
   function engineFrame(callback) {
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function") {
+      return motionScheduler.request(callback);
+    }
     if (typeof window.requestAnimationFrame === "function") {
       return window.requestAnimationFrame(callback);
     }
@@ -777,6 +793,11 @@
   }
 
   function cancelEngineFrame(handle) {
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.cancel === "function") {
+      motionScheduler.cancel(handle);
+      return;
+    }
     if (typeof window.cancelAnimationFrame === "function") {
       window.cancelAnimationFrame(handle);
       return;
@@ -1366,7 +1387,7 @@
         e.preventDefault();
         queueInputSignal("$input.command", "newline");
       }
-      requestAnimationFrame(function() { if (inputEl) inputEl.textContent = ""; });
+      engineFrame(function() { if (inputEl) inputEl.textContent = ""; });
     });
 
     // Composition (IME)

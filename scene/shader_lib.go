@@ -49,6 +49,11 @@ var shaderLibFields = []shaderLibFieldDesc{
 	{collection: "models", field: "customFragment"},
 	{collection: "models", field: "customVertexWGSL"},
 	{collection: "models", field: "customFragmentWGSL"},
+	// Instanced GLB authored-material fields.
+	{collection: "instancedGLBMeshes", field: "customVertex"},
+	{collection: "instancedGLBMeshes", field: "customFragment"},
+	{collection: "instancedGLBMeshes", field: "customVertexWGSL"},
+	{collection: "instancedGLBMeshes", field: "customFragmentWGSL"},
 	// Points authored-material fields.
 	{collection: "points", field: "customVertex"},
 	{collection: "points", field: "customFragment"},

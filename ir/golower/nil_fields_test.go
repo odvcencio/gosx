@@ -1,17 +1,17 @@
-// Slice Y.G — `&x` pass-through on nil-Fields receivers.
+// `&x` pass-through on nil-Fields receivers.
 //
 // graph_surface.go's Mount handler declares `var props GraphProps`
-// then calls `ctx.PropsInto(&props)`. Y.E's `&x` pass-through
+// then calls `ctx.PropsInto(&props)`. The `&x` pass-through
 // (expr.go's `case token.AND`) lowers `&props` as `OpLocalGet(props)`,
-// which reads the local's current Value. Pre-Y.G, OpLocalDecl reserves
+// which reads the local's current Value. Without the fix below, OpLocalDecl reserves
 // the slot with the bare zero Value{} — Fields map is nil — and the
 // host receives a Value-by-value copy whose Fields map is also nil.
 // Any host-side `target.Map()[key] = ...` write either panics (writing
 // to a nil map) or, with a workaround that allocates the map, lands in
 // the host's copy and never propagates back to the caller's local.
 //
-// Y.G's fix: when lowerDeclStmt sees `var x T` and T is a known struct
-// type (via Y.A's scanStructTypes registry), eagerly emit an
+// The fix: when lowerDeclStmt sees `var x T` and T is a known struct
+// type (via scanStructTypes), eagerly emit an
 // OpComposite zero-init right after the OpLocalDecl so the local
 // starts with a non-nil Fields map. Subsequent `&x` reads return a
 // Value sharing the same Fields reference (Go map = reference type),
@@ -113,7 +113,8 @@ func (h *propsIntoHost) Call(method string, args []vm.Value) (vm.Value, error) {
 	}
 	target := args[0]
 	if !target.IsMap() {
-		// Pre-Y.G this is the failure point — the host has no map
+		// Without the eager zero-init this is the failure point — the
+		// host has no map
 		// to write into, and even allocating one locally would not
 		// propagate back to the caller's local.
 		return vm.ZeroValue(0), nil

@@ -9,6 +9,7 @@
 //	gosx dev [--scene-inspector] <dir>
 //	                              Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
+//	gosx desktop package         Package a Windows desktop app for direct download
 //	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
@@ -36,6 +37,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -156,12 +158,17 @@ Usage:
 
 `)
 	case "desktop":
+		if len(os.Args) > 2 && os.Args[2] == "package" {
+			desktopPackageUsage(w)
+			break
+		}
 		fmt.Fprintf(w, `gosx desktop - Run a GoSX app in a native desktop host
 
 Usage:
   gosx desktop [flags] [dev [dir]]
   gosx desktop --url <url>
   gosx desktop --html <html>
+  gosx desktop package --input <staged-app> --config <config.json> [flags]
 
 `)
 	case "export":
@@ -184,7 +191,10 @@ Usage:
 		fmt.Fprintf(w, `gosx check - Parse and validate .gsx source
 
 Usage:
-  gosx check <file.gsx>
+  gosx check [--types] <file.gsx>
+
+Flags:
+  --types  Also run the go/types oracle over the package (experimental)
 
 `)
 	case "render":
@@ -400,9 +410,30 @@ func cmdCompile() {
 }
 
 func cmdCheck() {
-	file := requireArg(2, "check")
+	fs := flag.NewFlagSet("gosx check", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	// --types is opt-in (gosx#typeoracle milestone 1): a real go/types pass
+	// over the package's strict projection plus its sibling .go files,
+	// beside strictcheck's own go/ast-based checks rather than in place of
+	// them. Opt-in until it has run clean across enough real gosx code to
+	// trust as a default -- see internal/typeoracle's package doc for the
+	// design, and this slice's own report for what running it over
+	// examples/ found.
+	withTypes := fs.Bool("types", false, "also run the go/types oracle over the package (experimental; internal/typeoracle)")
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fatal("check: %v", err)
+	}
+	if fs.NArg() < 1 {
+		fatal("check requires a file argument")
+	}
+	file := fs.Arg(0)
 	if err := runCheck(file, os.Stderr); err != nil {
 		fatal("check: %v", err)
+	}
+	if *withTypes {
+		if err := runCheckTypes(file, os.Stderr); err != nil {
+			fatal("check: %v", err)
+		}
 	}
 }
 

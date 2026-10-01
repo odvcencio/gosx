@@ -1,4 +1,4 @@
-// Slice Y.E.2.1 — failing-first tests for method calls on non-package
+// Failing-first tests for method calls on non-package
 // receivers (the engine-surface Canvas + Context host bindings).
 //
 // graph_surface.go's handlers receive `c *surface.Canvas` and
@@ -8,9 +8,9 @@
 //   c.SetFillStyle("...") // host call: canvas dispatch with "SetFillStyle"
 //   ctx.PropsInto(&props) // host call: context dispatch with "PropsInto"
 //
-// Pre-Y.E the lowerer treats every selector-call as a stdlib intrinsic
+// Before this, the lowerer treats every selector-call as a stdlib intrinsic
 // candidate and rejects unknown ones with "call to <X> is not in the
-// supported intrinsic set." Y.E.2 introduces OpHostCall, which lets the
+// supported intrinsic set." OpHostCall lets the
 // VM dispatch into a runtime-bound receiver (the actual *surface.Canvas
 // instance threaded in by the surface bootstrap).
 //
@@ -22,9 +22,10 @@
 //   4. Context-receiver host call:  ctx.PropsInto(&props)
 //   5. Mixed-arg host method:       c.FillText(label, p.X, p.Y+r+12)
 //
-// At Y.E.2.1 each lowering call still fails. Y.E.2.2 adds OpHostCall,
-// Y.E.2.3 the VM evaluator + BindHost, Y.E.2.4 the lowerer dispatch
-// (import-pre-pass + receiver name classification), Y.E.2.5 marks PASS.
+// Before this, each lowering call still fails. OpHostCall,
+// the VM evaluator + BindHost, and the lowerer dispatch
+// (import-pre-pass + receiver name classification) make these tests
+// PASS.
 
 package golower
 

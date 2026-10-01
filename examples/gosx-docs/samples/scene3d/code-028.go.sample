@@ -1,0 +1,9 @@
+scene.InstancedGLBMesh{
+	    ID:  "trees",
+	    Src: "/models/pine.glb",
+	    Instances: []scene.MeshInstance{
+	        {ID: "pine-0", Position: scene.Vec3(0, 0, 0), Scale: scene.Vec3(1, 1, 1)},
+	        {ID: "pine-1", Position: scene.Vec3(6, 0, -3), Scale: scene.Vec3(1.4, 1.6, 1.4)},
+	    },
+	    Static: scene.Bool(true),
+	}

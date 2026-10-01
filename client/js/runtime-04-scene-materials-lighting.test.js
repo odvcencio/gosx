@@ -352,7 +352,7 @@ test("bootstrap binds Scene3D environment maps for WebGL PBR", async () => {
     "a static scene must schedule a post-load frame when its environment texture becomes ready",
   );
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasEnvMap" && entry[2] === 1));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 10));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 12));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envIntensity" && entry[2] === 1.25));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envRotation" && entry[2] === 0.5));
   assert.equal(env.consoleLogs.error.length, 0);
@@ -427,10 +427,7 @@ test("bootstrap keeps Scene3D CSM shadow units ahead of IBL units", async () => 
   const gl = mount.children[0].getContext("webgl2");
   assert.equal(gl.ops.filter((entry) => entry[0] === "createFramebuffer").length, 4);
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowCascades0" && entry[2] === 4));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_0" && entry[2] === 8));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_1" && entry[2] === 9));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_2" && entry[2] === 10));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_3" && entry[2] === 11));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0" && entry[2] === 8));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 12));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1fv" && entry[1] === "u_shadowCascadeSplits0" && entry[2] === 4));
   assert.equal(env.consoleLogs.error.length, 0);
@@ -503,7 +500,7 @@ test("bootstrap fetches Radiance HDR Scene3D environment maps for WebGL PBR", as
   assert.equal(env.imageLoads.includes("/hdri/studio.hdr"), false);
   const gl = mount.children[0].getContext("webgl2");
   assert.ok(gl.ops.filter((entry) => entry[0] === "texImage2D").length >= 2);
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 10));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 12));
   assert.equal(env.consoleLogs.error.length, 0);
 });
 

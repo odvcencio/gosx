@@ -1,10 +1,11 @@
-// Slice Y.D — `initPositions` shape regression test. Closest analogue
+// `initPositions` shape regression test. Closest analogue
 // in graph_surface.go: a handler invocation seeds the package-level
 // position/velocity maps by calling a sibling helper, which in turn
 // loops over the node list and writes into the maps via OpIndexSet.
 //
-// This is the test that proves the Y.A + Y.C + Y.D stack supports
-// the exact shape graph_surface.go's Mount → initPositions flow uses.
+// This is the test that proves the composite-literal, LHS-selector,
+// and user-function stack supports the exact shape graph_surface.go's
+// Mount → initPositions flow uses.
 
 package golower
 
@@ -61,8 +62,8 @@ func F() float64 {
 	}
 }
 
-// TestY_D_RecursiveHelperOverPackageState combines Y.D's recursion
-// with Y.C's package-state mutation: a helper writes one entry then
+// TestY_D_RecursiveHelperOverPackageState combines user-fn recursion
+// with package-state mutation: a helper writes one entry then
 // recurses to seed the next. Bounded by an explicit base case to
 // stay well inside the MaxCallDepth cap.
 func TestY_D_RecursiveHelperOverPackageState(t *testing.T) {

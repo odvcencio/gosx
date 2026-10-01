@@ -366,8 +366,9 @@ func TestScene3DDemoCinematicShape(t *testing.T) {
 		t.Error("scene3d/page.gsx missing aria-label — accessibility required")
 	}
 	for _, proof := range []string{
-		"Typed Go → SceneIR → browser GPU",
-		"data-gosx-scene3d-renderer",
+		"Material study / Scene3D",
+		"data-gosx-scene3d-status-scope",
+		`data-gosx-scene3d-status="renderer"`,
 		"What GoSX owns",
 		"View the typed scene source",
 	} {
@@ -417,6 +418,14 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 		t.Fatalf("read scene3d-bench/page.gsx: %v", err)
 	}
 	gsxSrc := string(gsxSource)
+	clientSource, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "public", "scene3d-bench-client.js"))
+	if err != nil {
+		t.Fatalf("read scene3d-bench-client.js: %v", err)
+	}
+	clientSrc := string(clientSource)
+	if !strings.Contains(gsxSrc, `src="/scene3d-bench-client.js"`) {
+		t.Error("scene3d-bench/page.gsx must load the benchmark client")
+	}
 
 	// New class names must be in place.
 	if !strings.Contains(gsxSrc, "scene3d-bench__overlay") {
@@ -434,26 +443,29 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 	}
 
 	// Functional substrate: perf gate flag must still be set.
-	if !strings.Contains(gsxSrc, "__gosx_scene3d_perf = true") {
-		t.Error("scene3d-bench/page.gsx missing __gosx_scene3d_perf = true — perf gate must remain")
+	if !strings.Contains(clientSrc, "__gosx_scene3d_perf = true") {
+		t.Error("scene3d-bench-client.js missing __gosx_scene3d_perf = true — perf gate must remain")
 	}
 
 	// Functional substrate: PerformanceObserver must still be attached.
-	if !strings.Contains(gsxSrc, "PerformanceObserver") {
-		t.Error("scene3d-bench/page.gsx missing PerformanceObserver — observer must remain")
+	if !strings.Contains(clientSrc, "PerformanceObserver") {
+		t.Error("scene3d-bench-client.js missing PerformanceObserver — observer must remain")
 	}
 
 	for _, honestMetric := range []string{
 		"CPU submit · current",
 		"rAF cadence",
-		"It does not claim GPU completion time",
-		`data-gosx-scene3d-renderer`,
-		`schema: "gosx.scene3d-bench.v1"`,
-		"copy JSON",
-		"download",
+		"It does not include GPU completion",
+		"Copy JSON",
+		"Download",
 	} {
 		if !strings.Contains(gsxSrc, honestMetric) {
 			t.Errorf("scene3d-bench/page.gsx missing honest measurement contract %q", honestMetric)
+		}
+	}
+	for _, clientMetric := range []string{`data-gosx-scene3d-renderer`, `schema: "gosx.scene3d-bench.v1"`} {
+		if !strings.Contains(clientSrc, clientMetric) {
+			t.Errorf("scene3d-bench-client.js missing honest measurement contract %q", clientMetric)
 		}
 	}
 	if strings.Contains(gsxSrc, `id="bench3d-overlay" aria-live`) {
@@ -487,7 +499,7 @@ func TestDemosIndexUsesSharedCatalogHierarchy(t *testing.T) {
 		t.Fatal("app/demos/page.gsx has no components (bare-fragment form breaks route resolution)")
 	}
 
-	// 2. The shared catalog must contain all nine demo slugs, while the loader
+	// 2. The shared catalog must contain the demo slugs, while the loader
 	// consumes its promoted and additional views rather than maintaining
 	// another roster.
 	serverSource, err := os.ReadFile(serverPath)
@@ -508,13 +520,19 @@ func TestDemosIndexUsesSharedCatalogHierarchy(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		`"showreel":   DemoShowreelProgram()`,
 		`"showcase":   ShowcaseDemos()`,
 		`"additional": AdditionalDemos()`,
 	} {
 		if !strings.Contains(serverSrc, required) {
 			t.Errorf("app/demos/page.server.go missing shared showcase data %q", required)
 		}
+	}
+	showreelSource, err := os.ReadFile(filepath.Join(demosDir, "showreel", "page.server.go"))
+	if err != nil {
+		t.Fatalf("read showreel route: %v", err)
+	}
+	if !strings.Contains(string(showreelSource), `"scene": demos.DemoShowreelProgram()`) {
+		t.Error("dedicated showreel route must load the shared scene")
 	}
 
 	// 3. Must use RegisterStaticDocsPage.

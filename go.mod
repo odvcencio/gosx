@@ -11,8 +11,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/odvcencio/turboquant v0.1.3
-
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/andybalholm/brotli v1.2.1
@@ -25,12 +23,13 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.43.0
 	m31labs.dev/selena v0.5.2
+	m31labs.dev/turboquant v0.2.1
 )
 
 require (
+	github.com/odvcencio/turboquant v0.1.3 // indirect
 	m31labs.dev/mll v0.1.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
-	m31labs.dev/turboquant v0.2.0 // indirect
 )
 
 require (

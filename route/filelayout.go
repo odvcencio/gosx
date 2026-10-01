@@ -31,9 +31,12 @@ import (
 // stale program. Filesystems with one-second time resolution can hit that; ext4
 // and APFS report nanoseconds and cannot.
 var gsxCompileCache struct {
-	mu    sync.RWMutex
-	progs map[string]*ir.Program
-	files map[string]gsxFileProgram
+	mu sync.RWMutex
+	// Allocation-heavy cold compiles share one process-wide slot. Cache hits
+	// bypass this lock; waiters recheck the content cache before compiling.
+	compileMu sync.Mutex
+	progs     map[string]*ir.Program
+	files     map[string]gsxFileProgram
 }
 
 // gsxFileProgram is one stat-keyed cache entry. It stores the compile error too
@@ -153,6 +156,15 @@ func compileCachedGSX(data []byte) (*ir.Program, error) {
 		return prog, nil
 	}
 	gsxCompileCache.mu.RUnlock()
+
+	gsxCompileCache.compileMu.Lock()
+	defer gsxCompileCache.compileMu.Unlock()
+	gsxCompileCache.mu.RLock()
+	prog, cached := gsxCompileCache.progs[hash]
+	gsxCompileCache.mu.RUnlock()
+	if cached {
+		return prog, nil
+	}
 
 	prog, err := gosx.Compile(data)
 	if err != nil {

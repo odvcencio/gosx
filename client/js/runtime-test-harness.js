@@ -290,6 +290,8 @@ class FakeWebGLContext {
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
     this.TEXTURE_2D = 0x0DE1;
+    this.TEXTURE_2D_ARRAY = 0x8C1A;
+    this.NONE = 0;
     this.TEXTURE0 = 0x84C0;
     this.TEXTURE_MIN_FILTER = 0x2801;
     this.TEXTURE_MAG_FILTER = 0x2800;
@@ -491,6 +493,16 @@ class FakeWebGLContext {
   framebufferTexture2D(target, attachment, textarget, texture, level) {
     this.ops.push(["framebufferTexture2D", target, attachment, textarget, texture && texture.id, level]);
   }
+
+  framebufferTextureLayer(target, attachment, texture, level, layer) {
+    this.ops.push(["framebufferTextureLayer", target, attachment, texture && texture.id, level, layer]);
+  }
+
+  texImage3D(target, level, format, width, height, layers) {
+    this.ops.push(["texImage3D", target, level, format, width, height, layers]);
+  }
+
+  readBuffer(value) { this.ops.push(["readBuffer", value]); }
 
   activeTexture(unit) {
     this.ops.push(["activeTexture", unit]);
@@ -912,6 +924,21 @@ class FakeElement {
 
   set id(value) {
     this.setAttribute("id", value);
+  }
+
+  get parentElement() {
+    return this.parentNode && this.parentNode.nodeType === ELEMENT_NODE ? this.parentNode : null;
+  }
+
+  closest(selector) {
+    for (let element = this; element; element = element.parentElement) {
+      if (fakeElementMatchesSelector(element, selector)) return element;
+    }
+    return null;
+  }
+
+  remove() {
+    if (this.parentNode) this.parentNode.removeChild(this);
   }
 
   get firstChild() {
@@ -2096,12 +2123,12 @@ function createContext(options) {
   if (typeof options.createWebGLContext === "function") {
     document.createWebGLContext = options.createWebGLContext;
   } else if (options.enableWebGL) {
-    document.createWebGLContext = () => new FakeWebGLContext();
+    document.createWebGLContext = () => new FakeWebGLContext(options);
   }
   if (typeof options.createWebGL2Context === "function") {
     document.createWebGL2Context = options.createWebGL2Context;
   } else if (options.enableWebGL2) {
-    document.createWebGL2Context = () => new FakeWebGLContext();
+    document.createWebGL2Context = () => new FakeWebGLContext(options);
   }
   if (typeof options.createWebGPUContext === "function") {
     document.createWebGPUContext = options.createWebGPUContext;
@@ -3296,7 +3323,31 @@ function loadSceneAdaptiveQualityAPI() {
       sceneSyncStatusBindings,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
-  return { api: context.adaptiveAPI, clock };
+  return { api: context.adaptiveAPI, clock, context };
+}
+
+// loadSceneFramePacingAPI exposes mount.ts's sceneFramePacing* pure decision
+// helpers (the "vsync-divisor" adaptive frame pacing governor) for direct,
+// no-DOM unit testing. Every helper is a pure function of primitive
+// arguments with no external dependency (no sceneNumber/setAttrValue/
+// performance), so the loader needs no stub preamble -- it just isolates
+// the trailing section of mount.ts where they live and republishes them by
+// name, exactly like loadSceneAdaptiveQualityAPI does for the quality
+// ladder governor above.
+function loadSceneFramePacingAPI() {
+  const source = readSceneMountSrc();
+  const start = source.indexOf("function sceneFramePacingMedianOf3");
+  assert.notEqual(start, -1, "frame pacing helpers start anchor missing");
+  const context = {};
+  vm.runInNewContext(source.slice(start) + `
+    globalThis.framePacingAPI = {
+      sceneFramePacingMedianOf3, sceneFramePacingBlendVsync, sceneFramePacingBlendCost,
+      sceneFramePacingCandidateK, sceneFramePacingMinKForInterval,
+      sceneFramePacingObserveCandidate, sceneFramePacingCommitK,
+      sceneFramePacingObserveTickGate, sceneFramePacingAdvanceOnTick,
+    };
+  `, context, { filename: "scene-frame-pacing.js" });
+  return { api: context.framePacingAPI };
 }
 
 function loadSceneViewportAPI(options = {}) {
@@ -3314,13 +3365,20 @@ function loadSceneViewportAPI(options = {}) {
     : 1;
   const environment = Object.assign({ devicePixelRatio }, options.environment || {});
   const context = {
-    window: { devicePixelRatio },
+    window: {
+      devicePixelRatio,
+      getComputedStyle(element) {
+        return element && element.computedStyle || { paddingTop: "0px", paddingBottom: "0px" };
+      },
+    },
     __environment: environment,
   };
   vm.runInNewContext(`
     function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
     function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
     function sceneEnvironmentState() { return __environment; }
+    function setAttrValue(element, name, value) { if (element && typeof element.setAttribute === "function") element.setAttribute(name, String(value)); }
+    function setStyleValue(style, name, value) { if (style) { if (typeof style.setProperty === "function") style.setProperty(name, value); else style[name] = value; } }
     function defaultSceneMaxDevicePixelRatio(capability) {
       if (capability && (capability.reducedData || capability.lowPower)) {
         switch (capability.tier) {
@@ -3340,6 +3398,7 @@ function loadSceneViewportAPI(options = {}) {
       sceneViewportBase,
       sceneViewportDevicePixelRatio,
       sceneViewportFromMount,
+      applySceneViewport,
     };
   `, context, { filename: "scene-viewport.js" });
   return context.viewportAPI;
@@ -5368,7 +5427,8 @@ function makeBundleWithCustomPost(options) {
 // pattern as other WebGL2 renderer tests in this file).
 function createWebGLRendererForPost(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true,
+    rejectShaderSources: opts.rejectShaderSources });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
   if (opts.fresh) {
     runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
@@ -5759,6 +5819,7 @@ module.exports = {
   CUSTOM_POST_TIME_LAYOUT_FIXTURE,
   sceneCoreSourceRange,
   loadSceneAdaptiveQualityAPI,
+  loadSceneFramePacingAPI,
   loadSceneViewportAPI,
   resolveSceneViewportForTest,
   createAdaptiveQualityHarness,

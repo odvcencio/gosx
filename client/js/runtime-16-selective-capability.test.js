@@ -811,7 +811,7 @@ test("chooseSceneBackend falls back to webgl when webgpu is capable but unavaila
 
   const backendCaps = {
     capable: ["webgpu", "webgl"],
-    degraded: {},
+    degraded: { webgl: ["ibl", "compute-particles"] },
     reasons: [],
   };
   const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
@@ -822,6 +822,7 @@ test("chooseSceneBackend falls back to webgl when webgpu is capable but unavaila
   assert.ok(result !== null, "result should not be null");
   assert.equal(result.backend, "webgl", "backend should be webgl when webgpu is unavailable at runtime");
   assert.equal(result.fallbackReason, "webgpu-unavailable", "fallbackReason should be webgpu-unavailable");
+  assert.deepEqual(result.degraded, ["ibl", "compute-particles"], "WebGL2 must publish the declared feature loss");
 });
 
 test("chooseSceneBackend does not invent webgl for webgpu-only backendCaps", () => {

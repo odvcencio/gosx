@@ -103,7 +103,7 @@ func TestStrictIslandRendersProvenPropsServerSide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ManifestJSON: %v", err)
 	}
-	for _, want := range []string{`"Label": "Draft Pick"`, `"Start": 7`, `"handlerName": "increment"`} {
+	for _, want := range []string{`"Label":"Draft Pick"`, `"Start":7`, `"handlerName":"increment"`} {
 		if !strings.Contains(manifestJSON, want) {
 			t.Fatalf("manifest JSON missing %q:\n%s", want, manifestJSON)
 		}

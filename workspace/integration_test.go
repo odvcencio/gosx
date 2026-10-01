@@ -6,7 +6,13 @@ import (
 )
 
 func TestIntegrationFullRoundTrip(t *testing.T) {
-	ws := New(Options{Name: "integration", Dim: 8, BitWidth: 2, Seed: 42})
+	// BitWidth 3, not 2: turboquant v0.2.1 defaults to a three-round Hadamard
+	// rotation (fixing a dim >= 1024 codebook defect), which is a different
+	// approximation than the old single round. At this fixture's near-duplicate
+	// f1/f2 directions, 2-bit quantization is coarse enough that the new
+	// rotation flips their top-1 rank; 3 bits keeps the exact-match f1 on top
+	// deterministically, so the assertions below stay meaningful.
+	ws := New(Options{Name: "integration", Dim: 8, BitWidth: 3, Seed: 42})
 
 	// Three agents write findings
 	findings := []FindingMessage{
@@ -47,7 +53,7 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ws2 := New(Options{Name: "integration", Dim: 8, BitWidth: 2, Seed: 42})
+	ws2 := New(Options{Name: "integration", Dim: 8, BitWidth: 3, Seed: 42})
 	if err := ws2.Load(data); err != nil {
 		t.Fatal(err)
 	}

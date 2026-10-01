@@ -44,12 +44,17 @@ func (r *Runner) tickLoop() {
 
 func (r *Runner) tickOnce() {
 	inputs := r.DrainInputs()
-	replayInputs := cloneInputs(inputs)
+	var replayInputs map[string]Input
+	if r.recorder != nil {
+		replayInputs = cloneInputs(inputs)
+	}
 	r.sim.Tick(inputs)
 
 	frame := r.frame.Add(1)
 	r.snapshots.Push(frame, r.sim.Snapshot())
-	r.recorder.Record(frame, replayInputs)
+	if r.recorder != nil {
+		r.recorder.Record(frame, replayInputs)
+	}
 
 	state := r.sim.State()
 	r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))

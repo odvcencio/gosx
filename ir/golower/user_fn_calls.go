@@ -1,14 +1,14 @@
-// Slice Y.D — user-defined function call lowering.
+// User-defined function call lowering.
 //
 // Engine-surface handlers frequently dispatch into sibling helpers
-// declared in the same file. Pre-Y.D the lowerer rejected every
+// declared in the same file. Without this, the lowerer rejected every
 // bare-identifier call with "calls to user-defined function ..."
 // because the supported subset offered no cross-handler dispatch.
 //
-// Y.D's approach:
+// The approach:
 //
 //  1. A pre-pass (scanUserFuncs, run at LowerASTFile time alongside
-//     scanStructTypes from Slice Y.A) walks the file's top-level
+//     scanStructTypes) walks the file's top-level
 //     *ast.FuncDecl nodes and records every non-method function in a
 //     per-file registry — name → (ordered param names, return count).
 //
@@ -30,15 +30,14 @@
 //     evaluates Body, pops the frame, and propagates the return value
 //     (or an ObjectVal carrier for multi-return — see lowerMultiAssign
 //     in multi_assign.go, which adopts the same `__y_d_call_<pos>`
-//     prefix Y.C's retrospective handed off to Y.D).
+//     prefix).
 //
-// Composite parameter semantics. Y.C's retrospective documented that
-// OpFieldSet on a parameter-typed receiver already propagates because
-// Value.Fields is a reference-typed map. Y.D preserves this: argument
+// Composite parameter semantics. OpFieldSet on a parameter-typed
+// receiver already propagates because Value.Fields is a
+// reference-typed map. Function calls preserve this: argument
 // Values are passed via the same struct-field-set semantics, so
 // `func upd(v vec2)` that calls `v.X = 1` does mutate the caller's vec2.
-// This matches Slice Y.C's in-place mutation contract and explicitly
-// keeps the Y.C → Y.D handoff intact.
+// This matches the OpFieldSet/OpIndexSet in-place mutation contract.
 //
 // Recursion safety. The VM caps recursion depth at Program.MaxCallDepth
 // (default 256 per program.DefaultMaxCallDepth) and records a

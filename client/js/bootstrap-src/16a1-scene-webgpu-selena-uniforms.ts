@@ -13,6 +13,7 @@
 //
 //   frame.viewProjection  Float32Array(16), the current view-projection matrix
 //   frame.time            number, seconds, the clock for `param time`
+//   frame.cameraProximity number in [0,1], smoothed scroll-camera proximity
 //
 // A caller with no frame, such as the post-effect path, passes nothing. The
 // reserved auto-uniforms then fall back to identity and zero.
@@ -106,6 +107,12 @@
     // customUniforms so a declared `param time` — whose compiled default ships
     // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
     if (name === "time") return sceneNumber(frame && frame.time, 0);
+    // cameraProximity is a renderer-owned scalar, forced before material
+    // values/defaults so close-range activity stays synchronized across
+    // WebGPU meshes and custom post effects.
+    if (name === "cameraProximity") {
+      return Math.max(0, Math.min(1, sceneNumber(frame && frame.cameraProximity, 0)));
+    }
     var value = sceneSelenaMaterialValue(material, name);
     if (value !== undefined) return value;
     var def = sceneSelenaUniformDefault(layout, name);

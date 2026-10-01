@@ -1,3 +1,20 @@
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneLatestGPUCompletion(previous, next) {
+    return previous && previous.frameSeq > next.frameSeq ? previous : next;
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneWebGPUCompletionSnapshot(status, sample, disposed, lost) {
+    var state = "measured";
+    if (!sample) state = "pending";
+    else if (performance.now() - sample.atMS > 1000) state = "stale";
+    if (!status.available) state = "unavailable";
+    if (status.failed || lost) state = "failed";
+    if (disposed) state = "disposed";
+    return Object.assign({ status: state, source: "gpu-timestamp", scope: "frame",
+      gpuMS: null, frameSeq: 0, atMS: 0 }, state === "measured" ? sample : {});
+  }
+
   // webgpu.ts — WebGPU rendering backend for GoSX Scene3D.
   // @ts-check
   //
@@ -179,10 +196,31 @@
     // (log2(iorF0) + log2(color)), with an exact-zero coefficient encoded
     // as the -1e30 sentinel so the shader can branch on it without any
     // epsilon substitution. The vec3f alignment lands at u32 indices
-    // 48..50 and the trailing hasSpecularColorMap flag at index 51,
-    // padding the struct to 208 bytes total.
+    // 48..50 and the trailing hasSpecularColorMap flag at index 51; this was
+    // the end of the struct at 208 bytes before the fields below extended it
+    // to 256 bytes.
       "    specularColorLog: vec3f,",
       "    hasSpecularColorMap: u32,",
+    // Trailing fields added for glTF material-shading parity with the WebGL2
+    // renderer: normalScale/occlusionStrength are the core glTF
+    // normalTexture.scale / occlusionTexture.strength factors; emissiveColor
+    // is the vec3f emissiveFactor (hasEmissiveColor distinguishes an
+    // authored [0,0,0] factor from "no factor set", the latter falling back
+    // to the pre-existing albedo-tinted glow for hand-authored materials);
+    // rimColor/rimPower/rimStrength are the optional rim-light term, off by
+    // default (rimStrength 0). u32 indices 52..55 fill one 16-byte block (no
+    // vec3f, so no extra alignment need); emissiveColor's vec3f then starts
+    // its own 16-byte-aligned block at index 56, same pattern as
+    // specularF0/specularF90 above; rimColor repeats the pattern at index
+    // 60, with index 63 left as reserved padding. Struct is 256 bytes total.
+    "    normalScale: f32,",
+    "    occlusionStrength: f32,",
+    "    hasEmissiveColor: u32,",
+    "    rimPower: f32,",
+    "    emissiveColor: vec3f,",
+    "    rimStrength: f32,",
+    "    rimColor: vec3f,",
+    "    _pad4: f32,",
     "};",
   ].join("\n");
 
@@ -374,7 +412,7 @@
     "  outTangents[t] = wt.x;",
     "  outTangents[t + 1u] = wt.y;",
     "  outTangents[t + 2u] = wt.z;",
-    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5) * an.w;",
+    "  outTangents[t + 3u] = mix(sourcePacked[packed + 9u], targetPacked[packed + 9u], a) * an.w;",
     "}",
   ].join("\n");
 
@@ -1830,13 +1868,31 @@
     "",
     "    var ambientOcclusion = 1.0;",
     "    if (material.hasOcclusionMap != 0u) {",
-    "        ambientOcclusion = clamp(textureSample(occlusionTex, occlusionSamp, in.uv).r, 0.0, 1.0);",
+    // KHR occlusion contract: occludedColor = mix(color, color * sample,
+    // strength), matching the WebGL2 renderer.
+    "        let occlusionSample = clamp(textureSample(occlusionTex, occlusionSamp, in.uv).r, 0.0, 1.0);",
+    "        ambientOcclusion = mix(1.0, occlusionSample, clamp(material.occlusionStrength, 0.0, 1.0));",
     "    }",
     "",
-    "    var emissiveStrength = material.emissive;",
-    "    var emissiveColor = albedo;",
-    "    if (material.hasEmissiveMap != 0u) {",
+    // Emission: when the material carries an authored emissive colour
+    // factor (material.hasEmissiveColor — every glTF-imported material sets
+    // this, even to black) emission is emissiveFactor * emissiveTexture(if
+    // any), times the KHR_materials_emissive_strength multiplier
+    // (material.emissive) — NEVER albedo. Hand-authored materials that only
+    // set the scalar `emissive` glow knob keep their pre-existing
+    // albedo-tinted glow (hasEmissiveColor == 0u), matching the WebGL2
+    // renderer.
+    "    let emissiveStrength = material.emissive;",
+    "    var emissiveColor: vec3f;",
+    "    if (material.hasEmissiveColor != 0u) {",
+    "        emissiveColor = material.emissiveColor;",
+    "        if (material.hasEmissiveMap != 0u) {",
+    "            emissiveColor = emissiveColor * textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
+    "        }",
+    "    } else if (material.hasEmissiveMap != 0u) {",
     "        emissiveColor = textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
+    "    } else {",
+    "        emissiveColor = albedo;",
     "    }",
     "",
     // Unlit path: output albedo directly.
@@ -1853,7 +1909,8 @@
     "        let T = normalize(in.tangent);",
     "        let B = normalize(in.bitangent);",
     "        let TBN = mat3x3f(T, B, N);",
-    "        let mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
     "",
@@ -2008,6 +2065,14 @@
     "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
+    // NOTE: unlike the WebGL2 renderer, the WebGPU equirect environment
+    // texture is currently uploaded with a single mip level (WebGPU has no
+    // gl.generateMipmap equivalent; a downsample chain needs its own WGSL
+    // compute/render pipeline). textureSample here already resolves to that
+    // one level, so a roughness-driven textureSampleLevel would be a no-op
+    // that implies a blur this renderer cannot yet produce. Tracked as a
+    // follow-up: build the mip chain, then switch both samples below to
+    // textureSampleLevel exactly like the WebGL2 fix.
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
     "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
@@ -2029,6 +2094,14 @@
     "    let emission = emissiveColor * emissiveStrength;",
     "",
     "    var color = ambient + Lo + emission;",
+    "",
+    // Rim light: a fresnel-style glancing-angle highlight, off by default
+    // (material.rimStrength == 0 skips the pow()). Additive, matching the
+    // WebGL2 renderer.
+    "    if (material.rimStrength > 0.0001) {",
+    "        let rim = pow(clamp(1.0 - NoV, 0.0, 1.0), max(material.rimPower, 0.0001)) * material.rimStrength;",
+    "        color = color + material.rimColor * rim;",
+    "    }",
     "",
     "    let clearcoat = clamp(material.clearcoat, 0.0, 1.0);",
     "    if (clearcoat > 0.0001) {",
@@ -2395,11 +2468,11 @@
     "",
     "struct PointsOutput {",
     "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) color: vec3f,",
-    "    @location(1) fogFactor: f32,",
-    "    @location(2) alpha: f32,",
+    "    @location(0) @interpolate(flat) color: vec3f,",
+    "    @location(1) @interpolate(flat) fogFactor: f32,",
+    "    @location(2) @interpolate(flat) alpha: f32,",
     "    @location(3) pointCoord: vec2f,",
-    "    @location(4) pointSize: f32,",
+    "    @location(4) @interpolate(flat) pointSize: f32,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -2490,11 +2563,11 @@
     "",
     "struct PointsOutput {",
     "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) color: vec3f,",
-    "    @location(1) fogFactor: f32,",
-    "    @location(2) alpha: f32,",
+    "    @location(0) @interpolate(flat) color: vec3f,",
+    "    @location(1) @interpolate(flat) fogFactor: f32,",
+    "    @location(2) @interpolate(flat) alpha: f32,",
     "    @location(3) pointCoord: vec2f,",
-    "    @location(4) pointSize: f32,",
+    "    @location(4) @interpolate(flat) pointSize: f32,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -2580,11 +2653,11 @@
     "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
     "",
     "struct PointsInput {",
-    "    @location(0) color: vec3f,",
-    "    @location(1) fogFactor: f32,",
-    "    @location(2) alpha: f32,",
+    "    @location(0) @interpolate(flat) color: vec3f,",
+    "    @location(1) @interpolate(flat) fogFactor: f32,",
+    "    @location(2) @interpolate(flat) alpha: f32,",
     "    @location(3) pointCoord: vec2f,",
-    "    @location(4) pointSize: f32,",
+    "    @location(4) @interpolate(flat) pointSize: f32,",
     "};",
     "",
     "@fragment fn fragmentMain(in: PointsInput) -> @location(0) vec4f {",
@@ -2708,6 +2781,9 @@
     "    } else {",
     "        color = aces(color);",
     "    }",
+    "    if (mode != 3) {",
+    "        color = pow(max(color, vec3f(0.0)), vec3f(1.0 / 2.2));",
+    "    }",
     "    return vec4f(color, 1.0);",
     "}",
   ].join("\n");
@@ -2759,13 +2835,9 @@
   // GoSX is weakest, and it lands hardest on a shader that is a weighted average
   // of many texture taps.
   //
-  // Where it is SAFE here, and why. Every post target this renderer allocates
-  // uses targetFormat — the preferred canvas format, an 8-bit UNORM. See
-  // ensureFBOs and ensureBloomPingPong. So every value a post shader samples is
-  // already quantized to 8 bits in [0, 1]. An f16 carries an 11-bit significand,
-  // which strictly exceeds that, and the blur weights sum to 1, so the
-  // accumulator never leaves [0, 1] either. Half precision cannot lose a bit the
-  // target could have stored.
+  // The post textures use RGBA16float. Blur and FXAA use bounded weights,
+  // while tone mapping, bright extraction, and depth reconstruction stay f32.
+  // Tests cover HDR inputs through the half and full precision variants.
   //
   // Where it is NOT safe, and why these shaders stay f32:
   //
@@ -3251,6 +3323,7 @@
       view: placeholderTex.createView({ dimension: cube ? "cube" : "2d" }),
       src: key,
       descriptor: descriptor,
+      colorSpace: "",
       loaded: false,
       pending: true,
       failed: false,
@@ -3270,11 +3343,11 @@
 
     if (cube) {
       record.failed = true;
-      record.pending = false;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.pending = false;
       record.error = "cube descriptors require a KTX2 upload path";
       wgpuNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
-      var image = new Image();
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var image = new Image();
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
@@ -3292,18 +3365,32 @@
           format: descriptor.colorSpace === "srgb" ? "rgba8unorm-srgb" : "rgba8unorm",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         });
-        // Use createImageBitmap for copyExternalImageToTexture.
-        if (typeof createImageBitmap === "function") {
-          var bitmapOptions = needsUnpremultipliedAlpha ? { premultiplyAlpha: "none" } : undefined;
-          createImageBitmap(image, bitmapOptions).then(function(bitmap) {
+        // Chromium rejects an ImageBitmap made from an SVG foreignObject.
+        // Drawing the Image to a canvas gives WebGPU a readable upload source.
+        var isHTMLTexture = key.indexOf("data:image/svg+xml") === 0 && key.indexOf("foreignObject") >= 0;
+        var htmlCanvas = null;
+        if (isHTMLTexture && typeof document !== "undefined" && document.createElement) {
+          htmlCanvas = document.createElement("canvas");
+          htmlCanvas.width = w; htmlCanvas.height = h;
+          var htmlContext = htmlCanvas.getContext("2d");
+          if (htmlContext) htmlContext.drawImage(image, 0, 0);
+        }
+        if (htmlCanvas && htmlContext) {
+          var imagePromise = Promise.resolve(htmlCanvas);
+        } else if (typeof createImageBitmap === "function") {
+          /* @ts-expect-error TS2345 -- premultiplyAlpha widens to string through the ternary; the runtime value is always the literal "none" */ var bitmapOptions = needsUnpremultipliedAlpha ? { premultiplyAlpha: "none" } : undefined;
+          imagePromise = createImageBitmap(image, bitmapOptions);
+        }
+        if (imagePromise) {
+          imagePromise.then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
-              if (bitmap && typeof bitmap.close === "function") bitmap.close();
+              if (typeof ImageBitmap !== "undefined" && bitmap instanceof ImageBitmap) bitmap.close();
               return;
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              needsUnpremultipliedAlpha ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
+              needsUnpremultipliedAlpha || isHTMLTexture ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();
@@ -3312,7 +3399,7 @@
             record.colorSpace = descriptor.colorSpace === "srgb" ? "srgb" : "linear";
             record.loaded = true;
             record.pending = false;
-            if (bitmap && typeof bitmap.close === "function") bitmap.close();
+            if (typeof ImageBitmap !== "undefined" && bitmap instanceof ImageBitmap) bitmap.close();
             wgpuNotifyTextureSettled(record);
           }).catch(function() {
             tex.destroy();
@@ -4091,7 +4178,8 @@
   // That crash sat undiscovered because the customPost case was unreachable:
   // normalizeScenePostEffect lowercased the kind, so this pass never ran and
   // never reached the uniform upload on the frame after its pipeline resolved.
-  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError, packSelenaUniforms) {
+  function wgpuCreatePostProcessor(device, presentationFormat, onAllocationError, packSelenaUniforms) {
+    var targetFormat = "rgba16float";
     // Resolve the precision variant once per post processor, not per frame.
     var postPrecisionMode = sceneWebGPUPostPrecisionMode(device);
     var postUsesF16 = postPrecisionMode === "f16";
@@ -4324,7 +4412,7 @@
       if (pipelines[name]) return pipelines[name];
       var fragModule = device.createShaderModule({ label: "post-" + name, code: fragmentSource });
       var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, targetFormat);
+      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, name === "present" ? presentationFormat : targetFormat);
       pipelines[name] = pipeline;
       return pipeline;
     }
@@ -4456,7 +4544,7 @@
     return {
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
-        return { colorView: sceneTexView, depthView: depthTexView };
+        return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
       apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
@@ -4464,6 +4552,7 @@
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+        var presentPipeline = getPipeline("present", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
         // postChain is the per-effect render-truth record. Built ONLY when the
         // diagnostics tier is on, so production pays one boolean read.
         //
@@ -4485,16 +4574,16 @@
           postDOMRegionBoundedSkips: 0,
           postDOMRegionBoundedPixels: 0,
           postPrecision: postPrecisionMode,
+          postColorFormat: targetFormat,
           postChain: postChain,
         };
         activePostChain = postChain;
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
-          var isLast = (i === effects.length - 1);
-          var outputView = isLast ? finalView : (currentTexView === sceneTexView ? auxTexView : sceneTexView);
-          var passW = isLast ? canvasW : scaledW;
-          var passH = isLast ? canvasH : scaledH;
+          var outputView = currentTexView === sceneTexView ? auxTexView : sceneTexView;
+          var passW = scaledW;
+          var passH = scaledH;
           activePostIndex = i;
 
           switch (effect.kind) {
@@ -4509,7 +4598,7 @@
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: buf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, pipeline, bg, outputView);
               currentTexView = outputView;
               break;
@@ -4537,7 +4626,7 @@
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: brightBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, brightPipeline, brightBG, pingPongAView);
 
               // 2. Horizontal blur: pingPongA -> pingPongB.
@@ -4551,7 +4640,7 @@
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: blurBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, blurPipeline, blurBGH, pingPongBView);
 
               // 3. Vertical blur: pingPongB -> pingPongA.
@@ -4564,7 +4653,7 @@
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: blurBufV } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, blurPipeline, blurBGV, pingPongAView);
 
               // 4. Composite: scene + bloom -> output.
@@ -4580,7 +4669,7 @@
                   { binding: 3, resource: linearSampler },
                   { binding: 4, resource: { buffer: compBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, compPipeline, compBG, outputView);
               currentTexView = outputView;
               break;
@@ -4609,7 +4698,7 @@
                   { binding: 2, resource: depthTexView },
                   { binding: 3, resource: { buffer: ssaoBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, ssaoPipeline, ssaoBG, outputView);
               stats.postSSAOPasses += 1;
               currentTexView = outputView;
@@ -4636,7 +4725,7 @@
                   { binding: 2, resource: depthTexView },
                   { binding: 3, resource: { buffer: dofBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, dofPipeline, dofBG, outputView);
               stats.postDOFPasses += 1;
               currentTexView = outputView;
@@ -4652,7 +4741,7 @@
                   { binding: 0, resource: currentTexView },
                   { binding: 1, resource: linearSampler },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, fxaaPipeline, fxaaBG, outputView);
               currentTexView = outputView;
               break;
@@ -4668,7 +4757,7 @@
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: vigBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, vigPipeline, vigBG, outputView);
               currentTexView = outputView;
               break;
@@ -4689,7 +4778,7 @@
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: cgBuf } },
                 ],
-              });
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
               fullscreenPass(encoder, cgPipeline, cgBG, outputView);
               currentTexView = outputView;
               break;
@@ -4743,7 +4832,7 @@
                 fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView, { loadOp: "load", scissor: roi.bounds });
                 stats.postDOMRegionBoundedPasses += 1;
                 stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
-              } else {
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
                 fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView);
               }
               currentTexView = outputView;
@@ -4765,8 +4854,8 @@
           var blitBG = postCachedBindGroup(postBindGroupOwners.blit, getPostBlitLayout(), [
             { binding: 0, resource: currentTexView },
             { binding: 1, resource: linearSampler },
-          ]);
-          fullscreenPass(encoder, blitPipeline, blitBG, finalView);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ ]);
+          fullscreenPass(encoder, presentPipeline, blitBG, finalView);
         }
         activePostChain = null;
         return stats;
@@ -6137,6 +6226,7 @@
   function sceneWebGPUBundleIneligibleReason(flags) {
     if (!flags) return "no-flags";
     if (flags.disabled) return "disabled";
+    if (flags.gpuDrivenSplit) return "gpu-driven-occlusion";
     if (flags.hasWater) return "water";
     if (flags.hasPoints) return "points";
     if (flags.hasLabels) return "labels";
@@ -6147,6 +6237,23 @@
     if (!flags.hasBundleableDraws) return "nothing-to-bundle";
     return "";
   }
+
+  // SCENE_GPU_DRIVEN_INERT_HOST stands in for the GPU-driven instancing host
+  // (indirect-instancing.ts, compute chunk) until that chunk publishes its factory.
+  // Every method reports "not handled", so render() needs no branch for it.
+  var SCENE_GPU_DRIVEN_INERT_HOST = {
+    beginFrame: function() { return false; },
+    owns: function() { return false; },
+    drawMesh: function() { return false; },
+    lightView: function() { return false; },
+    drawShadowMesh: function() { return false; },
+    splitsMainPass: function() { return false; },
+    prepareMainPass: function() { return false; },
+    splitMainPass: function() { return arguments[1]; },
+    finishEncoding: function() { return false; },
+    endFrame: function() { return false; },
+    dispose: function() {},
+  };
 
   // sceneWebGPUDrawListHasDynamicMesh reports whether any object in the three
   // pass lists draws through a path the bundled set excludes.
@@ -6205,14 +6312,19 @@
     default: return "";
     }
   }
-
+/* @ts-expect-error TS2393 -- webgl.ts carries an identical copy of this helper; see the note on its declaration there */
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
+    case "vec3": return 3;
     case "vec4": return 4;
-    case "vec3":
-    default:
-      return 3;
+    // float scalars bind one component. Unknown declared types are invalid
+    // descriptor metadata: report 0 so program creation fails closed instead
+    // of silently widening a scalar stream to a vec3 fetch. Kept in sync with
+    // webgl.ts's copy: in the monolith bundle both files share one scope, and
+    // the later-concatenated function declaration silently shadows the other.
+    case "float": return 1;
+    default: return 0;
     }
   }
 
@@ -6251,6 +6363,92 @@
       out[col * 4 + 3] = matrix[col * 4 + 3];
     }
     return out;
+  }
+
+  var WGSL_SCENE_SKY = [
+    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f, betaR: vec4f, betaM: vec4f, sun: vec4f, extra: vec4f };",
+    "@group(0) @binding(0) var<uniform> sky: Sky;",
+    "@group(0) @binding(1) var skySampler: sampler;",
+    "@group(0) @binding(2) var skyImage: texture_2d<f32>;",
+    "@group(0) @binding(3) var skyCube: texture_cube<f32>;",
+    "struct SkyVertex { @builtin(position) position: vec4f, @location(0) ndc: vec2f };",
+    "@vertex fn vertexMain(@builtin(vertex_index) i: u32) -> SkyVertex {",
+    "  var p = array<vec2f, 3>(vec2f(-1,-1), vec2f(3,-1), vec2f(-1,3));",
+    "  var out: SkyVertex; out.position = vec4f(p[i], 1, 1); out.ndc = p[i]; return out;",
+    "}",
+    "@fragment fn fragmentMain(in: SkyVertex) -> @location(0) vec4f {",
+    "  let ray = normalize(sky.forward.xyz + sky.right.xyz * in.ndc.x * sky.right.w + sky.up.xyz * in.ndc.y * sky.up.w);",
+    "  var color = mix(sky.horizon.xyz, select(sky.bottom.xyz, sky.top.xyz, ray.y >= 0), abs(ray.y));",
+    "  let c = cos(sky.forward.w); let s = sin(sky.forward.w);",
+    "  let d = vec3f(ray.x*c + ray.z*s, ray.y, -ray.x*s + ray.z*c);",
+    "  if (sky.bottom.w == 1) {",
+    "    let uv = vec2f(atan2(d.z,d.x)/6.28318530718+0.5, asin(clamp(d.y,-1.0,1.0))/3.14159265359+0.5);",
+    "    color = textureSampleLevel(skyImage, skySampler, uv, sky.horizon.w).rgb;",
+    "  } else if (sky.bottom.w == 2) { color = textureSampleLevel(skyCube, skySampler, d, sky.horizon.w).rgb;",
+    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; } else if (sky.bottom.w == 4) { color = gosxPhysicalSky(ray, sky.betaR, sky.betaM, sky.sun, sky.extra.x); }",
+    "  color = max(color * sky.top.w, vec3f(0));",
+    "  if (sky.output.x == 0) { color = select(1.055*pow(color,vec3f(1.0/2.4))-0.055, color*12.92, color <= vec3f(0.0031308)); }",
+    "  return vec4f(color, 1);",
+    "}",
+  ].join("\n");
+
+  // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
+  function wgpuCreateSkyRenderer(device, textureCache, imagePlaceholder, cubePlaceholder) {
+    var data = new Float32Array(44);
+    var uniform = device.createBuffer({ label: "gosx-sky", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    var sampler = device.createSampler({ addressModeU: "repeat", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
+    var layout = device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
+    ] });
+    var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY + "\n" + sceneSkyPhysicalSource("wgsl") });
+    var pipelines = new Map();
+    // @ts-ignore TS7018 -- bind-group identities become available on the first draw.
+    var cached = { group: null, image: null, cube: null };
+    return {
+      // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
+      draw: function(pass, opts) {
+        var env = opts.environment, sky = env.sky;
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        var image = imagePlaceholder, cube = cubePlaceholder, state = sky.mode === "physical" ? "physical" : "gradient";
+        if (sky.mode === "environment") {
+          var desc = env.ibl && env.ibl.radiance;
+          var record = desc && desc.view === "cube" && desc.uri
+            ? wgpuLoadTexture(device, desc.uri, textureCache, desc, "environment-radiance", "linear") : null;
+          if (record && record.loaded && !record.failed) { cube = record.view; data[23] = 2; state = "environment-cube"; }
+          else {
+            record = env.envMap ? wgpuLoadTexture(device, env.envMap, textureCache, null, "environment-radiance", "srgb") : record;
+            if (record && record.loaded && !record.failed) { image = record.view; data[23] = 1; state = "environment-map"; }
+            else state = record && !record.failed ? "environment-pending" : "environment-unavailable";
+          }
+          data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
+        }
+        device.queue.writeBuffer(uniform, 0, data);
+        var key = opts.format + ":" + opts.samples;
+        var pipeline = pipelines.get(key);
+        if (!pipeline) {
+          pipeline = device.createRenderPipeline({ label: "gosx-sky", layout: pipelineLayout,
+            vertex: { module: module, entryPoint: "vertexMain" },
+            fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format }] },
+            primitive: { topology: "triangle-list" }, multisample: { count: opts.samples },
+            depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" } });
+          pipelines.set(key, pipeline);
+        }
+        if (!cached.group || image !== cached.image || cube !== cached.cube) {
+          cached.group = device.createBindGroup({ layout: layout, entries: [
+            { binding: 0, resource: { buffer: uniform } }, { binding: 1, resource: sampler },
+            { binding: 2, resource: image }, { binding: 3, resource: cube },
+          ] });
+          cached.image = image; cached.cube = cube;
+        }
+        pass.setPipeline(pipeline); pass.setBindGroup(0, cached.group); pass.draw(3);
+        return state;
+      },
+      dispose: function() { uniform.destroy(); pipelines.clear(); cached.group = null; },
+    };
   }
 
   function createSceneWebGPURenderer(canvas, options) {
@@ -6338,7 +6536,8 @@
     // initFailed remains for runtime device-loss recovery.
     var initFailed = false;
     var initError = "";
-    var targetFormat = navigator.gpu.getPreferredCanvasFormat();
+    var presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+    var targetFormat = presentationFormat;
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
     var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
     var activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
@@ -6383,11 +6582,11 @@
     function sceneWebGPUCanvasConfiguration() {
       var config = {
         device: device,
-        format: targetFormat,
+        format: presentationFormat,
         alphaMode: activePresentation.alphaMode,
         colorSpace: activePresentation.colorSpace,
       };
-      if (activePresentation.toneMappingMode) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (activePresentation.toneMappingMode) {
         config.toneMapping = { mode: activePresentation.toneMappingMode };
       }
       return config;
@@ -6402,9 +6601,9 @@
       return [
         canvas ? canvas.width : 0,
         canvas ? canvas.height : 0,
-        targetFormat,
-        p.alphaMode,
-        p.colorSpace,
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ presentationFormat,
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ p.alphaMode,
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ p.colorSpace,
         p.toneMappingMode || "",
         device ? "d" : "",
       ].join("|");
@@ -6588,6 +6787,9 @@
     var waterSystems = new Map();
     var waterSystemRetireSerial = 0;
     var instancedCullSystems = new Map(); // meshId → { system, signature }
+    var instancedCacheOwners = new Map(); // meshId → owner of that mesh's cached GPU buffers and bind groups
+    var instancedCacheOwnerEpoch = 0;
+    var gpuDrivenHosts = new Map(); // "host" → GPU-driven instancing host; a Map keeps it typed any
     var lastComputeParticleTimeSeconds = null;
     var lastWaterTimeSeconds = null;
     var waterClockAPI = (typeof window !== "undefined" && window.__gosx_scene3d_api)
@@ -6597,14 +6799,13 @@
     var webGPUFrameSeq = 0;
     var gpuTiming = null;
     var gpuTimingFailed = false;
-    // A device may advertise timestamp-query while its command encoder does
-    // not expose the encoder-level timestamp operations used by this ring.
-    // Keep feature discovery separate from an actually encodable timer so
-    // adaptive quality can fall back to display-frame timing instead of
-    // waiting forever on a query that can never be written.
+    // Standard pass timestamp writes bracket all commands in the frame encoder.
     var gpuTimingEncodingAvailable = null;
     var failedGPUTimings = [];
     var lastGPUPerformanceSample = null;
+    // @ts-ignore TS7034 -- readback initializes the frame sample asynchronously.
+    var lastGPUCompletionSample = null;
+    var gpuTimingDisposed = false;
     var gpuTimingFrameSeq = 0;
     var deferredWaterTextureRetirements = [];
     var deferredWaterSystemRetirements = [];
@@ -6648,6 +6849,7 @@
     var webGPUBundleCache = null;
 
     function ensureGPUTiming() {
+      if (gpuTimingDisposed) return false;
       if (gpuTiming !== null) return gpuTiming;
       gpuTiming = false;
       var candidateQuerySet = null;
@@ -6680,7 +6882,6 @@
         gpuTiming = {
           querySet: candidateQuerySet,
           slots: slots,
-          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         gpuTimingEncodingAvailable = null;
         gpuTimingFailed = false;
@@ -6720,6 +6921,7 @@
       if (!timing || timing === false) return;
       if (gpuTiming === timing) gpuTiming = false;
       gpuTimingFailed = true;
+      lastGPUCompletionSample = null;
       failedGPUTimings.push({ timing: timing, retireAfterFrame: gpuTimingFrameSeq + 3 });
       lastGPUPerformanceSample = null;
       if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
@@ -6754,19 +6956,23 @@
       if (!timing) return;
       for (var i = 0; i < timing.slots.length; i++) {
         var slot = timing.slots[i];
-        if (!slot.pending || slot.mapping || gpuTimingFrameSeq - slot.frameSeq < 2) continue;
+        if (!slot.pending || slot.mapping) continue;
         if (!slot.readback || typeof slot.readback.mapAsync !== "function") continue;
         slot.mapping = true;
         (function(activeTiming, activeSlot) {
           activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
             if (!activeSlot.readback || typeof activeSlot.readback.getMappedRange !== "function") return;
             var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-            if (gpuTiming === activeTiming && values.length >= 2 && values[1] >= values[0]) {
+            if (gpuTiming === activeTiming && values.length >= 2 && values[1] > values[0]) {
               lastGPUPerformanceSample = {
                 source: "gpu-timestamp",
-                gpuMS: Number(values[1] - values[0]) * activeTiming.timestampPeriodNS / 1000000,
+                scope: "frame",
+                frameSeq: activeSlot.frameSeq,
+                gpuMS: Number(values[1] - values[0]) / 1000000,
                 atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
               };
+              // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
+              lastGPUCompletionSample = sceneLatestGPUCompletion(lastGPUCompletionSample, lastGPUPerformanceSample);
               if (telemetryMount) {
                 telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPerformanceSample.gpuMS.toFixed(3));
                 telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured");
@@ -6778,6 +6984,7 @@
           }).catch(function() {
             activeSlot.pending = false;
             activeSlot.mapping = false;
+            if (gpuTiming === activeTiming) disableGPUTiming(activeTiming);
           });
         })(timing, slot);
         break;
@@ -6788,7 +6995,7 @@
       pollGPUTimingReadback();
       var timing = ensureGPUTiming();
       if (!timing || !encoder) return null;
-      if (typeof encoder.writeTimestamp !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
+      if (typeof encoder.beginComputePass !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
         gpuTimingEncodingAvailable = false;
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
         return null;
@@ -6799,7 +7006,9 @@
         var slot = timing.slots[slotIndex];
         if (!slot || slot.pending || slot.mapping) continue;
         try {
-          encoder.writeTimestamp(timing.querySet, slotIndex * 2);
+          encoder.beginComputePass({ label: "gosx-frame-timer-start", timestampWrites: {
+            querySet: timing.querySet, beginningOfPassWriteIndex: slotIndex * 2,
+          } }).end();
           gpuTimingEncodingAvailable = true;
           return { timing: timing, slot: slot, slotIndex: slotIndex };
         } catch (_timestampBeginError) {
@@ -6813,7 +7022,9 @@
     function endGPUFrameTiming(encoder, token) {
       if (!token) return;
       try {
-        encoder.writeTimestamp(token.timing.querySet, token.slotIndex * 2 + 1);
+        encoder.beginComputePass({ label: "gosx-frame-timer-end", timestampWrites: {
+          querySet: token.timing.querySet, endOfPassWriteIndex: token.slotIndex * 2 + 1,
+        } }).end();
         encoder.resolveQuerySet(token.timing.querySet, token.slotIndex * 2, 2, token.slot.resolve, 0);
         encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, 16);
         token.slot.pending = true;
@@ -6825,22 +7036,9 @@
       }
     }
 
-    // -----------------------------------------------------------------------
-    // Per-pass GPU timing
-    // -----------------------------------------------------------------------
-    //
-    // The frame timer above uses encoder.writeTimestamp. That call is NOT part
-    // of the WebGPU standard: it needed the timestamp-query-inside-passes
-    // feature, and Chromium removed it. On such an implementation
-    // gpuTimingEncodingAvailable goes false and the page gets no GPU time at
-    // all, so adaptive quality falls back to display-frame timing.
-    //
-    // The standard path is timestampWrites on the render-pass descriptor. It
-    // also gives something the frame timer never could: a time per pass. Four
-    // stamps per frame — shadow begin, shadow end, main begin, main end — yield
-    // the shadow cost, the main cost, and a whole-scene GPU time that works
-    // where writeTimestamp does not.
-    //
+    // Per-pass GPU timing.
+    // These optional pass counters describe shadow and main draws only.
+    // The frame timer also includes compute, water, picking and post effects.
     // Slot layout, per ring entry:
     //   0 shadow begin   1 shadow end   2 main begin   3 main end
     var SCENE_WEBGPU_PASS_STAMPS = 4;
@@ -6883,7 +7081,6 @@
         gpuPassTiming = {
           querySet: querySet,
           slots: slots,
-          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "pending");
       } catch (_passTimingError) {
@@ -6978,7 +7175,7 @@
           activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
             if (activeSlot.readback && typeof activeSlot.readback.getMappedRange === "function") {
               var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-              recordGPUPassSample(activeTiming, activeSlot, values);
+              recordGPUPassSample(activeSlot, values);
               activeSlot.readback.unmap();
             }
             activeSlot.pending = false;
@@ -6995,11 +7192,11 @@
     // recordGPUPassSample turns four raw timestamps into milliseconds. A zero or
     // decreasing pair means the implementation did not write that stamp, so the
     // reading is dropped rather than published as 0.
-    function recordGPUPassSample(timing, slot, values) {
+    function recordGPUPassSample(slot, values) {
       if (!values || values.length < SCENE_WEBGPU_PASS_STAMPS) return;
       var toMS = function(begin, end) {
         if (end <= begin) return -1;
-        return Number(end - begin) * timing.timestampPeriodNS / 1000000;
+        return Number(end - begin) / 1000000;
       };
       var shadowMS = slot.hasShadow ? toMS(values[0], values[1]) : 0;
       var mainMS = toMS(values[2], values[3]);
@@ -7021,37 +7218,14 @@
         telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-scene-ms", lastGPUPassSample.sceneMS.toFixed(3));
         telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
       }
-      // Feed the shared performance sample only when the non-standard
-      // encoder-level timer is unavailable. Where both work, the frame timer
-      // keeps ownership so its existing budget assertions stay comparable.
-      if (gpuTimingEncodingAvailable === false || gpuTiming === false) {
-        lastGPUPerformanceSample = {
-          source: "gpu-pass-timestamp",
-          gpuMS: lastGPUPassSample.sceneMS,
-          atMS: lastGPUPassSample.atMS,
-        };
-        if (telemetryMount) {
-          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPassSample.sceneMS.toFixed(3));
-          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured-pass");
-        }
-      }
+
     }
 
     function destroyGPUPassTimingResources() {
       var timing = gpuPassTiming;
       gpuPassTiming = null;
       gpuPassTimingSlot = null;
-      if (!timing || timing === false) return;
-      destroyRendererGPUResource(timing.querySet);
-      for (var i = 0; i < timing.slots.length; i++) {
-        var slot = timing.slots[i];
-        if (!slot) continue;
-        try {
-          if (slot.readback && slot.mapping && typeof slot.readback.unmap === "function") slot.readback.unmap();
-        } catch (_unmapError) {}
-        destroyRendererGPUResource(slot.resolve);
-        destroyRendererGPUResource(slot.readback);
-      }
+      destroyGPUTimingResources(timing);
     }
 
     function pollPerformanceSample() {
@@ -7060,6 +7234,12 @@
       var sample = lastGPUPerformanceSample;
       lastGPUPerformanceSample = null;
       return sample;
+    }
+
+    function getFrameTiming() {
+      pollGPUTimingReadback();
+      // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
+      return sceneWebGPUCompletionSnapshot(getPerformanceTimingStatus(), lastGPUCompletionSample, gpuTimingDisposed, lastDeviceLostInfo);
     }
 
     function getPerformanceTimingStatus() {
@@ -7086,6 +7266,7 @@
     var mainMSAAWidth = 0;
     var mainMSAAHeight = 0;
     var mainMSAASampleCount = 1;
+    var mainMSAAFormat = "";
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
@@ -7158,7 +7339,7 @@
     var waterObjectTextureMatrixScratch = new Float32Array(32);
 
     // Texture cache.
-    var textureCache = new Map();
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var textureCache = new Map();
     textureCache._gosxGeneration = {
       disposed: false,
       onResourceReady: function() {
@@ -7208,6 +7389,8 @@
 
     // Post-processor.
     var postProcessor = null;
+    // @ts-ignore TS7018 -- lazily allocated backend sky resources.
+    var skyResources = { renderer: null };
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -7219,7 +7402,7 @@
     // clock (seconds) fed to selena materials that declare `param time : float`;
     // it is set once per frame before any selena draw, and an explicit
     // customUniforms.time still overrides it.
-    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0 };
+    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0 };
 
     // Hoisted uniform staging buffers — reused every frame to eliminate per-frame allocations.
     // Each scratch is consumed synchronously (filled → writeBuffer → done) before any reuse.
@@ -7252,11 +7435,14 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    // 208 bytes: the previous 192-byte MaterialUniforms layout plus the
-    // vec3f-aligned per-channel specular coefficient logs and the trailing
-    // hasSpecularColorMap flag. Only the material buffer grows; frame and
-    // shadow buffers are untouched.
-    var _materialUniformBuf = new ArrayBuffer(208);
+    // 256 bytes: the previous 208-byte MaterialUniforms layout (192 bytes
+    // plus the vec3f-aligned per-channel specular coefficient logs and the
+    // trailing hasSpecularColorMap flag) plus normalScale, occlusionStrength,
+    // emissiveColor/hasEmissiveColor and the optional rimColor/rimPower/
+    // rimStrength term — see WGSL_MATERIAL_STRUCT above for the exact field
+    // order and alignment. Only the material buffer grows; frame and shadow
+    // buffers are untouched.
+    var _materialUniformBuf = new ArrayBuffer(256);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -7531,7 +7717,7 @@
           }
         }
         renderTruth().record("webgpu-device-ready", renderTruth().implementation(webGPUAdapterInfoSnapshot()));
-
+/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
         configureWebGPUCanvas();
 
         // Create bind group layouts.
@@ -7893,7 +8079,7 @@
         size: [width, height, 1],
         format: "depth24plus",
         sampleCount: sampleCount,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       });
       mainDepthView = mainDepthTexture.createView();
       mainDepthWidth = width;
@@ -7908,7 +8094,7 @@
         mainMSAATexture &&
         mainMSAAWidth === width &&
         mainMSAAHeight === height &&
-        mainMSAASampleCount === sampleCount
+        mainMSAASampleCount === sampleCount && mainMSAAFormat === targetFormat
       ) {
         return mainMSAAView;
       }
@@ -7923,6 +8109,7 @@
       mainMSAAWidth = width;
       mainMSAAHeight = height;
       mainMSAASampleCount = sampleCount;
+      mainMSAAFormat = targetFormat;
       return mainMSAAView;
     }
 
@@ -8154,12 +8341,12 @@
         var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
-          visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
           texture: { sampleType: "float", viewDimension: texDimension },
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
-          visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
           sampler: { type: "filtering" },
         });
       }
@@ -8168,7 +8355,7 @@
         var bufferWGSL = storageBuffers[b] && storageBuffers[b].wgsl || {};
         entries.push({
           binding: sceneNumber(bufferWGSL.binding, 1 + textures.length * 2 + b),
-          visibility: visibility,
+          /* @ts-expect-error TS2741 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: visibility,
           buffer: { type: "read-only-storage" },
         });
       }
@@ -8195,17 +8382,17 @@
           binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
           visibility: visibility,
         };
-        if (String(stateWGSL.inKind || "storage").toLowerCase() === "texture") {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (String(stateWGSL.inKind || "storage").toLowerCase() === "texture") {
           stateEntry.texture = { sampleType: "unfilterable-float", viewDimension: "2d" };
-        } else {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else {
           stateEntry.buffer = { type: "read-only-storage" };
-        }
+        /* @ts-expect-error TS2345 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ }
         entries.push(stateEntry);
         var outBinding = sceneNumber(stateWGSL.outBinding, -1);
         if (outBinding >= 0) {
           entries.push({
             binding: outBinding,
-            visibility: visibility,
+            /* @ts-expect-error TS2741 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: visibility,
             buffer: { type: "storage" },
           });
         }
@@ -8213,20 +8400,69 @@
       return device.createBindGroupLayout({ label: "gosx-selena-material", entries: entries });
     }
 
+    function sceneSelenaAttributeSource(name) {
+      switch (name) {
+      case "position": return "positions";
+      case "normal": return "normals";
+      case "uv": return "uvs";
+      case "tangent": return "tangents";
+      default: return "";
+      }
+    }
+
     function sceneSelenaPipelineAttributes(layout) {
       var attrs = Array.isArray(layout && layout.attributes) ? layout.attributes : [];
       var out = [];
+      var seenLocations = {};
+      // Single static membership string of canonical reserved aliases that
+      // must never become custom attributes.
+      var RESERVED = "|position|positions|normal|normals|uv|uvs|uv1|tangent|tangents|index|indices|skin|skinIndex|joints|weights|";
+      // Single pass over the declared layout so output preserves the original
+      // Selena attribute order. Each descriptor is validated in place or
+      // dropped entirely (fail closed).
       for (var i = 0; i < attrs.length; i++) {
         var attr = attrs[i] || {};
-        var source = sceneSelenaAttributeSource(attr.name);
-        if (!source) continue;
+        var name = typeof attr.name === "string" ? attr.name.trim() : "";
+        if (!name) continue;
+        // Only exact float/vec2/vec3/vec4 types are supported.
+        var type = String(attr.type || "");
+        var comps = type === "float" ? 1 : type === "vec2" ? 2 :
+          type === "vec3" ? 3 : type === "vec4" ? 4 : 0;
+        if (!comps) continue;
+        // Builtin sources come from the shared helper; everything else must
+        // clear the reserved list and identifier validation.
+        var source = sceneSelenaAttributeSource(name);
+        var isBuiltin = !!source;
+        if (!isBuiltin) {
+          if (RESERVED.indexOf("|" + name + "|") !== -1) continue;
+          // Custom names must be valid WGSL-safe identifiers.
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+          source = "custom";
+          // Custom shader locations must be explicit nonnegative integers.
+          var n = Number(attr.location);
+          if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n) continue;
+        }
+        // Location: explicit value when provided, else prior builtin fallback
+        // of the running slot index (compatible only for builtin attributes).
+        var loc;
+        if (attr.location != null && Number.isFinite(Number(attr.location))) {
+          loc = Math.floor(Number(attr.location));
+          if (loc < 0 || loc !== Number(attr.location)) continue;
+        } else {
+          if (!isBuiltin) continue; // custom already required a location above
+          loc = out.length;
+        }
+        // Skip any descriptor whose location duplicates an earlier emission.
+        if (seenLocations[loc]) continue;
+        seenLocations[loc] = true;
         out.push({
-          name: attr.name,
+          name: name,
           source: source,
           slot: out.length,
-          components: sceneSelenaAttributeComponents(attr.type),
-          shaderLocation: Math.max(0, Math.floor(sceneNumber(attr.location, out.length))),
-          format: sceneSelenaWGPUFormat(attr.type),
+          components: comps,
+          shaderLocation: loc,
+          format: comps === 1 ? "float32" : comps === 2 ? "float32x2" :
+            comps === 3 ? "float32x3" : "float32x4",
         });
       }
       return out;
@@ -8352,7 +8588,7 @@
           primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
           multisample: { count: pipelineSampleCount },
         };
-        if (pipelineDepthStencil) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (pipelineDepthStencil) {
           pipelineDescriptor.depthStencil = { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" };
         }
         var pipeline = device.createRenderPipeline(pipelineDescriptor);
@@ -8517,7 +8753,7 @@
         // map) loads through wgpuLoadCubeTexture/placeholderCubeView instead
         // of the plain-2d wgpuLoadTexture/placeholderView path every other
         // Selena texture uses; this mirrors the hand-written
-        // createWaterRenderBindGroup's cubeMap handling.
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // createWaterRenderBindGroup's cubeMap handling.
         var record = url ? (isCube ? wgpuLoadCubeTexture(device, url, textureCache) : wgpuLoadTexture(device, url, textureCache)) : null;
         var view = liveView || (record && record.view ? record.view : (isCube ? placeholderCubeView : placeholderView));
         var wgsl = tex.wgsl || {};
@@ -9720,7 +9956,7 @@
         // descriptor-driven Selena compute path, using system.
         // _waterComputeObjectState -- freshly stashed by the
         // sceneWaterUniformData call immediately above -- for this event's
-        // own object state (see sceneWaterDisplacementSelenaRenderContext).
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // own object state (see sceneWaterDisplacementSelenaRenderContext).
         var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "displacement", pipeline);
         var eventDispatches = eventResult.dispatches;
         selenaDispatches += eventResult.selena;
@@ -9786,7 +10022,7 @@
         var id = sceneWaterDropEventID(event);
         if (id <= lastID) continue;
         var eventEntry = sceneWaterDropEventEntry(entry, event);
-        device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }));
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }));
         var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "drop", pipeline);
         var eventDispatches = eventResult.dispatches;
         selenaDispatches += eventResult.selena;
@@ -10224,7 +10460,7 @@
       var cubeLoaded = Boolean(cubeRecord && cubeRecord.loaded && cubeRecord.view);
       var cubePending = Boolean(cubeRecord && cubeRecord.pending && !cubeRecord.loaded && !cubeRecord.failed);
       var cubeFailed = Boolean(cubeRecord && cubeRecord.failed);
-      var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
       var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
       var tileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
       var tilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
@@ -10268,7 +10504,7 @@
       var entry = system && system.entry || {};
       if (!entry.cubeMap) return system.renderBindGroups[system.activeIndex];
       var cubeRecord = wgpuLoadCubeTexture(device, entry.cubeMap, textureCache);
-      var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
       var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
       var cubeView = (cubeRecord && cubeRecord.view) || null;
       var tileView = (tileRecord && tileRecord.view) || null;
@@ -10289,7 +10525,7 @@
     function getWaterPoolBindGroupCached(system) {
       if (!system) return null;
       var entry = system.entry || {};
-      var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
       var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
       var tileView = (tileRecord && tileRecord.view) || null;
       var cache = system._poolBindGroups;
@@ -10318,7 +10554,7 @@
       if (!system) return null;
       var activeBuffer = buffer || (system.activeIndex === 0 ? system.bufferA : system.bufferB);
       var entry = system.entry || {};
-      var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
       var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
       var tileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
       var tilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
@@ -10530,8 +10766,8 @@
         waterRestEnergy: 1.0,
         waterLastDisturbanceMS: 0,
         waterAtRest: false,
-        dispose: function() {
-          if (system._gosxDisposed) return;
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ dispose: function() {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (system._gosxDisposed) return;
           system._gosxDisposed = true;
           if (bufferA && typeof bufferA.destroy === "function") {
             pointsEntryGPUBuffers.delete(bufferA);
@@ -10578,21 +10814,21 @@
             system.objectShadowTexture.destroy();
           }
         },
-      };
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
       system.computeBindGroups = [
         createWaterComputeBindGroup(system, bufferA, bufferB),
         createWaterComputeBindGroup(system, bufferB, bufferA),
-      ];
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ ];
       system.renderBindGroups = [
         createWaterRenderBindGroup(system, bufferA),
         createWaterRenderBindGroup(system, bufferB),
-      ];
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ ];
       system.causticsBindGroups = [
         createWaterCausticsBindGroup(system, bufferA),
         createWaterCausticsBindGroup(system, bufferB),
-      ];
-      system.objectTextureBindGroup = createWaterObjectTextureBindGroup(system);
-      system.objectMeshShadowBindGroup = createWaterObjectMeshShadowBindGroup(system);
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ ];
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ system.objectTextureBindGroup = createWaterObjectTextureBindGroup(system);
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ system.objectMeshShadowBindGroup = createWaterObjectMeshShadowBindGroup(system);
       system._qualityResourceKey = [causticsResolution, objectShadowResolution, objectTextureWidth, objectTextureHeight, objectTextureSize.pixelBudget].join("|");
       return system;
     }
@@ -11041,6 +11277,9 @@
         if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return true;
         return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
       }
+      if (attr.source === "custom") {
+        return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, "custom:" + attr.name, attr.components);
+      }
       return false;
     }
 
@@ -11137,7 +11376,7 @@
         }
 
         var receiveShadow = false;
-        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
           pass.setBindGroup(1, createMaterialBindGroup(mat, receiveShadow, mat || obj));
           lastMaterialIndex = matIndex;
           lastReceiveShadow = receiveShadow;
@@ -11569,7 +11808,7 @@
         if (!objectList.length || !pbrBuffers || !frameBindGroup) {
           if (!objectList.length) stats.waterObjectTextureFallbackMissingObjects += 1;
           if (!pbrBuffers || !frameBindGroup) stats.waterObjectTextureFallbackMissingResources += 1;
-          var fallbackPasses = renderWaterObjectTexturePass(encoder, system);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var fallbackPasses = renderWaterObjectTexturePass(encoder, system);
           if (fallbackPasses > 0) addWaterObjectTextureStats(stats, system, fallbackPasses, fallbackPasses * 3, 0, fallbackPasses);
           continue;
         }
@@ -11617,7 +11856,7 @@
           if (system.objectViewProjectionMatrix) {
             system.objectViewProjectionMatrix.set(scratchSelenaViewProjection);
             system.objectViewProjectionReady = true;
-          }
+          /* @ts-expect-error TS2322 -- renderWaterObjectMeshTargetPass can also return the empty-pass sentinel 0 */ }
           refraction = renderWaterObjectMeshTargetPass(
             encoder,
             system,
@@ -11637,7 +11876,7 @@
             system.objectReflectionViewProjectionMatrix.set(scratchSelenaViewProjection);
             system.objectReflectionViewProjectionReady = true;
           }
-          if (passSlot === 1) {
+          /* @ts-expect-error TS2322 -- renderWaterObjectMeshTargetPass can also return the empty-pass sentinel 0 */ if (passSlot === 1) {
             reflection = renderWaterObjectMeshTargetPass(
               encoder,
               system,
@@ -11651,7 +11890,7 @@
               "gosx-water-object-mesh-reflection-pass",
               "reflection"
             );
-          } else {
+          /* @ts-expect-error TS2322 -- renderWaterObjectMeshTargetPass can also return the empty-pass sentinel 0 */ } else {
             clipped = renderWaterObjectMeshTargetPass(
               encoder,
               system,
@@ -11954,7 +12193,7 @@
         var waterStateDirty = false;
         if (hasSimulationTick && !system.seeded) {
           system.seeded = true;
-          if (Math.max(0, Math.floor(sceneNumber(entry.seedDrops, 7))) > 0) {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (Math.max(0, Math.floor(sceneNumber(entry.seedDrops, 7))) > 0) {
             var seedResult = dispatchWaterComputeStage(encoder, system, entry, "seed", seedCompute.pipeline);
             stats.waterComputeDispatches += seedResult.dispatches;
             stats.waterSelenaComputeDispatches += seedResult.selena;
@@ -11977,7 +12216,7 @@
         stats.waterSelenaComputeDispatches += dropEventsResult.selena;
         stats.waterSelenaComputeFallbacks += dropEventsResult.selenaFallback;
         if (dropEventsResult.dispatches > 0) {
-          system.dropDispatchCount = Math.max(0, Math.floor(sceneNumber(system.dropDispatchCount, 0))) + dropEventsResult.dispatches;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ system.dropDispatchCount = Math.max(0, Math.floor(sceneNumber(system.dropDispatchCount, 0))) + dropEventsResult.dispatches;
           stats.waterLastDropEventID = Math.max(stats.waterLastDropEventID, dropEventsResult.lastID || 0);
           stats.waterDropDispatches += dropEventsResult.dispatches;
           stats.waterComputeDispatches += dropEventsResult.dispatches;
@@ -11985,7 +12224,7 @@
           if (dropCompute.authored && dropEventsResult.selena === 0) stats.waterAuthoredComputeDispatches += dropEventsResult.dispatches;
         }
         var dropEventID = Math.max(0, Math.floor(sceneNumber(entry.dropEventID, 0)));
-        if (hasSimulationTick && dropEventID > 0 && system.lastDropEventID !== dropEventID) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (hasSimulationTick && dropEventID > 0 && system.lastDropEventID !== dropEventID) {
           var dropResult = dispatchWaterComputeStage(encoder, system, entry, "drop", dropCompute.pipeline);
           var dropDispatches = dropResult.dispatches;
           stats.waterSelenaComputeDispatches += dropResult.selena;
@@ -12021,7 +12260,7 @@
           // Zero-tick display frames leave the previous center untouched.
           // M6: pack once, then skip the actual GPU upload when nothing but
           // the volatile time/frameIndex header changed -- see
-          // waterUniformSnapshotChanged's comment (near sceneWaterUniformData).
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // waterUniformSnapshotChanged's comment (near sceneWaterUniformData).
           var commitUniformData = sceneWaterUniformData(system, entry, fixedDeltaSeconds, currentTime);
           if (waterUniformSnapshotChanged(system)) {
             device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);
@@ -12031,7 +12270,7 @@
           }
           if ((system.waterObjectActive || (system.waterObjectKind || 0) > 0) && system.waterObjectMoved) {
             stats.waterObjectSystems += 1;
-            stats.waterObjectSpheres += Math.max(0, system.waterObjectSphereCount || 0);
+            /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ stats.waterObjectSpheres += Math.max(0, system.waterObjectSphereCount || 0);
             var objectResult = dispatchWaterComputeStage(encoder, system, entry, "displacement", displacementCompute.pipeline);
             var objectDispatches = objectResult.dispatches;
             stats.waterObjectDispatches += objectDispatches;
@@ -12143,10 +12382,10 @@
           if (meshShadow.passes > 0) {
             objectShadowPasses = meshShadow.passes;
             stats.waterObjectShadowMeshPasses += meshShadow.passes;
-            stats.waterObjectShadowMeshDrawCalls += meshShadow.drawCalls;
-            if (meshShadow.authored) stats.waterAuthoredObjectMeshShadowPasses += meshShadow.passes;
-            if (meshShadow.failed) stats.waterAuthoredObjectMeshShadowFallbacks += 1;
-            stats.waterSelenaObjectMeshShadowPasses += meshShadow.selena || 0;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ stats.waterObjectShadowMeshDrawCalls += meshShadow.drawCalls;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (meshShadow.authored) stats.waterAuthoredObjectMeshShadowPasses += meshShadow.passes;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (meshShadow.failed) stats.waterAuthoredObjectMeshShadowFallbacks += 1;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ stats.waterSelenaObjectMeshShadowPasses += meshShadow.selena || 0;
             stats.waterSelenaObjectMeshShadowFallbacks += meshShadow.selenaFallback || 0;
           } else if (hasShadowSubject) {
             if (objectList.length === 0) stats.waterObjectShadowFallbackMissingObjects += 1;
@@ -12385,7 +12624,7 @@
       // Mirror createWaterPoolBindGroup's tile-texture bookkeeping so
       // diagnostics (waterPoolTileTexture* stats) stay accurate regardless of
       // which pool path rendered this frame. wgpuLoadTexture is memoized by
-      // URL in textureCache, so this is not a duplicate fetch.
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // URL in textureCache, so this is not a duplicate fetch.
       var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
       system.waterPoolTileRequested = !!tileURL;
       system.waterPoolTileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
@@ -12496,7 +12735,7 @@
         objectReflectionTex: sceneWaterSelenaResourceRef(system, "reflection"),
         objectClippedReflectionTex: sceneWaterSelenaResourceRef(system, "clippedReflection"),
         height: sceneWaterSelenaResourceRef(system, "state"),
-      };
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ };
       var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
       var cubeRecord = cubeURL ? wgpuLoadCubeTexture(device, cubeURL, textureCache) : null;
       system.waterSurfaceTileRequested = !!tileURL;
@@ -12774,7 +13013,7 @@
     }
 
     function sceneWaterCompoundShadowSelenaRenderContext(system) {
-      var base = sceneWaterObjectShadowSelenaContextBase(system);
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var base = sceneWaterObjectShadowSelenaContextBase(system);
       base.spheres = sceneWaterSpheresContextArray(system);
       return {
         uniformSlotSuffix: "water-compound-shadow-" + String((system && system.id) || "water"),
@@ -13287,7 +13526,7 @@
           renderPass.setBindGroup(0, frameBindGroup);
           frameGroupBound = true;
           activePipeline = null;
-        }
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
         var pipelineRecord = getWaterPoolPipeline(system);
         if (!pipelineRecord || !pipelineRecord.pipeline) continue;
         if (pipelineRecord.pipeline !== activePipeline) {
@@ -13414,7 +13653,7 @@
           renderPass.setBindGroup(0, frameBindGroup);
           frameGroupBound = true;
           activePipeline = null;
-        }
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
         var pipelineRecord = getWaterRenderPipeline(system, side);
         if (!pipelineRecord || !pipelineRecord.pipeline) {
           if (pipelineRecord && pipelineRecord.pending) {
@@ -13549,7 +13788,7 @@
 
       for (var i = 0; i < instancedMeshes.length; i++) {
         var mesh = instancedMeshes[i];
-        if (!mesh) continue;
+        if (!mesh || webGPUGPUDrivenHost().owns(mesh)) continue;
         var wgsl = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL.trim() : null;
         // A mesh without an authored kernel still culls on the GPU when the
         // renderer's own kernel applies. webGPUBuiltinCullEligible states the
@@ -13987,9 +14226,9 @@
       } else {
         var key = [radiance.uri, irradiance.uri, brdf.uri, model].join("\u0000");
         if (iblResources.key !== key) {
-          iblResources.key = key;
-          iblResources.radiance = wgpuLoadTexture(device, radiance.uri, textureCache, radiance);
-          iblResources.irradiance = wgpuLoadTexture(device, irradiance.uri, textureCache, irradiance);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ iblResources.key = key;
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ iblResources.radiance = wgpuLoadTexture(device, radiance.uri, textureCache, radiance);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ iblResources.irradiance = wgpuLoadTexture(device, irradiance.uri, textureCache, irradiance);
           iblResources.brdfLUT = wgpuLoadTexture(device, brdf.uri, textureCache, brdf);
         }
         var failed = [iblResources.radiance, iblResources.irradiance, iblResources.brdfLUT].some(function(record) {
@@ -14011,8 +14250,8 @@
         }
       }
       iblResources.active = diag.active;
-      iblResources.diagnostics = diag;
-      if ((diag.state === "unsupported" || diag.state === "failed") && iblResources.lastWarning !== diag.reason) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ iblResources.diagnostics = diag;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if ((diag.state === "unsupported" || diag.state === "failed") && iblResources.lastWarning !== diag.reason) {
         iblResources.lastWarning = diag.reason;
         try { console.warn("[gosx] WebGPU IBL " + diag.state + ": " + diag.reason); } catch (_error) {}
         renderTruth().record("ibl-" + diag.state, diag.reason);
@@ -14035,7 +14274,12 @@
       }
       if (envMapResources.key !== url) {
         envMapResources.key = url;
-        envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "linear");
+        // The legacy equirect environment map is an ordinary sRGB-encoded
+        // PNG/JPEG, not a raw linear radiance buffer — see the matching fix
+        // in the WebGL2 renderer (scenePBRUploadEnvironmentMap). Loading it
+        // as "linear" skipped the rgba8unorm-srgb decode and left every
+        // sample ~2.2x too bright.
+        envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "srgb");
       }
       var record = envMapResources.record;
       envMapResources.active = Boolean(record && record.loaded && !record.failed);
@@ -14202,6 +14446,48 @@
       return out;
     }
 
+    // Whether the material carries a valid authored emissive colour factor:
+    // exactly three finite, non-negative components (the glTF emissiveFactor
+    // triple). Mirrors the WebGL2 renderer's scenePBRHasEmissiveColor. The
+    // gltf.ts loader always sets this, even to [0, 0, 0]; hand-authored
+    // materials that only set the scalar `emissive` glow knob never do,
+    // which keeps their pre-existing albedo-tinted glow in the shader.
+    function sceneWebGPUHasEmissiveColor(material) {
+      var color = material && material.emissiveColor;
+      if (!(color && typeof color.length === "number" && color.length === 3)) {
+        return false;
+      }
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function sceneWebGPUEmissiveColor(material) {
+      var mat = material || {};
+      return sceneWebGPUHasEmissiveColor(mat) ? mat.emissiveColor : [0, 0, 0];
+    }
+
+    // Rim highlight tint. Off by default (rimStrength 0 in materialUniformData).
+    // Mirrors scenePBRRimColor on the WebGL2 renderer.
+    function sceneWebGPURimColor(material) {
+      var color = material && material.rimColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      return valid ? color : [1, 1, 1];
+    }
+
     function materialUniformData(material, receiveShadow, modelMatrix) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
@@ -14277,6 +14563,23 @@
       f[49] = colorLogs[1];
       f[50] = colorLogs[2];
       u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
+      // Trailing fields (see WGSL_MATERIAL_STRUCT for exact layout): core
+      // glTF normal-scale/occlusion-strength factors, the emissive colour
+      // factor with its has-flag, and the optional rim-light term.
+      f[52] = sceneNumber(mat.normalScale, 1);
+      f[53] = clamp01(sceneNumber(mat.occlusionStrength, 1));
+      u[54] = sceneWebGPUHasEmissiveColor(mat) ? 1 : 0;
+      f[55] = Math.max(0.0001, sceneNumber(mat.rimPower, 2));
+      var emissiveColor = sceneWebGPUEmissiveColor(mat);
+      f[56] = emissiveColor[0];
+      f[57] = emissiveColor[1];
+      f[58] = emissiveColor[2];
+      f[59] = Math.max(0, sceneNumber(mat.rimStrength, 0));
+      var rimColor = sceneWebGPURimColor(mat);
+      f[60] = rimColor[0];
+      f[61] = rimColor[1];
+      f[62] = rimColor[2];
+      f[63] = 0;
       return { data: f, u: u };
     }
 
@@ -14482,12 +14785,32 @@
 
     function webGPUDirectAttribute(obj, key, count, tupleSize) {
       var vertices = obj && obj.vertices;
-      var data = vertices && vertices[key];
+      var isCustom = typeof key === "string" && key.indexOf("custom:") === 0;
+      var data;
+      if (isCustom) {
+        // Custom streams resolve fail-closed from vertices.attributes only.
+        var attrs = vertices && typeof vertices.attributes === "object" ? vertices.attributes : null;
+        var entry = attrs ? attrs[key.slice("custom:".length)] : null;
+        if (
+          !entry ||
+          typeof entry !== "object" ||
+          !(entry.data instanceof Float32Array) ||
+          entry.itemSize !== tupleSize
+        ) {
+          return null;
+        }
+        data = entry.data;
+      } else {
+        data = vertices && vertices[key];
+        if (!vertices || !data || typeof data.length !== "number") {
+          return null;
+        }
+      }
       var required = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, tupleSize);
-      if (!vertices || required <= 0 || !data || typeof data.length !== "number" || data.length < required) {
+      if (required <= 0 || data.length < required) {
         return null;
       }
-      if (!(data instanceof Float32Array)) {
+      if (!isCustom && !(data instanceof Float32Array)) {
         data = new Float32Array(data);
         vertices[key] = data;
       }
@@ -15129,9 +15452,30 @@
     function webGPUComputedMorphEnsureOutputBuffer(record, slot, count, components) {
       var bytes = Math.max(4, Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, components) * 4);
       var buffer = record && record[slot];
+      // Cross-renderer staleness guard: scene objects retain their morph
+      // records across renderer rebuilds, but dispose() destroys every buffer
+      // tracked in pointsEntryGPUBuffers. A cached output buffer absent from
+      // THIS renderer's set belongs to a dead device — drop the stale JS
+      // reference WITHOUT calling destroy() again (dispose already destroyed
+      // it), so the alloc path below creates a fresh buffer on the current
+      // device. The bind group is invalidated too: it was created on the dead
+      // device and references the destroyed output buffers, so no cache path
+      // may return with a live-looking bindGroup around a dead buffer.
+      // Mirrors the guard in webGPUElioEnsureOutputBuffer.
+      if (buffer && !pointsEntryGPUBuffers.has(buffer)) {
+        record[slot] = null;
+        record.bindGroup = null;
+        buffer = null;
+      }
       if (buffer && wgpuTrackedBufferSize(buffer) >= bytes) return buffer;
       if (buffer && typeof buffer.destroy === "function") {
         pointsEntryGPUBuffers.delete(buffer);
+        // The live-but-undersized buffer is about to be destroyed and
+        // replaced. Invalidate the cached bind group BEFORE destruction so it
+        // cannot retain a reference to this soon-to-be-destroyed output
+        // buffer; a stale bindGroup around a destroyed buffer must never be
+        // returned by the cache path.
+        record.bindGroup = null;
         buffer.destroy();
       }
       buffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, bytes);
@@ -15431,7 +15775,7 @@
       return Boolean(shadowFrameBuffer);
     }
 
-    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
@@ -15461,7 +15805,7 @@
           depthStoreOp: "store",
         },
       };
-      var shadowStamps = gpuPassTimestampWrites("shadow");
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var shadowStamps = gpuPassTimestampWrites("shadow");
       if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
       var pass = encoder.beginRenderPass(shadowPassDescriptor);
 
@@ -15542,7 +15886,7 @@
       }
 
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
-      drawInstancedShadowMeshes(pass, bundle);
+      drawInstancedShadowMeshes(pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       pass.end();
     }
 
@@ -15559,23 +15903,27 @@
       function bindMeshAttribute(attr, obj, offset, count) {
         var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (attr.source === "positions") {
-          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return;
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
-          return;
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
         }
         if (attr.source === "normals") {
-          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return;
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
-          return;
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return true;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
         }
         if (attr.source === "uvs") {
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
-          return;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
         }
         if (attr.source === "tangents") {
-          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return;
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return true;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
         }
+        // Custom attribute stream: bind fail-closed from the retained direct
+        // vertex data under its "custom:<name>" key. Any failure returns false
+        // so the caller skips the draw instead of binding a stale slot.
+        if (attr.source === "custom") {
+          return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, "custom:" + attr.name, attr.components);
+        }
+        return false;
       }
 
       function bindPBRPipeline(reflected) {
@@ -15645,7 +15993,7 @@
           if (currentPipelineKind !== selenaKey) {
             pass.setPipeline(selenaResource.pipeline);
             currentPipelineKind = selenaKey;
-          }
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
           var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
           if (selenaBG) {
             pass.setBindGroup(0, selenaBG);
@@ -15660,10 +16008,19 @@
               }
               continue;
             }
+            var allBound = true;
             for (var ai = 0; ai < selenaResource.attrs.length; ai++) {
-              bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count);
+              if (!bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count)) {
+                allBound = false;
+                break;
+              }
             }
-            pass.draw(count);
+            // Fail closed: skip the whole object (and its draw-call stat)
+            // when any declared attribute could not be bound.
+            if (!allBound) continue;
+            var selenaIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (selenaIndexCount > 0) pass.drawIndexed(selenaIndexCount);
+            else pass.draw(count);
             if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
             continue;
           }
@@ -15672,7 +16029,7 @@
         if (isSkinned) {
           bindPBRPipeline(reflectedDirect);
           var skinnedOwner = mat || obj;
-          if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
             var skinnedMatBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
             pass.setBindGroup(1, skinnedMatBG);
             lastMaterialIndex = matIndex;
@@ -15863,12 +16220,75 @@
       return wgpuCachedTrackedBuffer(geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
     }
 
+    // webGPUInstancedCacheOwner returns the object that owns one instanced
+    // mesh's cached GPU buffers and bind groups. The render bundle hands the
+    // renderer a fresh shallow copy of every instanced mesh each frame, so
+    // caching on that copy created a uniform buffer and a bind group per mesh
+    // per frame and kept render bundles from replaying. Key by mesh id.
+    function webGPUInstancedCacheOwner(meshId = "") {
+      if (!meshId) return null;
+      var owner = instancedCacheOwners.get(meshId);
+      if (!owner) {
+        owner = { meshId: meshId, seenEpoch: 0 };
+        instancedCacheOwners.set(meshId, owner);
+      }
+      owner.seenEpoch = instancedCacheOwnerEpoch;
+      return owner;
+    }
+
+    // webGPUSweepInstancedCacheOwners frees the cached buffers of instanced
+    // meshes that have not drawn for 120 rendered frames.
+    function webGPUSweepInstancedCacheOwners() {
+      instancedCacheOwners.forEach(function(owner, meshId) {
+        if (instancedCacheOwnerEpoch - owner.seenEpoch <= 120) return;
+        var slots = ["_gosxWGPUInstanceTransformBuffer", "_gosxWGPUInstanceColorBuffer", "_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"];
+        for (var i = 0; i < slots.length; i++) {
+          var buffer = owner[slots[i]];
+          if (!buffer) continue;
+          pointsEntryGPUBuffers.delete(buffer);
+          destroyRendererGPUResource(buffer);
+        }
+        instancedCacheOwners.delete(meshId);
+      });
+    }
+
+    // webGPUGPUDrivenHost returns this renderer's GPU-driven instancing host
+    // (indirect-instancing.ts), or the inert host until the compute chunk publishes the
+    // factory. The hooks are the renderer's own factories, shader sources and
+    // instanced helpers, so the host builds pipelines that match the renderer's.
+    function webGPUGPUDrivenHost() {
+      var host = gpuDrivenHosts.get("host");
+      if (host) return host;
+      var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+      if (!device || !api || typeof api.createSceneGPUDrivenHost !== "function") return SCENE_GPU_DRIVEN_INERT_HOST;
+      host = api.createSceneGPUDrivenHost(device, {
+        createFrameBindGroupLayout: wgpuCreateFrameBindGroupLayout,
+        createMaterialBindGroupLayout: wgpuCreateMaterialBindGroupLayout,
+        createShadowBindGroupLayout: wgpuCreateShadowBindGroupLayout,
+        pbrInstancedVertexWGSL: WGSL_PBR_INSTANCED_VERTEX,
+        pbrFragmentWGSL: WGSL_PBR_FRAGMENT,
+        shadowInstancedVertexWGSL: WGSL_SHADOW_INSTANCED_VERTEX,
+        shadowFragmentWGSL: WGSL_SHADOW_FRAGMENT,
+        pbrVertexLayout: WGPU_PBR_VERTEX_LAYOUT,
+        shadowVertexLayout: WGPU_SHADOW_VERTEX_LAYOUT,
+        blendState: wgpuBlendState,
+        instancedMeshCount: instancedMeshCount,
+        instancedMeshColorData: instancedMeshColorData,
+        getInstancedGeometry: getInstancedGeometry,
+        ensureInstancedGeometryGPUBuffer: ensureInstancedGeometryGPUBuffer,
+        instancedCullRadius: webGPUInstancedCullRadius,
+        drawInstancedMeshes: drawInstancedMeshes,
+      });
+      gpuDrivenHosts.set("host", host);
+      return host;
+    }
+
     function ensureInstancedTransformGPUBuffer(mesh, data) {
-      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+      return wgpuCachedTrackedBuffer(webGPUInstancedCacheOwner(mesh && mesh.id) || mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
 
     function ensureInstancedColorGPUBuffer(mesh, data) {
-      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+      return wgpuCachedTrackedBuffer(webGPUInstancedCacheOwner(mesh && mesh.id) || mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
     }
 
     function buildInstancedDrawList(bundle, materials) {
@@ -15902,8 +16322,9 @@
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
 
-        var mat = instancedMeshMaterial(mesh, materials);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, mesh));
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var mat = instancedMeshMaterial(mesh, materials);
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh));
+        if (webGPUGPUDrivenHost().drawMesh(pass, mesh, depthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
@@ -16053,12 +16474,13 @@
       return bounds || { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
     }
 
-    function drawInstancedShadowMeshes(pass, bundle) {
+    function drawInstancedShadowMeshes(pass, bundle, lightSlot = 0) {
       var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       var drew = false;
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
         if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+        if (webGPUGPUDrivenHost().drawShadowMesh(pass, mesh, lightSlot)) { drew = false; continue; }
         var instanceCount = instancedMeshCount(mesh);
         var transformData = instancedMeshTransformData(mesh, instanceCount);
         if (!transformData) continue;
@@ -16395,7 +16817,7 @@
         var positions = toSceneFloat32Array(surface.positions);
         var uvs = toSceneFloat32Array(surface.uv);
         var vertexCount = Math.min(Math.floor(positions.length / 3), Math.floor(uvs.length / 2), Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))));
-        if (vertexCount <= 0) continue;
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (vertexCount <= 0) continue;
         renderPass.setBindGroup(1, createMaterialBindGroup(mat, false, surface));
         renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfacePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
         renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfaceUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
@@ -16589,7 +17011,7 @@
           ]);
           pipeline = getPointsVertexPipeline(validBlend, depthWrite);
           pass.setPipeline(pipeline);
-          pass.setVertexBuffer(0, pointsParticleBuffer);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setVertexBuffer(0, pointsParticleBuffer);
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
           pass.setBindGroup(2, pointsBG);
         }
@@ -16758,7 +17180,7 @@
             { binding: 1, resource: { buffer: system.renderBuffer } },
           ]);
           pipeline = getPointsPipeline(validBlend, depthWrite);
-          pass.setPipeline(pipeline);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setPipeline(pipeline);
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
           pass.setBindGroup(2, pointsBG);
         }
@@ -17406,10 +17828,10 @@
       // Need a real text-capable 2D context. The node test harness's fake
       // context lacks fillText/measureText, so glyph rasterization degrades to
       // null there (no GPU text) — the documented node-harness behavior; the
-      // DOM-overlay label path still runs unaffected.
-      if (!mctx || typeof mctx.fillText !== "function" || typeof mctx.measureText !== "function") return null;
-      mctx.font = font;
-      mctx.textBaseline = "alphabetic";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // DOM-overlay label path still runs unaffected.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!mctx || typeof mctx.fillText !== "function" || typeof mctx.measureText !== "function") return null;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ mctx.font = font;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ mctx.textBaseline = "alphabetic";
       var mm = mctx.measureText("Mg");
       var ascent = (mm && mm.actualBoundingBoxAscent > 0) ? mm.actualBoundingBoxAscent : sizePx * 0.8;
       var descent = (mm && mm.actualBoundingBoxDescent > 0) ? mm.actualBoundingBoxDescent : sizePx * 0.2;
@@ -17419,7 +17841,7 @@
       var metrics = [];
       var totalW = 0;
       for (var gi = 0; gi < allChars.length; gi++) {
-        var g = allChars[gi];
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var g = allChars[gi];
         var adv = mctx.measureText(g).width;
         var cellW = Math.ceil(adv) + pad * 2;
         metrics.push({ ch: g, advance: adv, x: totalW, w: cellW });
@@ -17431,14 +17853,14 @@
       var atlasCanvas = boardCreateCanvas(atlasW, atlasH);
       if (!atlasCanvas) return null;
       var actx = atlasCanvas.getContext("2d");
-      if (!actx) return null;
-      actx.clearRect(0, 0, atlasW, atlasH);
-      actx.font = font;
-      actx.textBaseline = "alphabetic";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!actx) return null;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ actx.clearRect(0, 0, atlasW, atlasH);
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ actx.font = font;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ actx.textBaseline = "alphabetic";
       actx.fillStyle = "#ffffff";
       var glyphs = {};
       for (var mi = 0; mi < metrics.length; mi++) {
-        var me = metrics[mi];
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var me = metrics[mi];
         actx.fillText(me.ch, me.x + pad, pad + ascent);
         glyphs[me.ch] = {
           u0: me.x / atlasW,
@@ -17504,7 +17926,7 @@
     // rects use) is consumed via sceneSelenaUniformData("mvp").
     function drawBoardLabels(pass, bundle, blendMode, depthWrite) {
       var labels = Array.isArray(bundle.labels) ? bundle.labels : [];
-      if (!labels.length) return;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!labels.length) return;
       var resource = getSelenaPipeline(boardTextMaterial, blendMode, depthWrite);
       if (!resource) return;
 
@@ -17716,9 +18138,9 @@
       for (var p = 0; p < passes.length; p++) {
         var spec = passes[p];
         var meshList = ctx.drawList[spec.name];
-        if (meshList && meshList.length > 0) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (meshList && meshList.length > 0) {
           target.setPipeline(getPBRPipeline(spec.blend, spec.depthWrite));
-          target.setBindGroup(0, ctx.frameBindGroup);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ target.setBindGroup(0, ctx.frameBindGroup);
           drawPBRObjects(target, meshList, ctx.bundle, ctx.materials, ctx.frameBindGroup, spec.blend, spec.depthWrite, ctx.pbrBuffers);
         }
         var instancedList = ctx.instancedDrawList[spec.name];
@@ -17818,7 +18240,9 @@
         hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
       }
       webGPUBeginRetainedMeshFrame(bundle);
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData) {
+      instancedCacheOwnerEpoch += 1;
+      webGPUSweepInstancedCacheOwners();
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return;
       }
@@ -17849,6 +18273,7 @@
       // forever with a poisoned post-FX target.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
+      targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
@@ -17902,7 +18327,7 @@
             : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
-      selenaFrame.time = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
+      selenaFrame.time = frameTimeSeconds; selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before every Selena draw this frame
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
@@ -17921,6 +18346,12 @@
       // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
       // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
       // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var instancedDrawList = hasInstancedData
+        ? buildInstancedDrawList(bundle, materials)
+        : { opaque: [], alpha: [], additive: [] };
+      var gpuDriven = webGPUGPUDrivenHost();
+      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: instancedDrawList.opaque });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -17956,6 +18387,7 @@
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 
+        gpuDriven.lightView(encoder, lightMatrix, slot);
         renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
         activeShadowCount++;
       }
@@ -17976,7 +18408,6 @@
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
       var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
-      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
         ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing)
         : renderWaterObjectSceneTexturePasses(
@@ -18014,7 +18445,7 @@
 
       if (usePostProcessing) {
         if (!postProcessor) {
-          postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
+          postProcessor = wgpuCreatePostProcessor(device, presentationFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
             return sceneSelenaUniformData(material, owner, renderContext, selenaFrame);
           });
         }
@@ -18051,7 +18482,7 @@
         storeOp: "store",
         clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
       };
-      if (mainResolveView) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (mainResolveView) {
         mainColorAttachment.resolveTarget = mainResolveView;
       }
 
@@ -18064,13 +18495,19 @@
           depthStoreOp: "store",
         },
       };
-      var mainStamps = gpuPassTimestampWrites("main");
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+      gpuDriven.prepareMainPass(mainPassDescriptor);
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
+      var skyState = "none";
+      if (bundle.environment && bundle.environment.sky) {
+        if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
+        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix,
+          camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
+      }
+      if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
-      var instancedDrawList = hasInstancedData
-        ? buildInstancedDrawList(bundle, materials)
-        : { opaque: [], alpha: [], additive: [] };
+
       var drawList = hasPBRData
         ? (preparedScene && preparedScene.pbrPasses ? preparedScene.pbrPasses : buildDrawList(bundle))
         : { opaque: [], alpha: [], additive: [] };
@@ -18254,6 +18691,7 @@
         disabled: !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
+        gpuDrivenSplit: gpuDriven.splitsMainPass(),
         hasWater: hasWaterData,
         hasPoints: hasPointsData,
         hasLabels: hasLabels,
@@ -18264,11 +18702,11 @@
           return webGPUObjectBlocksBundle(obj, materials);
         }),
         hasBundleableDraws: bundleableDraws,
-      });
-      frameStats.bundleState = "direct";
-      frameStats.bundleReason = bundleReason;
-      frameStats.bundleEncodes = 0;
-      frameStats.bundleReplays = 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ });
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ frameStats.bundleState = "direct";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ frameStats.bundleReason = bundleReason;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ frameStats.bundleEncodes = 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ frameStats.bundleReplays = 0;
       frameStats.bundleDraws = 0;
 
       if (bundleReason === "") {
@@ -18286,11 +18724,11 @@
           encodeBundleableSceneDraws(recorder, bundleContext);
         });
         if (!verdict.eligible) {
-          bundleReason = verdict.reason;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ bundleReason = verdict.reason;
           frameStats.bundleReason = bundleReason;
         } else if (verdict.reusable) {
           mainPass.executeBundles([webGPUBundleCache.bundle()]);
-          webGPUBundleCache.markReplayed();
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ webGPUBundleCache.markReplayed();
           frameStats.bundleState = "replayed";
         } else {
           var bundleEncoder = device.createRenderBundleEncoder({
@@ -18302,21 +18740,23 @@
           encodeBundleableSceneDraws(bundleEncoder, bundleContext);
           var finishedBundle = bundleEncoder.finish({ label: "gosx-scene-bundle" });
           webGPUBundleCache.adopt(bundleLayoutKey, finishedBundle);
-          mainPass.executeBundles([finishedBundle]);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ mainPass.executeBundles([finishedBundle]);
           frameStats.bundleState = "encoded";
-        }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
         if (frameStats.bundleState !== "direct") {
-          var bundleStats = webGPUBundleCache.stats();
-          frameStats.bundleEncodes = bundleStats.encodes;
-          frameStats.bundleReplays = bundleStats.replays;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var bundleStats = webGPUBundleCache.stats();
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ frameStats.bundleEncodes = bundleStats.encodes;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ frameStats.bundleReplays = bundleStats.replays;
           frameStats.bundleDraws = bundleStats.draws;
         }
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
+      var waterDrawnBeforeAlpha = false;
+      // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
-        if (drawList.opaque.length > 0) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.opaque.length > 0) {
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
@@ -18335,8 +18775,21 @@
           drawWorldLineEntries(mainPass, worldLineEntries, "opaque", frameBindGroup);
         }
 
+        // Two-phase occlusion: end the early pass, cull against its depth, and
+        // draw the newly visible instances in a late pass that loads it.
+        mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
+
+        // The water surface writes depth before translucent world surfaces.
+        // A stele in front of the tide must remain visible after its HTML
+        // texture is composited, while rocks behind the tide stay occluded.
+        if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+          Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
+          Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
+          waterDrawnBeforeAlpha = true;
+        }
+
         // Alpha pass.
-        if (drawList.alpha.length > 0) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.alpha.length > 0) {
           var alphaPipeline = getPBRPipeline("alpha", false);
           mainPass.setPipeline(alphaPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
@@ -18356,7 +18809,7 @@
         }
 
         // Additive pass.
-        if (drawList.additive.length > 0) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.additive.length > 0) {
           var additivePipeline = getPBRPipeline("additive", false);
           mainPass.setPipeline(additivePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
@@ -18376,7 +18829,7 @@
         }
       }
 
-      if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+      if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
         Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
         Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
       }
@@ -18396,7 +18849,7 @@
       // Draw points.
       if (hasPointsData) {
         mainPass.setBindGroup(0, frameBindGroup);
-        // Create a dummy material bind group for group 1 (points pipeline layout requires it).
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG);
         Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds));
@@ -18428,9 +18881,11 @@
 
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
+      gpuDriven.finishEncoding(encoder);
       device.queue.submit([encoder.finish()]);
-      // Start the pick map AFTER submit. mapAsync resolves on a later task, so
-      // this adds no wait to the frame.
+      Object.assign(frameStats, gpuDriven.endFrame(canvas && canvas.parentNode));
+      pollGPUTimingReadback();
+      // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
       webGPUSweepRetainedMeshBuffers();
       Object.assign(frameStats, webGPURetainedMeshFrameStats());
@@ -18457,7 +18912,11 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
+      if (skyResources.renderer) skyResources.renderer.dispose();
+      skyResources.renderer = null;
 
+      gpuTimingDisposed = true;
+      lastGPUCompletionSample = null;
       try { destroyGPUTimingResources(gpuTiming); } catch (_err) {}
       try { destroyGPUPassTimingResources(); } catch (_err) {}
       if (webGPUBundleCache) {
@@ -18529,6 +18988,9 @@
         }
       }
       instancedCullSystems.clear();
+      instancedCacheOwners.clear();
+      gpuDrivenHosts.forEach(function(host) { host.dispose(); });
+      gpuDrivenHosts.clear();
       waterRenderPipelineCache.clear();
       pointsAuthoredPipelineCache.clear();
       pointsAuthoredLayerFailed.clear();
@@ -18555,7 +19017,7 @@
         if (shadowSlots[si]) destroyRendererGPUResource(shadowSlots[si].texture);
         shadowSlots[si] = null;
       }
-
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
       textureCache._gosxGeneration.disposed = true;
       for (var record of textureCache.values()) {
         if (record) {
@@ -18712,18 +19174,18 @@
         if (Object.prototype.hasOwnProperty.call(base, key)) {
           out[key] = base[key];
         }
-      }
-      out.renderer = "webgpu";
-      out.targetFormat = targetFormat;
-      out.activeSampleCount = activeSampleCount;
-      out.presentationAlphaMode = activePresentation.alphaMode;
-      out.presentationColorSpace = activePresentation.colorSpace;
-      out.presentationToneMappingMode = activePresentation.toneMappingMode;
-      out.powerPreference = activePowerPreference;
-      out.ready = !!device && !initFailed;
-      out.initFailed = !!initFailed;
-      out.initError = initError || "";
-      out.resourcesDisposed = rendererResourcesDisposed;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderer = "webgpu";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.targetFormat = targetFormat;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.activeSampleCount = activeSampleCount;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationAlphaMode = activePresentation.alphaMode;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationColorSpace = activePresentation.colorSpace;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationToneMappingMode = activePresentation.toneMappingMode;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.powerPreference = activePowerPreference;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.ready = !!device && !initFailed;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.initFailed = !!initFailed;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.initError = initError || "";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.resourcesDisposed = rendererResourcesDisposed;
       out.resourceCacheEntries = (
         pointsAuthoredPipelineCache.size +
         pointsAuthoredLayerFailed.size +
@@ -18737,59 +19199,59 @@
         Object.keys(pipelineCache).length +
         Object.keys(waterPoolPipelineCache).length +
         Object.keys(waterObjectMeshPipelineCache).length
-      );
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ );
       out.deviceLost = !!lastDeviceLostInfo || !!(base && base.lost);
       // Prefer THIS renderer's own lastDeviceLostInfo (set synchronously by
       // the device.lost handler above, never cleared) over the shared probe
       // snapshot (base.lost), which a successful re-probe nulls out the
-      // moment it recovers — often before a watchdog poll gets to read it.
-      out.deviceLostInfo = lastDeviceLostInfo || (base && base.lost ? base.lost : null);
-      out.frameSeq = webGPUFrameSeq;
-      out.frameAt = lastWebGPUFrameStats && lastWebGPUFrameStats.frameAt || 0;
-      out.lastError = lastWebGPUFrameStats && lastWebGPUFrameStats.lastError || "";
-      out.waterSimulationTickSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSimulationTickSeq || 0;
-      out.waterSolverSubstepSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSolverSubstepSeq || 0;
-      out.waterDroppedTicks = lastWebGPUFrameStats && lastWebGPUFrameStats.waterDroppedTicks || 0;
-      out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
-      out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // moment it recovers — often before a watchdog poll gets to read it.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.deviceLostInfo = lastDeviceLostInfo || (base && base.lost ? base.lost : null);
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameSeq = webGPUFrameSeq;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameAt = lastWebGPUFrameStats && lastWebGPUFrameStats.frameAt || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.lastError = lastWebGPUFrameStats && lastWebGPUFrameStats.lastError || "";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSimulationTickSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSimulationTickSeq || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSolverSubstepSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSolverSubstepSeq || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterDroppedTicks = lastWebGPUFrameStats && lastWebGPUFrameStats.waterDroppedTicks || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
       out.postProcessing = !!postProcessor;
       // Frame-error resilience state (see reportWebGPUFrameError /
       // disablePostProcessing / enablePostProcessing above and
       // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
-      // that acts on these).
-      out.frameErrorStreak = webGPUConsecutiveFrameErrors;
-      out.frameCleanStreak = webGPUConsecutiveCleanFrames;
-      out.postFXDisabled = postFXForceDisabled;
-      out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
-      out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
-      out.skinnedMeshObjects = lastWebGPUFrameStats && lastWebGPUFrameStats.skinnedMeshObjects || 0;
-      out.computedMorphDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphDispatches || 0;
-      out.computedMorphVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphVertices || 0;
-      out.computedMorphKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphKernel || "";
-      out.elioSkinningDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningDispatches || 0;
-      out.elioSkinningVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningVertices || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // that acts on these).
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameErrorStreak = webGPUConsecutiveFrameErrors;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameCleanStreak = webGPUConsecutiveCleanFrames;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postFXDisabled = postFXForceDisabled;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.skinnedMeshObjects = lastWebGPUFrameStats && lastWebGPUFrameStats.skinnedMeshObjects || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphDispatches || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphVertices || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphKernel || "";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.elioSkinningDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningDispatches || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.elioSkinningVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningVertices || 0;
       out.elioSkinningKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningKernel || "";
       // GPU picking. gpuPicking stays true whether or not a pick has run yet —
       // it reports the renderer capability, matching the gpu-picking cell in
-      // 16a-scene-webgpu.capabilities.json.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // 16a-scene-webgpu.capabilities.json.
       out.gpuPicking = true;
       if (scenePicker) Object.assign(out, scenePicker.diagnostics());
       // Render truth: implementation identity, the post-chain dispatch record
       // and the event journal, so a single diagnostics() call is a complete
       // dump rather than a starting point for DOM scraping.
-      var truthApi = renderTruth();
-      out.implementation = truthApi.implementation(out.adapterInfo || {});
-      out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
-      out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
-      out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
-      out.postChain = lastWebGPUFrameStats && lastWebGPUFrameStats.postChain || null;
-      out.uniformTime = selenaFrame.time;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var truthApi = renderTruth();
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.implementation = truthApi.implementation(out.adapterInfo || {});
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postChain = lastWebGPUFrameStats && lastWebGPUFrameStats.postChain || null;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.uniformTime = selenaFrame.time;
       out.textureVariantContext = {
         backend: textureVariantContext.backend,
         uploadReady: textureVariantContext.uploadReady,
         tokens: textureVariantContext.tokens.slice(),
-      };
-      out.ibl = Object.assign({}, iblResources.diagnostics);
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.ibl = Object.assign({}, iblResources.diagnostics);
       out.retainedGeometry = webGPURetainedMeshBufferStats();
       return out;
     }
@@ -18803,6 +19265,7 @@
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,
+      getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
       render: render,
       dispose: dispose,

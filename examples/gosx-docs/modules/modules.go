@@ -3,6 +3,7 @@ package modules
 
 import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/capabilities"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
@@ -15,6 +16,7 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/playground"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d-bench"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/showreel"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/water"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/auth"
@@ -38,6 +40,9 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/streaming"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/text-layout"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/typed-live"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/your-first-app"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/performance"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-m2"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-material"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-spin"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/webgpu-honesty-gate"

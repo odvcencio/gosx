@@ -299,6 +299,7 @@ func TestCheckoutHandlerUsesSessionProtectConvention(t *testing.T) {
 	tokenResponse := httptest.NewRecorder()
 	tokenRequest := httptest.NewRequest(http.MethodGet, "http://app.example.test/token", nil)
 	manager.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		manager.Get(r).Set("checkout_offer", "starter")
 		w.Header().Set("X-Test-CSRF", manager.Token(r))
 	})).ServeHTTP(tokenResponse, tokenRequest)
 	token := tokenResponse.Header().Get("X-Test-CSRF")

@@ -40,6 +40,10 @@ type cachedContactPoint struct {
 type cachedManifold struct {
 	Points [4]cachedContactPoint
 	Count  int
+	// touchedStep is the step that last wrote this entry. cacheContactImpulses
+	// compares it against World.steps to prune a manifold that broke this
+	// step, without rebuilding the whole cache map from scratch.
+	touchedStep uint64
 }
 
 type World struct {
@@ -56,8 +60,19 @@ type World struct {
 
 	continuousCollision bool
 	warmStart           bool
-	contactCache        map[contactCacheKey]cachedManifold
-	constraints         []Constraint
+	// contactCache holds one *cachedManifold per live contact pair, keyed by
+	// collider index. The map itself persists across steps; only a pair that
+	// starts or breaks contact touches it, which is what keeps a resting
+	// scene's cacheContactImpulses pass allocation-free. cachedManifold is
+	// too large for Go's inline map value storage (over the runtime's 128
+	// byte threshold), so a plain map[key]cachedManifold rebuilt every step
+	// would heap-allocate one boxed value per contact per step; the pointer
+	// plus free-list below amortizes that allocation to zero in steady state.
+	contactCache map[contactCacheKey]*cachedManifold
+	// cachePool recycles a *cachedManifold whose contact broke, so a new
+	// contact elsewhere reuses the allocation instead of making one.
+	cachePool   []*cachedManifold
+	constraints []Constraint
 
 	// solveState mirrors contacts one to one and holds the per-step solver
 	// scratch. The backing array is reused, so a step allocates nothing here.
@@ -125,7 +140,7 @@ func NewWorld(config WorldConfig) *World {
 		sleepAngularSpeed:   config.SleepAngularSpeed,
 	}
 	if w.warmStart {
-		w.contactCache = make(map[contactCacheKey]cachedManifold)
+		w.contactCache = make(map[contactCacheKey]*cachedManifold)
 	}
 	return w
 }
@@ -488,21 +503,30 @@ func (w *World) warmStartContacts() {
 }
 
 // cacheContactImpulses stores the post-solve normal impulses keyed by
-// collider pair for warm-starting the next frame. Manifolds no longer in
-// contact are pruned naturally because the cache is rebuilt from this
-// frame's manifolds.
+// collider pair for warm-starting the next frame.
+//
+// The map persists across steps instead of being rebuilt: a pair already
+// cached gets its entry updated in place, a new pair takes a *cachedManifold
+// from the pool (or allocates one, the only case that can allocate), and
+// pruneContactCache below removes a pair that broke this step. A resting
+// scene touches the same pairs every step, so after the first few steps this
+// pass allocates nothing.
 func (w *World) cacheContactImpulses() {
 	if w.contactCache == nil {
-		w.contactCache = make(map[contactCacheKey]cachedManifold)
+		w.contactCache = make(map[contactCacheKey]*cachedManifold)
 	}
-	next := make(map[contactCacheKey]cachedManifold, len(w.contacts))
 	for mi := range w.contacts {
 		m := &w.contacts[mi]
 		if m.IsTrigger() || m.PointCount == 0 {
 			continue
 		}
 		key := manifoldCacheKey(m)
-		var cm cachedManifold
+		cm, ok := w.contactCache[key]
+		if !ok {
+			cm = w.takeCacheEntry()
+			w.contactCache[key] = cm
+		}
+		cm.Count = 0
 		for pi := 0; pi < m.PointCount; pi++ {
 			cm.Points[cm.Count] = cachedContactPoint{
 				LocalA:         m.Points[pi].LocalA,
@@ -512,9 +536,37 @@ func (w *World) cacheContactImpulses() {
 			}
 			cm.Count++
 		}
-		next[key] = cm
+		cm.touchedStep = w.steps
 	}
-	w.contactCache = next
+	w.pruneContactCache()
+}
+
+// takeCacheEntry returns a *cachedManifold from the free list, or a fresh one
+// when the list is empty. The fresh-allocation case only happens the first
+// time a given collider-pair count grows past what the world has ever held
+// live at once.
+func (w *World) takeCacheEntry() *cachedManifold {
+	if n := len(w.cachePool); n > 0 {
+		entry := w.cachePool[n-1]
+		w.cachePool[n-1] = nil
+		w.cachePool = w.cachePool[:n-1]
+		return entry
+	}
+	return &cachedManifold{}
+}
+
+// pruneContactCache removes a cache entry this step's contact pass did not
+// touch, which means the pair no longer overlaps, and returns the entry to
+// the pool. Ranging the map costs time proportional to the live pair count
+// but allocates nothing, unlike the map-rebuild this replaced.
+func (w *World) pruneContactCache() {
+	for key, cm := range w.contactCache {
+		if cm.touchedStep == w.steps {
+			continue
+		}
+		delete(w.contactCache, key)
+		w.cachePool = append(w.cachePool, cm)
+	}
 }
 
 func manifoldCacheKey(m *ContactManifold) contactCacheKey {

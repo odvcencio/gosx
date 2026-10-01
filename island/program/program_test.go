@@ -980,7 +980,7 @@ func TestProgramSurfaceZeroValue(t *testing.T) {
 
 func TestProgramVersionOmittedRoundTrip(t *testing.T) {
 	// Programs without a version field decode with empty Version and re-encode
-	// without emitting the field (per omitempty). Reserved per ADR 0002.
+	// without emitting the field (per omitempty). Reserved for future use.
 	src := `{"nodes":[],"exprs":[]}`
 	var p Program
 	if err := json.Unmarshal([]byte(src), &p); err != nil {
@@ -1009,7 +1009,7 @@ func TestProgramVersionRoundTripWhenSet(t *testing.T) {
 	}
 }
 
-// --- Slice X.A: statement sequencing + locals opcodes ---
+// --- statement sequencing + locals opcodes ---
 
 // TestSequencingOpcodesAreDistinct guards against accidental reuse of the
 // iota slots the AST-compiler initiative added. These five opcodes underpin
@@ -1048,7 +1048,7 @@ func TestSequencingOpcodesAreDistinct(t *testing.T) {
 }
 
 // TestSequencingOpcodeShapes documents the operand shape each new opcode
-// expects so callers (the X.C lowerer, hand-rolled tests) can construct
+// expects so callers (the lowerer, hand-rolled tests) can construct
 // programs with confidence. The constructors here are illustrative — the
 // VM-level behavior tests live in client/vm/vm_test.go.
 func TestSequencingOpcodeShapes(t *testing.T) {
@@ -1083,12 +1083,12 @@ func TestSequencingOpcodeShapes(t *testing.T) {
 	}
 }
 
-// --- Slice Y.A: composite literal opcode ---
+// --- composite literal opcode ---
 
-// TestCompositeOpcodeIsDistinct guards the new Y.A iota slot against
-// accidental collision with the X.A/X.B/X.C additions or any prior
-// opcode. OpComposite is the single new opcode introduced by Slice Y.A
-// (composite-literal lowering); a collision would silently corrupt
+// TestCompositeOpcodeIsDistinct guards the OpComposite iota slot against
+// accidental collision with the sequencing/iteration additions or any
+// prior opcode. OpComposite is the single new opcode introduced for
+// composite-literal lowering; a collision would silently corrupt
 // every struct/slice/map literal in lowered handlers.
 func TestCompositeOpcodeIsDistinct(t *testing.T) {
 	all := []OpCode{
@@ -1105,15 +1105,15 @@ func TestCompositeOpcodeIsDistinct(t *testing.T) {
 		OpToUpper, OpToLower, OpTrim, OpSplit, OpJoin, OpReplace,
 		OpSubstring, OpStartsWith, OpEndsWith,
 		OpToString, OpToInt, OpToFloat,
-		// X.A
+		// sequencing + locals
 		OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet,
-		// X.C
+		// control flow
 		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
-		// Y.A
+		// composite literals
 		OpComposite,
-		// Y.B
+		// map lookup
 		OpMapLookup,
-		// Y.C (new)
+		// LHS selector / indexed-set (new)
 		OpFieldSet, OpIndexSet,
 	}
 	seen := map[OpCode]bool{}
@@ -1164,7 +1164,7 @@ func TestCompositeOpcodeShape(t *testing.T) {
 	}
 }
 
-// --- Slice Y.B: two-value map lookup opcode ---
+// --- two-value map lookup opcode ---
 
 // TestMapLookupOpcodeShape documents the operand encoding for the
 // comma-ok map lookup (`v, ok := m[k]`). Operands[0] is the map
@@ -1184,7 +1184,7 @@ func TestMapLookupOpcodeShape(t *testing.T) {
 	}
 }
 
-// --- Slice Y.C: LHS selector / indexed-set opcodes ---
+// --- LHS selector / indexed-set opcodes ---
 
 // TestFieldSetOpcodeShape documents the operand encoding for
 // `target.<Value> = expr`. Operands[0] is the target expression (which
@@ -1228,14 +1228,16 @@ func TestIndexSetOpcodeShape(t *testing.T) {
 	}
 }
 
-// --- Slice Y.D: user-defined function call opcode ---
+// --- user-defined function call opcode ---
 
-// TestIndirectCallOpcodeIsDistinct guards Y.D's iota slot from
-// colliding with Y.A/Y.B/Y.C additions. A collision would route every
-// user-function call into the wrong evaluator silently.
+// TestIndirectCallOpcodeIsDistinct guards OpIndirectCall's iota slot
+// from colliding with the composite/map-lookup/LHS-selector additions.
+// A collision would route every user-function call into the wrong
+// evaluator silently.
 func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
 	all := []OpCode{
-		// pre-existing (TestOpCodeRange + Y.A/Y.B/Y.C)
+		// pre-existing opcodes, including sequencing/control-flow/composite/
+		// map-lookup/LHS-selector additions
 		OpLitString, OpLitInt, OpLitFloat, OpLitBool,
 		OpPropGet, OpSignalGet, OpSignalSet, OpSignalUpdate,
 		OpAdd, OpSub, OpMul, OpDiv, OpMod, OpNeg,
@@ -1251,13 +1253,13 @@ func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
 		OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet,
 		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
 		OpComposite, OpMapLookup, OpFieldSet, OpIndexSet,
-		// Y.D
+		// user-defined function call
 		OpIndirectCall,
-		// Y.E (new)
+		// make(...), host calls, rune conversion (new)
 		OpMake,
 		OpHostCall,
 		OpToRunes,
-		// Y.G (new)
+		// closure allocation (new)
 		OpClosure,
 	}
 	seen := map[OpCode]bool{}
@@ -1360,7 +1362,7 @@ func TestProgramMaxCallDepthDefault(t *testing.T) {
 }
 
 // TestMakeOpcodeShape documents the operand encoding for the make()
-// builtin (Slice Y.E). Maps carry no operands (the optional capacity
+// builtin. Maps carry no operands (the optional capacity
 // hint is dropped at lowering time); slices carry the length expression
 // in Operands[0] (the optional cap argument is dropped). The kind tag
 // lives in Value — "map" or "slice".
@@ -1385,8 +1387,8 @@ func TestMakeOpcodeShape(t *testing.T) {
 	}
 }
 
-// TestHostCallOpcodeShape documents the operand encoding for OpHostCall
-// (Slice Y.E). The Value carries the qualified call target
+// TestHostCallOpcodeShape documents the operand encoding for OpHostCall.
+// The Value carries the qualified call target
 // "<receiver>.<MethodName>" — the receiver prefix is the source-level
 // identifier, NOT the receiver's type. Operands are the call args in
 // source order.
@@ -1407,10 +1409,10 @@ func TestHostCallOpcodeShape(t *testing.T) {
 	}
 }
 
-// --- Slice Y.G: closure allocation opcode ---
+// --- closure allocation opcode ---
 
-// TestClosureOpcodeShape documents the operand encoding for OpClosure
-// (Slice Y.G). The Value carries the synthetic FuncDef name registered
+// TestClosureOpcodeShape documents the operand encoding for OpClosure.
+// The Value carries the synthetic FuncDef name registered
 // by the lowerer for the anonymous body; Operands are the captured
 // local names (each lowered as an OpLitString) which the VM resolves
 // against the CURRENT frame at evaluation time to snapshot slot
@@ -1434,7 +1436,7 @@ func TestClosureOpcodeShape(t *testing.T) {
 
 // TestClosureFuncDefRegistration verifies an anonymous FuncDef
 // registered for an OpClosure round-trips through Program.Funcs JSON
-// the same way named user functions do (Slice Y.D).
+// the same way named user functions do.
 func TestClosureFuncDefRegistration(t *testing.T) {
 	p := Program{
 		Name: "TestSurface",

@@ -9,8 +9,8 @@ import (
 
 func TestDemoShowreelStaysWithinItsRenderBudget(t *testing.T) {
 	props := DemoShowreelProgram()
-	if got := len(props.Graph.Nodes); got != 10 {
-		t.Fatalf("showreel node count = %d, want 10", got)
+	if got := len(props.Graph.Nodes); got != 12 {
+		t.Fatalf("showreel node count = %d, want 12", got)
 	}
 	if len(props.Graph.Nodes) > showreelNodeBudget {
 		t.Fatalf("showreel node count = %d, budget = %d", len(props.Graph.Nodes), showreelNodeBudget)
@@ -50,12 +50,14 @@ func TestDemoShowreelHasStableNodeIDs(t *testing.T) {
 		"showreel-accent",
 		"showreel-hemi",
 		"showreel-plinth",
+		"showreel-plinth-top",
+		"showreel-plinth-inlay",
 		"showreel-core",
 		"showreel-orbit-a",
 		"showreel-orbit-b",
-		"showreel-satellite-box",
-		"showreel-satellite-pyramid",
-		"showreel-satellite-sphere",
+		"showreel-satellite-one",
+		"showreel-satellite-two",
+		"showreel-satellite-three",
 	}
 	got := make([]string, 0, len(DemoShowreelProgram().Graph.Nodes))
 	for _, node := range DemoShowreelProgram().Graph.Nodes {

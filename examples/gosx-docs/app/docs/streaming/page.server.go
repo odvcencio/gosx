@@ -28,8 +28,8 @@ func init() {
 				// through CodeBlock on the page. They show ctx.Defer/ctx.Suspense
 				// callers, so they show gosx.El on purpose: that is the real
 				// shape of a Defer callback body written in Go, not .gsx markup.
-				"deferSample":   "return gosx.El(\"main\",\n\tctx.Defer(\n\t\tgosx.El(\"p\", gosx.Text(\"Loading activity...\")),\n\t\tfunc() (gosx.Node, error) {\n\t\t\titems, err := loadActivity(ctx.Request.Context())\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn ActivityList(items), nil\n\t\t},\n\t),\n)",
-				"optionsSample": "ctx.SuspenseWithOptions(server.DeferredOptions{\n\tID:       \"account-summary\",\n\tTag:      \"section\",\n\tClass:    \"summary-shell\",\n\tBoundary: \"component\",\n}, fallback, resolve)",
+				"deferSample":   docsapp.DocSample("streaming/deferSample.go.sample"),
+				"optionsSample": docsapp.DocSample("streaming/optionsSample.go.sample"),
 			}, nil
 		},
 		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {

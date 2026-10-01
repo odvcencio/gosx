@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <main
+	return <section
 		class="water-demo"
 		data-gosx-scene3d-control-scope="true"
 		data-gosx-scene3d-panel-scope="true"
@@ -18,7 +18,7 @@ func Page() Node {
 			controls="orbit"
 			capabilityTier={data.diagCapabilityTier}
 			controlTargetX={0}
-			controlTargetY={-0.5}
+			controlTargetY={0}
 			controlTargetZ={0}
 			controlRotateMode="pixel-degrees"
 			controlRotateDirection="grab"
@@ -36,8 +36,9 @@ func Page() Node {
 			msaaSamples={data.diagMsaa}
 			antialias={data.diagAntialias}
 			canvasAlpha={false}
+			stats={false}
 		>
-			<Camera x={1.38} y={1.52} z={2.87} fov={42} near={0.01} far={100} />
+			<Camera x={1.55} y={2.8} z={2.1} fov={38} near={0.01} far={100} />
 			<Environment
 				ambientColor="#a8cfda"
 				ambientIntensity={0.16}
@@ -247,12 +248,12 @@ func Page() Node {
 			</p>
 			<h1 id="water-demo-title">Water, in motion.</h1>
 			<p class="water-demo__lede">
-				A live heightfield bends light through a physically based surface, casts moving caustics, and responds wherever you touch.
+				Draw ripples across a live surface. Watch light bend through the water and move across the pool.
 			</p>
 			<div class="water-demo__proofs" aria-label="Rendered water features">
 				<span>Dielectric Fresnel</span>
 				<span>Depth absorption</span>
-				<span>Native GPU</span>
+				<span>WebGPU or WebGL2</span>
 			</div>
 			<nav class="water-demo__quality" aria-label="Rendering quality">
 				<span>Quality</span>
@@ -261,7 +262,7 @@ func Page() Node {
 				<a href="?quality=battery" data-profile="battery" aria-current={data.diagQualityBatteryCurrent}>Battery</a>
 			</nav>
 			<p class="water-demo__gesture">
-				Draw across the surface to send light through the pool.
+				Draw on the water · drag the background to orbit
 			</p>
 		</section>
 		<aside
@@ -271,9 +272,9 @@ func Page() Node {
 			aria-label="Water demo reference"
 		>
 			<p class="water-demo__eyebrow">Behind the surface</p>
-			<h2>One solver. Two native renderers.</h2>
+			<h2>One water system, two backends.</h2>
 			<p class="water-demo__help-summary">
-				The same typed WaterSystem and Selena materials compile for WebGPU and WebGL2, with honest backend and diagnostic telemetry on the mount.
+				The typed WaterSystem and Selena materials run on the backend selected by this scene's capability verdict.
 			</p>
 			<h2>Interactions</h2>
 			<ul>
@@ -424,5 +425,5 @@ func Page() Node {
 				</fieldset>
 			</div>
 		</form>
-	</main>
+	</section>
 }

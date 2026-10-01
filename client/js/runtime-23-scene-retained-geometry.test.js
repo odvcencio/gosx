@@ -572,9 +572,9 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   assert.ok(secondRetainedStats.hits >= firstRetainedStats.hits + 4);
   const materialWrite = secondWrites.find((call) => call.buffer === firstMaterialBuffer);
   assert.ok(materialWrite, "second frame must rewrite the identified retained material uniform buffer");
-  assert.ok(materialWrite.data && materialWrite.data.byteLength === 208,
-    "second frame must upload the current 208-byte material uniform to the identified buffer");
-  assert.equal(materialWrite.data.byteLength / 4, 52, "material uniform payload must be 52 floats");
+  assert.ok(materialWrite.data && materialWrite.data.byteLength === 256,
+    "second frame must upload the current 256-byte material uniform to the identified buffer");
+  assert.equal(materialWrite.data.byteLength / 4, 64, "material uniform payload must be 64 floats");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-retained-mesh-objects"), "1");
 
   object.vertices.positions[0] = -2;

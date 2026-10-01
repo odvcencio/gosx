@@ -9,6 +9,7 @@ import (
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/session"
 )
 
 // PageState carries shared request-scoped page response state used by both
@@ -48,7 +49,39 @@ func NewPageStateForRequest(r *http.Request) *PageState {
 	if r != nil && r.URL != nil {
 		state.requestPath = r.URL.Path
 	}
+	state.PrepareCache(r)
 	return state
+}
+
+// PrepareCache keeps session HTML private and gives anonymous session-managed
+// pages a shareable revalidation policy unless the app chose another policy.
+// A nonce-based security policy stays private by default so existing inline
+// scripts keep working; CachePublic remains an explicit opt-in for that case.
+func (s *PageState) PrepareCache(r *http.Request) {
+	if s == nil || r == nil {
+		return
+	}
+	if session.Current(r) != nil {
+		appendVary(s.Header(), "Authorization")
+	}
+	if session.HasState(r) || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+		s.CacheState().SetPolicy(NoStoreCache())
+		return
+	}
+	if s.cache != nil && s.cache.defaultPolicy && s.Header().Get("Cache-Control") != "" {
+		s.cache.policySet = false
+		s.cache.defaultPolicy = false
+		s.cache.policy = CachePolicy{}
+	}
+	if RequestNonce(r) != "" && (s.cache == nil || !s.cache.policySet) && s.Header().Get("Cache-Control") == "" {
+		s.CacheState().SetPolicy(NoStoreCache())
+		s.cache.defaultPolicy = true
+	}
+	if session.Current(r) != nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		RequestNonce(r) == "" && (s.cache == nil || !s.cache.policySet) && s.Header().Get("Cache-Control") == "" {
+		s.CacheState().SetPolicy(CachePolicy{Public: true, MustRevalidate: true})
+		s.cache.defaultPolicy = true
+	}
 }
 
 // Header returns the response headers to apply when the request completes.
@@ -174,7 +207,9 @@ func (s *PageState) SetNonce(nonce string) {
 
 // SetLanguage records the BCP 47 language tag for the document shell.
 // Language is request-scoped; PageState deliberately has no implicit global
-// language default so applications can choose the locale they serve.
+// language default so applications can choose the locale they serve. An
+// unset value still reaches the document as lang="en":
+// documentHTMLAttrValues applies that fallback at render time, not here.
 func (s *PageState) SetLanguage(language string) {
 	if s == nil {
 		return

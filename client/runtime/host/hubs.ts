@@ -19,6 +19,33 @@
   // Hub connections
   // --------------------------------------------------------------------------
 
+  const hubConnections = window.__gosx.hubConnections || (window.__gosx.hubConnections = new Map());
+
+  function hubIdentity(entry) {
+    return JSON.stringify([String(entry.name || ""), hubURL(entry.path)]);
+  }
+
+  function hubSocketLive(record) {
+    return record && !record.disposed && !record.closed && record.socket && record.socket.readyState !== 2 && record.socket.readyState !== 3;
+  }
+
+  function refreshHubBindings(record) {
+    releaseHubBindings(record);
+    const entries = Array.from(record.entries.values());
+    // Each manifest entry owns one reference and its set of page bindings.
+    // Several entries for the same transport share a socket until all leave.
+    record.refCount = entries.length;
+    record.entry = Object.assign({}, entries[0], {
+      bindings: entries.flatMap(function(entry) { return entry.bindings || []; }),
+    });
+    record.suspended = false;
+    record.inputController = createHubInputController(record);
+    if (record.socket.readyState === 1 || record.socket.readyState == null) {
+      bindHubOutputs(record);
+      startHubRoundTrip(record);
+    }
+  }
+
   function hubURL(path) {
     if (!path) return "";
     if (isAbsoluteHubURL(path)) {
@@ -56,6 +83,52 @@
     }
   }
 
+  function hubMonotonicNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  }
+
+  function sendHubRoundTrip(record) {
+    const config = record.roundTripConfig;
+    if (!config || !record.socket || record.socket.readyState !== 1) return;
+    record.roundTripSequence++;
+    record.roundTripSentAt = hubMonotonicNow();
+    record.socket.send(JSON.stringify({ event: config.pingEvent, data: { sequence: record.roundTripSequence } }));
+  }
+
+  function startHubRoundTrip(record) {
+    stopHubRoundTrip(record);
+    const config = record.entry && record.entry.roundTrip;
+    if (!config || !config.signal) return;
+    record.roundTripConfig = config;
+    record.roundTripSequence = 0;
+    sendHubRoundTrip(record);
+    record.roundTripTimer = setInterval(function() { sendHubRoundTrip(record); }, config.intervalMs);
+  }
+
+  function stopHubRoundTrip(record) {
+    if (!record) return;
+    if (record.roundTripTimer != null) {
+      clearInterval(record.roundTripTimer);
+      record.roundTripTimer = null;
+    }
+    record.roundTripSentAt = 0;
+  }
+
+  function observeHubRoundTrip(record, message) {
+    const config = record && record.roundTripConfig;
+    if (!config || !message || message.event !== config.pongEvent || !record.roundTripSentAt) return false;
+    const sequence = Number(message.data && message.data.sequence);
+    if (!Number.isSafeInteger(sequence) || sequence !== record.roundTripSequence) return false;
+    const elapsed = Math.max(0, hubMonotonicNow() - record.roundTripSentAt);
+    record.roundTripSentAt = 0;
+    try {
+      setSharedSignalJSON(config.signal, JSON.stringify(Math.round(elapsed * 100) / 100));
+    } catch (_e) {}
+    return true;
+  }
+
   function applyHubBinding(record, binding, message) {
     const entry = record.entry;
     if (binding && binding.direction === "out") return;
@@ -72,7 +145,65 @@
         console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
       }
     }
+    if (binding.sceneCommands) {
+      dispatchHubSceneCommands(record, binding, message.data);
+    }
     if (binding.refresh) scheduleHubRefresh(record, binding);
+  }
+
+  function dispatchHubSceneCommands(record, binding, data) {
+    const mountID = String(binding && binding.sceneMountId || "").trim();
+    if (!mountID || !data || typeof data !== "object") return;
+    const revision = Number(data.revision);
+    if (!Number.isSafeInteger(revision) || revision <= 0 || !Array.isArray(data.commands)) return;
+    record.lastSceneCommandRevision = record.lastSceneCommandRevision || new Map();
+    const lastRevision = record.lastSceneCommandRevision.get(mountID) || 0;
+    if (revision <= lastRevision) return;
+    record.lastSceneCommandRevision.set(mountID, revision);
+    const mount = document.getElementById(mountID);
+    const detail = { revision: revision, commands: data.commands };
+    if (mount && mount.getAttribute("data-gosx-scene3d-command-ready") === "true") {
+      emitHubSceneCommands(mount, detail);
+      return;
+    }
+
+    // Hub sockets can open before the Scene3D renderer has finished loading.
+    // Keep only the newest revision per mount, then apply it as soon as the
+    // renderer sets its command-ready attribute. A snapshot is a full diff
+    // from the initial scene, so older queued batches are unnecessary.
+    record.pendingSceneCommands = record.pendingSceneCommands || new Map();
+    record.pendingSceneCommands.set(mountID, detail);
+    watchHubSceneCommandMount(record, mountID);
+  }
+
+  function watchHubSceneCommandMount(record, mountID) {
+    if (typeof MutationObserver !== "function" || !document.documentElement) return;
+    record.sceneCommandObservers = record.sceneCommandObservers || new Map();
+    if (record.sceneCommandObservers.has(mountID)) return;
+    const observer = new MutationObserver(function() {
+      const mount = document.getElementById(mountID);
+      if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return;
+      observer.disconnect();
+      record.sceneCommandObservers.delete(mountID);
+      const detail = record.pendingSceneCommands && record.pendingSceneCommands.get(mountID);
+      if (record.pendingSceneCommands) record.pendingSceneCommands.delete(mountID);
+      if (detail) emitHubSceneCommands(mount, detail);
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-gosx-scene3d-command-ready"],
+      childList: true,
+      subtree: true,
+    });
+    record.sceneCommandObservers.set(mountID, observer);
+  }
+
+  function emitHubSceneCommands(mount, detail) {
+    if (!mount || typeof mount.dispatchEvent !== "function") return;
+    const event = typeof CustomEvent === "function"
+      ? new CustomEvent("gosx:scene3d:commands", { detail: detail })
+      : { type: "gosx:scene3d:commands", detail: detail };
+    mount.dispatchEvent(event);
   }
 
   function hubNavigationFetchEpoch(navigation) {
@@ -308,13 +439,27 @@
   // every reconnect delay back to reconnectDelayMs(0) forever.
   function connectHub(entry, attempt) {
     if (!canConnectHub(entry)) return;
-
-    if (gosxHost.hubs && typeof gosxHost.hubs.disconnect === "function") {
+    const identity = hubIdentity(entry);
+    const previous = window.__gosx.hubs.get(entry.id);
+    if (previous && previous.identity !== identity) {
       gosxHost.hubs.disconnect(entry.id);
     }
-    const record = createHubRecord(entry, attempt);
+    let record = hubConnections.get(identity);
+    if (!hubSocketLive(record)) {
+      const entries = record ? Array.from(record.entries.values()) : [];
+      if (record) closeHubConnection(record);
+      record = createHubRecord(entry, attempt);
+      for (const current of entries) {
+        record.entries.set(current.id, current);
+        window.__gosx.hubs.set(current.id, record);
+      }
+      hubConnections.set(identity, record);
+      attachHubSocketHandlers(record);
+    }
+    record.entries.set(entry.id, entry);
     window.__gosx.hubs.set(entry.id, record);
-    attachHubSocketHandlers(record);
+    refreshHubBindings(record);
+    return record;
   }
 
   function canConnectHub(entry) {
@@ -324,6 +469,9 @@
   function createHubRecord(entry, attempt) {
     return {
       entry: entry,
+      identity: hubIdentity(entry),
+      entries: new Map(),
+      refCount: 0,
       socket: new WebSocket(hubURL(entry.path)),
       reconnectTimer: null,
       reconnectAttempt: attempt || 0,
@@ -337,16 +485,20 @@
     if (!bindings || !bindings.length) return;
     for (let bi = 0; bi < bindings.length; bi++) {
       const b = bindings[bi];
-      if (!b || b.direction !== "out" || !b.signal || !b.event) continue;
+      if (!b || b.direction !== "out" || !b.event || (!b.signal && !b.sceneInput)) continue;
       (function(binding) {
         let lastSentAt = 0;
         let debounceTimer = null;
         const sendValue = function(value) {
           const socket = record.socket;
-          if (socket && (socket.readyState === 1 || socket.readyState == null)) {
+          if (!record.disposed && !record.suspended && socket && (socket.readyState === 1 || socket.readyState == null)) {
             socket.send(JSON.stringify({ event: binding.event, data: value || {} }));
           }
         };
+        record.outputUnsubscribers.push(function() {
+          if (debounceTimer != null) clearTimeout(debounceTimer);
+          debounceTimer = null;
+        });
         const fn = function(value) {
           if (binding.throttleMs > 0) {
             const now = Date.now();
@@ -364,34 +516,56 @@
             sendValue(value);
           }
         };
-        const unsub = gosxSubscribeSharedSignal(binding.signal, fn, { immediate: false });
-        record.outputUnsubscribers.push(unsub);
+        if (binding.signal) {
+          const unsub = gosxSubscribeSharedSignal(binding.signal, fn, { immediate: false });
+          record.outputUnsubscribers.push(unsub);
+        }
+        if (binding.sceneInput) {
+          const mountID = String(binding.sceneMountId || "").trim();
+          if (!mountID || typeof document.addEventListener !== "function") return;
+          const onSceneInput = function(event) {
+            const mount = document.getElementById(mountID);
+            if (!mount || event.target !== mount) return;
+            const detail = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+            if (!detail) return;
+            if (binding.sceneInput !== "all" && detail.kind !== binding.sceneInput) return;
+            const payload = Object.assign({}, detail);
+            if (binding.sceneInputKind) payload.kind = binding.sceneInputKind;
+            fn(payload);
+          };
+          document.addEventListener("gosx:scene3d:input", onSceneInput);
+          record.outputUnsubscribers.push(function() {
+            document.removeEventListener("gosx:scene3d:input", onSceneInput);
+          });
+        }
       })(b);
     }
   }
 
   function attachHubSocketHandlers(record) {
-    const entry = record.entry;
     const socket = record.socket;
-    record.inputController = createHubInputController(record);
     try {
       socket.binaryType = "arraybuffer";
     } catch (_e) {
       // Some test doubles and embedded runtimes expose binaryType as read-only.
     }
     socket.onopen = function() {
+      if (record.disposed) return;
       // A successful open proves the connection is healthy again, so the
       // exponential backoff resets: the NEXT unexpected close starts back
       // at reconnectDelayMs(0), not wherever this connection's own retry
       // count left off.
       record.reconnectAttempt = 0;
+      if (record.suspended) return;
       if (record.inputController && typeof record.inputController.flush === "function") {
         record.inputController.flush();
       }
       bindHubOutputs(record);
+      startHubRoundTrip(record);
     };
     socket.onmessage = function(evt) {
-      const decoded = decodeHubMessage(entry, evt.data);
+      if (record.disposed || record.suspended) return;
+      const decoded = decodeHubMessage(record.entry, evt.data);
       if (decoded && typeof decoded.then === "function") {
         decoded.then(function(message) {
           dispatchHubMessage(record, message);
@@ -402,17 +576,21 @@
     };
 
     socket.onclose = function() {
+      if (record.disposed) return;
+      record.closed = true;
+      stopHubRoundTrip(record);
       scheduleHubReconnect(record);
     };
 
     socket.onerror = function(e) {
-      console.error(`[gosx] hub connection error for ${entry.id}:`, e);
+      if (!record.disposed) console.error(`[gosx] hub connection error for ${record.entry.id}:`, e);
     };
   }
 
   function dispatchHubMessage(record, message) {
-    if (!message) return;
+    if (!message || record.disposed || record.suspended) return;
     const entry = record.entry;
+    observeHubRoundTrip(record, message);
     applyHubBindings(record, message);
     if (record.inputController && typeof record.inputController.onMessage === "function") {
       try {
@@ -421,7 +599,7 @@
         console.error(`[gosx] hub input message error for ${entry.id}:`, e);
       }
     }
-    emitHubEvent(entry, message);
+    for (const current of record.entries.values()) emitHubEvent(current, message);
   }
 
   function decodeHubMessage(entry, raw) {
@@ -485,26 +663,44 @@
   }
 
   function scheduleHubReconnect(record) {
-    const entry = record.entry;
-    const current = window.__gosx.hubs.get(entry.id);
+    const current = hubConnections.get(record.identity);
     // current.reconnectTimer != null means a reconnect is already
     // scheduled for this hub id — a second close of the same (already
     // closing) socket, or a close racing an in-flight reconnect, must
     // never schedule a second, overlapping retry on top of the first.
-    if (!current || current.socket !== record.socket || current.reconnectTimer != null) return;
+    if (record.disposed || current !== record || current.reconnectTimer != null) return;
     current.reconnectAttempt = (current.reconnectAttempt || 0) + 1;
     current.reconnectDelay = reconnectDelayMs(current.reconnectAttempt - 1);
     current.reconnectTimer = setTimeout(function() {
+      if (current.disposed || hubConnections.get(current.identity) !== current) return;
       current.reconnectTimer = null;
-      connectHub(entry, current.reconnectAttempt);
+      connectHub(current.entries.values().next().value, current.reconnectAttempt);
     }, current.reconnectDelay);
   }
 
   async function connectAllHubs(manifest) {
     initializeClientIdentity(manifest && manifest.clientIdentity);
-    if (!manifest || !manifest.hubs || manifest.hubs.length === 0) return;
-    for (const entry of manifest.hubs) {
-      connectHub(entry);
+    const groups = new Map();
+    for (const entry of manifest && manifest.hubs || []) {
+      if (!canConnectHub(entry)) continue;
+      const identity = hubIdentity(entry);
+      if (!groups.has(identity)) groups.set(identity, new Map());
+      groups.get(identity).set(entry.id, entry);
+    }
+    for (const record of Array.from(hubConnections.values())) {
+      if (!groups.has(record.identity) || !hubSocketLive(record)) closeHubConnection(record);
+    }
+    window.__gosx.hubs.clear();
+    for (const [identity, entries] of groups) {
+      let record = hubConnections.get(identity);
+      if (!record) {
+        record = createHubRecord(entries.values().next().value);
+        hubConnections.set(identity, record);
+        attachHubSocketHandlers(record);
+      }
+      record.entries = entries;
+      for (const id of entries.keys()) window.__gosx.hubs.set(id, record);
+      refreshHubBindings(record);
     }
   }
 
@@ -522,10 +718,8 @@
   // any resume that dropped a socket without dispatching close, and it is a
   // no-op when every socket is live (a first load has no hubs connected yet).
   function revalidateHubConnections() {
-    const hubs = window.__gosx && window.__gosx.hubs;
-    if (!hubs || typeof hubs.forEach !== "function") return;
     const stale = [];
-    hubs.forEach(function(record) {
+    hubConnections.forEach(function(record) {
       if (!record || !record.entry) return;
       const socket = record.socket;
       // WebSocket.CLOSING === 2, CLOSED === 3. A null readyState is a test
@@ -533,7 +727,7 @@
       // treats that as live, so leave it alone.
       const state = socket ? socket.readyState : 3;
       if (state === 2 || state === 3) {
-        stale.push(record.entry);
+        stale.push(record.entries.values().next().value);
       }
     });
     for (const entry of stale) {

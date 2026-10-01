@@ -14,7 +14,7 @@
   //
   // Everything here draws with the plain gl.LINES / gl.TRIANGLES pipeline:
   // the world bundle, the mesh passes, the textured surfaces, the shader
-  // programs and the thick-line expansion.
+  // programs and the thick-line draw path.
 
   function createSceneWebGLRenderer(canvas, options) {
     if (!canvas || typeof canvas.getContext !== "function") {
@@ -111,6 +111,7 @@
       surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
       surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
       surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
+      surfaceOutputLinearLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_outputLinear") : null,
       floatType: typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406,
       arrayBuffer: typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892,
       staticDraw: typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4,
@@ -462,6 +463,11 @@
       if (!textureRecord || !textureRecord.texture) {
         continue;
       }
+      // Raster availability precedes image decode and the GPU upload. HTML
+      // surfaces must not flash the opaque white placeholder in that gap.
+      if (entry.sourceKind === "html" && !textureRecord.loaded) {
+        continue;
+      }
       uploadSceneWebGLSurfaceBuffers(gl, resources, entry);
       bindSceneWebGLSurfaceTexture(gl, resources, textureRecord);
       applySceneWebGLSurfaceMaterial(gl, resources, material);
@@ -493,6 +499,7 @@
   function applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources) {
     const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
     const camera = sceneRenderCamera(bundle && bundle.camera);
+    gl.uniform1i(resources.surfaceOutputLinearLocation, bundle && bundle.outputLinear ? 1 : 0);
     if (typeof gl.uniform4f === "function" && resources.surfaceCameraLocation) {
       gl.uniform4f(resources.surfaceCameraLocation, camera.x, camera.y, camera.z, camera.fov);
     }
@@ -1206,9 +1213,12 @@
       "uniform sampler2D u_texture;",
       "uniform vec4 u_tint;",
       "uniform float u_emissive;",
+      "uniform bool u_outputLinear;",
       "void main() {",
       "  vec4 sampleColor = texture2D(u_texture, v_uv);",
       "  vec3 rgb = sampleColor.rgb * u_tint.rgb;",
+      // HTML rasters use RGBA8 sRGB bytes. Decode before the linear post chain.
+      "  if (u_outputLinear) rgb = mix(rgb / 12.92, pow((rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), rgb));",
       "  rgb *= 1.0 + max(u_emissive, 0.0) * 0.5;",
       "  gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(sampleColor.a * u_tint.a, 0.0, 1.0));",
       "}",
@@ -1372,181 +1382,6 @@
       cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
       orthoLocation: gl.getUniformLocation(program, "u_ortho"),
     };
-  }
-
-  // Pooled scratch for thick-line vertex expansion. Lives on the renderer
-  // resources (resources.thickLineScratch) so it's reused across frames —
-  // the previous implementation allocated 8 fresh typed arrays per frame
-  // for any scene with thick lines, which on a 60 fps particle-effect
-  // scene burned 480 typed-array allocations per second on the GC heap.
-  //
-  // Growth strategy: geometric (2× current capacity) up to the current
-  // segment count. Never shrinks — sustained peak usage stays mapped.
-  //
-  // Quad layout per segment (4 vertices, 2 triangles):
-  //
-  //     endpoint=0,side=-1   endpoint=1,side=-1
-  //              *──────────*
-  //              │          │
-  //              │          │
-  //              *──────────*
-  //     endpoint=0,side=+1   endpoint=1,side=+1
-  //
-  // All 4 vertices carry the full (positionA, positionB, colorA, colorB)
-  // pair so the vertex shader can compute the screen-space direction
-  // without touching the index buffer.
-  function createSceneThickLineScratch() {
-    return {
-      segmentCapacity: 0,
-      positionsA: new Float32Array(0),
-      positionsB: new Float32Array(0),
-      colorsA: new Float32Array(0),
-      colorsB: new Float32Array(0),
-      sides: new Float32Array(0),
-      endpoints: new Float32Array(0),
-      widths: new Float32Array(0),
-      // Three pooled index buffers — one per render pass. Writing them
-      // separately lets the draw path issue up to three drawElements
-      // calls with different blend/depth states so additive thick lines
-      // composite correctly against opaque and alpha passes.
-      opaqueIndices: new Uint16Array(0),
-      alphaIndices: new Uint16Array(0),
-      additiveIndices: new Uint16Array(0),
-      opaqueIndexCount: 0,
-      alphaIndexCount: 0,
-      additiveIndexCount: 0,
-    };
-  }
-
-  function ensureSceneThickLineScratchCapacity(scratch, segmentCount) {
-    if (scratch.segmentCapacity >= segmentCount) {
-      return;
-    }
-    const nextCapacity = Math.max(64, Math.max(scratch.segmentCapacity * 2, segmentCount));
-    const totalVerts = nextCapacity * 4;
-    scratch.positionsA = new Float32Array(totalVerts * 3);
-    scratch.positionsB = new Float32Array(totalVerts * 3);
-    scratch.colorsA = new Float32Array(totalVerts * 4);
-    scratch.colorsB = new Float32Array(totalVerts * 4);
-    scratch.sides = new Float32Array(totalVerts);
-    scratch.endpoints = new Float32Array(totalVerts);
-    scratch.widths = new Float32Array(totalVerts);
-    // Worst case: all segments belong to one pass. Sized for that.
-    scratch.opaqueIndices = new Uint16Array(nextCapacity * 6);
-    scratch.alphaIndices = new Uint16Array(nextCapacity * 6);
-    scratch.additiveIndices = new Uint16Array(nextCapacity * 6);
-    scratch.segmentCapacity = nextCapacity;
-  }
-
-  // Quad corner layout: shared constants hoisted out of the hot loop.
-  // Vertex indices inside a quad: 0 = A-, 1 = A+, 2 = B+, 3 = B-.
-  // Triangles: (0,1,2) and (0,2,3).
-  const _thickLineQuadEndpoints = [0, 0, 1, 1];
-  const _thickLineQuadSides = [-1, 1, 1, -1];
-
-  // expandSceneThickLineIntoScratch walks world line data, writes the
-  // expanded per-quad attribute values into pooled scratch, and assigns
-  // each segment's 6 triangle indices to the scratch index buffer
-  // matching its render pass (0=opaque, 1=alpha, 2=additive). One linear
-  // pass through worldPositions — no sorting, no allocations.
-  //
-  // Returns the total segment count actually processed (may be less than
-  // the input when the 16384-segment Uint16 cap is hit; the overflow
-  // guard in the draw path routes those scenes back to gl.LINES).
-  function expandSceneThickLineIntoScratch(scratch, worldPositions, worldColors, worldLineWidths, worldLinePasses, segmentCount) {
-    const safeCount = Math.min(segmentCount, 16384);
-    ensureSceneThickLineScratchCapacity(scratch, safeCount);
-
-    const positionsA = scratch.positionsA;
-    const positionsB = scratch.positionsB;
-    const colorsA = scratch.colorsA;
-    const colorsB = scratch.colorsB;
-    const sides = scratch.sides;
-    const endpoints = scratch.endpoints;
-    const widths = scratch.widths;
-    const opaqueIndices = scratch.opaqueIndices;
-    const alphaIndices = scratch.alphaIndices;
-    const additiveIndices = scratch.additiveIndices;
-
-    let opaqueIdx = 0;
-    let alphaIdx = 0;
-    let additiveIdx = 0;
-
-    for (let seg = 0; seg < safeCount; seg += 1) {
-      const posOffset = seg * 6;
-      const colorOffset = seg * 8;
-      const ax = worldPositions[posOffset];
-      const ay = worldPositions[posOffset + 1];
-      const az = worldPositions[posOffset + 2];
-      const bx = worldPositions[posOffset + 3];
-      const by = worldPositions[posOffset + 4];
-      const bz = worldPositions[posOffset + 5];
-      const caR = worldColors[colorOffset];
-      const caG = worldColors[colorOffset + 1];
-      const caB = worldColors[colorOffset + 2];
-      const caA = worldColors[colorOffset + 3];
-      const cbR = worldColors[colorOffset + 4];
-      const cbG = worldColors[colorOffset + 5];
-      const cbB = worldColors[colorOffset + 6];
-      const cbA = worldColors[colorOffset + 7];
-      const width = (worldLineWidths && worldLineWidths[seg] > 0) ? worldLineWidths[seg] : 1;
-
-      for (let corner = 0; corner < 4; corner += 1) {
-        const vi = seg * 4 + corner;
-        const p3 = vi * 3;
-        const p4 = vi * 4;
-        positionsA[p3] = ax;
-        positionsA[p3 + 1] = ay;
-        positionsA[p3 + 2] = az;
-        positionsB[p3] = bx;
-        positionsB[p3 + 1] = by;
-        positionsB[p3 + 2] = bz;
-        colorsA[p4] = caR;
-        colorsA[p4 + 1] = caG;
-        colorsA[p4 + 2] = caB;
-        colorsA[p4 + 3] = caA;
-        colorsB[p4] = cbR;
-        colorsB[p4 + 1] = cbG;
-        colorsB[p4 + 2] = cbB;
-        colorsB[p4 + 3] = cbA;
-        sides[vi] = _thickLineQuadSides[corner];
-        endpoints[vi] = _thickLineQuadEndpoints[corner];
-        widths[vi] = width;
-      }
-
-      const base = seg * 4;
-      const pass = (worldLinePasses && seg < worldLinePasses.length) ? worldLinePasses[seg] : 0;
-      if (pass === 2) {
-        additiveIndices[additiveIdx] = base;
-        additiveIndices[additiveIdx + 1] = base + 1;
-        additiveIndices[additiveIdx + 2] = base + 2;
-        additiveIndices[additiveIdx + 3] = base;
-        additiveIndices[additiveIdx + 4] = base + 2;
-        additiveIndices[additiveIdx + 5] = base + 3;
-        additiveIdx += 6;
-      } else if (pass === 1) {
-        alphaIndices[alphaIdx] = base;
-        alphaIndices[alphaIdx + 1] = base + 1;
-        alphaIndices[alphaIdx + 2] = base + 2;
-        alphaIndices[alphaIdx + 3] = base;
-        alphaIndices[alphaIdx + 4] = base + 2;
-        alphaIndices[alphaIdx + 5] = base + 3;
-        alphaIdx += 6;
-      } else {
-        opaqueIndices[opaqueIdx] = base;
-        opaqueIndices[opaqueIdx + 1] = base + 1;
-        opaqueIndices[opaqueIdx + 2] = base + 2;
-        opaqueIndices[opaqueIdx + 3] = base;
-        opaqueIndices[opaqueIdx + 4] = base + 2;
-        opaqueIndices[opaqueIdx + 5] = base + 3;
-        opaqueIdx += 6;
-      }
-    }
-
-    scratch.opaqueIndexCount = opaqueIdx;
-    scratch.alphaIndexCount = alphaIdx;
-    scratch.additiveIndexCount = additiveIdx;
-    return safeCount;
   }
 
   function createSceneThickLineBufferSet(gl) {

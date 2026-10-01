@@ -456,10 +456,5 @@
   }
 
   function sceneHashString(hash, value) {
-    const text = String(value || "");
-    for (let i = 0; i < text.length; i += 1) {
-      hash ^= text.charCodeAt(i);
-      hash = Math.imul(hash, 16777619) >>> 0;
-    }
-    return hash;
+    return sceneContentHashString(hash, value);
   }

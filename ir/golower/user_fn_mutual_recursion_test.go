@@ -1,4 +1,4 @@
-// Slice Y.D mutual-recursion regression test — verifies that two
+// Mutual-recursion regression test — verifies that two
 // user functions calling each other resolve through the registry's
 // forward-reference contract.
 //

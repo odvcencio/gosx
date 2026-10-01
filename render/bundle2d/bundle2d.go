@@ -33,7 +33,7 @@ import (
 // it reuses the very same vm helpers. nodes are projected: "rect" → an unlit
 // instanced quad whose fill color lives in Materials, "line" → Lines, "label"
 // → Labels, "image"/"sprite" → Sprites; unknown kinds are dropped. Lighting and
-// post-FX are stripped (ADR 0004's 2D-mode gate).
+// post-FX are stripped (the 2D-mode gate).
 //
 //   - width,height : framebuffer size in CSS pixels (≤0 falls back to 1280x720,
 //     matching the WASM path).

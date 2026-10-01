@@ -199,8 +199,8 @@ func cloneCMSBlocks(blocks []map[string]string) []map[string]string {
 // which use go/parser to evaluate expressions.
 func defaultCMSBlocks() []map[string]string {
 	return []map[string]string{
-		{"kind": "hero", "title": "Welcome to GoSX", "subtitle": "The Go-native web platform"},
-		{"kind": "feature", "title": "Server Rendering", "body": "Every page renders on the server first."},
-		{"kind": "quote", "text": "One language, full stack.", "author": "GoSX"},
+		{"kind": "hero", "title": "Coastal Field Notes", "subtitle": "A record of places worth slowing down for."},
+		{"kind": "feature", "title": "North Head Trail", "body": "A short path runs above the water. At dusk, the grass moves before the tide turns."},
+		{"kind": "quote", "text": "The coast asks you to pay attention.", "author": "Field Notes"},
 	}
 }

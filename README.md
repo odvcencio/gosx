@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.55.2**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.1**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -97,10 +97,15 @@ rendered field from schema data the compiler writes into the IR, and the
 compiler builds that data from the one `.gsx` file it reads. A type declared
 in a sibling `.go` file is invisible at that moment.
 
-A strict `component Name` compiles to a package-level Go `func Name`, and a
-`.gsx` type declaration compiles to itself. `gosx check` reports a name a
-sibling `.go` file in the same package already declares, naming both
-declarations and their positions.
+`gosx compile` transpiles a strict `component Name` to a package-level Go
+`func Name`. A `.gsx` type declaration compiles to itself. `gosx check`
+reads that generated Go and reports a name a sibling `.go` file in the
+same package already declares, naming both declarations and positions.
+
+The file renderer never runs this generated Go. `router.AddDir` — the
+form the scaffold's `main.go` calls in production — parses and lowers
+each `.gsx` file to IR once. It then interprets that IR per request, the
+way the previous paragraph describes.
 
 ### Islands are strict-capable; engines use the programmatic v1 surface
 
@@ -365,6 +370,8 @@ a same-origin root-relative path, with unsafe values resolving to `/`.
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
 **Navigation** — `app.EnableNavigation()` adds server-driven soft transitions with managed head swaps, conservative keyed body reconciliation, and intent-prefetching. Same-origin anchors, GET forms, and GoSX `/__actions/` forms are managed automatically; `data-gosx-native` is the explicit native-browser opt-out. Stable `id`/`data-gosx-key` elements keep DOM identity and dirty focused form state while incoming attributes and content update. Pages remain server-first and progressively enhanced.
+
+**Declarative Transfer** — `data-gosx-transfer` describes a stable source and fixed target for pointer/touch or keyboard assignment. Pointer/touch drags never relocate nodes optimistically; while a pointer is held near an edge, GoSX scrolls the nearest scrollable ancestor (or the viewport) and re-tests the held coordinates against live targets. The managed action response remains authoritative.
 
 **Streaming** — Deferred page regions via `ctx.Defer()` and component-level `ctx.Suspense()` boundaries render fallback content immediately, then stream resolved content into place as each boundary completes.
 
@@ -739,6 +746,40 @@ compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
 
+### Prebuilt runtime (no TinyGo required)
+
+A project pinned to a stable released `m31labs.dev/gosx` version (a plain
+`require`, not a local `replace`) does not need TinyGo installed at all.
+When `gosx build --prod` cannot find `tinygo` on `PATH`, it automatically
+falls back to a release-matched, integrity-verified prebuilt runtime:
+
+1. It resolves the project's exact pinned GoSX version (the same check
+   `gosx`'s version-skew guard already runs).
+2. It fetches that release's runtime WASM variants, `wasm_exec.js` shim, and
+   a hashed manifest (`gosx-runtime-artifacts.json`) from the GitHub release
+   published for that tag.
+3. It verifies every file's SHA-256 against the manifest before staging it
+   into `dist/`, and caches the verified files under
+   `$GOSX_RUNTIME_CACHE` (default `os.UserCacheDir()/gosx/runtime`) so a
+   later build for the same version fetches nothing.
+
+Controls:
+
+| Env var | Effect |
+| --- | --- |
+| `GOSX_RUNTIME_MODE=tinygo` | Require TinyGo; never fall back to a prebuilt runtime. |
+| `GOSX_RUNTIME_MODE=prebuilt` | Skip the TinyGo probe; always resolve a prebuilt runtime. |
+| `GOSX_RUNTIME_MODE=auto` (default) | Prefer TinyGo; fall back to prebuilt only when TinyGo is missing. |
+| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-artifact cache directory. |
+| `GOSX_RUNTIME_RELEASE_REPO=<owner>/<repo>` | Resolve prebuilt runtimes from a fork's own releases. |
+| `gosx build --offline` | Disable the prebuilt *network fetch*; an already cached, verified version still resolves. |
+
+A project still building against unreleased GoSX source (a `go.mod` local
+`replace`, or a version with no published release, such as a pseudo-version)
+always requires TinyGo — there is no prebuilt runtime for source that was
+never tagged. `gosx dev` never needs TinyGo; it always uses the standard Go
+WASM compiler.
+
 ## Performance Budgets
 
 GoSX treats performance as a framework contract, not a dashboard you check after release. `gosx perf` already records TTFB, DCL, LCP, CLS, long tasks, TBT, network bytes, JS coverage, hub bytes, island hydration, Scene3D frame percentiles, and GPU context information. `gosx perf budget` turns those measurements into a CI gate.
@@ -800,19 +841,18 @@ Production builds and static exports also write route capability metadata into `
 
 `make wasm-size-budget` (script: `scripts/check-wasm-size.sh`) builds both
 flavors of `client/wasm` and asserts the resulting WebAssembly artifacts stay
-within budget. CI runs the gate on every PR. Baselines (Phase 1c shipped):
+within budget. CI runs the gate on every PR. Measured 2026-09-23 (TinyGo
+0.41.1, wasm-opt -Oz):
 
-| Flavor | Build tags                    | Shipped (Phase 1c) | Budget |
-|--------|-------------------------------|--------------------|--------|
-| full   | _(none)_                      | ~1,368 KB          | 5,500 KB |
-| tiny   | `gosx_tiny_islands_only`      | ~684 KB            | 3,200 KB |
+| Flavor | Build tags                    | Measured | Budget |
+|--------|-------------------------------|----------|--------|
+| full   | _(none)_                      | 2,191 KB | 2,450 KB |
+| tiny   | `gosx_tiny_islands_only`      | 817 KB   | 920 KB |
 
 Override the budget for a planned-growth slice by exporting
-`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. **Any budget increase
-greater than 10% over the Phase 1c baseline requires an ADR** explaining what
-deliberate growth shipped (e.g. Phase 2's `<CanvasBoard>` primitive, future
-opcode-set expansion). The gate fires on incidental regressions so they get
-caught at the PR boundary instead of slipping into a release.
+`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. The gate fires on
+incidental regressions so they get caught at the PR boundary instead of
+slipping into a release.
 
 `gosx desktop [app]` opens the dev server in the native desktop host. On Windows
 it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
@@ -827,6 +867,26 @@ Windows backend still returns `desktop.ErrUnsupported` for extra windows until
 shared WebView2-environment support lands. From WSL or CI, `make
 build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
 `build/gosx-windows-arm64.exe` for handoff to a Windows host.
+
+Desktop games can select a Fixed Version WebView2 runtime with
+`desktop.Options.BrowserExecutableFolder` and pass Chromium options through
+`desktop.Options.AdditionalBrowserArguments`; for example, `--mute-audio` and
+`--autoplay-policy=no-user-gesture-required`. GoSX sets the documented
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment creation.
+WebView2 environment variables are process-wide and apply to every WebView2
+environment in the process. `desktop.WebView2RuntimeVersion` reports
+the selected runtime, while `desktop.ErrWebView2LoaderUnavailable` and
+`desktop.ErrWebView2RuntimeUnavailable` identify a missing loader or runtime
+and still match `desktop.ErrWebView2Unavailable`.
+
+Production mode disables WebView2 browser accelerators, zoom controls, and its
+status bar; `Options.Debug` leaves them enabled. `Options.OnProcessFailed`
+receives a `desktop.ProcessFailedKind`; the game can call `App.Reload` when it
+chooses to recover. HTML `requestFullscreen()` uses borderless fullscreen on
+the window's monitor and returns to the earlier window state when it ends.
+The first icon resource in the executable supplies the window's large and
+small icons when present. Run `make test-desktop-windows-shipping-smoke` from
+WSL to verify these behaviors on a Windows host.
 
 Trusted desktop content can call `window.gosxDesktop.app`,
 `window.gosxDesktop.window`, `window.gosxDesktop.dialog`,
@@ -854,10 +914,13 @@ Trusted desktop content can then call:
 const prefs = await window.gosxDesktop.service("prefs").load({ scope: "user" });
 ```
 
-The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
-`App.UpdateApply()` consume MSIX AppInstaller feeds, and
-`CrashReporterOptions` captures Go panics plus Windows minidumps with optional
-user-consented upload.
+The `desktop` package exposes two update paths. `App.UpdateCheck()` and
+`App.UpdateApply()` use the Windows App Installer feed for MSIX releases.
+`App.CheckSignedUpdate()` verifies the signed `latest.json` feed emitted by
+`gosx desktop package` for direct-download releases. It only reports an update;
+the player follows the returned download page and reinstalls Setup. Both paths
+are separate from the optional `CrashReporterOptions`, which captures Go
+panics plus Windows minidumps with optional user-consented upload.
 
 `gosx build --prod` emits a deployable `dist/` bundle with a server binary,
 hashed assets, prerendered static pages, an ISR manifest, and edge worker
@@ -866,6 +929,64 @@ manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `dist/app.msix` through MakeAppx, `--sign` to run signtool with
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
 `dist/app.appinstaller` for AppInstaller-based updates.
+
+For a direct Windows download, stage the app's `.exe`, `WebView2Loader.dll`,
+assets and other runtime files, then package them from Linux:
+
+```sh
+gosx desktop package --input dist/windows --config release/desktop.json --output dist/download
+```
+
+The JSON config supplies `app_id`, `name`, `publisher`, `version`, `icon`,
+`host_exe`, `data_dir`, `update_public_key`, `channel`, `released`, `notes`, and
+`download_page`. `data_dir` must be the player's app-selected data folder; the
+installer never stores player data in its install root. Set
+`webview2_bootstrapper` to a local Microsoft Evergreen bootstrapper when you
+have one, or omit it to download the Microsoft bootstrapper during packaging.
+The packager records its SHA-256 in `package-metadata.json` and bundles it in
+Setup for offline use after download.
+
+The output contains a per-user Setup executable, a portable ZIP, `latest.json`,
+`SHA256SUMS`, and `package-metadata.json`. Setup verifies each payload file
+before extraction, uses `%LOCALAPPDATA%\Programs\<App>` by default, and asks
+before replacing an install with a lower version. It needs no administrator
+rights. The uninstaller asks whether to remove `data_dir`; its default is to
+keep player data. For unsigned builds, metadata records `unsigned`. Use
+`--sign-cmd` to sign each app PE before packaging and Setup after the payload is
+appended. The command template accepts `{input}`, `{output}`, and `{file}`. Use
+`--manifest-key <file>` or `--manifest-sign-cmd <template>` to sign `latest.json`.
+
+Use `gosx desktop package` for a direct-download app with an ordinary per-user
+installer and publisher-hosted `latest.json` manifest. The app embeds the
+matching Ed25519 public key in its build and calls the update API after startup,
+from a menu action or later background check. For example, the application can
+keep the key in a Go source constant and keep the check state in its player-data
+directory:
+
+```go
+result, err := app.CheckSignedUpdate(ctx, desktop.SignedUpdateCheckOptions{
+    ManifestURL:     "https://updates.example.com/wb/latest.json",
+    Channel:         "stable",
+    PublicKey:       updatePublicKey,
+    StateFile:       filepath.Join(playerDataDir, "update-check.json"),
+    Enabled:         updateChecksEnabled,
+    StartupComplete: appIsReady,
+    Online:          networkIsAvailable,
+})
+if err == nil && result.Status == desktop.SignedUpdateAvailable {
+    // Show result.Version, result.Notes, and a link to result.DownloadPage.
+}
+```
+
+The app ID and current version come from `desktop.Options`. The state file
+limits attempts to one per 24 hours, including failed requests. The API skips
+checks when disabled, before startup completes, or while the caller reports
+offline. It requires HTTPS; `AllowLoopbackHTTPForTests` is only for local test
+servers. `--manifest-key <file>` or `--manifest-sign-cmd <template>` signs the
+manifest during packaging. Use `gosx build --msix` and `--appinstaller <uri>`
+when the app distributes MSIX packages through the Windows App Installer feed;
+that existing feed and its `App.UpdateCheck()` / `App.UpdateApply()` methods
+remain the MSIX path.
 
 ### Bundle boundary and mutable state
 
@@ -1064,7 +1185,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.55.2**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.1**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

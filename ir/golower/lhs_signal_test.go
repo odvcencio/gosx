@@ -1,4 +1,4 @@
-// Slice Y.C.5 — package-level signal mutation tests.
+// Package-level signal mutation tests.
 //
 // graph_surface.go's `fx []float64`, `fy []float64`, `gPos map[string]vec2`,
 // `gVel map[string]vec2`, `gTx tx`, and `gDrag drag` are all package-level
@@ -16,10 +16,10 @@
 // and the canvas re-draws on every frame anyway, so the visible
 // behavior matches the author's expectations.
 //
-// If a future surface needs reactivity over Y.C mutations, the lowerer
-// can wrap OpFieldSet / OpIndexSet on signal targets in a follow-up
-// OpSignalSet that re-stores the (already-mutated) collection. This
-// is documented in the Y.C retrospective as a Y.D / Y.E follow-up.
+// If a future surface needs reactivity over these mutations, the
+// lowerer can wrap OpFieldSet / OpIndexSet on signal targets in a
+// follow-up OpSignalSet that re-stores the (already-mutated)
+// collection.
 
 package golower
 

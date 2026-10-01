@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+var sampleReference = regexp.MustCompile(`[A-Za-z]+\.DocSample\("([^"]+\.sample)"\)`)
+var sampleBinding = regexp.MustCompile(`\bdata\.(sample[0-9]{3})\b`)
+var sampleLoader = regexp.MustCompile(`"(sample[0-9]{3})"\s*:\s*docsapp\.DocSample\("([^"]+\.sample)"\)`)
 
 func TestAPIDocsUseCurrentPublicSurfaces(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -97,6 +103,276 @@ func TestAPIDocsUseCurrentPublicSurfaces(t *testing.T) {
 	}
 }
 
+func TestChangedDocsPagesEmbedTheirExamples(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	tests := []struct {
+		page     string
+		required string
+	}{
+		{"auth", "auth/sessionSample.go.sample"},
+		{"compiler", "compiler/strictSample.gosx.sample"},
+		{"components", "components/strictSample.gosx.sample"},
+		{"debugging-scene3d", "debugging-scene3d/code-001.bash.sample"},
+		{"deployment", "deployment/sampleBuildModes.bash.sample"},
+		{"engines", "engines/mountSample.go.sample"},
+		{"engines", "engines/liveWorker.go.sample"},
+		{"forms", "forms/code-001.gsx.sample"},
+		{"getting-started", "getting-started/quickstart-install.bash.sample"},
+		{"getting-started", "getting-started/quickstart-page.gosx.sample"},
+		{"hubs", "hubs/hubSample.go.sample"},
+		{"images", "images/imageSample.go.sample"},
+		{"islands", "islands/counterSample.gosx.sample"},
+		{"islands", "islands/liveCounter.gosx.sample"},
+		{"motion", "motion/motionSample.go.sample"},
+		{"routing", "routing/treeSample.text.sample"},
+		{"runtime", "runtime/code-001.gosx.sample"},
+		{"scene3d", "scene3d/code-001.go.sample"},
+		{"signals", "signals/basicSample.go.sample"},
+		{"signals", "signals/liveExample.gosx.sample"},
+		{"streaming", "streaming/deferSample.go.sample"},
+		{"text-layout", "text-layout/blockSample.go.sample"},
+		{"your-first-app", "tutorial/step-01-page-server.go.sample"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.page, func(t *testing.T) {
+			body := readDocsPagePair(t, root, test.page)
+			assertDocsContract(t, body, []string{test.required}, []string{"CodeBlock(\"go\", `"})
+		})
+	}
+}
+
+func TestGoSXPagesPassEmbeddedSamplesThroughTheirLoader(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	var pages []string
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info != nil && !info.IsDir() && filepath.Base(path) == "page.gsx" {
+			pages = append(pages, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range pages {
+		gsx, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(gsx), "docsapp.DocSample(") {
+			t.Errorf("%s calls DocSample from .gsx; bind the sample in page.server.go so production pages render it", page)
+		}
+		bindings := sampleBinding.FindAllStringSubmatch(string(gsx), -1)
+		if len(bindings) == 0 {
+			continue
+		}
+		serverPath := filepath.Join(filepath.Dir(page), "page.server.go")
+		server, err := os.ReadFile(serverPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", serverPath, err)
+		}
+		loaders := make(map[string]string)
+		for _, match := range sampleLoader.FindAllStringSubmatch(string(server), -1) {
+			loaders[match[1]] = match[2]
+		}
+		used := make(map[string]bool)
+		for _, binding := range bindings {
+			field := binding[1]
+			used[field] = true
+			if _, ok := loaders[field]; !ok {
+				t.Errorf("%s reads data.%s without a matching page.server.go sample loader", page, field)
+			}
+		}
+		for field := range loaders {
+			if !used[field] {
+				t.Errorf("%s loads %s without a matching .gsx sample binding", serverPath, field)
+			}
+		}
+	}
+}
+
+func TestDocsActiveNavigationContrastUsesDarkTextOnGold(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "app", "docs", "layout.css")
+	css, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lightRule := regexp.MustCompile(`(?s)\.docs-section\.light \.docs-guide-link\.is-current\s*\{([^}]+)\}`)
+	match := lightRule.FindSubmatch(css)
+	if len(match) != 2 {
+		t.Fatal("light-theme active guide navigation rule is missing")
+	}
+	rule := string(match[1])
+	for _, required := range []string{"color: #17140b;", "background: var(--accent);"} {
+		if !strings.Contains(rule, required) {
+			t.Errorf("active guide navigation rule is missing %q", required)
+		}
+	}
+	if strings.Contains(rule, "color: #ffffff;") || strings.Contains(rule, "background: var(--accent-deep);") {
+		t.Fatal("active guide navigation reverted to low-contrast white on gold")
+	}
+}
+
+func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	tests := []struct {
+		page      string
+		required  []string
+		forbidden []string
+	}{
+		{page: "getting-started", required: []string{"GoSX is a Go framework for server-rendered web apps.", "docs-live-example", "QuickstartPage", "Go rendered this page on the server.", "quickstart-page.gosx.sample", "View the page source", "gosx init my-app", "quickstart-app.jpg", "75 seconds"}, forbidden: []string{"doc-scene", "remains necessary today only for loader-bound routes, islands, and engines", "GoSX is a Go framework for server-rendered pages, interactive islands, realtime hubs, and typed 3D scenes."}},
+		{page: "engines", required: []string{"IndexWorker config passed engine.Config.Validate", "liveWorkerSample", "View the worker config source"}, forbidden: []string{"doc-scene", "<Scene3D"}},
+		{page: "your-first-app", required: []string{"Step 1 · Server data", "Step 2 · Island", "Step 3 · Hub", "shared signal updates the count", "Step 4 · Scene3D", "step-04.jpg"}, forbidden: []string{"doc-scene", "three.js", "refresh binding reruns"}},
+		{page: "compiler", required: []string{"CompilerExample", "Typed component", "Compiled output"}, forbidden: []string{"doc-scene", "Calls stay within one declaration style in v0.39"}},
+		{page: "components", required: []string{"Working typed component", "/docs/typed-live", "View the example source"}, forbidden: []string{"doc-scene"}},
+		{page: "deployment", required: []string{"data.buildInfo.frameworkVersion", "/api/site", "docs-live-example"}, forbidden: []string{"doc-scene"}},
+		{page: "auth", required: []string{"Live session-backed action", "View the session action source"}, forbidden: []string{"doc-scene"}},
+		{page: "forms", required: []string{`actionPath("subscribe")`, "actions.subscribe.fieldErrors.email", "ctx.ValidationFailure"}, forbidden: []string{"doc-scene"}},
+		{page: "hubs", required: []string{"ExampleHub", "docs-guide-presence", "ctx.Hub.Broadcast", "data.openTabs", "data-gosx-region-signal", "$docs.guidePresence"}, forbidden: []string{"doc-scene", "Refresh: true"}},
+		{page: "images", required: []string{"data.liveImage", "server.Image", "View the image helper source"}, forbidden: []string{"doc-scene"}},
+		{page: "islands", required: []string{"LiveCounter", "signal.New(props.Initial)", "data.liveCounterProps"}, forbidden: []string{"doc-scene", "Strict islands are not supported yet"}},
+		{page: "motion", required: []string{"ctx.Runtime().Motion", "MotionPresetSlideUp", "motionExample"}, forbidden: []string{"doc-scene"}},
+		{page: "routing", required: []string{"routing/examples/hello-world"}, forbidden: []string{"doc-scene", "not part of v0.39"}},
+		{page: "runtime", required: []string{`data-gosx-link="true"`, `data-gosx-prefetch="render"`}, forbidden: []string{"doc-scene"}},
+		{page: "signals", required: []string{"ReactiveExample", "signal.Derive", "doubled.Get()"}, forbidden: []string{"doc-scene"}},
+		{page: "streaming", required: []string{"Live deferred response", "ctx.DeferWithOptions", "streamDemo"}, forbidden: []string{"doc-scene"}},
+		{page: "text-layout", required: []string{"textLayoutExample", "TextBlockProps", "View the Go TextBlock source"}, forbidden: []string{"doc-scene"}},
+		{page: "typed-live", required: []string{"strict typed component", "Read this route's source"}, forbidden: []string{"v0.39 strict component"}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.page, func(t *testing.T) {
+			body := readDocsPagePair(t, root, test.page)
+			assertDocsContract(t, body, test.required, test.forbidden)
+		})
+	}
+
+	routingExample := filepath.Join(root, "routing", "examples", "[slug]")
+	page, err := os.ReadFile(filepath.Join(routingExample, "page.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDocsContract(t, string(page), []string{"params.slug", "View the parameter route source"}, nil)
+}
+
+func TestDocsCopyControlWaitsForItsJavaScriptHandler(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Dir(thisFile)
+	css, err := os.ReadFile(filepath.Join(root, "app", "docs", "layout.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pattern := range []string{
+		`(?s)\.docs-content \.code-sample__copy\s*\{\s*display:\s*none;\s*\}`,
+		`(?s):global\(\.docs-content \.code-sample__gutter\)\s*\{\s*color:\s*var\(--code-comment\);\s*\}`,
+		`(?s):global\(html\[data-gosx-runtime-ready="true"\] \.docs-content \.code-sample__copy\)\s*\{\s*display:\s*inline-flex;\s*\}`,
+		`(?s):global\(html\[data-gosx-copy-ready="true"\] \.docs-content \.code-sample__copy\)\s*\{\s*display:\s*inline-flex;\s*\}`,
+	} {
+		if !regexp.MustCompile(pattern).Match(css) {
+			t.Errorf("copy control runtime rule is missing pattern %q", pattern)
+		}
+	}
+
+	layout, err := os.ReadFile(filepath.Join(root, "app", "docs", "layout.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(layout, []byte("copy-controls.js")) {
+		t.Fatal("docs layout bypasses the managed script API for its copy-control handler")
+	}
+	layoutServer, err := os.ReadFile(filepath.Join(root, "app", "docs", "layout.server.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(layoutServer, []byte(`server.LifecycleScript("/docs/copy-controls.js"`)) {
+		t.Fatal("docs layout does not register its copy-control handler as a managed script")
+	}
+	handler, err := os.ReadFile(filepath.Join(root, "public", "docs", "copy-controls.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"data-gosx-copy-button", "data-gosx-copy-ready", "navigator.clipboard", "Copy failed. Select the code and copy it manually."} {
+		if !bytes.Contains(handler, []byte(want)) {
+			t.Errorf("copy-control handler is missing %q", want)
+		}
+	}
+}
+
+func TestDocsImagesPrioritizeQuickstartAndDeferTutorialScreenshots(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	quickstart, err := os.ReadFile(filepath.Join(root, "getting-started", "page.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`src="/docs/quickstart-app.jpg"`, `fetchpriority="high"`, `decoding="async"`} {
+		if !bytes.Contains(quickstart, []byte(want)) {
+			t.Errorf("quickstart image is missing %q", want)
+		}
+	}
+	tutorial, err := os.ReadFile(filepath.Join(root, "your-first-app", "page.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(tutorial), `loading="lazy"`); got != 4 {
+		t.Errorf("tutorial should defer all four below-fold screenshots; got %d lazy images", got)
+	}
+	if got := strings.Count(string(tutorial), `decoding="async"`); got != 4 {
+		t.Errorf("tutorial should decode all four screenshots asynchronously; got %d", got)
+	}
+}
+
+func TestDocsLiveExamplesLinkToTheirSource(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve docs test location")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info == nil || info.IsDir() || filepath.Base(path) != "page.gsx" {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		body := string(source)
+		if !strings.Contains(body, `class="docs-live-example"`) {
+			return nil
+		}
+		if !strings.Contains(body, "github.com/odvcencio/"+"gosx/") && !strings.Contains(body, `href="/docs/typed-live"`) {
+			t.Errorf("%s has a live example without a link to its source", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	docsRoot := filepath.Join(filepath.Dir(thisFile), "app", "docs")
@@ -108,11 +384,18 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 	}{
 		{
 			page:     "getting-started",
-			required: []string{"gosx version"},
+			required: []string{"gosx init my-app", "Go 1.26", "75 seconds", "quickstart-app.jpg", "quickstart-install.bash.sample", "quickstart-init.bash.sample", "quickstart-run.bash.sample"},
 			forbidden: []string{
 				"gosx --version",
 				"produces a deployable binary with everything included",
+				"It remains necessary today only for loader-bound routes, islands, and engines.",
+				"doc-scene",
 			},
+		},
+		{
+			page:      "your-first-app",
+			required:  []string{"Step 1 · Server data", "Step 2 · Island", "step-02-counter-props.go.sample", "step-02-page-server.go.sample", "Step 3 · Hub", "Step 4 · Scene3D", "step-04-page-server.go.sample", "step-04.jpg"},
+			forbidden: []string{"doc-scene", "three.js"},
 		},
 		{
 			page: "components",
@@ -188,7 +471,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 				"RequiredCapabilities",
 				"scene.RequireWebGPU",
 				"environment-map",
-				"Prepared split-sum IBL is faithful on WebGPU",
+				"Prepared split-sum IBL is supported on both GPU backends",
 			},
 			forbidden: []string{
 				"environment map degrades on WebGPU",
@@ -250,6 +533,15 @@ func readDocsPagePair(t *testing.T, root, page string) string {
 		}
 		joined.Write(body)
 		joined.WriteByte('\n')
+		for _, match := range sampleReference.FindAllSubmatch(body, -1) {
+			samplePath := filepath.Join(filepath.Dir(root), "..", "samples", filepath.FromSlash(string(match[1])))
+			sample, err := os.ReadFile(samplePath)
+			if err != nil {
+				t.Fatalf("read documentation sample %s: %v", samplePath, err)
+			}
+			joined.Write(sample)
+			joined.WriteByte('\n')
+		}
 	}
 	return joined.String()
 }

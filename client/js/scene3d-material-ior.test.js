@@ -199,6 +199,57 @@ test("normalizeSceneObject carries authored ior through material normalization",
     "var(--glass-ior)");
 });
 
+test("normalizeSceneObject and material profiles preserve imported PBR factors", () => {
+  const context = createSceneCoreContext();
+  const result = callIn(context,
+    '(() => {' +
+      'const authoredColor = [0.8, 0.15, 0.05];' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: {' +
+        ' emissive: 4, emissiveColor: authoredColor, normalScale: 0, occlusionStrength: 0' +
+      '} }, 0, null);' +
+      'authoredColor[0] = 7;' +
+      'const normalizedColorWasCopied = object.emissiveColor[0] === 0.8;' +
+      'const first = sceneObjectMaterialProfile(object);' +
+      'const firstColor = first.emissiveColor.slice();' +
+      'object.emissiveColor[0] = 0.6;' +
+      'object.emissive = 2;' +
+      'object.normalScale = 0.5;' +
+      'object.occlusionStrength = 0.25;' +
+      'const second = sceneObjectMaterialProfile(object);' +
+      'return {' +
+        'normalizedColorWasCopied,' +
+        'profileColorWasCopied: firstColor[0] === 0.8,' +
+        'cacheInvalidated: first !== second && first.key !== second.key,' +
+        'secondColor: second.emissiveColor[0],' +
+        'secondEmissive: second.emissive,' +
+        'secondNormalScale: second.normalScale,' +
+        'secondOcclusionStrength: second.occlusionStrength' +
+      '};' +
+    '})()');
+  assert.strictEqual(result.normalizedColorWasCopied, true);
+  assert.strictEqual(result.profileColorWasCopied, true);
+  assert.strictEqual(result.cacheInvalidated, true);
+  assert.strictEqual(result.secondColor, 0.6);
+  assert.strictEqual(result.secondEmissive, 2);
+  assert.strictEqual(result.secondNormalScale, 0.5);
+  assert.strictEqual(result.secondOcclusionStrength, 0.25);
+
+  const keyOf = (fields) => callIn(context,
+    "sceneObjectMaterialProfile(Object.assign({ materialKind: 'standard' }, " + fields + ")).key");
+  const base = keyOf("{}");
+  assert.notStrictEqual(keyOf("{ emissiveColor: [0, 0, 0] }"), base,
+    "authored black differs from an absent emissive color");
+  assert.notStrictEqual(keyOf("{ emissiveColor: [0.8, 0.15, 0.05] }"), base);
+  assert.notStrictEqual(keyOf("{ emissive: 4 }"), keyOf("{ emissive: 4.0001 }"));
+  assert.notStrictEqual(keyOf("{ normalScale: 0.1231 }"), keyOf("{ normalScale: 0.1232 }"));
+  assert.notStrictEqual(keyOf("{ occlusionStrength: 0.5001 }"), keyOf("{ occlusionStrength: 0.5002 }"));
+
+  const legacy = callIn(context,
+    'sceneObjectMaterialProfile({ materialKind: "standard", emissive: 1 })');
+  assert.strictEqual(legacy.emissiveColor, undefined,
+    "legacy scalar emission keeps the shader's albedo-tinted behavior");
+});
+
 test("named material resolution and record updates preserve ior", () => {
   const context = createSceneCoreContext();
 
@@ -239,6 +290,53 @@ test("normalizeSceneModel stores glTF model ior overrides on materialOverride", 
   // A model without any override carries no materialOverride bag at all.
   assert.strictEqual(
     callIn(context, 'normalizeSceneModel({ id: "glb", src: "model.glb" }, 0).materialOverride'), null);
+});
+
+test("model, named-material, and instanced GLB paths retain imported PBR factors", () => {
+  const context = createSceneCoreContext();
+  const model = callIn(context,
+    'normalizeSceneModel({ id: "actor", src: "actor.glb", material: {' +
+      ' emissive: 4, emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0' +
+    '} }, 0)');
+  assert.strictEqual(model.materialOverride.emissive, 4);
+  assert.strictEqual(model.materialOverride.normalScale, 0);
+  assert.strictEqual(model.materialOverride.occlusionStrength, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(model.materialOverride.emissiveColor)), [0.8, 0.15, 0.05]);
+
+  const material = callIn(context,
+    'normalizeSceneMaterialRecord({ name: "paint", emissive: 4, emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0 }, 0, null)');
+  const object = callIn(context, 'sceneApplyNamedMaterialToObject({ emissiveColor: [0, 0, 0] }, ' +
+    'normalizeSceneMaterialRecord({ name: "paint", emissive: 4, emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0 }, 0, null))');
+  assert.strictEqual(material.emissive, 4);
+  assert.strictEqual(material.normalScale, 0);
+  assert.strictEqual(material.occlusionStrength, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(object.emissiveColor)), [0.8, 0.15, 0.05]);
+  assert.strictEqual(object.normalScale, 0);
+  assert.strictEqual(object.occlusionStrength, 0);
+  assert.notStrictEqual(object.emissiveColor, material.emissiveColor,
+    "named material application snapshots its colour array");
+
+  const batch = callIn(context,
+    'normalizeSceneInstancedGLBMeshEntry({ src: "actors.glb", emissive: 4, ' +
+      'emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0, instances: [{ id: "a" }] }, 0, null)');
+  const batchModel = callIn(context, 'sceneInstancedGLBMeshToModels(' +
+    'normalizeSceneInstancedGLBMeshEntry({ src: "actors.glb", emissive: 4, ' +
+      'emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0, instances: [{ id: "a" }] }, 0, null), 0)[0]');
+  assert.strictEqual(batch.emissive, 4);
+  assert.strictEqual(batch.normalScale, 0);
+  assert.strictEqual(batch.occlusionStrength, 0);
+  assert.strictEqual(batchModel.materialOverride.emissive, 4);
+  assert.strictEqual(batchModel.materialOverride.normalScale, 0);
+  assert.strictEqual(batchModel.materialOverride.occlusionStrength, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(batchModel.materialOverride.emissiveColor)), [0.8, 0.15, 0.05]);
+
+  const instancedMesh = callIn(context,
+    'normalizeSceneInstancedMeshEntry({ kind: "cube", emissive: 4, ' +
+      'emissiveColor: [0.8, 0.15, 0.05], normalScale: 0, occlusionStrength: 0 }, 0, null)');
+  assert.strictEqual(instancedMesh.emissive, 4);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(instancedMesh.emissiveColor)), [0.8, 0.15, 0.05]);
+  assert.strictEqual(instancedMesh.normalScale, 0);
+  assert.strictEqual(instancedMesh.occlusionStrength, 0);
 });
 
 test("instanced GLB batching carries authored ior and preserves genuinely absent ior", () => {
@@ -570,9 +668,10 @@ test("WebGPU material uniform packing carries the effective specular factors wit
 
   // The WebGPU struct keeps its legacy trailing dielectricF0 scalar at f40
   // for layout compatibility, then packs the live effective specular F0 as
-  // an aligned vec3f (floats 44..46) and F90 (float 47), padding the struct
-  // to 208 bytes. Struct line matching allows the production aligned
-  // whitespace.
+  // an aligned vec3f (floats 44..46) and F90 (float 47). The struct then
+  // extends to 256 bytes with the glTF material-parity fields (normalScale,
+  // occlusionStrength, emissiveColor, rim term). Struct line matching
+  // allows the production aligned whitespace.
   const structStart = indexOfMatch(source, /"struct MaterialUniforms \{"/);
   const matrixLine = indexOfMatch(source, /"\s+modelMatrix: mat4x4f,"/);
   const signsLine = indexOfMatch(source, /"\s+modelScaleSigns: vec4f,"/);
@@ -592,7 +691,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
     const flagLine = indexOfMatch(source, new RegExp('"\\s+' + flag + ': u32,"'));
     assert.ok(flagLine > structStart && flagLine < matrixLine, flag + " texture-flag slot preserved");
   }
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
   // Fragment shader consumes the effective specular factors; the fixed 0.04
   // default is gone.
@@ -606,7 +705,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // declarations (whitespace-tolerant) with the real shared numeric/color
   // helpers — no hand copies of the buffer views or the math.
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
-  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
+  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
   assert.match(bufferDecls, /var\s+_materialUniformF\s*=/);
   assert.match(bufferDecls, /var\s+_materialUniformU\s*=/);
   const context = createSceneCoreContext();
@@ -639,7 +738,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
 
   const packed = callIn(context,
     'materialUniformData({ color: "#ffffff", roughness: 0.25, metalness: 0.5, ior: 2.42 }, true, null, null)');
-  assert.strictEqual(packed.data.length, 52);
+  assert.strictEqual(packed.data.length, 64);
   // PBR scalars keep their slots.
   assert.ok(Math.abs(packed.data[3] - 0.25) <= 1e-6);
   assert.ok(Math.abs(packed.data[4] - 0.5) <= 1e-6);
@@ -677,4 +776,40 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // Specular-color log coefficients at 48..50 and the neutral flag at u32 51.
   for (let c = 0; c < 3; c++) assert.ok(Number.isFinite(packed.data[48 + c]));
   assert.strictEqual(packed.u[51], 0);
+  // glTF material-parity trailing fields (52..63): normalScale and
+  // occlusionStrength default to 1, hasEmissiveColor is unset for a material
+  // with no authored emissiveColor, rimStrength defaults to off (0) with a
+  // white rimColor and rimPower 2, and the reserved pad word stays zero.
+  assert.strictEqual(packed.data[52], 1, "normalScale defaults to 1");
+  assert.strictEqual(packed.data[53], 1, "occlusionStrength defaults to 1");
+  assert.strictEqual(packed.u[54], 0, "hasEmissiveColor unset without an authored emissiveColor");
+  assert.strictEqual(packed.data[55], 2, "rimPower defaults to 2");
+  assert.deepStrictEqual([packed.data[56], packed.data[57], packed.data[58]], [0, 0, 0], "emissiveColor defaults to black");
+  assert.strictEqual(packed.data[59], 0, "rimStrength defaults to off");
+  assert.deepStrictEqual([packed.data[60], packed.data[61], packed.data[62]], [1, 1, 1], "rimColor defaults to white");
+  assert.strictEqual(packed.data[63], 0, "reserved padding stays zero");
+});
+
+test("WebGPU materialUniformData packs an authored emissive colour and rim term", () => {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  const context = createSceneCoreContext();
+  runFragment(context, [
+    bufferDecls,
+    sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
+  ].join("\n"), "webgpu-material-extract-emissive.js");
+
+  const packed = callIn(context,
+    'materialUniformData({ color: "#ffffff", emissiveColor: [1, 0, 0], emissive: 3, ' +
+    'normalScale: 0.5, occlusionStrength: 0.25, rimColor: [0, 1, 0], rimPower: 4, rimStrength: 0.6 }, false, null, null)');
+  const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 1e-6, label + ": got " + actual + ", want " + expected);
+  near(packed.data[52], 0.5, "normalScale carries the authored value");
+  near(packed.data[53], 0.25, "occlusionStrength carries the authored value");
+  assert.strictEqual(packed.u[54], 1, "hasEmissiveColor set for an authored emissiveColor");
+  near(packed.data[55], 4, "rimPower carries the authored value");
+  [1, 0, 0].forEach((v, i) => near(packed.data[56 + i], v, "emissiveColor[" + i + "]"));
+  near(packed.data[59], 0.6, "rimStrength carries the authored value");
+  [0, 1, 0].forEach((v, i) => near(packed.data[60 + i], v, "rimColor[" + i + "]"));
 });

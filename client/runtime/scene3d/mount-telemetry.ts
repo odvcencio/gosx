@@ -109,7 +109,7 @@
         return value == null ? null : String(value);
       }
       function invalidAttr(name, value, expected, reason, error) {
-        var data = { attribute: attributeName(name), value: value, expected: expected, reason: reason };
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var data = { attribute: attributeName(name), value: value, expected: expected, reason: reason };
         if (error) data.error = error;
         parseDiagnostics.push({
           severity: "warn",
@@ -123,7 +123,7 @@
         if (value === null) return null;
         var trimmed = value.trim();
         var parsed = trimmed === "" ? NaN : Number(trimmed);
-        if (!Number.isFinite(parsed)) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!Number.isFinite(parsed)) {
           invalidAttr(name, value, "finite-number", "invalid-value");
           return null;
         }
@@ -133,7 +133,7 @@
         var value = attr(name);
         if (value === null) return null;
         if (value === "true") return true;
-        if (value === "false") return false;
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (value === "false") return false;
         invalidAttr(name, value, "true-or-false", "invalid-value");
         return null;
       }
@@ -142,7 +142,7 @@
         if (value === null) return null;
         try {
           var parsed = JSON.parse(value);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             invalidAttr(name, value, "json-object", "invalid-value");
             return null;
           }
@@ -201,6 +201,13 @@
         qualityDprCap: numAttr("quality-dpr-cap"),
         qualityPostfxSuppressed: boolAttr("quality-postfx-suppressed"),
         adaptiveQuality: attr("adaptive-quality"),
+        // framePacing* surfaces the vsync-divisor governor (opt-in via
+        // props.framePacing === "vsync-divisor"; see mount.ts's
+        // sceneFramePacing* helpers). Absent for every other scene.
+        framePacing: attr("frame-pacing"),
+        framePacingK: numAttr("frame-pacing-k"),
+        framePacingVsyncMs: numAttr("frame-pacing-vsync-ms"),
+        framePacingCostMs: numAttr("frame-pacing-cost-ms"),
         renderLoopReason: attr("render-loop-reason"),
         renderWatchdogReason: attr("render-watchdog-reason"),
         dropped: attr("dropped"),
@@ -258,6 +265,21 @@
       mount = typeof document !== "undefined" && typeof document.querySelector === "function"
         ? document.querySelector("[data-gosx-scene3d-mounted]")
         : null;
-    }
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
     return mountSnapshot(mount, null);
   };
+
+// @ts-ignore TS7006 -- runtime source fixtures use JavaScript signatures.
+function sceneRenderWithTiming(renderer, bundle, viewport, meta, timing) {
+  const start = performance.now();
+  timing.frameIntervalMS = timing.submitAtMS > 0 ? start - timing.submitAtMS : 0;
+  timing.submitAtMS = start;
+  try { renderer.render(bundle, viewport, meta); }
+  finally { timing.cpuSubmitMS = performance.now() - start; }
+}
+
+// @ts-ignore TS7006 -- runtime source fixtures use JavaScript signatures.
+function sceneRendererFrameTiming(renderer, timing) {
+  return Object.assign({ status: "unavailable", source: "none", scope: "frame", gpuMS: null },
+    renderer && typeof renderer.getFrameTiming === "function" ? renderer.getFrameTiming() : {}, timing);
+}

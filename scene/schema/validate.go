@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"m31labs.dev/gosx/scene"
@@ -58,6 +59,7 @@ type Document struct {
 	PostEffects        []json.RawMessage          `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                        `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                        `json:"shadowMaxPixels,omitempty"`
+	GPUDriven          json.RawMessage            `json:"gpuDriven,omitempty"`
 	BackendCaps        *capability.BackendCaps    `json:"backendCaps,omitempty"`
 }
 
@@ -107,6 +109,42 @@ func validateParentMatricesRawDocument(report *Report, data []byte) {
 	}
 }
 
+// validateGPUDriven checks the optional gpuDriven renderer mode. The runtime
+// reads two booleans. A value of the wrong type is an error, because the
+// author asked for a mode that will not engage as written. An unknown key is
+// a warning, and so is a mode on a scene with no instanced mesh, because the
+// mode has nothing to act on there.
+func validateGPUDriven(report *Report, raw json.RawMessage, instancedMeshes int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		report.add(Error, "scene.gpu_driven.invalid", "gpuDriven must be an object", "gpuDriven", "", nil)
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "occlusion", "shadowCulling":
+			var value *bool
+			if json.Unmarshal(fields[key], &value) != nil || value == nil {
+				report.add(Error, "scene.gpu_driven.invalid_flag", "gpuDriven."+key+" must be a boolean", "gpuDriven."+key, "", nil)
+			}
+		default:
+			report.add(Warn, "scene.gpu_driven.unknown_field", "gpuDriven field is not recognized", "gpuDriven."+key, "", map[string]any{"field": key})
+		}
+	}
+	if instancedMeshes == 0 {
+		report.add(Warn, "scene.gpu_driven.no_instanced_meshes", "gpuDriven has no effect: the scene declares no instancedMeshes", "gpuDriven", "", nil)
+	}
+}
+
 func validateParentMatrixRaw(report *Report, record json.RawMessage, path, fallbackID string) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(record, &fields) != nil {
@@ -136,6 +174,12 @@ func validateParentMatrixRaw(report *Report, record json.RawMessage, path, fallb
 	}
 }
 
+func validateInteractiveNode(report *Report, interactive bool, label, id, path string) {
+	if interactive && strings.TrimSpace(label) == "" {
+		report.add(Error, "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path+".label", id, nil)
+	}
+}
+
 func validateDocument(report *Report, doc Document, opts Options) {
 	if doc.Schema != "" && doc.Schema != scene.SceneIRSchema {
 		severity := Warn
@@ -153,6 +197,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	if doc.ShadowMaxPixels < 0 {
 		report.add(Error, "scene.shadow.invalid_max_pixels", "shadowMaxPixels must not be negative", "shadowMaxPixels", "", nil)
 	}
+	validateGPUDriven(report, doc.GPUDriven, len(doc.InstancedMeshes))
 
 	ids := map[string]string{}
 	targetIDs := map[string]struct{}{}
@@ -198,6 +243,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		validateGeometryKind(report, object.Kind, object.ID, path)
 		validateMaterialKind(report, object.MaterialKind, object.ID, path, opts.Strict)
 		validateBlendMode(report, object.BlendMode, object.ID, path)
+		validateInteractiveNode(report, object.Interactive, object.Label, object.ID, path)
 		validateObject(report, object, path)
 	}
 	for i, model := range doc.Models {
@@ -205,6 +251,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		addID(model.ID, path+".id", model.Pickable != nil && *model.Pickable)
 		addTargetID(model.ID)
 		animatableIDs[model.ID] = struct{}{}
+		validateInteractiveNode(report, model.Interactive, model.Label, model.ID, path)
 		validateObject(report, model.ObjectIR, path)
 		if !modelHasValidAssetSource(model) {
 			report.add(Error, "scene.asset.missing", "Model scene record requires src", path+".src", model.ID, nil)
@@ -486,6 +533,7 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 }
 
 func validateMeshInstance(report *Report, instance scene.MeshInstanceIR, path, parentID string) {
+	validateNonNegativeFloat(report, parentID, path+".animationTime", instance.AnimationTime)
 	validateNumericFields(report, parentID, path, map[string]float64{
 		"x":         instance.X,
 		"y":         instance.Y,
@@ -761,6 +809,13 @@ func validateHTML(report *Report, html scene.HTMLIR, path string, opts Options, 
 	}
 	if mode != "dom" && mode != "texture" && mode != "portal" && mode != "world" && mode != "screen" {
 		report.add(Warn, "scene.html.unknown_mode", "HTML surface mode is not part of the formal mode set", path+".mode", html.ID, map[string]any{"mode": html.Mode})
+	}
+	if html.Perspective {
+		if mode != "dom" {
+			report.add(Warn, "scene.html.perspective_ignored_mode", "Perspective HTML positioning applies only to DOM mode", path+".perspective", html.ID, map[string]any{"mode": mode})
+		} else if html.SurfaceWidth <= 0 || html.SurfaceHeight <= 0 {
+			report.add(Error, "scene.html.perspective_size_missing", "Perspective DOM HTML requires positive surfaceWidth and surfaceHeight", path, html.ID, map[string]any{"surfaceWidth": html.SurfaceWidth, "surfaceHeight": html.SurfaceHeight})
+		}
 	}
 	if mode == "texture" {
 		severity := Warn

@@ -450,6 +450,8 @@ func init() {
 func appHomeTemplate() string {
 	return `package app
 
+// The form's token is empty for anonymous visitors; Protect checks its origin.
+// Existing sessions also submit their token and receive private HTML.
 func Page() Node {
 	return <main class="shell">
 		<span class="eyebrow">GoSX</span>

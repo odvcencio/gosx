@@ -169,3 +169,49 @@
     animation: none;
   }
 }
+
+/* The canvas is the main exhibit; the controls sit beside it on wide screens. */
+.livesim { align-items: stretch; gap: var(--space-md); padding: var(--space-lg); color: var(--demo-fg); background: var(--demo-bg); }
+.livesim__heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-md); width: 100%; max-width: 78rem; margin: 0 auto; }
+.livesim__eyebrow { margin: 0 0 var(--space-xs); color: var(--demo-accent); font: 700 0.7rem/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.livesim__heading h1 { margin: 0; font: 700 clamp(2.3rem, 5vw, 4.5rem)/1.04 var(--font-display); letter-spacing: -0.06em; }
+.livesim__heading p:last-child { max-width: 36rem; margin: var(--space-sm) 0 0; color: var(--color-text-secondary); font-size: 1rem; line-height: 1.5; }
+.livesim__badge { flex: none; margin-bottom: 0.25rem; padding: 0.45rem 0.7rem; color: var(--demo-accent); border: 1px solid color-mix(in srgb, var(--demo-accent) 40%, transparent); border-radius: var(--radius-pill); font: 700 0.68rem var(--font-mono); white-space: nowrap; }
+.livesim__frame { display: grid; grid-template-columns: minmax(0, 1fr) minmax(13rem, 16rem); align-items: stretch; gap: var(--space-sm); max-width: 78rem; margin: 0 auto; }
+.livesim__stage { position: relative; min-width: 0; overflow: hidden; background: #0c1720; border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg); box-shadow: 0 1.5rem 3rem var(--color-backdrop); }
+.livesim__canvas { box-sizing: border-box; width: 100%; height: auto; max-width: none; aspect-ratio: 800 / 500; background: transparent; border: 0; border-radius: inherit; }
+.livesim__hint { position: absolute; top: 50%; left: 50%; display: grid; justify-items: center; gap: 0.35rem; width: min(80%, 18rem); padding: var(--space-md); color: #f8efe2; background: rgba(17, 32, 40, 0.88); border: 1px solid rgba(246, 186, 119, 0.35); border-radius: var(--radius-md); text-align: center; pointer-events: none; transform: translate(-50%, -50%); transition: opacity var(--duration-standard) var(--ease-out); }
+.livesim__hint span { color: #f6ba77; font-size: 1.5rem; }
+.livesim__hint strong { font: 700 1.05rem/1.25 var(--font-display); }
+.livesim__hint small { color: #c4d0ce; font-size: 0.75rem; }
+.livesim__stage[data-has-circles="true"] .livesim__hint { opacity: 0; }
+.livesim__stage-note { position: absolute; right: var(--space-sm); bottom: var(--space-xs); margin: 0; color: #f6ba77; font: 700 0.62rem var(--font-mono); letter-spacing: 0.1em; pointer-events: none; }
+.livesim__hud { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: var(--space-sm); min-width: 0; padding: var(--space-md); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.livesim__hud h2 { grid-column: 1 / -1; margin: 0; font: 700 1rem/1.3 var(--font-display); }
+.livesim__stat { min-width: 0; padding: var(--space-xs); background: var(--color-surface-raised); border-radius: var(--radius-sm); }
+.livesim__stat-label { color: var(--demo-muted); font-family: var(--font-mono); font-size: 0.62rem; }
+.livesim__stat-value { color: var(--demo-fg); font-family: var(--font-mono); font-size: 1rem; overflow-wrap: anywhere; }
+.livesim__actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; gap: var(--space-xs); margin-top: var(--space-xs); }
+.livesim__spawn,
+.livesim__burst { min-height: 2.75rem; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font: 700 0.8rem/1.2 var(--font-body); }
+.livesim__spawn { color: var(--demo-fg); background: var(--color-surface-raised); border-color: var(--color-border-strong); }
+.livesim__burst { color: var(--demo-bg); background: var(--demo-accent); border-color: var(--demo-accent); }
+.livesim__footer { display: flex; gap: var(--space-md); justify-content: space-between; max-width: 78rem; margin: 0 auto; padding-top: var(--space-sm); border-color: var(--color-border); font: 0.73rem/1.5 var(--font-body); letter-spacing: 0; }
+.livesim__footer p { max-width: 34rem; margin: 0; }
+
+@media (max-width: 900px) {
+  .livesim { padding: var(--space-sm); }
+  .livesim__heading { display: block; }
+  .livesim__heading h1 { font-size: clamp(2.25rem, 9vw, 3.5rem); }
+  .livesim__badge { display: inline-block; margin-top: var(--space-sm); }
+  .livesim__frame { grid-template-columns: minmax(0, 1fr); }
+  .livesim__hud { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: var(--space-sm); border: 1px solid var(--color-border); }
+  .livesim__actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .livesim__footer { display: block; }
+  .livesim__footer p + p { margin-top: var(--space-xs); }
+}
+
+@media (max-width: 480px) {
+  .livesim__hud { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .livesim__hint { padding: var(--space-sm); }
+}

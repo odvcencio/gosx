@@ -77,7 +77,7 @@ type RenderHTML struct {
 // Mode selects the projection pipeline. The empty string is the default
 // (perspective 3D, Scene3D's path). The constant bundle.OrthoCamera2DMode
 // switches to the 2D pipeline (orthographic projection, depth + lighting
-// + post-FX disabled) per ADR 0004. For ortho2d cameras, X/Y are reused
+// + post-FX disabled). For ortho2d cameras, X/Y are reused
 // as pan offsets and Z is the zoom factor (1 = 1 world unit per pixel).
 type RenderCamera struct {
 	Mode      string  `json:"mode,omitempty"`

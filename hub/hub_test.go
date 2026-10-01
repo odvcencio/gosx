@@ -1,7 +1,10 @@
 package hub
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +14,59 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+type writeGateConn struct {
+	net.Conn
+	blocked sync.Once
+	release sync.Once
+	active  chan struct{}
+	entered chan struct{}
+	unblock chan struct{}
+}
+
+func newWriteGateConn(conn net.Conn) *writeGateConn {
+	return &writeGateConn{
+		Conn:    conn,
+		active:  make(chan struct{}),
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+}
+
+func (c *writeGateConn) blockWrites()   { c.blocked.Do(func() { close(c.active) }) }
+func (c *writeGateConn) releaseWrites() { c.release.Do(func() { close(c.unblock) }) }
+
+func (c *writeGateConn) Write(payload []byte) (int, error) {
+	select {
+	case <-c.active:
+		select {
+		case <-c.entered:
+		default:
+			close(c.entered)
+		}
+		<-c.unblock
+	default:
+	}
+	return c.Conn.Write(payload)
+}
+
+type writeGateListener struct {
+	net.Listener
+	accepted chan *writeGateConn
+}
+
+func (l *writeGateListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	gated := newWriteGateConn(conn)
+	select {
+	case l.accepted <- gated:
+	default:
+	}
+	return gated, nil
+}
 
 func readUntilEvent(t *testing.T, conn *websocket.Conn, event string) Message {
 	t.Helper()
@@ -76,6 +132,131 @@ func TestHubDisconnectRunsNormalLifecycle(t *testing.T) {
 	}
 	if h.Disconnect(identity.ClientID, "again") {
 		t.Fatal("second disconnect should report missing client")
+	}
+}
+
+func TestHubDisconnectConcurrentWithBroadcast(t *testing.T) {
+	h := New("disconnect-broadcast")
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	const peers = 8
+	connections := make([]*websocket.Conn, peers)
+	identities := make([]string, peers)
+	for i := range connections {
+		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		connections[i] = conn
+		defer conn.Close()
+		welcome := readUntilEvent(t, conn, "__welcome")
+		var identity struct {
+			ClientID string `json:"clientId"`
+		}
+		if err := json.Unmarshal(welcome.Data, &identity); err != nil {
+			t.Fatalf("decode welcome %d: %v", i, err)
+		}
+		identities[i] = identity.ClientID
+	}
+
+	// Prove every write pump is active before the concurrent stress begins.
+	h.Broadcast("state", map[string]int{"sequence": -1})
+	for _, conn := range connections {
+		readUntilEvent(t, conn, "state")
+	}
+
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		close(started)
+		for sequence := 0; sequence < 20_000; sequence++ {
+			h.Broadcast("state", map[string]int{"sequence": sequence})
+		}
+	}()
+	<-started
+	var disconnects sync.WaitGroup
+	for _, clientID := range identities {
+		disconnects.Add(1)
+		go func(clientID string) {
+			defer disconnects.Done()
+			if !h.Disconnect(clientID, "replaced") {
+				t.Errorf("expected client %s to be disconnected", clientID)
+			}
+		}(clientID)
+	}
+	disconnects.Wait()
+	<-done
+
+	deadline := time.Now().Add(2 * time.Second)
+	for h.ClientCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if h.ClientCount() != 0 {
+		t.Fatal("forced disconnect did not complete during broadcast")
+	}
+}
+
+func TestHubSlowWriterDoesNotBlockBroadcastDuringDisconnect(t *testing.T) {
+	h := New("slow-writer")
+	listener := &writeGateListener{accepted: make(chan *writeGateConn, 1)}
+	server := httptest.NewUnstartedServer(h)
+	listener.Listener = server.Listener
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	serverConn := <-listener.accepted
+	defer serverConn.releaseWrites()
+	welcome := readUntilEvent(t, conn, "__welcome")
+	var identity struct {
+		ClientID string `json:"clientId"`
+	}
+	if err := json.Unmarshal(welcome.Data, &identity); err != nil {
+		t.Fatal(err)
+	}
+
+	serverConn.blockWrites()
+	h.Send(identity.ClientID, "blocked", strings.Repeat("x", 1024))
+	select {
+	case <-serverConn.entered:
+	case <-time.After(time.Second):
+		t.Fatal("write pump did not enter the deterministic transport gate")
+	}
+
+	disconnected := make(chan bool, 1)
+	go func() { disconnected <- h.Disconnect(identity.ClientID, "replaced") }()
+	select {
+	case <-disconnected:
+		t.Fatal("Disconnect returned while its close control was gated behind the normal writer")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	broadcast := make(chan struct{})
+	go func() {
+		h.Broadcast("state", map[string]int{"sequence": 1})
+		close(broadcast)
+	}()
+	select {
+	case <-broadcast:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("slow writer or pending Disconnect blocked hub broadcast")
+	}
+
+	serverConn.releaseWrites()
+	select {
+	case ok := <-disconnected:
+		if !ok {
+			t.Fatal("connected client was not disconnected")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Disconnect did not finish after releasing the transport")
 	}
 }
 
@@ -449,4 +630,138 @@ func TestHubBroadcast(t *testing.T) {
 	mu.Unlock()
 
 	t.Logf("Broadcast test passed: 3 clients, ping/pong")
+}
+
+// TestHubHandlerPanicRecovers proves the recover boundary in invokeHandler:
+// a handler that panics must not crash the server — the panicking client's
+// connection keeps working, a second unrelated client keeps working, and the
+// panic reaches the log. Run this test against a build that reverts the
+// invokeHandler wrapper and the whole `go test` process dies instead of
+// failing the assertions below.
+func TestHubHandlerPanicRecovers(t *testing.T) {
+	h := New("panic-recovery")
+
+	var pongs int32
+	var mu sync.Mutex
+	h.On("boom", func(ctx *Context) {
+		panic("deliberate handler panic for TestHubHandlerPanicRecovers")
+	})
+	h.On("ping", func(ctx *Context) {
+		mu.Lock()
+		pongs++
+		mu.Unlock()
+		ctx.Client.trySend(mustMarshalMessage("pong", nil))
+	})
+
+	// log.SetOutput redirects the package-global logger, and a prior
+	// subtest's server.Close() does not block until its clients'
+	// readPump/writePump goroutines actually exit (net/http.Server.Close
+	// closes the listener but explicitly does not wait for background
+	// goroutines) — so a straggler from an earlier subtest, or this
+	// test's own bystander client logging its own join/disconnect, can
+	// still call log.Printf while this test reads the buffer below. A
+	// bare bytes.Buffer has no locking, so that's a real, race-detector-
+	// visible data race, not just a hypothetical one — this exact
+	// scenario failed go-race-tests in CI before syncLogBuffer existed.
+	// The mutex serializes every writer (mine and any straggler's), and
+	// the strings.Contains assertions below only look for text unique to
+	// this test's own panic, so stray unrelated log lines can't produce
+	// a false pass.
+	logBuf := &syncLogBuffer{}
+	prevOutput := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(logBuf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOutput)
+		log.SetFlags(prevFlags)
+	})
+
+	server := httptest.NewServer(h)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	// The client that triggers the panic.
+	panicker, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial panicker: %v", err)
+	}
+	defer panicker.Close()
+	readUntilEvent(t, panicker, "__welcome")
+
+	// A second, unrelated client that must keep working after the panic.
+	bystander, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial bystander: %v", err)
+	}
+	defer bystander.Close()
+	readUntilEvent(t, bystander, "__welcome")
+
+	if h.ClientCount() != 2 {
+		t.Fatalf("expected 2 clients before the panic, got %d", h.ClientCount())
+	}
+
+	panicker.WriteJSON(Message{Event: "boom"})
+	time.Sleep(100 * time.Millisecond)
+
+	// The panicking handler must not have taken its own connection down:
+	// the same socket still answers a later, unrelated event.
+	panicker.WriteJSON(Message{Event: "ping"})
+	pong := readUntilEvent(t, panicker, "pong")
+	if pong.Event != "pong" {
+		t.Fatalf("expected pong on the panicker's own connection after recovery, got %+v", pong)
+	}
+
+	// The bystander's connection, and the hub as a whole, must still work.
+	bystander.WriteJSON(Message{Event: "ping"})
+	if pong := readUntilEvent(t, bystander, "pong"); pong.Event != "pong" {
+		t.Fatalf("expected pong on the bystander connection, got %+v", pong)
+	}
+
+	mu.Lock()
+	if pongs != 2 {
+		t.Fatalf("expected 2 ping handler calls after the panic, got %d", pongs)
+	}
+	mu.Unlock()
+
+	if h.ClientCount() != 2 {
+		t.Fatalf("expected both clients still connected after the panic, got %d", h.ClientCount())
+	}
+
+	if !strings.Contains(logBuf.String(), "recovered panic") {
+		t.Fatalf("expected the panic to be logged, got log output: %q", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "deliberate handler panic for TestHubHandlerPanicRecovers") {
+		t.Fatalf("expected the panic message in the log, got: %q", logBuf.String())
+	}
+}
+
+func mustMarshalMessage(event string, data any) []byte {
+	msg, _ := json.Marshal(Message{Event: event, Data: mustMarshal(data)})
+	return msg
+}
+
+// syncLogBuffer is a mutex-guarded io.Writer + String() sink for tests that
+// redirect the package-global log output (log.SetOutput). The global
+// logger has writers this package does not control — a straggler
+// goroutine from an earlier subtest's not-yet-exited readPump/writePump
+// (net/http.Server.Close does not wait for them), or a concurrent client
+// in the same test — so a plain bytes.Buffer read from the test goroutine
+// races with any of those writes. Every access here goes through the same
+// mutex, so it stays race-free regardless of who else writes.
+type syncLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

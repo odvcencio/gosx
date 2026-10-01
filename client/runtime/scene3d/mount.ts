@@ -16,6 +16,10 @@
     }
 
     const props = ctx.props || {};
+    if (sceneWalkEnabled(props)) {
+      await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -41,7 +45,7 @@
     await settleSceneIBLFeature(props);
     if (!scene3DFactoryCurrent()) return {};
     const sceneState = createSceneState(props, capability);
-    // Allocate model texture variants while state remains private.
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
     await settlePreferredWebGPUBackend(props, capability);
     if (!scene3DFactoryCurrent()) return {};
@@ -62,6 +66,7 @@
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
+    sceneState._crowdWebGLRequested = sceneForcesWebGL(props) || sceneRequiresWebGL(props);
     // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
@@ -348,6 +353,33 @@
     }
 
     let canvas = createSceneMountCanvas();
+    // Submit the two measured cold-start programs on the final canvas/context
+    // while the initial GLB hydration above continues. Do this before attaching
+    // mount layers so a superseded factory has only private state to release.
+    const initialShaderPreparation = await prepareSceneInitialWebGLRenderer(
+      canvas,
+      props,
+      capability,
+      sceneState,
+      scene3DFactoryOwned,
+    );
+    if (!scene3DFactoryOwned()) {
+      discardSceneInitialWebGLRenderer(initialShaderPreparation);
+      invalidateSceneModelHydration(sceneState);
+      settleSceneModelTextureVariantScope(
+        sceneState._modelTextureVariantScope,
+        sceneModelTextureVariantContextForRenderer(null),
+      );
+      if (sceneAnimationToggle && sceneAnimationToggleBound &&
+          typeof sceneAnimationToggle.removeEventListener === "function") {
+        sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
+      }
+      if (sceneAnimationToggle && sceneAnimationToggle.__gosxScene3DOwner === sceneMountOwner) {
+        delete sceneAnimationToggle.__gosxScene3DOwner;
+      }
+      if (mount.__gosxScene3DOwner === sceneMountOwner) delete mount.__gosxScene3DOwner;
+      return {};
+    }
     mount.appendChild(canvas);
     scenePublishWaterShaderSourcesToMount(mount, canvas, mountedWaterShaderSources);
     setAttrValue(mount, "data-gosx-scene3d-water-frame-seq",
@@ -358,7 +390,9 @@
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute(sceneAttr("label-layer"), "true");
     labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.pointerEvents = "none";
     mount.appendChild(labelLayer);
+    const sceneFocusProxies = setupSceneNodeFocusProxies(mount);
     const statsOverlay = createSceneStatsOverlay(mount, sceneBool(props.stats, false));
     let inspectorOverlay = null;
 
@@ -383,7 +417,16 @@
     let viewport = applySceneViewport(mount, canvas, labelLayer, sceneViewportFromMount(mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
     scenePrimeAdaptiveQuality(adaptiveQuality, viewport, mount, sceneState);
 
-    const initialRenderer = createSceneRenderer(canvas, props, capability);
+    let initialRenderer = null;
+    try {
+      initialRenderer = createSceneRenderer(canvas, props, capability);
+    } catch (error) {
+      discardSceneInitialWebGLRenderer(initialShaderPreparation);
+      console.warn("[gosx] Scene3D initial renderer creation failed:", error && error.message ? error.message : error);
+    }
+    if (!initialRenderer || !initialRenderer.renderer || initialRenderer.renderer.type !== "webgl-pbr") {
+      discardSceneInitialWebGLRenderer(initialShaderPreparation);
+    }
     if (!initialRenderer || !initialRenderer.renderer) {
       // Fence model hydration before returning the unsupported handle so a late
       // asset can only finish as stale and release its staged resources.
@@ -396,7 +439,7 @@
       console.warn("[gosx] Scene3D could not acquire a renderer");
       const unsupportedReason = initialRenderer && initialRenderer.unsupportedReason
         ? initialRenderer.unsupportedReason
-        : (sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable");
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ : (sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable");
       applySceneRendererState(mount, { kind: "unsupported" }, unsupportedReason);
       publishSceneWaterRendererState(mount, sceneState, null, unsupportedReason);
       publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
@@ -407,6 +450,7 @@
       if (labelLayer.parentNode === mount) {
         mount.removeChild(labelLayer);
       }
+      disposeSceneNodeFocusProxies(sceneFocusProxies);
       if (statsOverlay) {
         statsOverlay.dispose();
       }
@@ -434,6 +478,7 @@
       canvas.appendChild(sentinelLayer);
     }
     let renderer = initialRenderer.renderer;
+    sceneState._crowdRenderer = renderer;
     settleSceneModelTextureVariantScope(
       sceneState._modelTextureVariantScope,
       sceneModelTextureVariantContextForRenderer(renderer)
@@ -534,7 +579,7 @@
         if (sceneNodeSentinels.has(id)) {
           return;
         }
-        const sentinel = document.createElement("div");
+        /* @ts-expect-error TS2345 -- next is a Set<unknown> by default; every ID collectSceneNodeSentinelIDs adds is actually a string */ const sentinel = document.createElement("div");
         sentinel.setAttribute("data-gosx-scene-node", id);
         sentinel.setAttribute("aria-hidden", "true");
         sentinel.style.position = "absolute";
@@ -585,13 +630,16 @@
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
         renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+        syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
         renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       });
     });
 
-    let frameHandle = null;
+    let frameHandle = 0;
     let renderHandle = null;
     let initHandle = null;
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler; const sceneFrameRegistration = motionScheduler && typeof motionScheduler.registerScene === "function" ? motionScheduler.registerScene(runSceneFrame) : null;
+    let detachMotionScene = function() {};
     let initPending = true;
     let initReason = "";
     let readySent = false;
@@ -669,14 +717,14 @@
 
     function sceneRenderLoopSnapshot(reason) {
       const animation = sceneAnimationState();
-      let active = frameHandle != null || renderHandle != null;
+      let active = frameHandle !== 0 || renderHandle != null;
       let loopReason = reason || lastRenderLoopReason || animation.reason || "unknown";
       if (!sceneCanRender()) {
         active = false;
         loopReason = lifecycle.pageVisible ? "offscreen" : "page-hidden";
       } else if (renderHandle != null) {
         loopReason = lastRenderReason || loopReason || "scheduled-render";
-      } else if (frameHandle != null) {
+      } else if (frameHandle !== 0) {
         loopReason = animation.reason || loopReason || "animation";
       } else if (!animation.wants) {
         loopReason = animation.reason || "static";
@@ -686,7 +734,7 @@
         wantsAnimation: animation.wants,
         reason: loopReason,
         scheduled: renderHandle != null,
-        animationFrame: frameHandle != null,
+        animationFrame: frameHandle !== 0,
       };
     }
 
@@ -708,7 +756,7 @@
       };
     }
 
-    function publishSceneRenderWatchdogState(reason, stalledFor) {
+    /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function publishSceneRenderWatchdogState(reason, stalledFor) {
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog", sceneWebGLFallbackOwner === false ? "terminal" : (reason ? "recovering" : "ok"));
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
       setAttrValue(mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
@@ -737,8 +785,8 @@
       return "";
     }
 
-    function terminalSceneWebGPURecovery(reason) {
-      sceneWebGLFallbackOwner = false;
+    /* @ts-expect-error TS2322 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function terminalSceneWebGPURecovery(reason) {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneWebGLFallbackOwner = false;
       applySceneRendererState(mount, { kind: "unsupported" }, sceneDebugAttr(mount, sceneAttr("renderer-fallback")) || reason);
       setAttrValue(mount, readyAttr, "false");
       publishSceneRenderWatchdogState(reason, 0);
@@ -790,7 +838,7 @@
           nextRenderer.dispose();
         }
       }
-      if (nativeOnly) {
+      /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (nativeOnly) {
         if (sceneWebGLFallbackOwner === false) publishSceneRenderWatchdogState("webgpu-device-lost", 0);
         return false;
       }
@@ -868,11 +916,11 @@
       if (!reason) {
         return;
       }
-      if (reason === "webgpu-device-lost") {
-        if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
+      /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (reason === "webgpu-device-lost") {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
         recoverSceneWebGPURenderer(reason, 0, true);
         return;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
     }
 
@@ -1001,7 +1049,7 @@
       if (renderer.kind !== "webgpu") {
         checkSceneWebGLLossRecovery();
         return;
-      }
+      /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ }
       if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
       const animation = sceneAnimationState();
       if (!animation.wants || !sceneCanRender()) {
@@ -1010,7 +1058,7 @@
         renderWatchdogLastAdvanceAt = 0;
         publishSceneRenderWatchdogState("", 0);
         return;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       const now = sceneFrameNowMS();
       // A hidden tab stalls requestAnimationFrame BY DESIGN, and the interval
       // that drives this check is itself throttled while hidden. Counting
@@ -1033,7 +1081,7 @@
       const progress = readSceneWebGPUProgress();
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const failureReason = rendererReportsWebGPUFailure(diagnostics);
-      if (failureReason) {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (failureReason) {
         recoverSceneWebGPURenderer(failureReason, 0, true);
         return;
       }
@@ -1059,7 +1107,7 @@
         return;
       }
       const reason = progress.seq > 0 || progress.at > 0 ? "webgpu-render-stall" : "webgpu-render-not-started";
-      const forceFallback = stalledFor >= SCENE_RENDER_FALLBACK_STALL_MS;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const forceFallback = stalledFor >= SCENE_RENDER_FALLBACK_STALL_MS;
       if (recoverSceneWebGPURenderer(reason, stalledFor, forceFallback)) {
         renderWatchdogLastAdvanceAt = now;
       }
@@ -1068,7 +1116,7 @@
     function startSceneRenderWatchdog() {
       if (renderWatchdogTimer != null || typeof setInterval !== "function") {
         return;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       const now = sceneFrameNowMS();
       const progress = readSceneWebGPUProgress();
       renderWatchdogLastSeq = progress.seq;
@@ -1307,6 +1355,40 @@
     // explicitly schedules a refresh.
     let viewportDirty = true;
     let lastAnimationFrameAt = 0;
+    let animationIntervalMS = 0;
+
+    // Adaptive frame pacing ("vsync-divisor", opt-in via props.framePacing).
+    // See the sceneFramePacing* pure helpers defined after this factory
+    // closure for the actual decision math; everything here is mutable
+    // per-mount state plus the glue that feeds real rAF ticks and render
+    // costs into them. framePacingEnabled is resolved once at mount time
+    // from the authored prop and never changes for this mount's lifetime,
+    // so a scene that never sets the prop pays one string comparison and
+    // then never touches any of the rest -- scheduleNextAnimationFrame's
+    // default frame-cap gate below handles the clock phase.
+    const framePacingMode = typeof (props && props.framePacing) === "string" ? props.framePacing.trim() : "";
+    const framePacingEnabled = framePacingMode === "vsync-divisor";
+    let framePacingTick1 = 0;
+    let framePacingTick2 = 0;
+    let framePacingTick3 = 0;
+    let framePacingVsyncMS = 0;
+    let framePacingCostMS = 0;
+    let framePacingActiveK = 1;
+    let framePacingPendingK = 1;
+    let framePacingPendingStreak = 0;
+    let framePacingTicksSinceRender = 0;
+
+    // publishSceneFramePacingState mirrors the governor's own state onto the
+    // mount as data-gosx-scene3d-frame-pacing* attributes -- the QA/telemetry
+    // surface window.__gosx_scene3d_telemetry reads (see mount-telemetry.ts).
+    // A disabled mount (the default) never calls this, so it never gains
+    // these attributes.
+    function publishSceneFramePacingState() {
+      setAttrValue(mount, sceneAttr("frame-pacing"), framePacingMode);
+      setAttrValue(mount, sceneAttr("frame-pacing-k"), String(framePacingActiveK));
+      setAttrValue(mount, sceneAttr("frame-pacing-vsync-ms"), framePacingVsyncMS > 0 ? framePacingVsyncMS.toFixed(2) : "");
+      setAttrValue(mount, sceneAttr("frame-pacing-cost-ms"), framePacingCostMS > 0 ? framePacingCostMS.toFixed(2) : "");
+    }
 
     function sceneAnimationFrameIntervalMS() {
       var interval = sceneNumber(props && props.frameIntervalMS, 0);
@@ -1319,6 +1401,22 @@
           interval = 1000 / Math.min(240, Math.max(1, fps));
         }
       }
+      // Scroll-driven camera scenes need to track the display while input is
+      // active even when their idle animation is intentionally capped (for
+      // example, the galaxy runs at 30fps between interactions). The scroll
+      // cadence is opt-in so existing scenes retain their authored budget;
+      // after the runtime's short active-input window expires, the normal
+      // interval is restored automatically. This keeps the GPU quiet at rest
+      // without letting a wheel/trackpad outrun the camera between frames.
+      var scrollCamera = sceneState && sceneState._scrollCamera;
+      var scrollFrameRate = sceneNumber(props && props.scrollFrameRate, 0);
+      var activeInputUntil = sceneNumber(scrollCamera && scrollCamera._activeInputUntil, 0);
+      if (scrollFrameRate > 0 && activeInputUntil >= sceneNowMilliseconds()) {
+        var scrollInterval = 1000 / Math.min(240, Math.max(1, scrollFrameRate));
+        if (!(interval > 0) || scrollInterval < interval) {
+          interval = scrollInterval;
+        }
+      }
       return interval > 0 ? Math.max(1, interval) : 0;
     }
 
@@ -1326,25 +1424,68 @@
     // promptly; the continuous chain stays single-owner and honors maxFrameRate.
     function scheduleNextAnimationFrame() {
       if (disposed) return;
-      if (frameHandle != null) return;
       const animation = sceneAnimationState();
-      if (!animation.wants || !sceneCanRender()) {
-        applySceneRenderLoopState(animation.reason);
-        return;
-      }
-      frameHandle = engineFrame(function(now) {
-        frameHandle = null;
-        var interval = sceneAnimationFrameIntervalMS();
-        if (interval > 0 && lastAnimationFrameAt > 0 && typeof now === "number" && now - lastAnimationFrameAt < interval - 0.75) {
-          scheduleNextAnimationFrame();
+      if (!animation.wants || !sceneCanRender()) { if (sceneFrameRegistration) sceneFrameRegistration.setActive(false); if (frameHandle === -1) frameHandle = 0; applySceneRenderLoopState(animation.reason); return; }
+      if (frameHandle !== 0) return;
+      if (sceneFrameRegistration) { frameHandle = -1; sceneFrameRegistration.setActive(true); applySceneRenderLoopState(animation.reason); return; }
+      frameHandle = engineFrame(runSceneFrame);
+      applySceneRenderLoopState(animation.reason);
+    }
+
+    function runSceneFrame() { return sceneRunFrameGuard(runSceneFrameInner, arguments, function() { return frameHandle === -1; }, function() { frameHandle = 0; }); }
+    function runSceneFrameInner() {
+        const now = motionScheduler && typeof motionScheduler.now === "function" ? motionScheduler.now() : arguments[0];
+        if (frameHandle !== -1) frameHandle = 0;
+        const scheduledRender = renderHandle === -1;
+        if (scheduledRender) renderHandle = null;
+        if (disposed) return;
+        const animation = sceneAnimationState();
+        if (initPending || (!animation.wants && !scheduledRender) || !sceneCanRender()) { if (sceneFrameRegistration) sceneFrameRegistration.setActive(false); if (frameHandle === -1) frameHandle = 0; applySceneRenderLoopState(animation.reason); return; }
+        if (scheduledRender) { renderFrame(now, lastRenderReason || "refresh"); return; }
+        if (animation.wants && framePacingEnabled) {
+          var rawTickDeltaMS = lastAnimationFrameAt > 0 && typeof now === "number" ? Math.max(0, now - lastAnimationFrameAt) : 0;
+          if (typeof now === "number") {
+            lastAnimationFrameAt = now;
+          }
+          framePacingTick3 = framePacingTick2;
+          framePacingTick2 = framePacingTick1;
+          framePacingTick1 = rawTickDeltaMS;
+          var vsyncSampleMS = sceneFramePacingMedianOf3(framePacingTick1, framePacingTick2, framePacingTick3);
+          var advanced = sceneFramePacingAdvanceOnTick(vsyncSampleMS, framePacingVsyncMS, framePacingCostMS, framePacingActiveK, framePacingPendingK, framePacingPendingStreak, framePacingTicksSinceRender, sceneAnimationFrameIntervalMS());
+          framePacingVsyncMS = advanced.vsyncEstimateMS;
+          framePacingActiveK = advanced.activeK;
+          framePacingPendingK = advanced.pendingK;
+          framePacingPendingStreak = advanced.pendingStreak;
+          framePacingTicksSinceRender = advanced.ticksSinceRender;
+          publishSceneFramePacingState();
+          if (!advanced.shouldRender) {
+            scheduleNextAnimationFrame();
+            return;
+          }
+          var framePacingRenderStartMS = typeof performance !== "undefined" && performance.now ? performance.now() : now;
+          renderFrame(now, "frame-pacing");
+          var framePacingRenderEndMS = typeof performance !== "undefined" && performance.now ? performance.now() : framePacingRenderStartMS;
+          framePacingCostMS = sceneFramePacingBlendCost(framePacingCostMS, Math.max(0, framePacingRenderEndMS - framePacingRenderStartMS));
           return;
         }
-        if (typeof now === "number") {
-          lastAnimationFrameAt = now;
+        if (animation.wants) {
+          var interval = sceneAnimationFrameIntervalMS();
+          // Keep the fractional display tick after a capped frame. Resetting
+          // the clock to `now` turns a 60 FPS cap on a 100 Hz display into 50 FPS.
+          // A changed cap starts a new phase; it must not inherit old time debt.
+          var gate = sceneAnimationFrameGate(now, lastAnimationFrameAt, interval, animationIntervalMS);
+          animationIntervalMS = interval;
+          if (!gate.shouldRender) {
+            scheduleNextAnimationFrame();
+            return;
+          }
+          if (typeof now === "number") {
+            lastAnimationFrameAt = gate.atMS;
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
+          renderFrame(now);
+          return;
         }
-        renderFrame(now);
-      });
-      applySceneRenderLoopState(animation.reason);
+        renderFrame(now, lastRenderReason || "refresh");
     }
 
 	    let sceneRendererRecentlySwapped = false;
@@ -1361,13 +1502,14 @@
 	      }
       const previous = renderer;
       renderer = nextRenderer;
+      sceneState._crowdRenderer = renderer;
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
-      publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
       applySceneRendererState(mount, renderer, renderer.kind === "webgpu" ? "" : fallbackReason);
       publishSceneWaterRendererState(mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
-      renderWatchdogLastAt = 0;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ renderWatchdogLastAt = 0;
       renderWatchdogLastAdvanceAt = sceneFrameNowMS();
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
@@ -1506,7 +1648,7 @@
         return false;
       }
       const owner = sceneWebGLFallbackOwner = renderer;
-      gosxSceneEmit("info", "webgl-fallback-chunk-fetch", { reason: reason || "" });
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ gosxSceneEmit("info", "webgl-fallback-chunk-fetch", { reason: reason || "" });
       ensureWebGLFeatureLoaded().then(function() { settleSceneWebGLFallback(reason, owner); })
         .catch(function(error) { settleSceneWebGLFallback(reason, owner, error); });
       return true;
@@ -1589,7 +1731,7 @@
                 // Canvas2D and generic WebGL cannot represent the water
                 // simulation. Expose the backend failure instead of swapping
                 // to a renderer that would produce a plausible-but-blank demo.
-                const waterReason = "water-webgl2-unavailable";
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const waterReason = "water-webgl2-unavailable";
                 applySceneRendererState(mount, renderer, waterReason);
                 publishSceneWaterRendererState(mount, sceneState, null, waterReason);
                 gosxSceneEmit("warn", "water-renderer-fallback-unavailable", {
@@ -1601,12 +1743,12 @@
                 gosxSceneEmit("warn", "renderer-fallback-disallowed", {
                   reason: fallbackReason,
                   capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
-                });
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
                 applySceneRendererState(mount, renderer, fallbackReason || "no-capable-backend");
                 return false;
               }
               if (sceneRequiresWebGL(props)) {
-                gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
                 applySceneRendererState(mount, renderer, reason || "webgl-required");
                 return false;
               }
@@ -1614,7 +1756,7 @@
                 gosxSceneEmit("warn", "renderer-canvas-fallback-disallowed", {
                   reason: fallbackReason,
                   capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
-                });
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ });
                 applySceneRendererState(mount, renderer, fallbackReason || "no-capable-backend");
                 return false;
               }
@@ -1666,12 +1808,13 @@
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
-      renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(null));
+      sceneRenderWithTiming(renderer, latestBundle, viewport, createSceneRenderFrameMeta(null), renderTiming);
       recordSceneWaterFrame(mount, latestBundle);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       return true;
     }
@@ -1757,6 +1900,7 @@
         /* dispose errors on a lost context are expected */
       }
       renderer = sceneRendererLostStub;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneState._crowdRenderer = renderer;
       applySceneRendererState(mount, renderer, "webgl-context-lost");
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
@@ -1793,23 +1937,18 @@
       return lifecycle.pageVisible && lifecycle.inViewport;
     }
 
+    detachMotionScene = attachSceneMotionBridge.call(null, mount, sceneState, scheduleRender);
     function sceneWantsAnimation() {
       return sceneShouldAnimate() && sceneCanRender();
     }
 
     function cancelFrame() {
-      if (frameHandle != null) {
-        cancelEngineFrame(frameHandle);
-        frameHandle = null;
-      }
+      if (frameHandle !== 0) { if (frameHandle === -1 && sceneFrameRegistration) sceneFrameRegistration.setActive(false); else cancelEngineFrame(frameHandle); frameHandle = 0; }
       applySceneRenderLoopState("");
     }
 
     function cancelScheduledRender() {
-      if (renderHandle != null) {
-        cancelEngineFrame(renderHandle);
-        renderHandle = null;
-      }
+      if (renderHandle != null) { if (renderHandle === -1 && sceneFrameRegistration) sceneFrameRegistration.clearPending(); else cancelEngineFrame(renderHandle); renderHandle = null; }
       applySceneRenderLoopState("");
     }
 
@@ -1823,7 +1962,7 @@
       mount.__gosxScene3DScheduleCounts = counters;
     }
 
-    function scheduleRender(reason) {
+    /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function scheduleRender(reason) {
       if (disposed || sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) {
         return;
       }
@@ -1844,6 +1983,7 @@
         applySceneRenderLoopState(lastRenderReason);
         return;
       }
+      if (sceneFrameRegistration) { renderHandle = -1; sceneFrameRegistration.invalidate(); applySceneRenderLoopState(lastRenderReason); return; }
       // Defer the viewport read+write into the RAF callback. The old
       // code called sceneViewportFromMount / applySceneViewport
       // synchronously, which meant every scroll event forced two
@@ -2099,18 +2239,18 @@
 	        return viewport;
 	      }, function() {
 	        return latestBundle;
-	      }, function(detail) {
+	      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }, function(detail) {
 	        latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
 	        dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
 	        ctx.emit("scene-interaction", detail);
-	        if (mount && typeof mount.dispatchEvent === "function") {
+	        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (mount && typeof mount.dispatchEvent === "function") {
 	          const inputDetail = { kind: "pick", input: detail ? sceneDebugClone(detail, 4) : null };
 	          const inputEvent = typeof CustomEvent === "function"
 	            ? new CustomEvent("gosx:scene3d:input", { detail: inputDetail, bubbles: true })
 	            : { type: "gosx:scene3d:input", detail: inputDetail };
 	          mount.dispatchEvent(inputEvent);
 	        }
-	      });
+	      }, sceneFocusEnabled.call(null, sceneState), sceneFocusPointerHandler.call(null, sceneFocusProxies));
 	      // Gizmo drags own pointer-down near an active TransformControls form.
 	      // Registered before the camera controls so stopImmediatePropagation can
 	      // reserve the gesture; presses away from the gizmo fall through.
@@ -2150,7 +2290,7 @@
 	      // drags still fall through to camera navigation.
 	      sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
 	        return viewport;
-	      }, readSceneSourceCamera, scheduleRender);
+	      }, readSceneSourceCamera, scheduleRender, sceneState);
 	      dragHandle = sceneControlHandle.controller
 	        ? { dispose() {} }
 	        : setupSceneDragInteractions(canvas, props, function() {
@@ -2207,6 +2347,26 @@
     let lastAppliedGizmoMode = null;
     let applyingSignalGizmoMode = false;
 
+    // Per-mount memory of the last string this render loop itself wrote to
+    // a given `data-gosx-scene3d-*` telemetry attribute. setAttrValue()
+    // already skips the DOM write when the value is unchanged, but it still
+    // pays for an element.getAttribute() read and a string compare on every
+    // one of these calls, every frame, even while the scene is idle. Since
+    // this closure is the sole writer of the attribute names it uses this
+    // cache for, an in-memory compare is equivalent and cheaper. A remount
+    // creates a fresh closure (and therefore a fresh, empty cache), so the
+    // first publish after mount or remount always re-syncs the DOM.
+    const lastPublishedFrameAttrs = Object.create(null);
+
+    // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+    function publishSceneFrameAttr(name, value) {
+      if (lastPublishedFrameAttrs[name] === value) {
+        return;
+      }
+      lastPublishedFrameAttrs[name] = value;
+      setAttrValue(mount, name, value);
+    }
+
     // syncMountedSceneGizmoHelpers is the shared live-update pass for
     // TransformControls helper meshes (Mesh.GizmoHelper / gizmoHelper:true;
     // see scene.go's lowerTransformControls). Re-run after either the
@@ -2240,12 +2400,12 @@
         if (obj.gizmoHelper) {
           const visible = Boolean(target) && obj.gizmoFormMode === mode;
           const patch = { visible: visible };
-          if (anchor) {
-            patch.x = anchor.x;
-            patch.y = anchor.y;
-            patch.z = anchor.z;
-            patch.rotationX = anchor.rotationX;
-            patch.rotationY = anchor.rotationY;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (anchor) {
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.x = anchor.x;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.y = anchor.y;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.z = anchor.z;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.rotationX = anchor.rotationX;
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ patch.rotationY = anchor.rotationY;
             patch.rotationZ = anchor.rotationZ;
           }
           applySceneObjectPatch(sceneState, obj.id, patch);
@@ -2284,12 +2444,12 @@
       scheduleRender("signal-gizmo-mode");
     }
 
-	    function currentMountedSceneCamera(sourceCamera) {
-	      return sceneRenderCamera(sceneCurrentControlCamera(
-	        sceneControlHandle && sceneControlHandle.controller,
-	        sourceCamera || readSceneSourceCamera(),
-	        sceneState._scrollCamera,
-	      ));
+    function currentMountedSceneCamera(sourceCamera) {
+      return sceneRenderCamera(sceneViewportCamera(sceneCurrentControlCamera(
+        sceneControlHandle && sceneControlHandle.controller,
+        sourceCamera || readSceneSourceCamera(),
+        sceneState._scrollCamera,
+      ), sceneState.camera, viewport));
     }
 
     function currentMountedSceneOrbitState() {
@@ -2334,7 +2494,7 @@
     function applyMountedSceneCamera(camera, reason) {
       if (!sceneIsPlainObject(camera)) {
         return false;
-      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
 	      const currentCamera = currentMountedSceneCamera();
 	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
 	      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
@@ -2346,6 +2506,7 @@
 	      publishMountedSceneCamera(nextCamera, reason || "camera");
 	      return true;
 	    }
+    const renderTiming = { cpuSubmitMS: 0, frameIntervalMS: 0, submitAtMS: 0 };
     function buildSceneDebugSnapshot(mode) {
       const rendererKind = renderer && renderer.kind ? renderer.kind : "";
       const rendererDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
@@ -2359,6 +2520,7 @@
         engineID: String(ctx.id || ""),
         component: String(ctx.component || ""),
         renderer: rendererKind,
+        frameTiming: sceneRendererFrameTiming(renderer, renderTiming),
         fallbackReason: sceneDebugAttr(mount, sceneAttr("renderer-fallback")),
         ready: sceneDebugAttr(mount, readyAttr) === "true",
         active: sceneDebugAttr(mount, sceneAttr("active")) !== "false",
@@ -2374,11 +2536,11 @@
         diagnostics: sceneDebugDiagnostics(mount, rendererKind, rendererDiagnostics),
         lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
       };
-      if (mode !== "summary") {
-        snapshot.camera = currentMountedSceneCamera();
-        snapshot.gpuResources = sceneDebugGPUResources(mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
-        snapshot.webgpuStats = sceneDebugClone(mount && mount.__gosxScene3DWebGPUStats, 3);
-        snapshot.waterShaderSources = { sceneState: [], bundle: [] };
+      /* @ts-expect-error TS2339, TS2554 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files); this call omits trailing arguments the JS caller has always been able to omit */ if (mode !== "summary") {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ snapshot.camera = currentMountedSceneCamera();
+        /* @ts-expect-error TS2339, TS2554 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files); this call omits trailing arguments the JS caller has always been able to omit */ snapshot.gpuResources = sceneDebugGPUResources(mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ snapshot.webgpuStats = sceneDebugClone(mount && mount.__gosxScene3DWebGPUStats, 3);
+        /* @ts-expect-error TS2339, TS2554 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files); this call omits trailing arguments the JS caller has always been able to omit */ snapshot.waterShaderSources = { sceneState: [], bundle: [] };
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
       }
       return snapshot;
@@ -2544,7 +2706,7 @@
     // Viewport observer fires on canvas/mount resize. Mark dirty so
     // renderFrame re-measures the rect on the next tick — this is the
     // one place we genuinely need a fresh getBoundingClientRect.
-    const releaseViewportObserver = observeSceneViewport(mount, function(reason) {
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const releaseViewportObserver = observeSceneViewport(mount, function(reason) {
       sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scheduleRenderWithViewport(reason);
     });
@@ -2559,10 +2721,10 @@
       if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
         fallbackSceneRenderer(desiredFallback || "environment-constrained");
       } else if (renderer && renderer.kind !== "webgl" && (webglPreference === "prefer" || webglPreference === "force")) {
-        if (!restoreSceneWebGLRenderer("")) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!restoreSceneWebGLRenderer("")) {
           applySceneRendererState(mount, renderer, desiredFallback);
         }
-      } else {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
         applySceneRendererState(mount, renderer, desiredFallback);
       }
       scheduleRender(reason || "capability");
@@ -2798,7 +2960,7 @@
     // points path draws from state, not the bundle lists).
     function sceneFrameHasContent(bundle) {
       if (bundle) {
-        if (Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
+        if ((bundle.environment && bundle.environment.sky) || Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
           return true;
         }
         if ((Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0)
@@ -2867,7 +3029,7 @@
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
-      setAttrValue(mount, "data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
+      publishSceneFrameAttr("data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
       const modelAnimationDelta = lastModelAnimationTimeSeconds == null
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
@@ -2884,10 +3046,10 @@
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
           const effectiveBundle = sceneBundleWithCameraOverride(
-            runtimeBundle,
-            sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
+            applySceneMotionBindings(runtimeBundle, sceneState, sceneControlHandle),
+            sceneCurrentControlCamera(sceneControlController(sceneControlHandle), runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
-          effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources;
+          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
@@ -2896,10 +3058,11 @@
             return;
           }
           syncSceneNodeSentinels(effectiveBundle);
-          renderer.render(effectiveBundle, viewport, createSceneRenderFrameMeta(now));
+          sceneRenderWithTiming(renderer, effectiveBundle, viewport, createSceneRenderFrameMeta(now), renderTiming);
           recordSceneWaterFrame(mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+          syncSceneNodeFocusProxies.call(null, sceneFocusProxies, effectiveBundle, sceneState);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
@@ -2946,7 +3109,7 @@
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
-      const activeCamera = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
       const pointQualityGroups = sceneQualityLadderAdmittedGroups(adaptiveQuality);
       const pointBudgetScale = sceneQualityLadderPointBudgetScale(adaptiveQuality);
@@ -2958,7 +3121,7 @@
       const computeQualityScale = sceneQualityLadderComputeBudgetScale(adaptiveQuality);
       const computeQualitySourceInstances = sceneComputeParticlesInstanceCount(sceneState.computeParticles);
       const computeQualityActiveInstances = sceneComputeParticlesInstanceCount(qualityScaledComputeParticles);
-      latestBundle = createSceneRenderBundle(
+      latestBundle = applySceneMotionBindings(createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
@@ -2977,25 +3140,28 @@
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
-        { retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true) },
-      );
-      latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
-      sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
+        {
+          retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
+          rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
+          meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
+        },
+      ), sceneState, sceneControlHandle);
+      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
       // this frame (0 when no ladder is active or nothing was tagged). Same
       // filtered bundle.points array both the WebGPU (16a-scene-webgpu.js
       // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
       // backends draw from, so this single attribute covers both.
-      setAttrValue(mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
-      setAttrValue(mount, "data-gosx-scene3d-compute-quality-reduced-instances",
+      publishSceneFrameAttr("data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
+      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-reduced-instances",
         String(Math.max(0, computeQualitySourceInstances - computeQualityActiveInstances)));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
@@ -3008,11 +3174,12 @@
         return;
       }
       syncSceneNodeSentinels(latestBundle);
-      renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(now));
+      sceneRenderWithTiming(renderer, latestBundle, viewport, createSceneRenderFrameMeta(now), renderTiming);
       recordSceneWaterFrame(mount, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);
@@ -3083,11 +3250,11 @@
           || window.__gosx_telemetry_config.allowCanvasReadbackProbe !== true) {
         return;
       }
-      if (typeof window.requestAnimationFrame !== "function") {
+      if (typeof engineFrame !== "function") {
         return;
       }
-      window.requestAnimationFrame(function () {
-        window.requestAnimationFrame(function () {
+      engineFrame(function () {
+        engineFrame(function () {
           if (disposed || !renderer || renderer.kind !== "webgl") {
             return;
           }
@@ -3145,7 +3312,7 @@
           initHandle = null;
           if (disposed) return;
           initPending = false;
-          renderFrame(typeof now === "number" ? now : 0, initReason || "");
+          scheduleRender(initReason || "initial");
         });
       });
     }
@@ -3189,7 +3356,7 @@
     var visualViewportScrollHandler = null;
     if (sceneState._scrollCamera) {
       sceneState._scrollCamera._progress = 0;
-      sceneState._scrollCamera._smoothProgress = 0;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneState._scrollCamera._smoothProgress = 0;
       sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scrollHandler = function() {
         sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, false, true);
@@ -3233,7 +3400,7 @@
       if (result && typeof result.then === "function") {
         scheduleRender("progressive-models");
         return result.then(function(outcome) {
-          scheduleRender("progressive-models-hydrated");
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ scheduleRender("progressive-models-hydrated");
           return sceneModelHydrationOutcomeDetail(outcome) || outcome;
         });
       }
@@ -3305,16 +3472,36 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
-      getCamera() {
+      applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
+      // applyMotionFrame: the GSP3 sibling of applyPoseFrame above -- see
+      // command-runtime.ts's "GPU-driven crowd motion" section and
+      // sceneUpdateRigidInstanceMotion's doc comment (mount-webgl.ts) for
+      // the full design. A mount whose backend has no GPU-motion crowd path
+      // (see prepareCrowdMotionShaders) rejects every frame through the
+      // same "retained-motion-unavailable" path applyMountedMotionFrame
+      // reports, so a caller's options.fallbackPoseFrame/fallbackCommands
+      // still render that crowd.
+      // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+      applyMotionFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedMotionFrame(sceneState, batches, sceneUpdateRigidInstanceMotion, scheduleRender, handle); },
+      // applyInstanceStream: opt-in fast path; the bridge (instance-stream-
+      // bridge.ts) lazy-loads the chunk on first use, queues an in-flight
+      // frame, and reports a load failure -- never a silent drop.
+      applyInstanceStream(bytes) {
+        return window.__gosx_scene3d_apply_instance_stream_frame(sceneState, bytes, scheduleRender, mount);
+      },
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
         return currentMountedSceneCamera();
       },
       getTelemetry() {
-        return {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return {
           camera: currentMountedSceneCamera(),
           orbit: currentMountedSceneOrbitState(),
           selectionID: lastAppliedSelectionID || "",
           lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
           rendererStats: renderer && typeof renderer.getStats === "function" ? renderer.getStats() : null,
+          poseFrames: handle.__gosxPoseFrameStats || null,
+          // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+          motionFrames: handle.__gosxMotionFrameStats || null,
         };
       },
       setCamera(camera) {
@@ -3387,12 +3574,15 @@
           scheduleRender("update-props");
         }
       },
+      // @ts-ignore TS7005 -- the handle grows authority-specific methods at installation
+      resetCamera() { return sceneControlHandle && sceneControlHandle.reset ? (sceneControlHandle.reset(), true) : false; },
       dispose: disposeMountedScene,
     };
 
     function disposeMountedScene() {
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
       disposed = true;
+      if (sceneFrameRegistration) sceneFrameRegistration.dispose(); detachMotionScene(); detachMotionScene = function() {};
       if (sceneAnimationToggle) {
         if (typeof sceneAnimationToggle.removeEventListener === "function") {
           sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
@@ -3523,3 +3713,160 @@
     sceneState._modelOwner = null;
     return handle;
   });
+
+// Advance the capped animation clock by whole target intervals. The display
+// can present only on rAF ticks, so a non-divisor rate alternates tick counts.
+// Missed intervals are discarded in one step; there is no catch-up draw loop.
+// The tolerance matches the existing gate and absorbs sub-ms rAF jitter.
+function sceneAnimationFrameGate(now = 0, previous = 0, interval = 0, previousInterval = 0) {
+  var elapsed = now - previous;
+  if (!Number.isFinite(now) || !(interval > 0) || !(previous > 0) ||
+      interval !== previousInterval || elapsed < 0 || elapsed > interval * 4) {
+    return { shouldRender: true, atMS: Number.isFinite(now) ? now : 0 };
+  }
+  if (elapsed < interval - 0.75) return { shouldRender: false, atMS: previous };
+  return { shouldRender: true, atMS: previous + Math.floor((elapsed + 0.75) / interval) * interval };
+}
+
+// -----------------------------------------------------------------------
+// Adaptive frame pacing ("vsync-divisor") — pure decision helpers.
+// This opt-in policy chooses an integer display-tick divisor for even pacing.
+// The default cap above preserves time remainder for rates such as 60/100 Hz.
+// The divisor policy instead favors uniform presentation intervals and may
+// run below the cap. Render cost selects k in [1,4]; an authored cap can
+// require a larger divisor. The mount owns all mutable state.
+
+// sceneFramePacingMedianOf3 is a robust median of the three most recent
+// raw requestAnimationFrame tick deltas (milliseconds). A single implausible
+// delta -- a dropped frame, a GC pause, or the one big gap a hidden tab
+// produces on resume -- is outvoted by the other two, so it never skews the
+// vsync estimate the way a plain average would.
+function sceneFramePacingMedianOf3(a = 0, b = 0, c = 0) {
+  var lo = Math.min(a, b, c);
+  var hi = Math.max(a, b, c);
+  return a + b + c - lo - hi;
+}
+
+// sceneFramePacingBlendVsync folds one new median-sampled tick delta into
+// the running vsync-interval estimate. The estimate snaps directly to the
+// first real sample (no data yet), then blends slowly afterward so a
+// sustained refresh-rate change (a window dragged to a different monitor)
+// still visibly re-estimates within a handful of ticks while single-tick
+// jitter barely moves it. A non-positive sample (not enough history yet,
+// see sceneFramePacingMedianOf3) leaves the estimate unchanged.
+function sceneFramePacingBlendVsync(estimateMS = 0, sampleMS = 0) {
+  if (!(sampleMS > 0)) return estimateMS;
+  if (!(estimateMS > 0)) return sampleMS;
+  return estimateMS * 0.85 + sampleMS * 0.15;
+}
+
+// sceneFramePacingBlendCost folds one measured renderFrame wall-clock
+// sample (milliseconds) into the running render-cost estimate (an EWMA).
+// Only a caller that actually rendered this tick has a sample to offer.
+function sceneFramePacingBlendCost(estimateMS = 0, sampleMS = 0) {
+  if (!(sampleMS >= 0)) return estimateMS;
+  if (!(estimateMS > 0)) return sampleMS;
+  return estimateMS * 0.75 + sampleMS * 0.25;
+}
+
+// sceneFramePacingCandidateK returns the smallest integer k in [1,4] such
+// that k display intervals cover the measured render cost with a 10%
+// margin (k * vsyncMS >= costMS * 1.1). Either measurement missing (not
+// yet warmed up) returns 1: render every tick until real data exists.
+function sceneFramePacingCandidateK(vsyncMS = 0, costMS = 0) {
+  if (!(vsyncMS > 0) || !(costMS > 0)) return 1;
+  var budget = costMS * 1.1;
+  if (vsyncMS >= budget) return 1;
+  if (vsyncMS * 2 >= budget) return 2;
+  if (vsyncMS * 3 >= budget) return 3;
+  return 4;
+}
+
+// sceneFramePacingMinKForInterval returns the smallest k whose resulting
+// frame interval (k display ticks) is at or above minIntervalMS -- the
+// floor that keeps the paced rate at or below an authored
+// frameIntervalMS/MaxFrameRate/MaxFPS cap (see sceneAnimationFrameIntervalMS).
+// Returns 1 when no such cap applies.
+//
+// Unlike sceneFramePacingCandidateK, this is NOT bounded to 4: the [1,4]
+// range in the spec covers the render-cost decision, not an authored cap.
+// The pre-existing fixed-interval gate this feature replaces has no such
+// bound either (a low MaxFrameRate can skip arbitrarily many ticks), so
+// capping this floor at 4 would let a scene render FASTER than its
+// authored maximum -- for example MaxFrameRate 10 on a 60 Hz display
+// needs six ticks per render; a k=4 cap would render at 15 fps instead.
+function sceneFramePacingMinKForInterval(vsyncMS = 0, minIntervalMS = 0) {
+  if (!(vsyncMS > 0) || !(minIntervalMS > 0)) return 1;
+  return Math.max(1, Math.ceil(minIntervalMS / vsyncMS));
+}
+
+// sceneFramePacingObserveCandidate tracks how many consecutive ticks the
+// raw candidate k (see sceneFramePacingCandidateK/MinKForInterval) has held
+// the SAME value. Any change resets the streak to 1, so a candidate that
+// alternates near a boundary (for example 1/2/1/2...) never accumulates
+// enough streak to commit -- see sceneFramePacingCommitK.
+function sceneFramePacingObserveCandidate(pendingK = 1, pendingStreak = 0, candidateK = 1) {
+  if (candidateK === pendingK) {
+    return { pendingK: pendingK, pendingStreak: pendingStreak + 1 };
+  }
+  return { pendingK: candidateK, pendingStreak: 1 };
+}
+
+// sceneFramePacingCommitK is the hysteresis gate: the active k only moves
+// to a new candidate once that candidate has been the stable raw proposal
+// for commitStreak consecutive ticks (default 12, about a fifth of a
+// second at 60Hz). This is what keeps a cost estimate that hovers exactly
+// on a k boundary from visibly flapping the paced frame rate.
+function sceneFramePacingCommitK(activeK = 1, pendingK = 1, pendingStreak = 0, commitStreak = 12) {
+  if (pendingK === activeK) return activeK;
+  return pendingStreak >= commitStreak ? pendingK : activeK;
+}
+
+// sceneFramePacingObserveTickGate is the TICK COUNTER render gate: it
+// counts real rAF ticks since the last render and fires once that count
+// reaches the active k, then resets to zero. Because the comparison always
+// uses the CURRENT k, a k change taking effect mid-count self-corrects on
+// the very next tick instead of needing a manual reset.
+function sceneFramePacingObserveTickGate(ticksSinceRender = 0, activeK = 1) {
+  var next = ticksSinceRender + 1;
+  if (next >= activeK) {
+    return { shouldRender: true, ticksSinceRender: 0 };
+  }
+  return { shouldRender: false, ticksSinceRender: next };
+}
+
+// sceneFramePacingAdvanceOnTick composes the helpers above into the one
+// call scheduleNextAnimationFrame's rAF callback makes per tick. Every
+// argument is the governor's OWN state going in (see the framePacing*
+// closure variables); the caller destructures every field of the return
+// value back into its own state. vsyncSampleMS is this tick's raw delta
+// already reduced by sceneFramePacingMedianOf3; minIntervalMS is
+// sceneAnimationFrameIntervalMS()'s result (0 when the scene authored no
+// frameIntervalMS/MaxFrameRate/MaxFPS cap).
+function sceneFramePacingAdvanceOnTick(
+  vsyncSampleMS = 0,
+  vsyncEstimateMS = 0,
+  costEstimateMS = 0,
+  activeK = 1,
+  pendingK = 1,
+  pendingStreak = 0,
+  ticksSinceRender = 0,
+  minIntervalMS = 0,
+  commitStreak = 12
+) {
+  var nextVsyncEstimateMS = sceneFramePacingBlendVsync(vsyncEstimateMS, vsyncSampleMS);
+  var costCandidateK = sceneFramePacingCandidateK(nextVsyncEstimateMS, costEstimateMS);
+  var boundCandidateK = sceneFramePacingMinKForInterval(nextVsyncEstimateMS, minIntervalMS);
+  var rawCandidateK = Math.max(costCandidateK, boundCandidateK);
+  var observed = sceneFramePacingObserveCandidate(pendingK, pendingStreak, rawCandidateK);
+  var nextActiveK = sceneFramePacingCommitK(activeK, observed.pendingK, observed.pendingStreak, commitStreak);
+  var gate = sceneFramePacingObserveTickGate(ticksSinceRender, nextActiveK);
+  return {
+    vsyncEstimateMS: nextVsyncEstimateMS,
+    activeK: nextActiveK,
+    pendingK: observed.pendingK,
+    pendingStreak: observed.pendingStreak,
+    ticksSinceRender: gate.ticksSinceRender,
+    shouldRender: gate.shouldRender,
+  };
+}

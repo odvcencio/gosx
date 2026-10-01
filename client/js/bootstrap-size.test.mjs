@@ -597,7 +597,101 @@ const budgets = [
   // Measured: 1_584_206 / 431_882 / 347_007. This sub-0.1% drift stays inside
   // the governed tolerance, so the reviewed baseline intentionally does not
   // ratchet to the latest artifact byte count.
-  { file: "bootstrap.js", raw: 1_584_000, gzip: 431_500, brotli: 346_700 },
+  // v0.56.6: transactional rigid GLB membership, shared-appearance cohorts,
+  // bounded 48 MiB rigid residency, and the private retained-CSS record stamp
+  // measure 1_641_331 / 449_265 / 361_298. Only gzip exceeded its governed
+  // envelope; 432_916 keeps the exact reviewed hard limit at 449_300.
+  // Allocation-free fallback mesh attribute transforms measure
+  // 1_641_760 / 449_493 / 361_563. Only gzip exceeds the v0.56.6 envelope;
+  // 433_109 sets the minimum exact hard limit at 449_493.
+  // Immutable authored-shader world-bake reuse measures
+  // 1_644_810 / 450_272 / 362_067. Only gzip exceeds that envelope;
+  // 433_888 keeps the exact governed hard limit at 450_272.
+  // Typed world-mesh attribute builders measure 1_645_660 / 450_589 /
+  // 362_277. Only gzip exceeds that envelope; 434_205 keeps the exact
+  // governed hard limit at 450_589.
+  // The retained Scene3D pose-frame hook adds 241 raw bytes to the optional
+  // Scene3D feature and 69 gzip bytes to this legacy monolith. The decoder
+  // and validation live in the lazily fetched command chunk below.
+  // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+  // adds a tiny forwarding method to mount.ts's handle; the fast path itself
+  // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
+  // outside this monolith. Only gzip exceeds that envelope; 434_400 keeps
+  // narrow rounding headroom.
+  // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds a
+  // small loader IIFE to the same monolith, so the chunk it lazy-loads can
+  // ship outside this bundle instead of eagerly. Measured: 1_648_132 /
+  // 451_153 / 362_586. Only gzip exceeds the prior envelope; 435_200 keeps
+  // narrow rounding headroom.
+  // Bounding the pending-frame coalescing (per (mount, batch) instead of
+  // per frame) added a small header-parsing helper to the same loader IIFE.
+  // Measured: 1_649_209 / 451_571 / 362_775. Only gzip was within 13 bytes
+  // of the prior hard limit; 436_000 restores real headroom.
+  // Scroll-driven camera scenes now track the display cadence during active
+  // input (scene.Props.ScrollFrameRate), and camera proximity reaches Selena
+  // materials on both render paths. Measured: 1_649_935 / 452_098 / 363_101.
+  // Raw and brotli exceeded the prior hard limit; bumped raw 1_584_000 ->
+  // 1_584_500 and brotli 346_700 -> 346_800 for narrow rounding headroom.
+  // Gzip stays at 436_000: its hard limit already clears the new measurement.
+  // The computed-morph repeated-blend fix (prior-array plumbing plus a
+  // cross-renderer output-buffer staleness guard) measured 1_650_075 /
+  // 452_182 / 363_298. Raw and brotli exceeded the prior hard limit; bumped
+  // raw 1_584_500 -> 1_589_000, gzip 436_000 -> 438_000, and brotli 346_800
+  // -> 350_000 for headroom.
+  // Marking the point-sprite color/fog/alpha/size varyings @interpolate(flat)
+  // combines with the above on merge.
+  // glTF material-shading parity fixes (spec-default metallic/roughness,
+  // vec3 emissiveFactor, normal/occlusion factors, sRGB environment decode,
+  // roughness-LOD env sampling, single-application exposure, the optional
+  // rim term) plus the WebGPU material-uniform struct growth from 208 to
+  // 256 bytes combines with the above on merge.
+  // Custom per-vertex float BufferAttributes (Go scene.BufferAttribute
+  // lowering, WebGL2 Selena attribute binding, WebGPU custom vertex-buffer
+  // slots, the __proto__-safe normalized attribute map) combines with all
+  // three on this merge.
+  // Perspective spot shadows (WebGL and WebGPU one-map slots, fail-closed
+  // validation, retirement) combines with all of the above on this merge.
+  // Caps re-measured from the merged source below.
+  // Adaptive vsync-divisor frame pacing (opt-in scene.Props.FramePacing)
+  // adds the pacing governor and its telemetry to the same monolith, on
+  // top of glTF material-shading parity and the WebGPU material-uniform
+  // struct growth. Caps re-measured from the fully merged source below.
+  // The GPU-driven host and Elio kernels now ship inline after compute.ts.
+  // Measured: 1_714_299 / 470_983 / 378_710. Gzip target 453_200 -> 454_600,
+  // the smallest 100-byte step that clears the hard limit; raw and brotli stay.
+  // GPU frame timing, HDR post color and browser skies add to the monolith.
+  // Measured: 1_723_671 / 474_492 / 381_358. Targets raw 1_655_000 ->
+  // 1_658_200, gzip 454_600 -> 458_200 and brotli 364_200 -> 365_000, the
+  // smallest 100-byte steps that clear the hard limits.
+  // Scene3D's glTF material path now preserves authored emission factors.
+  // Measured: 1_726_029 / 475_444 / 381_598. Targets raw 1_658_200 ->
+  // 1_660_500, gzip 458_200 -> 459_100 and brotli 365_000 -> 365_300, the
+  // smallest 100-byte steps that clear the hard limits.
+  // Scene3D hub bindings add setup and disposal telemetry to the monolith.
+  // Measured: 1_729_670 / 476_378 / 382_315. Targets raw 1_660_500 ->
+  // 1_664_200, gzip 459_100 -> 460_000 and brotli 365_300 -> 366_000, the
+  // smallest 100-byte steps that clear the hard limits.
+  // The GPU-driven renderer seam adds culling, shadow, occlusion and telemetry.
+  // Measured: 1_731_259 / 476_950 / 382_656. Targets raw 1_664_200 ->
+  // 1_665_800, gzip 460_000 -> 460_600 and brotli 366_000 -> 366_300, the
+  // smallest 100-byte steps that clear the hard limits.
+  // Declarative code-copy controls add 1,276 raw, 368 gzip, and 436 Brotli
+  // bytes on the merged GPU-driven base. Measured: 1_732_535 / 477_318 /
+  // 383_092. Raise only the reviewed targets needed to retain the governed
+  // hard limit: raw 1_665_800 -> 1_667_100, gzip 460_600 -> 461_000, and
+  // Brotli 366_300 -> 366_800.
+  // Responsive Scene3D fill sizing adds 340 raw bytes. Measured after the fix:
+  // 1_732_875 raw. Raise the raw target by the smallest 100-byte step needed.
+  // The complete motion fix measures 1,772,143 / 489,381 / 392,878. Reviewed
+  // hard-limit headroom is 2,793 / 1,103 / 1,206 bytes.
+  // Walking adds a small control hook; shared sub-feature loading reduces raw
+  // and gzip. The legacy monolith measures 1_781_215 / 492_868 / 395_925;
+  // Brotli's changed dictionary exceeds the old hard cap by 141 bytes. Raise
+  // only that target by 200 bytes. Selective routes use the smaller base chunk.
+  // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+  // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
+  // exception under decision 0014).
+  { file: "bootstrap.js", raw: 1_722_102, gzip: 478_861, brotli: 381_317 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -673,7 +767,9 @@ const budgets = [
   // by the runtime chunk). Measured: 150_160 / 41_135 / 35_887.
   // v0.55.0 soft-navigation reconciliation and declarative link/form routing
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
-  { file: "bootstrap-runtime.js", raw: 156_500, gzip: 43_100, brotli: 37_600 },
+  // The complete motion fix measures 190,789 / 53,839 / 46,948. Reviewed
+  // hard-limit headroom is 1,991 / 1,076 / 1,037 bytes.
+  { file: "bootstrap-runtime.js", raw: 184_000, gzip: 52_300, brotli: 45_700 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -729,7 +825,9 @@ const budgets = [
   // gosx#217 review follow-up: same navigation.ts/regions.ts growth as
   // bootstrap-runtime.js above, carried by the lite chunk. Measured:
   // 113_659 / 30_609 / 27_146.
-  { file: "bootstrap-lite.js", raw: 113_900, gzip: 30_800, brotli: 27_400 },
+  // The complete motion fix measures 147,576 / 41,324 / 36,551. Reviewed
+  // hard-limit headroom is 1,944 / 1,096 / 1,039 bytes.
+  { file: "bootstrap-lite.js", raw: 142_900, gzip: 40_400, brotli: 35_800 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -951,7 +1049,17 @@ const budgets = [
   // raised with narrow rounding headroom; brotli cap unchanged.
   // Final rebuild removed dead activeShadowCount; measured 51554 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_750, gzip: 60_800, brotli: 51_600 },
+  // Instanced animated crowds add renderer-local pose textures, shared rigid
+  // geometry, conservative animated bounds, and a skinned shadow path. The
+  // v0.56.5 release build measures 235_455 / 65_712 / 55_866; retain narrow
+  // rounding headroom so later growth remains visible.
+  // GPU-driven crowd motion adds a second full color-pass and shadow-pass
+  // vertex shader (motion-key interpolation plus in-shader clip-table
+  // lookup), the clip-table/motion-record batching state, and the
+  // persistent-buffer upload path. The build with frame caching measures
+  // 251_292 / 70_024 / 59_410;
+  // retain narrow rounding headroom so later growth remains visible.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 70_100, brotli: 59_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1043,13 +1151,56 @@ const budgets = [
   // 547_457 / 151_409 / 125_421 raw/gzip/brotli after restoring the
   // pause-control guards. Raw remains within the existing ceiling; gzip
   // 151_200 -> 151_450. Brotli remains within the allocated 125_600 cap.
-  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_450, brotli: 125_600 },
+  // v0.56.6's transactional rigid membership, shared-appearance cohort path,
+  // 48 MiB bounded residency and private retained-CSS record stamp measure
+  // 577_910 / 160_859 / 133_219. Exact governed hard limits are
+  // 577_951 / 160_900 / 133_245.
+  // Allocation-free fallback mesh attribute transforms measure
+  // 578_318 / 160_967 / 133_423. Baselines below set exact minimum hard
+  // limits equal to those reviewed artifacts.
+  // Immutable authored-shader world-bake reuse measures
+  // 581_374 / 161_972 / 134_213. Baselines below set exact minimum hard
+  // limits equal to those reviewed artifacts.
+  // Typed world-mesh attribute builders measure 582_224 / 162_304 / 134_535.
+  // Baselines below set exact minimum hard limits equal to those artifacts.
+  // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+  // adds a tiny forwarding method to mount.ts's handle; the fast path itself
+  // ships in its own lazy bootstrap-feature-scene3d-instance-stream.js chunk,
+  // outside this base chunk. Narrow rounding headroom on raw and gzip; brotli
+  // fits the prior envelope.
+  // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds its
+  // loader IIFE here, in this base chunk, so the actual chunk it lazy-loads
+  // stays outside it. Measured: 584_696 / 162_859 / 134_858.
+  // Perspective spot shadows add the shared-PBR one-map slot, fail-closed
+  // validation, and depth padding to this base chunk. Measured:
+  // 587_941 / 164_203 / 135_919. Raw and gzip exceeded the prior hard limit;
+  // bumped raw 559_000 -> 564_000 and gzip 156_000 -> 159_500 for headroom.
+  // Merged with the computed-morph repeated-blend fix. Measured:
+  // 588_019 / 164_285 / 135_995. Brotli exceeded the prior hard limit by 20
+  // bytes; bumped 129_500 -> 130_000 for headroom.
+  // Custom per-vertex float BufferAttributes (Selena retained-geometry
+  // eligibility, WebGL2/WebGPU custom attribute binding) combines with the
+  // above on this merge. Caps re-measured from the merged source below.
+  // GPU-driven crowd motion adds motion-frame dispatch and telemetry. Frame
+  // pacing also adds its governor and telemetry. The build with frame
+  // caching measures 594_098 / 166_371 / 137_740.
+  // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 166_900, brotli: 137_850 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
   // an instanced mesh, and the island renderer advertises its URL only then.
   // Measured: 31_046 / 9_174 / 8_281.
-  { file: "bootstrap-feature-scene3d-compute.js", raw: 32_000, gzip: 9_500, brotli: 8_600 },
+  // The host caps instance-buffer growth at the binding limit. Measured:
+  // 61_176 / 17_826 / 16_072. Targets 61_100 / 17_800 / 16_100 ->
+  // 61_200 / 17_900 / 16_100, rounded up to the next 100 bytes.
+  // Opt-in grounded first-person controls, physics, accessible inputs and DOM
+  // overlays live in a separate lazy chunk. Measured 11_013 / 4_596 / 4_116;
+  // caps round up by at most 100 bytes. Sharing sub-feature loaders keeps the
+  // base Scene3D chunk below its previous raw, gzip and Brotli sizes, so these
+  // bytes are excluded from every existing first-load route budget.
+  { file: "bootstrap-feature-scene3d-walk.js", raw: 11_100, gzip: 4_600, brotli: 4_200 },
+  { file: "bootstrap-feature-scene3d-compute.js", raw: 61_200, gzip: 17_900, brotli: 16_100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount
   // fetches it before it builds the scene state, and only for a scene that
@@ -1058,7 +1209,17 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-decompress.js", raw: 9_500, gzip: 3_800, brotli: 3_300 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
+  // GSP2 decoding, validation, and retained pose application are loaded only
+  // for command users. The bounded per-target queue and async error telemetry
+  // measure 8_135 / 2_972 / 2_661 after generation.
+  // GSP3 (GPU-driven crowd motion) adds its own decoder, per-target queue,
+  // fallback-to-PoseFrame-then-JSON-commands chain, and retained-motion
+  // application, doubling this chunk: the two wire formats and their queues
+  // are independent, so nothing here is shared/deduplicated with GSP2's own
+  // copy of the same shape. Measured: 13_839 / 3_606 / 3_158; all three caps
+  // raised with narrow rounding headroom. The merged build measures
+  // 13_888 / 3_631 / 3_181.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 14_000, gzip: 3_700, brotli: 3_250 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
@@ -1270,7 +1431,15 @@ const budgets = [
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
   // next 100-byte boundary while compressed caps remain unchanged.
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_600, gzip: 4_000, brotli: 4_000 },
+  // v0.56.5 adds explicit animation name/time/loop commands and the shared
+  // crowd-pose runtime. Measured 13_925 / 5_491 / 4_911, with narrow rounding
+  // headroom.
+  // GPU-driven crowd motion adds the clip-table builder, the shader-mirror
+  // pose-rows/angle-lerp/interpolation-factor/TRS-compose functions, and the
+  // GSP3 record read/write helpers. Measured: 16_950 / 6_714 / 5_955; all
+  // three caps raised with narrow rounding headroom. The merged build
+  // measures 17_457 / 6_841 / 6_055.
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 17_550, gzip: 6_950, brotli: 6_150 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
@@ -1354,7 +1523,9 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
+  // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
+  // hard limit had only 10 bytes left; targets grow by the measured change.
+  { file: "bootstrap-feature-hubs.js", raw: 47_903, gzip: 14_843, brotli: 13_361 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -1486,11 +1657,13 @@ const routeBudgets = [
     // Measured selective total: 259_682 / 73_492 / 64_547, plus narrow
     // headroom on gzip/brotli too (both were within single-digit percent of
     // their prior caps already).
-    // v0.55.0 carries the same soft-navigation behavior without pulling in
-    // Scene3D. Measured: 265_883 / 75_486 / 66_333.
-    raw: 266_000,
-    gzip: 75_600,
-    brotli: 66_400,
+    // The complete motion fix measures 300,712 / 86,428 / 75,806 on this route.
+    // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    raw: 288_800,
+    gzip: 83_400,
+    brotli: 73_200,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1620,9 +1793,41 @@ const routeBudgets = [
     // v0.55.0 route audit: 1_245_867 / 333_157 / 281_573. The previous
     // baseline accidentally described a dual-backend-era payload; use rounded
     // current-route baselines and let the shared policy govern future growth.
-    raw: 1_250_000,
-    gzip: 335_000,
-    brotli: 282_000,
+    // GPU-driven instancing config carries the mode through scene state and
+    // both mount paths, after the instanced cache-owner fix. Measured:
+    // 1_305_322 / 351_407 / 296_071. Gzip target 335_000 -> 335_100 is the
+    // smallest 100-byte step that clears the hard limit.
+    // Imported glTF material factors add 973 gzip and 526 brotli bytes to
+    // this route. The merged route now measures 1_313_202 raw.
+    // Full-frame GPU timing adds 256 gzip bytes and 384 Brotli bytes after
+    // the G01 cache merge; HDR presentation adds 128 gzip bytes. The opt-in
+    // sky route measures 353_377 gzip / 297_877 Brotli bytes. Keep both the
+    // material and latest-main additions within the shared route budget.
+    // The GPU-driven renderer seam adds culling, shadow, occlusion and telemetry.
+    // Measured: 1_314_987 / 355_012 / 298_857. Targets raw 1_251_000 ->
+    // 1_252_500, gzip 338_200 -> 338_700 and brotli 284_500 -> 284_700, the
+    // smallest 100-byte steps that clear the hard limits.
+    // Declarative copy controls increase this route by 1,276 raw, 406 gzip,
+    // and 255 Brotli bytes. The merged route measures 1_316_263 / 355_418 /
+    // 299_112. Raise raw to 1_254_000, gzip to 339_100, and Brotli to 284_900.
+    // Responsive fill sizing measures this route at 1_316_603 raw and 355_507
+    // gzip. Raise gzip by the smallest 100-byte step needed; raw and Brotli
+    // remain within the existing main budgets.
+    // The complete motion fix measures 1,355,038 / 367,463 / 309,371 on this
+    // route. Raising gzip's target by 100 bytes leaves 1,247 / 1,121 / 1,219
+    // bytes of hard-limit headroom for raw, gzip, and Brotli.
+    // Curve signals and camera rails add the piecewise curve evaluator to the
+    // shared motion core. The route now measures 1_356_360 / 368_049 / 309_771,
+    // +1_322 raw / +586 gzip / +400 Brotli. Raise raw to 1_292_000; gzip and
+    // Brotli remain within their existing targets.
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_303_200,
+    gzip: 356_200,
+    brotli: 298_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1748,9 +1953,62 @@ const routeBudgets = [
     // 1_073_972 / 298_512 / 253_298. The reviewed baseline remains stable;
     // the shared warning/error policy absorbs this sub-0.2% implementation
     // drift without weakening the route-level gate.
-    raw: 1_073_500,
-    gzip: 298_200,
-    brotli: 253_100,
+    // v0.56.6's bounded rigid-membership/cohort path plus private retained-CSS
+    // record stamp measures 1_123_870 / 313_470 / 265_588 on this route. Only
+    // gzip exceeded its governed envelope; the exact hard limit is 313_500.
+    // Allocation-free fallback mesh attribute transforms measure
+    // 1_124_278 / 313_578 / 265_792. The compressed baselines below set the
+    // minimum exact hard limits to those reviewed artifacts; raw still fits.
+    // Immutable authored-shader world-bake reuse measures
+    // 1_127_334 / 314_583 / 266_582. The exact governed hard limits follow.
+    // Typed world-mesh attribute builders measure 1_128_184 / 314_915 /
+    // 266_904. The baselines below set the minimum hard limits for those
+    // reviewed route totals.
+    // Retained pose-frame mount hook adds 241 bytes; the binary decoder is
+    // deferred to bootstrap-feature-scene3d-command.js.
+    //
+    // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+    // adds a tiny forwarding method to mount.ts's handle -- carried by
+    // bootstrap-feature-scene3d.js on this route -- so every page pays a few
+    // bytes even though the fast path itself ships in its own lazy chunk.
+    // Narrow rounding headroom.
+    //
+    // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
+    // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
+    // carries. Measured: 1_130_656 / 315_470 / 267_227.
+    // Bounding the pending-frame coalescing added a small header-parsing
+    // helper to the same loader IIFE. Measured: 1_131_733 / 315_923 /
+    // 267_505. Gzip was within 127 bytes of the prior hard limit; 301_500
+    // restores real headroom.
+    // glTF material-shading parity fixes plus the WebGPU material-uniform
+    // struct growth (see the bootstrap.js note above) carried by
+    // bootstrap-feature-scene3d.js and bootstrap-feature-scene3d-webgl.js on
+    // this route. Measured: 1_134_981 / 316_709 / 268_296.
+    // Perspective spot shadows add the WebGL one-map slot, fail-closed
+    // validation, and retirement to bootstrap-feature-scene3d.js and
+    // bootstrap-feature-scene3d-webgl.js, both carried by this route.
+    // Measured: 1_134_321 / 317_007 / 268_471.
+    // Custom per-vertex float BufferAttributes add WebGL2 Selena attribute
+    // binding to bootstrap-feature-scene3d-webgl.js, carried by this route.
+    // All three combine on this merge; caps re-measured from the merged
+    // source below.
+    // The complete motion fix measures 1,204,868 / 339,499 / 286,726 on this
+    // route. Reviewed hard-limit headroom is 1,372 / 1,121 / 1,079 bytes.
+    // Curve signals and camera rails add the piecewise curve evaluator to the
+    // shared motion core: this route now measures 1_206_286 raw (+1_418). Raise
+    // raw to 1_149_000; gzip and Brotli remain within their existing targets.
+    // CSS compilation (cssCompiled bindings skipped when scroll timelines are
+    // supported) adds about 840 raw bytes to the shared motion core.
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    // The feature-path fix (keep every bootstrapFeature*Path, match only real
+    // Scene3D labels, never let a failed text-layout load stop the mounts) adds
+    // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
+    // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_160_200,
+    gzip: 328_400,
+    brotli: 277_295, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1879,9 +2137,52 @@ const routeBudgets = [
     // 331_014; only brotli exceeded, raised with narrow rounding headroom.
     // v0.55.0 navigation reconciliation is shared by the dual-backend route.
     // Measured: 1_465_069 / 393_405 / 332_750.
-    raw: 1_465_500,
-    gzip: 393_600,
-    brotli: 332_900,
+    // Immutable authored-shader world-bake reuse measures
+    // 1_520_168 / 410_167 / 346_528. Only gzip exceeds the existing governed
+    // envelope; 393_783 keeps its exact hard limit at 410_167.
+    // Typed world-mesh attribute builders measure 1_521_018 / 410_499 /
+    // 346_738. Only gzip exceeds that envelope; 394_115 keeps its exact hard
+    // limit at 410_499.
+    // The opt-in binary instance-transform fast path (scene.InstanceStreamFrame)
+    // adds a tiny forwarding method to mount.ts's handle, carried by
+    // bootstrap-feature-scene3d.js on this route. Measured:
+    // 1_521_189 / 410_555 / 346_843. Only gzip exceeds that envelope;
+    // 394_300 keeps narrow rounding headroom.
+    // The instance-stream lazy-load bridge (instance-stream-bridge.ts) adds
+    // its loader IIFE to bootstrap-feature-scene3d.js, which this route also
+    // carries. Measured: 1_523_490 / 411_054 / 347_173. Only gzip exceeds
+    // that envelope; 395_200 keeps narrow rounding headroom.
+    // Bounding the pending-frame coalescing added a small header-parsing
+    // helper to the same loader IIFE. Measured: 1_524_567 / 411_507 /
+    // 347_451. Gzip was within 77 bytes of the prior hard limit; 396_000
+    // restores real headroom.
+    // glTF material-shading parity fixes plus the WebGPU material-uniform
+    // struct growth (see the bootstrap.js note above), carried in full by
+    // this route since it loads both backends. Measured:
+    // 1_529_592 / 412_738 / 348_560. Only gzip exceeds the prior envelope;
+    // 397_500 restores headroom. Raw and brotli caps stay put.
+    // Retained pose-frame mount hook adds 52 gzip bytes to this route; the
+    // instance-stream forwarding method (see above) adds a few more.
+    // Perspective spot shadows carry both backends' one-map slots and
+    // fail-closed validation on this route. Measured: 1_528_057 / 412_845 /
+    // 348_680. Gzip exceeded the prior hard limit; bumped 396_000 ->
+    // 400_500. Raw and brotli headroom is unchanged.
+    // Custom per-vertex float BufferAttributes carry both backends' custom
+    // attribute binding on this route, combining with all of the above on
+    // this merge.
+    // Perspective spot shadows carry both backends' one-map slots on this
+    // route, combining with all of the above on this merge. Measured:
+    // 1_535_961 / 415_092 / 350_465. Raw and brotli exceeded the prior hard
+    // limit; bumped raw 1_469_000 -> 1_470_500 and brotli 334_000 ->
+    // 335_000 for headroom. Gzip headroom is unchanged.
+    // The complete motion fix measures 1,608,681 / 438,588 / 369,624 on this
+    // route. Reviewed hard-limit headroom is 8,255 / 1,096 / 1,060 bytes.
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_556_800, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 427_500,
+    brotli: 357_695, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2014,9 +2315,25 @@ const routeBudgets = [
     // retain one 100-byte step of reviewed headroom.
     // v0.55.0 navigation reconciliation plus Scene3D command-diff reuse.
     // Measured: 1_093_330 / 289_512 / 242_867.
-    raw: 1_093_500,
-    gzip: 289_700,
-    brotli: 243_000,
+    // Perspective spot shadows plus custom per-vertex float BufferAttributes
+    // (WebGPU side of both) combine on this merge. Measured:
+    // 1_141_513 / 304_230 / 254_461. Only gzip exceeded the prior hard
+    // limit; bumped 289_700 -> 290_000 for headroom.
+    // glTF material-shading parity fixes (WebGPU side) combine with the
+    // above on this merge. Measured: 1_143_495 / 304_706 / 254_874. Only
+    // gzip exceeded the prior hard limit; bumped 290_000 -> 290_500 for
+    // headroom.
+    // Motion-frame dispatch and adaptive frame pacing both add code to this
+    // route. The build with frame caching measures 1_148_054 / 306_276 /
+    // 256_268.
+    // The complete motion fix measures 1,202,669 / 324,104 / 270,997 on this
+    // route. Reviewed hard-limit headroom is 2,941 / 1,081 / 1,058 bytes.
+    // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
+    // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
+    // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    raw: 1_158_000,
+    gzip: 313_600,
+    brotli: 262_195, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
@@ -2042,8 +2359,13 @@ function fileSize(relativePath) {
 // and the region-key/-cursor validation. Measured: 88_076. Cap set with
 // narrow rounding headroom.
 // v0.55.0 keyed body reconciliation and automatic same-origin link/form
-// routing. Measured: 94_820; the raw-only cap retains 180 bytes of headroom.
-const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 95_000 };
+// routing. Measured: 94_820; the raw-only cap retained 180 bytes of headroom.
+// gosx#250 adds the fixed-target transfer primitive (pointer/touch capture,
+// keyboard destination navigation, source-specific eligibility, managed
+// action state, and lifecycle cleanup). Measured after generation: 105_784;
+// the reviewed target is 106_000, retaining the existing 5% governed
+// regression ceiling without hiding unrelated bundle growth.
+const navigationRuntimeMinBudget = { file: "../runtime/host/navigation-runtime.min.js", raw: 106_000 };
 
 function assertGovernedSize(t, actual, target, metric, label) {
   const result = evaluateSizeBudget(actual, target, metric);

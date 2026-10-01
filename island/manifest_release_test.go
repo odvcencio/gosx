@@ -35,7 +35,7 @@ func TestManifestScriptReleaseOptIn(t *testing.T) {
 	if !strings.Contains(released, `<script id="gosx-manifest" type="application/json" data-gosx-release>`) {
 		t.Fatalf("opt-in did not emit the release attribute: %q", released)
 	}
-	if !strings.Contains(released, `"component": "Counter"`) {
+	if !strings.Contains(released, `"component":"Counter"`) {
 		t.Fatalf("release attribute must not change the manifest payload: %q", released)
 	}
 }

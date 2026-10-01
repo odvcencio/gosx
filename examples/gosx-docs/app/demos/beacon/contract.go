@@ -27,6 +27,7 @@ type BlackglassCoastContract struct {
 	Revision            uint64
 	DocumentFingerprint string
 	ArtDirection        string
+	BeaconSelenaSource  string
 	Water               BlackglassWaterZone
 	Markers             []BlackglassMarker
 }
@@ -52,11 +53,16 @@ type BlackglassMarker struct {
 }
 
 type blackglassSceneDoc struct {
-	Schema   string            `json:"schema"`
-	ID       string            `json:"id"`
-	Revision uint64            `json:"revision"`
-	Metadata map[string]string `json:"metadata"`
-	World    struct {
+	Schema    string            `json:"schema"`
+	ID        string            `json:"id"`
+	Revision  uint64            `json:"revision"`
+	Metadata  map[string]string `json:"metadata"`
+	Materials map[string]struct {
+		Selena *struct {
+			Source string `json:"source"`
+		} `json:"selena"`
+	} `json:"materials"`
+	World struct {
 		WaterZones map[string]blackglassWaterZone `json:"waterZones"`
 		Markers    map[string]blackglassMarker    `json:"markers"`
 	} `json:"world"`
@@ -124,6 +130,10 @@ func loadBlackglassCoastRuntimeContract(payload []byte) (BlackglassCoastContract
 	if err := validateBlackglassRuntimeMarkers(document.World.Markers); err != nil {
 		return BlackglassCoastContract{}, err
 	}
+	beaconMaterial, ok := document.Materials["beacon-glow"]
+	if !ok || beaconMaterial.Selena == nil || beaconMaterial.Selena.Source == "" {
+		return BlackglassCoastContract{}, fmt.Errorf("missing authored beacon Selena material")
+	}
 	markers := make([]BlackglassMarker, 0, len(document.World.Markers))
 	for id, marker := range document.World.Markers {
 		if marker.ID != id || marker.Kind == "" {
@@ -134,9 +144,9 @@ func loadBlackglassCoastRuntimeContract(payload []byte) (BlackglassCoastContract
 	sort.Slice(markers, func(i, j int) bool { return markers[i].ID < markers[j].ID })
 	return BlackglassCoastContract{
 		Schema: "gosx.scene3d.world/v1", DocumentID: document.ID, Revision: document.Revision, DocumentFingerprint: fingerprint,
-		ArtDirection: document.Metadata["art-direction"],
-		Water:        BlackglassWaterZone{ID: zone.ID, Name: zone.Name, Center: scene.Vec3(zone.Center.X, zone.Center.Y, zone.Center.Z), Size: scene.Vec3(zone.Size.X, zone.Size.Y, zone.Size.Z), SurfaceY: zone.SurfaceY, Current: scene.Vec3(zone.Current.X, zone.Current.Y, zone.Current.Z), BuoyancyScale: zone.BuoyancyScale, LinearDrag: zone.LinearDrag, RuntimeProfile: zone.RuntimeProfile},
-		Markers:      markers,
+		ArtDirection: document.Metadata["art-direction"], BeaconSelenaSource: beaconMaterial.Selena.Source,
+		Water:   BlackglassWaterZone{ID: zone.ID, Name: zone.Name, Center: scene.Vec3(zone.Center.X, zone.Center.Y, zone.Center.Z), Size: scene.Vec3(zone.Size.X, zone.Size.Y, zone.Size.Z), SurfaceY: zone.SurfaceY, Current: scene.Vec3(zone.Current.X, zone.Current.Y, zone.Current.Z), BuoyancyScale: zone.BuoyancyScale, LinearDrag: zone.LinearDrag, RuntimeProfile: zone.RuntimeProfile},
+		Markers: markers,
 	}, nil
 }
 

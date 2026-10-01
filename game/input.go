@@ -52,6 +52,14 @@ func Button(action, code string) Binding {
 	return Binding{Action: action, Kind: EventGamepad, Code: code, Scale: 1}
 }
 
+// Axis maps a gamepad analog axis code onto an action, scaled by scale. Zero
+// scale normalizes to 1, matching Button and Key; pass -1 to invert an axis.
+// Package game/gamepad emits axis codes "axis0".."axis3" for the four
+// W3C-standard-mapping stick axes; a game may bind any subset of them.
+func Axis(action, code string, scale float64) Binding {
+	return Binding{Action: action, Kind: EventGamepad, Code: code, Scale: scale}
+}
+
 // PointerButton maps a pointer button code such as "Mouse0" onto an action.
 func PointerButton(action, code string) Binding {
 	return Binding{Action: action, Kind: EventPointerDown, Code: code, Scale: 1}

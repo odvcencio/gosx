@@ -95,6 +95,7 @@ type IRCamera struct {
 	RotationY    float64 `json:"rotationY,omitempty"`
 	RotationZ    float64 `json:"rotationZ,omitempty"`
 	FOV          float64 `json:"fov,omitempty"`
+	PortraitFOV  float64 `json:"portraitFOV,omitempty"`
 	Left         float64 `json:"left,omitempty"`
 	Right        float64 `json:"right,omitempty"`
 	Top          float64 `json:"top,omitempty"`
@@ -424,6 +425,7 @@ type IRLabelNode struct {
 type IRHTMLNode struct {
 	Target           string  `json:"target,omitempty"`
 	Mode             string  `json:"mode,omitempty"`
+	Perspective      bool    `json:"perspective,omitempty"`
 	HTML             string  `json:"html"`
 	ClassName        string  `json:"className,omitempty"`
 	Fallback         string  `json:"fallback,omitempty"`
@@ -898,6 +900,7 @@ func cameraToIR(camera PerspectiveCamera) IRCamera {
 		RotationY:    camera.Rotation.Y,
 		RotationZ:    camera.Rotation.Z,
 		FOV:          camera.FOV,
+		PortraitFOV:  camera.PortraitFOV,
 		Near:         camera.Near,
 		Far:          camera.Far,
 		TransitionMS: camera.TransitionMS,
@@ -1278,6 +1281,7 @@ func htmlToIRNode(html HTMLIR) IRNode {
 		HTML: &IRHTMLNode{
 			Target:           html.Target,
 			Mode:             html.Mode,
+			Perspective:      html.Perspective,
 			HTML:             html.HTML,
 			ClassName:        html.ClassName,
 			Fallback:         html.Fallback,

@@ -65,6 +65,10 @@
     if (lastPrepared && lastPrepared.signature === signature) {
       scenePlannerTelemetryState.cacheHits += 1;
       lastPrepared.ir = source;
+      // Equal render content can arrive in fresh per-frame mesh objects. The
+      // renderer keys crowd/rigid batches by those identities, so cached pass
+      // buckets must follow this bundle even when their ordering is unchanged.
+      lastPrepared.pbrPasses = prepareScenePBRPasses(source, lastPrepared.pbrPasses);
       lastPrepared.camera = resolvedCamera;
       lastPrepared.viewport = viewport;
       lastPrepared.resolvedEnv = source.environment || {};
@@ -327,6 +331,7 @@
       mount,
       sentinels,
       styles: typeof Map === "function" ? new Map() : null,
+      properties: typeof Map === "function" ? new Map() : null,
       hasComputedStyle: Boolean(win && typeof win.getComputedStyle === "function"),
       revision,
       transitionFrame: animationUntil > now ? Math.floor(now / 16) : 0,
@@ -353,6 +358,12 @@
     return Number.isFinite(until) ? until : 0;
   }
 
+  const sceneCSSMeshInputKeys = [
+    "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
+    "vertexCount", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
+    "specularIntensity", "specularColor", "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
+  ];
+
   function sceneCSSInputSignature(bundle) {
     let hash = 2166136261 >>> 0;
     hash = scenePlannerHashString(hash, "css");
@@ -376,12 +387,7 @@
       "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
       "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
     ]);
-    hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
-      "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
-      "vertexCount", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
-      "specularIntensity", "specularColor",
-      "blendMode", "renderPass", "_blendModeDerived", "_renderPassDerived",
-    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, sceneCSSMeshInputKeys);
     hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
       "id", "material", "materialIndex", "count", "color", "size", "opacity",
       "blendMode", "depthWrite", "x", "y", "z", "rotationX", "rotationY",
@@ -462,13 +468,28 @@
     }
     return String(value);
   }
+  // Numeric poses and draw ranges are consumed by the render planner, not
+  // CSS resolution. Keep authored var(...) strings in this signature so a
+  // binding being added, replaced or removed still invalidates its patches.
+  const sceneCSSPoseInputKeys = new Set([
+    "x", "y", "z", "rotationX", "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
+    "depthCenter", "vertexOffset", "vertexCount",
+  ]);
 
   function sceneCSSHashRecordKeys(hash, record, keys) {
     if (!record || typeof record !== "object") {
       return scenePlannerHashString(hash, "null");
     }
+    if (keys === sceneCSSMeshInputKeys) {
+      const fingerprint = sceneRetainedMeshCSSInputFingerprint(record);
+      if (fingerprint > 0) return scenePlannerHashNumber(hash, fingerprint);
+    }
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
+      // Absent properties have no CSS input to invalidate. Most retained
+      // mesh records only supply a few fields in this shared schema.
+      if (record[key] === undefined) continue;
+      if (typeof record[key] === "number" && sceneCSSPoseInputKeys.has(key)) continue;
       hash = scenePlannerHashString(hash, key);
       if (key === "specularIntensity" || key === "specularColor") {
         // Full-precision factor hashing: the shared *1000 number
@@ -1068,6 +1089,8 @@
   }
 
   function sceneCSSReadPropertyOnElement(css, element, name) {
+    let properties = css && css.properties && css.properties.get(element);
+    if (properties && properties.has(name)) return properties.get(name);
     const style = sceneCSSComputedStyle(css, element);
     if (!style) {
       return null;
@@ -1079,7 +1102,15 @@
       value = style[name];
     }
     const text = String(value == null ? "" : value).trim();
-    return text === "" ? null : text;
+    const result = text === "" ? null : text;
+    // Computed style is stable for this synchronous resolution pass. Cache
+    // reads as well as the style object; a thousand objects can inherit the
+    // same defaults without a thousand DOM calls for each property.
+    if (css && css.properties) {
+      if (!properties) { properties = new Map(); css.properties.set(element, properties); }
+      properties.set(name, result);
+    }
+    return result;
   }
 
   function sceneCSSComputedStyle(css, element) {
@@ -1318,12 +1349,14 @@
     }
   }
 
-  function prepareScenePBRPasses(bundle) {
+  function prepareScenePBRPasses(bundle, reuse) {
     const objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
     const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials : [];
-    const opaque = [];
-    const alpha = [];
-    const additive = [];
+    const passes = reuse || { opaque: [], alpha: [], additive: [] };
+    const opaque = passes.opaque;
+    const alpha = passes.alpha;
+    const additive = passes.additive;
+    opaque.length = alpha.length = additive.length = 0;
 
     for (let index = 0; index < objects.length; index += 1) {
       const object = objects[index];
@@ -1351,7 +1384,7 @@
       additive.sort(scenePlannerDepthSort);
     }
 
-    return { opaque, alpha, additive };
+    return passes;
   }
 
   function scenePreparedPassList(worldDrawPlan, pbrPasses) {
@@ -1653,6 +1686,13 @@
     if (object && object.retainedGeometry) {
       scenePlannerTelemetryState.retainedHashFastPaths += 1;
       hash = scenePlannerHashString(hash, String(object.geometryRevision == null ? 0 : object.geometryRevision));
+      // Early rigid cohorts keep opaque pass membership stable while their
+      // current transform stream changes. The cache-hit path refreshes PBR
+      // buckets with records from the current bundle, so hashing every row
+      // would only recreate the per-instance planner work batching removes.
+      if (object._rigidImportedBatch === true) {
+        return scenePlannerHashNumber(hash, sceneNumber(object.instanceCount, 0));
+      }
       // Retained geometry is immutable between explicit revisions, so hashing
       // every position/normal/UV on every animated frame would recreate the
       // exact O(vertices) cost the retained path removes. The compact model
@@ -1770,27 +1810,64 @@
     return hash;
   }
 
-  function scenePlannerHashMeshVertices(hash, vertices) {
-    scenePlannerTelemetryState.fullVertexHashScans += 1;
-    if (!vertices || typeof vertices !== "object") {
-      return scenePlannerHashNumber(hash, 0);
+  // Per-vertices-object memo of the content-only hash computed below,
+  // independent of any caller's rolling hash seed. normalizeSceneObject's
+  // sceneNormalizeMeshVertexDataCached (10-runtime-scene-core.ts) hands
+  // back the exact same normalized `vertices` object across ticks whenever
+  // the raw authored payload is unchanged, so most non-retained meshes
+  // present the same object reference frame after frame while only their
+  // transform or pose moves. Without this memo, scenePlannerHashMeshVertices
+  // re-walked every position/normal/UV float on every one of those frames,
+  // even though the geometry itself never changed.
+  //
+  // Only immutable, revisioned geometry promises unchanged content.
+  // Mutable arrays and dynamic geometry always need a fresh scan.
+
+  const sceneVertexContentHashCache = new WeakMap();
+  const SCENE_VERTEX_CONTENT_HASH_SEED = 2166136261 >>> 0;
+
+  function sceneVertexContentHash(vertices) {
+    const reusable = vertices.immutable === true && vertices.dynamic !== true &&
+      Number.isSafeInteger(vertices.revision) && vertices.revision >= 0;
+    const cached = reusable ? sceneVertexContentHashCache.get(vertices) : null;
+    if (cached && cached.revision === vertices.revision) {
+      return cached.value;
     }
-    hash = scenePlannerHashNumber(hash, sceneNumber(vertices.count, 0));
-    hash = scenePlannerHashFloatArray(hash, vertices.positions, 0);
-    hash = scenePlannerHashFloatArray(hash, vertices.normals, 0);
-    hash = scenePlannerHashFloatArray(hash, vertices.uvs, 0);
+    scenePlannerTelemetryState.fullVertexHashScans += 1;
+    let contentHash = SCENE_VERTEX_CONTENT_HASH_SEED;
+    contentHash = scenePlannerHashNumber(contentHash, sceneNumber(vertices.count, 0));
+    contentHash = scenePlannerHashFloatArray(contentHash, vertices.positions, 0);
+    contentHash = scenePlannerHashFloatArray(contentHash, vertices.normals, 0);
+    contentHash = scenePlannerHashFloatArray(contentHash, vertices.uvs, 0);
     // The authored index stream is part of the geometry identity: swapping
     // topology without touching attributes must still invalidate the hash.
     const indices = vertices.indices;
     if (indices instanceof Uint32Array && indices.length > 0) {
-      hash = scenePlannerHashNumber(hash, indices.length);
+      contentHash = scenePlannerHashNumber(contentHash, indices.length);
       for (let i = 0; i < indices.length; i += 1) {
-        hash = scenePlannerHashNumber(hash, indices[i]);
+        contentHash = scenePlannerHashNumber(contentHash, indices[i]);
       }
     } else {
-      hash = scenePlannerHashNumber(hash, 0);
+      contentHash = scenePlannerHashNumber(contentHash, 0);
     }
-    return hash;
+    if (reusable) {
+      sceneVertexContentHashCache.set(vertices, { revision: vertices.revision, value: contentHash });
+    }
+    return contentHash;
+  }
+
+  function scenePlannerHashMeshVertices(hash, vertices) {
+    if (!vertices || typeof vertices !== "object") {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    // Custom attribute streams are deliberately NOT hashed per-value here.
+    // sceneNormalizeCustomAttributes only accepts custom streams when the
+    // geometry is immutable, non-dynamic, and revision-pinned, and
+    // scenePlannerHashMeshObject already hashes object.geometryRevision.
+    // Any change to a custom stream must therefore bump the revision, so
+    // scanning every name/itemSize/data value here would duplicate identity
+    // work already covered by the contract.
+    return scenePlannerHashNumber(hash, sceneVertexContentHash(vertices));
   }
 
   function scenePlannerHashPointsEntry(hash, entry) {
@@ -1912,12 +1989,7 @@
   }
 
   function scenePlannerHashString(hash, value) {
-    const text = String(value || "");
-    for (let i = 0; i < text.length; i += 1) {
-      hash ^= text.charCodeAt(i);
-      hash = Math.imul(hash, 16777619) >>> 0;
-    }
-    return hash;
+    return sceneContentHashString(hash, value);
   }
 
   // Exact serialization for specular factor fields: numbers serialize

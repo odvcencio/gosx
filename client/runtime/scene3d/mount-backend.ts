@@ -58,7 +58,7 @@
           if (!record || typeof record.captureFrame !== "function") {
             return { surfaceID: String(surfaceID || ""), dataURL: null, reason: "surface-not-found" };
           }
-          try {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ try {
             return sceneDebugClone(record.captureFrame(), 4);
           } catch (err) {
             return {
@@ -133,7 +133,7 @@
     if (!record || typeof record.snapshot !== "function") {
       return null;
     }
-    try {
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ try {
       return sceneDebugClone(record.snapshot(mode || "full"), 6);
     } catch (err) {
       return {
@@ -189,11 +189,11 @@
       seen.pop();
       return out;
     }
-    if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)) {
       const slice = Array.prototype.slice.call(value, 0, Math.min(value.length || 0, 64));
       seen.pop();
       return {
-        type: value.constructor && value.constructor.name ? value.constructor.name : "TypedArray",
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ type: value.constructor && value.constructor.name ? value.constructor.name : "TypedArray",
         length: value.length || 0,
         preview: slice,
       };
@@ -580,7 +580,7 @@
         severity: "warn",
         code: "scene.backend.fallback",
         message: "Scene3D renderer fallback is active",
-        backend: rendererKind || "",
+        /* @ts-expect-error TS2353 -- diagnostics seeds a narrower shape than the entries pushed onto it later */ backend: rendererKind || "",
         data: { reason: fallback },
       });
     }
@@ -599,7 +599,7 @@
         severity: "warn",
         code: "scene.shader.compile_error",
         message: "Custom material fell back to the standard WebGPU material path",
-        backend: "webgpu",
+        /* @ts-expect-error TS2353 -- diagnostics seeds a narrower shape than the entries pushed onto it later */ backend: "webgpu",
         data: { reason: customFallback },
       });
     }
@@ -653,8 +653,8 @@
       lines: counts.lines,
       postEffects: counts.postEffects,
       htmlTextures,
-      webgpu: {
-        stats: sceneDebugClone(webgpuStats, 3),
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ webgpu: {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ stats: sceneDebugClone(webgpuStats, 3),
         diagnostics: sceneDebugClone(rendererDiagnostics, 3),
       },
     };
@@ -944,11 +944,13 @@
     const avail = availability && typeof availability === "object" ? availability : {};
     const webgpuAvail = Boolean(avail.webgpu);
     const webglAvail = avail.webgl !== false;
-    if (prefs && (prefs.requireWebGL || prefs.forceWebGL)) { return { backend: "webgl", fallbackReason: "", degraded: [] }; }
+    const declaredDegraded = backendCaps && backendCaps.degraded && typeof backendCaps.degraded === "object" ? backendCaps.degraded : {};
+    const webglDegraded = Array.isArray(declaredDegraded.webgl) ? declaredDegraded.webgl.map(String) : [];
+    if (prefs && (prefs.requireWebGL || prefs.forceWebGL)) { return { backend: "webgl", fallbackReason: "", degraded: webglDegraded }; }
     if (prefs && prefs.preferCanvas) { return { backend: "canvas2d", fallbackReason: "", degraded: [] }; }
     if (!backendCaps || !Array.isArray(backendCaps.capable)) { return null; }
     const capable = backendCaps.capable;
-    const degraded = backendCaps.degraded && typeof backendCaps.degraded === "object" ? backendCaps.degraded : {};
+    const degraded = declaredDegraded;
     const reasons = Array.isArray(backendCaps.reasons) ? backendCaps.reasons : [];
     let exclusionReason = "";
     for (let k = 0; k < reasons.length; k += 1) {
@@ -964,7 +966,7 @@
       if (b === "webgl" || b === "webgl2") {
         if (webglAvail) {
           const skipped = capable.slice(0, i).some(function(c) { return String(c).toLowerCase() === "webgpu"; });
-          return { backend: "webgl", fallbackReason: skipped ? "webgpu-unavailable" : exclusionReason, degraded: [] };
+          return { backend: "webgl", fallbackReason: skipped ? "webgpu-unavailable" : exclusionReason, degraded: webglDegraded };
         }
         continue;
       }

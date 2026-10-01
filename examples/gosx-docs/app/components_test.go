@@ -93,3 +93,21 @@ func TestCodeBlockUsesNormalizedSourceForContentAndGutter(t *testing.T) {
 		t.Fatalf("line-number gutter counted trimmed edge blanks: %q", rendered)
 	}
 }
+
+func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
+	t.Parallel()
+
+	rendered := gosx.RenderHTML(CodeBlock("go", "fmt.Println(\"hello\")"))
+	for _, want := range []string{
+		`data-gosx-copy-scope=""`,
+		`data-gosx-copy-button=""`,
+		`data-gosx-copy-status=""`,
+		`aria-live="polite"`,
+		`fmt`,
+		`Println`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("CodeBlock output is missing %q: %s", want, rendered)
+		}
+	}
+}

@@ -172,6 +172,36 @@ const (
 	NavigationReorderDefaultItemField  = "item_id"
 	NavigationReorderDefaultIndexField = "index"
 
+	// NavigationTransferAttr declares a fixed-target source-to-destination
+	// interaction (gosx#250). Sources carry NavigationTransferSourceAttr and
+	// destinations carry NavigationTransferTargetAttr. A target may further
+	// restrict the source identities allowed to use it with
+	// NavigationTransferEligibleForAttr (comma/space-separated identities or
+	// *). The runtime posts one stable source identity and one stable target
+	// identity to the same-origin
+	// POST named by NavigationTransferActionAttr, plus optional URLSearchParams
+	// context from NavigationTransferContextAttr. It never relocates either
+	// node optimistically; the action's authoritative redirect or region
+	// reconciliation owns the resulting assignment. A descendant marked
+	// NavigationTransferHandleAttr is the only pointer/keyboard grip when one
+	// exists; otherwise the source itself is the grip. See the runtime guide's
+	// "Declarative fixed-target transfer" section for the full interaction and
+	// accessibility contract.
+	NavigationTransferAttr               = "data-gosx-transfer"
+	NavigationTransferActionAttr         = "data-gosx-transfer-action"
+	NavigationTransferSourceAttr         = "data-gosx-transfer-source"
+	NavigationTransferHandleAttr         = "data-gosx-transfer-handle"
+	NavigationTransferTargetAttr         = "data-gosx-transfer-target"
+	NavigationTransferSourceFieldAttr    = "data-gosx-transfer-source-field"
+	NavigationTransferTargetFieldAttr    = "data-gosx-transfer-target-field"
+	NavigationTransferContextAttr        = "data-gosx-transfer-context"
+	NavigationTransferEligibleForAttr    = "data-gosx-transfer-eligible-for"
+	NavigationTransferActiveClass        = "gosx-transfer--active"
+	NavigationTransferSourceActiveClass  = "gosx-transfer-source--active"
+	NavigationTransferTargetOverClass    = "gosx-transfer-target--over"
+	NavigationTransferDefaultSourceField = "player_id"
+	NavigationTransferDefaultTargetField = "slot"
+
 	// NavigationLiveSrcAttr and NavigationLiveIntervalAttr declare a
 	// live-bound text region (gosx#217): the runtime polls a same-origin JSON
 	// object on NavigationLiveIntervalAttr's period (the same duration grammar

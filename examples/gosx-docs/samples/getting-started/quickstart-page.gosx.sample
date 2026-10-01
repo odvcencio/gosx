@@ -1,0 +1,5 @@
+package docs
+
+func QuickstartPage() Node {
+	return <p class="quickstart-example__output">Go rendered this page on the server.</p>
+}

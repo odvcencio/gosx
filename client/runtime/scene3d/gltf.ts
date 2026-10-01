@@ -185,6 +185,25 @@
     return [value[0], value[1], value[2]];
   }
 
+  // Read a top-level (non-extension) linear RGB colour triple straight off a
+  // material, such as emissiveFactor. Per spec every component is a finite
+  // number in [0, 1]; a malformed or partial component falls back to the
+  // matching component of `fallback` rather than rejecting the whole triple,
+  // so one bad channel in a hand-edited asset does not blank the other two.
+  // The result is always a fresh array.
+  function gltfColor3Property(value, fallback) {
+    var base = Array.isArray(fallback) ? fallback : [0, 0, 0];
+    if (!Array.isArray(value) || value.length < 3) {
+      return base.slice(0, 3);
+    }
+    var out = [];
+    for (var i = 0; i < 3; i++) {
+      var component = Number(value[i]);
+      out.push(isFinite(component) ? Math.max(0, Math.min(1, component)) : base[i]);
+    }
+    return out;
+  }
+
   // Compression extensions rewrite the bytes a bufferView or primitive points
   // at. The loader has no decoder for them, so reading the raw bytes would
   // build a corrupt mesh. Throw instead, with the extension named.
@@ -1654,15 +1673,22 @@
     return {
       kind: "standard",
       color: "#cccccc",
+      // glTF's default material (used when a primitive carries no material
+      // index) is metallicFactor 1.0, roughnessFactor 1.0 — see
+      // gltfExtractMaterial below for the same spec defaults on an authored
+      // material missing these factors.
       roughness: 1.0,
-      metalness: 0.0,
+      metalness: 1.0,
       opacity: 1.0,
-      emissive: 0,
+      emissive: 1.0,
+      emissiveColor: [0, 0, 0],
       texture: "",
       normalMap: "",
+      normalScale: 1.0,
       roughnessMap: "",
       metalnessMap: "",
       occlusionMap: "",
+      occlusionStrength: 1.0,
       emissiveMap: "",
       alphaMode: "OPAQUE",
       doubleSided: false,
@@ -1744,13 +1770,23 @@
     return "";
   }
 
+  // One embedded image can feed several material slots and channel roles.
+  // Keep its byte copy and URL shared within this extraction. A fresh scene
+  // extraction resets the map, so re-parsing mutable input cannot retain old
+  // image bytes. Weak document ownership does not retain parsed GLBs.
+  var gltfEmbeddedImageURLs = new WeakMap();
+
   function gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer) {
+    var urls = gltfEmbeddedImageURLs.get(gltf);
+    if (urls && urls.has(image)) return urls.get(image);
     var view = gltfResolveBufferView(gltf, binaryBuffer, image.bufferView, "image");
     var mimeType = image.mimeType || "application/octet-stream";
     var start = view.bytes.byteOffset + view.offset;
     var slice = view.bytes.buffer.slice(start, start + view.byteLength);
     var blob = new Blob([slice], { type: mimeType });
-    return URL.createObjectURL(blob);
+    var uri = URL.createObjectURL(blob);
+    if (urls) urls.set(image, uri);
+    return uri;
   }
 
   // ---------------------------------------------------------------------------
@@ -1827,16 +1863,28 @@
     var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer) : "";
     var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer) : "";
 
-    var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
-    var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
-
-    // KHR_materials_emissive_strength scales the emissive factor above 1 so
-    // HDR emitters keep their intensity. The PBR shaders take an unclamped
-    // emissive scalar, so multiply straight through.
+    // emissiveFactor is a linear RGB colour, not a scalar — a red-only
+    // emissive on a blue albedo must glow red, never albedo-blue. Keep it as
+    // a vec3 (record.emissiveColor) and carry the KHR_materials_emissive_strength
+    // multiplier separately as record.emissive, so the shader computes
+    // emission = emissiveColor * emissive * emissiveTexture(if any) and never
+    // substitutes albedo for a missing emissive map.
+    var emissiveColor = gltfColor3Property(mat.emissiveFactor, [0, 0, 0]);
+    var emissiveStrength = 1;
     var emissiveExtension = gltfExtension(mat, "KHR_materials_emissive_strength");
     if (emissiveExtension) {
-      emissiveStrength *= gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
+      emissiveStrength = gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
     }
+
+    // normalTexture.scale and occlusionTexture.strength are core glTF
+    // fields (not extensions), each defaulting to 1.0 per spec and applying
+    // only when the matching map is present.
+    var normalScale = mat.normalTexture && typeof mat.normalTexture.scale === "number" && isFinite(mat.normalTexture.scale)
+      ? mat.normalTexture.scale
+      : 1.0;
+    var occlusionStrength = mat.occlusionTexture && typeof mat.occlusionTexture.strength === "number" && isFinite(mat.occlusionTexture.strength)
+      ? Math.max(0, Math.min(1, mat.occlusionTexture.strength))
+      : 1.0;
 
     var effectiveAlphaMode = mat.alphaMode || "OPAQUE";
     // OPAQUE (explicit or omitted) ignores baseColor alpha; BLEND, MASK and
@@ -1866,29 +1914,36 @@
     var record = {
       kind: "standard",
       color: gltfBaseColorToHex(baseColorFactor),
+      // Both factors default to 1.0 per the glTF spec (pbrMetallicRoughness
+      // omits either when the author wants the fully rough, fully metallic
+      // default look — NOT the JS-truthy 0.0 this used to fall back to,
+      // which silently turned every metal-less-authored asset into plastic).
       roughness: pbr.roughnessFactor != null ? pbr.roughnessFactor : 1.0,
-      metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.0,
+      metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 1.0,
       opacity: effectiveOpacity,
       emissive: emissiveStrength,
+      emissiveColor: emissiveColor,
       texture: baseColorURL,
       normalMap: normalURL,
+      normalScale: normalScale,
       roughnessMap: metallicRoughnessURL,
       metalnessMap: metallicRoughnessURL,
       occlusionMap: occlusionURL,
+      occlusionStrength: occlusionStrength,
       emissiveMap: emissiveURL,
       alphaMode: effectiveAlphaMode,
       doubleSided: mat.doubleSided || false,
     };
-    if (effectiveAlphaMode === "MASK") {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (effectiveAlphaMode === "MASK") {
       record.alphaCutoff = alphaCutoff;
     }
-    if (Object.keys(textureDescriptors).length) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (Object.keys(textureDescriptors).length) {
       record.textureDescriptors = textureDescriptors;
     }
 
     // KHR_materials_clearcoat -> StandardMaterial.Clearcoat, range 0 to 1.
     var clearcoat = gltfExtension(mat, "KHR_materials_clearcoat");
-    if (clearcoat) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (clearcoat) {
       record.clearcoat = gltfExtensionFactor(clearcoat, "clearcoatFactor", 0, 0, 1);
     }
 
@@ -1897,7 +1952,7 @@
     // roughness and the colour hue are dropped.
     var sheen = gltfExtension(mat, "KHR_materials_sheen");
     if (sheen) {
-      var sheenColor = sheen.sheenColorFactor;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var sheenColor = sheen.sheenColorFactor;
       record.sheen = Array.isArray(sheenColor) && sheenColor.length >= 3
         ? Math.max(0, Math.min(1, Math.max(
             Number(sheenColor[0]) || 0,
@@ -1908,13 +1963,13 @@
 
     // KHR_materials_transmission -> StandardMaterial.Transmission, 0 to 1.
     var transmission = gltfExtension(mat, "KHR_materials_transmission");
-    if (transmission) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (transmission) {
       record.transmission = gltfExtensionFactor(transmission, "transmissionFactor", 0, 0, 1);
     }
 
     // KHR_materials_iridescence -> StandardMaterial.Iridescence, 0 to 1.
     var iridescence = gltfExtension(mat, "KHR_materials_iridescence");
-    if (iridescence) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (iridescence) {
       record.iridescence = gltfExtensionFactor(iridescence, "iridescenceFactor", 0, 0, 1);
     }
 
@@ -1928,7 +1983,7 @@
     var anisotropy = gltfExtension(mat, "KHR_materials_anisotropy");
     if (anisotropy) {
       var strength = gltfExtensionFactor(anisotropy, "anisotropyStrength", 0, 0, 1);
-      var rotation = Number(anisotropy.anisotropyRotation) || 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var rotation = Number(anisotropy.anisotropyRotation) || 0;
       record.anisotropy = Math.max(-1, Math.min(1, strength * Math.cos(2 * rotation)));
     }
 
@@ -1940,8 +1995,8 @@
     // channel in linear space, the colour is sRGB RGB — but the extension
     // still stays off GLTF_SUPPORTED_EXTENSIONS until renderer sampling and
     // the broader textureInfo semantics are validated.
-    if (specular) {
-      record.specularIntensity = gltfExtensionStrictFactor(specular, "specularFactor", 1, 0, 1);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (specular) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.specularIntensity = gltfExtensionStrictFactor(specular, "specularFactor", 1, 0, 1);
       record.specularColor = gltfExtensionColor3(specular, "specularColorFactor") || [1, 1, 1];
     }
 
@@ -1956,25 +2011,25 @@
     var ior = gltfExtension(mat, "KHR_materials_ior");
     if (ior) {
       var iorValue = typeof ior.ior === "number" ? ior.ior : NaN;
-      if (iorValue === 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (iorValue === 0) {
         record.ior = 0;
-      } else if (Number.isFinite(iorValue) && iorValue >= 1) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (Number.isFinite(iorValue) && iorValue >= 1) {
         record.ior = iorValue;
-      } else {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else {
         record.ior = 1.5;
       }
     }
 
     // KHR_materials_unlit switches to the flat shading path. Both the WebGL and
     // the WebGPU renderers read material.unlit already.
-    if (gltfExtension(mat, "KHR_materials_unlit")) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (gltfExtension(mat, "KHR_materials_unlit")) {
       record.unlit = true;
     }
 
     // KHR_texture_transform on the base colour texture. Record the matrix so
     // gltfExtractMeshNode can bake it into the UV buffer.
     var uvMatrix = gltfTextureTransformMatrix(pbr.baseColorTexture);
-    if (uvMatrix) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (uvMatrix) {
       record.uvTransform = uvMatrix;
     }
 
@@ -2100,12 +2155,12 @@
           blendMode: gltfIsAlphaMaterial(material) ? "alpha" : "",
           depthWrite: material.alphaMode !== "BLEND",
           attenuation: false,
-        };
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
         pointEntry._cachedPos = pointPositions;
-        if (pointSizes) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (pointSizes) {
           pointEntry._cachedSizes = pointSizes;
         }
-        if (pointColors) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (pointColors) {
           pointEntry._cachedColors = pointColors;
         }
         if (animateTRS) {
@@ -2113,7 +2168,7 @@
           // re-transform every frame; the baked stream above remains the
           // authored-pose initial value.
           var pointLocal = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
-          if (pointLocal && pointLocal.values && pointLocal.values.length >= 3) {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (pointLocal && pointLocal.values && pointLocal.values.length >= 3) {
             pointEntry._nodeAnim = {
               nodeIndex: nodeIndex,
               instanceMatrix: instanceMatrix ? gltfCopyMat4(instanceMatrix) : null,
@@ -2153,7 +2208,7 @@
           // lineSegments index into the per-frame rebuilt points array and
           // stay valid because the vertex count never changes.
           var lineLocal = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
-          if (lineLocal && lineLocal.values && lineLocal.values.length >= 6) {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (lineLocal && lineLocal.values && lineLocal.values.length >= 6) {
             lineObject._nodeAnim = {
               nodeIndex: nodeIndex,
               instanceMatrix: instanceMatrix ? gltfCopyMat4(instanceMatrix) : null,
@@ -2183,7 +2238,7 @@
       // the extracted object.
       var authoredWeights = node && Array.isArray(node.weights)
         ? node.weights
-        : mesh.weights;
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ : mesh.weights;
       var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
@@ -2220,6 +2275,11 @@
       var object = {
         id: objectID,
         kind: "gltf-mesh",
+        // glTF triangle primitives are solid even without a base-color map.
+        // The generic Scene3D object fallback is historically wireframe;
+        // letting it decide here changes untextured PBR assets into cages.
+        // Authored GoSX extras below can still explicitly opt into wireframe.
+        wireframe: false,
         vertices: vertices,
         material: material,
         transform: worldTransform,
@@ -2227,10 +2287,10 @@
         doubleSided: material.doubleSided,
       };
 
-      if (primitiveSkinned) {
-        vertices.joints = geometry.joints;
-        vertices.weights = geometry.weights;
-        object.skinIndex = skinIndex;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (primitiveSkinned) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ vertices.joints = geometry.joints;
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ vertices.weights = geometry.weights;
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ object.skinIndex = skinIndex;
         object.skin = skin;
       }
 
@@ -2243,9 +2303,9 @@
         if (geometry.morphMeta.instanced && instanceMatrix) {
           // Authored instance-local matrix for morph time: composed after
           // the animated node-world matrix. The baked node matrix already
-          // contains it, so it is never applied twice.
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // contains it, so it is never applied twice.
           geometry.morphMeta.instanceMatrix = gltfCopyMat4(instanceMatrix);
-        }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
         object._morphAnim = geometry.morphMeta;
       } else if (!primitiveSkinned && animateTRS) {
         // Rigid TRS playback: retain pristine primitive-local streams (post
@@ -2253,7 +2313,7 @@
         // Skinned primitives are skipped — their node transforms fold in at
         // skin time through the joint matrices — and morph-animated
         // primitives are skipped — the morph apply already composes animated
-        // node matrices so rigid transforms are never applied twice.
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // node matrices so rigid transforms are never applied twice.
         object._nodeAnim = {
           nodeIndex: nodeIndex,
           instanced: suffix.indexOf("-inst-") === 0,
@@ -2494,6 +2554,7 @@
   }
 
   function gltfExtractScene(gltf, binaryBuffer) {
+    gltfEmbeddedImageURLs.set(gltf, new Map());
     gltfReportUnsupportedRequiredExtensions(gltf);
     var result = {
       objects: [],
@@ -2638,8 +2699,8 @@
         // does during base extraction, so the overlay must resolve it the
         // same way or every authored layer misses its patch.
         var extras = gltfCollectScene3DExtras(node, mesh, primitive);
-        var nodeSuffix = gltfNodeSuffix(sharedMeshes && sharedMeshes[node.mesh], nodeIndex);
-        var key = extras && typeof extras.id === "string" && extras.id
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var nodeSuffix = gltfNodeSuffix(sharedMeshes && sharedMeshes[node.mesh], nodeIndex);
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var key = extras && typeof extras.id === "string" && extras.id
           ? extras.id
           : gltfPrimitiveID(mesh, node.mesh, "points", p, nodeSuffix);
         out[key] = { count: count, colors: colors, positions: positions, sizes: sizes };
@@ -3039,7 +3100,7 @@
     response = await gltfFetchModelResource(url, "glTF");
     var json = await response.json();
     // External buffers do not depend on image variant selection, so fetch them
-    // while the renderer context is still settling.
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // while the renderer context is still settling.
     var bufferPromise = gltfFetchExternalBuffers(json, assetURL);
     // Mark an early network failure handled immediately. The original Promise
     // remains rejected, so the later await still throws the same error after

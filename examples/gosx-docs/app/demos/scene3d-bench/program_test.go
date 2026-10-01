@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -103,6 +104,8 @@ func TestBenchScene_Dispatch(t *testing.T) {
 		{"particles", len(BenchParticlesScene().Graph.Nodes)},
 		{"mesh-swarm", len(BenchMeshSwarmScene().Graph.Nodes)},
 		{"particles-storm", len(BenchParticlesStormScene().Graph.Nodes)},
+		{"gpu-driven", len(BenchGPUDrivenScene().Graph.Nodes)},
+		{"instanced-classic", len(BenchInstancedClassicScene().Graph.Nodes)},
 		{"mixed", len(BenchMixedScene().Graph.Nodes)},
 		{"", len(BenchMixedScene().Graph.Nodes)},
 		{"not-a-real-workload", len(BenchMixedScene().Graph.Nodes)},
@@ -151,4 +154,47 @@ func computeParticlesCount(t *testing.T, props scene.Props) int {
 	}
 	t.Fatal("no scene.ComputeParticles node found in graph")
 	return 0
+}
+
+// TestBenchGPUDrivenScene_PairsWithClassic proves the two city workloads draw
+// the same scene and differ only in the GPU-driven mode, so comparing their
+// frame times measures the mode and nothing else.
+func TestBenchGPUDrivenScene_PairsWithClassic(t *testing.T) {
+	driven := BenchGPUDrivenScene()
+	classic := BenchInstancedClassicScene()
+	if driven.GPUDriven == nil || !driven.GPUDriven.Occlusion {
+		t.Fatalf("gpu-driven workload GPUDriven = %#v, want occlusion on", driven.GPUDriven)
+	}
+	if classic.GPUDriven != nil {
+		t.Fatalf("instanced-classic workload must not set GPUDriven, got %#v", classic.GPUDriven)
+	}
+	drivenIR := driven.SceneIR()
+	classicIR := classic.SceneIR()
+	if len(drivenIR.InstancedMeshes) != benchCityBatches+1 || len(classicIR.InstancedMeshes) != len(drivenIR.InstancedMeshes) {
+		t.Fatalf("instanced batches = %d / %d, want %d", len(drivenIR.InstancedMeshes), len(classicIR.InstancedMeshes), benchCityBatches+1)
+	}
+	instances := 0
+	for _, mesh := range drivenIR.InstancedMeshes {
+		instances += mesh.Count
+	}
+	if want := benchCityBatches*benchCityPerBatch + benchCityTowers; instances != want {
+		t.Fatalf("instances = %d, want %d", instances, want)
+	}
+	drivenIR.GPUDriven = nil
+	if !sceneRecordsEqual(t, drivenIR, classicIR) {
+		t.Fatal("the two city workloads differ in more than the GPU-driven mode")
+	}
+}
+
+func sceneRecordsEqual(t *testing.T, a, b scene.SceneIR) bool {
+	t.Helper()
+	left, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(left) == string(right)
 }

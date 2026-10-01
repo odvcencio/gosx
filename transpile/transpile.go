@@ -235,13 +235,28 @@ func (t *transpiler) emitStrictSourceFile(n *gotreesitter.Node) string {
 		case "const_declaration", "type_declaration":
 			declaration := t.emitDefault(child)
 			if t.sourceFile != "" {
-				declaration = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, declaration)
+				declaration = lineDirective(t.sourceFile, child) + declaration
 			}
 			declarations = append(declarations, declaration)
 		case "gosx_component_declaration":
 			declaration := t.emitStrictComponent(child)
 			if t.sourceFile != "" {
-				declaration = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, declaration)
+				// No column here (lineDirectiveNoColumn, not lineDirective):
+				// emitStrictComponent's own signature line is synthesized
+				// ("func Name(...)" replacing source's "component
+				// Name(...)"), a different length than the source keyword
+				// it replaces, so a column anchored to the source's
+				// "component" would misalign every position resolved
+				// against that synthesized first line (verified against
+				// this Go toolchain's go/parser: a line directive's column
+				// only ever applies to its own first line, so the
+				// misalignment is confined to it, but every position
+				// backing this declaration's own name identifier IS on
+				// that first line). Every line after the first remains
+				// merely row-accurate, exactly as it always has for this
+				// declaration kind; see the package doc for the general
+				// limitation.
+				declaration = lineDirectiveNoColumn(t.sourceFile, child) + declaration
 			}
 			declarations = append(declarations, declaration)
 		case "function_declaration":
@@ -265,7 +280,7 @@ func (t *transpiler) emitStrictSourceFile(n *gotreesitter.Node) string {
 			// so no projected reference to it can exist.
 			if stub := t.emitTypedLegacyStub(child); stub != "" {
 				if t.sourceFile != "" {
-					stub = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, stub)
+					stub = lineDirective(t.sourceFile, child) + stub
 				}
 				declarations = append(declarations, stub)
 			}
@@ -532,6 +547,38 @@ func filepathForLineDirective(name string) string {
 		name = abs
 	}
 	return filepath.ToSlash(name)
+}
+
+// lineDirective returns a "//line file:row:col\n" directive anchoring decl's
+// projected text to decl's own start position in sourceFile.
+//
+// The column matters beyond decl's own first line: go/parser resets column
+// tracking to 1 at the start of every subsequent source line regardless of
+// the directive's column, but only once a directive supplies one at all —
+// a directive with no column (this package's original shape) reports
+// column 0 ("unknown") for every position it covers, decl's first line
+// included, not only the lines after it. A same-file struct field's own
+// declared type — the exact position a props/go/types cross-file mismatch
+// needs to name (see internal/typeoracle) — sits on one of those later
+// lines, so this is what lets that diagnostic carry a real column instead
+// of every caller having to fall back to column 1 (the fallback
+// strictcheck/collision.go's declSpan and internal/typeoracle's
+// spanFromPosition both still apply for the rarer case of a position this
+// directive's own segment cannot cover at all, e.g. one synthesized by
+// emitStrictComponent's non-verbatim signature wrapper).
+func lineDirective(sourceFile string, decl *gotreesitter.Node) string {
+	point := decl.StartPoint()
+	return fmt.Sprintf("//line %s:%d:%d\n", filepathForLineDirective(sourceFile), point.Row+1, point.Column+1)
+}
+
+// lineDirectiveNoColumn is lineDirective without a column: every position it
+// covers reports column 0 ("unknown") to go/token, not only decl's own
+// first line (verified against this Go toolchain's go/parser) — the
+// original shape this package's three //line sites all used before
+// lineDirective existed. See emitStrictSourceFile's gosx_component_declaration
+// case for why that declaration kind still needs this shape.
+func lineDirectiveNoColumn(sourceFile string, decl *gotreesitter.Node) string {
+	return fmt.Sprintf("//line %s:%d\n", filepathForLineDirective(sourceFile), decl.StartPoint().Row+1)
 }
 
 func (t *transpiler) collectStructFields(n *gotreesitter.Node) {

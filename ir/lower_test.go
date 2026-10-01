@@ -294,3 +294,121 @@ func Demo() Node {
 		t.Fatalf("computed not emitted into island program: %+v", island.Computeds)
 	}
 }
+
+// TestLowerSignalAliasedImport proves that importing the gosx signal
+// package under an alias still lowers `alias.New(...)` as a signal
+// declaration (gosx#import-binding). Name-based matching against the
+// literal text "signal" would miss this.
+func TestLowerSignalAliasedImport(t *testing.T) {
+	source := []byte(`package main
+
+import sig "m31labs.dev/gosx/signal"
+
+func Demo() Node {
+	count := sig.New(0)
+	return <div>{count.Get()}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	comp := prog.Components[0]
+	if comp.Scope == nil {
+		t.Fatal("component scope is nil")
+	}
+	found := false
+	for _, s := range comp.Scope.Signals {
+		if s.Local == "count" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sig.New (aliased signal import) not recognized as a signal; got Signals=%+v", comp.Scope.Signals)
+	}
+}
+
+// TestLowerSignalShadowedByLocal proves that a parameter named "signal"
+// shadows the gosx signal package meaning — `signal.New(...)` inside
+// such a function must NOT lower as a signal declaration
+// (gosx#import-binding).
+func TestLowerSignalShadowedByLocal(t *testing.T) {
+	source := []byte(`package main
+
+func Demo(signal FakeSignalNamespace) Node {
+	count := signal.New(0)
+	return <div>{count}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	comp := prog.Components[0]
+	if comp.Scope != nil {
+		for _, s := range comp.Scope.Signals {
+			if s.Local == "count" {
+				t.Fatalf("signal.New lowered as a signal despite \"signal\" naming a shadowing parameter; got Signals=%+v", comp.Scope.Signals)
+			}
+		}
+	}
+}
+
+// TestLowerSignalDifferentPackageNamedSignal proves that an import of an
+// unrelated package under the local name "signal" does not make
+// `signal.New(...)` a gosx signal declaration (gosx#import-binding).
+func TestLowerSignalDifferentPackageNamedSignal(t *testing.T) {
+	source := []byte(`package main
+
+import signal "some/other/pkg"
+
+func Demo() Node {
+	count := signal.New(0)
+	return <div>{count}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	comp := prog.Components[0]
+	if comp.Scope != nil {
+		for _, s := range comp.Scope.Signals {
+			if s.Local == "count" {
+				t.Fatalf("signal.New lowered as a signal despite \"signal\" naming an unrelated import; got Signals=%+v", comp.Scope.Signals)
+			}
+		}
+	}
+}
+
+// TestLowerSignalImplicitDefaultStillWorks proves that a .gsx file that
+// never imports "m31labs.dev/gosx/signal" explicitly (gosx's documented
+// convention — see examples/hotswap and most of this test corpus) still
+// lowers a bare `signal.New(...)` as a signal declaration. This is the
+// backward-compatibility case the import-binding fix must not break.
+func TestLowerSignalImplicitDefaultStillWorks(t *testing.T) {
+	source := []byte(`package main
+
+func Demo() Node {
+	count := signal.New(0)
+	return <div>{count.Get()}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	comp := prog.Components[0]
+	if comp.Scope == nil {
+		t.Fatal("component scope is nil")
+	}
+	found := false
+	for _, s := range comp.Scope.Signals {
+		if s.Local == "count" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("bare signal.New without an import not recognized as a signal; got Signals=%+v", comp.Scope.Signals)
+	}
+}

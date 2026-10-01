@@ -34,7 +34,8 @@ var (
 
 // CheckoutFormProps configures a native hosted-checkout POST form. Action is
 // an application route, OfferID is an opaque application-owned lookup key, and
-// CSRFToken should normally come from session.Token(r).
+// CSRFToken should normally come from session.Token(r) after session state has
+// been established. Anonymous token reads leave the form disabled.
 type CheckoutFormProps struct {
 	ID        string
 	Class     string

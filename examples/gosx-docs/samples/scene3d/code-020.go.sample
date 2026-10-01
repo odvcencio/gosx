@@ -1,0 +1,14 @@
+props.PostFX = scene.PostFX{
+	    MaxPixels: scene.PostFXMaxPixels1080p,
+	    Effects: []scene.PostEffect{
+	        scene.SSAO{Radius: 4, Intensity: 0.55},
+	        scene.Bloom{Threshold: 0.8, Strength: 0.5, Radius: 6, Scale: 0.25},
+	        scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
+	        scene.ColorGrade{Contrast: 1.05, Saturation: 1.1},
+	        scene.Vignette{Intensity: 0.4},
+	        scene.FXAA{}, // always last: it searches tonemapped luma
+	    },
+	}
+
+	// A ready-made 60 fps chain: half-resolution bloom, ACES, FXAA, 720p cap.
+	props.PostFX = scene.GameplayPostFX()

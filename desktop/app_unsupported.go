@@ -9,6 +9,10 @@ import (
 
 type unsupportedApp struct{}
 
+func showPlatformMessage(MessageOptions, uintptr) (MessageResult, error) {
+	return "", ErrUnsupported
+}
+
 func newPlatformApp(Options) (platformApp, error) {
 	return nil, ErrUnsupported
 }
@@ -17,12 +21,32 @@ func platformAvailable() error {
 	return ErrUnsupported
 }
 
+// AcquireSingleInstance is unsupported when no Windows desktop backend is available.
+func AcquireSingleInstance(string) (*InstanceLock, bool, error) {
+	return nil, false, ErrUnsupported
+}
+
+// ForwardToFirstInstance is unsupported when no Windows desktop backend is available.
+func ForwardToFirstInstance(string, []string, string) error {
+	return ErrUnsupported
+}
+
+// WebView2RuntimeVersion is unsupported when no Windows WebView2 backend is
+// available.
+func WebView2RuntimeVersion(string) (string, error) {
+	return "", ErrUnsupported
+}
+
 func (unsupportedApp) Run() error {
 	return ErrUnsupported
 }
 
 func (unsupportedApp) Close() error {
 	return nil
+}
+
+func (unsupportedApp) Reload() error {
+	return ErrUnsupported
 }
 
 func (unsupportedApp) Navigate(url string) error {
@@ -84,7 +108,10 @@ func (unsupportedApp) OpenURL(string) error {
 	return ErrUnsupported
 }
 
-func (unsupportedApp) SetFullscreen(bool) error  { return ErrUnsupported }
+func (unsupportedApp) SetFullscreen(bool) error { return ErrUnsupported }
+func (unsupportedApp) WindowPlacement() (WindowPlacement, error) {
+	return WindowPlacement{}, ErrUnsupported
+}
 func (unsupportedApp) SetMinSize(int, int) error { return ErrUnsupported }
 func (unsupportedApp) SetMaxSize(int, int) error { return ErrUnsupported }
 
@@ -119,3 +146,5 @@ func (unsupportedApp) Notify(Notification) error {
 func (unsupportedApp) SetFileDropHandler(func([]string)) error {
 	return ErrUnsupported
 }
+
+func (unsupportedApp) PrimaryWindow() *Window { return nil }

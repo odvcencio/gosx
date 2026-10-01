@@ -47,7 +47,7 @@ func registerRuntime(b *bridge.Bridge) {
 	registerTextLayoutRuntime()
 	registerCRDTRuntime()
 	// Cross-frame postMessage relay for $preview.* shared signals
-	// (ADR 0009 — see client/wasm/cross_frame.go). Idempotent and
+	// (see client/wasm/cross_frame.go). Idempotent and
 	// inert when the page does not opt into preview mode via the
 	// gosx-preview=1 query parameter.
 	registerCrossFrameRelay(b)

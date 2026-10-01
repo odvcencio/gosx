@@ -24,8 +24,7 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 	for _, required := range []string{
 		"<Scene3D",
 		"/checkers-native-preview.png",
-		"/checkers-native-telemetry.json",
-		"Pure-Go native preview",
+		"Go rendered preview",
 		"Keyboard board · 121 holes",
 		"data-checkers-hole",
 		"checkers-status",
@@ -44,6 +43,9 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Errorf("page.gsx missing %q", required)
 		}
+	}
+	if strings.Contains(text, "/checkers-native-telemetry.json") {
+		t.Fatal("public demo page links to renderer telemetry")
 	}
 }
 

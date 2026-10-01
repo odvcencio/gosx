@@ -56,7 +56,9 @@ type DocumentContext struct {
 	Status  int
 	Title   string
 	// Language is the BCP 47 language tag written to the document's html
-	// element. Empty preserves the historical document output.
+	// element. Empty falls back to defaultDocumentLanguage ("en") so the
+	// rendered document always carries a lang attribute; set it explicitly
+	// to serve a different locale.
 	Language      string
 	PageID        string
 	Path          string
@@ -135,6 +137,7 @@ func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle
 	if s == nil {
 		s = NewPageStateForRequest(request)
 	}
+	s.PrepareCache(request)
 	path := documentContextPath(request)
 	// A shared cache stores one body and replays it to every client, so the
 	// document must not name this request. Omit the request ID there.
@@ -225,6 +228,7 @@ type documentContractAssets struct {
 	BootstrapFeatureHubsPath        string `json:"bootstrapFeatureHubsPath,omitempty"`
 	BootstrapFeatureControllersPath string `json:"bootstrapFeatureControllersPath,omitempty"`
 	BootstrapFeatureScene3DPath     string `json:"bootstrapFeatureScene3dPath,omitempty"`
+	BootstrapFeatureTextLayoutPath  string `json:"bootstrapFeatureTextLayoutPath,omitempty"`
 	HLSPath                         string `json:"hlsPath,omitempty"`
 	Islands                         int    `json:"islands,omitempty"`
 	ComputeIslands                  int    `json:"computeIslands,omitempty"`
@@ -265,6 +269,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			BootstrapFeatureHubsPath:        doc.Runtime.BootstrapFeatureHubsPath,
 			BootstrapFeatureControllersPath: doc.Runtime.BootstrapFeatureControllersPath,
 			BootstrapFeatureScene3DPath:     doc.Runtime.BootstrapFeatureScene3DPath,
+			BootstrapFeatureTextLayoutPath:  doc.Runtime.BootstrapFeatureTextLayoutPath,
 			HLSPath:                         doc.Runtime.HLSPath,
 			Islands:                         doc.Runtime.Islands,
 			ComputeIslands:                  doc.Runtime.ComputeIslands,

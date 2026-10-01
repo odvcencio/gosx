@@ -2,6 +2,7 @@ package docs
 
 import (
 	"encoding/json"
+	"maps"
 	"math"
 	"sync"
 )
@@ -68,6 +69,9 @@ var waterDuckMaterialSelenaUniforms = map[string]any{
 	"causticTexture":  "gosx:water:water-main:caustics",
 }
 
+// WaterDemoData returns the compiled water demo data. The result is a fresh
+// shallow copy on every call: callers may add or replace top-level keys, but
+// must not modify the nested values, which are shared.
 func WaterDemoData() (map[string]any, error) {
 	waterDemoOnce.Do(func() {
 		controlData, err := waterControlDataJSON()
@@ -139,7 +143,12 @@ func WaterDemoData() (map[string]any, error) {
 			}
 		}
 	})
-	return waterDemoData, waterDemoErr
+	// The page loader adds per-request keys (the resolved diagnostic knobs) to the
+	// returned map, so every caller gets its own copy. Returning the shared map
+	// let concurrent requests write to it at once (fatal error: concurrent map
+	// writes) and leaked one request's knobs into another's page. The nested
+	// values stay shared and read-only.
+	return maps.Clone(waterDemoData), waterDemoErr
 }
 
 func waterControlDataJSON() (string, error) {

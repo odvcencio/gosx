@@ -104,6 +104,64 @@ func TestReturnTargetInvalidValuesFallThrough(t *testing.T) {
 	}
 }
 
+func TestNormalizeReturnTargetPublicContract(t *testing.T) {
+	invalidUTF8 := string([]byte{0xff})
+	tests := []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{name: "empty", raw: "", want: "", ok: false},
+		{name: "relative", raw: "team/roster", want: "", ok: false},
+		{name: "authority", raw: "//evil.example/team", want: "", ok: false},
+		{name: "absolute", raw: "https://evil.example/team", want: "", ok: false},
+		{name: "opaque", raw: "javascript:alert(1)", want: "", ok: false},
+		{name: "userinfo", raw: "//user:pass@evil.example/team", want: "", ok: false},
+		{name: "leading whitespace", raw: " /team", want: "", ok: false},
+		{name: "trailing whitespace", raw: "/team ", want: "", ok: false},
+		{name: "malformed path escape", raw: "/team%ZZ", want: "", ok: false},
+		{name: "malformed query escape", raw: "/team?next=%ZZ", want: "", ok: false},
+		{name: "malformed fragment escape", raw: "/team#%ZZ", want: "", ok: false},
+		{name: "raw control in path", raw: "/team\x00roster", want: "", ok: false},
+		{name: "encoded control in query", raw: "/team?next=%00", want: "", ok: false},
+		{name: "encoded DEL in fragment", raw: "/team#%7f", want: "", ok: false},
+		{name: "raw backslash", raw: "/team\\roster", want: "", ok: false},
+		{name: "encoded backslash", raw: "/team%5Croster", want: "", ok: false},
+		{name: "double encoded backslash", raw: "/team%255Croster", want: "", ok: false},
+		{name: "encoded leading double slash", raw: "/%2f%2fevil", want: "", ok: false},
+		{name: "double encoded leading double slash", raw: "/%252f%252fevil", want: "", ok: false},
+		{name: "raw invalid UTF-8 in path", raw: "/team" + invalidUTF8, want: "", ok: false},
+		{name: "encoded invalid UTF-8 in path", raw: "/team%ff", want: "", ok: false},
+		{name: "raw invalid UTF-8 in query", raw: "/team?next=" + invalidUTF8, want: "", ok: false},
+		{name: "encoded invalid UTF-8 in query", raw: "/team?next=%ff", want: "", ok: false},
+		{name: "raw invalid UTF-8 in fragment", raw: "/team#" + invalidUTF8, want: "", ok: false},
+		{name: "encoded invalid UTF-8 in fragment", raw: "/team#%ff", want: "", ok: false},
+		{name: "force query", raw: "/team?", want: "/team?", ok: true},
+		{name: "encoded embedded slash", raw: "/team%2Froster", want: "/team%2Froster", ok: true},
+		{name: "dot segments", raw: "/a/../team/./roster", want: "/a/../team/./roster", ok: true},
+		{name: "encoded slash remains in query", raw: "/team?next=%2F%2Fevil", want: "/team?next=%2F%2Fevil", ok: true},
+		{name: "encoded query punctuation remains", raw: "/team?next=a%2Fb&literal=%26", want: "/team?next=a%2Fb&literal=%26", ok: true},
+		{name: "fragment remains encoded", raw: "/team#board%2Fpool", want: "/team#board%2Fpool", ok: true},
+		{name: "raw Unicode path", raw: "/équipe", want: "/%C3%A9quipe", ok: true},
+		{name: "encoded Unicode path", raw: "/%C3%A9quipe", want: "/%C3%A9quipe", ok: true},
+		{name: "raw Unicode query", raw: "/team?q=é", want: "/team?q=é", ok: true},
+		{name: "encoded Unicode query", raw: "/team?q=%C3%A9", want: "/team?q=%C3%A9", ok: true},
+		{name: "raw Unicode fragment", raw: "/team#é", want: "/team#%C3%A9", ok: true},
+		{name: "encoded Unicode fragment", raw: "/team#%C3%A9", want: "/team#%C3%A9", ok: true},
+		{name: "punctuation", raw: "/team?next=!$&'()*+,;=:@#frag!$&'()*+,;=:@", want: "/team?next=!$&'()*+,;=:@#frag!$&'()*+,;=:@", ok: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := NormalizeReturnTarget(tt.raw)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("NormalizeReturnTarget(%q) = %q, %t; want %q, %t", tt.raw, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestReturnTargetReadsFirstBodyValueAndIgnoresQuery(t *testing.T) {
 	values := "" + url.QueryEscape(ReturnTargetField) + "=" + url.QueryEscape("//evil.example") + "&" + url.QueryEscape(ReturnTargetField) + "=" + url.QueryEscape("/good")
 	req := httptest.NewRequest(http.MethodPost, "https://league.example/gosx/action/save?"+ReturnTargetField+"=%2Fquery", strings.NewReader(values))

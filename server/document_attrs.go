@@ -55,15 +55,26 @@ func DocumentBodyAttrs(doc *DocumentContext) gosx.AttrList {
 	return append(attrs, doc.BodyAttrs...)
 }
 
+// defaultDocumentLanguage is the BCP 47 tag the document shell writes to
+// <html lang> when the app never sets DocumentContext.Language or
+// PageState.SetLanguage. A browser and assistive tech both need a lang
+// attribute to pick the right hyphenation, voice, and spell-check rules;
+// shipping none silently defaulted every reader to "guess the language"
+// (usually the browser's own UI locale, not the page's). An app that serves
+// a known locale still overrides it exactly as before, by setting Language.
+const defaultDocumentLanguage = "en"
+
 func documentHTMLAttrValues(doc *DocumentContext) []documentAttr {
 	attrs := []documentAttr{
 		{name: "data-gosx-document", value: "true"},
 	}
+	language := defaultDocumentLanguage
 	if doc != nil {
-		if language := strings.TrimSpace(doc.Language); language != "" {
-			attrs = append(attrs, documentAttr{name: "lang", value: language})
+		if explicit := strings.TrimSpace(doc.Language); explicit != "" {
+			language = explicit
 		}
 	}
+	attrs = append(attrs, documentAttr{name: "lang", value: language})
 	return appendDocumentContextAttrs(attrs, doc, true)
 }
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestResolveAliasRedirectsLegacySceneEventNames is the ADR 0007 keystone:
+// TestResolveAliasRedirectsLegacySceneEventNames is the keystone test:
 // every legacy $scene.event.<field> name resolves to the corresponding
 // $surface.event.<field> target. Bridge consumers that haven't migrated
 // transparently read the canonical signal through this redirection.

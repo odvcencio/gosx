@@ -1,9 +1,8 @@
 //go:build !js
 
-// Bytecode lowering for engine surfaces (Slice X.D — AST-compiler
-// initiative). Wraps ir/golower so engine/surface/discover.go can route
-// annotation-free surface declarations to the shared-VM bytecode path
-// per ADR 0003.
+// Bytecode lowering for engine surfaces. Wraps ir/golower so
+// engine/surface/discover.go can route annotation-free surface
+// declarations to the shared-VM bytecode path.
 //
 // Host-only (like discover.go, its sole caller): LowerToBytecode compiles
 // .gsx source into bytecode at build time via ir/golower, which pulls in
@@ -48,9 +47,9 @@
 //     never serialized, so the cached JSON stays clean.
 //
 // Surface kind is derived from the component's runtime context: today
-// the engine-surface authoring contract only ships Canvas2D (Slice X.E
-// targets the hyphae graph dogfood). Scene3D wiring stays the door open
-// for the meta-plan's future 3D handlers.
+// the engine-surface authoring contract only ships Canvas2D (targeting
+// the hyphae graph dogfood). Scene3D wiring stays the door open
+// for future 3D handlers.
 
 package surface
 

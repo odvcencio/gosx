@@ -244,7 +244,7 @@
       ];
     }
     var patch = { name: config.name, uniforms: uniforms };
-    if (config.bounds && config.bounds.mode === "union") {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (config.bounds && config.bounds.mode === "union") {
       patch.domRegionBounds = measurement && measurement.bounds ? measurement.bounds : {
         mode: "union",
         active: false,
@@ -254,7 +254,7 @@
         bottom: 0,
         paddingPx: config.bounds.paddingPx || 0,
       };
-    } else {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else {
       patch.domRegionBounds = null;
     }
     return patch;
@@ -262,7 +262,7 @@
 
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
     var disposed = false;
-    var raf = null;
+    var raf = 0;
     var configs = [];
     var key = "";
     var lastPatchKey = "";
@@ -331,7 +331,7 @@
     }
 
     function measureNow() {
-      raf = null;
+      raf = 0;
       if (disposed || configs.length === 0) return;
       var entries = [];
       var targetKeyParts = [];
@@ -369,20 +369,22 @@
     }
 
     function scheduleMeasure() {
-      if (disposed || configs.length === 0 || raf != null) return;
-      var rafFn = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
-        ? window.requestAnimationFrame.bind(window)
-        : function(callback) { return setTimeout(function() { callback(Date.now()); }, 0); };
-      raf = rafFn(measureNow);
+      if (disposed || configs.length === 0 || raf !== 0) return;
+      var motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+      raf = motionScheduler && typeof motionScheduler.request === "function"
+        ? motionScheduler.request(measureNow)
+        : (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+          ? window.requestAnimationFrame(measureNow)
+          : setTimeout(function() { measureNow(); }, 0));
     }
 
     function cancelMeasure() {
-      if (raf == null) return;
-      var cancel = typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function"
-        ? window.cancelAnimationFrame.bind(window)
-        : clearTimeout;
-      cancel(raf);
-      raf = null;
+      if (raf === 0) return;
+      var motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+      if (motionScheduler && typeof motionScheduler.cancel === "function") motionScheduler.cancel(raf);
+      else if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(raf);
+      else clearTimeout(raf);
+      raf = 0;
     }
 
     function enableGeometryTracking() {

@@ -60,11 +60,10 @@ const (
 	FeatureRectAreaLight             Feature = "rect-area-light"
 	FeatureRectAreaSpecular          Feature = "rect-area-specular"
 	FeatureLightProbeSH              Feature = "light-probe-sh"
-	// FeatureSkyEnvironment tracks only the environment-cube sky mode. Gradient
-	// sky draws on every backend, including Canvas2D (a genuine ctx2d gradient
-	// fill, not a degrade), so it earns no row: an absent feature is supported
-	// everywhere, per the Matrix contract. See sky_test.go.
+	// Sky features cover GPU backgrounds. Canvas2D retains the flat clear color.
 	FeatureSkyEnvironment Feature = "sky-environment"
+	FeatureSkyGradient    Feature = "sky-gradient"
+	FeatureSkyPhysical    Feature = "sky-physical"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -143,19 +142,13 @@ var Matrix = map[Feature]map[Backend]bool{
 	// validation failure degrades per frame with a recorded render-truth reason
 	// rather than silently shading wrong, so the cell is unconditionally true.
 	//
-	// WebGL2 holds the same three samplers (u_iblIrradiance, u_iblRadiance,
-	// u_iblBRDFLUT, behind #if GOSX_HDR_IBL) and the same runtime asset path
-	// (scenePBRUploadEnvironmentMap), but scenePBRHDRIBLAvailable gates the
-	// whole branch on MAX_TEXTURE_IMAGE_UNITS >= 20. A Matrix cell answers an
-	// unconditional question — "does this backend shade IBL for every
-	// authoring scene" — and a device below the gate does not, regardless of
-	// what the shader compiles. See assetpipe/ibl/contract.go:38-46 for the
-	// gate's rationale and PR-8 (ibl_test.go) for the SH9 irradiance fallback
-	// that keeps sub-20-unit devices from losing ambient light entirely.
+	// WebGL2 uses one depth-array sampler per shadow light. All eight material
+	// maps, two four-cascade lights, the legacy environment map, and all three
+	// IBL products fit in the core minimum of 16 fragment samplers.
 	//
 	// The ad hoc (1.0 - roughness * 0.65) legacy equirect-tap response —
 	// unrelated to this row — lives under FeatureEnvironmentMap below.
-	FeatureIBL: {BackendWebGPU: true, BackendWebGL: false},
+	FeatureIBL: {BackendWebGPU: true, BackendWebGL: true},
 	// environment-map: does the backend READ Environment.EnvMap at all.
 	//
 	// This row exists because the ibl row above reads as parity and is not.
@@ -291,12 +284,10 @@ var Matrix = map[Feature]map[Backend]bool{
 	// light would invent a distance falloff — but it is not an SH evaluation,
 	// so the cell stays false until one exists.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
-	// sky-environment: does the backend draw the environment-cube/equirect sky
-	// mode. False everywhere at this row's introduction — no backend draws any
-	// sky yet. Gradient sky (the other Sky.Mode) draws on every backend
-	// including Canvas2D and earns no row of its own; see the const doc.
-	// Flip each cell as its draw lands. See sky_test.go.
-	FeatureSkyEnvironment: {BackendWebGPU: false, BackendWebGL: false},
+	// Both GPU backends draw gradient and environment skies. Canvas2D degrades.
+	FeatureSkyEnvironment: {BackendWebGPU: true, BackendWebGL: true},
+	FeatureSkyGradient:    {BackendWebGPU: true, BackendWebGL: true},
+	FeatureSkyPhysical:    {BackendWebGPU: true, BackendWebGL: true},
 }
 
 func supports(b Backend, f Feature) bool {

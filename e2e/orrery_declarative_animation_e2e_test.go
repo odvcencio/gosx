@@ -64,7 +64,7 @@ func TestOrreryDeclarativeAnimationPauseResume(t *testing.T) {
 	if !strings.Contains(html, "meridian-procession") {
 		t.Fatalf("expected SSR HTML to contain the meridian-procession clip\n\nLogs:\n%s", app.logs.String())
 	}
-	if !strings.Contains(html, `"targetID": "orrery-planet-cinder"`) {
+	if !strings.Contains(html, `"targetID":"orrery-planet-cinder"`) {
 		t.Fatalf("expected SSR HTML to carry lowering-resolved stable targetID refs\n\nLogs:\n%s", app.logs.String())
 	}
 

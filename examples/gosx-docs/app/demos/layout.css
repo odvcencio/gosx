@@ -1,162 +1,15 @@
-/* ============================================================
-   Demos editorial shell
-   layout.css — sidecar for demos/layout.gsx
-   Linear/Vercel/Stripe-inspired: restrained, generous whitespace,
-   one accent-color slot per demo, humanist sans typography.
-   ============================================================ */
-
-/* ------------------------------------------------------------
-   Design tokens — scoped to .demos-shell
-   ------------------------------------------------------------ */
-
+/* Demo layout geometry and compatibility aliases for existing demo styles. */
 .demos-shell {
-	--font-display: "Space Grotesk", sans-serif;
-	--font-body: "Inter", sans-serif;
-	--font-mono: "JetBrains Mono", monospace;
-	--type-xs: 0.75rem;
-	--type-sm: 0.875rem;
-	--type-base: 1rem;
-	--type-lg: 1.25rem;
-	--type-xl: 1.5625rem;
-	--type-2xl: 1.953rem;
-	--type-3xl: clamp(2.25rem, 1.9rem + 1.5vw, 3.052rem);
-	--color-canvas: #0b0b0d;
-	--color-surface: #151519;
-	--color-surface-raised: #1d1d22;
-	--color-text: #f5f5ef;
-	--color-text-secondary: #c7c7c2;
-	--color-text-muted: #9a9a9a;
-	--color-accent: #69e3c7;
-	--color-border: rgba(255, 255, 255, 0.08);
-	--color-border-strong: rgba(255, 255, 255, 0.16);
-	--color-backdrop: rgba(0, 0, 0, 0.64);
-	--duration-fast: 150ms;
-	--duration-standard: 200ms;
-	--duration-reveal: 300ms;
-	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-	--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-	--space-xs: clamp(0.5rem, 0.45rem + 0.2vw, 0.75rem);
-	--space-sm: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
-	--space-md: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
-	--space-lg: clamp(1.5rem, 1.3rem + 0.8vw, 2rem);
-	--space-xl: clamp(2rem, 1.7rem + 1.25vw, 3rem);
-	--space-2xl: clamp(3rem, 2.5rem + 2vw, 4rem);
-	--space-3xl: clamp(4rem, 3rem + 4vw, 6rem);
-  --demo-site-nav-offset: 61px;
-  --demo-bg: var(--color-canvas);
-  --demo-fg: var(--color-text);
-  --demo-muted: var(--color-text-muted);
-  --demo-hair: var(--color-border);
-  --demo-hair-strong: var(--color-border-strong);
-  --demo-accent: #9fffa5;
-
-  /* Per-demo accent palette — active link metadata is projected by GoSX. */
-  --demo-accent-playground: #9fffa5;
-  --demo-accent-fluid:      #7aa2ff;
-  --demo-accent-water:      #69e3c7;
-  --demo-accent-livesim:    #f59e0b;
-  --demo-accent-cms:        #ec4899;
-  --demo-accent-scene3d:    #5fb4ff;
-  --demo-accent-scene3d-bench: #cbd5e1;
-  --demo-accent-collab:     #d9f99d;
-
+  color-scheme: dark;
   font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--type-base);
+  line-height: var(--lh-body);
   color: var(--demo-fg);
   background: var(--demo-bg);
-  min-height: calc(100vh - var(--demo-site-nav-offset));
-  padding-top: var(--demo-site-nav-offset);
+  min-height: 100vh;
+  padding-top: var(--site-nav-offset);
   display: flex;
   flex-direction: column;
-}
-
-/* Per-demo accent override via the runtime-managed navigation context. */
-.demos-shell[data-demo-slug="playground"] { --demo-accent: #9fffa5; }
-.demos-shell[data-demo-slug="fluid"]      { --demo-accent: #7aa2ff; }
-.demos-shell[data-demo-slug="water"]      { --demo-accent: #69e3c7; }
-.demos-shell[data-demo-slug="livesim"]    { --demo-accent: #f59e0b; }
-.demos-shell[data-demo-slug="cms"]        { --demo-accent: #ec4899; }
-.demos-shell[data-demo-slug="scene3d"]    { --demo-accent: #5fb4ff; }
-.demos-shell[data-demo-slug="scene3d-bench"] { --demo-accent: #cbd5e1; }
-.demos-shell[data-demo-slug="collab"]    { --demo-accent: #d9f99d; }
-
-/* ------------------------------------------------------------
-   Top bar — thin context strip
-   ------------------------------------------------------------ */
-
-.demos-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 44px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--demo-hair);
-  background: var(--demo-bg);
-  flex-shrink: 0;
-}
-
-.demos-topbar__crumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-
-.demos-topbar__home,
-.demos-topbar__section {
-  color: var(--demo-muted);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-
-.demos-topbar__home:hover,
-.demos-topbar__section:hover {
-  color: var(--demo-fg);
-}
-
-.demos-topbar__home:focus-visible,
-.demos-topbar__section:focus-visible {
-  outline: 2px solid var(--demo-accent);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-.demos-topbar__sep {
-  color: var(--demo-hair-strong);
-  user-select: none;
-}
-
-/* Hamburger — only visible on mobile (<900px) */
-.demos-topbar__menu {
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 44px;
-  min-height: 44px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 10px;
-  color: var(--demo-fg);
-}
-
-.demos-topbar__menu:focus-visible {
-  outline: 2px solid var(--demo-accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-.demos-topbar__menu-bar {
-  display: block;
-  width: 18px;
-  height: 1.5px;
-  background: currentColor;
-  transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
 /* ------------------------------------------------------------
@@ -355,6 +208,8 @@
   min-height: 0;
 }
 
+.demo-viewport > .orbital-study { flex: 0 0 auto; }
+
 /* ------------------------------------------------------------
    Meta footer — three pill buttons at bottom of viewport
    ------------------------------------------------------------ */
@@ -403,7 +258,7 @@
 
 .demo-details {
   position: fixed;
-  top: var(--demo-site-nav-offset);
+  top: var(--site-nav-offset);
   right: 0;
   bottom: 0;
   z-index: 400;
@@ -488,9 +343,9 @@
 .demo-details__facts dt {
   margin-bottom: var(--space-xs);
   color: var(--demo-muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--type-xs);
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .demo-details__facts dd {
@@ -519,50 +374,398 @@
   overflow-wrap: anywhere;
 }
 
+.demo-details__sources {
+  margin-top: var(--space-md);
+  border-top: 1px solid var(--demo-hair);
+  color: var(--demo-fg);
+}
+
+.demo-details__sources summary {
+  padding: var(--space-md) 0;
+  color: var(--demo-fg);
+  cursor: pointer;
+}
+
+.demo-details__sources ul {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-md);
+  padding-left: 1.2rem;
+}
+
+.demo-details__source-link {
+  color: var(--demo-accent);
+  font: var(--type-xs)/1.5 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.demo-details__source-link:focus-visible,
+.demo-details__sources summary:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
 @media (max-width: 900px) {
-  .demos-topbar__menu {
-    display: flex;
-  }
+  .demos-shell { --site-nav-offset: 4.25rem; }
 
   .demos-body {
-    grid-template-columns: 1fr;
-    position: relative;
+    display: flex;
+    flex-direction: column;
   }
 
   .demo-dock {
-    position: fixed;
-    top: var(--demo-site-nav-offset);
-    left: 0;
-    bottom: 0;
-    width: 280px;
-    z-index: 300;
-    border-right: 1px solid var(--demo-hair-strong);
-    transform: translateX(-100%);
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    overflow-y: auto;
+    position: static;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--demo-hair);
+    overflow: hidden;
   }
 
-  /* GoSX's declarative toggle owns the drawer's attribute and ARIA state. */
-  .demos-body[data-dock-open] .demo-dock {
-    transform: translateX(0);
+  .demo-dock__header { display: none; }
+  .demo-dock__list {
+    display: flex;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+  .demo-dock__item {
+    flex: 0 0 auto;
+    padding: 0;
+  }
+  .demo-dock__link {
+    min-height: 2.75rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+  }
+  .demo-dock__dot,
+  .demo-dock__tag {
+    display: none;
+  }
+  .demo-dock__title {
+    font-size: var(--type-sm);
+  }
+  .demo-dock__item[aria-current="page"] > .demo-dock__link,
+  .demo-dock__link[aria-current="page"] {
+    background: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--color-accent-line);
   }
 
   .demo-viewport {
     width: 100%;
   }
+
+  .demos-shell[data-demo-slug=""] .demo-dock {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .demo-dock {
-    transition: none;
-  }
-
-  .demos-topbar__menu-bar {
-    transition: none;
-  }
-
   .demo-dock__link,
   .demo-meta__pill {
     transition: none;
   }
+}
+
+/* Shared pieces used by each study. A demo may change placement while these
+   classes keep the same type, spacing, contrast, and interaction feedback. */
+.demos-shell :is(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
+.demo-frame {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--demo-fg);
+  background: var(--color-surface);
+  border: 1px solid var(--demo-hair);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-panel);
+}
+
+.demo-panel {
+  color: var(--demo-fg);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  border: 1px solid var(--demo-hair-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elevation-panel);
+  backdrop-filter: blur(20px);
+}
+
+.demo-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--demo-hair);
+  border-radius: var(--radius-md);
+}
+
+.demo-stat {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 6rem;
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-left: 1px solid var(--demo-hair);
+}
+
+.demo-stat dt,
+.demo-stat__label {
+  color: var(--demo-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.demo-stat dd,
+.demo-stat__value {
+  margin: 0;
+  color: var(--demo-fg);
+  font-size: var(--type-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-code-panel {
+  overflow: auto;
+  color: var(--color-text-secondary);
+  background: var(--color-canvas);
+  border: 1px solid var(--demo-hair);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1.7;
+}
+
+.demo-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 2.75rem;
+  padding: 0.7rem 1.15rem;
+  color: var(--color-canvas);
+  background: var(--demo-accent);
+  border: 1px solid var(--demo-accent);
+  border-radius: var(--radius-pill);
+  font: 700 var(--type-sm)/1.25 var(--font-body);
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform var(--duration-standard) var(--ease-out), box-shadow var(--duration-standard) var(--ease-out);
+}
+
+.demo-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--demo-accent) 25%, transparent);
+}
+
+.demo-action:active { transform: translateY(0); }
+.demo-action--quiet {
+  color: var(--demo-fg);
+  background: var(--color-surface);
+  border-color: var(--demo-hair-strong);
+}
+
+.demos-body { grid-template-columns: 14.75rem minmax(0, 1fr); }
+.demo-dock { background: var(--color-canvas); }
+.demo-dock__header {
+  padding: var(--space-lg) var(--space-md) var(--space-md);
+  border-bottom: 1px solid var(--demo-hair);
+}
+.demo-dock__header p {
+  margin: 0 0 0.35rem;
+  color: var(--demo-muted);
+  font: 500 var(--type-xs)/1.4 var(--font-body);
+}
+.demo-dock__overview {
+  display: flex;
+  justify-content: space-between;
+  color: var(--demo-fg);
+  font-size: var(--type-base);
+  font-weight: 750;
+  text-decoration: none;
+}
+.demo-dock__overview span { color: var(--demo-accent); }
+.demo-dock__list { padding: var(--space-sm) 0; counter-reset: study; }
+.demo-dock__item { padding-inline: 0.5rem; counter-increment: study; }
+.demo-dock__link { gap: 0.65rem; padding: 0.75rem 0.6rem; border-radius: var(--radius-sm); }
+.demo-dock__dot {
+  width: 1.25rem;
+  height: auto;
+  color: var(--demo-muted);
+  background: none;
+  border-radius: 0;
+  opacity: 1;
+  font: 500 0.65rem/1.5 var(--font-mono);
+}
+.demo-dock__dot::before { content: counter(study, decimal-leading-zero); }
+.demo-dock__title { font-size: 0.82rem; font-weight: 700; }
+.demo-dock__tag { font-size: 0.68rem; }
+.demo-dock__chip { display: none; }
+.demo-dock__item[aria-current="page"] > .demo-dock__link,
+.demo-dock__link[aria-current="page"] {
+  background: color-mix(in srgb, var(--demo-accent) 11%, var(--color-surface));
+  box-shadow: inset 2px 0 var(--demo-accent);
+}
+.demo-dock__item[aria-current="page"] .demo-dock__dot,
+.demo-dock__link[aria-current="page"] .demo-dock__dot { color: var(--demo-accent); }
+.demo-meta { justify-content: flex-end; padding: 0.55rem var(--space-lg); background: var(--color-canvas); }
+.demo-meta__pill { min-height: 2.25rem; padding-inline: 0.9rem; font-size: var(--type-xs); border-radius: var(--radius-pill); }
+.demo-details { background: var(--color-surface); box-shadow: var(--elevation-popover); }
+
+/* The index is its own catalogue; the rail serves the individual studies. */
+.demos-shell[data-demo-slug=""] .demos-body { grid-template-columns: minmax(0, 1fr); }
+.demos-shell[data-demo-slug=""] .demo-dock,
+.demos-shell[data-demo-slug=""] .demo-meta { display: none; }
+
+@media (max-width: 900px) {
+  .demos-body { grid-template-columns: minmax(0, 1fr); }
+  .demo-meta { padding-inline: var(--space-md); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-action { transition: none; }
+  .demo-action:hover { transform: none; }
+}
+
+@media (max-width: 900px) {
+  .demos-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .demo-dock {
+    position: static;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--demo-hair);
+    overflow: hidden;
+    box-shadow: none;
+  }
+
+  .demo-dock__header { display: none; }
+  .demo-dock__list {
+    display: flex;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .demo-dock__item { flex: 0 0 auto; padding: 0; }
+  .demo-dock__link {
+    min-height: 2.75rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+  }
+
+  .demo-dock__dot,
+  .demo-dock__tag,
+  .demo-dock__chip { display: none; }
+  .demo-dock__title { font-size: var(--type-sm); }
+
+  .demo-dock__item[aria-current="page"] > .demo-dock__link,
+  .demo-dock__link[aria-current="page"] {
+    background: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--color-accent-line);
+  }
+
+  .demos-shell[data-demo-slug=""] .demo-dock { display: none; }
+}
+
+/* Explanatory labels use the same body face as the rest of the site. */
+.demos-shell :is(.demos-topbar__edition, .demo-dock__header p, .demo-details__eyebrow, .demo-details__facts dt),
+.demos-shell .demo-viewport :is(
+  .scene3d-bench__heading > p,
+  [class$="__eyebrow"],
+  [class$="__kicker"],
+  [class$="__badge"],
+  [class$="__label"],
+  [class$="__pane-label"],
+  [class$="__pane-title"],
+  [class$="__stat-label"],
+  [class$="__status"],
+  [class$="__phase-time"],
+  [class$="__hint"],
+  [class$="__controls"],
+  [class$="__gesture"],
+  [class$="__runtime"],
+  [class$="__quality"],
+  [class$="__technical"],
+  [class$="-label"],
+  .fluid__intro > p,
+  .beacon__dock,
+  .beacon__dock-group > p,
+  .beacon__dock a,
+  .beacon__facts,
+  .water-demo__quality > span,
+  .water-demo__quality a,
+  .water-demo__proofs span,
+  .water-demo__help-toggle,
+  .html-surface__poster span,
+  .html-surface__poster em,
+  .diegetic-panel__eyebrow,
+  .checkers-showcase__render-note,
+  .checkers-showcase__search dt,
+  .orrery__technical summary,
+  .cms-editor-block__type,
+  .cms-field > span,
+  .cms-field legend
+) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.demos-shell .demo-viewport [class$="__title"] {
+  text-transform: none;
+}
+
+.demo-dock__dot {
+  font-family: var(--font-body);
+}
+
+.demos-shell .demo-dock__tag,
+.demos-shell .demo-dock__chip {
+  display: none;
+}
+
+.demos-shell .demo-viewport .livesim__badge,
+.demos-shell .demo-viewport [class$="__badge"],
+.demos-shell .demo-viewport :is([class$="__status"], [class*="__status "], [class*="__status--"]),
+.demos-shell .demo-viewport .water-demo__proofs span {
+  padding-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.demos-shell .demo-viewport .checkers-showcase__render-note {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Keep renderer diagnostics out of the public demo chrome. */
+.demos-shell [data-gosx-scene3d-stats],
+.demos-shell [data-gosx-scene3d-inspector],
+.demos-shell [data-gosx-scene3d-status],
+.demos-shell .scene3d-bench__overlay {
+  display: none !important;
+}
+
+.demos-shell .visually-hidden[data-gosx-scene3d-status] {
+  display: inline !important;
 }

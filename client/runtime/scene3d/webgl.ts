@@ -1,3 +1,106 @@
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function sceneWebGLTimerSampleIsNew(ns, frameSeq, latest) {
+    return Number.isFinite(ns) && ns > 0 && (!latest || frameSeq > latest.frameSeq);
+  }
+
+  // One elapsed query covers the complete frame, including composite callbacks.
+  // Results are read only after availability; this path never waits on the GPU.
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+  function createSceneWebGLFrameTimer(gl) {
+    const clock = () => performance.now();
+    let extension = null;
+    let status = "unavailable";
+    let frameSeq = 0;
+    let latest = null;
+    let pendingSample = null;
+    let active = null;
+    const slots = [];
+    function clear() {
+      for (const slot of slots) if (slot.query) gl.deleteQuery(slot.query);
+      slots.length = 0;
+      latest = pendingSample = active = null;
+    }
+    function fail() { clear(); status = "failed"; extension = null; }
+    try {
+      extension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+      if (extension && typeof gl.createQuery === "function") {
+        for (let i = 0; i < 3; i++) {
+          const query = gl.createQuery();
+          if (!query) throw new Error("timer query allocation failed");
+          slots.push({ query, pending: false, frameSeq: 0 });
+        }
+        status = "pending";
+      } else extension = null;
+    } catch (_) { fail(); }
+    function poll() {
+      if (!extension || active) return;
+      try {
+        if (gl.isContextLost && gl.isContextLost()) { fail(); return; }
+        if (gl.getParameter(extension.GPU_DISJOINT_EXT)) {
+          // Every outstanding result is invalid after a clock discontinuity.
+          latest = pendingSample = null;
+          status = "disjoint";
+          for (const slot of slots) {
+            gl.deleteQuery(slot.query);
+            slot.query = gl.createQuery();
+            slot.pending = false;
+            if (!slot.query) throw new Error("timer query allocation failed");
+          }
+          return;
+        }
+        for (const slot of slots) {
+          if (!slot.pending || !gl.getQueryParameter(slot.query, gl.QUERY_RESULT_AVAILABLE)) continue;
+          const ns = Number(gl.getQueryParameter(slot.query, gl.QUERY_RESULT));
+          slot.pending = false;
+          if (sceneWebGLTimerSampleIsNew(ns, slot.frameSeq, latest)) {
+            latest = { source: "webgl-timer", scope: "frame", gpuMS: ns / 1e6,
+              frameSeq: slot.frameSeq, atMS: clock() };
+            pendingSample = latest;
+            status = "measured";
+          }
+        }
+      } catch (_) { fail(); }
+    }
+    return {
+      begin() {
+        frameSeq++;
+        poll();
+        if (!extension || active) return null;
+        // Composite water uses the world's query; elapsed queries cannot nest.
+        if (typeof gl.getQuery === "function" && gl.getQuery(extension.TIME_ELAPSED_EXT, gl.CURRENT_QUERY)) return null;
+        const slot = slots.find(s => !s.pending);
+        if (!slot) return null;
+        try {
+          gl.beginQuery(extension.TIME_ELAPSED_EXT, slot.query);
+          slot.frameSeq = frameSeq;
+          active = slot;
+          return slot;
+        } catch (_) { fail(); return null; }
+      },
+      end(slot) {
+        if (!slot || active !== slot || !extension) return;
+        try {
+          gl.endQuery(extension.TIME_ELAPSED_EXT);
+          slot.pending = true;
+          active = null;
+        } catch (_) { fail(); }
+      },
+      poll,
+      sample() { poll(); const sample = pendingSample; pendingSample = null; return sample; },
+      snapshot() {
+        poll();
+        const state = latest && clock() - latest.atMS > 1000 ? "stale" : status;
+        return Object.assign({ status: state, source: "webgl-timer", scope: "frame",
+          gpuMS: null, frameSeq: 0, atMS: 0 }, state === "measured" ? latest : {});
+      },
+      timingStatus() {
+        return { available: !!extension, active: !!extension,
+          pending: !!active || slots.some(s => s.pending), failed: status === "failed", source: "webgl-timer" };
+      },
+      dispose() { clear(); extension = null; status = "disposed"; },
+    };
+  }
+
   // webgl.ts — PBR WebGL2 rendering backend for GoSX Scene3D.
   // @ts-check
   //
@@ -104,6 +207,13 @@
     "uniform float u_specularF90;",
     "uniform vec3 u_specularColorLog;",
     "uniform float u_emissive;",
+    "uniform vec3 u_emissiveColor;",
+    "uniform bool u_hasEmissiveColor;",
+    "uniform float u_normalScale;",
+    "uniform float u_occlusionStrength;",
+    "uniform vec3 u_rimColor;",
+    "uniform float u_rimPower;",
+    "uniform float u_rimStrength;",
     "uniform float u_opacity;",
     "uniform float u_alphaCutoff;",
     "uniform bool u_unlit;",
@@ -152,6 +262,7 @@
     "uniform float u_groundIntensity;",
     "uniform sampler2D u_envMap;",
     "uniform bool u_hasEnvMap;",
+    "uniform float u_envMapMaxLod;",
     "#if GOSX_HDR_IBL",
     "uniform samplerCube u_iblIrradiance;",
     "uniform samplerCube u_iblRadiance;",
@@ -162,15 +273,8 @@
     "uniform float u_envIntensity;",
     "uniform float u_envRotation;",
     "",
-    // Shadow maps (max 2 directional lights × up to 4 cascades each).
-    // CSM: the renderer picks a cascade per fragment via view-space depth
-    // against u_shadowCascadeSplits*[]. When u_shadowCascades* == 1 the
-    // extra cascade samplers are bound to the same texture as cascade 0 and
-    // the first branch always wins, matching the pre-CSM single-map path.
-    "uniform sampler2D u_shadowMap0_0;",
-    "uniform sampler2D u_shadowMap0_1;",
-    "uniform sampler2D u_shadowMap0_2;",
-    "uniform sampler2D u_shadowMap0_3;",
+    // Two lights, each with up to four depth-array cascade layers.
+    "uniform highp sampler2DArray u_shadowMap0;",
     "uniform mat4 u_lightSpaceMatrices0[4];",
     "uniform float u_shadowCascadeSplits0[4];",
     "uniform int u_shadowCascades0;",
@@ -178,10 +282,7 @@
     "uniform float u_shadowBias0;",
     "uniform float u_shadowSoftness0;",
     "",
-    "uniform sampler2D u_shadowMap1_0;",
-    "uniform sampler2D u_shadowMap1_1;",
-    "uniform sampler2D u_shadowMap1_2;",
-    "uniform sampler2D u_shadowMap1_3;",
+    "uniform highp sampler2DArray u_shadowMap1;",
     "uniform mat4 u_lightSpaceMatrices1[4];",
     "uniform float u_shadowCascadeSplits1[4];",
     "uniform int u_shadowCascades1;",
@@ -232,7 +333,7 @@
     // penumbra from the receiver-to-blocker distance, and then PCF with a
     // filter radius scaled to the penumbra. When softness is 0 we skip the
     // extra samples and just return a hard comparison.
-    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
+    "float shadowFactor(highp sampler2DArray shadowMap, int layer, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    if (lightSpacePos.w <= 0.0) return 1.0;",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
@@ -246,7 +347,7 @@
     "",
     // Hard-shadow fast path.
     "    if (softness <= 0.0001) {",
-    "        float depth = texture(shadowMap, projCoords.xy).r;",
+    "        float depth = texture(shadowMap, vec3(projCoords.xy, float(layer))).r;",
     "        return (receiverDepth - bias > depth) ? 0.0 : 1.0;",
     "    }",
     "",
@@ -259,7 +360,7 @@
     "    float blockerCount = 0.0;",
     "    for (int i = 0; i < 8; i++) {",
     "        vec2 offset = kPoissonDisk8[i] * texelSize * blockerRadius;",
-    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        float d = texture(shadowMap, vec3(projCoords.xy + offset, float(layer))).r;",
     "        if (receiverDepth - bias > d) {",
     "            blockerDepthSum += d;",
     "            blockerCount += 1.0;",
@@ -283,7 +384,7 @@
     "    float shadow = 0.0;",
     "    for (int i = 0; i < 8; i++) {",
     "        vec2 offset = kPoissonDisk8[i] * texelSize * filterRadius;",
-    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        float d = texture(shadowMap, vec3(projCoords.xy + offset, float(layer))).r;",
     "        shadow += (receiverDepth - bias > d) ? 0.0 : 1.0;",
     "    }",
     "    return shadow / 8.0;",
@@ -291,19 +392,15 @@
     "",
     // Cascaded-shadow dispatchers for up to 4 cascades per slot.
     // View-space positive depth is compared against u_shadowCascadeSplits*[c],
-    // where split[c] is the far plane of cascade c. Sampler selection is
-    // unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of
-    // sampler arrays; mat4 and float arrays are indexed normally.
+    // where split[c] is the far plane of cascade c. The array layer may
+    // vary per fragment; the sampler itself is fixed for each light.
     "float shadowFactorSlot0(float viewDepth) {",
     "    int c = 0;",
     "    if (u_shadowCascades0 >= 2 && viewDepth >= u_shadowCascadeSplits0[0]) c = 1;",
     "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
     "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices0[c];",
-    "    if (c == 1) return shadowFactor(u_shadowMap0_1, ls, u_shadowBias0, u_shadowSoftness0);",
-    "    if (c == 2) return shadowFactor(u_shadowMap0_2, ls, u_shadowBias0, u_shadowSoftness0);",
-    "    if (c == 3) return shadowFactor(u_shadowMap0_3, ls, u_shadowBias0, u_shadowSoftness0);",
-    "    return shadowFactor(u_shadowMap0_0, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0, u_shadowSoftness0);",
     "}",
     "",
     "float shadowFactorSlot1(float viewDepth) {",
@@ -312,10 +409,7 @@
     "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
     "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices1[c];",
-    "    if (c == 1) return shadowFactor(u_shadowMap1_1, ls, u_shadowBias1, u_shadowSoftness1);",
-    "    if (c == 2) return shadowFactor(u_shadowMap1_2, ls, u_shadowBias1, u_shadowSoftness1);",
-    "    if (c == 3) return shadowFactor(u_shadowMap1_3, ls, u_shadowBias1, u_shadowSoftness1);",
-    "    return shadowFactor(u_shadowMap1_0, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1, u_shadowSoftness1);",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -412,14 +506,33 @@
     "    float ambientOcclusion = 1.0;",
     "#if GOSX_HDR_IBL",
     "    if (u_hasOcclusionMap) {",
-    "        ambientOcclusion = clamp(texture(u_occlusionMap, v_uv).r, 0.0, 1.0);",
+    // KHR occlusion contract: occludedColor = mix(color, color * sample,
+    // strength) — i.e. the sampled AO blends toward full strength rather
+    // than always applying at 100%.
+    "        float occlusionSample = clamp(texture(u_occlusionMap, v_uv).r, 0.0, 1.0);",
+    "        ambientOcclusion = mix(1.0, occlusionSample, clamp(u_occlusionStrength, 0.0, 1.0));",
     "    }",
     "#endif",
     "",
+    // Emission: when the material carries an authored emissive colour
+    // factor (u_hasEmissiveColor — every glTF-imported material sets this,
+    // even to black) emission is emissiveFactor * emissiveTexture(if any),
+    // times the KHR_materials_emissive_strength multiplier (u_emissive) —
+    // NEVER albedo. Hand-authored materials that only ever set the scalar
+    // `emissive` glow knob and never an emissive colour keep their
+    // pre-existing albedo-tinted glow (u_hasEmissiveColor == false), so
+    // this fix changes nothing for that authoring style.
     "    float emissiveStrength = u_emissive;",
-    "    vec3 emissiveColor = albedo;",
-    "    if (u_hasEmissiveMap) {",
+    "    vec3 emissiveColor;",
+    "    if (u_hasEmissiveColor) {",
+    "        emissiveColor = u_emissiveColor;",
+    "        if (u_hasEmissiveMap) {",
+    "            emissiveColor *= texture(u_emissiveMap, v_uv).rgb;",
+    "        }",
+    "    } else if (u_hasEmissiveMap) {",
     "        emissiveColor = texture(u_emissiveMap, v_uv).rgb;",
+    "    } else {",
+    "        emissiveColor = albedo;",
     "    }",
     "",
     // Unlit path: output albedo directly.
@@ -438,6 +551,7 @@
     "        vec3 B = normalize(v_bitangent);",
     "        mat3 TBN = mat3(T, B, N);",
     "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
     "",
@@ -601,8 +715,14 @@
     "    if (u_hasEnvMap) {",
     "        vec3 Nr = rotateEnvY(N, u_envRotation);",
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 envDiffuse = texture(u_envMap, envEquirectUV(Nr)).rgb * albedo;",
-    "        vec3 envSpecular = texture(u_envMap, envEquirectUV(Rr)).rgb;",
+    // Diffuse irradiance stand-in: the loader mipmaps this equirect on
+    // upload, so the heaviest mip already averages the whole sphere into a
+    // few texels — a cheap substitute for a proper convolved irradiance map,
+    // instead of resampling the sharp, unblurred radiance at the normal.
+    "        vec3 envDiffuse = textureLod(u_envMap, envEquirectUV(Nr), u_envMapMaxLod).rgb * albedo;",
+    // Specular reflection: walk the mip chain by roughness so rough
+    // surfaces blur into the environment instead of mirror-sampling it.
+    "        vec3 envSpecular = textureLod(u_envMap, envEquirectUV(Rr), roughness * u_envMapMaxLod).rgb;",
     "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
@@ -622,6 +742,15 @@
     "    vec3 emission = emissiveColor * emissiveStrength;",
     "",
     "    vec3 color = ambient + Lo + emission;",
+    "",
+    // Rim light: a fresnel-style glancing-angle highlight, off by default
+    // (u_rimStrength == 0 skips the pow() entirely). Additive, so it never
+    // darkens the base shading and composites the same way under any tone
+    // mapping mode.
+    "    if (u_rimStrength > 0.0001) {",
+    "        float rim = pow(clamp(1.0 - NoV, 0.0, 1.0), max(u_rimPower, 0.0001)) * u_rimStrength;",
+    "        color += u_rimColor * rim;",
+    "    }",
     "",
     "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
     "    if (clearcoat > 0.0001) {",
@@ -654,8 +783,17 @@
     "        color = mix(u_fogColor, color, fogFactor);",
     "    }",
     "",
-    // Apply exposure.
-    "    color *= u_exposure;",
+    // Apply exposure exactly once. u_outputLinear == 0 means this shader
+    // owns the final display encode (no post-processing tone-mapping pass
+    // is active), so it applies exposure itself, right before its own
+    // tone-mapping curve below. u_outputLinear == 1 means a post-processing
+    // pass owns the encode instead (see applyToneMapping / applyColorGrade
+    // in the post-processing pipeline), which applies exposure on the
+    // resolved HDR buffer — applying it again here used to multiply the
+    // image by exposure^2 whenever a toneMapping post effect was active.
+    "    if (u_outputLinear == 0) {",
+    "        color *= u_exposure;",
+    "    }",
     "",
     // Tone mapping, then the display encode.
     //
@@ -877,6 +1015,119 @@
     "}",
   ].join("\n");
 
+  // Shared deformation source: color and depth consume identical sampled rows.
+  const SCENE_CROWD_SKIN_GLSL = [
+    "in vec4 a_joints; in vec4 a_weights; in vec3 a_pose;",
+    "uniform highp sampler2D u_crowdAtlas;",
+    "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
+    "mat4 gosxCrowdSkin(){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(a_pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(a_pose.y));m+=(a*(1.0-a_pose.z)+b*a_pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
+  ].join("\n");
+  const SCENE_PBR_CROWD_VERTEX_SOURCE = SCENE_PBR_INSTANCED_VERTEX_SOURCE
+    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=a_instanceMatrix*gosxCrowdSkin();")
+    .replace("a_instanceMatrix * vec4(a_position", "crowdModel * vec4(a_position")
+    .replace("mat3(a_instanceMatrix)", "mat3(crowdModel)");
+
+  // --- GPU-driven crowd motion (color pass) ---
+  //
+  // The CPU-computed `a_instanceMatrix` (per-instance transform) and `a_pose`
+  // (precomputed atlas rows) of SCENE_PBR_CROWD_VERTEX_SOURCE are replaced by
+  // a motion KEY (a previous and a next transform with scene-clock
+  // timestamps) and animation STATE (a clip row, its start time, loop flag,
+  // and playback rate). The vertex shader derives both the transform and the
+  // atlas rows from a single per-frame `u_now` uniform, so steady-state
+  // frames (no new MotionFrame) upload nothing per instance -- see
+  // uploadCrowdMotionRecords. animation.ts's sceneCrowdMotion* functions
+  // mirror every line of SCENE_CROWD_SKIN_MOTION_GLSL below in JS, and
+  // scene3d-crowd-motion.test.mjs pins the two together; a change to one
+  // requires the other.
+  //
+  // Attribute layout (beyond a_position/a_normal/a_uv/a_tangent/a_joints/
+  // a_weights, unchanged from the legacy crowd shader):
+  //   a_motionPrevPos/Rot/Scale (vec3 each) then a_tPrev (float), then
+  //     a_motionNextPos/Rot/Scale (vec3 each) then a_tNext (float) --
+  //     mirroring MeshInstanceIR's X/Y/Z + Rotation*/Scale* fields, once per
+  //     key, each key followed immediately by its own timestamp. This
+  //     matches the field order MotionInstanceIR (scene/motion_frame.go)
+  //     and object._crowdMotion.record (animation.ts) both use, so decoding
+  //     a wire instance into the per-instance buffer is a straight
+  //     sequential copy at every layer -- tPrev/tNext are two float
+  //     attributes rather than one vec2 for exactly this reason.
+  //   a_animState (vec4: clip row, clip start time, loop flag, playback
+  //     rate) -- the clip row indexes u_crowdClipTable, NOT the wire
+  //     dictionary index (see sceneCrowdMotionClipIndex).
+  //
+  // The clip table (start row, segments, duration per clip) is a small
+  // uniform array, not a texture: a crowd asset has a handful of named
+  // clips, not the thousands of atlas rows the joint palette needs, and a
+  // uniform array needs no texture-unit budget, capability check, or
+  // upload/cache bookkeeping -- one gl.uniform4fv call per bound batch (see
+  // bindCrowdMotionBatch) is enough. SCENE_CROWD_MOTION_MAX_CLIPS bounds it
+  // well under GLSL ES 3.00's guaranteed minimum 256 vertex uniform vec4s;
+  // an atlas with more clips than this fails closed (see
+  // bindCrowdMotionBatch), not silently truncated.
+  const SCENE_CROWD_MOTION_MAX_CLIPS = 32;
+  const SCENE_CROWD_MOTION_ATTRIBUTES_GLSL = [
+    "in vec4 a_joints; in vec4 a_weights;",
+    "in vec3 a_motionPrevPos; in vec3 a_motionPrevRot; in vec3 a_motionPrevScale; in float a_tPrev;",
+    "in vec3 a_motionNextPos; in vec3 a_motionNextRot; in vec3 a_motionNextScale; in float a_tNext;",
+    "in vec4 a_animState;",
+    "uniform highp sampler2D u_crowdAtlas;",
+    "uniform vec4 u_crowdClipTable[" + SCENE_CROWD_MOTION_MAX_CLIPS + "];",
+    "uniform float u_now;",
+    "uniform float u_motionExtrapolationSeconds;",
+  ].join("\n");
+
+  // Functions only -- no declarations -- so both the color and shadow motion
+  // shaders can share this block after each declares
+  // SCENE_CROWD_MOTION_ATTRIBUTES_GLSL for itself.
+  const SCENE_CROWD_SKIN_MOTION_GLSL = [
+    "const float GOSX_TWO_PI=6.283185307179586;const float GOSX_PI=3.141592653589793;",
+    "float gosxWrapAngleLerp(float a,float b,float t){float d=b-a;d=d-GOSX_TWO_PI*floor((d+GOSX_PI)/GOSX_TWO_PI);return a+d*t;}",
+    "float gosxMotionFactor(){float tPrev=a_tPrev,tNext=a_tNext;float span=max(tNext-tPrev,1e-6);if(u_now<=tPrev)return 0.0;if(u_now<tNext)return(u_now-tPrev)/span;return 1.0+min(u_now-tNext,u_motionExtrapolationSeconds)/span;}",
+    "mat4 gosxMotionModel(){float t=gosxMotionFactor();vec3 pos=mix(a_motionPrevPos,a_motionNextPos,t);vec3 rot=vec3(gosxWrapAngleLerp(a_motionPrevRot.x,a_motionNextRot.x,t),gosxWrapAngleLerp(a_motionPrevRot.y,a_motionNextRot.y,t),gosxWrapAngleLerp(a_motionPrevRot.z,a_motionNextRot.z,t));vec3 scale=mix(a_motionPrevScale,a_motionNextScale,t);float cx=cos(rot.x),sx=sin(rot.x),cy=cos(rot.y),sy=sin(rot.y),cz=cos(rot.z),sz=sin(rot.z);mat4 m;m[0]=vec4(cy*cz*scale.x,cy*sz*scale.x,-sy*scale.x,0.0);m[1]=vec4((sx*sy*cz-cx*sz)*scale.y,(sx*sy*sz+cx*cz)*scale.y,sx*cy*scale.y,0.0);m[2]=vec4((cx*sy*cz+sx*sz)*scale.z,(cx*sy*sz-sx*cz)*scale.z,cx*cy*scale.z,0.0);m[3]=vec4(pos,1.0);return m;}",
+    "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
+    "vec3 gosxCrowdMotionPoseRows(){int clipRow=clamp(int(a_animState.x),0," + (SCENE_CROWD_MOTION_MAX_CLIPS - 1) + ");vec4 clip=u_crowdClipTable[clipRow];float duration=clip.z;float elapsed=(u_now-a_animState.y)*a_animState.w;if(!(elapsed>=0.0))elapsed=0.0;float t=duration>0.0?(a_animState.z>0.5?mod(elapsed,duration):min(elapsed,duration)):0.0;float segments=clip.y;float frame=duration>0.0?t/duration*segments:0.0;float a=min(segments,floor(frame));return vec3(clip.x+a,clip.x+min(segments,a+1.0),frame-a);}",
+    "mat4 gosxCrowdSkinFromPose(vec3 pose){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(pose.y));m+=(a*(1.0-pose.z)+b*pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
+  ].join("\n");
+
+  const SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "flat out vec4 v_instanceColor;",
+    "",
+    SCENE_GLSL_AFFINE_NORMAL,
+    SCENE_CROWD_SKIN_MOTION_GLSL,
+    "",
+    "void main() {",
+    "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+    "    vec4 worldPos = crowdModel * vec4(a_position, 1.0);",
+    "    v_worldPosition = worldPos.xyz;",
+    "mat3 m=mat3(crowdModel);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
+    "    v_uv = a_uv;",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
+    "    v_tangent = T;",
+    "    v_instanceColor = vec4(1.0);",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
+    "}",
+  ].join("\n");
+
   // --- Skinned PBR Vertex Shader ---
   //
   // Variant of the PBR vertex shader with skeletal animation (vertex skinning).
@@ -941,71 +1192,54 @@
 
   // --- Matrix Helpers ---
 
-  // Create a framebuffer with a depth-only texture for shadow mapping.
-  function createSceneShadowResources(gl, size) {
-    const framebuffer = gl.createFramebuffer();
-    const depthTexture = gl.createTexture();
-
-    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24,
-      size, size, 0,
-      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0
-    );
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-    return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
-  }
-
-  // Create a shadow slot with N cascades. Each cascade gets its own
-  // framebuffer+depth-texture pair. Cascade-specific matrices and view-space
-  // far plane (splitFar) are filled in by computeShadowSlotCascadeMatrices().
+  // Each light owns one depth array. A framebuffer selects one cascade layer.
+  // Eight cascades therefore need two samplers, not eight.
   function createSceneShadowSlot(gl, size, numCascades) {
     var n = Math.max(1, Math.min(4, numCascades | 0));
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.DEPTH_COMPONENT24, size, size, n, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     var cascades = [];
     for (var i = 0; i < n; i++) {
-      var res = createSceneShadowResources(gl, size);
-      cascades.push({
-        framebuffer: res.framebuffer,
-        depthTexture: res.depthTexture,
-        size: size,
-        cascadeIndex: i,
-        splitNear: 0,
-        splitFar: 0,
-        lightMatrix: null,
-        _lastPassHash: null,
-      });
+      var framebuffer = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, texture, 0, i);
+      gl.drawBuffers([gl.NONE]);
+      gl.readBuffer(gl.NONE);
+      cascades.push({ framebuffer: framebuffer, depthTexture: texture, size: size,
+        cascadeIndex: i, splitNear: 0, splitFar: 0, lightMatrix: null, _lastPassHash: null });
     }
-    return {
-      size: size,
-      numCascades: n,
-      cascades: cascades,
-    };
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { size: size, numCascades: n, depthTexture: texture, cascades: cascades };
   }
 
-  // Release GPU resources for a shadow slot (all cascades). Safe to pass null.
   function disposeShadowSlot(gl, slot) {
     if (!slot) return;
-    if (Array.isArray(slot.cascades)) {
-      for (var i = 0; i < slot.cascades.length; i++) {
-        var c = slot.cascades[i];
-        if (c && c.framebuffer) gl.deleteFramebuffer(c.framebuffer);
-        if (c && c.depthTexture) gl.deleteTexture(c.depthTexture);
-      }
-    } else {
-      // Legacy single-cascade slot shape.
-      if (slot.framebuffer) gl.deleteFramebuffer(slot.framebuffer);
-      if (slot.depthTexture) gl.deleteTexture(slot.depthTexture);
+    for (var i = 0; i < slot.cascades.length; i++) {
+      gl.deleteFramebuffer(slot.cascades[i].framebuffer);
     }
+    gl.deleteTexture(slot.depthTexture);
+  }
+
+  // Inactive sampler arrays still need a distinct, complete texture target.
+  // The renderer's texture cache owns and disposes this one-pixel placeholder.
+  function scenePBRPlaceholderShadow(gl, textureCache) {
+    var key = "\u0000gosx-shadow-placeholder-array";
+    var record = textureCache.get(key);
+    if (record) return record.texture;
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.DEPTH_COMPONENT24, 1, 1, 1, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, new Uint32Array([0xffffffff]));
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    textureCache.set(key, { texture: texture, placeholder: true, loaded: true });
+    return texture;
   }
 
   // Compute per-cascade light-space matrices and split-far view-space depths
@@ -1344,7 +1578,7 @@
   // caller-supplied bind hook.
   var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindDirectCaster) {
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindDirectCaster, drawInstancedCaster) {
     var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
     var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
       cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
@@ -1399,6 +1633,7 @@
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (!obj.castShadow) continue;
+      if (typeof drawInstancedCaster === "function" && drawInstancedCaster(obj, lightMatrix)) continue;
 
       if (obj.directVertices) {
         // Retained geometry casts from its cached model-space position buffer.
@@ -1454,8 +1689,13 @@
   }
 
   // Compile the shadow depth shader program.
-  function createSceneShadowProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_SHADOW_VERTEX_SOURCE);
+  function createSceneShadowProgram(gl, instanced, crowd) {
+    let source = instanced ? SCENE_SHADOW_VERTEX_SOURCE
+      .replace("uniform mat4 u_modelMatrix;", "in mat4 a_instanceMatrix;")
+      .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
+    if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
+      .replace("a_instanceMatrix *", "a_instanceMatrix * gosxCrowdSkin() *");
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
     if (!vertexShader) return null;
     var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
     if (!fragmentShader) {
@@ -1472,10 +1712,74 @@
       fragmentShader: fragmentShader,
       attributes: {
         position: gl.getAttribLocation(program, "a_position"),
+        instanceMatrix: instanced ? gl.getAttribLocation(program, "a_instanceMatrix") : -1,
+        joints: crowd ? gl.getAttribLocation(program, "a_joints") : -1,
+        weights: crowd ? gl.getAttribLocation(program, "a_weights") : -1,
+        pose: crowd ? gl.getAttribLocation(program, "a_pose") : -1,
       },
       uniforms: {
+        crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
         lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+      },
+    };
+  }
+
+  // Compile the GPU-motion crowd shadow depth shader: color-pass parity, so
+  // a moving/animated crowd's shadow tracks the SAME interpolated
+  // motion+animation state the color pass draws, not a stale CPU pose. A
+  // dedicated function rather than a third createSceneShadowProgram mode:
+  // the attribute/uniform set has no overlap with that function's existing
+  // instanced/crowd branches (no a_instanceMatrix, no a_pose), so sharing it
+  // would add branches without sharing any code.
+  // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
+  function createSceneShadowMotionProgram(gl) {
+    var source = [
+      "#version 300 es",
+      "precision highp float;",
+      "precision highp int;",
+      "in vec3 a_position;",
+      SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
+      "uniform mat4 u_lightViewProjection;",
+      SCENE_CROWD_SKIN_MOTION_GLSL,
+      "void main() {",
+      "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+      "    gl_Position = u_lightViewProjection * (crowdModel * vec4(a_position, 1.0));",
+      "}",
+    ].join("\n");
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Crowd motion shadow shader");
+    if (!program) return null;
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: {
+        position: gl.getAttribLocation(program, "a_position"),
+        joints: gl.getAttribLocation(program, "a_joints"),
+        weights: gl.getAttribLocation(program, "a_weights"),
+        motionPrevPos: gl.getAttribLocation(program, "a_motionPrevPos"),
+        motionPrevRot: gl.getAttribLocation(program, "a_motionPrevRot"),
+        motionPrevScale: gl.getAttribLocation(program, "a_motionPrevScale"),
+        tPrev: gl.getAttribLocation(program, "a_tPrev"),
+        motionNextPos: gl.getAttribLocation(program, "a_motionNextPos"),
+        motionNextRot: gl.getAttribLocation(program, "a_motionNextRot"),
+        motionNextScale: gl.getAttribLocation(program, "a_motionNextScale"),
+        tNext: gl.getAttribLocation(program, "a_tNext"),
+        animState: gl.getAttribLocation(program, "a_animState"),
+      },
+      uniforms: {
+        crowdAtlas: gl.getUniformLocation(program, "u_crowdAtlas"),
+        crowdClipTable: gl.getUniformLocation(program, "u_crowdClipTable"),
+        now: gl.getUniformLocation(program, "u_now"),
+        motionExtrapolationSeconds: gl.getUniformLocation(program, "u_motionExtrapolationSeconds"),
+        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
       },
     };
   }
@@ -1770,6 +2074,57 @@
 
   // Create an offscreen framebuffer with HDR color texture and optional depth texture.
   // Uses RGBA16F when EXT_color_buffer_float is available, RGBA8 otherwise.
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function sceneWebGLRenderTarget(canvas, frameMeta) {
+    return frameMeta && frameMeta.renderTarget || {
+      framebuffer: null, width: canvas.width || 1, height: canvas.height || 1, linear: false,
+    };
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRHasComposite(frameMeta) {
+    return Boolean(frameMeta && typeof frameMeta.compositeBeforePost === "function");
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRHasFrameData(mesh, points, instances, lines, frameMeta) {
+    return mesh || points || instances || lines || scenePBRHasComposite(frameMeta);
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRCompositePass(gl, frameMeta, target) {
+    if (scenePBRHasComposite(frameMeta)) frameMeta.compositeBeforePost(target);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+  }
+
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function scenePBRLineBundle(bundle, target, frameMeta) {
+    return Object.assign({}, bundle, {
+      outputLinear: target.linear,
+      surfaces: scenePBRHasComposite(frameMeta) ? [] : bundle.surfaces,
+    });
+  }
+
+  // The tide writes depth before these surfaces. A submerged panel stays hidden.
+  // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+  function renderScenePBRSurfaces(gl, bundle, canvas, resources, target) {
+    if (!bundle || !resources || !Array.isArray(bundle.surfaces) || bundle.surfaces.length === 0) return;
+    target = target || sceneWebGLRenderTarget(canvas, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.viewport(0, 0, target.width, target.height);
+    resources.stateCache.blendMode = "";
+    resources.stateCache.depthMode = "";
+    var surfaceBundle = Object.assign({}, bundle, { outputLinear: target.linear });
+    renderSceneWebGLSurfaces(gl, surfaceBundle, target, resources, "opaque");
+    renderSceneWebGLSurfaces(gl, surfaceBundle, target, resources, "alpha");
+    renderSceneWebGLSurfaces(gl, surfaceBundle, target, resources, "additive");
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+    resources.stateCache.blendMode = "";
+    resources.stateCache.depthMode = "";
+  }
+
   function createScenePostFBO(gl, width, height, depthTexture) {
     var hdrSupported = Boolean(gl.getExtension("EXT_color_buffer_float"));
     var internalFormat = hdrSupported ? gl.RGBA16F : gl.RGBA8;
@@ -1823,8 +2178,8 @@
 
   // Create a ping-pong FBO pair for multi-pass effect processing.
   function createScenePostPingPong(gl, width, height) {
-    return {
-      a: createScenePostFBO(gl, width, height),
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return {
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ a: createScenePostFBO(gl, width, height),
       b: createScenePostFBO(gl, width, height),
     };
   }
@@ -2196,18 +2551,18 @@
         descriptor: sceneWaterParseDescriptor(descriptors[spec.desc]),
       };
     }
-
-    programs.simulation = compilePass("simulation");
-    programs.normal = compilePass("normal");
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.simulation = compilePass("simulation");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.normal = compilePass("normal");
     if (!programs.simulation || !programs.normal) {
       // Required passes missing — tear down and signal unavailability.
       for (var ci = 0; ci < compiledShaders.length; ci++) gl.deleteProgram(compiledShaders[ci]);
       gl.deleteTexture(states[0].tex); gl.deleteFramebuffer(states[0].fbo);
       gl.deleteTexture(states[1].tex); gl.deleteFramebuffer(states[1].fbo);
       return null;
-    }
-    programs.seed = compilePass("seed");
-    programs.drop = compilePass("drop");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.seed = compilePass("seed");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ programs.drop = compilePass("drop");
     programs.displacement = compilePass("displacement");
 
     // Empty VAO: the sim vertex shaders are attribute-less (gl_VertexID drives a
@@ -2302,7 +2657,7 @@
     }
 
     // Pointer-draw event: add a Gaussian-cosine bump at an NDC center [-1,1].
-    function drop(opts) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ function drop(opts) {
       if (!programs.drop) return false;
       var x = opts && opts.x != null ? +opts.x : sceneWaterNum(entry.dropX, 0);
       var z = opts && opts.z != null ? +opts.z : sceneWaterNum(entry.dropZ, 0);
@@ -2319,7 +2674,7 @@
     }
 
     // Reset event: stamp the procedural seed drops onto the resting surface.
-    function seed(opts) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ function seed(opts) {
       if (!programs.seed) return false;
       var count = Math.max(0, Math.min(64, Math.floor(
         opts && opts.count != null ? opts.count : sceneWaterNum(entry.seedDrops, 7))));
@@ -2339,7 +2694,7 @@
 
     // Object-move event: displace water by an object volume sweeping from its
     // previous to current center (sphere kind=1, cube kind=2, compound kind=3).
-    function displace(source) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ function displace(source) {
       if (!programs.displacement) return false;
       source = source || entry;
       var center = [sceneWaterNum(source.objectX, 0), sceneWaterNum(source.objectY, 0), sceneWaterNum(source.objectZ, 0)];
@@ -3261,7 +3616,7 @@
     var queuedWaterEventCount = 1; // authored seed is queued until the first tick
     var drainedWaterEventCount = 0;
     function primeRipples() {
-      if (seeded) return true;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (seeded) return true;
       if (!sim.seed()) return false;
       seeded = true;
       drainedWaterEventCount++;
@@ -3373,133 +3728,23 @@
       shadow: { desired: 0, failures: 0, nextFrame: 0, pending: false },
       object: { desired: 0, failures: 0, nextFrame: 0, pending: false },
     };
-    var timerExtension = null;
-    var timerQueries = [];
-    var timerQueryCursor = 0;
-    var timerQueryActive = null;
-    var pendingPerformanceSample = null;
+    var frameTimer = createSceneWebGLFrameTimer(gl);
     var lastPerformanceSample = null;
-
-    try {
-      timerExtension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
-      if (timerExtension && typeof gl.createQuery === "function" &&
-          typeof gl.getQueryParameter === "function") {
-        for (var timerIndex = 0; timerIndex < 3; timerIndex++) {
-          timerQueries.push({ query: gl.createQuery(), pending: false, atMS: 0 });
-        }
-        if (timerQueries.some(function(record) { return !record.query; })) {
-          disposeWaterTimerQueries();
-        }
-      } else {
-        timerExtension = null;
-      }
-    } catch (timerInitError) {
-      timerExtension = null;
-      timerQueries.length = 0;
-    }
-
-    function disposeWaterTimerQueries() {
-      if (typeof gl.deleteQuery === "function") {
-        timerQueries.forEach(function(record) {
-          if (record && record.query) gl.deleteQuery(record.query);
-        });
-      }
-      timerQueries.length = 0;
-      timerExtension = null;
-      timerQueryActive = null;
-      pendingPerformanceSample = null;
-    }
-
-    function resetWaterTimerRing() {
-      if (!timerExtension || typeof gl.createQuery !== "function") return;
-      timerQueries.forEach(function(record) {
-        if (record.query && typeof gl.deleteQuery === "function") gl.deleteQuery(record.query);
-        record.query = gl.createQuery();
-        record.pending = false;
-        record.atMS = 0;
-      });
-      if (timerQueries.some(function(record) { return !record.query; })) {
-        disposeWaterTimerQueries();
-        return;
-      }
-      timerQueryCursor = 0;
-      timerQueryActive = null;
-    }
-
+    function disposeWaterTimerQueries() { frameTimer.dispose(); }
     function pollWaterTimerQueries() {
-      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return;
-      try {
-        if (gl.getParameter(timerExtension.GPU_DISJOINT_EXT)) {
-          resetWaterTimerRing();
-          pendingPerformanceSample = null;
-          return;
-        }
-        for (var i = 0; i < timerQueries.length; i++) {
-          var record = timerQueries[i];
-          if (!record.pending || !gl.getQueryParameter(record.query, gl.QUERY_RESULT_AVAILABLE)) continue;
-          var elapsedNS = Number(gl.getQueryParameter(record.query, gl.QUERY_RESULT));
-          record.pending = false;
-          if (Number.isFinite(elapsedNS) && elapsedNS >= 0) {
-            pendingPerformanceSample = {
-              source: "webgl-timer",
-              gpuMS: elapsedNS / 1000000,
-              atMS: record.atMS,
-            };
-            lastPerformanceSample = pendingPerformanceSample;
-          }
-        }
-      } catch (timerPollError) {
-        disposeWaterTimerQueries();
-      }
+      var sample = frameTimer.snapshot();
+      lastPerformanceSample = sample.status === "measured" ? sample : null;
     }
-
-    function beginWaterTimerQuery(nowMS) {
-      pollWaterTimerQueries();
-      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return null;
-      var record = timerQueries[timerQueryCursor];
-      if (!record || record.pending) return null;
-      try {
-        gl.beginQuery(timerExtension.TIME_ELAPSED_EXT, record.query);
-        record.atMS = nowMS;
-        timerQueryActive = record;
-        timerQueryCursor = (timerQueryCursor + 1) % timerQueries.length;
-        return record;
-      } catch (timerBeginError) {
-        disposeWaterTimerQueries();
-        return null;
-      }
-    }
-
-    function endWaterTimerQuery(record) {
-      if (!record || timerQueryActive !== record || !timerExtension) return;
-      try {
-        gl.endQuery(timerExtension.TIME_ELAPSED_EXT);
-        record.pending = true;
-        timerQueryActive = null;
-      } catch (timerEndError) {
-        disposeWaterTimerQueries();
-      }
-    }
-
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+    function beginWaterTimerQuery(_nowMS) { return frameTimer.begin(); }
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+    function endWaterTimerQuery(record) { frameTimer.end(record); }
     function pollPerformanceSample() {
-      pollWaterTimerQueries();
-      var sample = pendingPerformanceSample;
-      pendingPerformanceSample = null;
+      var sample = frameTimer.sample();
+      if (sample) lastPerformanceSample = sample;
       return sample;
     }
-
-    function getPerformanceTimingStatus() {
-      var available = Boolean(timerExtension && timerQueries.length === 3);
-      var pending = Boolean(timerQueryActive) || timerQueries.some(function(record) {
-        return Boolean(record && record.pending);
-      });
-      return {
-        available: available,
-        active: available,
-        pending: pending,
-        source: "webgl-timer",
-      };
-    }
+    function getPerformanceTimingStatus() { return frameTimer.timingStatus(); }
 
     function selectWaterSurfaceGrid(requested) {
       return cachedWaterSurfaceGrid(requested);
@@ -3726,9 +3971,9 @@
 
     function drawFrame(frameMeta) {
       if (disposed) return;
-      var width = canvas.width || 1;
-      var height = canvas.height || 1;
-      var aspect = width / Math.max(1, height);
+      var target = sceneWebGLRenderTarget(canvas, frameMeta);
+      var width = target.width, height = target.height;
+      var aspect = canvas.width / Math.max(1, canvas.height);
       var liveEntry = (lastBundle && Array.isArray(lastBundle.waterSystems) && lastBundle.waterSystems[0]) || entry;
       applyWaterQualityProfile(frameMeta);
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
@@ -3857,7 +4102,7 @@
       var expensivePassCadence = activeExpensivePassCadence;
       // Solver work is bounded, but retained-pass cadence follows logical wall
       // time even when a very low authored frame rate forces solver ticks to be
-      // dropped beyond the bounded catch-up capacity.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // dropped beyond the bounded catch-up capacity.
       var logicalCausticsTickSeq = clockFrame.tickSeq + (waterClock.droppedTicks || 0);
       var causticsCadenceDue = clockFrame.ticks > 0 &&
         Math.floor(logicalCausticsTickSeq / expensivePassCadence) >
@@ -4003,16 +4248,23 @@
         meshTextureReady = objectTextureSlotsReady[0] && objectTextureSlotsReady[1] && objectTextureSlotsReady[2];
       }
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
       gl.viewport(0, 0, width, height);
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.CULL_FACE);
-      var bg = sceneWaterRenderHexColor(liveEntry.deepColor, [0.03, 0.08, 0.12]);
-      gl.clearColor(bg[0] * 0.4, bg[1] * 0.4, bg[2] * 0.4, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      var compositeWorld = frameMeta && frameMeta.compositeWorld === true;
+      if (!compositeWorld || frameMeta.clearComposite === true) {
+        var bg = compositeWorld
+          ? sceneWaterRenderHexColor(frameMeta.background, [0.03, 0.08, 0.12])
+          : sceneWaterRenderHexColor(liveEntry.deepColor, [0.03, 0.08, 0.12]);
+        gl.clearColor(compositeWorld ? bg[0] : bg[0] * 0.4,
+          compositeWorld ? bg[1] : bg[1] * 0.4,
+          compositeWorld ? bg[2] : bg[2] * 0.4, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      }
 
       // ---- 1. pool ----
       // The pool quads carry inward-facing normals (jeantimex-style tank: the
@@ -4021,27 +4273,26 @@
       // puts the caustic pattern on the FLOOR (not the outer walls) and lets the
       // submerged object + its floor shadow read. Restored to no-cull afterward so
       // the analytic object + double-sided surface keep their existing behavior.
-      gl.enable(gl.CULL_FACE);
-      gl.cullFace(gl.FRONT);
-      gl.useProgram(poolProgram);
-      gl.bindVertexArray(emptyVAO);
-      sceneWaterRenderBindSamplers(gl, poolProgram, [
-        { name: sceneWaterRenderStateUniform(poolDesc), target: gl.TEXTURE_2D, tex: stateTex },
-        { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
-        { name: "causticTexture", target: gl.TEXTURE_2D, tex: causticTex },
-        { name: "shadowTexture", target: gl.TEXTURE_2D, tex: shadowTex },
-      ]);
-      sceneWaterRenderSetUniforms(gl, poolProgram, poolDesc, {
-        mvp: mvp, normalMatrix: identity3,
-        poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
-        lightDir: liveLightDir,
-        // Rounded-corner pool: pool.sel's own params, picked up by name via
-        // the descriptor-driven applicator above (see livePoolShapeRounded /
-        // livePoolCornerRadius / livePoolRounded derivation near liveEntry).
-        cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded ? 1 : 0,
-      });
-      gl.drawArrays(gl.TRIANGLES, 0, livePoolVertexCount);
-      gl.disable(gl.CULL_FACE);
+      if (!compositeWorld && liveEntry.renderPool !== false) {
+        gl.enable(gl.CULL_FACE);
+        gl.cullFace(gl.FRONT);
+        gl.useProgram(poolProgram);
+        gl.bindVertexArray(emptyVAO);
+        sceneWaterRenderBindSamplers(gl, poolProgram, [
+          { name: sceneWaterRenderStateUniform(poolDesc), target: gl.TEXTURE_2D, tex: stateTex },
+          { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
+          { name: "causticTexture", target: gl.TEXTURE_2D, tex: causticTex },
+          { name: "shadowTexture", target: gl.TEXTURE_2D, tex: shadowTex },
+        ]);
+        sceneWaterRenderSetUniforms(gl, poolProgram, poolDesc, {
+          mvp: mvp, normalMatrix: identity3,
+          poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+          lightDir: liveLightDir,
+          cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded ? 1 : 0,
+        });
+        gl.drawArrays(gl.TRIANGLES, 0, livePoolVertexCount);
+        gl.disable(gl.CULL_FACE);
+      }
 
       // ---- 2. object ----
       // MESH objects (duck / torus): draw the live world-space mesh directly with
@@ -4096,7 +4347,10 @@
       gl.bindVertexArray(emptyVAO);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.depthMask(false);
+      // In a shared world composite, the water is drawn after the opaque
+      // world. Save its depth so the later diegetic surface pass can reject
+      // panels behind the tide. Standalone water keeps its prior blend mode.
+      gl.depthMask(compositeWorld);
       sceneWaterRenderBindSamplers(gl, surfaceProgram, [
         { name: sceneWaterRenderStateUniform(surfaceDesc), target: gl.TEXTURE_2D, tex: stateTex },
         { name: "tileTexture", target: gl.TEXTURE_2D, tex: tileTex },
@@ -4204,14 +4458,14 @@
           waterSurfaceVertices: surfaceVertexCount,
           waterCausticsRefreshes: causticsRefreshCount,
           waterShadowRefreshes: shadowRefreshCount,
-          waterObjectTexturePasses: meshTexturePassCount,
-          waterSimulationTickSeq: waterClock.tickSeq || 0,
-          waterSolverSubstepSeq: waterClock.solverSubstepSeq || 0,
-          waterDroppedSimulationTicks: waterClock.droppedTicks || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterObjectTexturePasses: meshTexturePassCount,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSimulationTickSeq: waterClock.tickSeq || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSolverSubstepSeq: waterClock.solverSubstepSeq || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterDroppedSimulationTicks: waterClock.droppedTicks || 0,
           waterDroppedSimulationTicksLastFrame: waterClock.dropped || 0,
-          waterSimulationCatchUpCap: waterClockOptions.maxCatchUpTicks,
-          waterSimulationTicksLastFrame: waterClock.ticks || 0,
-          waterSolverSubstepsLastFrame: waterClock.substeps || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSimulationCatchUpCap: waterClockOptions.maxCatchUpTicks,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSimulationTicksLastFrame: waterClock.ticks || 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ waterSolverSubstepsLastFrame: waterClock.substeps || 0,
           waterSimulationClockReset: waterClock.reset === true,
           waterSimulationPasses: simulationStats.simulationPasses,
           waterNormalPasses: simulationStats.normalPasses,
@@ -4248,6 +4502,7 @@
       },
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,
+      getFrameTiming: frameTimer.snapshot,
       setLifecycle: setLifecycle,
       dispose: dispose,
       resize: function() {},
@@ -4643,7 +4898,7 @@
 	        clearPostTextureBindings();
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
 	        return {
-            width: sw,
+            framebuffer: sceneFBO.fbo, width: sw,
             height: sh,
             factor: factor,
             hdrSupported: sceneFBO.hdrSupported,
@@ -4686,7 +4941,7 @@
 
         // Multi-effect chains need an auxiliary full-res FBO for intermediate
         // results. Allocated at SCALED dims, not canvas dims.
-        if (effects.length > 1 && !auxFBO) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (effects.length > 1 && !auxFBO) {
           auxFBO = createScenePostFBO(gl, scaledW, scaledH);
         }
 
@@ -4699,7 +4954,7 @@
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
             if (effect.kind === SCENE_POST_DOF && targetFBO === sceneFBO) {
               if (!scratchFBO || scratchFBO.width !== scaledW || scratchFBO.height !== scaledH) {
-                if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
+                /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
                 scratchFBO = createScenePostFBO(gl, scaledW, scaledH);
               }
               targetFBO = scratchFBO;
@@ -4775,7 +5030,7 @@
                 currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH, roi.bounds);
                 stats.postDOMRegionBoundedPasses += 1;
                 stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
-              } else {
+              /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
                 currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
               }
               break;
@@ -5073,6 +5328,7 @@
       descriptor: descriptor,
       target: target,
       loaded: false,
+      levels: 1,
       failed: false,
       generation: textureMap._gosxGeneration || null,
       disposed: false,
@@ -5111,10 +5367,10 @@
     }
 
     if (target === gl.TEXTURE_CUBE_MAP) {
-      record.failed = true;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.failed = true;
       record.error = "cube descriptors require a KTX2 upload path";
     } else if (typeof Image === "function") {
-      const image = new Image();
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const image = new Image();
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
@@ -5124,12 +5380,17 @@
         gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
         if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
           gl.generateMipmap(gl.TEXTURE_2D);
+          record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        }
-        record.colorSpace = srgb ? "srgb" : "linear";
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.colorSpace = srgb ? "srgb" : "linear";
         record.format = srgb ? "srgb8-alpha8" : "rgba8";
+        // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
+        record.width = image.naturalWidth || image.width || 0;
+        // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
+        record.height = image.naturalHeight || image.height || 0;
         record.loaded = true;
         scenePBRNotifyTextureSettled(record);
       };
@@ -5244,6 +5505,54 @@
     return out;
   }
 
+  // Whether the material carries a valid authored emissive colour factor:
+  // exactly three finite, non-negative components, matching the glTF
+  // emissiveFactor triple. The gltf.ts loader always sets this (even to
+  // [0, 0, 0] for a non-emissive material); hand-authored materials that
+  // only set the scalar `emissive` glow knob never set it, which keeps
+  // their pre-existing albedo-tinted glow — see u_hasEmissiveColor in the
+  // fragment shader.
+  function scenePBRHasEmissiveColor(material) {
+    var color = material && material.emissiveColor;
+    if (!(color && typeof color.length === "number" && color.length === 3)) {
+      return false;
+    }
+    for (var i = 0; i < 3; i++) {
+      var component = color[i];
+      if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Effective emissive colour factor for upload; only meaningful when
+  // scenePBRHasEmissiveColor(material) is true, but always returns a finite
+  // triple so the uniform upload can never see NaN/undefined.
+  function scenePBREmissiveColor(material) {
+    var mat = material || {};
+    return scenePBRHasEmissiveColor(mat) ? mat.emissiveColor : [0, 0, 0];
+  }
+
+  // Rim highlight tint. Off by default (rimStrength 0 in uploadMaterial, so
+  // this colour is inert unless an author opts in). Contract matches
+  // scenePBRSpecularFactors: a valid three-component finite non-negative
+  // triple passes through, anything else falls back to white.
+  function scenePBRRimColor(material) {
+    var color = material && material.rimColor;
+    var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+    if (valid) {
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    return valid ? color : [1, 1, 1];
+  }
+
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
@@ -5265,6 +5574,13 @@
       specularF90: gl.getUniformLocation(program, "u_specularF90"),
       specularColorLog: gl.getUniformLocation(program, "u_specularColorLog"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
+      emissiveColor: gl.getUniformLocation(program, "u_emissiveColor"),
+      hasEmissiveColor: gl.getUniformLocation(program, "u_hasEmissiveColor"),
+      normalScale: gl.getUniformLocation(program, "u_normalScale"),
+      occlusionStrength: gl.getUniformLocation(program, "u_occlusionStrength"),
+      rimColor: gl.getUniformLocation(program, "u_rimColor"),
+      rimPower: gl.getUniformLocation(program, "u_rimPower"),
+      rimStrength: gl.getUniformLocation(program, "u_rimStrength"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -5306,6 +5622,7 @@
       groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
       envMap: gl.getUniformLocation(program, "u_envMap"),
       hasEnvMap: gl.getUniformLocation(program, "u_hasEnvMap"),
+      envMapMaxLod: gl.getUniformLocation(program, "u_envMapMaxLod"),
       iblIrradiance: gl.getUniformLocation(program, "u_iblIrradiance"),
       iblRadiance: gl.getUniformLocation(program, "u_iblRadiance"),
       iblBRDFLUT: gl.getUniformLocation(program, "u_iblBRDFLUT"),
@@ -5314,10 +5631,7 @@
       envIntensity: gl.getUniformLocation(program, "u_envIntensity"),
       envRotation: gl.getUniformLocation(program, "u_envRotation"),
 
-      shadowMap0_0: gl.getUniformLocation(program, "u_shadowMap0_0"),
-      shadowMap0_1: gl.getUniformLocation(program, "u_shadowMap0_1"),
-      shadowMap0_2: gl.getUniformLocation(program, "u_shadowMap0_2"),
-      shadowMap0_3: gl.getUniformLocation(program, "u_shadowMap0_3"),
+      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
       lightSpaceMatrices0: gl.getUniformLocation(program, "u_lightSpaceMatrices0"),
       shadowCascadeSplits0: gl.getUniformLocation(program, "u_shadowCascadeSplits0"),
       shadowCascades0: gl.getUniformLocation(program, "u_shadowCascades0"),
@@ -5326,10 +5640,7 @@
       shadowSoftness0: gl.getUniformLocation(program, "u_shadowSoftness0"),
       shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
 
-      shadowMap1_0: gl.getUniformLocation(program, "u_shadowMap1_0"),
-      shadowMap1_1: gl.getUniformLocation(program, "u_shadowMap1_1"),
-      shadowMap1_2: gl.getUniformLocation(program, "u_shadowMap1_2"),
-      shadowMap1_3: gl.getUniformLocation(program, "u_shadowMap1_3"),
+      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
       lightSpaceMatrices1: gl.getUniformLocation(program, "u_lightSpaceMatrices1"),
       shadowCascadeSplits1: gl.getUniformLocation(program, "u_shadowCascadeSplits1"),
       shadowCascades1: gl.getUniformLocation(program, "u_shadowCascades1"),
@@ -5480,17 +5791,143 @@
     );
   }
 
+  // Per-context cache for WebGL capability constants that never change for
+  // the life of a context (MAX_TEXTURE_IMAGE_UNITS, MAX_VERTEX_ATTRIBS, and
+  // similar GL_MAX_* queries below). getParameter() is a synchronous round
+  // trip to the driver on some browsers/backends, and the PBR draw path
+  // re-queries the same constants on every draw call in dense scenes. Cache
+  // per WebGLRenderingContext/WebGL2RenderingContext instance and drop the
+  // entry from createScenePBRRenderer's dispose() (covers both context loss
+  // and normal renderer teardown), so a restored context re-queries fresh
+  // values instead of reusing stale ones.
+  var sceneGLConstantCache = new WeakMap();
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneCachedGLParameter(gl, pname) {
+    if (!gl) return undefined;
+    var cached = sceneGLConstantCache.get(gl);
+    if (cached && cached.has(pname)) {
+      return cached.get(pname);
+    }
+    var value;
+    try {
+      value = gl.getParameter(pname);
+    } catch (_error) {
+      return undefined;
+    }
+    if (!cached) {
+      cached = new Map();
+      sceneGLConstantCache.set(gl, cached);
+    }
+    cached.set(pname, value);
+    return value;
+  }
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneInvalidateGLConstantCache(gl) {
+    if (gl) {
+      sceneGLConstantCache.delete(gl);
+    }
+  }
+
+  // Per-distinct-string cache for sceneColorRGBA() results, consumed by
+  // sceneInstancedColorBuffer() (createScenePBRRenderer's instanced-mesh
+  // draw path, below). A hex/rgba() string is re-parsed through regex
+  // matching and parseInt on every call; an instanced mesh commonly reuses
+  // a small, fixed palette across hundreds of instances, so memoizing by
+  // the raw color value turns an O(instanceCount) parse into an O(distinct
+  // colors) parse per rebuild. sceneColorRGBA's result only depends on
+  // `value` here because every call below passes the same literal
+  // fallback; the loop only reads the returned array's components, so
+  // handing back the shared cached reference is safe. A color string
+  // always parses to the same RGBA, so this cache needs no invalidation
+  // (bounded defensively in case a caller streams unbounded distinct
+  // values instead of reusing a palette).
+  var sceneInstancedColorRGBACache = new Map();
+  var SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX = 512;
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneCachedInstancedColorRGBA(value, fallback) {
+    var cached = sceneInstancedColorRGBACache.get(value);
+    if (cached) {
+      return cached;
+    }
+    var rgba = sceneColorRGBA(value, fallback);
+    if (sceneInstancedColorRGBACache.size >= SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX) {
+      sceneInstancedColorRGBACache.clear();
+    }
+    sceneInstancedColorRGBACache.set(value, rgba);
+    return rgba;
+  }
+
+  // prepareRigidMeshBatches (createScenePBRRenderer's rigid-batch grouping
+  // path, below) groups rigid mesh records into shared-VBO batches keyed
+  // by everything that must match for a group to share one draw: material,
+  // vertex layout/revision, shadow flags, sidedness, view visibility and
+  // (for crowd-skinned rigids) the shared atlas. Building that key by
+  // joining an array into a string allocates on every one of these
+  // bundle-local mesh records, every frame, even though the record itself
+  // is rebuilt fresh each frame while the fields it is built from
+  // (materialIndex, vertexCount, geometryRevision, shadow/sidedness flags,
+  // the crowd atlas and motion mode) usually do not change frame to frame for a given
+  // mesh. `resourceOwner` (set by appendSceneMeshObjectToBundle) is the one
+  // thing that IS stable across frames for the same logical mesh, so the
+  // memo is keyed by that owner rather than the ephemeral record.
+  var sceneRigidBatchKeyCache = new WeakMap();
+
+  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+  function sceneRigidBatchKey(obj, visible) {
+    const atlasKey = obj._crowdMotion ? "crowd-motion:" + obj._crowdMotion.atlas.id :
+      obj._crowdSkin ? "crowd:" + obj._crowdSkin.atlas.id : "rigid";
+    const receiveShadow = obj.receiveShadow === true;
+    const castShadow = obj.castShadow === true;
+    const owner = obj.resourceOwner;
+    const cached = owner && (owner._rigidBatchKeyCache || sceneRigidBatchKeyCache.get(owner));
+    if (cached &&
+        cached.materialIndex === obj.materialIndex &&
+        cached.vertexCount === obj.vertexCount &&
+        cached.geometryRevision === obj.geometryRevision &&
+        cached.receiveShadow === receiveShadow &&
+        cached.castShadow === castShadow &&
+        cached.depthWrite === obj.depthWrite &&
+        cached.doubleSided === obj.doubleSided &&
+        cached.visible === visible &&
+        cached.atlasKey === atlasKey) {
+      return cached.key;
+    }
+    const key = [obj.materialIndex, obj.vertexCount, obj.geometryRevision,
+      receiveShadow, castShadow, obj.depthWrite,
+      obj.doubleSided, visible, atlasKey].join(":");
+    if (owner) {
+      const record = {
+        key: key,
+        materialIndex: obj.materialIndex,
+        vertexCount: obj.vertexCount,
+        geometryRevision: obj.geometryRevision,
+        receiveShadow: receiveShadow,
+        castShadow: castShadow,
+        depthWrite: obj.depthWrite,
+        doubleSided: obj.doubleSided,
+        visible: visible,
+        atlasKey: atlasKey,
+      };
+      if (Object.isExtensible(owner)) owner._rigidBatchKeyCache = record;
+      else sceneRigidBatchKeyCache.set(owner, record);
+    }
+    return key;
+  }
+
   function scenePBRHDRIBLAvailable(gl) {
     var maxUnits = 0;
     try {
       maxUnits = gl && typeof gl.getParameter === "function"
-        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        ? Math.floor(sceneNumber(sceneCachedGLParameter(gl, gl.MAX_TEXTURE_IMAGE_UNITS), 0))
         : 0;
     } catch (_error) {
       maxUnits = 0;
     }
-    // 8 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
-    return maxUnits >= 20;
+    // 8 material + 2 depth arrays + legacy env + 3 IBL = 14 samplers.
+    return maxUnits >= 16;
   }
 
   function scenePBRFragmentSourceForContext(gl, source) {
@@ -5504,6 +5941,11 @@
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
   function createScenePBRProgram(gl) {
+    const warmed = scenePBRTakeInitialProgram(gl, "base");
+    if (warmed === false) return null;
+    if (warmed) {
+      return scenePBRFinalizeBaseProgram(gl, warmed);
+    }
     const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
     if (!vertexShader) {
       return null;
@@ -5517,23 +5959,35 @@
     const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "PBR shader");
     if (!program) return null;
 
-    // Cache attribute locations.
-    const attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      normal: gl.getAttribLocation(program, "a_normal"),
-      uv: gl.getAttribLocation(program, "a_uv"),
-      tangent: gl.getAttribLocation(program, "a_tangent"),
-    };
-
-    // Cache uniform locations.
-    const uniforms = scenePBRCacheBaseUniforms(gl, program);
-
-    return {
+    return scenePBRFinalizeBaseProgram(gl, {
       program: program,
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
+    });
+  }
+
+  function scenePBRFinalizeBaseProgram(gl, linked) {
+    // Cache locations only after KHR_parallel_shader_compile reports the
+    // program complete. Location queries are allowed to synchronize an
+    // unfinished link just like LINK_STATUS, so moving only the status check
+    // would merely move the cold-frame stall.
+    const attributes = {
+      position: gl.getAttribLocation(linked.program, "a_position"),
+      normal: gl.getAttribLocation(linked.program, "a_normal"),
+      uv: gl.getAttribLocation(linked.program, "a_uv"),
+      tangent: gl.getAttribLocation(linked.program, "a_tangent"),
+    };
+
+    // Cache uniform locations.
+    const uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+
+    return {
+      program: linked.program,
+      vertexShader: linked.vertexShader,
+      fragmentShader: linked.fragmentShader,
       attributes: attributes,
       uniforms: uniforms,
+      initialProgramOwner: linked.initialProgramOwner || null,
     };
   }
 
@@ -5568,14 +6022,17 @@
     default: return 1;
     }
   }
-
+/* @ts-expect-error TS2393 -- webgpu.ts carries an identical copy of this helper; each renderer backend chunk loads on its own, so this file must not depend on the other for a small pure function */
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
+    case "vec3": return 3;
     case "vec4": return 4;
-    case "vec3":
-    default:
-      return 3;
+    // float scalars bind one component. Unknown declared types are invalid
+    // descriptor metadata: report 0 so program creation fails closed instead
+    // of silently widening a scalar stream to a vec3 fetch.
+    case "float": return 1;
+    default: return 0;
     }
   }
 
@@ -5743,6 +6200,20 @@
     return { source: out, hasNormal: hasNormal };
   }
 
+  // Fixed Selena vertex-layout built-ins that never participate in the
+  // custom-stream record (their binding is owned by the builtin path).
+  var SCENE_WEBGL_RESERVED_ATTRIBUTES = "position positions normal normals uv uvs uv1 tangent tangents index indices skin skinIndex joints weights".split(" ");
+
+  // sceneSelenaDiscardProgram releases a compiled Selena program whose
+  // attribute descriptor failed validation, so a failed compile path never
+  // leaks GPU programs across repeated material rejections.
+  function sceneSelenaDiscardProgram(gl, info) {
+    if (!info) return;
+    if (info.program) gl.deleteProgram(info.program);
+    if (info.vertexShader) gl.deleteShader(info.vertexShader);
+    if (info.fragmentShader) gl.deleteShader(info.fragmentShader);
+  }
+
   function createSceneSelenaProgram(gl, material, skinned) {
     var layout = sceneSelenaMaterialLayout(material);
     if (!layout) return null;
@@ -5765,17 +6236,6 @@
     if (!program) return null;
     var attrs = {};
     var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
-    for (var i = 0; i < layoutAttrs.length; i++) {
-      var attr = layoutAttrs[i] || {};
-      if (typeof attr.name !== "string") continue;
-      var glName = attr.name;
-      if (skinned && attr.name === "position") glName = "a_position";
-      else if (skinned && attr.name === "normal" && skinInfo.hasNormal) glName = "a_normal";
-      attrs[attr.name] = {
-        loc: gl.getAttribLocation(program, glName),
-        size: sceneSelenaAttributeComponents(attr.type),
-      };
-    }
     var result = {
       program: program,
       vertexShader: vertexShader,
@@ -5784,13 +6244,48 @@
       uniforms: sceneSelenaUniformLocations(gl, program, layout),
       layout: layout,
       skinned: Boolean(skinned),
+      // Validated Selena custom descriptors as one compact ordered flat
+      // array: [name, compiledLocation, componentWidth, ...].
+      customAttributes: [],
     };
-    if (skinned) {
+    var seenCustomLocations = {};
+    for (var i = 0; i < layoutAttrs.length; i++) {
+      var attr = layoutAttrs[i] || {};
+      var attrName = attr.name;
+      // Reserved built-in layout entries are part of the fixed Selena vertex
+      // layout; their binding is owned by the builtin path, so they are
+      // excluded from the custom-stream record.
+      var isReserved = SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(attrName) >= 0;
+      if (typeof attrName !== "string") {
+        if (!isReserved) {
+          sceneSelenaDiscardProgram(gl, result);
+          return null;
+        }
+        continue;
+      }
+      var glName = attrName;
+      if (skinned && attrName === "position") glName = "a_position";
+      else if (skinned && attrName === "normal" && skinInfo.hasNormal) glName = "a_normal";
+      var size = sceneSelenaAttributeComponents(attr.type);
+      var loc = gl.getAttribLocation(program, glName);
+      attrs[attrName] = { loc: loc, size: size };
+      if (!isReserved && (size < 1 || loc < 0 || seenCustomLocations[loc])) {
+        // Fail closed unless the descriptor has a known tuple width and the
+        // vertex shader exposes it at a unique compiled location; anything else
+        // discards the program so the object takes the journaled builtin-PBR
+        // fallback.
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      seenCustomLocations[loc] = true;
+      if (!isReserved) result.customAttributes.push(attrName, loc, size);
+    }
+    /* @ts-expect-error TS2551 -- skinUniforms is added to the program record only when skinned */ if (skinned) {
       result.skinUniforms = {
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
         jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
         hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
-      };
+      /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
       result.skinAttributes = {
         joints: gl.getAttribLocation(program, "a_joints"),
         weights: gl.getAttribLocation(program, "a_weights"),
@@ -5819,7 +6314,7 @@
       uv: gl.getAttribLocation(program, "a_uv"),
       tangent: gl.getAttribLocation(program, "a_tangent"),
     };
-    const uniforms = scenePBRCacheBaseUniforms(gl, program);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const uniforms = scenePBRCacheBaseUniforms(gl, program);
     uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
     return {
       program: program,
@@ -5860,8 +6355,8 @@
     // draw; caching 64 individual locations made every fighter pay 64
     // lookups at compile time and 64 uniform uploads per frame.
     var uniforms = scenePBRCacheBaseUniforms(gl, program);
-    uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
-    uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
     uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
 
     return {
@@ -5923,8 +6418,13 @@
 
   // Compile the instanced PBR vertex shader with the shared PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations, or null.
-  function createScenePBRInstancedProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_INSTANCED_VERTEX_SOURCE);
+  function createScenePBRInstancedProgram(gl, crowd) {
+    var warmed = crowd ? scenePBRTakeInitialProgram(gl, "crowd") : null;
+    if (warmed === false) return null;
+    if (warmed) {
+      return scenePBRFinalizeInstancedProgram(gl, warmed, true);
+    }
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE);
     if (!vertexShader) return null;
     var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
@@ -5935,18 +6435,79 @@
     var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced PBR shader");
     if (!program) return null;
 
+    return scenePBRFinalizeInstancedProgram(gl, {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+    }, crowd);
+  }
+
+  function scenePBRFinalizeInstancedProgram(gl, linked, crowd) {
+    var attributes = {
+      position: gl.getAttribLocation(linked.program, "a_position"),
+      normal: gl.getAttribLocation(linked.program, "a_normal"),
+      uv: gl.getAttribLocation(linked.program, "a_uv"),
+      tangent: gl.getAttribLocation(linked.program, "a_tangent"),
+      instanceMatrix: gl.getAttribLocation(linked.program, "a_instanceMatrix"),
+      joints: crowd ? gl.getAttribLocation(linked.program, "a_joints") : -1,
+      weights: crowd ? gl.getAttribLocation(linked.program, "a_weights") : -1,
+      pose: crowd ? gl.getAttribLocation(linked.program, "a_pose") : -1,
+      instanceColor: gl.getAttribLocation(linked.program, "a_instanceColor"),
+    };
+
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
+    uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
+
+    return {
+      program: linked.program,
+      vertexShader: linked.vertexShader,
+      fragmentShader: linked.fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  // Compile the GPU-motion crowd color-pass shader (see
+  // SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE's doc comment). No
+  // KHR_parallel_shader_compile pre-warm slot: this path is newer than the
+  // pre-warm plumbing's fixed base/crowd slots, so it always compiles
+  // synchronously on first use, exactly like the legacy crowd program did
+  // before that optimization existed -- a one-time first-use cost, not a
+  // per-frame one.
+  // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
+  function createScenePBRCrowdMotionProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Crowd motion PBR shader");
+    if (!program) return null;
     var attributes = {
       position: gl.getAttribLocation(program, "a_position"),
       normal: gl.getAttribLocation(program, "a_normal"),
       uv: gl.getAttribLocation(program, "a_uv"),
       tangent: gl.getAttribLocation(program, "a_tangent"),
-      instanceMatrix: gl.getAttribLocation(program, "a_instanceMatrix"),
-      instanceColor: gl.getAttribLocation(program, "a_instanceColor"),
+      joints: gl.getAttribLocation(program, "a_joints"),
+      weights: gl.getAttribLocation(program, "a_weights"),
+      motionPrevPos: gl.getAttribLocation(program, "a_motionPrevPos"),
+      motionPrevRot: gl.getAttribLocation(program, "a_motionPrevRot"),
+      motionPrevScale: gl.getAttribLocation(program, "a_motionPrevScale"),
+      tPrev: gl.getAttribLocation(program, "a_tPrev"),
+      motionNextPos: gl.getAttribLocation(program, "a_motionNextPos"),
+      motionNextRot: gl.getAttribLocation(program, "a_motionNextRot"),
+      motionNextScale: gl.getAttribLocation(program, "a_motionNextScale"),
+      tNext: gl.getAttribLocation(program, "a_tNext"),
+      animState: gl.getAttribLocation(program, "a_animState"),
     };
-
-    var uniforms = scenePBRCacheBaseUniforms(gl, program);
-    uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
-
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    /* @ts-expect-error TS2339 -- see above */ uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
+    /* @ts-expect-error TS2339 -- see above */ uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
+    /* @ts-expect-error TS2339 -- see above */ uniforms.now = gl.getUniformLocation(program, "u_now");
+    uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
     return {
       program: program,
       vertexShader: vertexShader,
@@ -5954,6 +6515,281 @@
       attributes: attributes,
       uniforms: uniforms,
     };
+  }
+
+  // Initial WebGL2 programs are submitted together while model assets are
+  // already hydrating. KHR_parallel_shader_compile lets the driver work
+  // without a synchronous LINK_STATUS fence on the main thread. The existing
+  // synchronous factories consume these records after completion, preserving
+  // their renderer and disposal contracts. Other contexts and browsers keep
+  // the established synchronous path.
+  const scenePBRInitialPrograms = new WeakMap();
+
+  function scenePBRSubmitInitialProgram(gl, vertexSource, fragmentSource, label) {
+    let vertexShader = null;
+    let fragmentShader = null;
+    let program = null;
+    try {
+      vertexShader = gl.createShader(gl.VERTEX_SHADER);
+      fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+      if (!vertexShader || !fragmentShader) throw new Error("shader allocation failed");
+      gl.shaderSource(vertexShader, vertexSource);
+      gl.shaderSource(fragmentShader, fragmentSource);
+      gl.compileShader(vertexShader);
+      gl.compileShader(fragmentShader);
+      program = gl.createProgram();
+      if (!program) throw new Error("program allocation failed");
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      return { program, vertexShader, fragmentShader, label, disposed: false };
+    } catch (_error) {
+      if (program) gl.deleteProgram(program);
+      if (vertexShader) gl.deleteShader(vertexShader);
+      if (fragmentShader) gl.deleteShader(fragmentShader);
+      return null;
+    }
+  }
+
+  function scenePBRDisposeInitialProgram(gl, record) {
+    if (!record || record.disposed) return;
+    record.disposed = true;
+    try { gl.deleteProgram(record.program); } catch (_error) {}
+    try { gl.deleteShader(record.vertexShader); } catch (_error) {}
+    try { gl.deleteShader(record.fragmentShader); } catch (_error) {}
+  }
+
+  function scenePBRValidateInitialProgram(gl, record) {
+    if (!record || record.disposed) return false;
+    try {
+      if (gl.getProgramParameter(record.program, gl.LINK_STATUS)) return true;
+      const vertexOK = gl.getShaderParameter(record.vertexShader, gl.COMPILE_STATUS);
+      const fragmentOK = gl.getShaderParameter(record.fragmentShader, gl.COMPILE_STATUS);
+      console.warn("[gosx] " + record.label + " program link failed:", gl.getProgramInfoLog(record.program));
+      if (!vertexOK) console.warn("[gosx] PBR vertex shader compile failed:", gl.getShaderInfoLog(record.vertexShader));
+      if (!fragmentOK) console.warn("[gosx] PBR fragment shader compile failed:", gl.getShaderInfoLog(record.fragmentShader));
+    } catch (_error) {
+      // Context loss and driver exceptions are handled like a failed link. The
+      // established synchronous factory will retry on a current context.
+    }
+    scenePBRDisposeInitialProgram(gl, record);
+    return false;
+  }
+
+  function scenePBRTakeInitialProgram(gl, key) {
+    const state = scenePBRInitialPrograms.get(gl);
+    if (!state || state.status !== "ready" || !state[key]) return null;
+    let current = false;
+    let contextLost = false;
+    try {
+      current = state.isCurrent();
+      contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
+    } catch (_error) {
+      current = false;
+    }
+    if (!current || contextLost) {
+      discardScenePBRInitialPrograms(gl, state);
+      return false;
+    }
+    const record = state[key];
+    state[key] = null;
+    if (!state.base && !state.crowd) scenePBRInitialPrograms.delete(gl);
+    return record;
+  }
+
+  function scenePBRInitialProgramOwner(gl) {
+    const state = scenePBRInitialPrograms.get(gl);
+    return state && state.status === "ready" ? state : null;
+  }
+
+  function scenePBRRequestFrame(callback) {
+    const motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function" && typeof motionScheduler.cancel === "function") {
+      const id = motionScheduler.request(callback);
+      return { cancel: function() { motionScheduler.cancel(id); } };
+    }
+    if (typeof requestAnimationFrame === "function") {
+      const id = requestAnimationFrame(callback);
+      return { cancel: function() { if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id); } };
+    }
+    return null;
+  }
+
+  function scenePBRClearInitialPoll(state) {
+    if (!state) return;
+    if (state.frame != null) state.frame.cancel();
+    if (state.timer != null && typeof clearTimeout === "function") {
+      clearTimeout(state.timer);
+    }
+    state.frame = null;
+    state.timer = null;
+  }
+
+  function scenePBRFinishInitialPrograms(gl, state, value) {
+    if (!state || state.settled) return;
+    state.settled = true;
+    scenePBRClearInitialPoll(state);
+    if (!value) {
+      if (scenePBRInitialPrograms.get(gl) === state) scenePBRInitialPrograms.delete(gl);
+      scenePBRDisposeInitialProgram(gl, state.base);
+      scenePBRDisposeInitialProgram(gl, state.crowd);
+      state.base = null;
+      state.crowd = null;
+    }
+    state.resolve(value ? state : null);
+  }
+
+  function discardScenePBRInitialPrograms(gl, expectedOwner) {
+    const state = scenePBRInitialPrograms.get(gl);
+    // Omitted owner is the one intentional unconditional operation used when a
+    // new preparation supersedes the current generation. A supplied null or
+    // stale owner must never erase another renderer's newer preparation.
+    if (!state || arguments.length > 1 && (!expectedOwner || state !== expectedOwner)) return;
+    scenePBRInitialPrograms.delete(gl);
+    if (state.status === "pending") {
+      scenePBRFinishInitialPrograms(gl, state, false);
+      return;
+    }
+    scenePBRClearInitialPoll(state);
+    scenePBRDisposeInitialProgram(gl, state.base);
+    scenePBRDisposeInitialProgram(gl, state.crowd);
+    state.base = null;
+    state.crowd = null;
+  }
+
+  function scenePBRDisposeInitialOwner(gl, owner) {
+    if (!owner) return;
+    discardScenePBRInitialPrograms(gl, owner);
+    const records = Array.isArray(owner.records) ? owner.records : [];
+    for (const record of records) scenePBRDisposeInitialProgram(gl, record);
+    owner.records = [];
+  }
+
+  function prepareScenePBRInitialPrograms(gl, options) {
+    let extension = null;
+    try {
+      extension = gl && typeof gl.getExtension === "function"
+        ? gl.getExtension("KHR_parallel_shader_compile")
+        : null;
+    } catch (_error) {
+      extension = null;
+    }
+    if (!extension || typeof extension.COMPLETION_STATUS_KHR !== "number") {
+      return Promise.resolve(false);
+    }
+    const opts = options || {};
+    const isCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : function() { return true; };
+    // One preparation owns one context generation. Superseding it immediately
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // settles and releases both pending and completed-but-unconsumed records.
+    discardScenePBRInitialPrograms(gl);
+    let fragmentSource = "";
+    try {
+      fragmentSource = scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE);
+    } catch (_error) {
+      return Promise.resolve(false);
+    }
+    const base = scenePBRSubmitInitialProgram(
+      gl,
+      SCENE_PBR_VERTEX_SOURCE,
+      fragmentSource,
+      "PBR shader",
+    );
+    const crowd = opts.crowd === true
+      ? scenePBRSubmitInitialProgram(
+          gl,
+          SCENE_PBR_CROWD_VERTEX_SOURCE,
+          fragmentSource,
+          "Crowd PBR shader",
+        )
+      : null;
+    const records = [base, crowd].filter(Boolean);
+    if (!base || opts.crowd === true && !crowd) {
+      for (const record of records) scenePBRDisposeInitialProgram(gl, record);
+      return Promise.resolve(false);
+    }
+    const startedAt = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    return new Promise(function(resolve) {
+      const state = {
+        status: "pending",
+        base,
+        crowd,
+        isCurrent,
+        frame: null,
+        timer: null,
+        settled: false,
+        resolve,
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.records = records;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ base.initialProgramOwner = state;
+      if (crowd) crowd.initialProgramOwner = state;
+      scenePBRInitialPrograms.set(gl, state);
+      function cancel() {
+        scenePBRFinishInitialPrograms(gl, state, false);
+      }
+      function schedulePoll() {
+        // Hidden documents may stop delivering animation frames. Keep a short
+        // timeout sibling so owner cancellation and the bounded deadline still
+        // release GL objects even when rendering is throttled.
+        let fired = false;
+        function run() {
+          if (fired || state.settled) return;
+          fired = true;
+          scenePBRClearInitialPoll(state);
+          poll();
+        }
+        state.frame = scenePBRRequestFrame(run);
+        if (typeof setTimeout === "function") state.timer = setTimeout(run, 50);
+        if (state.frame == null && state.timer == null) cancel();
+      }
+      function poll() {
+        if (state.settled || scenePBRInitialPrograms.get(gl) !== state) return;
+        let current = false;
+        let contextLost = false;
+        try {
+          current = isCurrent();
+          contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
+        } catch (_error) {
+          cancel();
+          return;
+        }
+        if (!current || contextLost) {
+          cancel();
+          return;
+        }
+        const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        if (now - startedAt > 8000) {
+          cancel();
+          return;
+        }
+        try {
+          for (const record of records) {
+            if (!gl.getProgramParameter(record.program, extension.COMPLETION_STATUS_KHR)) {
+              schedulePoll();
+              return;
+            }
+          }
+        } catch (_error) {
+          cancel();
+          return;
+        }
+        const validBase = scenePBRValidateInitialProgram(gl, base);
+        const validCrowd = crowd ? scenePBRValidateInitialProgram(gl, crowd) : false;
+        try {
+          current = isCurrent();
+          contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
+        } catch (_error) {
+          current = false;
+        }
+        if (!current || contextLost || !validBase || scenePBRInitialPrograms.get(gl) !== state) {
+          cancel();
+          return;
+        }
+        if (crowd && !validCrowd) state.crowd = null;
+        state.status = "ready";
+        scenePBRFinishInitialPrograms(gl, state, true);
+      }
+      poll();
+    });
   }
 
   function scenePBRCompileShader(gl, type, source) {
@@ -6232,7 +7068,7 @@
   function scenePBRMaxTextureUnits(gl) {
     try {
       var units = gl && typeof gl.getParameter === "function"
-        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        ? Math.floor(sceneNumber(sceneCachedGLParameter(gl, gl.MAX_TEXTURE_IMAGE_UNITS), 0))
         : 0;
       return units > 0 ? units : SCENE_TEXTURE_UNIT_DEFAULT_MAX;
     } catch (_error) {
@@ -6248,121 +7084,40 @@
     );
   }
 
-  function scenePBRSlotCascadeCount(slot, lightIndex) {
-    if (!slot || lightIndex < 0) {
-      return 0;
-    }
-    return Math.max(1, Math.min(4, slot.numCascades | 0));
-  }
-
-  function scenePBRShadowTextureCount(shadowSlots, shadowLightIndices) {
-    var slots = Array.isArray(shadowSlots) ? shadowSlots : [];
-    var indices = Array.isArray(shadowLightIndices) ? shadowLightIndices : [];
-    var count = 0;
-    for (var i = 0; i < slots.length; i++) {
-      count += scenePBRSlotCascadeCount(slots[i], indices[i]);
-    }
-    return count;
-  }
-
   function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment, maxUnits) {
-    var shadowCount = scenePBRShadowTextureCount(shadowSlots, shadowLightIndices);
-    if (scenePBREnvironmentHasMap(environment)) {
-      // Keep the legacy two-shadow reservation for non-shadowed env-map scenes
-      // while still moving IBL after all active CSM cascades.
-      shadowCount = Math.max(2, shadowCount);
-    }
-    var options = {
-      shadowCount: shadowCount,
-      ibl: scenePBREnvironmentHasMap(environment),
-    };
-    if (maxUnits != null) {
-      options.maxUnits = maxUnits;
-    }
-    return sceneAllocateTextureUnits(options);
+    // Reserve array and cube units even while their feature is inactive.
+    // Active sampler types must not alias material sampler2D units.
+    return sceneAllocateTextureUnits({ shadowCount: 2, ibl: true,
+      maxUnits: maxUnits == null ? SCENE_TEXTURE_UNIT_DEFAULT_MAX : maxUnits });
   }
 
-  // Negotiate effective per-light cascade counts against the real shared
-  // texture-unit budget BEFORE any slot is created, matrix fit, or depth
-  // pass. Fair baseline: when the budget covers at least one cascade per
-  // eligible light, each light gets one, then remaining units fill the first
-  // (priority) light up to its request. A reduced count is refit across the
-  // FULL camera range by computeShadowSlotCascadeMatrices, so far coverage
-  // is never truncated. Authored lights are never modified.
+  // The sampler budget limits LIGHTS; layers no longer consume texture units.
   function scenePBRNegotiateShadowCascades(requestedPerLight, environment, maxUnits) {
     var requested = Array.isArray(requestedPerLight) ? requestedPerLight : [];
+    var layout = scenePBRTextureLayoutForFrame([], [], environment, maxUnits);
     var counts = [];
-    var wants = [];
-    var totalRequested = 0;
     for (var i = 0; i < requested.length; i++) {
-      var want = Math.max(1, Math.min(4, requested[i] | 0));
-      counts.push(want);
-      wants.push(want);
-      totalRequested += want;
-    }
-    if (totalRequested === 0) {
-      return counts;
-    }
-    var placeholderSlots = [];
-    var placeholderIndices = [];
-    for (var j = 0; j < counts.length; j++) {
-      placeholderSlots.push({ numCascades: counts[j], cascades: [] });
-      placeholderIndices.push(j);
-    }
-    var layout = scenePBRTextureLayoutForFrame(
-      placeholderSlots, placeholderIndices, environment, maxUnits);
-    var budget = layout && Array.isArray(layout.shadows) ? layout.shadows.length : 0;
-    if (budget >= counts.length) {
-      // Reserve one cascade per eligible light, then fill first priority.
-      for (var k = 0; k < counts.length; k++) {
-        counts[k] = 1;
-      }
-      var remaining = budget - counts.length;
-      for (var p = 0; p < counts.length && remaining > 0; p++) {
-        // Fill from the pre-clamped per-light requests.
-        var extra = Math.min(Math.min(wants[p], 4) - counts[p], remaining);
-        if (extra > 0) {
-          counts[p] += extra;
-          remaining -= extra;
-        }
-      }
-    } else {
-      // Budget cannot cover one cascade per light: grant one cascade to
-      // earlier (priority) lights while units remain; later lights get 0
-      // (upload disables slots with 0 effective cascades rather than
-      // advertising a count it cannot bind).
-      for (var z = 0; z < counts.length; z++) {
-        counts[z] = z < budget ? 1 : 0;
-      }
+      counts.push(i < layout.shadows.length ? Math.max(1, Math.min(4, requested[i] | 0)) : 0);
     }
     return counts;
   }
 
-  // Upload cascaded-shadow uniforms for both slots to the given program's
-  // uniforms. `shadowSlots[s]` is either null (no shadow light in slot s)
-  // or an object produced by createSceneShadowSlot with up to 4 cascades.
-  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment) {
+  // Upload both array samplers before any draw, including inactive slots.
+  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment, textureCache) {
     var lightArray = Array.isArray(lights) ? lights : [];
-    // Allocate only the negotiated cascade counts, while reserving IBL after
-    // the cascades when an envMap is present. Slot offsets are packed, not
-    // hard-coded to 4-wide blocks: units start at 8, so two single-cascade
-    // lights use units 8/9 and one 4-cascade CSM light uses 8/9/10/11.
     var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment,
       scenePBRMaxTextureUnits(gl));
-    var shadowUnits = layout.shadows;
-
-    var unitBase = 0;
-    uploadCascadedSlot(gl, uniforms, 0, shadowSlots[0], shadowLightIndices[0],
-      lightArray, shadowUnits, unitBase);
-    unitBase += scenePBRSlotCascadeCount(shadowSlots[0], shadowLightIndices[0]);
-    uploadCascadedSlot(gl, uniforms, 1, shadowSlots[1], shadowLightIndices[1],
-      lightArray, shadowUnits, unitBase);
+    var placeholder = scenePBRPlaceholderShadow(gl, textureCache);
+    for (var i = 0; i < 2; i++) {
+      var slot = shadowSlots[i];
+      var texture = slot ? slot.depthTexture : placeholder;
+      scenePBRBindTexture(gl, layout.shadows[i], texture, gl.TEXTURE_2D_ARRAY);
+      gl.uniform1i(uniforms["shadowMap" + i], layout.shadows[i]);
+      uploadCascadedSlot(gl, uniforms, i, slot, shadowLightIndices[i], lightArray, layout.shadows, i);
+    }
   }
 
   function uploadCascadedSlot(gl, uniforms, slotIndex, slot, lightIndex, lightArray, shadowUnits, unitBase) {
-    var samplerKeys = slotIndex === 0
-      ? ["shadowMap0_0", "shadowMap0_1", "shadowMap0_2", "shadowMap0_3"]
-      : ["shadowMap1_0", "shadowMap1_1", "shadowMap1_2", "shadowMap1_3"];
     var matricesKey = slotIndex === 0 ? "lightSpaceMatrices0" : "lightSpaceMatrices1";
     var splitsKey = slotIndex === 0 ? "shadowCascadeSplits0" : "shadowCascadeSplits1";
     var cascadesKey = slotIndex === 0 ? "shadowCascades0" : "shadowCascades1";
@@ -6375,45 +7130,14 @@
     var numCascades = slot ? Math.max(0, Math.min(4, slot.numCascades | 0)) : 0;
     var primaryUnit = numCascades > 0 && shadowUnits.length > base ? shadowUnits[base] : null;
 
-    // Absent light, no budgeted unit, or a stale slot whose cascade count
-    // exceeds its remaining units: disable the WHOLE slot
-    // (has=0, index -1, cascade count 0) instead of truncating old fitted
-    // splits — truncation would lose far coverage while still advertising
-    // shadows. Never bind any texture here; a disabled slot must not steal
-    // another slot's unit.
-    if (!slot || lightIndex < 0 || numCascades <= 0 || primaryUnit == null ||
-        base + numCascades > shadowUnits.length) {
+    if (!slot || lightIndex < 0 || numCascades <= 0 || primaryUnit == null) {
       gl.uniform1i(uniforms[hasKey], 0);
       gl.uniform1f(uniforms[softKey], 0);
       gl.uniform1i(uniforms[indexKey], -1);
       gl.uniform1i(uniforms[cascadesKey], 0);
-      // Reset ALL unused 2D sampler uniforms: an unused 2D sampler points at
-      // material unit 0, which is always safe, and setting a sampler uniform
-      // binds no texture.
-      for (var di = 0; di < 4; di++) {
-        gl.uniform1i(uniforms[samplerKeys[di]], 0);
-      }
       return;
     }
-
     var light = lightArray[lightIndex] || {};
-
-    // Bind each ACTIVE cascade exactly once to its unique negotiated unit —
-    // negotiation guarantees every rendered cascade owns a unit, so there is
-    // no fallback re-bind of one texture over another's unit.
-    for (var ci = 0; ci < numCascades; ci++) {
-      var unit = shadowUnits.length > base + ci ? shadowUnits[base + ci] : null;
-      if (unit == null) break;
-      scenePBRBindTexture(gl, unit, slot.cascades[ci].depthTexture);
-      gl.uniform1i(uniforms[samplerKeys[ci]], unit);
-    }
-
-    // Alias unused samplers to cascade 0's unit WITHOUT re-binding (that
-    // texture is already bound there); the shader never selects them because
-    // u_shadowCascades matches the effective count.
-    for (var ai = numCascades; ai < 4; ai++) {
-      gl.uniform1i(uniforms[samplerKeys[ai]], primaryUnit);
-    }
     // Pack matrices and splits. Matrix array = 4*16 = 64 floats; cascades
     // beyond numCascades are filled with cascade 0's matrix as a safe
     // fallback (shader never selects them when numCascades is set correctly,
@@ -6514,6 +7238,7 @@
     var hdrIBLAvailable = scenePBRHDRIBLAvailable(gl);
     var maxUnits = scenePBRMaxTextureUnits(gl);
     var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env, maxUnits);
+    var unit = layout && layout.ibl ? layout.ibl.brdfLUT : null;
     // An active samplerCube may not alias a sampler2D unit in WebGL even when
     // a branch flag is false. Assign both cube samplers to a real black cube
     // on a dedicated unit before considering authored products.
@@ -6534,6 +7259,8 @@
       reason: "",
       radianceMipLevels: 0,
     };
+    gl.uniform1i(uniforms.envMap, Number(unit));
+    gl.uniform1i(uniforms.iblBRDFLUT, Number(unit));
     gl.uniform1i(uniforms.hasIBL, 0);
     gl.uniform1f(uniforms.iblRadianceMaxLod, 0);
 
@@ -6544,7 +7271,7 @@
       var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
       if (!hdrIBLAvailable) {
         iblStatus.state = "unsupported";
-        iblStatus.reason = "fragment-texture-units<20";
+        iblStatus.reason = "fragment-texture-units<16";
       } else if (!radianceDescriptor || !irradianceDescriptor || !brdfDescriptor) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "descriptor-role-color-view-format";
@@ -6557,9 +7284,9 @@
       } else if (!layout || !layout.ibl) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "texture-unit-budget";
-      } else {
-        var radianceRecord = scenePBRLoadTexture(gl, radianceDescriptor.uri, textureCache, radianceDescriptor);
-        var irradianceRecord = scenePBRLoadTexture(gl, irradianceDescriptor.uri, textureCache, irradianceDescriptor);
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ } else {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var radianceRecord = scenePBRLoadTexture(gl, radianceDescriptor.uri, textureCache, radianceDescriptor);
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var irradianceRecord = scenePBRLoadTexture(gl, irradianceDescriptor.uri, textureCache, irradianceDescriptor);
         var brdfRecord = scenePBRLoadTexture(gl, brdfDescriptor.uri, textureCache, brdfDescriptor);
         var failed = [radianceRecord, irradianceRecord, brdfRecord].some(function(record) { return record && record.failed; });
         var active = scenePBRIBLRecordValid(radianceRecord, radianceDescriptor, model) &&
@@ -6606,8 +7333,14 @@
       return;
     }
 
-    var unit = layout && layout.ibl ? layout.ibl.irradiance : null;
-    var record = scenePBRLoadTexture(gl, envMap, textureCache, null, "environment-radiance", "linear");
+    // The legacy equirect environment map is an ordinary photographic/baked
+    // PNG or JPEG — sRGB-encoded, same as a base-color texture — not a raw
+    // linear radiance buffer. Loading it as "linear" skipped the SRGB8_ALPHA8
+    // decode and left every sample ~2.2x too bright (linear-space math
+    // applied to gamma-encoded texels). True HDR sources (.hdr) are
+    // unaffected: scenePBRLoadTexture routes them through the Radiance HDR
+    // path before this colour-space argument is even consulted.
+    var record = scenePBRLoadTexture(gl, envMap, textureCache, null, "environment-radiance", "srgb");
     var available = Boolean(record && record.texture && record.loaded && !record.failed);
     gl.uniform1i(uniforms.hasEnvMap, available ? 1 : 0);
     var envIntensity = Object.prototype.hasOwnProperty.call(env, "envIntensity")
@@ -6615,7 +7348,14 @@
       : 1;
     gl.uniform1f(uniforms.envIntensity, Math.max(0, envIntensity));
     gl.uniform1f(uniforms.envRotation, sceneNumber(env.envRotation, 0));
-    if (available && unit != null) {
+    // Mip count the loader generated for this equirect (see scenePBRLoadTexture:
+    // generateMipmap runs unconditionally on the 2D image-load path). The
+    // shader uses the top LOD as a cheap diffuse-irradiance stand-in and
+    var envMaxLod = available && record.width && record.height
+      ? Math.max(0, Math.floor(Math.log2(Math.max(record.width, record.height))))
+      : 0;
+    gl.uniform1f(uniforms.envMapMaxLod, envMaxLod);
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (available && unit != null) {
       scenePBRBindTexture(gl, unit, record.texture);
       gl.uniform1i(uniforms.envMap, unit);
     }
@@ -6651,6 +7391,82 @@
     );
   }
 
+  const SCENE_SKY_FRAGMENT = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv; out vec4 fragColor;",
+    "uniform vec4 u_sky[11]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
+    "//GOSX_SKY_PHYSICAL",
+    "void main() {",
+    "  vec2 ndc = v_uv*2.-1.;",
+    "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w);",
+    "  vec3 color = mix(u_sky[4].xyz, ray.y >= 0. ? u_sky[3].xyz : u_sky[5].xyz, abs(ray.y));",
+    "  float c = cos(u_sky[2].w), s = sin(u_sky[2].w);",
+    "  vec3 d = vec3(ray.x*c+ray.z*s, ray.y, -ray.x*s+ray.z*c);",
+    "  if (u_sky[5].w == 1.) {",
+    "    vec2 uv = vec2(atan(d.z,d.x)/6.28318530718+.5, asin(clamp(d.y,-1.,1.))/3.14159265359+.5);",
+    "    color = textureLod(u_skyImage, uv, u_sky[4].w).rgb;",
+    "  } else if (u_sky[5].w == 2.) { color = textureLod(u_skyCube,d,u_sky[4].w).rgb;",
+    "  } else if (u_sky[5].w == 3.) { color = u_sky[4].xyz;",
+    "  } else if (u_sky[5].w == 4.) { color = gosxPhysicalSky(ray, u_sky[7], u_sky[8], u_sky[9], u_sky[10].x); }",
+    "  color = max(color*u_sky[3].w,vec3(0));",
+    "  if (u_sky[6].x == 0.) { color = mix(1.055*pow(color,vec3(1./2.4))-.055,color*12.92,lessThanEqual(color,vec3(.0031308))); }",
+    "  fragColor = vec4(color,1);",
+    "}",
+  ].join("\n");
+
+  // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
+  function createSceneSkyWebGLRenderer(gl, textureCache, imagePlaceholder) {
+    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl")));
+    if (!program) return null;
+    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(44);
+    var uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
+    var imageUniform = gl.getUniformLocation(program.program, "u_skyImage");
+    var cubeUniform = gl.getUniformLocation(program.program, "u_skyCube");
+    var imageSampler = gl.createSampler();
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.samplerParameteri(imageSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return {
+      // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
+      draw: function(opts) {
+        var env = opts.environment, sky = env.sky;
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        var image = { texture: imagePlaceholder }, cube = scenePBRPlaceholderCube(gl, textureCache);
+        var state = sky.mode === "physical" ? "physical" : "gradient";
+        if (sky.mode === "environment") {
+          var desc = env.ibl && env.ibl.radiance;
+          var record = desc && desc.view === "cube" && desc.uri
+            ? scenePBRLoadTexture(gl, desc.uri, textureCache, desc, "environment-radiance", "linear") : null;
+          if (record && record.loaded && !record.failed) { cube = record; data[23] = 2; state = "environment-cube"; }
+          else {
+            record = env.envMap ? scenePBRLoadTexture(gl, env.envMap, textureCache, null, "environment-radiance", "srgb") : record;
+            if (record && record.loaded && !record.failed) { image = record; data[23] = 1; state = "environment-map"; }
+            else state = record && !record.failed ? "environment-pending" : "environment-unavailable";
+          }
+          data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
+        }
+        var cull = gl.isEnabled(gl.CULL_FACE);
+        gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+        gl.useProgram(program.program); gl.uniform4fv(uniforms, data);
+        scenePBRBindTexture(gl, 0, image.texture, gl.TEXTURE_2D); gl.uniform1i(imageUniform, 0);
+        scenePBRBindTexture(gl, 1, cube.texture, gl.TEXTURE_CUBE_MAP); gl.uniform1i(cubeUniform, 1);
+        gl.bindSampler(0, imageSampler);
+        drawSceneFullscreenQuad(gl, quad.vao);
+        gl.bindSampler(0, null);
+        gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+        if (cull) gl.enable(gl.CULL_FACE);
+        return state;
+      },
+      dispose: function() {
+        gl.deleteSampler(imageSampler);
+        gl.deleteVertexArray(quad.vao); gl.deleteBuffer(quad.vbo);
+        gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader);
+      },
+    };
+  }
+
   function createScenePBRRenderer(gl, canvas) {
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -6674,7 +7490,7 @@
     var customProgramCache = new Map();
     var selenaProgramCache = new Map();
 
-    // Shadow program (depth-only shader for shadow pass).
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Shadow program (depth-only shader for shadow pass).
     const shadowProgram = createSceneShadowProgram(gl);
 
     // Shadow resources — up to 2 directional light shadow maps.
@@ -6683,6 +7499,8 @@
 
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor = null;
+    // @ts-ignore TS7018 -- lazily allocated backend sky resources.
+    var skyResources = { renderer: null };
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
     // Light matrices now live on the per-cascade objects in shadowSlots[s];
@@ -6744,6 +7562,262 @@
     // scene unmount without needing a per-subsystem bookkeeping pass.
     const staticMeshArrayVBOs = new WeakMap();
     const pointsEntryBuffers = new Set();
+    const instancedStreamRecords = new Map();
+    var instancedStreamEpoch = 0;
+    const crowdAtlasTextures = new Map();
+    let crowdProgram = null, crowdShadowProgram = null, crowdFrame = 0;
+    let crowdPaletteUploads = 0, crowdPaletteBytes = 0;
+    let crowdCapabilities = null, crowdCapabilityError = null;
+    function prepareCrowdAtlas(atlas) {
+      let record = crowdAtlasTextures.get(atlas);
+      if (record) { record.lastUsed = crowdFrame; return record; }
+      if (crowdPaletteBytes + atlas.data.byteLength > 32 * 1024 * 1024) throw new Error("crowd palette residency budget exceeded");
+      if (crowdCapabilityError) throw crowdCapabilityError;
+      if (!crowdCapabilities) {
+        const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        const unit = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) - 1;
+        if (gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) < 1 || unit < gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)) {
+          crowdCapabilityError = new Error("crowd palette capability unavailable"); throw crowdCapabilityError;
+        }
+        crowdCapabilities = { maxSize, unit };
+      }
+      const { maxSize, unit } = crowdCapabilities;
+      if (atlas.width > maxSize || atlas.height > maxSize) throw new Error("crowd palette capability unavailable: texture dimensions");
+      try {
+        if (!crowdProgram) crowdProgram = createScenePBRInstancedProgram(gl, true);
+        if (!crowdShadowProgram) crowdShadowProgram = createSceneShadowProgram(gl, true, true);
+        if (!crowdProgram || !crowdShadowProgram) throw new Error("crowd palette shader unavailable");
+      } catch (error) {
+        crowdCapabilityError = error; throw error;
+      }
+      const previousActive = gl.getParameter(gl.ACTIVE_TEXTURE);
+      const previousFlip = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      const previousBinding = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      let texture = null;
+      try {
+        texture = gl.createTexture();
+        if (!texture) throw new Error("crowd palette texture allocation failed");
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, atlas.width, atlas.height, 0, gl.RGBA, gl.FLOAT, atlas.data);
+        if (gl.getError() !== gl.NO_ERROR) throw new Error("crowd palette upload failed");
+        record = { texture, unit, lastUsed: crowdFrame };
+        crowdAtlasTextures.set(atlas, record); crowdPaletteUploads++; crowdPaletteBytes += atlas.data.byteLength;
+      } catch (error) {
+        if (texture) gl.deleteTexture(texture);
+        crowdCapabilityError = error;
+        throw error;
+      } finally {
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, previousBinding);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, Boolean(previousFlip));
+        gl.activeTexture(previousActive);
+      }
+      record.lastUsed = crowdFrame;
+      return record;
+    }
+    function disposeCrowdResources() {
+      for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
+      crowdAtlasTextures.clear();
+      crowdPaletteBytes = 0;
+      for (const cp of [crowdProgram, crowdShadowProgram, crowdMotionProgram, crowdMotionShadowProgram]) {
+        if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+      }
+      crowdProgram = crowdShadowProgram = null;
+      crowdCapabilities = crowdCapabilityError = null;
+      crowdMotionProgram = crowdMotionShadowProgram = crowdMotionShaderError = null;
+    }
+    function bindCrowdBatch(batch, ip, allowed) {
+      if (!batch.atlas) return;
+      const record = prepareCrowdAtlas(batch.atlas);
+      gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
+      gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
+      const obj = batch.objects[0];
+      for (const name of ["joints", "weights"]) {
+        const location = ip.attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const location = ip.attributes.pose; allowed[location] = true;
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "poses", batch.poses));
+      gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
+    }
+    function finishCrowdBatch(batch, ip) {
+      if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
+    }
+
+    // --- GPU-driven crowd motion batch binding ---
+    //
+    // Reuses prepareCrowdAtlas for the joint palette texture (identical
+    // format to the legacy crowd path); the clip table is a small uniform
+    // array (see SCENE_CROWD_MOTION_ATTRIBUTES_GLSL's doc comment), so it
+    // needs no texture-unit budget or cache of its own -- just one
+    // gl.uniform4fv call per bound batch.
+    //
+    // SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS and
+    // SCENE_CROWD_MOTION_RECORD_FLOATS mirror the same-named constants in
+    // animation.ts (a JS-side module this chunk cannot import directly --
+    // see that file's "GPU-driven crowd motion" section for why the two
+    // chunks share no module graph). scene3d-crowd-motion-glsl-constants.
+    // test.mjs asserts the literals stay equal.
+    const SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS = 0.25;
+    const SCENE_CROWD_MOTION_RECORD_FLOATS = 24;
+    // JSON.parse returns the null value with a dynamic type. This keeps the
+    // source parseable by the JavaScript-only Scene3D test harness.
+    let crowdMotionProgram = JSON.parse("null"), crowdMotionShadowProgram = JSON.parse("null"), crowdMotionShaderError = JSON.parse("null");
+    let crowdMotionNow = 0;
+    function prepareCrowdMotionShaders() {
+      if (crowdMotionProgram && crowdMotionShadowProgram) return true;
+      if (crowdMotionShaderError) throw crowdMotionShaderError;
+      try {
+        if (!crowdMotionProgram) crowdMotionProgram = createScenePBRCrowdMotionProgram(gl);
+        if (!crowdMotionShadowProgram) crowdMotionShadowProgram = createSceneShadowMotionProgram(gl);
+        if (!crowdMotionProgram || !crowdMotionShadowProgram) throw new Error("crowd motion shader unavailable");
+      } catch (error) {
+        crowdMotionShaderError = error;
+        crowdMotionProgram = crowdMotionShadowProgram = null;
+        throw error;
+      }
+      return true;
+    }
+    // setCrowdMotionNow is called once per render() (see render()'s top),
+    // not per batch or per instance -- the entire point of the GPU-motion
+    // path is that advancing time costs one uniform write regardless of how
+    // many crowd instances are on screen.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function setCrowdMotionNow(now) { crowdMotionNow = now; }
+
+    // prepareCrowdMotionRecords grows batch.motion to fit batch.count
+    // (geometric growth/shrink, matching the legacy transforms/poses buffers
+    // above), then copies each instance's _crowdMotion.record into its slot
+    // ONLY when that instance was marked dirty since the last call (a new
+    // MotionFrame touched it) or the batch's membership/order changed (a
+    // JSON scene command added, removed, or reordered an instance --
+    // MotionFrame application itself always rejects a membership change, so
+    // this is the only other way batch.objects can differ between calls).
+    // Dirty flags persist until the next GPU upload. They let a later bind
+    // upload only changed instance ranges, even if several snapshots arrive
+    // before rendering. batch._motionGeneration advances only on a copy.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function prepareCrowdMotionRecords(batch) {
+      prepareCrowdAtlas(batch.atlas);
+      const stride = SCENE_CROWD_MOTION_RECORD_FLOATS;
+      const needed = batch.count * stride;
+      let resync = false;
+      if (!batch.motion || batch.motion.length < needed || batch.motion.length > Math.max(stride * 8, needed * 4)) {
+        let capacity = stride * 8;
+        while (capacity < needed) capacity *= 2;
+        batch.motion = new Float32Array(capacity);
+        batch._motionDirtyFlags = new Uint8Array(capacity / stride);
+        resync = true;
+      }
+      if (!resync && (!batch._motionMembers || batch._motionMembers.length !== batch.count)) resync = true;
+      if (!resync) for (let i = 0; i < batch.count; i++) if (batch._motionMembers[i] !== batch.objects[i]) { resync = true; break; }
+      let touched = resync;
+      if (resync) batch._motionDirtyFlags.fill(1, 0, batch.count);
+      for (let i = 0; i < batch.count; i++) {
+        const motion = batch.objects[i]._crowdMotion;
+        if (resync || motion.dirty) {
+          batch.motion.set(motion.record, i * stride);
+          batch._motionDirtyFlags[i] = 1;
+          motion.dirty = false;
+          touched = true;
+        }
+      }
+      if (touched) {
+        batch._motionGeneration = (batch._motionGeneration || 0) + 1;
+        batch._motionMembers = batch.objects.slice();
+      }
+    }
+
+    // A steady-state bind only touches the stream's retirement epoch. Changed
+    // instances form contiguous dirty runs. Keep at most 16 upload calls; for
+    // more scattered changes, one covering range costs less CPU call time.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function crowdMotionStreamBuffer(batch) {
+      const retained = touchInstancedStream(batch, 0, "motion");
+      if (batch._motionUploadedGeneration !== batch._motionGeneration || !retained) {
+        const ranges = batch._motionDirtyRanges || (batch._motionDirtyRanges = []);
+        ranges.length = 0;
+        const flags = batch._motionDirtyFlags;
+        for (let i = 0; i < batch.count; i++) {
+          if (!flags[i]) continue;
+          const start = i;
+          while (i + 1 < batch.count && flags[i + 1]) i++;
+          ranges.push(start * SCENE_CROWD_MOTION_RECORD_FLOATS, (i + 1) * SCENE_CROWD_MOTION_RECORD_FLOATS);
+        }
+        if (!retained && !ranges.length) ranges.push(0, batch.count * SCENE_CROWD_MOTION_RECORD_FLOATS);
+        if (ranges.length > 32) {
+          ranges[1] = ranges[ranges.length - 1];
+          ranges.length = 2;
+        }
+        batch._motionBuffer = uploadInstancedStream(batch, 0, "motion", batch.motion,
+          batch.count * SCENE_CROWD_MOTION_RECORD_FLOATS, ranges);
+        batch._motionUploadedGeneration = batch._motionGeneration;
+        flags.fill(0, 0, batch.count);
+      }
+      return retained || batch._motionBuffer;
+    }
+
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function bindCrowdMotionBatch(batch, ip, allowed) {
+      if (!batch.atlas) return;
+      if (batch.clipTable.count > SCENE_CROWD_MOTION_MAX_CLIPS) {
+        throw new Error("crowd motion clip table budget exceeded: " + batch.clipTable.count + " > " + SCENE_CROWD_MOTION_MAX_CLIPS);
+      }
+      const record = prepareCrowdAtlas(batch.atlas);
+      gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
+      gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
+      gl.uniform4fv(ip.uniforms.crowdClipTable, batch.clipTable.data);
+      gl.uniform1f(ip.uniforms.now, crowdMotionNow);
+      gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
+      const obj = batch.objects[0];
+      for (const name of ["joints", "weights"]) {
+        const location = ip.attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
+      const buffer = crowdMotionStreamBuffer(batch);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      const stride = SCENE_CROWD_MOTION_RECORD_FLOATS * 4;
+      // [name, components, byteOffset] -- byte offsets match
+      // animation.ts's SCENE_CROWD_MOTION_* record layout exactly (four
+      // bytes per float32).
+      const layout = [
+        ["motionPrevPos", 3, 0], ["motionPrevRot", 3, 12], ["motionPrevScale", 3, 24], ["tPrev", 1, 36],
+        ["motionNextPos", 3, 40], ["motionNextRot", 3, 52], ["motionNextScale", 3, 64], ["tNext", 1, 76],
+        ["animState", 4, 80],
+      ];
+      for (const [name, components, byteOffset] of layout) {
+        const location = ip.attributes[name]; allowed[location] = true;
+        gl.enableVertexAttribArray(location);
+        gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, byteOffset);
+        gl.vertexAttribDivisor(location, 1);
+      }
+    }
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function finishCrowdMotionBatch(batch, ip) {
+      if (!batch.atlas) return;
+      for (const name of ["motionPrevPos", "motionPrevRot", "motionPrevScale", "tPrev", "motionNextPos", "motionNextRot", "motionNextScale", "tNext", "animState"]) {
+        gl.vertexAttribDivisor(ip.attributes[name], 0);
+        gl.disableVertexAttribArray(ip.attributes[name]);
+      }
+    }
+
+    const rigidBatchRecords = new Map();
+    const rigidObjectBatches = new Map();
+    const prebuiltRigidBatchRecords = new Map();
+    let prebuiltRigidBatchEpoch = 0;
+    const meshColorVisibility = new Map();
+    var rigidBatchSequence = 0;
+    var rigidShadowProgram = null;
+    var rigidShadowProgramFailed = false;
+    var rigidFrameDraws = 0;
+    var rigidFrameInstances = 0;
+    var rigidFrameShadowDraws = 0;
     // Direct mesh buffers are renderer-owned. GPU handles must never live on
     // shared vertex objects: simultaneous renderers may use different
     // contexts, and context recovery may reuse the same JS `gl` identity
@@ -6777,6 +7851,12 @@
       authoredDrawInstances: 0,
       authoredDrawCalls: 0,
     };
+    // Last string this renderer wrote per compute-particle-stats attribute,
+    // so an unchanged 0-valued scene stops re-calling setAttribute every
+    // frame. Renderer recreation rebuilds this cache from scratch.
+    var lastPublishedComputeParticleAttrs = Object.create(null);
+    // @ts-ignore TS7034 -- this mount can change on remount.
+    var lastPublishedComputeParticleMount = null;
 
     // webglRenderTruthStats accumulates OBSERVED GPU actions for one frame.
     // Every field counts something that either happened or provably did not;
@@ -6790,6 +7870,11 @@
       meshUndrawable: 0,
       meshMaterialFallback: 0,
       materialFallbacks: [],
+      // Retained Selena draws skipped because a declared custom attribute had
+      // no matching stream, or a component-count mismatch (see
+      // bindSelenaCustomAttributes). Fail-closed, so this counts real misses,
+      // never partial draws.
+      selenaCustomAttributeSkips: 0,
       pointsSubmitted: 0,
       pointsDrawn: 0,
       pointInstancesSubmitted: 0,
@@ -6806,6 +7891,7 @@
       webglRenderTruthStats.meshUndrawable = 0;
       webglRenderTruthStats.meshMaterialFallback = 0;
       webglRenderTruthStats.materialFallbacks.length = 0;
+      webglRenderTruthStats.selenaCustomAttributeSkips = 0;
       webglRenderTruthStats.pointsSubmitted = 0;
       webglRenderTruthStats.pointsDrawn = 0;
       webglRenderTruthStats.pointInstancesSubmitted = 0;
@@ -6906,6 +7992,9 @@
       setTelemetryAttribute("data-gosx-scene3d-retained-rebuilds", String(retainedStats.rebuilds));
       setTelemetryAttribute("data-gosx-scene3d-retained-retirements", String(retainedStats.retirements));
       setTelemetryAttribute("data-gosx-scene3d-retained-live-bytes", String(retainedStats.liveBytes));
+      setTelemetryAttribute("data-gosx-scene3d-rigid-instanced-draws", String(rigidFrameDraws));
+      setTelemetryAttribute("data-gosx-scene3d-rigid-instanced-meshes", String(rigidFrameInstances));
+      setTelemetryAttribute("data-gosx-scene3d-rigid-instanced-shadow-draws", String(rigidFrameShadowDraws));
       setTelemetryAttribute("data-gosx-scene3d-bundle-build-cpu-ms", String(sceneNumber(bundle && bundle.bundleBuildCPUms, 0)));
       setTelemetryAttribute("data-gosx-scene3d-planner-cpu-ms", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.lastPlannerCPUms, 0)));
       setTelemetryAttribute("data-gosx-scene3d-planner-full-vertex-hash-scans", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.fullVertexHashScans, 0)));
@@ -6945,18 +8034,32 @@
       webglComputeParticleDrawStats.authoredDrawCalls = 0;
     }
 
+    // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
+    function publishWebGLComputeParticleStatAttr(mount, name, value) {
+      // @ts-ignore TS7005 -- this mount can change on remount.
+      if (mount !== lastPublishedComputeParticleMount) {
+        lastPublishedComputeParticleMount = mount;
+        lastPublishedComputeParticleAttrs = Object.create(null);
+      }
+      if (lastPublishedComputeParticleAttrs[name] === value) {
+        return;
+      }
+      lastPublishedComputeParticleAttrs[name] = value;
+      mount.setAttribute(name, value);
+    }
+
     function publishWebGLComputeParticleDrawStats() {
       var mount = canvas && canvas.parentNode ? canvas.parentNode : null;
       if (!mount || typeof mount.setAttribute !== "function") {
         return;
       }
       mount.__gosxScene3DWebGLStats = Object.assign({}, webglComputeParticleDrawStats);
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-entries", String(webglComputeParticleDrawStats.drawEntries));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-instances", String(webglComputeParticleDrawStats.drawInstances));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-calls", String(webglComputeParticleDrawStats.drawCalls));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-entries", String(webglComputeParticleDrawStats.authoredDrawEntries));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-instances", String(webglComputeParticleDrawStats.authoredDrawInstances));
-      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-calls", String(webglComputeParticleDrawStats.authoredDrawCalls));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-draw-entries", String(webglComputeParticleDrawStats.drawEntries));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-draw-instances", String(webglComputeParticleDrawStats.drawInstances));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-draw-calls", String(webglComputeParticleDrawStats.drawCalls));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-authored-draw-entries", String(webglComputeParticleDrawStats.authoredDrawEntries));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-authored-draw-instances", String(webglComputeParticleDrawStats.authoredDrawInstances));
+      publishWebGLComputeParticleStatAttr(mount, "data-gosx-scene3d-webgl-compute-particle-authored-draw-calls", String(webglComputeParticleDrawStats.authoredDrawCalls));
     }
 
     function ensureStaticArrayVBO(cache, typedArray) {
@@ -6977,6 +8080,68 @@
       return Math.floor(data.length / components);
     }
 
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function uploadInstancedStream(mesh, index, slot, data, activeLength, dirtyRanges = null) {
+      // Commands replace JS arrays frequently. Their identity is not a GPU
+      // lifetime: own mutable streams by batch ID, with frame retirement.
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      let record = instancedStreamRecords.get(key);
+      if (!record) {
+        record = {};
+        instancedStreamRecords.set(key, record);
+      }
+      let stream = record[slot];
+      if (!stream) {
+        stream = { buffer: gl.createBuffer(), bytes: 0, epoch: 0 };
+        record[slot] = stream;
+        pointsEntryBuffers.add(stream.buffer);
+      }
+      stream.epoch = instancedStreamEpoch;
+      gl.bindBuffer(gl.ARRAY_BUFFER, stream.buffer);
+      const resized = stream.bytes !== data.byteLength;
+      if (resized) {
+        gl.bufferData(gl.ARRAY_BUFFER, dirtyRanges ? data.byteLength : data, gl.DYNAMIC_DRAW);
+        stream.bytes = data.byteLength;
+      }
+      if (dirtyRanges) {
+        for (let i = 0; i < dirtyRanges.length; i += 2) {
+          const start = Math.max(0, Math.min(data.length, dirtyRanges[i]));
+          const end = Math.max(start, Math.min(data.length, dirtyRanges[i + 1]));
+          if (end > start) gl.bufferSubData(gl.ARRAY_BUFFER, start * data.BYTES_PER_ELEMENT, data.subarray(start, end));
+        }
+      } else if (!resized) {
+        const length = Number.isFinite(activeLength)
+          ? Math.max(0, Math.min(data.length, Math.floor(activeLength)))
+          : data.length;
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, length === data.length ? data : data.subarray(0, length));
+      }
+      return stream.buffer;
+    }
+
+    function touchInstancedStream(mesh, index, slot) {
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      const record = instancedStreamRecords.get(key);
+      if (record && record[slot]) {
+        record[slot].epoch = instancedStreamEpoch;
+        return record[slot].buffer;
+      }
+      return null;
+    }
+
+    function retireInstancedStreams() {
+      for (const [key, record] of instancedStreamRecords) {
+        for (const slot of Object.keys(record)) {
+          const stream = record[slot];
+          if (stream.epoch !== instancedStreamEpoch) {
+            gl.deleteBuffer(stream.buffer);
+            pointsEntryBuffers.delete(stream.buffer);
+            delete record[slot];
+          }
+        }
+        if (!Object.keys(record).length) instancedStreamRecords.delete(key);
+      }
+    }
+
     function bindInstancedVertexAttribute(location, data, components, fallback) {
       if (location < 0) {
         return 0;
@@ -6994,7 +8159,7 @@
     }
 
     function sceneDisableUnownedVertexAttribArrays(allowed) {
-      var maxAttribs = Math.max(0, sceneNumber(gl.getParameter(gl.MAX_VERTEX_ATTRIBS), 0));
+      var maxAttribs = Math.max(0, sceneNumber(sceneCachedGLParameter(gl, gl.MAX_VERTEX_ATTRIBS), 0));
       for (var i = 0; i < maxAttribs; i++) {
         if (allowed && allowed[i]) {
           continue;
@@ -7136,7 +8301,7 @@
     var instancedGeometryCache = {};
 
     // Local texture cache for this renderer instance.
-    const textureCache = new Map();
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const textureCache = new Map();
     textureCache._gosxGeneration = {
       disposed: false,
       onResourceReady: function() {
@@ -7159,7 +8324,7 @@
 	    var scratchSelenaViewProjection = new Float32Array(16);
 	    // Per-frame clock (seconds) fed to selena materials that declare `param time : float`.
 	    // Set once per frame before any selena draw; explicit customUniforms.time still overrides.
-	    var sceneSelenaFrameTime = 0;
+	    var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;
 
 	    // Live per-frame values for Selena `context { ... }` uniform fields
 	    // (bindings.Layout marks them Class "context"). Reserved names the
@@ -7350,6 +8515,15 @@
       const specularColorLogs = scenePBRSpecularColorLogs(mat);
       gl.uniform3f(uniforms.specularColorLog, specularColorLogs[0], specularColorLogs[1], specularColorLogs[2]);
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
+      var emissiveColor = scenePBREmissiveColor(mat);
+      gl.uniform3f(uniforms.emissiveColor, emissiveColor[0], emissiveColor[1], emissiveColor[2]);
+      gl.uniform1i(uniforms.hasEmissiveColor, scenePBRHasEmissiveColor(mat) ? 1 : 0);
+      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1));
+      gl.uniform1f(uniforms.occlusionStrength, clamp01(sceneNumber(mat.occlusionStrength, 1)));
+      var rimColor = scenePBRRimColor(mat);
+      gl.uniform3f(uniforms.rimColor, rimColor[0], rimColor[1], rimColor[2]);
+      gl.uniform1f(uniforms.rimPower, Math.max(0.0001, sceneNumber(mat.rimPower, 2)));
+      gl.uniform1f(uniforms.rimStrength, Math.max(0, sceneNumber(mat.rimStrength, 0)));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       // Alpha-mask cutoff: the shared normalizer accepts finite numbers >= 0,
       // including numeric strings; unresolved CSS var text, invalid values and
@@ -7469,7 +8643,7 @@
       return _drawListResult;
     }
 
-    function render(bundle, viewport) {
+    function render(bundle, viewport, frameMeta) {
       if (!bundle) {
         return;
       }
@@ -7518,7 +8692,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -7533,7 +8707,12 @@
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
       const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
       sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
-      sceneSelenaFrameTime = performance.now() / 1000; // feed auto time uniform before any selena mesh draw
+      prepareRigidMeshBatches(bundle);
+      sceneSelenaFrameTime = performance.now() / 1000; sceneSelenaFrameProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before any Selena mesh draw
+      // GPU-motion crowd instances interpolate/animate from this SAME clock
+      // (see SCENE_CROWD_MOTION_ATTRIBUTES_GLSL's doc comment): one uniform
+      // write per render(), never per instance.
+      setCrowdMotionNow(sceneSelenaFrameTime);
 
       // --- Shadow Pass ---
       // Identify shadow-casting directional and spot lights (max 2 authored-
@@ -7626,7 +8805,7 @@
           // never drawn.
           for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
             var cascade = shadowSlots[candIdx].cascades[ci2];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster);
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, drawRigidShadowBatch);
           }
         }
 
@@ -7643,7 +8822,6 @@
 
       // --- Main Render Pass ---
 
-      // Determine if post-processing is active for this frame.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var usePostProcessing = postEffects.length > 0;
@@ -7654,6 +8832,7 @@
       // the main gl.viewport call must use render dims, not canvas dims.
       var renderW = canvas.width;
       var renderH = canvas.height;
+      var renderTarget = sceneWebGLRenderTarget(canvas, null);
 
       if (usePostProcessing) {
         if (!postProcessor) {
@@ -7665,6 +8844,7 @@
         var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
         renderW = scaled.width;
         renderH = scaled.height;
+        renderTarget = Object.assign({}, scaled, { linear: true });
       }
 
       // Resize viewport to the render target (scaled when postfx caps are active).
@@ -7673,9 +8853,19 @@
       // Clear — "transparent" clears to fully transparent for alpha compositing.
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
       const bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
-      gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
-      gl.clearDepth(1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      if (!frameMeta || frameMeta.compositeOverWater !== true) {
+        gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
+        gl.clearDepth(1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      }
+
+      var skyState = "none";
+      if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
+        if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
+        skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
+          camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
+      }
+      if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
       // could build per-cascade frusta; `cam`, `viewMatrix`, `projMatrix`,
@@ -7700,6 +8890,9 @@
       // meshes are ALL Selena-dressed still get live context.
       sceneSelenaFrameContextUpdate(cam, bundle.lights, bundle.environment);
 
+      const drawList = hasPBRData ? (preparedScene && preparedScene.pbrPasses
+        ? preparedScene.pbrPasses : buildPBRDrawList(bundle)) : null;
+      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       // Only activate PBR mesh program if there are mesh objects to draw.
       if (hasPBRData) {
       gl.useProgram(program);
@@ -7715,47 +8908,43 @@
       scenePBRUploadEnvironmentMap(gl, uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
 
       // Upload shadow map uniforms through the shared Scene3D texture-unit allocator.
-      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
-
-      // Build draw list grouped by render pass.
-      const drawList = preparedScene && preparedScene.pbrPasses
-        ? preparedScene.pbrPasses
-        : buildPBRDrawList(bundle);
-      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
 
       // Draw opaque pass.
       applyBlendMode(gl, "opaque");
       applyDepthMode(gl, "opaque");
       drawPBRObjectList(gl, drawList.opaque, bundle, materials);
+      } // end if (hasPBRData)
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
 
       // Draw alpha pass.
-      if (drawList.alpha.length > 0) {
+      if (drawList && drawList.alpha.length > 0) {
         applyBlendMode(gl, "alpha");
         applyDepthMode(gl, "alpha");
         drawPBRObjectList(gl, drawList.alpha, bundle, materials);
       }
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "alpha");
 
       // Draw additive pass.
-      if (drawList.additive.length > 0) {
+      if (drawList && drawList.additive.length > 0) {
         applyBlendMode(gl, "additive");
         applyDepthMode(gl, "additive");
         drawPBRObjectList(gl, drawList.additive, bundle, materials);
       }
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "additive");
 
-      } // end if (hasPBRData)
-
-      if (lineResources && bundle.worldVertexCount > 0) {
+      if (lineResources && hasLineData) {
         // meshObjects:false — drawPBRObjectList above already drew every mesh
         // with its OWN program (PBR, CustomMaterial or Selena). The legacy
         // world path is used here only for line segments and HTML surfaces.
         // Without this scope it re-drew each untextured mesh with the flat
         // world program on top of the correct draw, silently replacing an
         // authored Selena surface with its companion material's base color.
-        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
+        // PBR passes changed GL state without updating the legacy cache.
+        lineResources.stateCache.blendMode = "";
+        lineResources.stateCache.depthMode = "";
+        renderSceneWebGLWorldBundle(gl, scenePBRLineBundle(bundle, renderTarget, frameMeta), renderTarget, lineResources, { meshObjects: false });
       }
-
-      // Draw instanced meshes (after regular meshes, before points).
-      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
       // Draw points entries (after meshes, before post-processing).
       var frameTimeSeconds = performance.now() / 1000;
@@ -7766,9 +8955,8 @@
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
-      // Restore state.
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
+      // Complete the shared scene target before any post effect reads it.
+      scenePBRCompositePass(gl, frameMeta, renderTarget);
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
@@ -7820,7 +9008,10 @@
       if (!scenePBRHasCustomHooks(material)) {
         return null;
       }
-      const key = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      // Programs depend on authored code and uniform declarations, not values.
+      // Dynamic uniforms are uploaded for each draw without recompilation.
+      const key = JSON.stringify([material.customVertex || "", material.customFragment || "",
+        scenePBRCustomUniformDeclarations(material.customUniforms)]);
       const cached = customProgramCache.get(key);
       if (cached) {
         return cached.failed ? null : cached.program;
@@ -7839,7 +9030,10 @@
       if (!sceneSelenaIsMaterial(material)) {
         return null;
       }
-      const baseKey = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      // Match the WebGPU path: uniform values belong to per-draw bindings.
+      // The material key includes values and would leak a program per frame.
+      const baseKey = JSON.stringify([material.customVertex || "", material.customFragment || "",
+        sceneSelenaMaterialLayout(material)]);
       // Skinned draws compile a distinct program variant (augmented vertex
       // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
       // its own key: the same material can back both static and skinned
@@ -7926,7 +9120,7 @@
       // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
-      if (name === "time") return sceneSelenaFrameTime;
+      var autoUniform = sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity); if (autoUniform !== undefined) return autoUniform;
       // Context-class fields with reserved names resolve to live per-frame
       // scene state (see sceneSelenaFrameContextUpdate); unknown context
       // names fall through to the material's own values/defaults below.
@@ -7970,8 +9164,8 @@
         var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
         if (!loc) continue;
         var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
-        var url = sceneSelenaTextureURL(material, tex, i);
-        var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var url = sceneSelenaTextureURL(material, tex, i);
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
         scenePBRBindTexture(gl, unit, record && record.texture ? record.texture : selenaPlaceholderTexture);
         gl.uniform1i(loc, unit);
       }
@@ -8181,6 +9375,7 @@
 
     function beginWebGLDirectMeshBufferFrame(bundle) {
       directMeshAttributeEpoch += 1;
+      instancedStreamEpoch += 1;
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
@@ -8191,11 +9386,25 @@
     }
 
     function sweepWebGLDirectMeshBuffers() {
-      for (const pair of Array.from(directMeshAttributeCache.entries())) {
-        if (pair[1].lastSeenEpoch !== directMeshAttributeEpoch) {
-          retireWebGLDirectMeshEntry(pair[0], pair[1]);
+      let idleBytes = 0, idleEntries = 0;
+      // Only explicitly shared rigid GLB streams enter this pool. Ordinary
+      // meshes and dynamic buffers retain immediate retirement semantics.
+      // Keep at most 48 MiB / 64 primitives for 120 rendered frames; dispose
+      // still destroys every handle immediately on unmount/context loss.
+      for (const [vertices, entry] of directMeshAttributeCache) {
+        if (entry.lastSeenEpoch === directMeshAttributeEpoch) continue;
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ let bytes = 0;
+        for (const attribute of Object.values(entry.attributes || {})) bytes += attribute.byteLength || 0;
+        if (!entry.retained || vertices._rigidPool !== true ||
+            directMeshAttributeEpoch - entry.lastSeenEpoch > 120 ||
+            idleEntries >= 64 || idleBytes + bytes > 48 * 1024 * 1024) {
+          retireWebGLDirectMeshEntry(vertices, entry);
+        } else {
+          idleBytes += bytes; idleEntries++;
         }
-      }
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ retainedMeshBufferStats.idleBytes = idleBytes;
+      retainedMeshBufferStats.idleEntries = idleEntries;
     }
 
     function webGLRetainedMeshBufferStats() {
@@ -8278,6 +9487,276 @@
       return true;
     }
 
+    function prepareRigidMeshBatches(bundle) {
+      crowdFrame++;
+      prebuiltRigidBatchEpoch++;
+      // Small prewarmed palettes stay resident under the hard aggregate cap.
+      // Expiring by render-frame age would reintroduce later-wave upload hitches.
+      rigidObjectBatches.clear();
+      meshColorVisibility.clear();
+      rigidFrameDraws = rigidFrameInstances = rigidFrameShadowDraws = 0;
+      const materials = bundle.materials || [];
+      const planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
+      for (const groups of rigidBatchRecords.values()) {
+        for (const batch of groups.values()) batch.objects.length = 0;
+      }
+      for (const obj of bundle.meshObjects || []) {
+        const mat = materials[obj && obj.materialIndex] || null;
+        if (obj && obj._rigidImportedBatch === true) {
+          const authoredCount = Math.max(0, Math.min(Math.floor(sceneNumber(obj.instanceCount, 0)),
+            Array.isArray(obj.instanceMatrices) ? obj.instanceMatrices.length : 0));
+          let batch = prebuiltRigidBatchRecords.get(obj.id);
+          if (!batch) {
+            batch = { id: obj.id, objects: [obj], transforms: null, count: 0, atlas: null,
+              prebuilt: true, epoch: 0 };
+            prebuiltRigidBatchRecords.set(obj.id, batch);
+          }
+          batch.epoch = prebuiltRigidBatchEpoch;
+          batch.objects[0] = obj;
+          const required = authoredCount * 16;
+          if (!batch.transforms || batch.transforms.length < required ||
+              batch.transforms.length > Math.max(64, required * 4)) {
+            let capacity = 32;
+            while (capacity < required) capacity *= 2;
+            batch.transforms = new Float32Array(capacity);
+          }
+          let count = 0;
+          const boundsRows = obj.instanceBounds;
+          for (let index = 0; index < authoredCount; index++) {
+            const bounds = Array.isArray(boundsRows) ? boundsRows[index] : null;
+            let visible = Boolean(bounds);
+            if (visible) {
+              for (let planeIndex = 0; planeIndex < 4; planeIndex++) {
+                const p = planes[planeIndex];
+                if (p[0] * (p[0] >= 0 ? bounds.maxX : bounds.minX) +
+                    p[1] * (p[1] >= 0 ? bounds.maxY : bounds.minY) +
+                    p[2] * (p[2] >= 0 ? bounds.maxZ : bounds.minZ) + p[3] < -.0001) {
+                  visible = false;
+                  break;
+                }
+              }
+            }
+            if (!visible) continue;
+            const matrix = obj.instanceMatrices[index];
+            if (!matrix || matrix.length < 16) continue;
+            batch.transforms.set(matrix, count * 16);
+            count++;
+          }
+          batch.count = count;
+          if (count === 1) touchInstancedStream(batch, 0, "transforms");
+          meshColorVisibility.set(obj, count > 0);
+          if (count > 0 && obj.directVertices && obj.retainedGeometry && obj.vertices &&
+              obj.vertexCount > 0 && scenePBRObjectRenderPass(obj, mat) === "opaque" &&
+              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+            if (count === 1) obj.modelMatrix = batch.transforms.subarray(0, 16);
+            rigidObjectBatches.set(obj, batch);
+          }
+          continue;
+        }
+        let visible = true;
+        const bounds = obj && obj.bounds;
+        if (bounds && !objectIsSkinned(obj) && !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+          // Cull the color pass against the four side planes using the
+          // positive AABB vertex. Keep off-camera casters in shadow batches:
+          // their shadows can still fall onto visible ground.
+          for (let i = 0; i < 4; i++) {
+            const p = planes[i];
+            if (p[0] * (p[0] >= 0 ? bounds.maxX : bounds.minX) +
+                p[1] * (p[1] >= 0 ? bounds.maxY : bounds.minY) +
+                p[2] * (p[2] >= 0 ? bounds.maxZ : bounds.minZ) + p[3] < -.0001) { visible = false; break; }
+          }
+        }
+        meshColorVisibility.set(obj, visible);
+        // Only immutable, direct, opaque PBR geometry can share this shader.
+        // Keep animation, custom vertex behavior and sorted alpha draws intact.
+        if (!obj || obj.viewCulled || !obj.directVertices || !obj.retainedGeometry ||
+            !obj.vertices || !(obj.vertexCount > 0) ||
+            !(obj.vertices.positions instanceof Float32Array) || obj.vertices.positions.length < obj.vertexCount * 3 ||
+            objectIsSkinned(obj) ||
+            !obj.modelMatrix || !(sceneAffineDeterminant(obj.modelMatrix, 0) > 0.000001) ||
+            scenePBRObjectRenderPass(obj, mat) !== "opaque" ||
+            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat)) continue;
+        let groups = rigidBatchRecords.get(obj.vertices);
+        if (!groups) {
+          groups = new Map();
+          rigidBatchRecords.set(obj.vertices, groups);
+        }
+        const key = sceneRigidBatchKey(obj, visible);
+        let batch = groups.get(key);
+        if (!batch) {
+          batch = {
+            id: "rigid-geometry-" + (++rigidBatchSequence), objects: [], transforms: null, count: 0,
+            atlas: obj._crowdMotion ? obj._crowdMotion.atlas : (obj._crowdSkin ? obj._crowdSkin.atlas : null),
+            motion: obj._crowdMotion ? new Float32Array(0) : null,
+            clipTable: obj._crowdMotion ? obj._crowdMotion.clipTable : null,
+          };
+          groups.set(key, batch);
+        }
+        batch.objects.push(obj);
+        rigidObjectBatches.set(obj, batch);
+      }
+      for (const [vertices, groups] of rigidBatchRecords) {
+        for (const [key, batch] of groups) {
+          batch.count = batch.objects.length;
+          if (!batch.count) {
+            groups.delete(key);
+            continue;
+          }
+          if (batch.count < 2 && !batch.atlas) {
+            batch.transforms = null;
+            continue;
+          }
+          if (batch.motion) {
+            // GPU-motion crowd batch: no CPU transform/pose math here at all,
+            // and prepareCrowdMotionRecords re-copies/re-uploads only when an
+            // instance's motion state actually changed since the last frame.
+            prepareCrowdMotionRecords(batch);
+            continue;
+          }
+          const needed = batch.count * 16;
+          // Geometric growth avoids reallocating when a swarm gains one actor.
+          // Shrink after a large decline so a small surviving group cannot
+          // retain the entire high-water mark of a long expedition.
+          if (!batch.transforms || batch.transforms.length < needed || batch.transforms.length > Math.max(64, needed * 4)) {
+            let capacity = 32;
+            while (capacity < needed) capacity *= 2;
+            batch.transforms = new Float32Array(capacity);
+          }
+          for (let i = 0; i < batch.count; i++) batch.transforms.set(batch.objects[i].modelMatrix, i * 16);
+          if (batch.atlas) {
+            prepareCrowdAtlas(batch.atlas);
+            if (!batch.poses || batch.poses.length < batch.count * 3 || batch.poses.length > Math.max(12, batch.count * 12)) batch.poses = new Float32Array(batch.transforms.length / 16 * 3);
+            for (let i = 0; i < batch.count; i++) batch.poses.set(batch.objects[i]._crowdSkin.rows, i * 3);
+          }
+        }
+        if (!groups.size) rigidBatchRecords.delete(vertices);
+      }
+      for (const [id, batch] of prebuiltRigidBatchRecords) {
+        if (batch.epoch !== prebuiltRigidBatchEpoch) prebuiltRigidBatchRecords.delete(id);
+      }
+    }
+
+    function bindRigidBatchMatrices(batch, attributes) {
+      const base = attributes.instanceMatrix;
+      if (!(base >= 0)) return false;
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "transforms", batch.transforms, batch.count * 16));
+      for (let col = 0; col < 4; col++) {
+        gl.enableVertexAttribArray(base + col);
+        gl.vertexAttribPointer(base + col, 4, gl.FLOAT, false, 64, col * 16);
+        gl.vertexAttribDivisor(base + col, 1);
+      }
+      return true;
+    }
+
+    function finishRigidBatchMatrices(attributes) {
+      for (let col = 0; col < 4; col++) {
+        gl.vertexAttribDivisor(attributes.instanceMatrix + col, 0);
+        gl.disableVertexAttribArray(attributes.instanceMatrix + col);
+      }
+    }
+
+    function drawRigidBatchGeometry(batch) {
+      const obj = batch.objects[0];
+      const indices = bindScenePBRDirectIndexBuffer(obj);
+      if (indices > 0) gl.drawElementsInstanced(gl.TRIANGLES, indices, gl.UNSIGNED_INT, 0, batch.count);
+      else gl.drawArraysInstanced(gl.TRIANGLES, 0, obj.vertexCount, batch.count);
+    }
+
+    function drawRigidShadowBatch(obj, lightMatrix) {
+      const batch = rigidObjectBatches.get(obj);
+      if (!batch || batch.count < 2 && !batch.atlas || rigidShadowProgramFailed && !batch.atlas) return false;
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!batch.atlas && !rigidShadowProgram) {
+        rigidShadowProgram = createSceneShadowProgram(gl, true);
+        if (!rigidShadowProgram || rigidShadowProgram.attributes.instanceMatrix < 0) {
+          rigidShadowProgramFailed = true;
+          return false;
+        }
+      }
+      if (obj !== batch.objects[0]) return true;
+      if (batch.motion) prepareCrowdMotionShaders();
+      const ip = batch.motion ? crowdMotionShadowProgram : batch.atlas ? crowdShadowProgram : rigidShadowProgram;
+      gl.useProgram(ip.program);
+      gl.uniformMatrix4fv(ip.uniforms.lightViewProjection, false, lightMatrix);
+      const allowed = {};
+      allowed[ip.attributes.position] = true;
+      if (batch.motion) {
+        bindCrowdMotionBatch(batch, ip, allowed);
+      } else {
+        for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
+        bindCrowdBatch(batch, ip, allowed);
+      }
+      sceneDisableUnownedVertexAttribArrays(allowed);
+      bindScenePBRDirectAttribute(obj, "positions", ip.attributes.position, 3,
+        scenePBRDirectAttribute(obj.vertices, "positions", obj.vertexCount, 3));
+      if (!batch.motion) bindRigidBatchMatrices(batch, ip.attributes);
+      drawRigidBatchGeometry(batch);
+      rigidFrameShadowDraws++;
+      if (!batch.motion) finishRigidBatchMatrices(ip.attributes);
+      if (batch.motion) finishCrowdMotionBatch(batch, ip); else finishCrowdBatch(batch, ip);
+      gl.useProgram(shadowProgram.program);
+      return true;
+    }
+
+    function drawRigidPBRBatch(batch, bundle, mat, uploadFrameUniforms) {
+      if (batch.motion) prepareCrowdMotionShaders();
+      const ip = batch.motion ? crowdMotionProgram : batch.atlas ? crowdProgram : ensureInstancedProgram();
+      if (!ip || !batch.motion && ip.attributes.instanceMatrix < 0) return false;
+      const obj = batch.objects[0];
+      gl.useProgram(ip.program);
+      uploadFrameUniforms(ip.uniforms);
+      uploadMaterial(gl, ip.uniforms, mat, textureCache);
+      gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
+      gl.depthMask(obj.depthWrite !== false);
+      const allowed = {};
+      for (const [name, size, fallback] of [
+        ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
+        ["uv", 2, [0, 0]], ["tangent", 4, [1, 0, 0, 1]],
+      /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ ]) {
+        const location = ip.attributes[name];
+        if (!(location >= 0)) continue;
+        /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ allowed[location] = true;
+        const key = { position: "positions", normal: "normals", uv: "uvs", tangent: "tangents" }[name];
+        if (!bindScenePBRDirectAttribute(obj, key, location, size,
+          scenePBRDirectAttribute(obj.vertices, key, obj.vertexCount, size))) {
+          gl.disableVertexAttribArray(location);
+          if (size === 2) gl.vertexAttrib2f(location, fallback[0], fallback[1]);
+          if (size === 3) gl.vertexAttrib3f(location, fallback[0], fallback[1], fallback[2]);
+          if (size === 4) gl.vertexAttrib4f(location, fallback[0], fallback[1], fallback[2], fallback[3]);
+        }
+      }
+      if (batch.motion) {
+        bindCrowdMotionBatch(batch, ip, allowed);
+      } else {
+        for (let i = 0; i < 4; i++) allowed[ip.attributes.instanceMatrix + i] = true;
+        bindCrowdBatch(batch, ip, allowed);
+      }
+      sceneDisableUnownedVertexAttribArrays(allowed);
+      if (!batch.motion) bindRigidBatchMatrices(batch, ip.attributes);
+      drawRigidBatchGeometry(batch);
+      rigidFrameDraws++;
+      rigidFrameInstances += batch.count;
+      webglRenderTruthStats.meshDrawn += batch.count;
+      if (!batch.motion) finishRigidBatchMatrices(ip.attributes);
+      if (batch.motion) finishCrowdMotionBatch(batch, ip); else finishCrowdBatch(batch, ip);
+      gl.depthMask(true);
+      gl.useProgram(program);
+      return true;
+    }
+
+    function bindSelenaCustomAttributes(gl, selenaProgram, obj) {
+      // Trusted ordered flat [name, compiledLocation, width] record; missing or
+      // width-mismatched per-object stream fails the draw before binding.
+      var custom = selenaProgram.customAttributes;
+      var declared = obj && obj.vertices && obj.vertices.attributes;
+      for (var i = 0; i < custom.length; i += 3) {
+        var entry = declared ? declared[custom[i]] : null;
+        if (!entry || entry.itemSize !== custom[i + 2]) return false;
+        bindScenePBRDirectAttribute(obj, "custom:" + custom[i], custom[i + 1], custom[i + 2], entry.data);
+      }
+      return true;
+    }
+
     function drawPBRObjectList(gl, objectList, bundle, materials) {
       var lastMaterialIndex = -1;
       // Track which program is currently bound so we can switch between
@@ -8296,13 +9775,29 @@
 
         scenePBRUploadLights(gl, targetUniforms, bundle.lights, bundle.environment, _frameLightsHash);
         scenePBRUploadEnvironmentMap(gl, targetUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
-        scenePBRUploadShadowUniforms(gl, targetUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+        scenePBRUploadShadowUniforms(gl, targetUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
       }
 
       for (var i = 0; i < objectList.length; i++) {
         const obj = objectList[i];
+        if (meshColorVisibility.get(obj) === false) {
+          webglRenderTruthStats.meshViewCulled++;
+          continue;
+        }
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
+        const rigidBatch = rigidObjectBatches.get(obj);
+        const rigidProgram = rigidBatch ? (rigidBatch.motion ? crowdMotionProgram : rigidBatch.atlas ? crowdProgram : rigidBatch.count > 1 ? ensureInstancedProgram() : null) : null;
+        if (rigidProgram && (rigidBatch.motion || rigidProgram.attributes.instanceMatrix >= 0)) {
+          if (obj !== rigidBatch.objects[0]) continue;
+          if (drawRigidPBRBatch(rigidBatch, bundle, mat, uploadFrameUniformsForProgram)) {
+            currentProgram = program;
+            currentAttribs = attribs;
+            currentUniforms = uniforms;
+            lastMaterialIndex = -1;
+            continue;
+          }
+        }
         var isSkinned = objectIsSkinned(obj);
         // Selena is now reachable on skinned draws too (ensureSelenaProgram
         // compiles+caches the joint-skinning variant of the material's
@@ -8341,6 +9836,16 @@
           bindSelenaMeshAttribute(gl, selenaProgram, "uv", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
           if (selenaProgram.skinned && obj.skin) {
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
+          }
+          // Custom descriptor attributes resolve only against the mesh's own
+          // declared custom streams. A declared custom attribute with no
+          // matching stream (missing data or a component-count mismatch)
+          // fails the authored draw safely: the object is skipped this frame
+          // and the miss is journaled — no later location shifts, no
+          // substitution of unrelated data, no partial draws.
+          if (!bindSelenaCustomAttributes(gl, selenaProgram, obj)) {
+            webglRenderTruthStats.selenaCustomAttributeSkips += 1;
+            continue;
           }
           const selenaIndexCount = bindScenePBRDirectIndexBuffer(selenaDirectVertices ? obj : null);
           var selenaReflected = sceneWebGLObjectReflected(obj, selenaDirectVertices);
@@ -8423,12 +9928,12 @@
 	            obj.directVertices && obj.modelMatrix ? obj.modelMatrix : identityModelMatrix
 	          );
 	        }
-	        if (isSkinned) {
+	        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
           var jointMatrices = obj.skin.jointMatrices;
           if (jointMatrices) {
-            var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
             if (jointCount > 0 && currentUniforms.jointMatrices) {
               var jointUpload = jointMatrices;
               var requiredJointFloats = jointCount * 16;
@@ -8447,11 +9952,11 @@
                   jointViews[requiredJointFloats] = jointView;
                 }
                 jointUpload = jointView.view;
-              }
+              /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
               gl.uniformMatrix4fv(currentUniforms.jointMatrices, false, jointUpload);
             }
-          }
-        } else if (currentUniforms.hasSkin) {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (currentUniforms.hasSkin) {
           gl.uniform1i(currentUniforms.hasSkin, 0);
         }
 
@@ -8510,30 +10015,30 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        // Joints and weights (skinned meshes only).
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Joints and weights (skinned meshes only).
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
 
           const directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
-          const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
           if (!bindScenePBRDirectAttribute(obj, "joints", currentAttribs.joints, 4, directJoints)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
-            gl.enableVertexAttribArray(currentAttribs.joints);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.joints);
             gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
           }
-
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
           if (!bindScenePBRDirectAttribute(obj, "weights", currentAttribs.weights, 4, directWeights)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
-            gl.enableVertexAttribArray(currentAttribs.weights);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.weights);
             gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
-          }
-        } else if (currentAttribs.joints >= 0) {
-          gl.disableVertexAttribArray(currentAttribs.joints);
-          gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
-          gl.disableVertexAttribArray(currentAttribs.weights);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (currentAttribs.joints >= 0) {
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.disableVertexAttribArray(currentAttribs.joints);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.disableVertexAttribArray(currentAttribs.weights);
           gl.vertexAttrib4f(currentAttribs.weights, 0, 0, 0, 0);
         }
 
@@ -9077,7 +10582,7 @@
 	    // Ensure the instanced PBR program is compiled (lazy init).
 	    function ensureInstancedProgram() {
 	      if (instancedProgram) return instancedProgram;
-	      if (instancedProgramFailed) return null;
+	      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (instancedProgramFailed) return null;
 	      instancedProgram = createScenePBRInstancedProgram(gl);
 	      if (!instancedProgram) {
 	        instancedProgramFailed = true;
@@ -9135,7 +10640,7 @@
       if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
         mesh._cachedInstanceColors = new Float32Array(count * 4);
         for (var ci = 0; ci < count; ci++) {
-          var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+          var rgba = sceneCachedInstancedColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
           mesh._cachedInstanceColors[ci * 4] = rgba[0];
           mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
           mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
@@ -9160,20 +10665,23 @@
       return null;
     }
 
-    function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix) {
+    function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, renderPass) {
       var meshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
-      if (meshes.length === 0) return;
+      if (meshes.length === 0) {
+        if (renderPass === "additive") retireInstancedStreams();
+        return;
+      }
 
       var ip = ensureInstancedProgram();
       if (!ip) return;
 
       gl.useProgram(ip.program);
 
-      // Ensure opaque render state (prior passes may leave blend/depth dirty).
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthMask(true);
-      gl.depthFunc(gl.LEQUAL);
-      gl.disable(gl.BLEND);
+      // Instanced effects obey the same blend/depth passes as ordinary meshes.
+      // Previously every batch forced opaque state, hiding actors behind
+      // translucent shields and stamping solid disks for contact shadows.
+      applyBlendMode(gl, renderPass);
+      applyDepthMode(gl, renderPass);
 
       // Upload per-frame uniforms (camera, lights, fog, shadows).
       gl.uniformMatrix4fv(ip.uniforms.viewMatrix, false, viewMatrix);
@@ -9185,7 +10693,7 @@
 
       scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
       scenePBRUploadEnvironmentMap(gl, ip.uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
-      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache);
 
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
@@ -9215,6 +10723,7 @@
             metalness: sceneNumber(mesh.metalness, 0),
           };
         }
+        if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
         uploadMaterial(gl, ip.uniforms, mat, textureCache);
 
         // Per-object shadow receive control.
@@ -9263,8 +10772,6 @@
         var hasCullConfig = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
         // Fetch full color buffer (indexed by original instance) before compaction.
         var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
-        // Whether the draw will use the culled VBOs or the cached static VBOs.
-        var useCullVBOs = false;
         if (hasCullConfig) {
           var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
           var planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
@@ -9303,27 +10810,9 @@
           // If nothing survives, skip the draw entirely.
           if (instanceCount <= 0) continue;
 
-          // Upload compacted data to per-mesh dynamic VBOs. We do NOT use the
-          // static WeakMap cache (ensureStaticArrayVBO) because scratchT/scratchC
-          // are the same object references across frames; the cache would skip
-          // the re-upload. Instead we own dedicated dynamic VBOs here.
-          if (!mesh._cpuCullTransformVBO) {
-            mesh._cpuCullTransformVBO = gl.createBuffer();
-            pointsEntryBuffers.add(mesh._cpuCullTransformVBO);
-          }
-          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
-          gl.bufferData(gl.ARRAY_BUFFER, scratchT.subarray(0, instanceCount * 16), gl.DYNAMIC_DRAW);
-
-          if (scratchC) {
-            if (!mesh._cpuCullColorVBO) {
-              mesh._cpuCullColorVBO = gl.createBuffer();
-              pointsEntryBuffers.add(mesh._cpuCullColorVBO);
-            }
-            gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullColorVBO);
-            gl.bufferData(gl.ARRAY_BUFFER, scratchC.subarray(0, instanceCount * 4), gl.DYNAMIC_DRAW);
-          }
-          instanceColorData = scratchC;
-          useCullVBOs = true;
+          // The same batch-owned streams serve culled and unculled draws.
+          transformData = scratchT.subarray(0, instanceCount * 16);
+          instanceColorData = scratchC ? scratchC.subarray(0, instanceCount * 4) : null;
         }
 
         var hasInstanceColor = !!(instanceColorData && ip.attributes.instanceColor >= 0);
@@ -9345,13 +10834,8 @@
           instancedAllowedAttribs[ip.attributes.instanceColor] = true;
         }
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
-
-        // Bind transforms VBO: dynamic cull VBO or static cached VBO.
-        if (useCullVBOs) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
-        } else {
-          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
-        }
+/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
+        gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
         // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
@@ -9362,12 +10846,8 @@
           gl.vertexAttribDivisor(loc, 1);
         }
 
-        if (hasInstanceColor) {
-          if (useCullVBOs && mesh._cpuCullColorVBO) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullColorVBO);
-          } else {
-            gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, instanceColorData));
-          }
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (hasInstanceColor) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "colors", instanceColorData));
           gl.enableVertexAttribArray(ip.attributes.instanceColor);
           gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
           gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
@@ -9391,9 +10871,21 @@
 
       // Switch back to regular PBR program.
       gl.useProgram(program);
+      if (renderPass === "additive") retireInstancedStreams();
     }
 
     function dispose() {
+      if (skyResources.renderer) skyResources.renderer.dispose();
+      skyResources.renderer = null;
+      // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
+      // dispose() first) and normal teardown alike.
+      sceneInvalidateGLConstantCache(gl);
+      // The base warm record is consumed during construction. A crowd record
+      // can remain unused when the requested rig is ineligible; keep that GL
+      // ownership renderer-local and release it with the renderer.
+      if (pbrProgram.initialProgramOwner) {
+        discardScenePBRInitialPrograms(gl, pbrProgram.initialProgramOwner);
+      }
       for (const pair of Array.from(directMeshAttributeCache.entries())) {
         retireWebGLDirectMeshEntry(pair[0], pair[1]);
       }
@@ -9414,6 +10906,16 @@
         gl.deleteBuffer(buf);
       }
       pointsEntryBuffers.clear();
+      instancedStreamRecords.clear();
+      rigidBatchRecords.clear();
+      disposeCrowdResources();
+      meshColorVisibility.clear();
+      rigidObjectBatches.clear();
+      if (rigidShadowProgram) {
+        gl.deleteProgram(rigidShadowProgram.program);
+        gl.deleteShader(rigidShadowProgram.vertexShader);
+        gl.deleteShader(rigidShadowProgram.fragmentShader);
+      }
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
       staticPointKeyedVBOs.clear();
@@ -9424,7 +10926,7 @@
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
-
+/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
       textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {
         if (record) {
@@ -9549,6 +11051,7 @@
       }
       return {
         renderer: "webgl",
+        crowdPaletteUploads, crowdPaletteBytes, crowdPaletteTextures: crowdAtlasTextures.size,
         fragmentTextureUnits: typeof gl.getParameter === "function"
           ? sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0)
           : 0,
@@ -9560,7 +11063,7 @@
           active: false,
           state: "not-requested",
           reason: "",
-          radianceMipLevels: 0,
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ radianceMipLevels: 0,
         }, uniforms._gosxIBLDiagnostics || {}),
         textureVariantContext: {
           backend: textureVariantContext.backend,
@@ -9580,11 +11083,38 @@
       };
     }
 
+    // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
+    function renderSurfaces(bundle, target) {
+      renderScenePBRSurfaces(gl, bundle, canvas, lineResources, target);
+    }
+
+    const rigidImportedBatchProgram = ensureInstancedProgram();
+    const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
+      rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
+
+    var frameTimer = createSceneWebGLFrameTimer(gl);
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
-      render: render,
-      dispose: dispose,
+      supportsRigidImportedBatches,
+      prepareCrowdAtlas,
+      // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
+      // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
+      // crowdMotionProgram directly (see drawPBRObjectList's rigidProgram
+      // selection), so a page whose first crowd-motion batch reaches
+      // render() before this has ever run would silently skip drawing it.
+      prepareCrowdMotionShaders,
+  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
+      render: function(bundle, viewport, frameMeta) {
+        var token = frameTimer.begin();
+        try { return render(bundle, viewport, frameMeta); }
+        finally { frameTimer.end(token); }
+      },
+      getFrameTiming: frameTimer.snapshot,
+      pollPerformanceSample: frameTimer.sample,
+      getPerformanceTimingStatus: frameTimer.timingStatus,
+      renderSurfaces: renderSurfaces,
+      dispose: function() { frameTimer.dispose(); dispose(); },
       diagnostics: diagnostics,
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
@@ -9603,6 +11133,55 @@
 
   // --- Integration ---
 
+  function scenePBRCanvasAntialias(props, capability) {
+    const caps = capability || {};
+    const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    if (requestedSamples > 1) return true;
+    if (requestedSamples === 1) return false;
+    const tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    return sceneBool(props && props.antialias, tierDefault);
+  }
+
+  function createScenePBRContext(canvas, props, capability) {
+    if (!canvas || typeof canvas.getContext !== "function") return null;
+    const caps = capability || {};
+    try {
+      const useCanvasAlpha = sceneCanvasAlpha(props);
+      return canvas.getContext("webgl2", {
+        alpha: useCanvasAlpha,
+        premultipliedAlpha: useCanvasAlpha,
+        antialias: scenePBRCanvasAntialias(props, caps),
+        depth: true,
+        powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
+      });
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function scenePBRInitialRequestsCrowd(props, state) {
+    const rawScene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    const batches = state && Array.isArray(state.instancedGLBMeshes)
+      ? state.instancedGLBMeshes
+      : (rawScene && Array.isArray(rawScene.instancedGLBMeshes) ? rawScene.instancedGLBMeshes : []);
+    return batches.some(function(batch) {
+      return batch && typeof batch.src === "string" && batch.src.trim() &&
+        Array.isArray(batch.instances) && batch.instances.some(function(instance) {
+          return instance && typeof instance.animation === "string" && instance.animation.trim();
+        });
+    });
+  }
+
+  async function prepareScenePBRInitialRenderer(canvas, props, capability, options) {
+    const gl = createScenePBRContext(canvas, props, capability);
+    if (!gl) return { gl: null, prepared: false };
+    const opts = options || {};
+    const owner = await prepareScenePBRInitialPrograms(gl, Object.assign({}, opts, {
+      crowd: scenePBRInitialRequestsCrowd(props, opts.state),
+    }));
+    return { gl, prepared: Boolean(owner), owner };
+  }
+
   // Try to create a PBR renderer. If PBR shader compilation fails,
   // returns null so the caller can use the legacy renderer.
   function createScenePBRRendererOrFallback(gl, canvas, options) {
@@ -9614,12 +11193,15 @@
       return null;
     }
     var renderer = null;
+    const initialProgramOwner = scenePBRInitialProgramOwner(gl);
     try {
       renderer = createScenePBRRenderer(gl, canvas);
     } catch (e) {
+      scenePBRDisposeInitialOwner(gl, initialProgramOwner);
       console.warn("[gosx] PBR renderer creation failed:", e);
       return null;
     }
+    if (!renderer) scenePBRDisposeInitialOwner(gl, initialProgramOwner);
     return renderer;
   }
 
@@ -9638,13 +11220,7 @@
       create: function(canvas, props, capability) {
         const caps = capability || {};
         if (typeof createScenePBRRendererOrFallback === "function") {
-          const useCanvasAlpha = sceneCanvasAlpha(props);
-          const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-            alpha: useCanvasAlpha,
-            premultipliedAlpha: useCanvasAlpha,
-            antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
-            powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
-          }) : null;
+          const gl = createScenePBRContext(canvas, props, caps);
           if (gl) {
             const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
             if (pbrRenderer) {
@@ -9674,4 +11250,10 @@
   // gate flag, not the dispatch table.
   if (typeof window !== "undefined" && window.__gosx_scene3d_ktx2_texture_loader == null) {
     window.__gosx_scene3d_ktx2_texture_loader = scenePBRUploadKTX2Texture;
+  }
+
+  function sceneSelenaAutoUniformValue(name, time, proximity) {
+    if (name === "time") return time;
+    if (name === "cameraProximity") return proximity;
+    return undefined;
   }

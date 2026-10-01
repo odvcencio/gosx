@@ -22,8 +22,18 @@
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
     const loadScriptTag = api.loadScriptTag;
-    const engineFrame = api.engineFrame;
-    const cancelEngineFrame = api.cancelEngineFrame;
+    const engineFrame = api.engineFrame || function(callback) {
+      const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+      if (scheduler && typeof scheduler.request === "function") return scheduler.request(callback);
+      if (typeof window.requestAnimationFrame === "function") return window.requestAnimationFrame(callback);
+      return setTimeout(function() { callback(Date.now()); }, 16);
+    };
+    const cancelEngineFrame = api.cancelEngineFrame || function(handle) {
+      const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+      if (scheduler && typeof scheduler.cancel === "function") scheduler.cancel(handle);
+      else if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(handle);
+      else clearTimeout(handle);
+    };
     const capabilityList = api.capabilityList;
     const requiredCapabilityList = api.requiredCapabilityList;
     const engineCapabilityStatus = api.engineCapabilityStatus;
@@ -336,9 +346,9 @@
           // surface shouldn't break the rest of the page.
           console.error("[gosx] engine surface tick threw for " + id + ":", e);
         }
-        instance.raf = requestAnimationFrame(tick);
+        instance.raf = engineFrame(tick);
       }
-      instance.raf = requestAnimationFrame(tick);
+      instance.raf = engineFrame(tick);
     }
 
     // _canvasDeclaredSize returns the server-authored width/height — the
@@ -462,7 +472,7 @@
       if (!inst || inst.disposed) return;
       inst.disposed = true;
       if (inst.raf) {
-        cancelAnimationFrame(inst.raf);
+        cancelEngineFrame(inst.raf);
         inst.raf = 0;
       }
       for (const [evtName, handler] of inst.listeners) {
@@ -731,9 +741,9 @@
           // _startEngineSurfaceRAF.)
           console.error("[gosx] canvas2d paint loop threw for " + id + ":", e);
         }
-        instance.raf = requestAnimationFrame(frame);
+        instance.raf = engineFrame(frame);
       }
-      instance.raf = requestAnimationFrame(frame);
+      instance.raf = engineFrame(frame);
     }
 
     // _canvasSurfaceWantsWebGPU reads the per-surface backend opt-in ONCE, at
@@ -989,9 +999,9 @@
           // tear down and re-mount on the painter.
           console.error("[gosx] canvas2d WebGPU paint loop threw for " + id + ":", e);
         }
-        instance.raf = requestAnimationFrame(frame);
+        instance.raf = engineFrame(frame);
       }
-      instance.raf = requestAnimationFrame(frame);
+      instance.raf = engineFrame(frame);
     }
 
     // _disposeCanvasWebGPURenderer disposes a 16a renderer + its DOM overlays for

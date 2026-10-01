@@ -3,9 +3,7 @@ package island
 import "sync/atomic"
 
 // previewBootstrapEnabled is the process-level flag controlling whether
-// pages opt into the cross-frame relay's "preview-mode" bootstrap. See
-// ADR 0009 (decisions/0009-iframe-transport-postmessage-relay.md) and plan
-// section C of plans/2026-05-26-iframe-cross-frame-signal-transport.md.
+// pages opt into the cross-frame relay's "preview-mode" bootstrap.
 //
 // The flag is process-level (not per-Renderer) because the storefront
 // layout opts in via a single init() call (`island.EnablePreviewBootstrap()`),

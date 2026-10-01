@@ -1,8 +1,11 @@
 package docs
 
 import (
+	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/textlayout"
 )
 
 func init() {
@@ -21,10 +24,21 @@ func init() {
 					{"href": "#whitespace", "label": "Whitespace"},
 					{"href": "#low-level", "label": "Low-level API"},
 				},
-				"blockSample":    "node := ctx.TextBlock(server.TextBlockProps{\n\tTag:        \"p\",\n\tText:       article.Summary,\n\tFont:       \"400 16px Inter\",\n\tLang:       \"en\",\n\tMaxWidth:   520,\n\tLineHeight: 24,\n\tMaxLines:   3,\n\tOverflow:   textlayout.OverflowEllipsis,\n})",
-				"nativeSample":   "node := server.TextBlock(server.TextBlockProps{\n\tMode:       server.TextBlockModeNative,\n\tTag:        \"p\",\n\tText:       article.Summary,\n\tFont:       \"400 16px Inter\",\n\tMaxWidth:   520,\n\tLineHeight: 24,\n\tMaxLines:   3,\n\tOverflow:   textlayout.OverflowEllipsis,\n})",
-				"lowLevelSample": "prepared := textlayout.Prepare(text, textlayout.PrepareOptions{\n\tWhiteSpace: textlayout.WhiteSpacePreWrap,\n\tTabSize:    4,\n})\nmeasured, err := textlayout.Measure(prepared, measurer, \"400 16px Inter\")\nif err != nil {\n\treturn err\n}\nresult := textlayout.Layout(measured, textlayout.LayoutOptions{\n\tMaxWidth:   520,\n\tLineHeight: 24,\n\tMaxLines:   3,\n\tOverflow:   textlayout.OverflowEllipsis,\n})",
+				"blockSample":    docsapp.DocSample("text-layout/blockSample.go.sample"),
+				"nativeSample":   docsapp.DocSample("text-layout/nativeSample.go.sample"),
+				"lowLevelSample": docsapp.DocSample("text-layout/lowLevelSample.go.sample"),
 			}, nil
+		},
+		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			var textExample gosx.Node = gosx.Text("")
+			if ctx != nil {
+				textExample = ctx.Runtime().TextBlock(server.TextBlockProps{
+					Tag: "p", Text: "A Go-authored line plan stays readable before browser measurement.",
+					Font: "400 16px Inter", Lang: "en", MaxWidth: 420, LineHeight: 24,
+					MaxLines: 2, Overflow: textlayout.OverflowEllipsis,
+				})
+			}
+			return route.FileTemplateBindings{Values: map[string]any{"textLayoutExample": textExample}}
 		},
 	})
 }

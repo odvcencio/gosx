@@ -1,0 +1,3 @@
+app := server.New()
+	app.EnableNavigation()
+	app.Mount("/", router.Build())

@@ -2,13 +2,13 @@
 //
 // CanvasHostReceiver is the production glue that finally makes
 // `c.StartLoop(func(dt float64) { ... })` run per-frame when a surface
-// handler executes as shared-VM bytecode (the path Y.G unlocked).
+// handler executes as shared-VM bytecode.
 //
 // # The handoff chain
 //
 // 1. The bytecode handler lowers to OpHostCall("c.StartLoop", [closure])
 //    where `closure` evaluates to a vm.ClosureVal carrying the
-//    synthetic FuncDef name and a captured-frame pointer (Y.G).
+//    synthetic FuncDef name and a captured-frame pointer.
 // 2. The VM dispatches OpHostCall into the receiver bound under "c" —
 //    this CanvasHostReceiver.
 // 3. CanvasHostReceiver.Call("StartLoop", [closure]) wraps the
@@ -48,7 +48,7 @@
 // # Why not extend HostCanvasImpl
 //
 // HostCanvasImpl (canvas_host_impl.go) is the test-time CPU rasterizer
-// seam Y.F added — it deliberately omits startLoop because hosts
+// seam — it deliberately omits startLoop because hosts
 // drive their own loop. The CanvasHostReceiver lives one level up: it
 // adapts a *Canvas (which DOES carry a startLoop method that already
 // wires the rAF path on WASM) to the vm.HostReceiver contract, so the
@@ -139,7 +139,7 @@ func BindCanvas(machine *vm.VM, name string, canvas *Canvas, ctx *Context) *Canv
 }
 
 // Call satisfies vm.HostReceiver. The method name comes from the
-// source-level `c.<Method>` call as it was lowered by Y.E's host-call
+// source-level `c.<Method>` call as it was lowered by the host-call
 // path. Argument values are pre-evaluated by the VM.
 //
 // StartLoop is the only method that consumes a ClosureVal arg; every

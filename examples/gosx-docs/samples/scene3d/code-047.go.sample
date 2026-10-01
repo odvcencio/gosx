@@ -1,0 +1,16 @@
+session := harness.New(props, preview.Options{Width: 640, Height: 360})
+
+	if _, err := session.Render(0); err != nil {
+	    return err
+	}
+	if _, err := session.Render(0.5); err != nil {
+	    return err
+	}
+	session.Trace("centre", scene.Ray{
+	    Origin:    scene.Vec3(0, 0, 8),
+	    Direction: scene.Vec3(0, 0, -1),
+	})
+	if err := session.Validate(); err != nil {
+	    return err
+	}
+	return session.WriteJSON(os.Stdout)

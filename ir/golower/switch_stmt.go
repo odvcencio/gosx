@@ -1,4 +1,4 @@
-// Slice Y.E.3 — *ast.SwitchStmt lowering.
+// *ast.SwitchStmt lowering.
 //
 // Go's switch statement is essentially syntactic sugar for an
 // if/else-if/else chain when the cases are scalar (value-switch, no
@@ -54,7 +54,8 @@ func (c *lowerCtx) lowerSwitchStmt(s *ast.SwitchStmt) program.ExprID {
 
 	// Cache the tag once so each case's comparison reads a local
 	// rather than re-evaluating the tag expression. The synthetic
-	// local uses a reserved prefix per the Y.B / Y.D convention.
+	// local uses the same reserved-prefix convention as the other
+	// synthetic-local namespaces in this package.
 	var tagRefID program.ExprID
 	hasTag := s.Tag != nil
 	if hasTag {

@@ -261,7 +261,8 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    assert.equal(generated.length, 68);
+    // 72 + 4 for the lazily loaded walking authority and its sidecars.
+    assert.equal(generated.length, 76);
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));
@@ -554,7 +555,7 @@ function assertRendererABI(renderer, backend) {
   assert.equal(typeof renderer.dispose, "function");
   for (const key of contract.optional) {
     if (!(key in renderer)) continue;
-    if (key === "supportsRetainedGeometry") assert.equal(typeof renderer[key], "boolean");
+    if (key === "supportsRetainedGeometry" || key === "supportsRigidImportedBatches") assert.equal(typeof renderer[key], "boolean");
     else if (key === "textureVariantContext") assert.equal(typeof renderer[key], "object");
     else assert.equal(typeof renderer[key], "function");
   }

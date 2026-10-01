@@ -1,4 +1,4 @@
-// Slice Y.F — exported CanvasImpl seam for out-of-package hosts.
+// Exported CanvasImpl seam for out-of-package hosts.
 //
 // The package-internal CanvasImpl interface uses lowercase method names
 // (width/height/clearRect/...) so the only legal implementations are
@@ -7,7 +7,7 @@
 // pipeline: every real canvas binds through the JS bootstrap or the
 // in-process stub.
 //
-// However, the Slice Y.F SSIM parity test
+// However, the SSIM parity test
 // (~/work/hyphae/cmd/hypha-viz/dogfood_parity_test.go) needs to drive
 // the native-Go execution of an engine surface's handler bodies against
 // a pure-Go rasterizer it owns. Hard-coding the rasterizer inside the
@@ -40,9 +40,8 @@ package surface
 //
 // The method set mirrors CanvasImpl exactly, just capitalized.
 // StartLoop is omitted: hosts that want to drive a loop should do so
-// from the host side directly (calling stepLayout + draw in test code
-// per the Slice Y.E retrospective's Option F.b recommendation, since
-// FuncLit closures remain a Phase 4 expression-language gap).
+// from the host side directly (calling stepLayout + draw in test code),
+// since FuncLit closures remain an expression-language gap here.
 type HostCanvasImpl interface {
 	Width() int
 	Height() int

@@ -194,7 +194,28 @@ type fileRequestBindings struct {
 	actions       map[string]any
 	currentAction map[string]any
 	user          any
-	csrf          map[string]any
+	csrf          any
+}
+
+// csrfBinding reads the current session token only when a template needs it.
+// Anonymous csrf.token reads return empty and never create a cookie, including
+// during static export. Existing sessions keep their per-session form token.
+type csrfBinding struct {
+	request *http.Request
+}
+
+// selectField answers the two names a `.gsx` template reads off csrf:
+// csrf.token (empty for anonymous requests) and csrf.field (the form field name it
+// posts under). Any other name misses, matching the old map's behavior.
+func (c csrfBinding) selectField(name string) (any, bool) {
+	switch name {
+	case "token":
+		return session.Token(c.request), true
+	case "field":
+		return defaultCSRFFieldName(), true
+	default:
+		return nil, false
+	}
 }
 
 // withValue returns an env that binds name to value.
@@ -333,11 +354,10 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	if resolvedUser, ok := auth.Current(ctx.Request); ok {
 		bindings.user = templateUser(resolvedUser)
 	}
-	if token := session.Token(ctx.Request); token != "" {
-		bindings.csrf = map[string]any{
-			"token": token,
-			"field": defaultCSRFFieldName(),
-		}
+	// Bind csrf whenever Middleware ran. Anonymous reads stay empty; existing
+	// sessions expose their token and are kept out of shared caches.
+	if session.Current(ctx.Request) != nil {
+		bindings.csrf = csrfBinding{request: ctx.Request}
 	}
 	return bindings
 }
@@ -436,6 +456,10 @@ func evalIdent(name string, env fileRenderEnv) any {
 func selectValue(target any, name string) any {
 	if target == nil {
 		return nil
+	}
+	if cb, ok := target.(csrfBinding); ok {
+		value, _ := cb.selectField(name)
+		return value
 	}
 	if value, ok := selectMappedValue(target, name); ok {
 		return value
@@ -1025,6 +1049,28 @@ func isNumeric(value any) bool {
 	}
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
+// isIntegerKind reports whether value is a Go/reflect integer kind, the
+// same set isNumeric checks minus float32/float64. applyFileBinaryOp's QUO
+// case uses this to decide int-truncating division vs float division: an
+// int-typed props field or int literal on both sides of "/" must divide the
+// same way the generated Go and the island VM do (see gosx eval-parity).
+func isIntegerKind(value any) bool {
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	}
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return false
+	}
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return true
 	default:
 		return false

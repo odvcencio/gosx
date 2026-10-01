@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: gosx-docs
-  namespace: draco-quest
+  namespace: __NAMESPACE__
   labels:
     app: gosx-docs
   annotations:
@@ -54,7 +54,7 @@ spec:
             sizeLimit: 128Mi
       initContainers:
         - name: stage-isr
-          image: harbor.draco.quest/orchard/gosx-docs@sha256:__IMAGE_DIGEST__
+          image: __IMAGE_REPOSITORY__@sha256:__IMAGE_DIGEST__
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -80,7 +80,7 @@ spec:
         - name: gosx-docs
           # scripts/deploy-gosx-docs.sh requires an immutable digest and
           # substitutes it into this checked-in placeholder before apply.
-          image: harbor.draco.quest/orchard/gosx-docs@sha256:__IMAGE_DIGEST__
+          image: __IMAGE_REPOSITORY__@sha256:__IMAGE_DIGEST__
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -138,7 +138,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gosx-docs
-  namespace: draco-quest
+  namespace: __NAMESPACE__
 spec:
   selector:
     app: gosx-docs
@@ -151,7 +151,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gosx-docs
-  namespace: draco-quest
+  namespace: __NAMESPACE__
   annotations:
     cert-manager.io/cluster-issuer: cloudflare-issuer
     traefik.ingress.kubernetes.io/router.priority: "20"

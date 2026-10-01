@@ -1,0 +1,5 @@
+<form method="post" action={actionPath("subscribe")} data-gosx-managed>
+	<input type="hidden" name="csrf_token" value={csrf.token} />
+	<input name="email" type="email" placeholder="you@example.com" />
+	<button type="submit">Subscribe</button>
+</form>

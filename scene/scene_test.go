@@ -145,6 +145,41 @@ func TestPropsLegacyPropsLowerNestedGraph(t *testing.T) {
 	}
 }
 
+func TestPropsLegacyPropsLowerScrollFrameRate(t *testing.T) {
+	props := Props{
+		ScrollCameraStart: 500,
+		ScrollCameraEnd:   -200,
+		ScrollFrameRate:   60,
+		MaxFrameRate:      30,
+	}
+	legacy := props.LegacyProps()
+	if got := legacy["scrollFrameRate"]; got != float64(60) {
+		t.Fatalf("scrollFrameRate = %#v, want 60", got)
+	}
+	if got := legacy["maxFrameRate"]; got != float64(30) {
+		t.Fatalf("maxFrameRate = %#v, want 30", got)
+	}
+}
+
+func TestPropsLegacyPropsLowerFramePacing(t *testing.T) {
+	props := Props{
+		FramePacing:  "vsync-divisor",
+		MaxFrameRate: 50,
+	}
+	legacy := props.LegacyProps()
+	if got := legacy["framePacing"]; got != "vsync-divisor" {
+		t.Fatalf("framePacing = %#v, want vsync-divisor", got)
+	}
+	if got := legacy["maxFrameRate"]; got != float64(50) {
+		t.Fatalf("maxFrameRate = %#v, want 50", got)
+	}
+
+	empty := Props{}.LegacyProps()
+	if _, ok := empty["framePacing"]; ok {
+		t.Fatalf("framePacing = %#v, want absent when unset", empty["framePacing"])
+	}
+}
+
 func TestPropsSceneIRLowerNestedGraph(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
@@ -1374,6 +1409,79 @@ func TestStandardMaterialPointerUsesSolidDefault(t *testing.T) {
 	}
 }
 
+func TestStandardMaterialRimTermOffByDefault(t *testing.T) {
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "plain-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{Color: "#60a8dc"},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected exactly one object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.RimColor != nil {
+		t.Fatalf("rim term must stay off by default: RimColor = %#v, want nil", object.RimColor)
+	}
+	if object.RimStrength != 0 {
+		t.Fatalf("rim term must stay off by default: RimStrength = %v, want 0", object.RimStrength)
+	}
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("marshal ObjectIR: %v", err)
+	}
+	for _, key := range []string{`"rimColor"`, `"rimPower"`, `"rimStrength"`} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("rim term must be omitted from JSON when unset, found %s in %s", key, raw)
+		}
+	}
+}
+
+func TestStandardMaterialRimTermOptInPreserved(t *testing.T) {
+	rimColor := [3]float64{0.2, 0.6, 1}
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "rim-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{
+			Color:       "#60a8dc",
+			RimColor:    &rimColor,
+			RimPower:    3,
+			RimStrength: 0.75,
+		},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected exactly one object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.RimColor == nil || *object.RimColor != rimColor {
+		t.Fatalf("rim colour was not preserved: got %#v, want %#v", object.RimColor, rimColor)
+	}
+	if object.RimPower != 3 {
+		t.Fatalf("rim power was not preserved: got %v, want 3", object.RimPower)
+	}
+	if object.RimStrength != 0.75 {
+		t.Fatalf("rim strength was not preserved: got %v, want 0.75", object.RimStrength)
+	}
+
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("marshal ObjectIR: %v", err)
+	}
+	var back ObjectIR
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal ObjectIR: %v", err)
+	}
+	if back.RimColor == nil || *back.RimColor != rimColor {
+		t.Fatalf("rim colour did not round-trip through JSON: got %#v, want %#v", back.RimColor, rimColor)
+	}
+	if back.RimPower != 3 || back.RimStrength != 0.75 {
+		t.Fatalf("rim power/strength did not round-trip through JSON: got %v/%v", back.RimPower, back.RimStrength)
+	}
+}
+
 func TestStandardMaterialSolidDefaultDoesNotRewriteOtherMaterialKinds(t *testing.T) {
 	props := Props{Graph: NewGraph(
 		Mesh{
@@ -2142,6 +2250,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 				Markup:        `<button>Inspect</button>`,
 				ClassName:     "scene-card",
 				Position:      Vec3(0, 1.05, 0.2),
+				Perspective:   true,
+				SurfaceWidth:  1.4,
+				SurfaceHeight: 0.6,
 				Width:         220,
 				Height:        88,
 				Priority:      5,
@@ -2181,6 +2292,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if card.PointerEvents != "auto" || !card.Occlude {
 		t.Fatalf("expected html interaction fields, got %#v", card)
 	}
+	if !card.Perspective || card.SurfaceWidth != 1.4 || card.SurfaceHeight != 0.6 {
+		t.Fatalf("expected perspective plane dimensions to lower, got %#v", card)
+	}
 	if ir.HTML[1].Mode != string(HTMLTexture) {
 		t.Fatalf("expected html surface texture mode marker, got %#v", ir.HTML[1].Mode)
 	}
@@ -2213,6 +2327,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	}
 	if got := html[0]["target"]; got != "hero" {
 		t.Fatalf("expected target in legacy props, got %#v", got)
+	}
+	if got := html[0]["perspective"]; got != true {
+		t.Fatalf("expected perspective in legacy props, got %#v", got)
 	}
 	if got := html[1]["mode"]; got != string(HTMLTexture) {
 		t.Fatalf("expected texture mode in legacy props, got %#v", got)
@@ -3999,8 +4116,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 					{ID: "robot-1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)},
 					{ID: "robot-2", Position: Vec3(3, 0, 4), Scale: Vec3(1.2, 1.2, 1.2)},
 				},
-				Pickable: Bool(true),
-				Static:   Bool(false),
+				Pickable:         Bool(true),
+				Static:           Bool(false),
+				SharedAppearance: true,
 			},
 		),
 	}
@@ -4031,6 +4149,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	if batch.Color != "#ff6600" {
 		t.Fatalf("expected color #ff6600, got %q", batch.Color)
 	}
+	if !batch.SharedAppearance {
+		t.Fatal("expected shared appearance opt-in to survive lowering")
+	}
 
 	// Verify legacyProps wire shape.
 	legacy := ir.legacyProps()
@@ -4044,6 +4165,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	}
 	if got := batchMap["src"]; got != "/models/robot-scout.glb" {
 		t.Fatalf("expected batch src, got %#v", got)
+	}
+	if got := batchMap["sharedAppearance"]; got != true {
+		t.Fatalf("expected sharedAppearance=true, got %#v", got)
 	}
 	instances, ok := batchMap["instances"].([]map[string]any)
 	if !ok || len(instances) != 2 {

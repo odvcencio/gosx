@@ -1,0 +1,7 @@
+cfg := engine.Config{
+	Name:     "Chart",
+	Kind:     engine.KindSurface,
+	MountID:  "chart",
+	Runtime:  engine.RuntimeGoWASM,
+	WASMPath: "/engines/chart.wasm",
+}

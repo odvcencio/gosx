@@ -1,5 +1,5 @@
-// Slice Y.D graph_surface end-to-end test — exercises the full
-// Y.A+Y.B+Y.C+Y.D stack against a fixture modeled after
+// graph_surface end-to-end test — exercises the full
+// lowering stack against a fixture modeled after
 // graph_surface.go's `nodeAt` / `screenToWorld` / `updateNode`
 // helpers calling each other across handlers.
 //
@@ -21,9 +21,9 @@ import (
 
 // TestY_D_GraphSurfaceHelpersEndToEnd lowers the full graph-surface-
 // style fixture and verifies the returned value matches a Go
-// reference computation. Failure here means one of the Y.D building
-// blocks (registry, dispatch, multi-return, composite return) silently
-// regressed in a way the smaller tests didn't catch.
+// reference computation. Failure here means one of the user-function
+// building blocks (registry, dispatch, multi-return, composite return)
+// silently regressed in a way the smaller tests didn't catch.
 func TestY_D_GraphSurfaceHelpersEndToEnd(t *testing.T) {
 	src := []byte(`package handlers
 
@@ -135,7 +135,7 @@ func F() float64 {
 // TestY_D_GraphSurfaceForwardReference verifies that a handler may
 // call a user function declared LATER in the same file. Go allows
 // this without forward declarations because the type-check pass sees
-// all top-level decls before checking bodies; Y.D's registry pre-pass
+// all top-level decls before checking bodies; the registry pre-pass
 // preserves the same property because scanUserFuncs runs before any
 // body lowers.
 func TestY_D_GraphSurfaceForwardReference(t *testing.T) {

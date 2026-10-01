@@ -225,7 +225,7 @@ test("WebGL and WebGPU receivers reject invalid perspective coordinates before s
   const webgl = read(path.join(runtimeRoot, "webgl.ts"));
   const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
   const glGuard = webgl.indexOf('"    if (lightSpacePos.w <= 0.0) return 1.0;"');
-  const glSample = webgl.indexOf('"        float depth = texture(shadowMap, projCoords.xy).r;"');
+  const glSample = webgl.indexOf('"        float depth = texture(shadowMap, vec3(projCoords.xy, float(layer))).r;"');
   assert.ok(glGuard >= 0 && glGuard < glSample);
   assert.match(webgl, /u_receiveShadow && \(lightType == 1 \|\| lightType == 3\)/);
 
@@ -250,7 +250,7 @@ test("WebGPU shadow depth conversion maps GL near/far to 0/1 without mutating in
 test("alpha-masked materials have a documented shared closed-silhouette caster limit", () => {
   const webgl = read(path.join(runtimeRoot, "webgl.ts"));
   const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
-  const glShadow = between(webgl, "const SCENE_SHADOW_VERTEX_SOURCE", "// Create a framebuffer with a depth-only texture");
+  const glShadow = between(webgl, "const SCENE_SHADOW_VERTEX_SOURCE", "// Each light owns one depth array.");
   const gpuShadow = between(webgpu, "var WGSL_SHADOW_VERTEX", "var WGSL_SCENE_COLOR_FRAGMENT");
   for (const [backend, source] of [["WebGL", glShadow], ["WebGPU", gpuShadow]]) {
     assert.doesNotMatch(source, /alphaCutoff|baseColorMap|albedoMap|textureSample|texture\(/,

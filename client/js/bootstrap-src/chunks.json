@@ -10,6 +10,7 @@
         "bootstrap-src/01b-textlayout-inline-suffix.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
+        "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/generated/runtime-abi.ts",
         "../runtime/wasm/abi.ts",
@@ -18,6 +19,7 @@
         "../runtime/host/disclosure.ts",
         "../runtime/host/actions.ts",
         "../runtime/scene3d/command-bridge.ts",
+        "../runtime/scene3d/instance-stream-bridge.ts",
         "../runtime/host/regions.ts",
         "../runtime/host/controllers.ts",
         "../runtime/host/facade.ts",
@@ -49,6 +51,7 @@
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/compute.ts",
+        "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
         "bootstrap-src/18-scene-canvas.ts",
         "bootstrap-src/19a-scene-ktx2.ts",
@@ -63,6 +66,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount.ts",
@@ -88,6 +92,7 @@
         "bootstrap-src/00-textlayout.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
+        "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/disclosure.ts",
         "../runtime/host/actions.ts",
@@ -105,6 +110,7 @@
         "bootstrap-src/00-textlayout.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
+        "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/generated/runtime-abi.ts",
         "../runtime/wasm/abi.ts",
@@ -182,6 +188,7 @@
       "sources": [
         "bootstrap-src/26d-feature-scene3d-prefix.ts",
         "../runtime/scene3d/command-bridge.ts",
+        "../runtime/scene3d/instance-stream-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
@@ -208,6 +215,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
@@ -231,6 +239,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-instance-stream.js",
+      "sources": [
+        "../runtime/scene3d/instance-stream.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-hydrate.js",
       "sources": [
         "../runtime/scene3d/hydrate-input.ts"
@@ -251,7 +265,14 @@
       "sources": [
         "bootstrap-src/26k-feature-scene3d-compute-prefix.ts",
         "../runtime/scene3d/compute.ts",
+        "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/26k-feature-scene3d-compute-suffix.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-walk.js",
+      "sources": [
+        "../runtime/scene3d/mount-walk.ts"
       ]
     },
     {

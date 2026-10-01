@@ -1,4 +1,4 @@
-// Slice Y.D scope-isolation tests — verify that the per-call frame
+// Scope-isolation tests — verify that the per-call frame
 // correctly shadows package signals when a parameter shares a name
 // with one, and that the caller's frame is restored cleanly when the
 // callee returns.
@@ -131,7 +131,7 @@ func F() int {
 	prog, err := LowerFile(src)
 	if err != nil {
 		// In this fixture the lowerer happily emits OpLocalGet for any
-		// bare identifier (X.A's design); the VM is the one that
+		// bare identifier (by design); the VM is the one that
 		// diagnoses the missing local. So LowerFile should still
 		// succeed and the value should be zero.
 		t.Fatalf("LowerFile: %v", err)

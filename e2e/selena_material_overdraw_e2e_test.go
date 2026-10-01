@@ -185,7 +185,7 @@ func TestSelenaMaterialOwnsItsPixelsBesideALinesMesh(t *testing.T) {
 	// the runtime downgrades to Canvas2D, runs no shaders, and every pixel
 	// assertion below would be meaningless -- the backend check guards that.
 	browser, err := chrometest.Start(t.Context(), chrome,
-		"--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--window-size=640,480")
+		"--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--mute-audio", "--window-size=640,480")
 	if err != nil {
 		t.Fatalf("start Chrome for material overdraw: %v", err)
 	}

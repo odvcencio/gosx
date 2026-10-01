@@ -65,6 +65,9 @@ type SceneIR struct {
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
+	// GPUDriven: see Props.GPUDriven (scene/gpu_driven.go). Nil when the scene
+	// does not opt in, so the wire carries nothing.
+	GPUDriven *GPUDrivenIR `json:"gpuDriven,omitempty"`
 	// QualityLadder / QualityStartRung: see Props.QualityLadder and
 	// Props.QualityStartRung (scene/quality_ladder.go). Omitted (nil/zero)
 	// when no ladder is authored — the client governor's legacy dprCap-tier
@@ -124,73 +127,99 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
-	ID                string           `json:"id"`
-	Src               string           `json:"src"`
-	MaterialKind      string           `json:"materialKind,omitempty"`
-	Color             string           `json:"color,omitempty"`
-	Texture           string           `json:"texture,omitempty"`
-	Opacity           *float64         `json:"opacity,omitempty"`
-	Emissive          *float64         `json:"emissive,omitempty"`
-	AlphaCutoff       AlphaCutoff      `json:"alphaCutoff,omitzero"`
-	BlendMode         string           `json:"blendMode,omitempty"`
-	Roughness         float64          `json:"roughness,omitempty"`
-	Metalness         float64          `json:"metalness,omitempty"`
-	SpecularIntensity *float64         `json:"specularIntensity,omitempty"`
-	SpecularColor     *[3]float64      `json:"specularColor,omitempty"`
-	IOR               *float64         `json:"ior,omitempty"`
-	Instances         []MeshInstanceIR `json:"instances"`
-	Pickable          *bool            `json:"pickable,omitempty"`
-	Visible           *bool            `json:"visible,omitempty"`
-	Static            *bool            `json:"static,omitempty"`
+	ID                 string      `json:"id"`
+	Src                string      `json:"src"`
+	MaterialKind       string      `json:"materialKind,omitempty"`
+	Color              string      `json:"color,omitempty"`
+	Texture            string      `json:"texture,omitempty"`
+	Opacity            *float64    `json:"opacity,omitempty"`
+	Emissive           *float64    `json:"emissive,omitempty"`
+	EmissiveColor      *[3]float64 `json:"emissiveColor,omitempty"`
+	NormalScale        *float64    `json:"normalScale,omitempty"`
+	OcclusionStrength  *float64    `json:"occlusionStrength,omitempty"`
+	AlphaCutoff        AlphaCutoff `json:"alphaCutoff,omitzero"`
+	BlendMode          string      `json:"blendMode,omitempty"`
+	Roughness          float64     `json:"roughness,omitempty"`
+	Metalness          float64     `json:"metalness,omitempty"`
+	SpecularIntensity  *float64    `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64 `json:"specularColor,omitempty"`
+	IOR                *float64    `json:"ior,omitempty"`
+	CustomVertex       string      `json:"customVertex,omitempty"`
+	CustomFragment     string      `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string      `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string      `json:"customFragmentWGSL,omitempty"`
+	// *Ref fields replace their inline source when SceneIR hoists repeated shaders.
+	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
+	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
+	CustomVertexWGSLRef   string            `json:"customVertexWGSLRef,omitempty"`
+	CustomFragmentWGSLRef string            `json:"customFragmentWGSLRef,omitempty"`
+	CustomUniforms        map[string]any    `json:"customUniforms,omitempty"`
+	ShaderBackend         string            `json:"shaderBackend,omitempty"`
+	ShaderLayout          map[string]any    `json:"shaderLayout,omitempty"`
+	ShaderSource          string            `json:"shaderSource,omitempty"`
+	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
+	Instances             []MeshInstanceIR  `json:"instances"`
+	Pickable              *bool             `json:"pickable,omitempty"`
+	Visible               *bool             `json:"visible,omitempty"`
+	Static                *bool             `json:"static,omitempty"`
+	// SharedAppearance opts corresponding primitives into one shared renderer
+	// appearance across instances. It does not merge different GLB primitives.
+	SharedAppearance bool `json:"sharedAppearance,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
 type MeshInstanceIR struct {
-	ID           string    `json:"id,omitempty"`
-	X            float64   `json:"x,omitempty"`
-	Y            float64   `json:"y,omitempty"`
-	Z            float64   `json:"z,omitempty"`
-	ScaleX       float64   `json:"scaleX,omitempty"`
-	ScaleY       float64   `json:"scaleY,omitempty"`
-	ScaleZ       float64   `json:"scaleZ,omitempty"`
-	RotationX    float64   `json:"rotationX,omitempty"`
-	RotationY    float64   `json:"rotationY,omitempty"`
-	RotationZ    float64   `json:"rotationZ,omitempty"`
-	ParentMatrix []float64 `json:"parentMatrix,omitempty"`
+	Animation     string    `json:"animation,omitempty"`
+	AnimationTime float64   `json:"animationTime,omitempty"`
+	AnimationLoop bool      `json:"animationLoop,omitempty"`
+	ID            string    `json:"id,omitempty"`
+	X             float64   `json:"x,omitempty"`
+	Y             float64   `json:"y,omitempty"`
+	Z             float64   `json:"z,omitempty"`
+	ScaleX        float64   `json:"scaleX,omitempty"`
+	ScaleY        float64   `json:"scaleY,omitempty"`
+	ScaleZ        float64   `json:"scaleZ,omitempty"`
+	RotationX     float64   `json:"rotationX,omitempty"`
+	RotationY     float64   `json:"rotationY,omitempty"`
+	RotationZ     float64   `json:"rotationZ,omitempty"`
+	ParentMatrix  []float64 `json:"parentMatrix,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID                 string   `json:"id"`
-	Kind               string   `json:"kind"`
-	Size               float64  `json:"size,omitempty"`
-	Width              float64  `json:"width,omitempty"`
-	Height             float64  `json:"height,omitempty"`
-	Depth              float64  `json:"depth,omitempty"`
-	Radius             float64  `json:"radius,omitempty"`
-	Segments           int      `json:"segments,omitempty"`
-	LineSegments       [][2]int `json:"lineSegments,omitempty"`
-	LineWidth          float64  `json:"lineWidth,omitempty"`
-	RadiusTop          float64  `json:"radiusTop,omitempty"`
-	RadiusBottom       float64  `json:"radiusBottom,omitempty"`
-	Tube               float64  `json:"tube,omitempty"`
-	RadialSegments     int      `json:"radialSegments,omitempty"`
-	TubularSegments    int      `json:"tubularSegments,omitempty"`
-	MaterialKind       string   `json:"materialKind,omitempty"`
-	Color              string   `json:"color,omitempty"`
-	Texture            string   `json:"texture,omitempty"`
-	Opacity            *float64 `json:"opacity,omitempty"`
-	Emissive           *float64 `json:"emissive,omitempty"`
-	BlendMode          string   `json:"blendMode,omitempty"`
-	RenderPass         string   `json:"renderPass,omitempty"`
-	Wireframe          *bool    `json:"wireframe,omitempty"`
-	LineDash           *bool    `json:"lineDash,omitempty"`
-	DashSize           float64  `json:"dashSize,omitempty"`
-	GapSize            float64  `json:"gapSize,omitempty"`
-	CustomVertex       string   `json:"customVertex,omitempty"`
-	CustomFragment     string   `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string   `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string   `json:"customFragmentWGSL,omitempty"`
+	ID                 string      `json:"id"`
+	Kind               string      `json:"kind"`
+	Size               float64     `json:"size,omitempty"`
+	Width              float64     `json:"width,omitempty"`
+	Height             float64     `json:"height,omitempty"`
+	Depth              float64     `json:"depth,omitempty"`
+	Radius             float64     `json:"radius,omitempty"`
+	Segments           int         `json:"segments,omitempty"`
+	LineSegments       [][2]int    `json:"lineSegments,omitempty"`
+	LineWidth          float64     `json:"lineWidth,omitempty"`
+	RadiusTop          float64     `json:"radiusTop,omitempty"`
+	RadiusBottom       float64     `json:"radiusBottom,omitempty"`
+	Tube               float64     `json:"tube,omitempty"`
+	RadialSegments     int         `json:"radialSegments,omitempty"`
+	TubularSegments    int         `json:"tubularSegments,omitempty"`
+	MaterialKind       string      `json:"materialKind,omitempty"`
+	Color              string      `json:"color,omitempty"`
+	Texture            string      `json:"texture,omitempty"`
+	Opacity            *float64    `json:"opacity,omitempty"`
+	Emissive           *float64    `json:"emissive,omitempty"`
+	EmissiveColor      *[3]float64 `json:"emissiveColor,omitempty"`
+	NormalScale        *float64    `json:"normalScale,omitempty"`
+	OcclusionStrength  *float64    `json:"occlusionStrength,omitempty"`
+	BlendMode          string      `json:"blendMode,omitempty"`
+	RenderPass         string      `json:"renderPass,omitempty"`
+	Wireframe          *bool       `json:"wireframe,omitempty"`
+	LineDash           *bool       `json:"lineDash,omitempty"`
+	DashSize           float64     `json:"dashSize,omitempty"`
+	GapSize            float64     `json:"gapSize,omitempty"`
+	CustomVertex       string      `json:"customVertex,omitempty"`
+	CustomFragment     string      `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string      `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string      `json:"customFragmentWGSL,omitempty"`
 	// *Ref fields replace their counterparts when hoisted into SceneIR.ShaderLib.
 	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
 	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
@@ -202,6 +231,9 @@ type ObjectIR struct {
 	ShaderSource          string            `json:"shaderSource,omitempty"`
 	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
 	Pickable              *bool             `json:"pickable,omitempty"`
+	Interactive           bool              `json:"interactive,omitempty"`
+	Label                 string            `json:"label,omitempty"`
+	InteractiveOrder      int               `json:"interactiveOrder,omitempty"`
 	Visible               *bool             `json:"visible,omitempty"`
 	Selected              bool              `json:"selected,omitempty"`
 	// GizmoRing marks a TransformControls rotate-mode ring helper mesh; see
@@ -213,28 +245,32 @@ type ObjectIR struct {
 	GizmoFormMode string `json:"gizmoFormMode,omitempty"`
 	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
 	// (scene/quality_ladder.go). Empty means unconditionally visible.
-	QualityGroup       string                     `json:"qualityGroup,omitempty"`
-	OutlineColor       string                     `json:"outlineColor,omitempty"`
-	OutlineWidth       float64                    `json:"outlineWidth,omitempty"`
-	CastShadow         bool                       `json:"castShadow,omitempty"`
-	ReceiveShadow      bool                       `json:"receiveShadow,omitempty"`
-	DepthWrite         *bool                      `json:"depthWrite,omitempty"`
-	Roughness          float64                    `json:"roughness,omitempty"`
-	Metalness          float64                    `json:"metalness,omitempty"`
-	Clearcoat          float64                    `json:"clearcoat,omitempty"`
-	Sheen              float64                    `json:"sheen,omitempty"`
-	Transmission       float64                    `json:"transmission,omitempty"`
-	Iridescence        float64                    `json:"iridescence,omitempty"`
-	Anisotropy         float64                    `json:"anisotropy,omitempty"`
-	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
-	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
-	IOR                *float64                   `json:"ior,omitempty"`
-	NormalMap          string                     `json:"normalMap,omitempty"`
-	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
-	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
-	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
-	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
-	AlphaCutoff        AlphaCutoff                `json:"alphaCutoff,omitzero"`
+	QualityGroup      string      `json:"qualityGroup,omitempty"`
+	OutlineColor      string      `json:"outlineColor,omitempty"`
+	OutlineWidth      float64     `json:"outlineWidth,omitempty"`
+	CastShadow        bool        `json:"castShadow,omitempty"`
+	ReceiveShadow     bool        `json:"receiveShadow,omitempty"`
+	DepthWrite        *bool       `json:"depthWrite,omitempty"`
+	Roughness         float64     `json:"roughness,omitempty"`
+	Metalness         float64     `json:"metalness,omitempty"`
+	Clearcoat         float64     `json:"clearcoat,omitempty"`
+	Sheen             float64     `json:"sheen,omitempty"`
+	Transmission      float64     `json:"transmission,omitempty"`
+	Iridescence       float64     `json:"iridescence,omitempty"`
+	Anisotropy        float64     `json:"anisotropy,omitempty"`
+	SpecularIntensity *float64    `json:"specularIntensity,omitempty"`
+	SpecularColor     *[3]float64 `json:"specularColor,omitempty"`
+	IOR               *float64    `json:"ior,omitempty"`
+	NormalMap         string      `json:"normalMap,omitempty"`
+	RoughnessMap      string      `json:"roughnessMap,omitempty"`
+	MetalnessMap      string      `json:"metalnessMap,omitempty"`
+	OcclusionMap      string      `json:"occlusionMap,omitempty"`
+	EmissiveMap       string      `json:"emissiveMap,omitempty"`
+	AlphaCutoff       AlphaCutoff `json:"alphaCutoff,omitzero"`
+	// RimColor/RimPower/RimStrength: see StandardMaterial. Off by default.
+	RimColor           *[3]float64                `json:"rimColor,omitempty"`
+	RimPower           float64                    `json:"rimPower,omitempty"`
+	RimStrength        float64                    `json:"rimStrength,omitempty"`
 	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
 	LODGroup           string                     `json:"lodGroup,omitempty"`
 	LODLevel           int                        `json:"lodLevel,omitempty"`
@@ -430,6 +466,7 @@ type HTMLIR struct {
 	ID               string       `json:"id"`
 	Target           string       `json:"target,omitempty"`
 	Mode             string       `json:"mode,omitempty"`
+	Perspective      bool         `json:"perspective,omitempty"`
 	HTML             string       `json:"html"`
 	ClassName        string       `json:"className,omitempty"`
 	Fallback         string       `json:"fallback,omitempty"`
@@ -608,6 +645,9 @@ type InstancedMeshIR struct {
 	Texture              string                     `json:"texture,omitempty"`
 	Opacity              *float64                   `json:"opacity,omitempty"`
 	Emissive             *float64                   `json:"emissive,omitempty"`
+	EmissiveColor        *[3]float64                `json:"emissiveColor,omitempty"`
+	NormalScale          *float64                   `json:"normalScale,omitempty"`
+	OcclusionStrength    *float64                   `json:"occlusionStrength,omitempty"`
 	BlendMode            string                     `json:"blendMode,omitempty"`
 	RenderPass           string                     `json:"renderPass,omitempty"`
 	Wireframe            *bool                      `json:"wireframe,omitempty"`
@@ -718,6 +758,7 @@ type WaterSystemIR struct {
 	PoolWidth                   float64                          `json:"poolWidth,omitempty"`
 	PoolHeight                  float64                          `json:"poolHeight,omitempty"`
 	PoolLength                  float64                          `json:"poolLength,omitempty"`
+	RenderPool                  *bool                            `json:"renderPool,omitempty"`
 	CornerRadius                float64                          `json:"cornerRadius,omitempty"`
 	WaveSpeed                   float64                          `json:"waveSpeed,omitempty"`
 	Damping                     float64                          `json:"damping,omitempty"`
@@ -1088,6 +1129,7 @@ func (p Props) SceneIR() SceneIR {
 		ir.PostFXMaxPixels = p.PostFX.resolveMaxPixels()
 	}
 	ir.ShadowMaxPixels = p.Shadows.resolveMaxPixels()
+	ir.GPUDriven = p.GPUDriven.sceneIR()
 	ir.QualityLadder = qualityLadderSceneIR(p.QualityLadder)
 	if len(ir.QualityLadder) > 0 {
 		ir.QualityStartRung = resolveQualityStartRung(p.QualityLadder, p.QualityStartRung)
@@ -1531,6 +1573,9 @@ func cloneShaderLibCollections(ir *SceneIR) {
 	if len(ir.InstancedMeshes) > 0 {
 		ir.InstancedMeshes = append([]InstancedMeshIR(nil), ir.InstancedMeshes...)
 	}
+	if len(ir.InstancedGLBMeshes) > 0 {
+		ir.InstancedGLBMeshes = append([]InstancedGLBMeshIR(nil), ir.InstancedGLBMeshes...)
+	}
 	if len(ir.ComputeParticles) > 0 {
 		ir.ComputeParticles = append([]ComputeParticlesIR(nil), ir.ComputeParticles...)
 	}
@@ -1595,7 +1640,8 @@ type shaderLibPair struct {
 // collectShaderLibPairs walks every SceneIR collection whose IR struct
 // declares a *Ref sibling field for a shader-source field. It returns one
 // shaderLibPair per field. This covers objects, models (via the embedded
-// ObjectIR), points, instancedMeshes, computeParticles, and waterSystems.
+// ObjectIR), points, instancedMeshes, instancedGLBMeshes, computeParticles,
+// and waterSystems.
 //
 // PostEffects shader fields, such as CustomPostIR.FragmentWGSL, are not
 // covered. CustomPostIR declares no *Ref sibling field, so a duplicated
@@ -1606,7 +1652,7 @@ func collectShaderLibPairs(ir *SceneIR) []shaderLibPair {
 	// case — a scene with no shader-lib candidates at all — pays for one
 	// slice allocation instead of the ~9 grow-and-copy steps a nil-start
 	// append chain would trigger once a few hundred pairs accumulate.
-	capacity := 4*(len(ir.Objects)+len(ir.Models)+len(ir.Points)) +
+	capacity := 4*(len(ir.Objects)+len(ir.Models)+len(ir.Points)+len(ir.InstancedGLBMeshes)) +
 		len(ir.InstancedMeshes) + 5*len(ir.ComputeParticles) + 14*len(ir.WaterSystems)
 	pairs := make([]shaderLibPair, 0, capacity)
 	eachShaderLibPair(ir, func(p shaderLibPair) bool {
@@ -1653,6 +1699,13 @@ func eachShaderLibPair(ir *SceneIR, visit func(shaderLibPair) bool) {
 			}
 		}
 	}
+	for i := range ir.InstancedGLBMeshes {
+		for _, p := range instancedGLBMeshShaderLibPairs(&ir.InstancedGLBMeshes[i]) {
+			if !visit(p) {
+				return
+			}
+		}
+	}
 	for i := range ir.ComputeParticles {
 		for _, p := range computeParticlesShaderLibPairs(&ir.ComputeParticles[i]) {
 			if !visit(p) {
@@ -1690,6 +1743,15 @@ func pointsShaderLibPairs(pt *PointsIR) []shaderLibPair {
 func instancedMeshShaderLibPairs(m *InstancedMeshIR) []shaderLibPair {
 	return []shaderLibPair{
 		{&m.CullKernelWGSL, &m.CullKernelWGSLRef},
+	}
+}
+
+func instancedGLBMeshShaderLibPairs(m *InstancedGLBMeshIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&m.CustomVertex, &m.CustomVertexRef},
+		{&m.CustomFragment, &m.CustomFragmentRef},
+		{&m.CustomVertexWGSL, &m.CustomVertexWGSLRef},
+		{&m.CustomFragmentWGSL, &m.CustomFragmentWGSLRef},
 	}
 }
 
@@ -1874,6 +1936,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	if ir.ShadowMaxPixels != 0 {
 		out["shadowMaxPixels"] = ir.ShadowMaxPixels
 	}
+	if ir.GPUDriven != nil {
+		out["gpuDriven"] = ir.GPUDriven.legacyProps()
+	}
 	if len(ir.QualityLadder) > 0 {
 		rungs := make([]map[string]any, 0, len(ir.QualityLadder))
 		for _, r := range ir.QualityLadder {
@@ -1949,6 +2014,16 @@ func (item ObjectIR) legacyProps() map[string]any {
 		if len(v.UVs) > 0 {
 			vert["uvs"] = append([]float64(nil), v.UVs...)
 		}
+		if len(v.Tangents) > 0 {
+			vert["tangents"] = append([]float64(nil), v.Tangents...)
+		}
+		// Indexed BufferGeometry keeps UNIQUE vertices in the streams above, so
+		// the index list must travel with them. Dropping it made the browser
+		// draw only the first count/3 triangles of the unique-vertex stream
+		// (a two-triangle quad lost one triangle).
+		if len(v.Indices) > 0 {
+			vert["indices"] = append([]uint32(nil), v.Indices...)
+		}
 		record["vertices"] = vert
 	}
 	setNumeric(record, "lineWidth", item.LineWidth)
@@ -1962,6 +2037,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
+	setColor3Ptr(record, "emissiveColor", item.EmissiveColor)
+	setNumericPtr(record, "normalScale", item.NormalScale)
+	setNumericPtr(record, "occlusionStrength", item.OcclusionStrength)
 	setString(record, "blendMode", item.BlendMode)
 	setString(record, "renderPass", item.RenderPass)
 	if item.Wireframe != nil {
@@ -2321,6 +2399,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
+	setColor3Ptr(record, "emissiveColor", item.EmissiveColor)
+	setNumericPtr(record, "normalScale", item.NormalScale)
+	setNumericPtr(record, "occlusionStrength", item.OcclusionStrength)
 	setString(record, "blendMode", item.BlendMode)
 	setString(record, "renderPass", item.RenderPass)
 	setBool(record, "wireframe", item.Wireframe)
@@ -2405,6 +2486,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
+	setColor3Ptr(record, "emissiveColor", item.EmissiveColor)
+	setNumericPtr(record, "normalScale", item.NormalScale)
+	setNumericPtr(record, "occlusionStrength", item.OcclusionStrength)
 	setString(record, "blendMode", item.BlendMode)
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
@@ -2412,6 +2496,25 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
 	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setAlphaCutoff(record, "alphaCutoff", item.AlphaCutoff)
+	setString(record, "customVertex", item.CustomVertex)
+	setString(record, "customFragment", item.CustomFragment)
+	setString(record, "customVertexWGSL", item.CustomVertexWGSL)
+	setString(record, "customFragmentWGSL", item.CustomFragmentWGSL)
+	setString(record, "customVertexRef", item.CustomVertexRef)
+	setString(record, "customFragmentRef", item.CustomFragmentRef)
+	setString(record, "customVertexWGSLRef", item.CustomVertexWGSLRef)
+	setString(record, "customFragmentWGSLRef", item.CustomFragmentWGSLRef)
+	if len(item.CustomUniforms) > 0 {
+		record["customUniforms"] = cloneSceneAnyMap(item.CustomUniforms)
+	}
+	setString(record, "shaderBackend", item.ShaderBackend)
+	if len(item.ShaderLayout) > 0 {
+		record["shaderLayout"] = cloneSceneAnyMap(item.ShaderLayout)
+	}
+	setString(record, "shaderSource", item.ShaderSource)
+	if len(item.ShaderSourceFiles) > 0 {
+		record["shaderSourceFiles"] = cloneSceneStringMap(item.ShaderSourceFiles)
+	}
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
@@ -2421,10 +2524,18 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	if item.Static != nil {
 		record["static"] = *item.Static
 	}
+	if item.SharedAppearance {
+		record["sharedAppearance"] = true
+	}
 	if len(item.Instances) > 0 {
 		instances := make([]map[string]any, 0, len(item.Instances))
 		for _, inst := range item.Instances {
 			instRecord := map[string]any{}
+			setString(instRecord, "animation", inst.Animation)
+			setNumeric(instRecord, "animationTime", inst.AnimationTime)
+			if inst.AnimationLoop {
+				instRecord["animationLoop"] = true
+			}
 			if inst.ID != "" {
 				instRecord["id"] = inst.ID
 			}
@@ -2567,6 +2678,7 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setNumeric(record, "poolWidth", item.PoolWidth)
 	setNumeric(record, "poolHeight", item.PoolHeight)
 	setNumeric(record, "poolLength", item.PoolLength)
+	setBool(record, "renderPool", item.RenderPool)
 	setNumeric(record, "cornerRadius", item.CornerRadius)
 	setNumeric(record, "waveSpeed", item.WaveSpeed)
 	setNumeric(record, "damping", item.Damping)
@@ -2985,6 +3097,9 @@ func (item HTMLIR) legacyProps() map[string]any {
 	}
 	setString(record, "target", item.Target)
 	setString(record, "mode", item.Mode)
+	if item.Perspective {
+		record["perspective"] = true
+	}
 	setString(record, "className", item.ClassName)
 	setString(record, "fallback", item.Fallback)
 	setString(record, "fallbackReason", item.FallbackReason)
@@ -3178,6 +3293,8 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureIBL,
 	capability.FeatureEnvironmentMap,
 	capability.FeatureSkyEnvironment,
+	capability.FeatureSkyGradient,
+	capability.FeatureSkyPhysical,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3272,11 +3389,14 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 		seen[capability.FeatureIBL] = true
 	}
 
-	// sky-environment: the environment mode of an authored Sky. Gradient sky
-	// (the default and the degrade target) draws on every backend and raises
-	// nothing; see the row's doc comment in capability.go.
 	if skyRaisesEnvironmentFeature(ir.Environment.Sky) {
 		seen[capability.FeatureSkyEnvironment] = true
+	}
+	if skyRaisesGradientFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyGradient] = true
+	}
+	if skyRaisesPhysicalFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyPhysical] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

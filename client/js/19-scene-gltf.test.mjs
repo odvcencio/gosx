@@ -74,7 +74,23 @@ function createLoaderContext(options = {}) {
   sandbox.URL = options.urlAPI || { createObjectURL: () => "blob:fake" };
 
   const context = vm.createContext(sandbox);
-  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  if (options.sceneRuntime) {
+    for (const name of [
+      "10-runtime-primitives.ts",
+      "10-runtime-scene-utils.ts",
+      "11-scene-math.ts",
+      "12-scene-geometry.ts",
+      "13-scene-material.ts",
+    ]) {
+      vm.runInContext(readSource(name), context, { filename: name });
+    }
+    const core = readSource("10-runtime-scene-core.ts");
+    const marker = core.indexOf("// Scene3D shared API");
+    assert.ok(marker >= 0, "core shared API marker located");
+    vm.runInContext(core.slice(0, marker), context, { filename: "10-runtime-scene-core.ts" });
+  } else {
+    vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  }
   vm.runInContext(readSource("../runtime/scene3d/gltf.ts"), context, { filename: "gltf.ts" });
   return { context, sandbox, warnings };
 }
@@ -151,6 +167,51 @@ function extractSpecularTexturedMaterial(context, imageUri) {
   };
   return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
 }
+
+test("GLB PBR factors survive object normalization and material profiling", () => {
+  const { context } = createLoaderContext({ sceneRuntime: true });
+  const document = {
+    asset: { version: "2.0" },
+    images: [{ uri: "normal.png" }, { uri: "occlusion.png" }],
+    textures: [{ source: 0 }, { source: 1 }],
+    materials: [
+      {
+        pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] },
+        emissiveFactor: [0.8, 0.15, 0.05],
+        extensions: { KHR_materials_emissive_strength: { emissiveStrength: 4 } },
+      },
+      { pbrMetallicRoughness: { baseColorFactor: [0.9, 0.7, 0.3, 1] } },
+      { normalTexture: { index: 0, scale: 0 } },
+      { occlusionTexture: { index: 1, strength: 0 } },
+    ],
+  };
+  const raw = document.materials.map((_, index) => plain(call(context,
+    `gltfExtractMaterial(${JSON.stringify(document)}, ${index}, null)`)));
+  const normalized = raw.map((material, index) => plain(call(context,
+    `normalizeSceneObject(${JSON.stringify({ kind: "mesh", material })}, ${index}, null)`)));
+  const profile = (object) => plain(call(context,
+    `sceneObjectMaterialProfile(${JSON.stringify(object)})`));
+
+  assert.deepEqual(raw[0].emissiveColor, [0.8, 0.15, 0.05]);
+  assert.equal(raw[0].emissive, 4);
+  assert.deepEqual(raw[1].emissiveColor, [0, 0, 0]);
+  assert.equal(raw[1].emissive, 1);
+  assert.equal(raw[2].normalScale, 0);
+  assert.equal(raw[3].occlusionStrength, 0);
+
+  assert.deepEqual(normalized[0].emissiveColor, raw[0].emissiveColor);
+  assert.equal(normalized[0].emissive, 4);
+  assert.deepEqual(normalized[1].emissiveColor, [0, 0, 0]);
+  assert.equal(normalized[2].normalScale, 0);
+  assert.equal(normalized[3].occlusionStrength, 0);
+
+  const coloredProfile = profile(normalized[0]);
+  const darkProfile = profile(normalized[1]);
+  assert.deepEqual(coloredProfile.emissiveColor, [0.8, 0.15, 0.05]);
+  assert.equal(coloredProfile.emissive, 4);
+  assert.deepEqual(darkProfile.emissiveColor, [0, 0, 0]);
+  assert.notEqual(coloredProfile.key, darkProfile.key);
+});
 
 // --- KHR_materials_ior ------------------------------------------------------
 
@@ -772,6 +833,51 @@ test("gltf material without extensions keeps the base PBR mapping", () => {
   assert.equal(material.unlit, undefined);
 });
 
+test("omitted metallicFactor and roughnessFactor default to the spec value of 1.0", () => {
+  const { context } = createLoaderContext();
+  // pbrMetallicRoughness present but empty: an author who wants the fully
+  // rough, fully metallic default look omits both factors. The old fallback
+  // of 0.0 silently turned every such asset into plastic (metalness 0).
+  const empty = extractMaterial(context, { pbrMetallicRoughness: {} });
+  assert.equal(empty.roughness, 1.0);
+  assert.equal(empty.metalness, 1.0);
+
+  // No pbrMetallicRoughness block at all takes the same default path.
+  const none = extractMaterial(context, {});
+  assert.equal(none.roughness, 1.0);
+  assert.equal(none.metalness, 1.0);
+
+  // An explicit zero must still be preserved (never re-defaulted).
+  const zero = extractMaterial(context, {
+    pbrMetallicRoughness: { roughnessFactor: 0, metallicFactor: 0 },
+  });
+  assert.equal(zero.roughness, 0);
+  assert.equal(zero.metalness, 0);
+});
+
+test("normalTexture.scale and occlusionTexture.strength default to 1.0 and pass through", () => {
+  const { context } = createLoaderContext();
+  const defaults = extractMaterial(context, {
+    normalTexture: { index: 0 },
+    occlusionTexture: { index: 0 },
+  });
+  assert.equal(defaults.normalScale, 1.0);
+  assert.equal(defaults.occlusionStrength, 1.0);
+
+  const authored = extractMaterial(context, {
+    normalTexture: { index: 0, scale: 0.5 },
+    occlusionTexture: { index: 0, strength: 0.25 },
+  });
+  assert.equal(authored.normalScale, 0.5);
+  assert.equal(authored.occlusionStrength, 0.25);
+
+  // Materials with neither texture still get the neutral default so the
+  // renderer never uploads NaN/undefined uniforms.
+  const untextured = extractMaterial(context, {});
+  assert.equal(untextured.normalScale, 1.0);
+  assert.equal(untextured.occlusionStrength, 1.0);
+});
+
 test("glTF texture slots carry explicit color roles and transfer functions", () => {
   const { context } = createLoaderContext();
   const material = extractTexturedMaterial(context);
@@ -1002,16 +1108,46 @@ test("KHR_materials_anisotropy projects rotation onto the signed tangent axis", 
   assert.ok(Math.abs(between.anisotropy) < 1e-12, `expected 0, got ${between.anisotropy}`);
 });
 
-test("KHR_materials_emissive_strength scales the emissive factor above 1", () => {
+test("emissiveFactor maps to a colour, not a scalar dropped onto emissive", () => {
   const { context } = createLoaderContext();
+  // A red-only emissive on a material with no base colour texture must
+  // glow red, not the grey placeholder colour: emissiveColor carries the
+  // full triple, and emissive stays a pure strength multiplier (1 with no
+  // KHR_materials_emissive_strength extension).
   const base = extractMaterial(context, { emissiveFactor: [0.5, 0.25, 0] });
-  assert.equal(base.emissive, 0.5);
+  assert.deepEqual(base.emissiveColor, [0.5, 0.25, 0]);
+  assert.equal(base.emissive, 1);
 
+  // A material with no emissiveFactor at all still gets an explicit black
+  // triple (not undefined), so the renderer can tell "authored, zero" from
+  // "never set" without a truthiness check on a maybe-undefined field.
+  const none = extractMaterial(context, {});
+  assert.deepEqual(none.emissiveColor, [0, 0, 0]);
+  assert.equal(none.emissive, 1);
+});
+
+test("KHR_materials_emissive_strength sets the strength multiplier directly", () => {
+  const { context } = createLoaderContext();
+  // The strength extension no longer folds through max(emissiveFactor); it
+  // is carried as its own multiplier the shader applies to emissiveColor.
   const boosted = extractMaterial(context, {
     emissiveFactor: [0.5, 0.25, 0],
     extensions: { KHR_materials_emissive_strength: { emissiveStrength: 6 } },
   });
-  assert.equal(boosted.emissive, 3);
+  assert.deepEqual(boosted.emissiveColor, [0.5, 0.25, 0]);
+  assert.equal(boosted.emissive, 6);
+});
+
+test("emissiveFactor clamps malformed or out-of-range components independently", () => {
+  const { context } = createLoaderContext();
+  // A negative or non-finite component falls back to black in that channel
+  // alone; the other two valid channels still come through.
+  const clamped = extractMaterial(context, { emissiveFactor: [1.5, -1, "bad"] });
+  assert.deepEqual(clamped.emissiveColor, [1, 0, 0]);
+
+  // A malformed (too-short, non-array) factor falls back to black entirely.
+  assert.deepEqual(extractMaterial(context, { emissiveFactor: [0.2] }).emissiveColor, [0, 0, 0]);
+  assert.deepEqual(extractMaterial(context, { emissiveFactor: "red" }).emissiveColor, [0, 0, 0]);
 });
 
 test("KHR_materials_ior records the index of refraction", () => {
@@ -1622,12 +1758,14 @@ test("EXT_mesh_gpu_instancing draws one object per instance", () => {
     ({
       objects: scene.objects.length,
       ids: scene.objects.map(function(o) { return o.id; }),
+      wireframe: scene.objects.map(function(o) { return o.wireframe; }),
       firstCorners: scene.objects.map(function(o) {
         return [o.vertices.positions[0], o.vertices.positions[1], o.vertices.positions[2]];
       })
     });
   `));
   assert.equal(result.objects, 3, "three instance translations must draw three objects");
+  assert.deepEqual(result.wireframe, [false, false, false], "untextured imported triangles stay solid");
   assert.deepEqual(result.ids, ["tri-prim-0-inst-0", "tri-prim-0-inst-1", "tri-prim-0-inst-2"]);
   assert.deepEqual(result.firstCorners, [[0, 0, 0], [10, 0, 0], [0, 0, 10]]);
 });

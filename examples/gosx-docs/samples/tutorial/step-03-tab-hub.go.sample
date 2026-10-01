@@ -1,0 +1,13 @@
+package app
+
+import "m31labs.dev/gosx/hub"
+
+var TabHub = hub.New("tutorial-tabs")
+
+func init() {
+	broadcastPresence := func(ctx *hub.Context) {
+		ctx.Hub.Broadcast("presence", ctx.Hub.Presence().Count())
+	}
+	TabHub.On("join", broadcastPresence)
+	TabHub.On("leave", broadcastPresence)
+}

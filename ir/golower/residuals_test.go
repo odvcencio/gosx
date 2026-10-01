@@ -1,12 +1,5 @@
-// Slice Y.E.3 — failing-first tests for the three syntax residuals
-// Y.D's retrospective handed off: SwitchStmt, SliceExpr, and the
-// `[]T(x)` ArrayType cast.
-//
-// Per Y.D's handoff note these are NOT in Y.E's plan-defined scope
-// (the plan parked them under "residuals" and left a Y.G micro-slice
-// open). Y.E folds them in because we're already touching expr.go
-// (for OpHostCall) and stmt.go (potentially) — adding the three
-// handlers in the same slice avoids a tiny follow-up slice.
+// Failing-first tests for three syntax residuals: SwitchStmt,
+// SliceExpr, and the `[]T(x)` ArrayType cast.
 //
 // Patterns pinned here:
 //
@@ -16,8 +9,8 @@
 //   4. ArrayType cast: `[]rune(s)[:n]` rune conversion + slice
 //   5. ArrayType cast + len: `len([]rune(label)) > 24` in graph_surface.go
 //
-// At Y.E.3.1 each lowering call still fails. Y.E.3.2-4 add handlers
-// for each; Y.E.3.5 marks PASS.
+// Before this, each lowering call still fails. Handlers added
+// for each of the patterns above make these tests PASS.
 
 package golower
 
@@ -103,7 +96,7 @@ func F(t string) int {
 }
 
 // TestLowerSliceExpr verifies `s[i:j]` lowers through OpSlice (already
-// exists for the X.B intrinsic family). graph_surface.go's draw handler
+// exists for the stdlib intrinsic family). graph_surface.go's draw handler
 // uses `string([]rune(label)[:22])` — the slice expression is the
 // `[:22]` part.
 func TestLowerSliceExpr(t *testing.T) {
@@ -153,7 +146,7 @@ func F(s string) int {
 
 // TestLowerAddressOfDropsThrough verifies that `&x` lowers to the
 // underlying expression (composite reference semantics already
-// propagate through Value.Map()/Items per Y.C/Y.D; the explicit `&`
+// propagate through Value.Map()/Items; the explicit `&`
 // has no additional opcode-level meaning in the supported subset).
 // Mirrors graph_surface.go's Mount handler: `ctx.PropsInto(&props)`.
 func TestLowerAddressOfDropsThrough(t *testing.T) {

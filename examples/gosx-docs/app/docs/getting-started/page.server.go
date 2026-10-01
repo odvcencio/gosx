@@ -1,26 +1,29 @@
 package docs
 
 import (
-	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
 
 func init() {
-	docs.RegisterDocsPage("Getting Started", "Set up a GoSX project from scratch in under a minute.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Getting Started", "GoSX is a Go framework for server-rendered web apps.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
+				"sample001":   docsapp.DocSample("getting-started/quickstart-install.bash.sample"),
+				"sample002":   docsapp.DocSample("getting-started/quickstart-init.bash.sample"),
+				"sample003":   docsapp.DocSample("getting-started/quickstart-run.bash.sample"),
+				"sample004":   docsapp.DocSample("getting-started/code-003.text.sample"),
+				"sample005":   docsapp.DocSample("getting-started/code-007.bash.sample"),
+				"sample006":   docsapp.DocSample("getting-started/quickstart-page.gosx.sample"),
 				"mode":        "light",
 				"title":       "Getting Started",
-				"description": "Set up a GoSX project from scratch in under a minute.",
-				"tags":        []string{"quickstart", "init", "setup"},
+				"description": "GoSX is a Go framework for server-rendered web apps.",
 				"toc": []map[string]string{
-					{"href": "#overview", "label": "Overview"},
-					{"href": "#install", "label": "Install"},
-					{"href": "#create-a-project", "label": "Create a Project"},
-					{"href": "#project-structure", "label": "Project Structure"},
-					{"href": "#authoring-styles", "label": "Authoring Styles"},
-					{"href": "#dev-server", "label": "Dev Server"},
-					{"href": "#next-steps", "label": "Next Steps"},
+					{"href": "#quickstart-heading", "label": "Start"},
+					{"href": "#prerequisites", "label": "Prerequisites"},
+					{"href": "#timing", "label": "Measured time"},
+					{"href": "#troubleshooting", "label": "Troubleshooting"},
+					{"href": "#project-files", "label": "Project files"},
 				},
 			}, nil
 		},

@@ -12,7 +12,18 @@
   src: url('/fonts/SpaceGrotesk-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: 'Space Grotesk Fallback';
+  src: local('Arial');
+  font-weight: 700;
+  font-style: normal;
+  size-adjust: 100%;
+  ascent-override: 98.4%;
+  descent-override: 29.2%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -20,7 +31,7 @@
   src: url('/fonts/Inter-400.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
 }
 
 @font-face {
@@ -28,7 +39,7 @@
   src: url('/fonts/Inter-500.woff2') format('woff2');
   font-weight: 500;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
 }
 
 @font-face {
@@ -36,7 +47,40 @@
   src: url('/fonts/Inter-600.woff2') format('woff2');
   font-weight: 600;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  font-weight: 400;
+  font-style: normal;
+  size-adjust: 106.6%;
+  ascent-override: 96.875%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  font-weight: 500;
+  font-style: normal;
+  size-adjust: 106.9%;
+  ascent-override: 96.875%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  font-weight: 600;
+  font-style: normal;
+  size-adjust: 100.8%;
+  ascent-override: 96.875%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -44,73 +88,121 @@
   src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Fallback';
+  src: local('Courier New');
+  font-weight: 400;
+  font-style: normal;
+  size-adjust: 100%;
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
 }
 
 /* ------------------------------------------------------------
-   Design tokens — dark mode defaults
+   Shared site design tokens
    ------------------------------------------------------------ */
 
 :root {
-  /* Colors */
-  --bg: #000000;
-  --surface: rgba(255, 255, 255, 0.03);
-  --surface-hover: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-hover: rgba(255, 255, 255, 0.12);
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.70);
-  --text-muted: rgba(255, 255, 255, 0.52);
-  --accent: #D4AF37;
-  --accent-deep: #c9a227;
-  --accent-glow: hsla(46, 65%, 53%, 0.3);
-  --accent-soft: rgba(212, 175, 55, 0.10);
-  --accent-line: rgba(212, 175, 55, 0.35);
-  --chrome-dark: #C0C0C0;
-  --chrome-light: #E8E8E8;
+  color-scheme: dark;
 
-  /* Typography — font families */
-  --font-display: 'Space Grotesk', sans-serif;
-  --font-body: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  /* Color */
+  --color-canvas: #070809;
+  --color-surface: #101214;
+  --color-surface-raised: #181b1e;
+  --color-text: #f7f7f4;
+  --color-text-secondary: #c7c7c2;
+  --color-text-muted: #a5a6a3;
+  --color-accent: #d4af37;
+  --color-accent-deep: #c9a227;
+  --color-accent-soft: rgba(212, 175, 55, 0.12);
+  --color-accent-line: rgba(212, 175, 55, 0.42);
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+  --color-backdrop: rgba(0, 0, 0, 0.72);
+  --color-stage: #090b0d;
+  --color-stage-text: #f7f7f4;
+  --color-stage-muted: #c7c7c2;
+  --color-stage-accent: #d4af37;
+  --chrome-dark: #c0c0c0;
+  --chrome-light: #e8e8e8;
 
-  /* Typography — fluid scale */
-  --text-hero: clamp(2.5rem, 5vw + 1rem, 4.768rem);
-  --text-h2: clamp(1.728rem, 1.54rem + 0.98vw, 2.441rem);
-  --text-h3: clamp(1.44rem, 1.3rem + 0.72vw, 1.953rem);
-  --text-body: clamp(1rem, 0.93rem + 0.38vw, 1.25rem);
-  --text-small: clamp(0.833rem, 0.78rem + 0.28vw, 1rem);
-
-  /* Typography — line heights */
+  /* Typography */
+  --font-display: 'Space Grotesk', 'Space Grotesk Fallback', sans-serif;
+  --font-body: 'Inter', 'Inter Fallback', sans-serif;
+  --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback', monospace;
+  --type-xs: 0.75rem;
+  --type-sm: clamp(0.833rem, 0.78rem + 0.28vw, 1rem);
+  --type-base: clamp(1rem, 0.93rem + 0.38vw, 1.25rem);
+  --type-lg: 1.25rem;
+  --type-xl: 1.5625rem;
+  --type-2xl: 1.953rem;
+  --type-3xl: clamp(2.25rem, 1.9rem + 1.5vw, 3.052rem);
+  --type-hero: clamp(2.5rem, 5vw + 1rem, 4.768rem);
+  --type-h2: clamp(1.728rem, 1.54rem + 0.98vw, 2.441rem);
+  --type-h3: clamp(1.44rem, 1.3rem + 0.72vw, 1.953rem);
   --lh-headline: 1.1;
   --lh-body: 1.6;
   --lh-prose: 1.7;
   --lh-code: 1.65;
-
-  /* Typography — letter spacing */
   --ls-headline: -0.02em;
   --ls-display: -0.03em;
-  --ls-label: 0.05em;
+  --ls-label: 0;
 
-  /* Spacing — fluid */
-  --space-xs: clamp(0.75rem, 0.68rem + 0.33vw, 0.9375rem);
-  --space-sm: clamp(1rem, 0.91rem + 0.43vw, 1.25rem);
-  --space-md: clamp(1.5rem, 1.37rem + 0.65vw, 1.875rem);
-  --space-lg: clamp(2rem, 1.83rem + 0.87vw, 2.5rem);
-  --space-xl: clamp(3rem, 2.74rem + 1.3vw, 3.75rem);
-  --space-2xl: clamp(4rem, 3.65rem + 1.74vw, 5rem);
-  --space-3xl: clamp(6rem, 5.48rem + 2.61vw, 7.5rem);
+  /* Spacing */
+  --space-xs: clamp(0.5rem, 0.45rem + 0.2vw, 0.75rem);
+  --space-sm: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
+  --space-md: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
+  --space-lg: clamp(1.5rem, 1.3rem + 0.8vw, 2rem);
+  --space-xl: clamp(2rem, 1.7rem + 1.25vw, 3rem);
+  --space-2xl: clamp(3rem, 2.5rem + 2vw, 4rem);
+  --space-3xl: clamp(4rem, 3rem + 4vw, 6rem);
+
+  /* Shape and elevation */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-pill: 100vmax;
+  --elevation-panel: 0 1rem 3rem rgba(0, 0, 0, 0.28);
+  --elevation-popover: 0 1.5rem 4rem rgba(0, 0, 0, 0.52);
 
   /* Motion */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out: var(--ease-out-expo);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
-  --duration-fast: 200ms;
-  --duration-normal: 300ms;
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-standard: var(--duration-normal);
+  --duration-reveal: 300ms;
   --duration-slow: 500ms;
   --duration-slower: 800ms;
+  --site-nav-offset: 4.5rem;
 
-  /* Code syntax — always dark */
+  /* Existing site names remain aliases for current pages and components. */
+  --bg: var(--color-canvas);
+  --surface: rgba(255, 255, 255, 0.035);
+  --surface-hover: rgba(255, 255, 255, 0.07);
+  --border: var(--color-border);
+  --border-hover: var(--color-border-strong);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --accent: var(--color-accent);
+  --accent-deep: var(--color-accent-deep);
+  --accent-glow: hsla(46, 65%, 53%, 0.3);
+  --accent-soft: var(--color-accent-soft);
+  --accent-line: var(--color-accent-line);
+  --text-hero: var(--type-hero);
+  --text-h2: var(--type-h2);
+  --text-h3: var(--type-h3);
+  --text-body: var(--type-base);
+  --text-small: var(--type-sm);
+
+  /* Existing syntax palette is part of the shared code surface. */
   --code-bg: rgba(10, 10, 10, 0.95);
   --code-border: rgba(255, 255, 255, 0.08);
   --code-text: rgba(255, 255, 255, 0.85);
@@ -118,28 +210,21 @@
   --code-string: #b8e986;
   --code-number: #8ddae8;
   --code-type: #ffd88f;
-  --code-comment: #728292;
+  --code-comment: #9ca6af;
   --code-function: #d4af37;
   --code-property: #e8e8e8;
-  --code-operator: rgba(255, 255, 255, 0.60);
-  --code-punctuation: rgba(255, 255, 255, 0.50);
-}
+  --code-operator: rgba(255, 255, 255, 0.7);
+  --code-punctuation: rgba(255, 255, 255, 0.65);
 
-/* ------------------------------------------------------------
-   Light mode overrides
-   ------------------------------------------------------------ */
-
-.light {
-  --bg: #FAFAF8;
-  --surface: rgba(0, 0, 0, 0.03);
-  --surface-hover: rgba(0, 0, 0, 0.06);
-  --border: rgba(0, 0, 0, 0.10);
-  --border-hover: rgba(0, 0, 0, 0.16);
-  --text-primary: #1a1a18;
-  --text-secondary: #4a4a46;
-  --text-muted: #6B6B65;
-  --accent: #8B6914;
-  --accent-deep: #7A5B0E;
+  /* Previous page names now point at the shared system. */
+  --color-text-primary: var(--color-text);
+  --demo-bg: var(--color-canvas);
+  --demo-fg: var(--color-text);
+  --demo-muted: var(--color-text-muted);
+  --demo-hair: var(--color-border);
+  --demo-hair-strong: var(--color-border-strong);
+  --demo-accent: var(--color-accent);
+  --demo-site-nav-offset: var(--site-nav-offset);
 }
 
 /* ------------------------------------------------------------
@@ -262,11 +347,10 @@ video {
 
 .kicker {
   display: block;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-small);
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 /* ------------------------------------------------------------
@@ -448,14 +532,12 @@ pre code {
 
 .cap-tag {
   display: inline-block;
-  padding: 0.25em 0.75em;
+  padding: 0.25em 0.6em;
   font-size: var(--text-small);
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: var(--ls-label);
-  border: 1px solid var(--border);
-  border-radius: 2rem;
-  color: var(--text-muted);
+  font-family: var(--font-body);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--accent-soft);
 }
 
 /* ------------------------------------------------------------
@@ -549,4 +631,57 @@ button:active, .btn:active, [type="submit"]:active {
     opacity: 1;
     transform: none;
   }
+}
+
+/* Interface labels use the shared body face; mono stays with technical values. */
+.code-sample__label,
+.stat-card__label {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.docs-section .docs-grid :is(
+  .docs-guide-index small,
+  .docs-guide-group h2,
+  .docs-page-toc > p,
+  .docs-header__live-kicker,
+  .doc-scene__eyebrow,
+  .doc-scene__fallback,
+  .doc-scene__facts dt,
+  .docs-search__eyebrow,
+  .docs-directory__eyebrow,
+  .docs-search__hint,
+  .docs-search__clear,
+  .docs-result__meta,
+  .docs-result__provenance,
+  .typed-proof__kicker,
+  .typed-proof__row span,
+  .site-guide__flow span,
+  .site-guide__proofs article > span,
+  .engines-cap-group__title,
+  .islands-arch__col strong
+) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.docs-section .docs-grid .docs-tag {
+  padding-inline: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-family: var(--font-body);
+}
+
+.docs-section .docs-grid .docs-footer__link::before {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.docs-section .docs-grid .doc-scene__mount[data-gosx-scene3d-renderer]::after {
+  display: none;
 }

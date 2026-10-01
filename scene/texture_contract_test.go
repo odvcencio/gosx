@@ -61,7 +61,7 @@ func TestSceneIRCarriesExplicitTextureColorRoles(t *testing.T) {
 	}
 }
 
-func TestSceneIRCarriesNormalizedHDRIBLProductsWithoutCapabilityClaim(t *testing.T) {
+func TestSceneIRCarriesNormalizedHDRIBLProductsWithGPUCapabilities(t *testing.T) {
 	props := Props{
 		Environment: Environment{
 			EnvironmentMap: "/env/studio.hdr",
@@ -107,15 +107,12 @@ func TestSceneIRCarriesNormalizedHDRIBLProductsWithoutCapabilityClaim(t *testing
 
 	// capability.Supports reads the global Matrix, not this scene's authored
 	// descriptors — carrying a well-formed IBL block here must not itself move
-	// the renderer-truth cell. WebGPU claims the feature because
-	// syncEnvironmentIBL consumes any valid descriptor unconditionally; WebGL2
-	// stays false because its consumer gates on >= 18 fragment texture units
-	// regardless of what a scene authors. See scene/capability/capability.go.
+	// the renderer capability. Both GPU backends now consume valid IBL products.
 	if !capability.Supports(capability.BackendWebGPU, capability.FeatureIBL) {
 		t.Fatal("WebGPU must claim ibl capability unconditionally, independent of any one scene's descriptors")
 	}
-	if capability.Supports(capability.BackendWebGL, capability.FeatureIBL) {
-		t.Fatal("carrying IBL descriptors must not advertise WebGL2 capability; the gate is a fragment-texture-unit count")
+	if !capability.Supports(capability.BackendWebGL, capability.FeatureIBL) {
+		t.Fatal("WebGL2 must advertise IBL after depth-array shadows remove the sampler limit")
 	}
 }
 

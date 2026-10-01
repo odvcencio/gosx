@@ -2,6 +2,448 @@
 
 ## Unreleased
 
+### Added: opt-in Scene3D walking
+
+- Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
+  sliding, world bounds, slope and wading limits, sprint, and optional head bob.
+- Support pointer lock, focused keyboard navigation, simultaneous touch movement
+  and look, optional gamepads, and declarative camera reset buttons. Walking
+  loads a separate chunk only for scenes with walk props; existing controls keep
+  their behavior and browser defaults stay out of Go's JSON output.
+
+### Added: desktop update prompt
+
+- Add `App.OfferSignedUpdate` to check signed updates, prompt before opening
+  allowlisted download pages, and avoid host-specific check/confirm/open code.
+
+### Added: desktop rotating log files
+
+- Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
+  rotating log file.
+- Rotate before writes exceed the configured size, keeping the newest rotated
+  files as `Name.1.log` through `Name.<Keep>.log`.
+### Added: Azure Artifact Signing for desktop packages
+
+- Add `gosx desktop package --sign-provider azure-artifact-signing` with
+  SignTool or jsign, non-secret configuration, Authenticode verification, and
+  signing metadata. Sign staged PE files, the uninstaller, and per-user Setup.
+- Add `gosx desktop verify-signature`, a fake-tool CI packaging test, a gated
+  Azure release signing check, and [desktop code-signing documentation](docs/desktop-code-signing.md).
+
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
+### Added: desktop window placement
+
+- Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
+  bounds and maximized state across launches.
+- Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
+  provides the placement before the window is destroyed.
+
+### Added: desktop window handle, focus events, message box
+
+- Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
+  own window by title to call Win32 APIs.
+- Add `Options.OnFocusChanged(focused bool)`, fired from `WM_ACTIVATE` when
+  focus changes. With `NativeBridge`, the page also receives a
+  `gosx.window.focus` event with `{focused}`.
+- Add `desktop.ShowMessage` (works before `New`) and `App.ShowMessage`
+  (owned by the app window): info, warning, error, and question icons;
+  OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
+  it as `gosxDesktop.dialog.message`.
+
+### Added: physical sky for Scene3D
+
+- `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
+  scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`
+  (`scene.SunDirectionFromAngles` helps), `Turbidity`, `Rayleigh`,
+  `MieCoefficient`, `MieDirectionalG` and `SunDiskRadius`; zero means the
+  default. `Sky.PhysicalRadiance` evaluates the same model in Go, and
+  `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
+  Canvas2D gets gradient stops computed from the model. Capability
+  `sky-physical`.
+
+
+
+### Fixed and added: desktop single instance
+
+- Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
+  Windows session, so a second user signed in to the same PC could not start
+  the app. It is now `Local\gosx-<appID>` (one per session).
+- Add `desktop.AcquireSingleInstance(appID)` and `desktop.InstanceLock`, so an
+  app can reserve its ID at the top of `main`, before its own startup work,
+  and `desktop.ForwardToFirstInstance(appID, args, workingDir)`, which hands a
+  later launch to the running window (waiting up to 10 s for it to appear).
+  `Options.SingleInstance` reuses a lock the process already holds.
+- The running instance now restores its window if it is minimized, and the
+  forwarding process grants it foreground rights (`AllowSetForegroundWindow`)
+  so the window can come to the front.
+### Added: desktop sidecar processes
+
+- Add `desktop/sidecar`: `sidecar.Start` runs a helper process (a local game
+  server, an audio engine) without a console window, copies its output to a
+  writer, and returns once a stdout line matches `ReadyLine` (the first
+  submatch, such as a listen address, is returned by `Ready`) or `ReadyURL`
+  answers. On Windows the process starts suspended, joins a Job Object, and
+  then resumes, so it and anything it starts end when the app exits or
+  crashes. On Linux a crashed app's sidecar gets SIGKILL, but processes the
+  sidecar started do not (no unprivileged Job Object equivalent). `Stop` sends SIGTERM first on Unix, then kills the job or
+  process group after the grace period, including children that ignored
+  SIGTERM after the main process exited. On Unix, children left behind when
+  the sidecar exits on its own are killed too, as the Job Object does on
+  Windows.
+### Added: desktop permission requests
+
+- Add `Options.OnPermissionRequested`. It receives each browser permission
+  request (kind, origin, and whether a user gesture started it) and returns
+  `PermissionAllow`, `PermissionDeny`, or `PermissionAsk` (WebView2's own
+  prompt, the behavior without a handler). WebView2 reports Web MIDI requests,
+  including `requestMIDIAccess({sysex: false})`, as `PermissionMIDISysex`;
+  before this, a desktop app's Web MIDI request waited on a prompt.
+
+### Fixed: desktop WebView calls from goroutines
+
+- `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,
+  `OpenDevTools`, `PrependBootstrapScript`, and `Serve` now run on the window
+  thread when called from another goroutine. WebView2 rejects calls from
+  other threads with HRESULT 0x802A000C, so, for example, a host that
+  reloaded the page or pushed an event from a background goroutine failed
+  silently. Calls made on the window thread still run directly. If the
+  window thread cannot be woken, the call returns an error instead of running
+  off-thread. Bursts of calls post one wake message. After the window closes
+  and the WebView is released, calls that need a live WebView (`Reload`,
+  `PostMessage`, `ExecuteScript`, `OpenDevTools`) return "webview not ready";
+  `Navigate`, `SetHTML`, `PrependBootstrapScript`, and `Serve` store their
+  value and return nil.
+### Added: WebView2 GPU selection; fixed: operator browser arguments were dropped
+
+- Add `Options.GPU` (`GPUPreferenceHighPerformance`, `GPUPreferenceLowPower`,
+  or one adapter by `AdapterLUID`) and `desktop.GPUAdapters()`, which lists the
+  hardware DXGI adapters and their LUIDs. `gosx desktop --gpu` sets the
+  preference.
+- Fix: a desktop app that set `AdditionalBrowserArguments` replaced any
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` value already in the environment,
+  so operator and test overrides (for example a GPU adapter) were ignored.
+  The app's switches now come first and the operator's value last; an
+  operator GPU switch replaces the app's GPU switch.
+- `Options.MuteAudio` now also passes `--mute-audio`, which silences Web
+  Audio as well as media elements.
+### Added: desktop startup timeline, navigation event, and background color
+
+- Add `App.StartupTimeline()`, which reports when the window was created and
+  shown, when the WebView2 environment and controller were ready, and when the
+  first navigation finished, measured from `desktop.New`.
+- Add `Options.OnNavigationCompleted` (navigation ID, success, and WebView2
+  web error status).
+- Add `Options.BackgroundColor` (`#RGB` or `#RRGGBB`). It paints the native
+  window before WebView2 covers it, removing the white frame a dark app showed
+  for the first 200-450 ms, and sets the WebView2 controller's default
+  background.
+
+### Added: signed direct-download update checks
+
+- Add `App.CheckSignedUpdate` for the `latest.json` feed produced by
+  `gosx desktop package`. It verifies the detached Ed25519 signature, matches
+  the app and channel, and returns newer-version notes and a download page.
+- Persist check attempts in an app-selected state file and skip checks when
+  disabled, before startup completes, while offline, or within 24 hours of the
+  previous attempt. This path only notifies; players reinstall Setup to
+  upgrade. The existing `App.UpdateCheck()` / `App.UpdateApply()` MSIX feed
+  behavior is unchanged.
+
+### Added: per-user Windows desktop installer and packager
+
+- Add `gosx desktop package` to build a GUI Setup executable, a portable ZIP,
+  per-file SHA-256 manifest, direct-download update manifest and package
+  metadata from Linux without cgo or a third-party installer toolchain.
+- Setup verifies its payload before extraction, stages upgrades beside the
+  current install, creates a per-user Start menu shortcut and HKCU Uninstall
+  entry, and preserves the old version if extraction fails. The uninstaller
+  asks before deleting the app-selected data directory; it keeps player data
+  by default. Setup refuses to replace non-empty folders without a matching
+  app ID record, and each packaged uninstaller only removes its matching
+  install folder outside protected roots.
+- The packager downloads Microsoft's Evergreen WebView2 bootstrapper when no
+  local path is configured and records the downloaded file's SHA-256. Code
+  signing remains a command-template step and unsigned builds say so in
+  `package-metadata.json`.
+- Add `desktop.Options.MuteAudio` and `gosx desktop --mute-audio` for Windows
+  smoke apps that should mute HTML audio and video.
+
+### Added: Windows WebView2 shipping controls
+
+- `WebView2RuntimeVersion` reports the selected Evergreen or Fixed Version
+  runtime. `ErrWebView2LoaderUnavailable` and
+  `ErrWebView2RuntimeUnavailable` distinguish missing dependencies while
+  preserving `errors.Is(err, ErrWebView2Unavailable)`.
+- `Options.BrowserExecutableFolder` selects a Fixed Version runtime.
+  `Options.AdditionalBrowserArguments` sets the documented
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment
+  creation. WebView2 environment variables are process-wide and apply to every
+  WebView2 environment in the process.
+- Production mode disables browser accelerator keys, zoom controls, and the
+  status bar; Debug mode keeps them enabled. `Options.OnProcessFailed` reports
+  WebView2 failure kinds, and `App.Reload` lets the app choose a recovery.
+- HTML `requestFullscreen()` switches the window to borderless fullscreen on
+  its monitor and restores the earlier window state when fullscreen ends.
+  The executable's first icon resource supplies the window's large and small
+  icons when one is present.
+### Fixed: Windows WebView2 shuts down before the desktop app closes
+
+- Retain the environment and controller references returned to asynchronous
+  WebView2 callbacks, then release each owned reference during failure cleanup
+  or normal window teardown. Keep event handlers alive for their registered
+  lifetime and unregister them before closing the controller.
+- The Go COM handlers now accept only `IUnknown` and their own WebView2 handler
+  interface IDs. Unsupported queries clear the output pointer and return
+  `E_NOINTERFACE`.
+- Add `make test-desktop-windows-smoke` for a WSL-to-Windows runtime check of
+  WebGL2, `chrome.webview`, the native bridge, WebView2 process lifetime, and
+  clean window shutdown.
+
+### Added: GPU-driven instancing for the WebGPU renderer
+
+- `scene.Props.GPUDriven` hands every opaque `InstancedMesh` without an
+  authored cull kernel to one GPU-driven host. One compute dispatch per view
+  culls every instance (camera, and each shadow light), and each mesh draws
+  with one indirect draw that pulls its instance record from a storage
+  buffer. Per-instance colors now survive GPU culling.
+- `GPUDriven.Occlusion` adds two-phase hierarchical-Z occlusion culling.
+  The cull and Hi-Z kernels are authored once in Elio and embedded as WGSL.
+- The mode changes no pixels. WebGL, Canvas and headless rendering ignore it.
+  The mount publishes `data-gosx-scene3d-webgpu-gpu-driven-*` telemetry, and
+  the Scene3D Bench gains `gpu-driven` and `instanced-classic` workloads.
+
+### Fixed: instanced meshes no longer allocate GPU state every frame
+
+- The render bundle hands the WebGPU renderer a fresh copy of each instanced
+  mesh every frame. The renderer cached its uniform buffer and bind group on
+  that copy, so it created both again every frame and never replayed its
+  render bundle. The cache is now keyed by mesh id.
+
+## v0.57.1 (2026-09-24)
+
+### Fixed: computed-pose morph priors and stale WebGPU output buffers
+
+- Computed-pose morphing now publishes the correct source arrays before
+  each blend, and reuses the existing morph record instead of replacing it
+  on every event.
+- The WebGPU renderer no longer reuses output buffers that belong to a
+  destroyed device, so a scene with computed morphs keeps a valid render
+  cache after a device change.
+
+### Fixed: WebGPU point-sprite flat interpolation
+
+- Mark the point-sprite `color`, `fogFactor`, `alpha`, and `pointSize`
+  varyings `@interpolate(flat)` in the WebGPU shader source. Perspective
+  interpolation of these per-point values produced wrong colors and sizes
+  at the fragment stage; `pointCoord` still interpolates normally.
+
+### Added: custom per-vertex float BufferAttributes for Selena shaders
+
+- Authored Selena shaders can now declare named custom BufferAttributes on
+  scene geometry. The Go scene package validates each stream's name, item
+  size, length, and values, and fails closed on any malformed stream
+  instead of drawing a partial mesh.
+- Both the WebGL2 and WebGPU Selena paths bind the validated streams. A
+  Selena material with an effectively identity model matrix can now reach
+  the retained draw path; other custom-shader materials keep the existing
+  world-baked fallback.
+- A stream named `__proto__` survives normalization: custom attribute
+  names route through a null-prototype map instead of a plain object.
+
+### Added: opt-in hub permessage-deflate compression
+
+- Add `Hub.EnableCompression` to negotiate permessage-deflate (RFC 7692) on
+  WebSocket upgrade, and a matching client-side `Options.EnableCompression`
+  for the native transport. Compression stays off by default, since it
+  trades CPU time for bandwidth on every message.
+- Add `Hub.CompressionLevel` to select the flate level from -2
+  (HuffmanOnly) to 9 (BestCompression). An out-of-range value falls back to
+  the default level and logs a warning instead of failing the connection.
+
+### Added: perspective spot-light shadows
+
+- WebGL2 and WebGPU now render and sample one perspective shadow map per
+  valid shadow-casting spot light. Both backends share two deterministic
+  authored-order shadow-light slots with directional lights.
+- Shadow projection validation fails closed for a non-finite input, a zero
+  direction, a half-angle at or above pi/2, or an ill-conditioned
+  projection, instead of producing an incorrect shadow.
+
+### Fixed: glTF material shading parity between WebGL2 and WebGPU
+
+- `metallicFactor` and `roughnessFactor` now default to the glTF spec
+  value of 1.0, not 0.0. The old default turned every asset that omitted
+  these factors into plastic.
+- `emissiveFactor` carries through as a color, not a scalar tinted by
+  albedo, so a red-only emissive on a blue surface glows red.
+- `normalTexture.scale` and `occlusionTexture.strength` now reach both
+  renderers; previously both fields were ignored.
+- The environment equirect map now decodes as sRGB instead of linear,
+  removing an ambient light level that was about 2.7 times too bright.
+- WebGL2 samples the environment map by mip level for diffuse and specular
+  reflection, so rough surfaces blur into the environment.
+- Exposure now applies exactly once. The WebGL2 shader previously applied
+  exposure again inside an active tone-mapping post-processing pass.
+- Add an opt-in rim-light term (`rimColor`, `rimPower`, `rimStrength`) to
+  `StandardMaterial`, off by default, on both renderers.
+
+### Added: adaptive vsync-divisor frame pacing
+
+- Add the `FramePacing` prop to `scene.Props`, with the recognized value
+  `"vsync-divisor"`. An empty or unknown value keeps the existing
+  fixed-interval pacing, so current scenes render unchanged.
+- A scene with `FramePacing: "vsync-divisor"` renders on every k-th display
+  tick instead of a millisecond threshold, so the paced rate is an exact
+  fraction of the display refresh rate. A fixed millisecond cap cannot
+  divide every refresh rate evenly; on a 100 Hz display, a 50 fps cap
+  produced an uneven 40 to 48 fps.
+- The governor picks an integer divisor from 1 to 4 from an estimated
+  render cost, and commits a new divisor only after a stable streak of 12
+  ticks, so the paced rate does not flap at a divisor boundary.
+- `MaxFrameRate`, `MaxFPS`, and `FrameIntervalMS` still bound the paced
+  rate from above; an authored cap raises the divisor when it needs a
+  larger one.
+
+## v0.57.0 (2026-09-23)
+
+### Breaking: turboquant v0.2.1 changes stored vector output; pre-upgrade values fail closed
+
+- Upgrade `m31labs.dev/turboquant` from v0.2.0 to v0.2.1 and move its import
+  path from `github.com/odvcencio/turboquant` to `m31labs.dev/turboquant`.
+  Version 0.2.1 changes `NewWithSeed`'s default rotation from one
+  Walsh-Hadamard round to three, fixing a codebook defect at dimension 1024
+  and above. The same seed now produces different quantizer output.
+- `crdt.VectorValue` now tags every packed payload with the
+  `vectorQuantFormatV1` format marker. `Value.Vector()` checks that tag and
+  the tagged payload's exact expected length before it decodes, and fails
+  closed to `nil` for a payload that predates the tag, or otherwise does not
+  match, instead of returning a silently wrong vector.
+- A vector value persisted in a `crdt.Doc` snapshot or a
+  `workspace.Workspace.Save` output before this upgrade has no in-place
+  migration. After upgrading past this release, re-embed and re-write each
+  such value (`WriteVector`) from its original source; do not resume it from
+  the stored snapshot.
+
+### Added: opt-in scroll camera cadence and a renderer-owned camera-proximity signal
+
+- Add `ScrollFrameRate` to `scene.Props`. A scene keeps a low idle
+  `MaxFrameRate` and raises the cadence only while scroll input is active.
+  A zero value keeps the authored idle cadence, so existing scenes do not
+  change.
+- Add a renderer-owned `cameraProximity` reserved auto-uniform: the clamped,
+  smoothed scroll progress in `[0,1]`, or `0` with no scroll range. Both the
+  WebGL and WebGPU paths resolve it before material values and custom
+  uniforms, so an authored `param cameraProximity` cannot shadow it.
+
+### Documentation: retroactively record a prior breaking change
+
+- Record in this changelog, next to where it belongs by version, that
+  `server.NavigationScript` and `server.NavigationScriptWithNonce` were
+  removed in favor of `app.EnableNavigation`, and that
+  `ManagedScriptOptions.Load` and its fetch/eval loading mode were removed.
+  The code change shipped in an earlier release; this entry closes the gap
+  in its documentation. Compose the document shell through
+  `server.HTMLDocument(*server.DocumentContext)`, which threads the CSP
+  nonce through navigation, inline helpers, and managed scripts.
+
+## v0.56.10 (2026-09-22)
+
+### Added: retained Scene3D pose frames
+
+- Go/WASM clients can send versioned binary transform and animation frames to mounted InstancedGLBMesh batches. Stable actor membership updates the retained renderer directly, bypassing the JSON actor declaration and Scene3D command planner on those frames.
+- Membership and appearance changes still use ordered typed scene commands. A bounded latest-frame queue carries pending membership declarations forward, reports rejection and supersession through telemetry, and never blocks the animation-frame callback.
+
+### Added: versioned browser runtime release bundle
+
+- Governed releases now publish the complete browser runtime alongside CLI binaries, including all WASM variants, generated JavaScript chunks, compression sidecars, a per-file manifest, and exact tag/commit provenance. The release verifies the bundle and includes its digest in checksums.txt so applications can install an immutable runtime without recompiling TinyGo.
+
+## v0.56.9 (2026-09-21)
+
+### Improved: build world-mesh attributes in typed storage
+
+- World-baked positions, colors, normals, UVs, and tangents are written directly into capacity-managed `Float32Array` builders instead of boxed JavaScript arrays.
+- Completed render bundles retain exact-length owned attribute arrays, with indexed geometry, cache reuse, wire rendering, and picking behavior unchanged.
+
+## v0.56.8 (2026-09-20)
+
+### Improved: reuse stable authored-shader fallback geometry
+
+- Stable, immutable authored-shader fallback meshes reuse their world-baked geometry instead of transforming the same positions, normals, UVs, and tangents every frame.
+- Geometry, transform, parent-transform, shader, material, animation, and time-dependent changes invalidate or bypass the cache, while bounded weak ownership avoids retaining removed scene objects.
+
+## v0.56.7 (2026-09-20)
+
+### Improved: lower fallback mesh allocation pressure
+
+- World-baked fallback meshes reuse invocation-local normal, UV, tangent, and normalization scratch values instead of allocating equivalent objects for every vertex.
+- Existing allocating helper APIs retain their fresh-object behavior, while independent output tests cover indexed geometry, mirrored and nonuniform transforms, degenerate or incomplete attributes, and cross-mesh isolation.
+
+## v0.56.6 (2026-09-20)
+
+### Fixed: bounded rigid InstancedGLB membership updates
+
+- Variable-membership rigid InstancedGLB batches stage only new members while preserving the wrappers, immutable geometry, materials, and poses of surviving instances.
+- Additions, removals, and survivor transforms commit only after full validation. Changed materials, texture scopes, static declarations, animation or lifecycle ownership, and unsupported geometry retain the established full-hydration path.
+- Explicit shared-appearance batches avoid repeated per-instance appearance planning, while immutable rigid vertex streams keep a bounded 48 MiB idle residency window for wave-style churn.
+
+## v0.56.5 (2026-09-19)
+
+### Added: efficient animated crowds and instanced Selena materials
+
+- Instanced GLB batches retain one immutable geometry set while actors carry independent IDs, transforms, animation clips, clocks, material overrides, bounds, and shadow state. Compact instance-only updates reuse hydrated assets and renderer resources with bounded residency.
+- The WebGL renderer shares skinned pose atlases across color and depth draws, keeps per-renderer GPU caches isolated, and conservatively bounds animated actors under affine transforms.
+- Compiled Selena material payloads now survive typed lowering, shader-library hoisting, browser inflation, normalization, and hydration for `InstancedGLBMesh` batches, including skinned variants. Generic custom-material skinning behavior is unchanged.
+
+### Fixed: Scene3D startup, cache, texture, and hub lifecycle safety
+
+- Initial WebGL shader programs can compile in parallel with GLB hydration without crossing context or mount ownership boundaries; cancellation, replacement, link failure, and renderer fallback release every owned resource once.
+- Material profiles, authored-program keys, texture digests, embedded GLB image URLs, and HTML surface textures reuse stable identities while still invalidating on relevant source, uniform declaration, alpha-mask, unlit, and appearance changes.
+- Hub disconnect and slow-writer paths no longer let a stalled client block shared broadcast progress.
+
+## v0.56.4 (2026-09-13)
+
+### Fixed: bounded concurrent cold file-route compilation
+
+- Allocation-heavy cold GSX compiles share one process-wide slot; concurrent requests for identical content reuse the first completed program instead of independently parsing and compiling it.
+- Content-cache hits bypass the cold-compile lock. Waiting requests recheck the content cache before compiling, reducing transient memory pressure during cold starts and simultaneous page loads.
+- Added an eight-caller cold-compilation regression proving that every caller receives the same completed program.
+
+## v0.56.3 (2026-09-10)
+
+### Fixed: ambiguous action return targets fail closed
+
+- Managed action redirects now reject malformed, cross-origin, encoded leading double-slash, and invalid UTF-8 return targets before navigation.
+- Valid same-origin root-relative paths retain their query and fragment components, so post-action flows remain precise without opening an external redirect path.
+
+## v0.56.2 (2026-09-09)
+
+### Changed: managed region polling and regenerated bundles
+
+- Periodic regions continue refreshing when their retained, non-editable root holds GoSX-managed hash-navigation focus; this fixes indefinitely paused updates after section redirects.
+- Focused descendants, editable/native-control roots, active pointers, hidden documents, and in-flight navigation still defer polling.
+- Checked-in runtime bundles and their generated compressed/map siblings were regenerated from the current source so published assets match the release.
+
+## v0.56.1 (2026-09-09)
+
+### Fixed: edge scrolling for fixed-target transfers
+
+- Declarative transfer gestures now scroll the nearest scrollable ancestor or document viewport while a pointer or touch is held near an edge, re-testing live targets at the held coordinates after each scroll increment.
+- Edge scrolling uses deterministic instant increments even when smooth scroll CSS is active and cleans up on release, cancellation, lost pointer capture, Escape, and navigation; no optimistic DOM relocation occurs.
+
+## v0.56.0 (2026-09-08)
+
+### Added: fixed-target transfer gestures
+
+- `data-gosx-transfer` roots declare stable source and destination identities, optional source-specific eligibility, context fields, and a same-origin managed POST action for fixed-slot assignments.
+- Pointer, touch, and keyboard pickup/commit are supported with Space/Enter, arrow keys, Tab/Shift+Tab, and Escape. Touch handling is scoped to the source handle so surrounding board and list surfaces retain native scrolling.
+- Transfer submissions carry CSRF and context fields without optimistic DOM relocation. Authoritative action results, server rejection, unknown transport failures, and region replacement all clear pending gesture state and leave the rendered assignment under server control.
+
 ### Added: perspective spot-light shadows
 
 - WebGL2 and WebGPU now render and sample one perspective shadow map for a valid shadow-casting spot light. Directional and spot lights share two deterministic authored-order shadow-light slots; invalid spot projections fail closed before consuming a slot.
@@ -465,6 +907,22 @@ changes source-map generation, and is tracked separately.
   `route.RouteContext.Document(defaultTitle, body)` is the native route seam
   that composes the full request-scoped context without dropping route or
   runtime state. Generated scaffolds opt into English explicitly.
+
+### Breaking — removed navigation and managed-script loading helpers
+
+- **`server.NavigationScript` and `server.NavigationScriptWithNonce` are
+  removed.** Call `app.EnableNavigation` instead. It owns navigation-runtime
+  injection and threads the request's CSP (Content Security Policy) nonce for
+  you, so you no longer add the navigation script by hand.
+- **`ManagedScriptOptions.Load` is removed**, together with the fetch/eval
+  loading mode it selected. A managed script now always loads through a real
+  DOM `<script>` element, with an explicit type, cross-origin policy, and
+  referrer policy.
+- Compose the document shell through
+  `server.HTMLDocument(*server.DocumentContext)` (see "Changed: document
+  composition has one explicit renderer" above). It threads the CSP nonce
+  through navigation, inline helpers, and managed scripts, and strips nonces
+  from shared-cacheable responses.
 
 ### Added: a shared component call executes end to end for a strict caller
 
@@ -5301,7 +5759,7 @@ For the current runtime, that trims the external graph to `github.com/odvcencio/
 
 When the active `go` binary is too new for TinyGo, `gosx build` now retries the TinyGo compile against compatible installed Go SDKs. It checks `GOSX_TINYGO_GOROOT`, `$HOME/sdk/go1.*`, and `/usr/local/go`, filters to Go 1.19 through Go 1.25, picks the newest compatible root, and runs TinyGo with that root first on `PATH` plus `GOTOOLCHAIN=local`.
 
-On the release machine, the build used Go 1.25.9 at `/home/draco/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
+On the release machine, the build used Go 1.25.9 at `$HOME/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
 
 Measured release output:
 

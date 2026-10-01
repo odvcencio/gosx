@@ -1,4 +1,4 @@
-// Failure-mode tests for the lowerer (Slice X.C.9). Each test feeds
+// Failure-mode tests for the lowerer. Each test feeds
 // a construct that's outside the supported subset and asserts the
 // resulting Issue carries the escape-hatch suggestion + a line number
 // so authors can locate the problem.
@@ -29,10 +29,10 @@ func F() {
 	requireLowerError(t, err, "ADR 0006", 0)
 }
 
-// TestFailureMode_Interface_NowHostDispatched documents the Y.E-era
-// behavior shift: pre-Y.E the lowerer rejected every method call on
+// TestFailureMode_Interface_NowHostDispatched documents a
+// behavior shift: the lowerer once rejected every method call on
 // a non-package receiver with "method calls on non-package receivers
-// are not supported." Y.E generalizes that path into OpHostCall (so
+// are not supported." OpHostCall generalizes that path (so
 // `c.MoveTo()` and `ctx.PropsInto()` can lower against runtime-bound
 // HostReceivers). The trade is that an interface call now lowers
 // cleanly and only fails at *evaluation* time, recording a
@@ -73,13 +73,13 @@ func F() { fmt.Println("hi") }`)
 }
 
 // TestFailureMode_MultiReturnUserFunctionCall_NowSupported is the
-// Y.D-era successor to Y.B's failure-mode test for `a, b := f()`.
-// Y.B explicitly deferred the user-function multi-return form to
-// Slice Y.D; Y.D now lowers it through OpIndirectCall + the
+// successor to an earlier failure-mode test for `a, b := f()`.
+// User-function multi-return was once deferred and diagnosed as
+// unsupported; it now lowers through OpIndirectCall + the
 // `__ret_<i>` ObjectVal carrier so the call resolves cleanly. We
 // keep the test in failure_modes_test.go (rather than relocating to
 // user_fn_calls_test.go) as a permanent regression guard: if the
-// LowerFile call ever starts emitting a Y.D-deferral diagnostic
+// LowerFile call ever starts emitting the old deferral diagnostic
 // again, this test catches the regression before any handler-level
 // test does.
 func TestFailureMode_MultiReturnUserFunctionCall_NowSupported(t *testing.T) {

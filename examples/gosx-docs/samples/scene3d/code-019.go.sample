@@ -1,0 +1,5 @@
+props.Shadows = scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024}
+
+	// Presets: ShadowMaxPixels512, ShadowMaxPixels1024 (default),
+	// ShadowMaxPixels2048, ShadowMaxPixels4096.
+	// Opt out with scene.ShadowMaxPixelsUnbounded.

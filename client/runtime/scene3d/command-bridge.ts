@@ -4,6 +4,8 @@
 /**
  * @typedef {object} GoSXScene3DCommandBridge
  * @property {(target: unknown, commands: unknown[], options?: object) => Promise<unknown>} dispatchCommands
+ * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchPoseFrame
+ * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchMotionFrame
  * @property {(root: ParentNode) => unknown} applyCommandScripts
  */
 
@@ -16,7 +18,7 @@
 
   function commandURL() {
     try {
-      var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
       if (tag && tag.dataset && tag.dataset.gosxScene3dCommandUrl) return tag.dataset.gosxScene3dCommandUrl;
     } catch (_e) {}
     return "/gosx/bootstrap-feature-scene3d-command.js";
@@ -57,6 +59,20 @@
 
   api.dispatchCommands = function(target, commands, options) {
     return loadCommandBridge().then(function(bridge) { return bridge.dispatchCommands(target, commands, options); });
+  };
+  api.dispatchPoseFrame = function(target, frame, options) {
+    return loadCommandBridge().then(function(bridge) { return bridge.dispatchPoseFrame(target, frame, options); });
+  };
+  // GSP3 motion frame (see command-runtime.ts's "GPU-driven crowd motion"
+  // section). Same lazy-load contract as dispatchPoseFrame above: the first
+  // call to either fetches the one shared command-runtime chunk.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention.
+  // the expect-error form would report this directive unused under
+  // tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent
+  // either way.
+  api.dispatchMotionFrame = function(target, frame, options) {
+    // @ts-ignore TS7006 -- untyped, matching this file's convention.
+    return loadCommandBridge().then(function(bridge) { return bridge.dispatchMotionFrame(target, frame, options); });
   };
   function forceWebGLRequested() {
     if (window.__gosx_scene3d_force_webgl === true) return true;

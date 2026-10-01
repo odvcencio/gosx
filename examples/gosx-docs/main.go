@@ -18,6 +18,7 @@ import (
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
@@ -31,19 +32,31 @@ func main() {
 		log.Fatal(err)
 	}
 	port := getenv("PORT", "8080")
+	app, err := buildDocsApp(root, port)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("gosx-docs at http://localhost:%s", port)
+	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+// buildDocsApp wires the docs site: sessions, auth, the file router over
+// root/app, the demo hubs, and the production readiness checks. main serves
+// the result; the race test serves it in-process.
+func buildDocsApp(root, port string) (*server.App, error) {
 	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
 	// Keep the Secure cookie flag, unless PUBLIC_URL serves plain HTTP. A
 	// local HTTP run needs the opt-out, because a browser drops a Secure
 	// cookie on a plain HTTP origin.
 	sessionSecret, err := docsSessionSecret(publicBase, os.Getenv("SESSION_SECRET"))
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	sessions, err := session.New(sessionSecret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
 	docsapp.BindAuth(authn)
@@ -79,15 +92,17 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
-		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		if ctx.Request == nil || ctx.Request.URL == nil || !strings.HasPrefix(ctx.Request.URL.Path, "/demos") {
+			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
+			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		}
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.SetLanguage("en")
 		return server.HTMLDocument(ctx.Document("GoSX", body))
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	app := server.New()
@@ -120,6 +135,11 @@ func main() {
 		})
 	})
 	app.SetPublicDir(filepath.Join(root, "public"))
+	app.API("GET /api/docs-hubs/open-tabs", func(ctx *server.Context) (any, error) {
+		return map[string]any{
+			"html": fmt.Sprintf("<h2>Open guide tabs: %d</h2>", docshubs.ExampleHub.Presence().Count()),
+		}, nil
+	})
 	mountSiteDocuments(app, root)
 	configureProductionReadiness(app)
 	if publicAuthDemos {
@@ -134,14 +154,14 @@ func main() {
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
+	app.Mount("/docs/hubs/ws", docshubs.ExampleHub)
 	rootHandler, err := router.BuildChecked()
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	app.Mount("/", rootHandler)
 
-	log.Printf("gosx-docs at http://localhost:%s", port)
-	log.Fatal(app.ListenAndServe(":" + port))
+	return app, nil
 }
 
 func limitDocsRequestBodies(maxBytes int64) server.Middleware {

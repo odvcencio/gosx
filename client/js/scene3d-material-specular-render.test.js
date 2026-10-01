@@ -26,6 +26,10 @@ function readBootstrapSource(name) {
   return fs.readFileSync(path.join(srcDir, name), "utf8");
 }
 
+function readSceneRuntimeSource(name) {
+  return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
+}
+
 function trimBeforeSharedApiExport(source) {
   const at = source.indexOf(SHARED_API_EXPORT_MARKER);
   assert.ok(at >= 0, "core '// Scene3D shared API' export marker located");
@@ -87,10 +91,10 @@ function setupWebGLRenderer() {
       "var SCENE_TEXTURE_UNIT_MATERIALS", "function sceneTextureMipBytes"),
     sliceBetween(source, "function scenePBRSRGBChannelToLinear", "const SCENE_PBR_VERTEX_SOURCE"),
     sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
+    sliceBetween(source, "var sceneGLConstantCache", "function scenePBRHDRIBLAvailable"),
     sliceBetween(source, "function scenePBRHDRIBLAvailable", "function scenePBRFragmentSourceForContext"),
-    sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRSlotCascadeCount"),
-    sliceBetween(source, "function scenePBRSlotCascadeCount", "function scenePBRTextureLayoutForFrame"),
-    sliceBetween(source, "function scenePBRTextureLayoutForFrame", "// Upload cascaded-shadow uniforms"),
+    sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRTextureLayoutForFrame"),
+    sliceBetween(source, "function scenePBRTextureLayoutForFrame", "// Upload both array samplers"),
     sliceBetween(source, "function uploadCustomUniforms", "function uploadMaterial"),
     sliceBetween(source, "function uploadMaterial", "function applyBlendMode"),
     [
@@ -116,7 +120,8 @@ function setupWebGLRenderer() {
       "  const names = ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen',",
       "    'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90',",
       "    'specularColorLog',",
-    "    'emissive', 'opacity', 'unlit', 'alphaCutoff',",
+      "    'emissive', 'emissiveColor', 'hasEmissiveColor', 'normalScale', 'occlusionStrength',",
+      "    'opacity', 'unlit', 'alphaCutoff',",
       "    'albedoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'occlusionMap',",
       "    'emissiveMap', 'specularIntensityMap',",
       "    'specularColorMap',",
@@ -164,6 +169,109 @@ function webglUpload(context, literal) {
     "uploadMaterial(gl, uniforms, " + literal + ", null);" +
     "return { f0: gl.floats.get('specularF0'), f90: gl.floats.get('specularF90') }; })()");
 }
+
+test("imported PBR factors reach single-skin and GPU palette crowd uniforms", () => {
+  const { source, context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const document = {
+    asset: { version: "2.0" },
+    materials: [
+      { pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] } },
+      {
+        pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] },
+        emissiveFactor: [0.8, 0.15, 0.05],
+        extensions: { KHR_materials_emissive_strength: { emissiveStrength: 4 } },
+        normalTexture: { scale: 0 },
+        occlusionTexture: { strength: 0 },
+      },
+    ],
+  };
+  const documentLiteral = JSON.stringify(document);
+  const importAndUpload = (index, skinKind) => callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + documentLiteral + ', ' + index + ', null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported' +
+        (skinKind === "single" ? ', skin: { joints: [] }' : "") + ' }, 0, null);' +
+      (skinKind === "palette" ? 'object._crowdSkin = { atlas: { width: 1 } };' : "") +
+      'const material = sceneObjectMaterialProfile(object);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'uploadMaterial(gl, uniforms, material, null);' +
+      'return {' +
+        'profile: material,' +
+        'emissive: gl.floats.get("emissive"),' +
+        'emissiveColor: gl.floats.get("emissiveColor"),' +
+        'hasEmissiveColor: gl.ints.get("hasEmissiveColor"),' +
+        'normalScale: gl.floats.get("normalScale"),' +
+        'occlusionStrength: gl.floats.get("occlusionStrength")' +
+      '};' +
+    '})()');
+
+  assert.match(source, /if \(u_hasEmissiveColor\) \{/);
+  assert.match(source, /vec3 emission = emissiveColor \* emissiveStrength;/);
+  assert.ok(source.includes("uploadMaterial(gl, currentUniforms, mat, textureCache);"),
+    "single skinned meshes upload the resolved material profile");
+  assert.ok(source.includes("uploadMaterial(gl, ip.uniforms, mat, textureCache);"),
+    "GPU palette crowd batches upload the same resolved material profile");
+
+  for (const skinKind of ["single", "palette"]) {
+    const noEmission = importAndUpload(0, skinKind);
+    assert.strictEqual(noEmission.hasEmissiveColor, 1,
+      skinKind + ": imported black emission uses the explicit color branch");
+    assert.deepStrictEqual(Array.from(noEmission.emissiveColor), [0, 0, 0],
+      skinKind + ": a non-emissive GLB material cannot fall back to albedo glow");
+    assert.strictEqual(noEmission.emissive, 1);
+
+    const colored = importAndUpload(1, skinKind);
+    assert.strictEqual(colored.hasEmissiveColor, 1);
+    assert.deepStrictEqual(Array.from(colored.emissiveColor), [0.8, 0.15, 0.05]);
+    assert.strictEqual(colored.emissive, 4,
+      skinKind + ": KHR emissive strength above 1 reaches the uniform");
+    assert.strictEqual(colored.normalScale, 0);
+    assert.strictEqual(colored.occlusionStrength, 0);
+  }
+
+  const cacheEdit = callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + documentLiteral + ', 1, null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported, skin: { joints: [] } }, 0, null);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'const first = sceneObjectMaterialProfile(object); uploadMaterial(gl, uniforms, first, null);' +
+      'const oldStrength = gl.floats.get("emissive"); const oldColor = gl.floats.get("emissiveColor").slice();' +
+      'object.emissiveColor[0] = 0.4; object.emissive = 2; object.normalScale = 0.5; object.occlusionStrength = 0.25;' +
+      'const second = sceneObjectMaterialProfile(object); uploadMaterial(gl, uniforms, second, null);' +
+      'return {' +
+        'sameProfile: first === second, changedKey: first.key !== second.key,' +
+        'oldStrength, oldColor, nextStrength: gl.floats.get("emissive"),' +
+        'nextColor: gl.floats.get("emissiveColor"),' +
+        'nextNormalScale: gl.floats.get("normalScale"),' +
+        'nextOcclusionStrength: gl.floats.get("occlusionStrength")' +
+      '};' +
+    '})()');
+  assert.strictEqual(cacheEdit.sameProfile, false);
+  assert.strictEqual(cacheEdit.changedKey, true);
+  assert.strictEqual(cacheEdit.oldStrength, 4);
+  assert.deepStrictEqual(Array.from(cacheEdit.oldColor), [0.8, 0.15, 0.05]);
+  assert.strictEqual(cacheEdit.nextStrength, 2);
+  assert.deepStrictEqual(Array.from(cacheEdit.nextColor), [0.4, 0.15, 0.05]);
+  assert.strictEqual(cacheEdit.nextNormalScale, 0.5);
+  assert.strictEqual(cacheEdit.nextOcclusionStrength, 0.25);
+
+  const gpu = setupWebGPURenderer();
+  const packProfile = (profile) => callIn(gpu.context,
+    "materialUniformData(" + JSON.stringify(JSON.parse(JSON.stringify(profile))) + ", false, null, null)");
+  const gpuBlack = packProfile(importAndUpload(0, "single").profile);
+  assert.strictEqual(gpuBlack.u[54], 1);
+  assert.deepStrictEqual([gpuBlack.data[56], gpuBlack.data[57], gpuBlack.data[58]], [0, 0, 0]);
+  const gpuColored = packProfile(importAndUpload(1, "palette").profile);
+  assert.strictEqual(gpuColored.data[5], 4);
+  assert.strictEqual(gpuColored.data[52], 0);
+  assert.strictEqual(gpuColored.data[53], 0);
+  assert.strictEqual(gpuColored.u[54], 1);
+  [0.8, 0.15, 0.05].forEach((value, index) => {
+    assert.ok(close6(gpuColored.data[56 + index], value),
+      "WebGPU emissiveColor[" + index + "] = " + gpuColored.data[56 + index] + ", want " + value);
+  });
+});
 
 test("WebGL uploadMaterial uploads the effective specular factors", () => {
   const { context } = setupWebGLRenderer();
@@ -529,34 +637,20 @@ test("WebGL guarded max-texture-unit query falls back conservatively", () => {
     "scenePBRMaxTextureUnits({ MAX_TEXTURE_IMAGE_UNITS: 34930, getParameter() { throw new Error('lost'); } })"), 16);
 });
 
-test("WebGL frame layout threads real GL unit limits", () => {
+test("WebGL frame layout fits both shadow arrays and IBL at 16 units", () => {
   const { context } = setupWebGLRenderer();
-  const call = (maxUnits) => callIn(context,
-    "scenePBRTextureLayoutForFrame(" +
-    "[{ numCascades: 4, cascades: [{}, {}, {}, {}] }, { numCascades: 4, cascades: [{}, {}, {}, {}] }], [0, 1], " +
-    "{ ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } }, " + maxUnits + ")");
-  // A 32-unit GL retains 8 cascades plus the three IBL units.
-  const wide = call(32);
-  assert.deepEqual(Array.from(wide.shadows), [8, 9, 10, 11, 12, 13, 14, 15]);
-  assert.deepEqual({ ...wide.ibl }, { irradiance: 16, radiance: 17, brdfLUT: 18 });
-  assert.equal(wide.warnings.length, 0);
-  // A 16-unit GL keeps the supported non-HDR path with a boundary warning.
-  const tight = call(16);
-  // A 16-unit GL keeps the supported non-HDR path with a boundary warning:
-  // only 5 shadow slots fit after the 8 material units, leaving 3 for IBL.
-  assert.deepEqual(Array.from(tight.shadows), [8, 9, 10, 11, 12]);
-  assert.deepEqual({ ...tight.ibl }, { irradiance: 13, radiance: 14, brdfLUT: 15 });
-  assert.equal(tight.warnings.length > 0, true);
+  for (const max of [16, 32]) {
+    const layout = callIn(context, `scenePBRTextureLayoutForFrame([], [], { ibl: {} }, ${max})`);
+    assert.deepEqual(Array.from(layout.shadows), [8, 9]);
+    assert.deepEqual({ ...layout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+    assert.equal(layout.warnings.length, 0);
+  }
 });
 
-test("WebGL HDR IBL guard needs 20 sampler units", () => {
+test("WebGL HDR IBL fits the core sampler minimum", () => {
   const { context } = setupWebGLRenderer();
-  const source = readSceneRendererBackendSrc("webgl");
-  assert.match(source, /fragment-texture-units<20/);
-  assert.doesNotMatch(source, /fragment-texture-units<19/);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), false);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(19))"), false);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(20))"), true);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(15))"), false);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), true);
   assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(32))"), true);
 });
 
@@ -911,10 +1005,16 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
   assert.strictEqual(clean.data[42], -1, "stale cutoff must not survive a repack");
   assert.strictEqual(clean.data[41], 0);
   assert.strictEqual(clean.data[43], 0);
-  assert.strictEqual(clean.data.length, 52);
+  assert.strictEqual(clean.data.length, 64);
   for (let c = 0; c < 3; c++) assert.ok(close6(clean.data[44 + c], 0.04));
   assert.strictEqual(clean.data[47], 1);
   assert.strictEqual(clean.u[51], 0);
+  // Trailing glTF material-parity slots (52..63) reset to their neutral
+  // defaults on every repack, same as every other scratch-buffer field.
+  assert.strictEqual(clean.data[52], 1, "normalScale resets to 1");
+  assert.strictEqual(clean.data[53], 1, "occlusionStrength resets to 1");
+  assert.strictEqual(clean.u[54], 0, "hasEmissiveColor resets to unset");
+  assert.strictEqual(clean.data[59], 0, "rimStrength resets to off");
   const edge = pack("{ alphaCutoff: 1 }");
   assert.strictEqual(edge.data[41], 0);
   assert.strictEqual(edge.data[43], 0);
@@ -924,7 +1024,7 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
     assert.ok(Number.isFinite(edge.data[48 + c]));
     assert.ok(Math.abs(edge.data[48 + c] - expectedLog) <= 1e-6);
   }
-  assert.strictEqual(edge.data.buffer.byteLength, 208);
+  assert.strictEqual(edge.data.buffer.byteLength, 256);
 });
 
 test("WebGPU fragment shaders pin coverage discard and corrected alpha selects", () => {
@@ -967,7 +1067,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
   const { source, context } = setupWebGPURenderer();
   // The material buffer grew for the aligned vec3f plus the F90 scalar; the
   // earlier 176-byte layout must be gone.
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
 
@@ -975,7 +1075,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
     "materialUniformData(" + literal + ", false, null, null)");
 
   const def = pack("{}");
-  assert.strictEqual(def.data.length, 52);
+  assert.strictEqual(def.data.length, 64);
   for (let c = 0; c < 3; c++) assert.ok(close6(def.data[44 + c], 0.04));
   assert.strictEqual(def.data[47], 1);
   // Finite pre-clamp log coefficients at 48..50, neutral loaded-color flag at 51.
@@ -1144,7 +1244,7 @@ function setupWebGPUMaterialBinding() {
 
 // Stubs only the GPU resource and texture-loader boundaries; the production
 // materialUniformData, createMaterialBindGroup and bind-group cache execute
-// for real against the real 208-byte shared buffer.
+// for real against the real 256-byte shared buffer.
 function makeGPUHarness(context, textureStates) {
   const calls = { loads: [], bindGroups: [], buffers: [] };
   context.GPUBufferUsage = { UNIFORM: 0x40, COPY_DST: 0x8 };

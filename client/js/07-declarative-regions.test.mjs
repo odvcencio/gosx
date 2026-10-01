@@ -670,6 +670,96 @@ test("a poll tick skips while the region contains the document's focused element
   assert.equal(fetches.length, 2, "the tick resumes once focus clears");
 });
 
+test("a poll tick allows a focused framework-managed non-editable region root, and keeps focus there", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+    "data-gosx-focus-managed": "",
+    tabindex: "-1",
+  });
+  const { fetches, timers, context } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "the immediate first tick fetches before focus starts");
+
+  context.document.activeElement = region;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 2, "a managed non-editable focused root may poll");
+  assert.equal(context.document.activeElement, region, "polling does not steal focus from the retained root");
+});
+
+test("a poll tick still skips while a managed region contains a focused descendant", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+    "data-gosx-focus-managed": "",
+    tabindex: "-1",
+  });
+  const child = {};
+  region.contains = (node) => node === region || node === child;
+  const { fetches, timers, context } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1);
+
+  context.document.activeElement = child;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "a focused descendant still blocks the poll");
+
+  context.document.activeElement = null;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 2, "the poll resumes after the descendant clears");
+});
+
+test("a focus-managed marker never exempts an editable region root", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+    "data-gosx-focus-managed": "",
+    tabindex: "-1",
+    contenteditable: "",
+  });
+  // The real DOM exposes isContentEditable; retain the attribute assertion
+  // too because a minimal host/test double may not expose that property.
+  region.isContentEditable = false;
+  const { fetches, timers, context } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1);
+
+  context.document.activeElement = region;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "an editable root remains protected despite the managed marker");
+});
+
+test("a focus-managed marker never exempts a native form-control root", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+    "data-gosx-focus-managed": "",
+    tabindex: "-1",
+  });
+  region.tagName = "INPUT";
+  const { fetches, timers, context } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1);
+
+  context.document.activeElement = region;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "a native form-control root remains protected despite the marker");
+});
+
 test("a poll tick skips while a pointer is held down inside the region, and resumes after pointerup", async () => {
   const region = makeRegion({
     "data-gosx-region-url": "/api/wire/events",

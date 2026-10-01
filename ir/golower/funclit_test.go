@@ -1,8 +1,8 @@
-// Slice Y.G.1 — failing-first tests for FuncLit closure lowering.
+// Failing-first tests for FuncLit closure lowering.
 //
-// Pre-Y.G the lowerer rejects every *ast.FuncLit with
+// Before this, the lowerer rejects every *ast.FuncLit with
 // "unsupported expression *ast.FuncLit" from expr.go's default branch.
-// Y.G's plan covers:
+// Covers:
 //
 //   1. Simple no-capture FuncLit assigned and called:
 //        f := func(x int) int { return x * 2 }
@@ -24,11 +24,11 @@
 //        f := func() int { return helper() }
 //        f() resolves helper() through the user-fn registry.
 //
-// At Y.G.1 each lowering call still fails. Subsequent steps add:
-//   Y.G.2 — ClosureVal value kind + OpClosure opcode
-//   Y.G.3 — lowerer FuncLit handler + scanFuncLits anonymous registration
-//   Y.G.4 — VM evalClosureExpr + closure-aware OpIndirectCall dispatch
-//   Y.G.5 — host-side InvokeClosure entry point
+// Before this, each lowering call still fails. Support requires:
+//   - ClosureVal value kind + OpClosure opcode
+//   - lowerer FuncLit handler + scanFuncLits anonymous registration
+//   - VM evalClosureExpr + closure-aware OpIndirectCall dispatch
+//   - host-side InvokeClosure entry point
 //
 // The capture-by-reference semantics matter: Go closes over the
 // VARIABLE not the value, and the VM must match.
@@ -155,7 +155,7 @@ func Mount(c *surface.Canvas) {
 }
 
 // TestLowerFuncLitCallsUserFn verifies a FuncLit body can dispatch to
-// a sibling user function via the Y.D registry; the closure inherits
+// a sibling user function via the user-fn registry; the closure inherits
 // the same lowering context.
 func TestLowerFuncLitCallsUserFn(t *testing.T) {
 	src := []byte(`package handlers

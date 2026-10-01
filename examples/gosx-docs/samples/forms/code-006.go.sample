@@ -1,0 +1,3 @@
+// main.go
+app.Use(sessions.Middleware)
+app.Use(sessions.Protect)

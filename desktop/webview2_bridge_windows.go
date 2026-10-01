@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -16,18 +17,31 @@ import (
 const (
 	// ICoreWebView2 additions.
 	webViewGetSettings                         = 3
+	webViewAddNavigationCompleted              = 15
+	webViewRemoveNavigationCompleted           = 16
+	webViewAddPermissionRequested              = 23
+	webViewRemovePermissionRequested           = 24
+	webViewAddProcessFailed                    = 25
+	webViewRemoveProcessFailed                 = 26
 	webViewAddScriptToExecuteOnDocumentCreated = 27
 	webViewExecuteScript                       = 29
+	webViewReload                              = 31
 	webViewPostWebMessageAsString              = 33
 	webViewAddWebMessageReceived               = 34
 	webViewRemoveWebMessageReceived            = 35
-	webViewOpenDevToolsWindow                  = 44
+	webViewOpenDevToolsWindow                  = 51
+	webViewAddFullscreenChanged                = 52
+	webViewRemoveFullscreenChanged             = 53
+	webViewGetContainsFullscreenElement        = 54
 
 	// ICoreWebView2Settings.
-	settingsPutIsScriptEnabled               = 4
-	settingsPutIsWebMessageEnabled           = 6
-	settingsPutAreDevToolsEnabled            = 12
-	settingsPutAreDefaultContextMenusEnabled = 14
+	settingsPutIsScriptEnabled                  = 4
+	settingsPutIsWebMessageEnabled              = 6
+	settingsPutIsStatusBarEnabled               = 10
+	settingsPutAreDevToolsEnabled               = 12
+	settingsPutAreDefaultContextMenusEnabled    = 14
+	settingsPutIsZoomControlEnabled             = 18
+	settingsPutAreBrowserAcceleratorKeysEnabled = 24
 
 	// ICoreWebView2WebMessageReceivedEventArgs.
 	webMessageArgsTryGetAsString = 5
@@ -38,6 +52,10 @@ var procCoTaskMemFree = modOle32.NewProc("CoTaskMemFree")
 // coreWebView2Settings wraps ICoreWebView2Settings, obtained via
 // coreWebView2.getSettings().
 type coreWebView2Settings struct {
+	vtbl uintptr
+}
+
+type coreWebView2Settings3 struct {
 	vtbl uintptr
 }
 
@@ -52,6 +70,9 @@ func (w *coreWebView2) getSettings() (*coreWebView2Settings, error) {
 		uintptr(unsafe.Pointer(&settings)),
 	)
 	if failedHRESULT(hr) {
+		if settings != nil {
+			comRelease(unsafe.Pointer(settings))
+		}
 		return nil, hresultError{Op: "ICoreWebView2.get_Settings", Code: hr}
 	}
 	if settings == nil {
@@ -62,6 +83,37 @@ func (w *coreWebView2) getSettings() (*coreWebView2Settings, error) {
 
 // setBool invokes a setter at the given vtbl index with a BOOL argument.
 func (s *coreWebView2Settings) setBool(index uintptr, op string, value bool) error {
+	var v uintptr
+	if value {
+		v = 1
+	}
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(s), index),
+		uintptr(unsafe.Pointer(s)),
+		v,
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: op, Code: hr}
+	}
+	return nil
+}
+
+func (s *coreWebView2Settings) setBrowserAcceleratorKeysEnabled(enabled bool) error {
+	iidSettings3 := comGUID{
+		Data1: 0xfdb5ab74, Data2: 0xaf33, Data3: 0x4854,
+		Data4: [8]byte{0x84, 0xf0, 0x0a, 0x63, 0x1d, 0xeb, 0x5e, 0xba},
+	}
+	queried, err := queryCOMInterface(unsafe.Pointer(s), iidSettings3)
+	if err != nil {
+		return err
+	}
+	defer comRelease(queried)
+	settings := (*coreWebView2Settings3)(queried)
+	return settings.setBool(settingsPutAreBrowserAcceleratorKeysEnabled,
+		"Settings3.put_AreBrowserAcceleratorKeysEnabled", enabled)
+}
+
+func (s *coreWebView2Settings3) setBool(index uintptr, op string, value bool) error {
 	var v uintptr
 	if value {
 		v = 1
@@ -153,6 +205,121 @@ func (w *coreWebView2) openDevToolsWindow() error {
 	return nil
 }
 
+func (w *coreWebView2) reload() error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewReload),
+		uintptr(unsafe.Pointer(w)),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.Reload", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) containsFullScreenElement() (bool, error) {
+	var contains int32
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewGetContainsFullscreenElement),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(&contains)),
+	)
+	if failedHRESULT(hr) {
+		return false, hresultError{Op: "ICoreWebView2.get_ContainsFullScreenElement", Code: hr}
+	}
+	return contains != 0, nil
+}
+
+func (w *coreWebView2) addNavigationCompleted(handler *navigationCompletedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddNavigationCompleted),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_NavigationCompleted", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeNavigationCompleted(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveNavigationCompleted),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_NavigationCompleted", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) addPermissionRequested(handler *permissionRequestedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddPermissionRequested),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_PermissionRequested", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removePermissionRequested(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemovePermissionRequested),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_PermissionRequested", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) addProcessFailed(handler *processFailedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddProcessFailed),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_ProcessFailed", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeProcessFailed(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveProcessFailed),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_ProcessFailed", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) addFullscreenChanged(handler *containsFullScreenElementChangedEventHandler) (int64, error) {
+	var token int64
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewAddFullscreenChanged),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(handler)), uintptr(unsafe.Pointer(&token)),
+	)
+	if failedHRESULT(hr) {
+		return 0, hresultError{Op: "ICoreWebView2.add_ContainsFullScreenElementChanged", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeFullscreenChanged(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveFullscreenChanged),
+		uintptr(unsafe.Pointer(w)), uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_ContainsFullScreenElementChanged", Code: hr}
+	}
+	return nil
+}
+
 // Message-received event plumbing --------------------------------------
 
 // coreWebView2WebMessageReceivedEventArgs wraps the args structure the
@@ -207,20 +374,17 @@ var webMessageReceivedHandlerVtblInstance = webMessageReceivedHandlerVtbl{
 }
 
 func newWebMessageReceivedHandler(app *windowsApp) *webMessageReceivedHandler {
-	return &webMessageReceivedHandler{
+	handler := &webMessageReceivedHandler{
 		vtbl: &webMessageReceivedHandlerVtblInstance,
 		refs: 1,
 		app:  app,
 	}
+	rootCOMHandler(uintptr(unsafe.Pointer(handler)), handler)
+	return handler
 }
 
-func webMessageReceivedQueryInterface(this, _, ppv uintptr) uintptr {
-	if ppv == 0 {
-		return ePointer
-	}
-	*(*uintptr)(unsafe.Pointer(ppv)) = this
-	webMessageReceivedAddRef(this)
-	return sOK
+func webMessageReceivedQueryInterface(this, iid, ppv uintptr) uintptr {
+	return queryInterfaceHandler(this, iid, ppv, iidWebMessageReceivedEventHandler, webMessageReceivedAddRef)
 }
 
 func webMessageReceivedAddRef(this uintptr) uintptr {
@@ -230,7 +394,12 @@ func webMessageReceivedAddRef(this uintptr) uintptr {
 
 func webMessageReceivedRelease(this uintptr) uintptr {
 	h := (*webMessageReceivedHandler)(unsafe.Pointer(this))
-	return uintptr(atomic.AddUint32(&h.refs, ^uint32(0)))
+	refs := atomic.AddUint32(&h.refs, ^uint32(0))
+	if refs == 0 {
+		unrootCOMHandler(this)
+	}
+	runtime.KeepAlive(h)
+	return uintptr(refs)
 }
 
 // webMessageReceivedInvoke is the single entry point WebView2 hits for
@@ -253,9 +422,8 @@ func webMessageReceivedInvoke(this, sender, args uintptr) uintptr {
 }
 
 // addWebMessageReceived registers a handler for chrome.webview.postMessage
-// calls from JS. Returns a u64 event-registration token; for the desktop
-// app we don't currently unregister (handler lives as long as the webview).
-func (w *coreWebView2) addWebMessageReceived(handler *webMessageReceivedHandler) error {
+// calls from JS. Returns the event-registration token used during teardown.
+func (w *coreWebView2) addWebMessageReceived(handler *webMessageReceivedHandler) (int64, error) {
 	var token int64
 	hr, _, _ := syscall.SyscallN(
 		comMethod(unsafe.Pointer(w), webViewAddWebMessageReceived),
@@ -264,7 +432,19 @@ func (w *coreWebView2) addWebMessageReceived(handler *webMessageReceivedHandler)
 		uintptr(unsafe.Pointer(&token)),
 	)
 	if failedHRESULT(hr) {
-		return hresultError{Op: "ICoreWebView2.add_WebMessageReceived", Code: hr}
+		return 0, hresultError{Op: "ICoreWebView2.add_WebMessageReceived", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeWebMessageReceived(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveWebMessageReceived),
+		uintptr(unsafe.Pointer(w)),
+		uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_WebMessageReceived", Code: hr}
 	}
 	return nil
 }

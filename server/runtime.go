@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
@@ -47,6 +48,7 @@ type PageRuntimeSummary struct {
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
 	BootstrapFeatureScene3DPath     string
+	BootstrapFeatureTextLayoutPath  string
 	HLSPath                         string
 	Islands                         int
 	ComputeIslands                  int
@@ -149,6 +151,28 @@ func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBind
 	}
 	r.active = true
 	return r.renderer.BindHubInput(name, path, bindings, input)
+}
+
+// BindHubWithRoundTrip registers a hub and measures ping/pong time in the
+// browser into a shared island signal.
+func (r *PageRuntime) BindHubWithRoundTrip(name, path string, bindings []hydrate.HubBinding, roundTrip hydrate.HubRoundTripConfig) string {
+	if r == nil || strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	r.active = true
+	return r.renderer.BindHubWithRoundTrip(name, path, bindings, roundTrip)
+}
+
+// SetTextureVariants publishes built assetpipe texture variants to the current
+// page manifest. Scene3D uses them to choose a block-compressed texture only
+// when the selected renderer reports the required device capability; other
+// devices keep the authored PNG or WebP URI.
+func (r *PageRuntime) SetTextureVariants(manifest assetpipe.VariantManifest) {
+	if r == nil || r.renderer == nil {
+		return
+	}
+	r.renderer.Manifest().SetTextureVariants(manifest)
+	r.active = true
 }
 
 // Controller registers a declarative headless browser controller for the
@@ -358,6 +382,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		BootstrapFeatureHubsPath:        summary.BootstrapFeatureHubsPath,
 		BootstrapFeatureControllersPath: summary.BootstrapFeatureControllersPath,
 		BootstrapFeatureScene3DPath:     summary.BootstrapFeatureScene3DPath,
+		BootstrapFeatureTextLayoutPath:  summary.BootstrapFeatureTextLayoutPath,
 		HLSPath:                         summary.HLSPath,
 		Islands:                         summary.Islands,
 		ComputeIslands:                  summary.ComputeIslands,

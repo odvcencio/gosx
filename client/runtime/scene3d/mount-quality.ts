@@ -631,7 +631,8 @@
     }
     const deferred = Array.isArray(state._deferredPostEffects) && state._deferredPostEffects.length > 0;
     const enabled = Array.isArray(state.postEffects) && state.postEffects.length > 0;
-    setAttrValue(mount, "data-gosx-scene3d-postfx", deferred ? "deferred" : (enabled ? "enabled" : "none"));
+    const dropped = String(mount.getAttribute("data-gosx-scene3d-dropped") || "").split(",").indexOf("postfx") >= 0;
+    setAttrValue(mount, "data-gosx-scene3d-postfx", dropped ? "dropped" : (deferred ? "deferred" : (enabled ? "enabled" : "none")));
     // G1: live confirmation of the postFXMaxPixels cap actually driving the
     // postfx render targets this frame. Both backends read
     // sceneState.postFXMaxPixels fresh off the render bundle every frame and

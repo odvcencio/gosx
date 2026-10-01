@@ -251,3 +251,34 @@ func TestBufferGeometryPickableKeepsWebGPU(t *testing.T) {
 		t.Fatalf("expected canvas2d excluded for gpu-picking, got %v", ir.BackendCaps.Capable)
 	}
 }
+
+// Mesh.SpreadProps feeds the composable <Mesh> path. It used to drop the index
+// list, so an indexed quad (4 unique vertices, 6 indices) reached the browser
+// as a bare 4-vertex triangle list and drew one triangle.
+func TestMeshSpreadPropsCarriesIndicesAndTangents(t *testing.T) {
+	props := Mesh{
+		ID: "quad",
+		Geometry: BufferGeometry{
+			Positions: []float64{-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0},
+			Normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+			UVs:       []float64{0, 0, 1, 0, 1, 1, 0, 1},
+			Tangents:  []float64{1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1},
+			Indices:   []int{0, 1, 2, 0, 2, 3},
+		},
+		Material: StandardMaterial{Color: "#ffffff"},
+	}.SpreadProps()
+	vertices, ok := props["vertices"].(map[string]any)
+	if !ok {
+		t.Fatalf("vertices missing from SpreadProps: %#v", props)
+	}
+	if got := vertices["count"]; got != 4 {
+		t.Fatalf("vertices.count = %v, want 4 unique vertices", got)
+	}
+	indices, ok := vertices["indices"].([]uint32)
+	if !ok || !slices.Equal(indices, []uint32{0, 1, 2, 0, 2, 3}) {
+		t.Fatalf("vertices.indices = %#v, want [0 1 2 0 2 3]", vertices["indices"])
+	}
+	if tangents, ok := vertices["tangents"].([]float64); !ok || len(tangents) != 16 {
+		t.Fatalf("vertices.tangents = %#v, want 16 floats", vertices["tangents"])
+	}
+}

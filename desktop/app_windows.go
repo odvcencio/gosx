@@ -11,25 +11,68 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 type windowsApp struct {
 	options Options
 
-	mu         sync.Mutex
-	hwnd       uintptr
-	env        *coreWebView2Environment
-	controller *coreWebView2Controller
-	webview    *coreWebView2
-	settings   *coreWebView2Settings
-	runErr     error
-	singleLock *singleInstanceLock
+	mu            sync.Mutex
+	primaryWindow *Window
+	hwnd          uintptr
 
-	envHandler        *environmentCompletedHandler
-	controllerHandler *controllerCompletedHandler
-	webMsgHandler     *webMessageReceivedHandler
-	resHandler        *webResourceRequestedHandler
+	// dispatch runs WebView2 calls on the window thread (see onUIThread).
+	dispatch        uiDispatcher
+	iconLarge       uintptr
+	iconSmall       uintptr
+	env             *coreWebView2Environment
+	envRef          *comReference
+	controller      *coreWebView2Controller
+	controllerRef   *comReference
+	webview         *coreWebView2
+	webviewRef      *comReference
+	settings        *coreWebView2Settings
+	settingsRef     *comReference
+	runErr          error
+	webviewReleased bool
+	singleLock      *InstanceLock
+
+	envHandler           *environmentCompletedHandler
+	envHandlerRef        *comReference
+	controllerHandler    *controllerCompletedHandler
+	controllerHandlerRef *comReference
+	webMsgHandler        *webMessageReceivedHandler
+	webMsgHandlerRef     *comReference
+	webMsgToken          int64
+	webMsgRegistered     bool
+	processFailedHandler *processFailedEventHandler
+	processFailedRef     *comReference
+	processFailedToken   int64
+	processFailedAdded   bool
+	fullscreenHandler    *containsFullScreenElementChangedEventHandler
+	fullscreenRef        *comReference
+	fullscreenToken      int64
+	fullscreenAdded      bool
+	navCompletedHandler  *navigationCompletedEventHandler
+	navCompletedRef      *comReference
+	navCompletedToken    int64
+	navCompletedAdded    bool
+	permissionHandler    *permissionRequestedEventHandler
+	permissionRef        *comReference
+	permissionToken      int64
+	permissionAdded      bool
+
+	// created is when New built this app; timeline durations are measured
+	// from it. backgroundBrush paints WM_ERASEBKGND when BackgroundColor is
+	// set.
+	created              time.Time
+	timeline             StartupTimeline
+	backgroundBrush      uintptr
+	resHandler           *webResourceRequestedHandler
+	resHandlerRef        *comReference
+	resHandlerToken      int64
+	resHandlerRegistered bool
 
 	// Pending bootstrap script to register on the next controller creation.
 	// Cached because AddScriptToExecuteOnDocumentCreated requires a live
@@ -42,14 +85,17 @@ type windowsApp struct {
 	// resource-requested event handler on every matching request.
 	servedRoutes []*servedRoute
 
-	// Fullscreen + min/max-size state, all edited only from the
-	// WebView2-owning OS thread but read from app-public methods — hence
-	// guarded by the same mu as the rest of the struct.
-	fullscreen fullscreenState
-	minWidth   int32
-	minHeight  int32
-	maxWidth   int32
-	maxHeight  int32
+	// Fullscreen events and public toggles can arrive on different goroutines,
+	// so their source state and saved window state use fullscreenMu. Min/max
+	// dimensions remain protected by mu.
+	fullscreenMu     sync.Mutex
+	fullscreen       fullscreenState
+	fullscreenManual bool
+	fullscreenHTML   bool
+	minWidth         int32
+	minHeight        int32
+	maxWidth         int32
+	maxHeight        int32
 
 	// Native UI integration owned by the UI thread. The maps are guarded
 	// by mu because public App methods may install menus before Run.
@@ -57,27 +103,56 @@ type windowsApp struct {
 	menuBar             uintptr
 	contextMenus        map[uintptr]uintptr
 	pendingTray         *TrayOptions
+	focusTracker        focusStateTracker
 	tray                *windowsTray
 	nextNativeCommandID uint16
 	menuActions         map[uint16]func()
 }
 
 func newPlatformApp(options Options) (platformApp, error) {
-	return &windowsApp{options: options}, nil
+	return &windowsApp{options: options, created: time.Now()}, nil
+}
+
+// markStartup records the first time a startup phase finished.
+func (a *windowsApp) markStartup(phase *time.Duration) {
+	a.mu.Lock()
+	if *phase == 0 {
+		*phase = time.Since(a.created)
+	}
+	a.mu.Unlock()
+}
+
+// StartupTimeline implements startupTimelineReporter.
+func (a *windowsApp) StartupTimeline() StartupTimeline {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.timeline
+}
+
+func (a *windowsApp) onNavigationCompleted(event NavigationCompleted) {
+	a.markStartup(&a.timeline.FirstNavigationCompleted)
+	a.mu.Lock()
+	cb := a.options.OnNavigationCompleted
+	a.mu.Unlock()
+	if cb != nil {
+		cb(event)
+	}
 }
 
 func platformAvailable() error {
-	if err := procCreateCoreWebView2EnvironmentWithOptions.Find(); err != nil {
-		return fmt.Errorf("%w: WebView2Loader.dll: %v", ErrWebView2Unavailable, err)
-	}
-	return nil
+	return platformAvailableFor("")
+}
+
+func platformAvailableFor(browserExecutableFolder string) error {
+	_, err := WebView2RuntimeVersion(browserExecutableFolder)
+	return err
 }
 
 func (a *windowsApp) Run() error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	if a.options.SingleInstance {
+	if a.options.SingleInstance && !instanceLockHeld(a.options.AppID) {
 		lock, owned, err := acquireSingleInstanceLock(a.options.AppID)
 		if err != nil {
 			return err
@@ -86,8 +161,9 @@ func (a *windowsApp) Run() error {
 			defer lock.Close()
 			return forwardCurrentLaunch(a.options.AppID)
 		}
+		heldLock := newInstanceLock(a.options.AppID, lock.Close)
 		a.mu.Lock()
-		a.singleLock = lock
+		a.singleLock = heldLock
 		a.mu.Unlock()
 		defer func() {
 			a.mu.Lock()
@@ -107,7 +183,7 @@ func (a *windowsApp) Run() error {
 		return err
 	}
 
-	if err := platformAvailable(); err != nil {
+	if err := platformAvailableFor(a.options.BrowserExecutableFolder); err != nil {
 		return err
 	}
 	if err := coInitializeApartment(); err != nil {
@@ -115,25 +191,55 @@ func (a *windowsApp) Run() error {
 	}
 	defer coUninitialize()
 
-	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, a)
+	if color, _, ok, _ := parseBackgroundColor(a.options.BackgroundColor); ok {
+		brush, err := createSolidBrush(color)
+		if err != nil {
+			return err
+		}
+		a.mu.Lock()
+		a.backgroundBrush = brush
+		a.mu.Unlock()
+		defer func() {
+			a.mu.Lock()
+			brush := a.backgroundBrush
+			a.backgroundBrush = 0
+			a.mu.Unlock()
+			deleteGDIObject(brush)
+		}()
+	}
+
+	placement := a.options.InitialPlacement
+	if !placement.IsZero() {
+		placement = clampPlacement(placement, monitorWorkAreas())
+	}
+	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, placement, a)
 	if err != nil {
 		return err
 	}
+	a.markStartup(&a.timeline.WindowCreated)
 	a.mu.Lock()
 	a.hwnd = hwnd
+	a.mu.Unlock()
+	a.startDispatch(hwnd)
+	large, small := setExecutableWindowIcons(hwnd)
+	a.mu.Lock()
+	a.iconLarge = large
+	a.iconSmall = small
 	a.mu.Unlock()
 	enableFileDrop(hwnd, true)
 	if err := applyWindowAccessibility(hwnd, a.options); err != nil {
 		destroyWindow(hwnd)
 		return err
 	}
+	defer a.releaseWebView()
 	if err := a.installPendingNativeUI(hwnd); err != nil {
 		destroyWindow(hwnd)
 		return err
 	}
 	a.fireWindowCreated(hwnd)
 
-	showWindow(hwnd)
+	showWindow(hwnd, placement.Maximized)
+	a.markStartup(&a.timeline.WindowShown)
 	if err := a.createWebView(); err != nil {
 		destroyWindow(hwnd)
 		return err
@@ -166,7 +272,7 @@ func (a *windowsApp) Close() error {
 	return nil
 }
 
-func (a *windowsApp) Navigate(url string) error {
+func (a *windowsApp) navigateOnUI(url string) error {
 	normalized, err := normalizeOptions(Options{Title: a.options.Title, Width: a.options.Width, Height: a.options.Height, URL: url})
 	if err != nil {
 		return err
@@ -183,7 +289,7 @@ func (a *windowsApp) Navigate(url string) error {
 	return webview.navigate(normalized.URL)
 }
 
-func (a *windowsApp) SetHTML(html string) error {
+func (a *windowsApp) setHTMLOnUI(html string) error {
 	if _, err := normalizeOptions(Options{Title: a.options.Title, Width: a.options.Width, Height: a.options.Height, HTML: html}); err != nil {
 		return err
 	}
@@ -198,6 +304,16 @@ func (a *windowsApp) SetHTML(html string) error {
 	return webview.navigateToString(html)
 }
 
+func (a *windowsApp) reloadOnUI() error {
+	a.mu.Lock()
+	webview := a.webview
+	a.mu.Unlock()
+	if webview == nil {
+		return fmt.Errorf("%w: webview not ready", ErrWebView2Unavailable)
+	}
+	return webview.reload()
+}
+
 func (a *windowsApp) createWebView() error {
 	userDataDirValue, err := resolveUserDataDir(a.options.UserDataDir)
 	if err != nil {
@@ -207,87 +323,239 @@ func (a *windowsApp) createWebView() error {
 	if err != nil {
 		return err
 	}
+	browserExecutableFolder, err := optionalUTF16Ptr(a.options.BrowserExecutableFolder)
+	if err != nil {
+		return err
+	}
+	// Merge the app's switches with any value the operator already set, so
+	// field and test overrides (for example a GPU adapter) still apply.
+	// Write the composed value every time: an earlier app in this process
+	// may have left its own switches in the process-wide variable.
+	if err := setBrowserArgumentsEnv(composeBrowserArguments(a.options, operatorBrowserArguments())); err != nil {
+		return err
+	}
 
-	a.envHandler = newEnvironmentCompletedHandler(a)
+	handler := newEnvironmentCompletedHandler(a)
+	a.mu.Lock()
+	a.envHandler = handler
+	a.envHandlerRef = ownCOMReference(unsafe.Pointer(handler), func(ptr unsafe.Pointer) {
+		environmentRelease(uintptr(ptr))
+	})
+	a.mu.Unlock()
 	hr, _, _ := procCreateCoreWebView2EnvironmentWithOptions.Call(
-		0,
+		uintptr(unsafe.Pointer(browserExecutableFolder)),
 		uintptr(unsafe.Pointer(userDataDir)),
 		0,
-		uintptr(unsafe.Pointer(a.envHandler)),
+		uintptr(unsafe.Pointer(handler)),
 	)
 	if failedHRESULT(hr) {
-		return hresultError{Op: "CreateCoreWebView2EnvironmentWithOptions", Code: hr}
+		err := hresultError{Op: "CreateCoreWebView2EnvironmentWithOptions", Code: hr}
+		a.releaseWebView()
+		return err
 	}
 	return nil
 }
 
 func (a *windowsApp) onEnvironmentCreated(hr uintptr, env *coreWebView2Environment) {
+	var envRef *comReference
+	if env != nil {
+		envRef = retainCOMReference(unsafe.Pointer(env), comAddRef, comRelease)
+	}
 	if failedHRESULT(hr) {
-		a.failRun(hresultError{Op: "CreateCoreWebView2EnvironmentWithOptions callback", Code: hr})
+		envRef.Release()
+		a.failSetup(hresultError{Op: "CreateCoreWebView2EnvironmentWithOptions callback", Code: hr})
 		return
 	}
 	if env == nil {
-		a.failRun(fmt.Errorf("%w: WebView2 environment was nil", ErrWebView2Unavailable))
+		a.failSetup(fmt.Errorf("%w: WebView2 environment was nil", ErrWebView2Unavailable))
 		return
 	}
 
 	a.mu.Lock()
+	if a.webviewReleased {
+		a.mu.Unlock()
+		envRef.Release()
+		return
+	}
 	a.env = env
+	a.envRef = envRef
+	if a.timeline.EnvironmentReady == 0 {
+		a.timeline.EnvironmentReady = time.Since(a.created)
+	}
 	hwnd := a.hwnd
-	a.controllerHandler = newControllerCompletedHandler(a)
-	handler := a.controllerHandler
+	handler := newControllerCompletedHandler(a)
+	a.controllerHandler = handler
+	a.controllerHandlerRef = ownCOMReference(unsafe.Pointer(handler), func(ptr unsafe.Pointer) {
+		controllerRelease(uintptr(ptr))
+	})
 	a.mu.Unlock()
 
 	if err := env.createController(hwnd, handler); err != nil {
-		a.failRun(err)
+		a.failSetup(err)
 	}
 }
 
 func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Controller) {
+	var controllerRef *comReference
+	if controller != nil {
+		controllerRef = retainCOMReference(unsafe.Pointer(controller), comAddRef, comRelease)
+	}
 	if failedHRESULT(hr) {
-		a.failRun(hresultError{Op: "CreateCoreWebView2Controller callback", Code: hr})
+		controllerRef.Release()
+		a.failSetup(hresultError{Op: "CreateCoreWebView2Controller callback", Code: hr})
 		return
 	}
 	if controller == nil {
-		a.failRun(fmt.Errorf("%w: WebView2 controller was nil", ErrWebView2Unavailable))
+		a.failSetup(fmt.Errorf("%w: WebView2 controller was nil", ErrWebView2Unavailable))
+		return
+	}
+	a.mu.Lock()
+	closed := a.webviewReleased
+	a.mu.Unlock()
+	if closed {
+		controllerRef.Release()
 		return
 	}
 
 	webview, err := controller.coreWebView2()
 	if err != nil {
-		a.failRun(err)
+		controller.close()
+		controllerRef.Release()
+		a.failSetup(err)
 		return
 	}
+	webviewRef := ownCOMReference(unsafe.Pointer(webview), comRelease)
 
 	// Fetch + configure settings before any page loads so the first
 	// navigation observes the desired policy (web-message enabled, dev
 	// tools per Options.Debug, etc).
 	settings, err := webview.getSettings()
 	if err != nil {
-		a.failRun(err)
+		controller.close()
+		webviewRef.Release()
+		controllerRef.Release()
+		a.failSetup(err)
 		return
 	}
+	settingsRef := ownCOMReference(unsafe.Pointer(settings), comRelease)
 	if err := configureDefaultSettings(settings, a.options); err != nil {
-		a.failRun(err)
+		controller.close()
+		settingsRef.Release()
+		webviewRef.Release()
+		controllerRef.Release()
+		a.failSetup(err)
 		return
+	}
+
+	msgHandler := newWebMessageReceivedHandler(a)
+	msgHandlerRef := ownCOMReference(unsafe.Pointer(msgHandler), func(ptr unsafe.Pointer) {
+		webMessageReceivedRelease(uintptr(ptr))
+	})
+	resHandler := newWebResourceRequestedHandler(a)
+	resHandlerRef := ownCOMReference(unsafe.Pointer(resHandler), func(ptr unsafe.Pointer) {
+		webResourceRequestedRelease(uintptr(ptr))
+	})
+	processFailedHandler := newProcessFailedEventHandler(a)
+	processFailedRef := ownCOMReference(unsafe.Pointer(processFailedHandler), func(ptr unsafe.Pointer) {
+		processFailedRelease(uintptr(ptr))
+	})
+	fullscreenHandler := newContainsFullScreenElementChangedEventHandler(a)
+	fullscreenRef := ownCOMReference(unsafe.Pointer(fullscreenHandler), func(ptr unsafe.Pointer) {
+		fullscreenChangedRelease(uintptr(ptr))
+	})
+	navCompletedHandler := newNavigationCompletedEventHandler(a)
+	navCompletedRef := ownCOMReference(unsafe.Pointer(navCompletedHandler), func(ptr unsafe.Pointer) {
+		navigationCompletedRelease(uintptr(ptr))
+	})
+	var permissionHandler *permissionRequestedEventHandler
+	var permissionRef *comReference
+	if a.options.OnPermissionRequested != nil {
+		permissionHandler = newPermissionRequestedEventHandler(a)
+		permissionRef = ownCOMReference(unsafe.Pointer(permissionHandler), func(ptr unsafe.Pointer) {
+			permissionRequestedRelease(uintptr(ptr))
+		})
+	}
+	var msgToken, resToken, processFailedToken, fullscreenToken, navCompletedToken, permissionToken int64
+	var msgRegistered, resRegistered, processFailedAdded, fullscreenAdded, navCompletedAdded, permissionAdded bool
+	cleanupLocal := func() {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
+		if navCompletedAdded {
+			_ = webview.removeNavigationCompleted(navCompletedToken)
+		}
+		if fullscreenAdded {
+			_ = webview.removeFullscreenChanged(fullscreenToken)
+		}
+		if processFailedAdded {
+			_ = webview.removeProcessFailed(processFailedToken)
+		}
+		if resRegistered {
+			_ = webview.removeWebResourceRequested(resToken)
+		}
+		if msgRegistered {
+			_ = webview.removeWebMessageReceived(msgToken)
+		}
+		controller.close()
+		permissionRef.Release()
+		navCompletedRef.Release()
+		fullscreenRef.Release()
+		processFailedRef.Release()
+		resHandlerRef.Release()
+		msgHandlerRef.Release()
+		settingsRef.Release()
+		webviewRef.Release()
+		controllerRef.Release()
+	}
+	failLocal := func(err error) {
+		cleanupLocal()
+		a.failSetup(err)
 	}
 
 	// Register the JS→Go message bridge handler. Must happen BEFORE the
 	// first navigation — otherwise early postMessage calls from the page
 	// can race with our subscription and silently drop.
-	msgHandler := newWebMessageReceivedHandler(a)
-	if err := webview.addWebMessageReceived(msgHandler); err != nil {
-		a.failRun(err)
+	msgToken, err = webview.addWebMessageReceived(msgHandler)
+	if err != nil {
+		failLocal(err)
 		return
 	}
+	msgRegistered = true
 
 	// Register the resource-requested handler that powers App.Serve.
 	// Filter installation happens per-route as Serve is called; the
 	// event handler is shared across all filters.
-	resHandler := newWebResourceRequestedHandler(a)
-	if err := webview.addWebResourceRequested(resHandler); err != nil {
-		a.failRun(err)
+	resToken, err = webview.addWebResourceRequested(resHandler)
+	if err != nil {
+		failLocal(err)
 		return
+	}
+	resRegistered = true
+	processFailedToken, err = webview.addProcessFailed(processFailedHandler)
+	if err != nil {
+		failLocal(err)
+		return
+	}
+	processFailedAdded = true
+	fullscreenToken, err = webview.addFullscreenChanged(fullscreenHandler)
+	if err != nil {
+		failLocal(err)
+		return
+	}
+	fullscreenAdded = true
+	navCompletedToken, err = webview.addNavigationCompleted(navCompletedHandler)
+	if err != nil {
+		failLocal(err)
+		return
+	}
+	navCompletedAdded = true
+	if permissionHandler != nil {
+		permissionToken, err = webview.addPermissionRequested(permissionHandler)
+		if err != nil {
+			failLocal(err)
+			return
+		}
+		permissionAdded = true
 	}
 	// Replay any filters registered before the webview came up.
 	a.mu.Lock()
@@ -295,44 +563,78 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	a.mu.Unlock()
 	for _, route := range pendingRoutes {
 		if err := webview.addWebResourceRequestedFilter(filterURI(route.prefix)); err != nil {
-			a.failRun(err)
+			failLocal(err)
 			return
 		}
 	}
 
 	a.mu.Lock()
 	a.controller = controller
+	a.controllerRef = controllerRef
 	a.webview = webview
+	a.webviewRef = webviewRef
 	a.settings = settings
+	a.settingsRef = settingsRef
 	a.webMsgHandler = msgHandler
+	a.webMsgHandlerRef = msgHandlerRef
+	a.webMsgToken = msgToken
+	a.webMsgRegistered = msgRegistered
+	a.processFailedHandler = processFailedHandler
+	a.processFailedRef = processFailedRef
+	a.processFailedToken = processFailedToken
+	a.processFailedAdded = processFailedAdded
+	a.fullscreenHandler = fullscreenHandler
+	a.fullscreenRef = fullscreenRef
+	a.fullscreenToken = fullscreenToken
+	a.fullscreenAdded = fullscreenAdded
+	a.navCompletedHandler = navCompletedHandler
+	a.navCompletedRef = navCompletedRef
+	a.navCompletedToken = navCompletedToken
+	a.navCompletedAdded = navCompletedAdded
+	a.permissionHandler = permissionHandler
+	a.permissionRef = permissionRef
+	a.permissionToken = permissionToken
+	a.permissionAdded = permissionAdded
 	a.resHandler = resHandler
+	a.resHandlerRef = resHandlerRef
+	a.resHandlerToken = resToken
+	a.resHandlerRegistered = resRegistered
 	html := a.options.HTML
 	url := a.options.URL
 	bootstrap := a.pendingBootstrap
 	a.mu.Unlock()
+	if a.options.MuteAudio {
+		bootstrap = muteMediaAudioScript + bootstrap
+	}
 
 	if bootstrap != "" {
 		if err := webview.addScriptToExecuteOnDocumentCreated(bootstrap); err != nil {
-			a.failRun(err)
+			a.failSetup(err)
 			return
 		}
 	}
 
 	if err := a.resizeWebView(); err != nil {
-		a.failRun(err)
+		a.failSetup(err)
 		return
+	}
+	if color, _, ok, _ := parseBackgroundColor(a.options.BackgroundColor); ok {
+		// Older runtimes lack ICoreWebView2Controller2; the window brush
+		// still covers the area until the page paints.
+		_ = controller.setDefaultBackgroundColor(color)
 	}
 	if err := controller.setVisible(true); err != nil {
-		a.failRun(err)
+		a.failSetup(err)
 		return
 	}
+	a.markStartup(&a.timeline.ControllerReady)
 	if html != "" {
 		err = webview.navigateToString(html)
 	} else {
 		err = webview.navigate(url)
 	}
 	if err != nil {
-		a.failRun(err)
+		a.failSetup(err)
 	}
 }
 
@@ -363,33 +665,114 @@ func (a *windowsApp) failRun(err error) {
 	}
 }
 
+func (a *windowsApp) failSetup(err error) {
+	a.releaseWebView()
+	a.failRun(err)
+}
+
 func (a *windowsApp) releaseWebView() {
 	a.mu.Lock()
+	a.webviewReleased = true
 	controller := a.controller
+	controllerRef := a.controllerRef
 	webview := a.webview
-	settings := a.settings
-	env := a.env
+	webviewRef := a.webviewRef
+	settingsRef := a.settingsRef
+	envRef := a.envRef
+	envHandlerRef := a.envHandlerRef
+	controllerHandlerRef := a.controllerHandlerRef
+	webMsgHandlerRef := a.webMsgHandlerRef
+	resHandlerRef := a.resHandlerRef
+	processFailedRef := a.processFailedRef
+	fullscreenRef := a.fullscreenRef
+	webMsgToken, webMsgRegistered := a.webMsgToken, a.webMsgRegistered
+	resHandlerToken, resHandlerRegistered := a.resHandlerToken, a.resHandlerRegistered
+	processFailedToken, processFailedAdded := a.processFailedToken, a.processFailedAdded
+	fullscreenToken, fullscreenAdded := a.fullscreenToken, a.fullscreenAdded
+	navCompletedRef := a.navCompletedRef
+	navCompletedToken, navCompletedAdded := a.navCompletedToken, a.navCompletedAdded
+	permissionRef := a.permissionRef
+	permissionToken, permissionAdded := a.permissionToken, a.permissionAdded
+	a.permissionHandler = nil
+	a.permissionRef = nil
+	a.permissionToken = 0
+	a.permissionAdded = false
+	a.navCompletedHandler = nil
+	a.navCompletedRef = nil
+	a.navCompletedToken = 0
+	a.navCompletedAdded = false
 	a.controller = nil
+	a.controllerRef = nil
 	a.webview = nil
+	a.webviewRef = nil
 	a.settings = nil
+	a.settingsRef = nil
 	a.env = nil
+	a.envRef = nil
+	a.envHandler = nil
+	a.envHandlerRef = nil
+	a.controllerHandler = nil
+	a.controllerHandlerRef = nil
+	a.webMsgHandler = nil
+	a.webMsgHandlerRef = nil
+	a.webMsgRegistered = false
+	a.processFailedHandler = nil
+	a.processFailedRef = nil
+	a.processFailedToken = 0
+	a.processFailedAdded = false
+	a.fullscreenHandler = nil
+	a.fullscreenRef = nil
+	a.fullscreenToken = 0
+	a.fullscreenAdded = false
+	a.resHandler = nil
+	a.resHandlerRef = nil
+	a.resHandlerRegistered = false
 	a.mu.Unlock()
 
+	if webview != nil {
+		if permissionAdded {
+			_ = webview.removePermissionRequested(permissionToken)
+		}
+		if navCompletedAdded {
+			_ = webview.removeNavigationCompleted(navCompletedToken)
+		}
+		if fullscreenAdded {
+			_ = webview.removeFullscreenChanged(fullscreenToken)
+		}
+		if processFailedAdded {
+			_ = webview.removeProcessFailed(processFailedToken)
+		}
+		if resHandlerRegistered {
+			_ = webview.removeWebResourceRequested(resHandlerToken)
+		}
+		if webMsgRegistered {
+			_ = webview.removeWebMessageReceived(webMsgToken)
+		}
+	}
 	if controller != nil {
 		controller.close()
 	}
-	if settings != nil {
-		comRelease(unsafe.Pointer(settings))
-	}
-	if webview != nil {
-		comRelease(unsafe.Pointer(webview))
-	}
-	if controller != nil {
-		comRelease(unsafe.Pointer(controller))
-	}
-	if env != nil {
-		comRelease(unsafe.Pointer(env))
-	}
+	settingsRef.Release()
+	webviewRef.Release()
+	controllerRef.Release()
+	envRef.Release()
+	permissionRef.Release()
+	navCompletedRef.Release()
+	fullscreenRef.Release()
+	processFailedRef.Release()
+	resHandlerRef.Release()
+	webMsgHandlerRef.Release()
+	controllerHandlerRef.Release()
+	envHandlerRef.Release()
+}
+
+func (a *windowsApp) releaseWindowIcons(hwnd uintptr) {
+	a.mu.Lock()
+	large, small := a.iconLarge, a.iconSmall
+	a.iconLarge = 0
+	a.iconSmall = 0
+	a.mu.Unlock()
+	releaseExecutableWindowIcons(hwnd, large, small)
 }
 
 // configureDefaultSettings applies the Windows-specific settings policy
@@ -420,13 +803,23 @@ func configureDefaultSettings(s *coreWebView2Settings, o Options) error {
 		"Settings.put_AreDefaultContextMenusEnabled", o.Debug); err != nil {
 		return err
 	}
+	policy := settingsPolicy(o.Debug)
+	if err := s.setBool(settingsPutIsStatusBarEnabled, "Settings.put_IsStatusBarEnabled", policy.statusBar); err != nil {
+		return err
+	}
+	if err := s.setBool(settingsPutIsZoomControlEnabled, "Settings.put_IsZoomControlEnabled", policy.zoomControl); err != nil {
+		return err
+	}
+	if err := s.setBrowserAcceleratorKeysEnabled(policy.browserAcceleratorKeys); err != nil {
+		return err
+	}
 	return nil
 }
 
 // PostMessage sends a string payload to the webview's chrome.webview event
 // listener. Falls back silently when the webview hasn't finished creation
 // — the caller can retry after OnWebMessage confirms the bridge is live.
-func (a *windowsApp) PostMessage(message string) error {
+func (a *windowsApp) postMessageOnUI(message string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -439,7 +832,7 @@ func (a *windowsApp) PostMessage(message string) error {
 // ExecuteScript runs arbitrary JavaScript in the top-level frame. The
 // completion handler form is ignored for simplicity — callers that need
 // the return value can use PostMessage to round-trip through JS.
-func (a *windowsApp) ExecuteScript(script string) error {
+func (a *windowsApp) executeScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.mu.Unlock()
@@ -452,7 +845,7 @@ func (a *windowsApp) ExecuteScript(script string) error {
 // OpenDevTools pops the Chromium dev-tools inspector in a separate
 // window. Requires Options.Debug or Options.DevTools; otherwise returns
 // an error because the underlying setting disables the call.
-func (a *windowsApp) OpenDevTools() error {
+func (a *windowsApp) openDevToolsOnUI() error {
 	if !devToolsEnabled(a.options) {
 		return fmt.Errorf("%w: Options.Debug or Options.DevTools must be true to open dev tools",
 			ErrInvalidOptions)
@@ -476,7 +869,7 @@ func (a *windowsApp) openDevToolsFromShortcut() {
 // PrependBootstrapScript queues a JS snippet that will run before every
 // document load inside the webview. Calls queued before Run are stored
 // in pendingBootstrap and registered once the controller completes.
-func (a *windowsApp) PrependBootstrapScript(script string) error {
+func (a *windowsApp) prependBootstrapScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
 	a.pendingBootstrap = script
@@ -553,7 +946,7 @@ func (a *windowsApp) SetTitle(title string) error {
 // matches everything rooted at "app://assets/". Registrations are
 // first-match-wins in insertion order, so specific prefixes should be
 // registered before generic ones.
-func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+func (a *windowsApp) serveOnUI(prefix string, handler http.Handler) error {
 	if strings.TrimSpace(prefix) == "" {
 		return fmt.Errorf("%w: serve prefix must be non-empty", ErrInvalidOptions)
 	}
@@ -582,16 +975,48 @@ func filterURI(prefix string) string {
 	return prefix
 }
 
+func (a *windowsApp) WindowPlacement() (WindowPlacement, error) {
+	a.mu.Lock()
+	hwnd := a.hwnd
+	a.mu.Unlock()
+	if hwnd == 0 {
+		return WindowPlacement{}, fmt.Errorf("%w: window handle is not available", ErrWindowNotReady)
+	}
+	a.fullscreenMu.Lock()
+	defer a.fullscreenMu.Unlock()
+	if a.fullscreen.active {
+		return a.fullscreen.savedPlacement, nil
+	}
+	return getWindowPlacement(hwnd)
+}
+
 // SetFullscreen toggles borderless-fullscreen mode for the hosted window.
 // On entry, saves the current chrome style + bounds so the reverse call
 // restores the user's pre-fullscreen window rect rather than a maximized
 // approximation.
 func (a *windowsApp) SetFullscreen(enabled bool) error {
+	return a.setFullscreenSource(false, enabled)
+}
+
+func (a *windowsApp) onHTMLFullscreenChanged(enabled bool) error {
+	return a.setFullscreenSource(true, enabled)
+}
+
+func (a *windowsApp) setFullscreenSource(html, enabled bool) error {
 	a.mu.Lock()
 	hwnd := a.hwnd
-	state := &a.fullscreen
 	a.mu.Unlock()
-	return applyFullscreen(hwnd, state, enabled)
+	if hwnd == 0 {
+		return fmt.Errorf("%w: fullscreen requires a live window", ErrInvalidOptions)
+	}
+	a.fullscreenMu.Lock()
+	defer a.fullscreenMu.Unlock()
+	if html {
+		a.fullscreenHTML = enabled
+	} else {
+		a.fullscreenManual = enabled
+	}
+	return applyFullscreen(hwnd, &a.fullscreen, a.fullscreenManual || a.fullscreenHTML)
 }
 
 // SetMinSize configures the minimum resize dimensions the window enforces
@@ -657,15 +1082,56 @@ func (a *windowsApp) onWebMessage(message string) {
 	cb(message)
 }
 
+func (a *windowsApp) onProcessFailed(kind ProcessFailedKind) {
+	a.mu.Lock()
+	cb := a.options.OnProcessFailed
+	a.mu.Unlock()
+	if cb != nil {
+		cb(kind)
+	}
+}
+
 func (a *windowsApp) fireWindowCreated(hwnd uintptr) {
 	a.mu.Lock()
 	cb := a.options.OnWindowCreated
 	options := a.options
+	window := a.primaryWindow
+	if window == nil {
+		window = newPrimaryWindow(hwnd, options, func(menu Menu) error {
+			return a.setWindowContextMenu(hwnd, menu)
+		})
+		a.primaryWindow = window
+	}
 	a.mu.Unlock()
 	if cb != nil {
-		cb(newPrimaryWindow(hwnd, options, func(menu Menu) error {
-			return a.setWindowContextMenu(hwnd, menu)
-		}))
+		cb(window)
+	}
+}
+
+// clearPrimaryWindow forgets the destroyed primary window, so App.Window
+// returns nil and App.ShowMessage (for example from OnClose) does not use a
+// handle Windows may reuse.
+func (a *windowsApp) clearPrimaryWindow() {
+	a.mu.Lock()
+	a.primaryWindow = nil
+	a.mu.Unlock()
+}
+
+func (a *windowsApp) PrimaryWindow() *Window {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.primaryWindow
+}
+
+func (a *windowsApp) onFocusChanged(focused bool) {
+	if !a.focusTracker.Update(focused) {
+		return
+	}
+	a.mu.Lock()
+	cb := a.options.OnFocusChanged
+	a.mu.Unlock()
+	if cb != nil {
+		cb(focused)
 	}
 }
 
@@ -711,4 +1177,44 @@ func resolveUserDataDir(configured string) (string, error) {
 		return "", fmt.Errorf("create WebView2 user data dir: %w", err)
 	}
 	return dir, nil
+}
+
+// Navigate runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Navigate(url string) error {
+	return a.onUIThread(func() error { return a.navigateOnUI(url) })
+}
+
+// SetHTML runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) SetHTML(html string) error {
+	return a.onUIThread(func() error { return a.setHTMLOnUI(html) })
+}
+
+// Reload runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Reload() error {
+	return a.onUIThread(a.reloadOnUI)
+}
+
+// PostMessage runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) PostMessage(message string) error {
+	return a.onUIThread(func() error { return a.postMessageOnUI(message) })
+}
+
+// ExecuteScript runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) ExecuteScript(script string) error {
+	return a.onUIThread(func() error { return a.executeScriptOnUI(script) })
+}
+
+// OpenDevTools runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) OpenDevTools() error {
+	return a.onUIThread(a.openDevToolsOnUI)
+}
+
+// PrependBootstrapScript runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) PrependBootstrapScript(script string) error {
+	return a.onUIThread(func() error { return a.prependBootstrapScriptOnUI(script) })
+}
+
+// Serve runs on the window thread; WebView2 rejects calls from other threads.
+func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+	return a.onUIThread(func() error { return a.serveOnUI(prefix, handler) })
 }

@@ -48,6 +48,7 @@ var sceneIRFieldMutators = map[string]func(ir *SceneIR){
 	"PostEffects":        func(ir *SceneIR) { ir.PostEffects = append(ir.PostEffects, BloomIR{Threshold: 0.55}) },
 	"PostFXMaxPixels":    func(ir *SceneIR) { ir.PostFXMaxPixels = PostFXMaxPixels720p },
 	"ShadowMaxPixels":    func(ir *SceneIR) { ir.ShadowMaxPixels = 4096 },
+	"GPUDriven":          func(ir *SceneIR) { ir.GPUDriven = &GPUDrivenIR{Occlusion: true, ShadowCulling: true} },
 	"QualityLadder":      func(ir *SceneIR) { ir.QualityLadder = append(ir.QualityLadder, QualityRungIR{Name: "low"}) },
 	"QualityStartRung":   func(ir *SceneIR) { ir.QualityStartRung = 2 },
 	"PointQualityGroups": func(ir *SceneIR) { ir.PointQualityGroups = map[string]string{"dust": "props"} },

@@ -48,11 +48,26 @@ func CodeBlock(lang, source string) gosx.Node {
 	lineCount := highlight.LineCount(source)
 	return gosx.El("figure", gosx.Attrs(
 		gosx.Attr("class", "code-sample"),
+		gosx.Attr("data-gosx-copy-scope", ""),
 		gosx.Attr("role", "region"),
 		gosx.Attr("aria-label", highlight.Label(normalized)+" code sample"),
 	),
 		gosx.El("figcaption", gosx.Attrs(gosx.Attr("class", "code-sample__head")),
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "code-sample__label")), gosx.Text(highlight.Label(normalized))),
+			gosx.El("div", gosx.Attrs(gosx.Attr("class", "code-sample__actions")),
+				gosx.El("button", gosx.Attrs(
+					gosx.Attr("type", "button"),
+					gosx.Attr("class", "code-sample__copy"),
+					gosx.Attr("data-gosx-copy-button", ""),
+					gosx.Attr("data-gosx-copy-label", "Copy"),
+				), gosx.Text("Copy")),
+				gosx.El("span", gosx.Attrs(
+					gosx.Attr("class", "code-sample__copy-status"),
+					gosx.Attr("data-gosx-copy-status", ""),
+					gosx.Attr("role", "status"),
+					gosx.Attr("aria-live", "polite"),
+				)),
+			),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "code-sample__body")),
 			gosx.El("pre", gosx.Attrs(

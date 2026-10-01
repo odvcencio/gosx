@@ -1,4 +1,4 @@
-// Known stdlib intrinsics that the X.B registry exposes. The lowerer
+// Known stdlib intrinsics that the intrinsic registry exposes. The lowerer
 // consults this table when it encounters a selector-call expression
 // (math.Sin(x), strings.Split(s, ","), ...) to decide whether to emit
 // an OpCall with the qualified name or a "construct not supported"

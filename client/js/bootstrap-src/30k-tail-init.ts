@@ -30,6 +30,7 @@
     mountManagedTextLayouts(document.body || document.documentElement);
 
     const manifest = loadManifest();
+    if (!manifestHasEntries(manifest, "hubs")) await gosxHost.hubs.connectAll(manifest);
     if (!manifest) {
       // No manifest — pure server-rendered page, no islands to hydrate.
       pendingManifest = null;

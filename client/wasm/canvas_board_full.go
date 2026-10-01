@@ -52,7 +52,7 @@ func registerCanvasBoardRuntime(b *bridge.Bridge) {
 }
 
 // canvasSetBackendFunc routes the named board's per-frame RenderBundle to a
-// render backend (M1 slice 4). The JS surface calls this once, right after
+// render backend. The JS surface calls this once, right after
 // hydration, only when its canvas2d element opted into WebGPU AND the GPU path
 // is genuinely available (navigator.gpu + the 16a factory present) — so the
 // __gosx_render_canvas frames that follow carry GPU geometry the 16a WebGPU
@@ -97,7 +97,7 @@ func canvasUpdateHTMLFunc(b *bridge.Bridge) js.Func {
 // into the named board's adapter via Bridge.CanvasBoardEvent. Pan and zoom
 // mutate the adapter's runtime camera so the next __gosx_render_canvas frame
 // paints the new view; pick hit-tests through the camera and writes the result
-// into $surface.event.* (ADR 0007). Mirrors __gosx_dispatch_engine_surface_event
+// into $surface.event.*. Mirrors __gosx_dispatch_engine_surface_event
 // for the canvas2d surface — same (id, kind, floats, payloadStr) shape — so the
 // JS bootstrap's canvas2d branch wires its DOM listeners the same way the
 // engine-surface branch does.

@@ -174,7 +174,7 @@ func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 // pushPickToSignals writes the pick outcome into the unified surface-event
-// signal namespace ($surface.event.*) per ADR 0007. Legacy $scene.event.*
+// signal namespace ($surface.event.*). Legacy $scene.event.*
 // consumers continue to receive these writes via the read-only alias table
 // in package signal — see signal/aliases.go.
 //

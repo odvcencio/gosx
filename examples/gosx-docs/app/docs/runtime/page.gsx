@@ -2,32 +2,19 @@ package docs
 
 func Page() Node {
 	return <div>
-		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
-			<div id={docScene.SurfaceID} class="doc-scene__surface">
-				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
-					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
-				</Scene3D>
-			</div>
-			<div class="doc-scene__teaching">
-				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
-				<p class="doc-scene__summary">{docScene.Summary}</p>
-				<dl class="doc-scene__facts">
-					<div>
-						<dt>Backend contract</dt>
-						<dd>{docScene.BackendTruth}</dd>
-					</div>
-					<div>
-						<dt>Interaction</dt>
-						<dd>{docScene.InteractionHint}</dd>
-					</div>
-				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
-			</div>
+		<section class="docs-live-example" aria-label="Managed navigation example">
+			<p class="eyebrow">Managed navigation</p>
+			<p>
+				These links are ordinary anchors first. GoSX fetches and swaps the server-rendered page while preserving the document runtime.
+			</p>
+			<nav aria-label="Runtime example pages">
+				<a href="/docs/islands" data-gosx-link="true" data-gosx-prefetch="render">Open the Islands guide</a>
+				<a href="/docs/your-first-app" data-gosx-link="true">Open the first-app tutorial</a>
+			</nav>
+			<a
+				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/runtime/page.gsx"
+				rel="noopener"
+			>View the navigation link source</a>
 		</section>
 		<section id="client-navigation">
 			<h2>Opt-in client navigation</h2>
@@ -36,9 +23,7 @@ func Page() Node {
 				<span class="inline-code">/__actions/&lt;name&gt;</span>
 				are managed automatically too. Every one retains native browser behavior when JavaScript is unavailable.
 			</p>
-			{CodeBlock("gosx", `<a href="/docs/routing">Routing</a>
-	<form method="get" action="/docs"><input name="q" /></form>
-	<a href="/download" data-gosx-native>Use native navigation</a>`)}
+			{CodeBlock("gosx", data.sample001)}
 			<p>
 				Use
 				<span class="inline-code">data-gosx-native</span>
@@ -55,9 +40,7 @@ func Page() Node {
 				<span class="inline-code">app.EnableNavigation()</span>
 				; the same application setting wires a mounted file-router layout.
 			</p>
-			{CodeBlock("go", `app := server.New()
-	app.EnableNavigation()
-	app.Mount("/", router.Build())`)}
+			{CodeBlock("go", data.sample002)}
 			<p>
 				The framework-owned navigation runtime is emitted once by
 				<span class="inline-code">app.EnableNavigation()</span>
@@ -107,9 +90,7 @@ func Page() Node {
 			<p>
 				Use the public navigation facade for a programmatic transition or an explicit revalidation:
 			</p>
-			{CodeBlock("javascript", `await window.__gosx.navigation.navigate("/docs/routing")
-	await window.__gosx.navigation.revalidate()
-	console.log(window.__gosx.navigation.getState())`)}
+			{CodeBlock("javascript", data.sample003)}
 		</section>
 		<section id="periodic-revalidation">
 			<h2>Periodic revalidation</h2>
@@ -118,9 +99,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-revalidate-interval</span>
 				to the first matching element on a page. The runtime revalidates on that interval, with zero application JavaScript.
 			</p>
-			{CodeBlock("gosx", `<main data-gosx-revalidate-interval="4s" data-gosx-revalidate-src="/api/league/version">
-	    <!-- draft room, scoreboard, or other live server state -->
-	</main>`)}
+			{CodeBlock("gosx", data.sample004)}
 			<p>
 				The interval accepts whole seconds or whole minutes only, for example
 				<span class="inline-code">"4s"</span>
@@ -169,7 +148,7 @@ func Page() Node {
 				<span class="inline-code">body</span>
 				itself, for a periodic presence ping with zero application JavaScript.
 			</p>
-			{CodeBlock("gosx", `<body data-gosx-heartbeat="/api/presence/ping" data-gosx-heartbeat-interval="30s">`)}
+			{CodeBlock("gosx", data.sample005)}
 			<p>
 				A page component never renders
 				<span class="inline-code">body</span>
@@ -179,12 +158,7 @@ func Page() Node {
 				<span class="inline-code">gosx.El</span>
 				div solely to carry it:
 			</p>
-			{CodeBlock("go", `ctx.BodyAttrs(
-	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
-	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
-	)
-	ctx.SetLanguage("en")
-	return server.HTMLDocument(ctx.Document(appName, body))`)}
+			{CodeBlock("go", data.sample006)}
 			<p>
 				That is the whole change. It replaces this pattern, which existed only because
 				<span class="inline-code">HTMLDocument</span>
@@ -192,12 +166,7 @@ func Page() Node {
 				<span class="inline-code">display: contents</span>
 				CSS rule so the div does not disturb layout — a rule a consumer forgetting to write gets a layout bug from, with no diagnostic.
 			</p>
-			{CodeBlock("go", `heartbeatShell := gosx.El("div", gosx.Attrs(
-	    gosx.Attr("class", "gosx-heartbeat-shell"),
-	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
-	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
-	), body)
-	return server.HTMLDocument(ctx.Document(appName, heartbeatShell))`)}
+			{CodeBlock("go", data.sample007)}
 			<p>
 				A page that renders its document by calling
 				<span class="inline-code">HTMLDocument</span>
@@ -270,19 +239,12 @@ func Page() Node {
 				<span class="inline-code">data-gosx-countdown</span>
 				with an RFC3339 instant to count down to that moment with zero application JavaScript. Write the element's initial text yourself, so the page shows a correct value even with no JavaScript at all. The runtime takes over at the first 1-second tick after the page loads, with one shared timer for every countdown on the page.
 			</p>
-			{CodeBlock("gosx", `<span data-gosx-countdown="2026-08-22T16:00:00-04:00"
-	      data-gosx-countdown-format="mm:ss">15:00</span>`)}
+			{CodeBlock("gosx", data.sample008)}
 			<p>
 				To compute that initial text from the server's own clock instead of a hand-typed guess, format it in the page's loader and render the result as the element's text:
 			</p>
-			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    remaining := time.Until(launchAt)
-	    return map[string]any{
-	        "countdownText": fmt.Sprintf("%d:%02d", int(remaining.Minutes()), int(remaining.Seconds())%60),
-	    }, nil
-	}`)}
-			{CodeBlock("gosx", `<span data-gosx-countdown="2026-08-22T16:00:00-04:00"
-	      data-gosx-countdown-format="mm:ss">{data.countdownText}</span>`)}
+			{CodeBlock("go", data.sample009)}
+			{CodeBlock("gosx", data.sample010)}
 			<p>
 				Add
 				<span class="inline-code">data-gosx-countdown-format</span>
@@ -309,12 +271,7 @@ func Page() Node {
 				<span class="inline-code">"seconds"</span>
 				. The runtime fills only the matching element, and leaves the rest of the subtree untouched. Write each segment's own initial value, the same way the compact form's initial text is author-written above.
 			</p>
-			{CodeBlock("gosx", `<div data-gosx-countdown="2026-08-22T16:00:00-04:00">
-	    <b data-gosx-countdown-segment="days">3</b>
-	    <b data-gosx-countdown-segment="hours">04</b>
-	    <b data-gosx-countdown-segment="minutes">12</b>
-	    <b data-gosx-countdown-segment="seconds">09</b>
-	</div>`)}
+			{CodeBlock("gosx", data.sample011)}
 			<p>
 				A segment set missing one or more of the four names still renders, but each present segment shows only its own remainder modulo its own unit — a seconds-only segment on a 5 minute countdown shows
 				<span class="inline-code">"59"</span>
@@ -387,10 +344,7 @@ func Page() Node {
 				<span class="inline-code">gosx:cue:muted</span>
 				. A muted cue is skipped, never queued.
 			</p>
-			{CodeBlock("gosx", `<button data-gosx-cue-toggle
-	    data-gosx-cue-label-on="Sound on" data-gosx-cue-label-off="Sound off">
-	    Sound on
-	</button>`)}
+			{CodeBlock("gosx", data.sample012)}
 			<p>
 				A toggle on any other tag still functions, but warns once in the console — the
 				<span class="inline-code">&lt;button type="button"&gt;</span>
@@ -485,8 +439,7 @@ func Page() Node {
 				</span>
 				(that element's own named attribute):
 			</p>
-			{CodeBlock("gosx", `<div id="viewer" data-seat-id="seat-7"></div>
-	<div data-gosx-watch="data-seat=@#viewer[data-seat-id]" data-seat="seat-7"></div>`)}
+			{CodeBlock("gosx", data.sample013)}
 			<p>
 				Add
 				<span class="inline-code">
@@ -569,12 +522,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-action</span>
 				uses.
 			</p>
-			{CodeBlock("gosx", `<ol data-gosx-reorder data-gosx-reorder-action="POST /api/board/reorder">
-	    <li data-gosx-reorder-item="42">
-	        <span data-gosx-reorder-handle aria-label="Reorder">⠿</span>
-	        Player Name
-	    </li>
-	</ol>`)}
+			{CodeBlock("gosx", data.sample014)}
 			<p>
 				A drop posts the moved item's identity and its zero-based target index as
 				<span class="inline-code">item_id</span>
@@ -682,6 +630,91 @@ func Page() Node {
 				above) — periodic revalidation, the pause it pauses, and the managed-form error surface it reverts through all live there.
 			</p>
 		</section>
+		<section id="declarative-transfer">
+			<h2>Declarative fixed-target transfer</h2>
+			<p>
+				Use a transfer root when one item must be assigned to one fixed destination — for example, a player card moved to a QB, RB, or bench slot. Put
+				<span class="inline-code">data-gosx-transfer</span>
+				and a same-origin POST action on the root. Mark each source with
+				<span class="inline-code">data-gosx-transfer-source</span>
+				and each destination with
+				<span class="inline-code">data-gosx-transfer-target</span>
+				. A source's optional
+				<span class="inline-code">data-gosx-transfer-handle</span>
+				descendant is its only grip; when no handle is present, the source itself is keyboard and pointer reachable.
+			</p>
+			{CodeBlock("gosx", data.sample015)}
+			<p>
+				A successful transfer posts
+				<span class="inline-code">player_id=player-7</span>
+				and
+				<span class="inline-code">slot=QB</span>
+				by default, together with the context pairs. Override those two field names with
+				<span class="inline-code">data-gosx-transfer-source-field</span>
+				and
+				<span class="inline-code">data-gosx-transfer-target-field</span>
+				. Context is a URLSearchParams-style query string in
+				<span class="inline-code">data-gosx-transfer-context</span>
+				; keys equal to either identity field are ignored so the runtime's source and target values stay authoritative.
+			</p>
+			<p>
+				Eligibility can be source-specific: put a comma- or space-separated list of allowed source identities in
+				<span class="inline-code">data-gosx-transfer-eligible-for</span>
+				on a target (or
+				<span class="inline-code">*</span>
+				for every source). This lets the server render, for example, WR-only destinations without trusting a client-side position rule. The existing
+				<span class="inline-code">data-gosx-transfer-eligible="false"</span>
+				form remains the global opt-out.
+			</p>
+			<ul>
+				<li>
+					Pointer Events with pointer capture support mouse, touch, and pen. The runtime highlights the source and the eligible target under the pointer while leaving every source and target in its original DOM position, so the surrounding player-pool scroll remains native.
+				</li>
+				<li>
+					Space or Enter picks up a source for keyboard users. Arrow keys or Tab move across eligible destinations; Space or Enter assigns, and Escape cancels. Every transition is announced through the shared
+					<span class="inline-code">aria-live</span>
+					region.
+				</li>
+				<li>
+					A destination with
+					<span class="inline-code">disabled</span>
+					,
+					<span class="inline-code">aria-disabled="true"</span>
+					,
+					<span class="inline-code">data-gosx-transfer-locked</span>
+					, or
+					<span class="inline-code">data-gosx-transfer-eligible="false"</span>
+					is skipped for both pointer hit-testing and keyboard navigation. A source marked disabled cannot be picked up.
+				</li>
+				<li>
+					The root reuses
+					<span class="inline-code">data-gosx-pending</span>
+					and
+					<span class="inline-code">data-gosx-form-state</span>
+					as its in-flight/error surface. A second transfer while the action is pending is refused, and a failed action does not move or silently rewrite either node.
+				</li>
+				<li>
+					The action is sent through the managed same-origin transport with the page's CSRF token. Its redirect or region/document reconciliation is authoritative; the runtime only reports success or failure and never pretends a transfer succeeded by relocating DOM nodes optimistically. A soft navigation or region replacement cancels any active gesture and removes its temporary state.
+				</li>
+			</ul>
+			<p>
+				Style the transient hooks
+				<span class="inline-code">gosx-transfer--active</span>
+				(on the root),
+				<span class="inline-code">gosx-transfer-source--active</span>
+				(on the picked source), and
+				<span class="inline-code">gosx-transfer-target--over</span>
+				(on the current destination). The navigation runtime exposes
+				<span class="inline-code">
+					window.__gosx.transfer.targetForPointer(root, x, y)
+				</span>
+				and
+				<span class="inline-code">
+					window.__gosx.transfer.eligibleTargets(root)
+				</span>
+				for diagnostics or a custom visual layer; ordinary pages need no JavaScript of their own.
+			</p>
+		</section>
 		<section id="live-bound-regions">
 			<h2>Live-bound regions</h2>
 			<p>
@@ -705,10 +738,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-region-on</span>
 				use below. All three compose; none is required on its own, but at least one must be present or the region never refreshes past its server-rendered initial text.
 			</p>
-			{CodeBlock("gosx", `<div data-gosx-live-src="/api/live/week" data-gosx-live-interval="10s">
-	    <span data-gosx-live-bind="score:t42" data-gosx-live-flash-class="score-flash">0.0</span>
-	    <span data-gosx-live-bind="status.mode">SCHEDULED</span>
-	</div>`)}
+			{CodeBlock("gosx", data.sample016)}
 			<p>
 				A bind key is a top-level key, or a
 				<span class="inline-code">"."</span>
@@ -730,9 +760,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-live-bind</span>
 				uses above.
 			</p>
-			{CodeBlock("gosx", `<b data-gosx-countdown="2026-09-06T17:00:00Z"
-	    data-gosx-live-bind-attr="data-gosx-countdown:clock.effective_deadline"
-	    data-gosx-live-bind-class="pick-clock--paused:clock.paused">15:00</b>`)}
+			{CodeBlock("gosx", data.sample017)}
 			<p>
 				An attribute bind is a server-controlled write into the DOM, so its target passes a POSITIVE allowlist: never an
 				<span class="inline-code">on*</span>
@@ -771,9 +799,7 @@ func Page() Node {
 				<span class="inline-code">window.__gosx.live.refresh(element)</span>
 				manual-refresh escape hatch.
 			</p>
-			{CodeBlock("gosx", `<div data-gosx-live-on="draft:pick" data-gosx-live-mode="event">
-	    <span data-gosx-live-bind="cell.3.4">3.04</span>
-	</div>`)}
+			{CodeBlock("gosx", data.sample018)}
 			<p>
 				Many independent live regions can exist on one page, each on its own timer, because each is free to poll a different source at a different cadence. Unlike periodic revalidation above, an interval-triggered live region fires its first tick immediately at setup rather than waiting out a full interval — the tick's own action is a cheap text patch, not a decision about whether a much heavier full-page revalidation is worth doing. A region declaring only a signal or hub-event trigger, with no interval, fires no tick at setup either — it stays on its server-rendered text until that trigger first fires.
 			</p>
@@ -804,10 +830,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-region</span>
 				:
 			</p>
-			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    ctx.Runtime().EnableBootstrap()
-	    return map[string]any{"title": "Wire"}, nil
-	}`)}
+			{CodeBlock("go", data.sample019)}
 			<p>
 				Without a bootstrap bundle,
 				<span class="inline-code">data-gosx-region</span>
@@ -834,9 +857,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-revalidate-interval</span>
 				accepts, composing with the other triggers rather than replacing them.
 			</p>
-			{CodeBlock("gosx", `<ul data-gosx-region data-gosx-region-url="/api/wire/events" data-gosx-region-interval="20s">
-	    <!-- server-rendered <li> items -->
-	</ul>`)}
+			{CodeBlock("gosx", data.sample020)}
 			<p>
 				The server renders the fragment as ordinary HTML; the runtime replaces the region's children with the fetched markup. A growing or reordering list the server is already positioned to render belongs here, not rebuilt from a JSON payload in application JavaScript.
 			</p>
@@ -872,11 +893,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-region-cursor</span>
 				read only the region's own direct children, never a nested descendant, so a wrapper row's own nested markup is never mistaken for one of the region's own entries.
 			</p>
-			{CodeBlock("gosx", `<div data-gosx-region data-gosx-region-url="/tape?since={cursor}"
-	    data-gosx-region-mode="prepend" data-gosx-region-key="data-tape-key"
-	    data-gosx-region-cursor="data-pick-number">
-	    <!-- server-rendered rows, newest first -->
-	</div>`)}
+			{CodeBlock("gosx", data.sample021)}
 			<p>
 				A tick from the interval trigger alone skips, and retries next tick, while the document is hidden, a navigation is in flight, or the region contains the document's focused element or an element under an active pointer. A signal or hub-event trigger answers its own discrete, user-caused event immediately regardless — picking an option and having its own region refresh right away, even while that same element keeps focus, is the whole point of that trigger.
 			</p>
@@ -936,43 +953,8 @@ func Page() Node {
 				<span class="inline-code">Page</span>
 				itself.
 			</p>
-			{CodeBlock("gosx", `// page.gsx
-	type SignalCardProps struct {
-	    Label string
-	    Value string
-	}
-
-	component SignalCard(props: SignalCardProps) {
-	    return <li class="signal-card">{props.Label}: {props.Value}</li>
-	}
-
-	component Page() {
-	    return <ul data-gosx-region data-gosx-region-url="/wire/signal" data-gosx-region-interval="20s">
-	        <SignalCard label="Passing Yards" value="317" />
-	    </ul>
-	}`)}
-			{CodeBlock("go", `// page.server.go — same package as page.gsx
-	type FragmentProps struct {
-	    Label string
-	    Value string
-	}
-
-	func ServeSignalFragment(w http.ResponseWriter, r *http.Request) {
-	    prog, err := route.LoadFileProgramHere("page.gsx")
-	    if err != nil {
-	        http.Error(w, err.Error(), http.StatusInternalServerError)
-	        return
-	    }
-	    node, err := route.RenderProgramComponentNode(prog, "SignalCard", route.ProgramRenderEnv{
-	        Props: FragmentProps{Label: "Passing Yards", Value: currentValue()},
-	    })
-	    if err != nil {
-	        http.Error(w, err.Error(), http.StatusInternalServerError)
-	        return
-	    }
-	    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	    w.Write([]byte(gosx.RenderHTML(node)))
-	}`)}
+			{CodeBlock("gosx", data.sample022)}
+			{CodeBlock("go", data.sample023)}
 			<p>
 				<span class="inline-code">route.LoadFileProgramHere</span>
 				reads through the same stat-keyed program cache a file-routed page renders through, so an edit to
@@ -1006,11 +988,7 @@ func Page() Node {
 				<span class="inline-code">data-gosx-filter-text</span>
 				, the text the runtime searches.
 			</p>
-			{CodeBlock("gosx", `<input type="search" data-gosx-filter="draft-pool-list" placeholder="Search the pool">
-	<ul id="draft-pool-list">
-	    <li data-gosx-filter-text="patrick mahomes qb kc">Patrick Mahomes</li>
-	    <li data-gosx-filter-text="josh allen qb buf">Josh Allen</li>
-	</ul>`)}
+			{CodeBlock("gosx", data.sample024)}
 			<p>
 				The runtime reads
 				<span class="inline-code">data-gosx-filter-text</span>
@@ -1051,18 +1029,13 @@ func Page() Node {
 				<span class="inline-code">dispose()</span>
 				contract.
 			</p>
-			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    ctx.LifecycleScript(server.AssetURL("scripts/chart-page.js"))
-	    return map[string]any{"title": "Chart"}, nil
-	}`)}
+			{CodeBlock("go", data.sample025)}
 			<p>
 				Use
 				<span class="inline-code">ctx.ManagedScript</span>
 				for an ordinary runtime-owned helper. Managed scripts always load through a real DOM script element; GoSX adds explicit type, cross-origin, referrer-policy, and (for build-manifest assets) integrity metadata.
 			</p>
-			{CodeBlock("go", `ctx.ManagedScript(server.AssetURL("scripts/analytics.js"), server.ManagedScriptOptions{
-	    Role: server.ManagedScriptRoleManaged,
-	})`)}
+			{CodeBlock("go", data.sample026)}
 		</section>
 		<section id="prefetch">
 			<h2>Prefetch and page cache</h2>
@@ -1071,23 +1044,18 @@ func Page() Node {
 				<span class="inline-code">force</span>
 				, and the cache entry expires after five minutes.
 			</p>
-			{CodeBlock("gosx", `<a href="/pricing" data-gosx-prefetch="render">Pricing</a>
-	<a href="/account" data-gosx-prefetch="off">Account</a>
-	<a href="/demo" data-gosx-prefetch="force">Demo</a>`)}
+			{CodeBlock("gosx", data.sample027)}
 			<p>
 				A fetched page can remove itself from the in-memory page cache with this document metadata:
 			</p>
-			{CodeBlock("html", `<meta name="gosx-page-cache" content="no-store">`)}
+			{CodeBlock("html", data.sample028)}
 		</section>
 		<section id="runtime-telemetry">
 			<h2>Best-effort runtime telemetry</h2>
 			<p>
 				The public telemetry facade can emit events, inspect frozen transport accounting, and request a best-effort flush. A browser-accepted beacon is not proof that the server received it; a successful fetch response is the stronger acknowledgement represented by the snapshot.
 			</p>
-			{CodeBlock("javascript", `const telemetry = window.__gosx.telemetry
-	telemetry.emit("info", "checkout", "dialog-opened", { orderID: "o_123" })
-	telemetry.flush({ beacon: true })
-	console.table(telemetry.snapshot())`)}
+			{CodeBlock("javascript", data.sample029)}
 			<p>
 				Set
 				<span class="inline-code">
