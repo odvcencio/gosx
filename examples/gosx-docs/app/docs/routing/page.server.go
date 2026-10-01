@@ -28,4 +28,14 @@ func init() {
 			}, nil
 		},
 	})
+	docsapp.RegisterDocsPageAt("docs/routing/examples/[slug]/page.gsx", "Dynamic route example", "A live file route that reads a value from a named path segment.", route.FileModuleOptions{
+		Load: func(_ *route.RouteContext, _ route.FilePage) (any, error) {
+			return map[string]any{
+				"mode":        "light",
+				"title":       "Dynamic route example",
+				"description": "See how a GoSX file route reads a value from a named path segment.",
+				"tags":        []string{"routes", "parameters", "file router"},
+			}, nil
+		},
+	})
 }

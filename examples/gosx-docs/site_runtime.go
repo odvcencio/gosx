@@ -248,7 +248,7 @@ func buildAssetFiles(manifest *buildmanifest.Manifest) []buildAssetRef {
 }
 
 func publicSiteRoutes(root string) ([]string, error) {
-	routes := []string{"/", "/demos", "/capabilities", "/performance"}
+	routes := []string{"/", "/demos", "/capabilities", "/performance", "/docs/routing/examples/hello-world"}
 	routes = append(routes, docsapp.DocsCatalogRoutes()...)
 	for _, demo := range demospages.Demos() {
 		routes = append(routes, "/demos/"+demo.Slug)
@@ -280,9 +280,45 @@ func publicSiteRoutes(root string) ([]string, error) {
 	return public, nil
 }
 
+func publicRouteHasDynamicSource(root, routePath string) (bool, error) {
+	parts := strings.Split(strings.Trim(routePath, "/"), "/")
+	for i := range parts {
+		parent := filepath.Join(root, "app", filepath.Join(parts[:i]...))
+		entries, err := os.ReadDir(parent)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("read route directory for %s: %w", routePath, err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.IsDir() || len(name) < 3 || name[0] != '[' || name[len(name)-1] != ']' {
+				continue
+			}
+			candidateParts := append(append([]string(nil), parts[:i]...), name)
+			candidateParts = append(candidateParts, parts[i+1:]...)
+			candidate := filepath.Join(root, "app", filepath.Join(candidateParts...), "page.gsx")
+			if _, err := os.Stat(candidate); err == nil {
+				return true, nil
+			} else if !os.IsNotExist(err) {
+				return false, fmt.Errorf("stat dynamic route source %s: %w", candidate, err)
+			}
+		}
+	}
+	return false, nil
+}
+
 func publicRouteIsPrerendered(root, routePath string) (bool, error) {
 	parts := strings.Split(strings.Trim(routePath, "/"), "/")
 	if len(parts) != 2 || (parts[0] != "docs" && parts[0] != "demos") {
+		dynamic, err := publicRouteHasDynamicSource(root, routePath)
+		if err != nil {
+			return false, err
+		}
+		if dynamic {
+			return false, nil
+		}
 		return true, nil
 	}
 	configPath := filepath.Join(root, "app", parts[0], parts[1], "route.config.json")

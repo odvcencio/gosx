@@ -60,11 +60,11 @@ func Page() Node {
 				</div>
 			</div>
 		</div>
-		<footer class="fluid__footer">
+		<div class="fluid__footer">
 			<span>
 				The server sends a compact field at 20 Hz. Your drag changes only this browser's particle view.
 			</span>
-		</footer>
+		</div>
 		<script src="/fluid-client.js" defer></script>
 	</section>
 }
