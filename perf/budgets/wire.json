@@ -32,7 +32,7 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 111656,
-          "htmlWireBytes": 198220,
+          "htmlWireBytes": 198700,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
@@ -47,7 +47,10 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "htmlWireBytes": "The physical daylight sky adds its capability row to the capabilities matrix: +224 HTML wire bytes measured in CI."
+        }
       },
       "/demos/": {
         "limits": {

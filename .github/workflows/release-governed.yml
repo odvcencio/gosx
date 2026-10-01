@@ -110,8 +110,12 @@ jobs:
           cache: true
 
       # Keep release verification aligned with the CI package partition.
+      # A release also requires a docs performance receipt measured with the
+      # current inputs (pull requests skip that check; decision 0014).
       - name: Partition validation and unit tests
         working-directory: source
+        env:
+          GOSX_REQUIRE_FRESH_RECEIPT: "1"
         run: |
           set -euo pipefail
           make test-ci-partitions
