@@ -708,10 +708,10 @@ const budgets = [
   // Integrated renderer changes: raw 1837300 -> 1844000 (measured 1909487); gzip 516200 -> 518300 (measured 534587); brotli 407700 -> 409300 (measured 425593). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1844000 -> 1849600 (measured 1915132); gzip 518300 -> 520100 (measured 536390); brotli 409300 -> 410700 (measured 427029). Existing allowances stay fixed.
   // Integrated performance governor and retained geometry: raw 1849600 -> 1850300 (measured 1915746); gzip 520100 -> 520300 (measured 536600). Existing allowances stay fixed.
-  // Bounded WebGPU detail cache reuse and retirement adds 1,113 raw, 344 gzip,
-  // and 438 Brotli bytes. Raise only breached targets in 100-byte steps;
+  // Bounded WebGPU detail cache reuse and retirement adds 1,098 raw, 345 gzip,
+  // and 125 Brotli bytes. Raise only breached targets in 100-byte steps;
   // the shared governed allowances remain fixed.
-  { file: "bootstrap.js", raw: 1_852_200, gzip: 520_900, brotli: 411_500 },
+  { file: "bootstrap.js", raw: 1_852_200, gzip: 520_900, brotli: 411_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1431,7 +1431,7 @@ const budgets = [
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
   // Integrated renderer changes: raw 426766 -> 431400 (measured 452906); gzip 107996 -> 109300 (measured 114670); brotli 89655 -> 90600 (measured 95093). Existing allowances stay fixed.
   // Integrated renderer changes: raw 431400 -> 435000 (measured 456669); gzip 109300 -> 110400 (measured 115831); brotli 90600 -> 91500 (measured 95974). Existing allowances stay fixed.
-  { // Detail cache lifecycle adds 1,101 raw / 311 gzip / 305 Brotli WebGPU bytes.
+  { // Detail cache lifecycle adds 1,086 raw / 314 gzip / 280 Brotli WebGPU bytes.
     // Raise only breached measured targets; the size policy stays fixed.
     file: "bootstrap-feature-scene3d-webgpu.js", raw: 436_000, gzip: 110_700, brotli: 91_800 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
@@ -1881,7 +1881,7 @@ const routeBudgets = [
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
-    // Detail resource reuse and retirement adds 1,101 raw, 311 gzip and 305
+    // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     raw: 1_382_600,
     gzip: 382_900,
@@ -2259,7 +2259,7 @@ const routeBudgets = [
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
-    // WebGPU detail lifecycle adds 1,101 raw, 311 gzip and 305 Brotli bytes.
+    // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
     raw: 1_687_500,
     gzip: 470_600,
@@ -2287,7 +2287,7 @@ const routeBudgets = [
     // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
-    // Detail cache lifecycle adds 1,101 raw / 311 gzip / 305 Brotli WebGPU bytes.
+    // Detail cache lifecycle adds 1,086 raw / 314 gzip / 280 Brotli WebGPU bytes.
     // Raise only breached measured targets; the size policy stays fixed.
     name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
