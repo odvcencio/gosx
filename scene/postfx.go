@@ -145,6 +145,19 @@ type SSAO struct {
 
 func (SSAO) isPostEffect() {}
 
+// ContactShadows adds short, soft screen-space shadows near visible objects.
+// It supplements shadow maps: casters outside the image still need those maps.
+// Admit "contactShadows" only on QualityLadder rungs with frame headroom.
+type ContactShadows struct {
+	Distance  float32 // maximum ray length in world units (default 1, capped at 10)
+	Thickness float32 // depth intersection tolerance in world units (default 0.15)
+	Bias      float32 // receiver offset in world units (default 0.01)
+	Intensity float32 // maximum darkening, 0..1 (default 0.45)
+	Direction Vector3 // light travel direction; zero uses the first directional light
+}
+
+func (ContactShadows) isPostEffect() {}
+
 // DOF applies a depth-of-field blur around the camera focus plane.
 type DOF struct {
 	FocusDistance float32 // world-space distance from camera (default 8)

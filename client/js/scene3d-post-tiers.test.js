@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadSceneAdaptiveQualityAPI, FakeElement, createWebGLRendererForPost, makeWebGLBundleWithCustomPost } = require("./runtime-test-harness.js");
 
-const gatedKinds = ["ssao"];
+const gatedKinds = ["ssao", "contactShadows"];
 function prime(tier, mobile, adaptive = false) {
   const h = loadSceneAdaptiveQualityAPI();
   h.context.navigator = { userAgent: mobile ? "Android Mobile" : "Desktop" };

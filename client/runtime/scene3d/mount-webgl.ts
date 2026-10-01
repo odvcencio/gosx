@@ -5302,7 +5302,7 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     const suppress = adaptiveQuality.adaptivePostFX && adaptiveQuality.postFXSuppressed && source.length > 0;
     const limited = adaptiveQuality.postFXMobile || adaptiveQuality.activeTier !== "full";
-    const next = suppress ? [] : limited ? source.filter(function(effect) { return effect.kind !== "ssao"; }) : source;
+    const next = suppress ? [] : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows"; }) : source;
     const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
     if (current.length === next.length && current.every(function(effect, index) { return effect === next[index]; })) {
       return false;

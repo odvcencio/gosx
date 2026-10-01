@@ -4806,6 +4806,21 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function applyContactShadows(inputTex: any, effect: any, targetFBO: any, w: number, h: number, frame: any) {
+      if (!sceneFBO || !sceneFBO.depthTex || !frame) return inputTex;
+      var prog = getProgram("contactShadows", SCENE_POST_CONTACT_SHADOWS_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
+      gl.uniformMatrix4fv(gl.getUniformLocation(prog.program, "u_projection"), false, frame.projection);
+      var light = sceneContactShadowLight(effect, frame.lights, frame.view);
+      gl.uniform3f(gl.getUniformLocation(prog.program, "u_lightDirection"), light[0], light[1], light[2]);
+      gl.uniform4fv(gl.getUniformLocation(prog.program, "u_contactParams"), sceneContactShadowParams(effect));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
     function applyDOF(inputTex, effect, targetFBO, w, h, camera) {
       if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
       var prog = getProgram("dof", SCENE_POST_DOF_SOURCE);
@@ -4901,6 +4916,7 @@
       apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, atmosphereContext: any = {}) {
         atmospherePost.begin(effects);
         var projection = atmosphereContext.projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
+        var view = atmosphereContext.view || scenePBRViewMatrix(camera), lights = atmosphereContext.lights || [];
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -4967,6 +4983,9 @@
             case SCENE_POST_SSAO:
               projection = projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
               currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH, projection);
+              break;
+            case "contactShadows":
+              currentTexture = applyContactShadows(currentTexture, effect, targetFBO, passW, passH, { projection: projection, view: view, lights: lights });
               break;
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
@@ -7488,7 +7507,7 @@
     var shadowSlots = [null, null];
 
     // Post-processing pipeline — created lazily when postEffects are present.
-    var postProcessor = null;
+    var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
     var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
@@ -8982,7 +9001,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
         }
