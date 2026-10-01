@@ -5113,7 +5113,7 @@ function gosxConfigureSceneScript(script, role, src) {
       };
     });
     const requestedValue = (props && (props.requestedQualityTier || props.adaptiveQualityTier || props.qualityTier)) || adaptiveConfig.tier;
-    const requestedTier = requestedValue === "balanced" || requestedValue === "survival" ? requestedValue : "full";
+    const requestedTier = requestedValue === "low" ? "survival" : requestedValue === "balanced" || requestedValue === "survival" ? requestedValue : "full";
     // G2: QualityLadder, when authored, supersedes the dprCap-tier governor
     // built above entirely — see sceneUpdateQualityLadder/
     // applySceneQualityLadderState. `tierEnabled` (NOT `enabled`) gates every
@@ -5150,6 +5150,9 @@ function gosxConfigureSceneScript(script, role, src) {
       profiles,
       requestedTier,
       activeTier: requestedTier,
+      // Resolve once: desktop GPU timing on an emulated phone cannot prove
+      // mobile post-effect headroom. Explicit ladder admission is the opt-in.
+      postFXMobile: typeof navigator !== "undefined" && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || ""),
       activeProfile: profiles[requestedTier],
       frameCount: 0,
       validSamples: 0,
@@ -5271,15 +5274,17 @@ function gosxConfigureSceneScript(script, role, src) {
       return;
     }
     if (!state || !state.enabled) {
+      sceneApplyAdaptivePostFX(sceneState, state);
       applySceneAdaptiveQualityState(mount, state, 0, true);
       return;
     }
+    sceneApplyAdaptivePostFX(sceneState, state);
     state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, sceneNumber(state.activeProfile && state.activeProfile.dprCap, 1));
     applySceneAdaptiveQualityState(mount, state, 0, true);
   }
 
   function sceneApplyAdaptivePostFX(sceneState, adaptiveQuality) {
-    if (!sceneState || !adaptiveQuality || !adaptiveQuality.enabled) {
+    if (!sceneState || !adaptiveQuality) {
       return false;
     }
     const source = sceneAdaptivePostFXSource(sceneState);
@@ -5287,8 +5292,14 @@ function gosxConfigureSceneScript(script, role, src) {
       sceneState.postEffects = [];
       return false;
     }
+    if (adaptiveQuality.mode === "ladder") {
+      return sceneApplyQualityLadderRung(sceneState, adaptiveQuality);
+    }
     const suppress = adaptiveQuality.adaptivePostFX && adaptiveQuality.postFXSuppressed && source.length > 0;
-    const next = suppress ? [] : source;
+    const limited = adaptiveQuality.postFXMobile || adaptiveQuality.activeTier !== "full";
+    // Keep the existing spatial edge pass; denied TAA never enters history.
+    const next = suppress ? [] : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows" && effect.kind !== "taa"; }) : source;
+    if (limited && !suppress && source.some(function(effect) { return effect.kind === "taa"; }) && !next.some(function(effect) { return effect.kind === "fxaa"; })) next.push({ kind: "fxaa" });
     const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
     if (current.length === next.length && current.every(function(effect, index) { return effect === next[index]; })) {
       return false;

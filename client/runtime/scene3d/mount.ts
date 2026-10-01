@@ -3439,6 +3439,7 @@
         cancelSceneProgressiveModelLifecycle(sceneState);
       }
       const result = applySceneCommands(sceneState, commands);
+      sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
         domRegionTracker.configure(sceneState.postEffects);

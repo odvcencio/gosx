@@ -4484,7 +4484,7 @@
   // custom post pass silently reads 0 for every reserved uniform.
   function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
-    var temporal = createSceneTemporalHistory(gl, quad);
+    var temporal: any = null;
     var temporalEnabled = false;
     var sceneFBO: any = null;
     var auxFBO: any = null;
@@ -4894,11 +4894,13 @@
 	      },
 
       prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean) {
+        if (!canJitter) { if (temporal) temporal.reset(); temporalEnabled = false; return false; }
+        if (!temporal) temporal = createSceneTemporalHistory(gl, quad);
         temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter);
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
         return temporalEnabled;
       },
-      resetTemporal: function() { temporal.reset(); temporalEnabled = false; },
+      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; },
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
@@ -4913,8 +4915,7 @@
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
       // blit to the default framebuffer).
-      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, frame: any) {
-        var projection = frame && frame.projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, projection: any, view: any, lights: any) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -4977,17 +4978,18 @@
               currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_SSAO:
+              projection = projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
               currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH, projection);
               break;
             case "contactShadows":
-              currentTexture = applyContactShadows(currentTexture, effect, targetFBO, passW, passH, frame);
+              currentTexture = applyContactShadows(currentTexture, effect, targetFBO, passW, passH, { projection: projection, view: view, lights: lights });
               break;
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
               break;
             case "taa":
               currentTexture = temporalEnabled
-                ? temporal.resolve(currentTexture, sceneFBO, effect, frame)
+                ? temporal.resolve(currentTexture, sceneFBO, effect, { projection: projection, view: view })
                 : applyFXAA(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_FXAA:
@@ -5071,7 +5073,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
-        temporal.dispose();
+        if (temporal) temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = null;
@@ -8848,9 +8850,18 @@
         renderW = scaled.width;
         renderH = scaled.height;
         renderTarget = Object.assign({}, scaled, { linear: true });
-        var temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true));
-        sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
-        if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-antialiasing", temporalActive ? "taa" : postEffects.some(function(e: any) { return e.kind === "taa" || e.kind === "fxaa"; }) ? "fxaa" : "none");
+        var temporalRequested = false, spatialRequested = false;
+        for (var postIndex = 0; postIndex < postEffects.length; postIndex++) {
+          temporalRequested = temporalRequested || postEffects[postIndex].kind === "taa";
+          spatialRequested = spatialRequested || postEffects[postIndex].kind === "fxaa";
+        }
+        var temporalActive = false;
+        if (temporalRequested) {
+          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true));
+          if (temporalActive) sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
+        } else postProcessor.resetTemporal();
+        var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";
+        if (canvas.parentNode && canvas.parentNode.getAttribute("data-gosx-scene3d-antialiasing") !== antialiasing) canvas.parentNode.setAttribute("data-gosx-scene3d-antialiasing", antialiasing);
       } else if (postProcessor) {
         postProcessor.resetTemporal();
       }
@@ -8970,7 +8981,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights });
+        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, projMatrix, viewMatrix, bundle.lights);
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
         }

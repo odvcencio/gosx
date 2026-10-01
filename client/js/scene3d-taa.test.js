@@ -62,3 +62,20 @@ test("WebGPU accepts a TAA quality rung and dispatches FXAA as its supported fal
   assert.ok(h.fake.state.renderPasses.flatMap(p => p.draws).some(d => d.pipeline?.desc?.fragment?.module === fxaa));
   h.renderer.dispose();
 });
+
+test("disabling TAA keeps FXAA without temporal allocations, reprojection uploads, or history copies", () => {
+  const h = temporalHarness();
+  h.frame(); h.frame();
+  h.bundle.postEffects = [{ kind: "toneMapping" }, { kind: "fxaa" }];
+  h.frame();
+  const start = h.gl.ops.length, params = h.params.length;
+  const extension = h.gl.getExtension;
+  let temporalChecks = 0;
+  h.gl.getExtension = name => { if (name === "EXT_color_buffer_float") temporalChecks++; return extension(name); };
+  h.frame(); h.frame();
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+  assert.equal(h.params.length, params);
+  assert.equal(temporalChecks, 0);
+  assert.equal(h.gl.ops.slice(start).some(op => ["createTexture", "createFramebuffer", "blitFramebuffer"].includes(op[0])), false);
+  h.renderer.dispose();
+});
