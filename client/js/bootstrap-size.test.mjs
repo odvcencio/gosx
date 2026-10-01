@@ -704,7 +704,8 @@ const budgets = [
   // Integrated renderer changes: raw 1837200 -> 1837300 (measured 1902801). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1837300 -> 1844000 (measured 1909487); gzip 516200 -> 518300 (measured 534587); brotli 407700 -> 409300 (measured 425593). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1844000 -> 1849600 (measured 1915132); gzip 518300 -> 520100 (measured 536390); brotli 409300 -> 410700 (measured 427029). Existing allowances stay fixed.
-  { file: "bootstrap.js", raw: 1_849_600, gzip: 520_100, brotli: 410_700 },
+  // Integrated performance governor and retained geometry: raw 1849600 -> 1850300 (measured 1915746); gzip 520100 -> 520300 (measured 536600). Existing allowances stay fixed.
+  { file: "bootstrap.js", raw: 1_850_300, gzip: 520_300, brotli: 410_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1213,7 +1214,8 @@ const budgets = [
   // Integrated renderer changes: raw 610500 -> 612600 (measured 643229); gzip 175100 -> 175700 (measured 184411); brotli 144350 -> 144800 (measured 151967). Existing allowances stay fixed.
   // Integrated renderer changes: raw 612600 -> 612700 (measured 643254). Existing allowances stay fixed.
   // Integrated renderer changes: brotli 144800 -> 144900 (measured 152043). Existing allowances stay fixed.
-  { file: "bootstrap-feature-scene3d.js", raw: 612_700, gzip: 175_700, brotli: 144_900 },
+  // Integrated performance governor and retained geometry: raw 612700 -> 613300 (measured 643941); gzip 175700 -> 175900 (measured 184689); brotli 144900 -> 145200 (measured 152357). Existing allowances stay fixed.
+  { file: "bootstrap-feature-scene3d.js", raw: 613_300, gzip: 175_900, brotli: 145_200 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1714,6 +1716,7 @@ const routeBudgets = [
   // Integrated renderer changes: raw 1376100 -> 1376200 (measured 1441640). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1376200 -> 1380000 (measured 1445470); gzip 380900 -> 382100 (measured 398454); brotli 317500 -> 318400 (measured 334262). Existing allowances stay fixed.
   // Integrated renderer changes: brotli 318400 -> 318500 (measured 334336). Existing allowances stay fixed.
+  // Integrated performance governor and retained geometry: raw 1380000 -> 1380600 (measured 1446100); gzip 382100 -> 382400 (measured 398697); brotli 318500 -> 318700 (measured 334615). Existing allowances stay fixed.
   {
     name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
@@ -1869,9 +1872,9 @@ const routeBudgets = [
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
-    raw: 1_380_000,
-    gzip: 382_100,
-    brotli: 318_500,
+    raw: 1_380_600,
+    gzip: 382_400,
+    brotli: 318_700,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -1879,6 +1882,7 @@ const routeBudgets = [
   // Integrated renderer changes: raw 1224000 -> 1224100 (measured 1285262); brotli 295000 -> 295200 (measured 309893). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1224100 -> 1226800 (measured 1288058); gzip 351500 -> 352200 (measured 368527); brotli 295200 -> 295700 (measured 310478). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1226800 -> 1232200 (measured 1293711); gzip 352200 -> 354000 (measured 370299); brotli 295700 -> 297100 (measured 311908). Existing allowances stay fixed.
+  // Integrated performance governor and retained geometry: raw 1232200 -> 1232700 (measured 1294321); gzip 354000 -> 354200 (measured 370528); brotli 297100 -> 297400 (measured 312187). Existing allowances stay fixed.
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
@@ -2057,10 +2061,10 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    raw: 1_232_200,
-    gzip: 354_000,
+    raw: 1_232_700,
+    gzip: 354_200,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
-    brotli: 297_100,
+    brotli: 297_400,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2068,6 +2072,7 @@ const routeBudgets = [
   // Integrated renderer changes: raw 1672600 -> 1672700 (measured 1738168); gzip 466100 -> 466200 (measured 482506); brotli 388500 -> 388700 (measured 404986). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1672700 -> 1679200 (measured 1744727); gzip 466200 -> 468000 (measured 484358); brotli 388700 -> 390100 (measured 406452). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1679200 -> 1684900 (measured 1750390); gzip 468000 -> 469800 (measured 486136); brotli 390100 -> 391600 (measured 407921). Existing allowances stay fixed.
+  // Integrated performance governor and retained geometry: raw 1684900 -> 1685500 (measured 1751000); gzip 469800 -> 470000 (measured 486365); brotli 391600 -> 391900 (measured 408200). Existing allowances stay fixed.
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
     // ladder fetches the WebGL chunk on top of everything already loaded. This
@@ -2243,16 +2248,17 @@ const routeBudgets = [
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
-    raw: 1_684_900,
-    gzip: 469_800,
+    raw: 1_685_500,
+    gzip: 470_000,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
-    brotli: 391_600,
+    brotli: 391_900,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1227800 -> 1227900 (measured 1289196). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1227900 -> 1231500 (measured 1293026); gzip 337500 -> 338700 (measured 355053); brotli 280800 -> 281700 (measured 295732). Existing allowances stay fixed.
   // Integrated renderer changes: brotli 281700 -> 281800 (measured 295806). Existing allowances stay fixed.
+  // Integrated performance governor and retained geometry: raw 1231500 -> 1232100 (measured 1293656); gzip 338700 -> 339000 (measured 355296); brotli 281800 -> 282000 (measured 296085). Existing allowances stay fixed.
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
     // no realtime hub and no text labels. It fetches the runtime, the base
@@ -2402,9 +2408,9 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_231_500,
-    gzip: 338_700,
-    brotli: 281_800,
+    raw: 1_232_100,
+    gzip: 339_000,
+    brotli: 282_000,
   },
 
 ];
