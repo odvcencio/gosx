@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,8 @@ type staticExportOptions struct {
 	StageAssets  func(outputDir string, manifest exportManifest) error
 }
 
+var errPrivateExportPage = errors.New("response is not shared-cacheable")
+
 func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	appRoot, err := filepath.Abs(opts.AppRoot)
 	if err != nil {
@@ -78,9 +81,6 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		return exportManifest{}, err
 	}
 	pages := make([]string, 0, len(routes))
-	for _, entry := range routes {
-		pages = append(pages, entry.Path)
-	}
 
 	internalPort, err := pickFreePort()
 	if err != nil {
@@ -122,12 +122,19 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	assetRefs := map[string]struct{}{}
-	for i, entry := range routes {
+	exportedRoutes := make([]exportRoute, 0, len(routes))
+	for _, entry := range routes {
 		pageHTML, err := fetchExportPage(client, baseURL+entry.Path)
+		if errors.Is(err, errPrivateExportPage) {
+			// Keep session-creating and private pages dynamic. A build visitor's
+			// token or personalized state must never reach a shared artifact.
+			fmt.Fprintf(os.Stderr, "gosx export: keeping %s dynamic (private response)\n", entry.Path)
+			continue
+		}
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("export %s: %w", entry.Path, err)
 		}
-		routes[i].Capabilities = routeCapabilitiesFromHTML(pageHTML)
+		entry.Capabilities = routeCapabilitiesFromHTML(pageHTML)
 		addExportRuntimeAssetRefs(assetRefs, pageHTML)
 		pageHTML, err = rewriteStaticExportHTML(entry.Path, pageHTML)
 		if err != nil {
@@ -136,6 +143,8 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		if err := writeExportPage(outputDir, entry.Path, pageHTML); err != nil {
 			return exportManifest{}, err
 		}
+		pages = append(pages, entry.Path)
+		exportedRoutes = append(exportedRoutes, entry)
 	}
 
 	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+"/__gosx_export_missing__"); err == nil && status == http.StatusNotFound {
@@ -149,7 +158,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		}
 	}
 
-	manifest := exportManifest{Pages: pages, Routes: routes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
+	manifest := exportManifest{Pages: pages, Routes: exportedRoutes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
 	if opts.StageAssets != nil {
 		if err := opts.StageAssets(outputDir, manifest); err != nil {
 			return exportManifest{}, err
@@ -466,12 +475,28 @@ func fetchExportPageWithStatus(client *http.Client, url string) (string, int, er
 		return "", 0, err
 	}
 	defer resp.Body.Close()
+	if len(resp.Header.Values("Set-Cookie")) > 0 || exportResponseIsPrivate(resp.Header) {
+		return "", resp.StatusCode, errPrivateExportPage
+	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", resp.StatusCode, err
 	}
 	return string(data), resp.StatusCode, nil
+}
+
+func exportResponseIsPrivate(headers http.Header) bool {
+	for _, value := range headers.Values("Cache-Control") {
+		for _, directive := range strings.Split(value, ",") {
+			name, _, _ := strings.Cut(strings.TrimSpace(directive), "=")
+			switch strings.ToLower(name) {
+			case "private", "no-store", "no-cache":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func writeExportPage(outputDir, routePath, html string) error {
