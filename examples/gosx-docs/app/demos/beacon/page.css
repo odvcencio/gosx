@@ -1,4 +1,3 @@
-/* Unique bgb classes own the window without repeated generated scope prefixes. */
 :global(html:has(.bgb)), :global(body:has(.bgb)) { overflow: hidden; margin: 0; }
 :global(body:has(.bgb) :is(.pill-nav, .nav-overlay, .skip-link, .demo-dock, .demo-meta, .demo-details, .site-footer)) { display: none; }
 :global(.bgb) {

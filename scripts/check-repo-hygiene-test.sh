@@ -53,8 +53,8 @@ EOF
 	printf '%s\n' "wasm" >"$repo/editor/intelligenceassets/assets/gotreesitter.wasm"
 	printf '%s\n' "grammar" >"$repo/editor/intelligenceassets/assets/go.bin"
 	printf '%s\n' "exec" >"$repo/editor/intelligenceassets/assets/wasm_exec.js"
-	printf '%s\n' "package beacon" >"$repo/examples/gosx-docs/app/demos/beacon/contract.go"
-	printf '%s\n' "package beacon" >"$repo/examples/gosx-docs/app/demos/beacon/evidence_test.go"
+	printf '%s\n' "package beacon" >"$repo/examples/gosx-docs/app/demos/beacon/beach.go"
+	printf '%s\n' "package beacon" >"$repo/examples/gosx-docs/app/demos/beacon/beach_baked_test.go"
 
 	git -C "$repo" add .
 	git -C "$repo" commit -m "fixture" >/dev/null
