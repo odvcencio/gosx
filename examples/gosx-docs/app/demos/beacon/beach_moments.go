@@ -18,7 +18,8 @@ const (
 func blackglassBeachMoments(periodID string) []scene.Node {
 	nodes := blackglassBeachBeacon(periodID)
 	nodes = append(nodes, blackglassBeachPools()...)
-	return append(nodes, blackglassBeachWreck()...)
+	nodes = append(nodes, blackglassBeachWreck()...)
+	return append(nodes, blackglassBeachTrail()...)
 }
 
 func blackglassBeachBeacon(periodID string) []scene.Node {
