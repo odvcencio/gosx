@@ -123,9 +123,10 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	horizon := blackglassBeachHorizon(sky, period.Exposure)
 	return scene.Props{
 		Width: 1280, Height: 720,
-		Label:      "Blackglass Beach — " + view.Name + " at " + period.Name,
-		AriaLabel:  "A black sand beach at " + period.Name + ": footprints lead to an obsidian monolith, tide pools glint on the eastern shore, wreck ribs rise in the western dunes, a hollow catches the low sun, and a lighthouse sweeps the eastern headland. A three-masted clipper waits at the jetty.",
-		Background: horizon, Controls: scene.ControlFirstPerson, Walk: blackglassBeachWalk(), Vessel: blackglassBeachVessel(), PointerLock: scene.Bool(true),
+		Label:       "Blackglass Beach — " + view.Name + " at " + period.Name,
+		AriaLabel:   "A black sand beach at " + period.Name + ": footprints lead to an obsidian monolith, tide pools glint on the eastern shore, wreck ribs rise in the western dunes, a hollow catches the low sun, and a lighthouse sweeps the eastern headland. A three-masted clipper waits at the jetty.",
+		ControlZoom: scene.Bool(true), ControlTarget: view.Target, ControlMinDistance: 2, ControlMaxDistance: 240,
+		Background: horizon, Controls: blackglassBeachControls(view.ID), Walk: blackglassBeachWalk(), Vessel: blackglassBeachVessel(), PointerLock: scene.Bool(true),
 		AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
 		PreferWebGPU: scene.Bool(true), CanvasAlpha: scene.Bool(false), Stats: scene.Bool(false),
 		UnsupportedMessage: "Interactive 3D is unavailable in this browser.",
@@ -176,4 +177,12 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 				Material: scene.StandardMaterial{Color: "#8aaca9", Roughness: 0.065, Metalness: 0, Clearcoat: 0.75, Transmission: 0.88, IOR: scene.Float(1.48)}},
 		}, blackglassBeachBakedMoments(period.ID)...)...),
 	}
+}
+
+// Scenic presets dolly around their subject; shore and ship remain walkable.
+func blackglassBeachControls(viewID string) string {
+	if viewID == "glass" || viewID == "cliff" {
+		return scene.ControlOrbit
+	}
+	return scene.ControlFirstPerson
 }

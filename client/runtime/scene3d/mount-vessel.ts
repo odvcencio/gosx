@@ -38,7 +38,7 @@
     if(props.walk) {walk.surfaces=walk.surfaces||[];walk.surfaces.push(surface);}
     const mount=canvas.closest('[data-gosx-engine="GoSXScene3D"]')||canvas.parentElement;
     const read=()=>helpers.current(base.controller,sceneState.camera,sceneState._scrollCamera);
-    const controller={mode:'first-person',touched:false,active:false,currentCamera:()=>state.mode==='sailing'?state.camera||read():read(),
+    const controller={get zoomScale(){return base.controller.zoomScale||1;},set zoomScale(value: number){base.controller.zoomScale=value;},mode:'first-person',touched:false,active:false,currentCamera:()=>state.mode==='sailing'?state.camera||read():read(),
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
       syncCamera:camera=>{if(base.controller&&base.controller.syncCamera)base.controller.syncCamera(camera);},
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
@@ -63,7 +63,7 @@
     const wake=window.__gosx_scene3d_vessel_wake&&props.vessel.wake!==false?window.__gosx_scene3d_vessel_wake.create(sceneState,helpers,props.vessel):null;
     function reset() {leave();window.__gosx_scene3d_vessel_input.clear(controls.input);if(wake)wake.reset();if(base.reset)base.reset();Object.assign(state,physics.create(props.vessel,ocean,walk));first=true;lastBob=0;helpers.schedule('vessel-reset');}
   // @ts-ignore TS7006 -- plain JS method parameters are exercised without transpilation.
-    return {controller,state,reset,stopInertia:()=>false,advance(dt,seconds,detail,paused) {
+    return {controller,state,zoomController:base.controller,reset,cancelTouch:()=>{if(base.cancelTouch)base.cancelTouch();window.__gosx_scene3d_vessel_input.clear(controls.input);},stopInertia:()=>false,advance(dt,seconds,detail,paused) {
       if(disposed)return;
       state.reduced=!!(motion&&motion.matches);
       const camera=read(),before=new Float32Array(model.pose),aboard=state.mode==='deck'&&!first;

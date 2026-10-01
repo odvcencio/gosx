@@ -20,7 +20,7 @@ interface SceneWalkState {
   camera: Record<string, any>; start: Record<string, any>;
   x: number; z: number; yaw: number; pitch: number; eyeY: number; velocityY: number;
   grounded: boolean; distance: number; bobWeight: number; bob: number;
-  reduced: boolean; settling: boolean; moving: boolean;
+  zoomScale: number; reduced: boolean; settling: boolean; moving: boolean;
   eyeHeight: number; radius: number; speed: number; sprint: number;
   slope: number; stepHeight: number; amplitude: number; lookSpeed: number;
 }
@@ -68,7 +68,7 @@ interface SceneWalkState {
       config, ground: decodeGround(config.ground || null), camera: Object.assign({}, camera), start: Object.assign({}, camera),
       x: number(camera.x, 0), z: number(camera.z, 0), yaw: number(camera.rotationY, 0), pitch: number(camera.rotationX, 0),
       eyeY: number(camera.y, 0), velocityY: 0, grounded: false, distance: 0, bobWeight: 0, bob: 0,
-      reduced, settling: false, moving: false,
+      zoomScale: 1, reduced, settling: false, moving: false,
       eyeHeight: positive(config.eyeHeight, 1.7), radius: positive(config.radius, 0.35), speed: positive(config.walkSpeed, 1.6),
       sprint: positive(config.sprintMultiplier, 2.2), slope: Math.tan(clamp(positive(config.maxSlope, 38), 0, 89) * Math.PI / 180),
       stepHeight: positive(config.stepHeight, 0.3), amplitude: Math.max(0, number(config.headBob, 0.03)),
@@ -144,13 +144,13 @@ interface SceneWalkState {
     return walked;
   }
   function look(s: SceneWalkState, yaw: number, pitch: number): void {
-    s.yaw += yaw; s.pitch = clamp(s.pitch + pitch, -1.45, 1.45);
+    s.yaw += yaw * s.zoomScale; s.pitch = clamp(s.pitch + pitch * s.zoomScale, -1.45, 1.45);
     s.camera.rotationY = s.yaw; s.camera.rotationX = s.pitch; s.camera.rotationZ = 0;
   }
   function advance(s: SceneWalkState, dt: number, strafe: number, forward: number, sprint: boolean): boolean {
     dt = clamp(dt, 0, 0.1);
     const oldY = s.camera.y, oldX = s.x, oldZ = s.z;
-    const length = Math.max(1, Math.hypot(strafe, forward)), speed = s.speed * (sprint ? s.sprint : 1) * dt / length;
+    const length = Math.max(1, Math.hypot(strafe, forward)), speed = s.speed * s.zoomScale * (sprint ? s.sprint : 1) * dt / length;
     const sin = Math.sin(s.yaw), cos = Math.cos(s.yaw);
     const walked = move(s, (cos * strafe - sin * forward) * speed, (-sin * strafe - cos * forward) * speed);
     s.moving = walked > 0;
@@ -225,6 +225,7 @@ interface SceneWalkState {
     const state = createState(helpers.camera(readCamera()), props.walk, !!(media && media.matches));
     const controller = { mode: "first-person", suspended: false, touched: false, active: false, keys: new Set<string>(),
       currentCamera: () => state.camera,
+      get zoomScale() { return state.zoomScale; }, set zoomScale(value: number) { state.zoomScale = value; },
       setSuspended: (value: boolean) => { controller.suspended = value; clearInput(); showHint(); },
       carryCamera: (camera: any) => { state.x = camera.x; state.z = camera.z; state.eyeY = camera.y; state.yaw = camera.rotationY; Object.assign(state.camera, camera); },
       syncCamera: (camera: any) => { if (!controller.touched) resetState(state, helpers.camera(camera)); },
@@ -234,13 +235,14 @@ interface SceneWalkState {
     const stick = joystick(mount), hint = hintElement(mount, props.walk), pads = new Set<number>();
     let frame = 0, last = 0, disposed = false;
     let moveID = -1, lookID = -1, originX = 0, originY = 0, lookX = 0, lookY = 0, stickX = 0, stickY = 0;
-    const listeners: Array<[any, string, EventListener]> = [];
+    const listeners: Array<[any, string, EventListener, any]> = [];
     canvas.style.touchAction = "none"; canvas.style.cursor = "crosshair";
     canvas.setAttribute("tabindex", "0");
     canvas.setAttribute("aria-label", (props.ariaLabel || props.label || "3D scene") + ". Walk with WASD or up/down arrows; left/right arrows turn; PageUp/PageDown look up/down; Shift sprints; Home resets.");
     canvas.setAttribute("aria-keyshortcuts", "W A S D ArrowUp ArrowDown ArrowLeft ArrowRight PageUp PageDown Shift Home");
     function listen(target: any, name: string, callback: any): void {
-      target.addEventListener(name, callback, { passive: false }); listeners.push([target, name, callback]);
+      const options = { passive: !["pointerdown", "pointermove", "pointerup", "pointercancel", "lostpointercapture", "keydown", "keyup"].includes(name) };
+      target.addEventListener(name, callback, options); listeners.push([target, name, callback, options]);
     }
     function focused(): boolean { return document.activeElement === canvas || helpers.locked(canvas); }
     function showHint(): void { if (hint) hint.hidden = controller.suspended || helpers.locked(canvas) || state.moving || stickX !== 0 || stickY !== 0; }
@@ -374,9 +376,9 @@ interface SceneWalkState {
     }
     if (media && typeof media.addEventListener === "function") listen(media, "change", () => { state.reduced = media.matches; wake(); });
     mounts.set(mount, reset);
-    return { controller, reset, bindReset: (handler: any) => mounts.set(mount, handler), stopInertia: () => false, dispose: () => {
+    return { controller, reset, cancelTouch: clearInput, bindReset: (handler: any) => mounts.set(mount, handler), stopInertia: () => false, dispose: () => {
       disposed = true; if (frame) helpers.cancelFrame(frame); helpers.exitLock(canvas); clearInput();
-      for (const listener of listeners) listener[0].removeEventListener(listener[1], listener[2]);
+      for (const listener of listeners) listener[0].removeEventListener(listener[1], listener[2], listener[3]);
       stick.base.remove(); if (hint) hint.remove(); mounts.delete(mount);
       if (sceneState && sceneState._gosxMotionController === controller) sceneState._gosxMotionController = null;
     } };

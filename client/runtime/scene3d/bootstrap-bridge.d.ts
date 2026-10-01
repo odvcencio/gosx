@@ -288,6 +288,7 @@ interface Window {
   __gosx_scene3d_ocean_waves: any;
   __gosx_scene3d_ocean_query: any;
   __gosx_scene3d_vessel_api: any;
+  __gosx_scene3d_zoom_api: any;
 }
 // Transmission shader/resource fragments precede their backend in each chunk.
 declare const GLSL_TRANSMISSION: string;

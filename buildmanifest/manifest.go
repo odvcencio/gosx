@@ -68,6 +68,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DCompute    HashedAsset `json:"bootstrapFeatureScene3dCompute,omitzero"`
 	BootstrapFeatureScene3DDecompress HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitzero"`
 	BootstrapFeatureScene3DWalk       HashedAsset `json:"bootstrapFeatureScene3dWalk,omitzero"`
+	BootstrapFeatureScene3DZoom       HashedAsset `json:"bootstrapFeatureScene3dZoom,omitzero"`
 	BootstrapFeatureScene3DVessel     HashedAsset `json:"bootstrapFeatureScene3dVessel,omitzero"`
 	BootstrapFeatureScene3DOceanQuery HashedAsset `json:"bootstrapFeatureScene3dOceanQuery,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
@@ -204,6 +205,7 @@ type RuntimePaths struct {
 	BootstrapFeatureScene3DCompute        string
 	BootstrapFeatureScene3DDecompress     string
 	BootstrapFeatureScene3DWalk           string
+	BootstrapFeatureScene3DZoom           string
 	BootstrapFeatureScene3DVessel         string
 	BootstrapFeatureScene3DOceanQuery     string
 	BootstrapFeatureScene3DInstanceStream string
@@ -260,6 +262,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureScene3DCompute:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCompute.File),
 		BootstrapFeatureScene3DDecompress:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DDecompress.File),
 		BootstrapFeatureScene3DWalk:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWalk.File),
+		BootstrapFeatureScene3DZoom:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DZoom.File),
 		BootstrapFeatureScene3DVessel:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DVessel.File),
 		BootstrapFeatureScene3DOceanQuery:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DOceanQuery.File),
 		BootstrapFeatureScene3DInstanceStream: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DInstanceStream.File),

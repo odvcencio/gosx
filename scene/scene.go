@@ -164,14 +164,16 @@ type Props struct {
 	// "grab" makes the viewport track the pointer like a grabbed scene.
 	ControlRotateDirection string  `json:"controlRotateDirection,omitempty"`
 	ControlRotateSpeed     float64 `json:"controlRotateSpeed,omitempty"`
-	ControlZoomSpeed       float64 `json:"controlZoomSpeed,omitempty"`
-	ControlLookSpeed       float64 `json:"controlLookSpeed,omitempty"`
-	ControlMoveSpeed       float64 `json:"controlMoveSpeed,omitempty"`
-	ControlMinDistance     float64 `json:"controlMinDistance,omitempty"`
-	ControlMaxDistance     float64 `json:"controlMaxDistance,omitempty"`
-	ControlPitchLimit      float64 `json:"controlPitchLimit,omitempty"`
-	ScrollCameraStart      float64 `json:"scrollCameraStart,omitempty"`
-	ScrollCameraEnd        float64 `json:"scrollCameraEnd,omitempty"`
+	// ControlZoom opts into damped wheel, pinch and focused keyboard zoom in all camera modes.
+	ControlZoom        *bool   `json:"controlZoom,omitempty"`
+	ControlZoomSpeed   float64 `json:"controlZoomSpeed,omitempty"`
+	ControlLookSpeed   float64 `json:"controlLookSpeed,omitempty"`
+	ControlMoveSpeed   float64 `json:"controlMoveSpeed,omitempty"`
+	ControlMinDistance float64 `json:"controlMinDistance,omitempty"`
+	ControlMaxDistance float64 `json:"controlMaxDistance,omitempty"`
+	ControlPitchLimit  float64 `json:"controlPitchLimit,omitempty"`
+	ScrollCameraStart  float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd    float64 `json:"scrollCameraEnd,omitempty"`
 	// ScrollCameraOffset applies a camera-position delta per CSS pixel scrolled.
 	// It complements ScrollCameraStart/End, which preserve the legacy z-range
 	// interpolation contract.
@@ -1929,6 +1931,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "controlRotateMode", p.ControlRotateMode)
 	setString(out, "controlRotateDirection", p.ControlRotateDirection)
 	setNumeric(out, "controlRotateSpeed", p.ControlRotateSpeed)
+	if p.ControlZoom != nil {
+		out["controlZoom"] = *p.ControlZoom
+	}
 	setNumeric(out, "controlZoomSpeed", p.ControlZoomSpeed)
 	setNumeric(out, "controlLookSpeed", p.ControlLookSpeed)
 	setNumeric(out, "controlMoveSpeed", p.ControlMoveSpeed)

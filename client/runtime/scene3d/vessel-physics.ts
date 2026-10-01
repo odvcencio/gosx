@@ -151,13 +151,13 @@
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function camera(s, previous, dt, seconds=0) {
     const wheel=s.cameraMode === "wheel", h=s.helm;
-    const p=localPoint(s,wheel?h.x:0,wheel?h.y:s.length*.45,wheel?h.z:s.length*1.8);
+    const p=localPoint(s,wheel?h.x:0,wheel?h.y:(s.followDistance||s.length*1.8)*.25,wheel?h.z:(s.followDistance||s.length*1.8));
     const target=localPoint(s,wheel?h.x:0,wheel?s.deck:s.length*.4,wheel?-s.length*.35: -s.length*.15);
     const yaw=Math.atan2(-(target.x-p.x),-(target.z-p.z)), pitch=Math.atan2(target.y-p.y,Math.hypot(target.x-p.x,target.z-p.z));
     const bob=deckBob(s,seconds);
     const result=Object.assign({},previous,{x:p.x,y:p.y+(wheel?bob:0),z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel&&!s.reduced?s.roll*.35:0,fov:65,near:wheel?.05:previous.near});
     if (!wheel && s.cameraReady && s.camera) {
-      const alpha=1-Math.exp(-dt*5);
+      const alpha=s.reduced?1:1-Math.exp(-dt*5);
       for(const key of ['x','y','z','rotationX']) result[key]=s.camera[key]+(result[key]-s.camera[key])*alpha;
       result.rotationY=s.camera.rotationY+angle(yaw-s.camera.rotationY)*alpha;
     }
