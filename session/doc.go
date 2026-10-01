@@ -14,7 +14,7 @@
 //	Manager.Middleware  wrap the handler tree; nothing below works without it
 //	Manager.Protect     add CSRF checking to unsafe methods
 //	Current(r)      the *Store for this request
-//	Token(r)        the CSRF token to embed in a form
+//	Token(r)        the CSRF token to embed when a session exists
 //
 // On the Store itself: Set, Value, String, Decode, Delete, AddFlash, Flashes,
 // Destroy, and Err. The package-level AddFlash, Values, FlashValues and Destroy
@@ -33,9 +33,19 @@
 // middleware required before csrf protection" rather than letting an unchecked
 // request through.
 //
-// Protect reads the token from the X-CSRF-Token header. For a request that does
-// not want JSON it also falls back to the csrf_token form field, which covers
-// both urlencoded and multipart submissions.
+// An anonymous Token read returns empty and does not create a cookie. Set or
+// AddFlash creates session state; every persisted session includes a random
+// CSRF token. Responses carrying session state are private and vary by Cookie.
+//
+// Protect rejects unsafe browser requests from foreign origins. A fresh
+// same-origin browser form needs no session token. Once a session exists, both
+// the origin check and the token check must pass. Requests without Origin and
+// Sec-Fetch-Site still need a session token, as before. Explicit TrustedOrigins
+// can permit other browser origins. Forwarded headers are ignored unless both
+// the proxy addresses and the public AllowedHosts are configured.
+//
+// Protect reads tokens from X-CSRF-Token. For a request that does not want JSON
+// it also reads the csrf_token field in urlencoded or multipart submissions.
 //
 // # Secrets and rotation
 //

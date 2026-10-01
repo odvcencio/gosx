@@ -543,9 +543,17 @@ func (a *App) Build() http.Handler {
 	a.mux = mux
 	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux)
 	a.registerRewriteRoutes(rewriteMux, dispatch)
+	// Regeneration must observe the same auth/session and cache boundaries as
+	// a normal request. It never calls the ISR lookup recursively.
+	regeneration := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatch(w, r, true)
+	}))
+	regenerate := func(w http.ResponseWriter, r *http.Request, _ bool) {
+		regeneration.ServeHTTP(w, r)
+	}
 
 	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.maybeServeISR(w, r, dispatch) {
+		if a.maybeServeISR(w, r, regenerate) {
 			return
 		}
 		dispatch(w, r, true)
@@ -924,6 +932,7 @@ func (a *App) observeOperation(event OperationEvent) {
 
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
+	ctx.PrepareCache(ctx.Request)
 	requestNonce := ctx.Nonce()
 	// Drop the nonce before the render when a shared cache may store the body.
 	// One stored copy reaches many clients, so a per-request nonce in that copy
@@ -978,10 +987,9 @@ func ensurePageContext(ctx *Context) *Context {
 // CSRF meta tag mirroring the session's token so client JS can echo it back
 // on mutating requests — see m31labs.dev/gosx/session.Manager.Protect) can be
 // wired ONCE at the composition root instead of edited into every page
-// render function. server intentionally does not import session (route is
-// the layer that already glues server + session + auth together — see
-// route/fileeval.go's csrf template binding); callers that need
-// session-derived head content close over their own *session.Manager, as in:
+// render function. Anonymous Token reads return empty, so this contributes no
+// token to prerendered or shared HTML. Session-derived head content makes the
+// response private; callers close over their own *session.Manager, as in:
 //
 //	app.AddHeadDecorator(func(ctx *server.Context) (gosx.Node, bool) {
 //		token := sessions.Token(ctx.Request)

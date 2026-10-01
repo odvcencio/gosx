@@ -3577,14 +3577,13 @@ func Page() Node {
 	}
 
 	csrf := findInputValue(t, body, "csrf_token")
-	if csrf == "" {
-		t.Fatalf("expected csrf token in %q", body)
+	if csrf != "" || len(getRes.Result().Cookies()) != 0 {
+		t.Fatalf("anonymous form created session state in %q", body)
 	}
-	cookie := getRes.Result().Cookies()[0]
 
 	postReq := httptest.NewRequest(http.MethodPost, "/account/draco/__actions/save", strings.NewReader("name=Ada&email=&csrf_token="+csrf))
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	postReq.AddCookie(cookie)
+	postReq.Header.Set("Sec-Fetch-Site", "same-origin")
 	postRes := httptest.NewRecorder()
 	handler.ServeHTTP(postRes, postReq)
 	if postRes.Code != http.StatusSeeOther {
@@ -3594,7 +3593,7 @@ func Page() Node {
 		t.Fatalf("expected redirect to page path, got %q", location)
 	}
 
-	cookie = postRes.Result().Cookies()[0]
+	cookie := postRes.Result().Cookies()[0]
 	reloadReq := httptest.NewRequest(http.MethodGet, "/account/draco", nil)
 	reloadReq.AddCookie(cookie)
 	reloadRes := httptest.NewRecorder()
@@ -3619,8 +3618,8 @@ func Page() Node {
 // fix: a page whose template never reads csrf.token or csrf.field must not
 // mint one, so its GET response carries no Set-Cookie header and stays
 // publicly cacheable. TestRouterFilePagesSupportRequestDataActionsAndCSRF
-// above is the paired proof that a page which does read csrf.token keeps
-// minting one and keeps its Set-Cookie header exactly as before.
+// above also proves that reading csrf.token on an anonymous form stays empty
+// and that its first same-origin action succeeds without a session cookie.
 func TestRouterFilePagesSkipCSRFMintWithoutTemplateUse(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "page.gsx", `package docs

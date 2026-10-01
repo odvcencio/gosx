@@ -172,8 +172,17 @@ func Page() Node {
 		<h2 id="csrf">CSRF</h2>
 		<CodeBlock lang="gosx" source={data.csrfSample} />
 		<p>
+			Use this form for both new visitors and signed-in visitors. On an anonymous GET,
+			<span class="inline-code">csrf.token</span>
+			is empty and reading it sets no cookie. The browser supplies the origin information when the form submits. Once a session exists, the same field carries its token.
+		</p>
+		<p>
 			<span class="inline-code">sessions.Protect</span>
-			checks unsafe methods. Submit
+			checks every method except GET, HEAD, and OPTIONS. It rejects cross-site and same-site requests using
+			<span class="inline-code">Sec-Fetch-Site</span>
+			and checks
+			<span class="inline-code">Origin</span>
+			when present. A same-origin request without a session needs no token. A request with a session must also submit its matching token, even when its origin is allowed. Submit
 			<span class="inline-code">csrf_token</span>
 			as a form field or send
 			<span class="inline-code">X-CSRF-Token</span>
@@ -182,6 +191,38 @@ func Page() Node {
 			or the file-template
 			<span class="inline-code">csrf.token</span>
 			binding.
+		</p>
+		<p>
+			Clients that send neither browser header still need a session and a matching token. Reading a token alone no longer starts a session: a handler must write session data, such as form state, before these clients can retrieve a token. Keep GET handlers free of application mutations; origin checks protect unsafe methods only.
+		</p>
+		<p>
+			Set
+			<span class="inline-code">session.Options.TrustedOrigins</span>
+			to allow specific additional browser origins. Forwarded headers are ignored by default. If a proxy rewrites the host, or an Origin-only client reaches a proxy that terminates TLS, configure
+			<span class="inline-code">ForwardedTrust</span>
+			with its proxy IP addresses or CIDR blocks, and list the public host in
+			<span class="inline-code">AllowedHosts</span>
+			. Those proxies must replace client-supplied forwarded headers. Modern same-origin browser metadata works through TLS termination without trusting forwarded headers.
+		</p>
+		<p>
+			Sessions start when a handler writes data with
+			<span class="inline-code">Set</span>
+			or
+			<span class="inline-code">AddFlash</span>
+			. Anonymous session-managed pages use
+			<span class="inline-code">public, max-age=0, must-revalidate</span>
+			by default, so shared caches may store their HTML. Existing ISR and
+			<span class="inline-code">CachePublic</span>
+			policies keep their lifetimes. Cookie and authorization variants stay out of shared caches; session responses use
+			<span class="inline-code">private, no-store</span>
+			and vary by Cookie. Other personalized pages should set
+			<span class="inline-code">CachePrivate</span>
+			or
+			<span class="inline-code">NoStore</span>
+			.
+		</p>
+		<p>
+			Prerendering leaves anonymous token fields empty and keeps cookie-setting or private pages dynamic. Visitors with cookies bypass ISR so their form tokens, identity, and flash messages come from the origin. Pages using a per-request CSP nonce remain uncached by default; an explicit public policy must use a CSP that works without a nonce.
 		</p>
 		<p>
 			For mutating file-action forms,
