@@ -1,6 +1,6 @@
 {
   "schema": "gosx.beach-moments-budget/v1",
-  "reason": "Three content nodes add batched dune grass, tideline wrack and a retained gull flock. Complete golden-hour props measure 61813 JSON bytes and 25618 gzip bytes; the 26000 gzip cap stays unchanged. The page drops the inline docs navigation runtime and uses ordinary view links. Grass/wrack have a combined 64 KB asset cap and reuse generated sand/basalt detail maps instead of six scanned maps. The 172000-byte page cap ratchets down from 280000; the inherited docs CSS/layout still leaves the page above the 150 KB program target.",
+  "reason": "Static pool rims, grotto, footprints and the wreck keel/prow use 16692 bytes of Go-generated quantized GLBs, with a combined 32 KB asset cap. Footprints omit buried faces; keel and prow share one draw. The 28 ribs keep their existing efficient instanced draw and avoid a WebGL shader-switch warning. Rib transforms retain 0.1 mm and 0.006 degree precision; walk data is unchanged; the graph has 28 nodes. Unique bgb class selectors omit redundant generated CSS scope prefixes. Complete golden-hour props measure 44137 JSON bytes and 22704 gzip bytes; caps ratchet from 63000/26000 to 44400/23000. The served shore page measures 149531 raw bytes at golden hour and meets the 150 KB program target; caps ratchet from 172000/50000 to 149700/42000. Runtime bundle growth is zero.",
   "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page including inherited docs CSS. Gzip uses Go\u2019s default compressor. Runtime bundle growth is zero.",
   "moments": {
     "beacon": {
@@ -25,12 +25,12 @@
     }
   },
   "program": {
-    "nodes": 30,
-    "jsonBytes": 63000,
-    "gzipBytes": 26000
+    "nodes": 28,
+    "jsonBytes": 44400,
+    "gzipBytes": 23000
   },
   "page": {
-    "htmlBytes": 172000,
-    "gzipBytes": 50000
+    "htmlBytes": 149700,
+    "gzipBytes": 42000
   }
 }

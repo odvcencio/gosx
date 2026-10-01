@@ -221,7 +221,9 @@ func TestBeachMomentsIntegrated(t *testing.T) {
 	for _, period := range beachgen.Periods {
 		p := BlackglassBeachProgram("shore", period)
 		wire := momentWire(t, p.Graph.Nodes)
-		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims", "wreck-ribs", "wreck-prow", "glass-trail-soles", "glass-trail-heels", "sun-grotto-arch", "sun-grotto-patch"} {
+		// The wreck includes its prow and keel; the trail includes both heels
+		// and soles. Their baked geometry is checked by the asset tests.
+		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims", "wreck-ribs", "glass-trail-soles", "sun-grotto-arch", "sun-grotto-patch"} {
 			if !bytes.Contains(wire, []byte(`"`+id+`"`)) {
 				t.Fatalf("%s missing from beach program", id)
 			}
@@ -249,8 +251,8 @@ func TestBeachMomentsIntegrated(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("%s beach runtime props: %d bytes, %d gzip bytes", period, len(full), compressed.Len())
-		// Nineteen moment nodes, eight existing scene nodes; unchanged
-		// asset and runtime bundles. These limits ratchet the complete props.
+		// Static surfaces share model draws; these caps include the full walk
+		// heightfield, colliders, periods and discoverable moments.
 		limit := beachMomentsLimits(t).Program
 		if len(p.Graph.Nodes) != limit.Nodes || len(full) > limit.JSONBytes || compressed.Len() > limit.GzipBytes {
 			t.Fatal("beach moments exceeded the complete scene budget")
