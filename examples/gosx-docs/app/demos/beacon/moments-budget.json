@@ -1,11 +1,11 @@
 {
   "schema": "gosx.beach-moments-budget/v1",
-  "reason": "Static pool rims, grotto, footprints and the wreck keel/prow use 16692 bytes of Go-generated quantized GLBs, with a combined 32 KB asset cap. Footprints omit buried faces; keel and prow share one draw. The 28 ribs keep their existing efficient instanced draw and avoid a WebGL shader-switch warning. Rib transforms retain 0.1 mm and 0.006 degree precision; walk data is unchanged; the graph has 28 nodes. Unique bgb class selectors omit redundant generated CSS scope prefixes. Complete golden-hour props measure 44137 JSON bytes and 22704 gzip bytes; caps ratchet from 63000/26000 to 44400/23000. The integrated shore page measures 149885 raw bytes at golden hour and 149918 at blue hour, including the caption contrast gradient, and meets the 150 KB program target; Caps are 149999/42000; the mobile helm and steering hint sit above the view controls and respect the safe area. The complete page remains below 150 KB. Runtime bundle growth is zero. The lighthouse uses narrower cones and lower emission to keep the blue-hour overlook visible without geometry or runtime growth. The integrated CSS asset cache removes repeated inherited styles: golden-hour HTML is 78574 bytes and blue-hour HTML is 78607 bytes. The raw HTML cap ratchets from 149999 to 80000; the existing gzip cap stays fixed.",
+  "reason": "Procedural cliff ledges, basalt color/wetness atlases and fine sand grains retain the existing 560 KiB terrain, 450 KiB stacks and 20 KiB monolith asset caps. The monolith has a solid bevelled silhouette and an explicit 2.4 m refraction path. Blue hour shares one twilight radiance evaluator between the sky bake, IBL and fog. A 5974-byte beam falloff texture softens two tapered light ribbons; one swept water-glint draw increases the graph from 28 to 29 nodes. Beacon props measure at most 8035 JSON bytes (cap 8200); complete props measure 47223 JSON / 23283 gzip bytes (caps rise from 44400/23000 to 47400/23500). Served golden-hour HTML measures 81675 raw bytes: the cap rises from 80000 to 82000 for beam UVs and the broken water reflection, below the 150 KB program limit. Runtime bundle growth is zero. Static scenery uses retained geometry; vessel and beam transforms remain live. Mobile keeps the embedded rock/sand maps and solid monolith, with one 1024 shadow map, no optional detail or planar capture, and the existing middle/low ship LODs to bound CPU deformation cost.",
   "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page including inherited docs CSS. Gzip uses Go\u2019s default compressor. Runtime bundle growth is zero.",
   "moments": {
     "beacon": {
-      "nodes": 7,
-      "jsonBytes": 5200
+      "nodes": 8,
+      "jsonBytes": 8200
     },
     "pools": {
       "nodes": 4,
@@ -25,12 +25,12 @@
     }
   },
   "program": {
-    "nodes": 28,
-    "jsonBytes": 44400,
-    "gzipBytes": 23000
+    "nodes": 29,
+    "jsonBytes": 47400,
+    "gzipBytes": 23500
   },
   "page": {
-    "htmlBytes": 80000,
+    "htmlBytes": 82000,
     "gzipBytes": 42000
   }
 }

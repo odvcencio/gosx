@@ -58,7 +58,12 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	stacksGLB, err := writeGLB(stacks, rockMaterial(), []embeddedImage{{name: "rock-normal", data: rockNormal, mime: "image/jpeg"}})
+	rockColor, rockMR, err := makeRockAtlas(seed)
+	if err != nil {
+		return nil, err
+	}
+	stacksGLB, err := writeGLB(stacks, rockMaterial(), []embeddedImage{{name: "rock-normal", data: rockNormal, mime: "image/jpeg"},
+		{name: "basalt-color", data: rockColor, mime: "image/jpeg"}, {name: "basalt-wetness", data: rockMR}})
 	if err != nil {
 		return nil, fmt.Errorf("stacks GLB: %w", err)
 	}
@@ -129,17 +134,20 @@ func terrainHeight(n noiseField, x, z float64) float64 {
 	var h float64
 	switch {
 	case z < 0:
-		h = math.Max(-6, .12*z)
+		h = math.Max(-6, shorelineHeight(z))
 	case z <= 18:
-		h = .045*z + .35*smoothstep(6, 18, z)
+		h = shorelineHeight(z) + .35*smoothstep(6, 18, z)
 	default:
 		h = 1.16 + 2.34*smoothstep(18, 50, z) + 1.2*n.fbm(x/12, z/12, 4)
 	}
 	sand := n.fbm(x*.17+19, z*.17-7, 4) * .08
+	sand += .035 * math.Sin(x*.19) * (1 - smoothstep(4, 18, z))
 	h += sand
+	// The same displaced ledges drive the mesh, walking surface and shore map.
 	zGate := smoothstep(-40, -30, z)
-	left := (1 - smoothstep(-34, -28, x)) * zGate
-	right := smoothstep(34, 40, x) * zGate
+	column := .45*math.Cos(z*2.8) + .7*n.fbm(z*.7, 12, 3)
+	left := cliffLedges(1-smoothstep(-34, -28, x+column)) * zGate
+	right := cliffLedges(smoothstep(34, 40, x-column)) * zGate
 	if left > 0 {
 		base := h
 		cliff := n.fbm(x/4.8+47, z/7.2-11, 5)
@@ -173,7 +181,7 @@ func terrainGeometry(n noiseField) (*geometry, error) {
 	}
 	for _, z := range zs {
 		for column := 0; column < columns; column++ {
-			x := -60 + 120*float64(column)/float64(columns-1)
+			x := terrainColumn(column)
 			y := terrainHeight(n, x, z)
 			dx := (terrainHeight(n, x+.2, z) - terrainHeight(n, x-.2, z)) / .4
 			dz := (terrainHeight(n, x, z+.2) - terrainHeight(n, x, z-.2)) / .4
@@ -197,6 +205,7 @@ func terrainGeometry(n noiseField) (*geometry, error) {
 
 func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1024, 1024))
+	boulders := boulderSpecs(seed)
 	for py := 0; py < 1024; py++ {
 		z := -40 + 90*float64(py)/1023
 		for px := 0; px < 1024; px++ {
@@ -207,15 +216,15 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 			rock := math.Hypot(dx, dz) > .6 || (math.Abs(x) > 34 && h > 2)
 			ao := ambientOcclusion(n, x, z, h)
 			factor := .45 + .55*ao
-			base := [3]float64{80, 74, 68}
+			base := [3]float64{58, 61, 65}
 			foam := 0.0
 			if rock {
-				base = [3]float64{58, 60, 63}
+				base = basaltTint(n, x, h, z, 21)
 			} else {
 				mottle := n.fbm(x/3+float64(seed%19), z/3-float64(seed%23), 3) * .10
 				streaks := n.fbm(x/9+float64(seed%7), z*1.4, 3) * .08 // wind streaks run across the beach
 				grain := n.value(x*18+float64(seed%19), z*18-float64(seed%23)) * .10
-				factor *= 1 + mottle + streaks + grain
+				factor *= (1 + mottle + streaks + grain) * sandContact(x, z, boulders)
 				// Broken filaments left by the retreating wash. The live ocean
 				// supplies moving run-up; these narrow lines remain on sand.
 				if z > .6 && z < 6 && h < .6 {
@@ -262,9 +271,9 @@ func ambientOcclusion(n noiseField, x, z, origin float64) float64 {
 }
 
 func makeMetalRoughness(n noiseField) ([]byte, error) {
-	palette := make(color.Palette, 16)
+	palette := make(color.Palette, 64)
 	for value := range palette {
-		palette[value] = color.RGBA{R: 0, G: uint8(value * 17), B: 0, A: 255}
+		palette[value] = color.RGBA{R: 0, G: uint8(math.Round(float64(value) * 255 / 63)), B: 0, A: 255}
 	}
 	img := image.NewPaletted(image.Rect(0, 0, 256, 256), palette)
 	for py := 0; py < 256; py++ {
@@ -281,9 +290,9 @@ func makeMetalRoughness(n noiseField) ([]byte, error) {
 			} else if h < -.2 {
 				roughness = .25
 			} else if z < 12 {
-				roughness = .065 + .735*smoothstep(.12, .8, h)
+				roughness = .12 + .72*smoothstep(.02, .65, h)
 			}
-			img.SetColorIndex(px, py, uint8(math.Round(clamp(roughness, 0, 1)*15)))
+			img.SetColorIndex(px, py, uint8(math.Round(clamp(roughness, 0, 1)*63)))
 		}
 	}
 	return encodePNG(img)
@@ -293,8 +302,8 @@ func makeSandNormal() ([]byte, error) {
 	// Full-precision tangent-space normals: a palette quantizes the ripple
 	// slopes away and the sand renders flat.
 	img := image.NewNRGBA(image.Rect(0, 0, 512, 512))
-	const tileMeters = 2.5
-	const strength = 5.0
+	const tileMeters = .25
+	const strength = .7
 	for y := 0; y < 512; y++ {
 		v := float64(y) / 512
 		for x := 0; x < 512; x++ {
@@ -321,7 +330,9 @@ func periodicRockHeight(n noiseField, u, v float64) float64 {
 		weight += amplitude
 		amplitude *= .5
 	}
-	return total/weight - .5
+	strata := .025 * math.Sin(2*math.Pi*7*v+.5*math.Sin(2*math.Pi*u))
+	fracture := .03 * math.Pow(.5+.5*math.Cos(2*math.Pi*5*u+.4*math.Sin(2*math.Pi*v)), 12)
+	return total/weight - .5 + strata - fracture
 }
 
 func makeRockNormal(seed int64) ([]byte, error) {
@@ -342,10 +353,9 @@ func makeRockNormal(seed int64) ([]byte, error) {
 	return encodeJPEG(img, 92)
 }
 func rippleHeight(u, v float64) float64 {
-	warp := .045*math.Sin(2*math.Pi*3*u)*math.Sin(2*math.Pi*2*v) + .025*math.Sin(2*math.Pi*(5*u+4*v))
-	phase := 2 * math.Pi * 9 * (v + warp)
-	grain := .00018*math.Sin(2*math.Pi*(37*u+19*v)) + .00012*math.Sin(2*math.Pi*(23*u-41*v))
-	return .00224*math.Sin(phase) + grain
+	// Submillimetre grains with no coherent wave direction.
+	return .00012*math.Sin(2*math.Pi*(37*u+19*v)) + .00009*math.Sin(2*math.Pi*(23*u-41*v)) +
+		.00007*math.Cos(2*math.Pi*(53*u+47*v))
 }
 
 // encodeJPEG keeps noisy texture maps small; quality 92 hides block
@@ -368,7 +378,7 @@ func encodePNG(img image.Image) ([]byte, error) {
 }
 
 func terrainMaterial() map[string]any {
-	transform := map[string]any{"scale": []float64{60, 45}}
+	transform := map[string]any{"scale": []float64{480, 360}}
 	return map[string]any{
 		"name": "Black volcanic sand",
 		"pbrMetallicRoughness": map[string]any{
@@ -385,9 +395,10 @@ func rockMaterial() map[string]any {
 	return map[string]any{
 		"name": "Weathered basalt",
 		"pbrMetallicRoughness": map[string]any{
-			"baseColorFactor": []float64{srgbLinear(62.0 / 255), srgbLinear(63.0 / 255), srgbLinear(66.0 / 255), 1},
-			"metallicFactor":  0,
-			"roughnessFactor": .85,
+			"baseColorTexture":         map[string]any{"index": 1},
+			"metallicRoughnessTexture": map[string]any{"index": 2},
+			"metallicFactor":           0,
+			"roughnessFactor":          .85,
 		},
 		"normalTexture": map[string]any{"index": 0, "scale": .9, "extensions": map[string]any{"KHR_texture_transform": map[string]any{"scale": []float64{3, 3}}}},
 	}
@@ -399,11 +410,15 @@ func solidMaterial(base [4]float64, roughness, metalness float64) map[string]any
 
 func stackGeometry(seed int64) (*geometry, error) {
 	g := &geometry{}
-	for _, stack := range stackSpecs(seed) {
+	for tile, stack := range stackSpecs(seed) {
+		first := len(g.positions) / 3
 		addStack(g, stack)
+		rockAtlasUV(g, first, tile, -6, stack.height)
 	}
-	for _, boulder := range boulderSpecs(seed) {
+	for tile, boulder := range boulderSpecs(seed) {
+		first := len(g.positions) / 3
 		addBoulder(g, boulder, newNoise(seed+int64(boulder.id)*101), newNoise(seed))
+		rockAtlasUV(g, first, tile+5, 0, 0)
 	}
 	averageVertexNormals(g)
 	return g, nil
@@ -517,7 +532,7 @@ func appendVertex(g *geometry, p vec3, u, v float64) uint16 {
 }
 
 func addStack(g *geometry, stack stackSpec) {
-	const sides, rings = 48, 64
+	const sides, rings = 48, 48
 	noise := newNoise(stack.seed)
 	baseY, topY := -6.0, stack.height
 	first := len(g.positions) / 3
@@ -526,7 +541,7 @@ func addStack(g *geometry, stack stackSpec) {
 		y := lerp(baseY, topY, t)
 		domeStart := topY - math.Min((topY-baseY)*.16, stack.radius*.45)
 		dome := smoothstep(domeStart, topY, y)
-		profile := 1 - .45*dome
+		profile := 1 - .25*dome
 		for side := 0; side <= sides; side++ { // the last column repeats the first with u = 1
 			angle := 2 * math.Pi * float64(side%sides) / sides
 			dx, dz := math.Cos(angle), math.Sin(angle)
@@ -539,11 +554,12 @@ func addStack(g *geometry, stack stackSpec) {
 			lumps := fbm3(noise, px/(r*1.3), worldY/(r*1.1), pz/(r*1.3), 4)
 			ridges := ridgeFbm3(noise, px/(r*.45)+5, worldY/(r*.45), pz/(r*.45)+9, 4)
 			cracks := fbm3(noise, px/(r*.22)+11, worldY*.07, pz/(r*.22)+7, 3)
-			strata := .03 * math.Sin(worldY*1.1+2.5*noiseValue3(noise, px*.1, worldY*.05, pz*.1))
-			taper := 1 - .22*(worldY-baseY)/(topY-baseY)
+			strata := .018 * math.Sin(worldY*3.8+noiseValue3(noise, px*.1, worldY*.05, pz*.1))
+			columns := .075*math.Cos(angle*12+.2*math.Sin(worldY*.35)) - .06*math.Pow(math.Abs(math.Sin(angle*6+.1)), 18)
+			taper := 1 - .12*(worldY-baseY)/(topY-baseY)
 			// Bulges and waists that change with height break the bottle outline.
 			girth := noiseValue3(noise, stack.x*.31, worldY/(r*.9), stack.z*.31) + .5*noiseValue3(noise, stack.x*.7, worldY/(r*.4), stack.z*.7)
-			radius := r * profile * taper * (1 + .22*girth + .32*lumps + .16*ridges - .14*math.Abs(cracks) + strata)
+			radius := r * profile * taper * (1 + .08*girth + .18*lumps + .13*ridges - .18*math.Abs(cracks) + strata + columns)
 			notch := smoothstep(-1, -.6, worldY) * (1 - smoothstep(1.2, 1.6, worldY))
 			radius *= 1 - .18*notch
 			leanFactor := (worldY - baseY) * stack.lean
@@ -633,50 +649,41 @@ func averageVertexNormals(g *geometry) {
 	}
 }
 
-// monolithGeometry is a knapped obsidian shard: six jittered rings of seven
-// points narrowing to an off-centre apex, flat-shaded so every facet
-// catches the sky and sun at its own angle (conchoidal glass, not a box).
+// monolithGeometry builds a solid, bevelled obelisk with broad optical faces.
+// The crown is cut on a slant instead of tapering the whole slab to a blade.
 func monolithGeometry() (*geometry, error) {
 	g := &geometry{}
-	rng := newRandom(0x0B51D1A)
-	const sides = 7
-	ringY := []float64{0, .5, 1.25, 2.05, 2.7, 3.05}
-	ringR := []float64{.72, .78, .7, .56, .38, .2}
-	rings := make([][]vec3, len(ringY))
-	for r := range ringY {
-		twist := float64(r) * .31
-		for k := 0; k < sides; k++ {
-			a := 2*math.Pi*float64(k)/sides + twist + (rng.float64()-.5)*.35
-			rad := ringR[r] * (0.78 + .44*rng.float64())
-			y := ringY[r]
-			if r > 0 {
-				y += (rng.float64() - .5) * .22
+	rings := make([][]vec3, 4)
+	for r, y := range []float64{0, .45, 2.85, 3.36} {
+		x := []float64{.92, .98, .86, .54}[r]
+		z := []float64{.42, .5, .46, .3}[r]
+		for _, p := range chamferedRect(x, z, .16) {
+			h := y
+			if r == 3 {
+				h += p[0] / .54 * .06
 			}
-			// Flattened section: the shard is a blade, wider than it is deep.
-			rings[r] = append(rings[r], vec3{math.Cos(a) * rad, y, math.Sin(a) * rad * .45})
+			rings[r] = append(rings[r], vec3{p[0] + .035*float64(r), h, p[1]})
 		}
-	}
-	apex := vec3{.12, 3.42, -.04}
-	tri := func(a, b, c vec3) {
-		n := normalize(cross(sub(b, a), sub(c, a)))
-		centre := scaleVec(vec3{a.x + b.x + c.x, 0, a.z + b.z + c.z}, 1.0/3)
-		if dot(n, centre) < 0 && n.y < .9 { // keep side facets facing outward
-			n = scaleVec(n, -1)
-			b, c = c, b
-		}
-		addTriangle(g, a, b, c, n)
 	}
 	for r := 0; r+1 < len(rings); r++ {
-		for k := 0; k < sides; k++ {
-			a, b := rings[r][k], rings[r][(k+1)%sides]
-			c, d := rings[r+1][(k+1)%sides], rings[r+1][k]
-			tri(a, b, c)
-			tri(a, c, d)
+		for k := 0; k < 8; k++ {
+			a, b := rings[r][k], rings[r][(k+1)%8]
+			c, d := rings[r+1][(k+1)%8], rings[r+1][k]
+			addQuad(g, a, b, c, d, vec3{a.x + b.x, 0, a.z + b.z})
 		}
 	}
-	top := rings[len(rings)-1]
-	for k := 0; k < sides; k++ {
-		tri(top[k], top[(k+1)%sides], apex)
+	for _, r := range []int{0, 3} {
+		n := vec3{0, -1, 0}
+		if r == 3 {
+			n = vec3{0, 1, 0}
+		}
+		for k := 1; k < 7; k++ {
+			a, b, c := rings[r][0], rings[r][k], rings[r][k+1]
+			if dot(cross(sub(b, a), sub(c, a)), n) < 0 {
+				b, c = c, b
+			}
+			addTriangle(g, a, b, c, normalize(cross(sub(b, a), sub(c, a))))
+		}
 	}
 	return g, nil
 }

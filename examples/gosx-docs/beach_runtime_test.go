@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/server"
@@ -35,33 +36,40 @@ func TestBlackglassBeachDiscoveriesServeWithinWireBudget(t *testing.T) {
 	}
 	handler := app.Build()
 	for _, period := range []string{"golden-hour", "blue-hour", "noon"} {
-		t.Run(period, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/demos/beacon?view=shore&period="+period, nil))
-			if w.Code != http.StatusOK {
-				t.Fatalf("beach returned HTTP %d", w.Code)
-			}
-			body := w.Body.Bytes()
-			if !bytes.Contains(body, []byte(`data-period="`+period+`"`)) || !bytes.Contains(body, []byte(`data-view="shore"`)) {
-				t.Fatal("served beach must preserve the requested period and view")
-			}
-			for _, id := range []string{"beacon-beam", "tide-pool-0", "wreck-ribs", "glass-trail-soles", "sun-grotto-patch"} {
-				if !bytes.Contains(body, []byte(id)) {
-					t.Fatalf("served scene is missing %s", id)
+		for _, profile := range []string{"desktop", "Android Mobile"} {
+			t.Run(period+"/"+profile, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(http.MethodGet, "/demos/beacon?view=shore&period="+period, nil)
+				r.Header.Set("User-Agent", profile)
+				handler.ServeHTTP(w, r)
+				if w.Code != http.StatusOK {
+					t.Fatalf("beach returned HTTP %d", w.Code)
 				}
-			}
-			var compressed bytes.Buffer
-			gz := gzip.NewWriter(&compressed)
-			if _, err := gz.Write(body); err != nil {
-				t.Fatal(err)
-			}
-			if err := gz.Close(); err != nil {
-				t.Fatal(err)
-			}
-			t.Logf("served beach: %d HTML bytes, %d gzip bytes", len(body), compressed.Len())
-			if len(body) > limits.Page.HTMLBytes || compressed.Len() > limits.Page.GzipBytes {
-				t.Fatal("beach exceeded its HTML wire budget")
-			}
-		})
+				if !strings.Contains(strings.Join(w.Header().Values("Vary"), ","), "User-Agent") {
+					t.Fatal("cached HTML must vary by the scene's mobile profile")
+				}
+				body := w.Body.Bytes()
+				if !bytes.Contains(body, []byte(`data-period="`+period+`"`)) || !bytes.Contains(body, []byte(`data-view="shore"`)) {
+					t.Fatal("served beach must preserve the requested period and view")
+				}
+				for _, id := range []string{"beacon-beam", "tide-pool-0", "wreck-ribs", "glass-trail-soles", "sun-grotto-patch"} {
+					if !bytes.Contains(body, []byte(id)) {
+						t.Fatalf("served scene is missing %s", id)
+					}
+				}
+				var compressed bytes.Buffer
+				gz := gzip.NewWriter(&compressed)
+				if _, err := gz.Write(body); err != nil {
+					t.Fatal(err)
+				}
+				if err := gz.Close(); err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("served beach: %d HTML bytes, %d gzip bytes", len(body), compressed.Len())
+				if len(body) > limits.Page.HTMLBytes || compressed.Len() > limits.Page.GzipBytes {
+					t.Fatal("beach exceeded its HTML wire budget")
+				}
+			})
+		}
 	}
 }

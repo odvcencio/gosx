@@ -51,10 +51,10 @@ func blackglassBeachLookRotation(position, target scene.Vector3) scene.Euler {
 func blackglassBeachDetail() *scene.Detail {
 	root := blackglassBeachModelRoot
 	return &scene.Detail{
-		Ground: &scene.DetailLayer{Normal: root + "sand-normal.jpg", Scale: 2.5, NormalScale: 0.32},
+		Ground: &scene.DetailLayer{Normal: root + "sand-normal.jpg", Scale: .25, NormalScale: 0.22},
 		Steep: &scene.DetailLayer{Normal: root + "rock-normal.jpg", Roughness: root + "rock-rough.jpg",
-			Scale: 3, NormalScale: 0.85, RoughnessMix: 0.45},
-		SlopeStart: 28, SlopeEnd: 42, FadeStart: 12, FadeEnd: 24,
+			Scale: 1.6, NormalScale: 0.95, RoughnessMix: 0.18},
+		SlopeStart: 28, SlopeEnd: 42, FadeStart: 45, FadeEnd: 85,
 	}
 }
 

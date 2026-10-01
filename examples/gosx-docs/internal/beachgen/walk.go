@@ -49,7 +49,7 @@ func WalkHeightfield(seed int64) WalkGrid {
 // MonolithX, MonolithZ and MonolithYaw place the obsidian monolith.
 const (
 	MonolithX, MonolithY, MonolithZ = -6.2, 0.05, 2.6
-	MonolithYaw                     = -1.16
+	MonolithYaw                     = .65
 )
 
 // WalkColliders returns the solid shapes a walker must not enter.
@@ -65,7 +65,7 @@ func WalkColliders(seed int64) []WalkShape {
 	for _, b := range boulderSpecs(seed) {
 		out = append(out, WalkShape{Kind: "sphere", X: b.x, Y: terrainHeight(n, b.x, b.z), Z: b.z, Radius: b.radius * 1.05})
 	}
-	// The monolith is a flattened blade about 1.9 m by 0.9 m and 3.4 m tall.
-	out = append(out, WalkShape{Kind: "cylinder", X: MonolithX, Y: MonolithY, Z: MonolithZ, Radius: 0.75, Height: 3.5})
+	// Cover the bevelled slab's widest cross-section, including its lean.
+	out = append(out, WalkShape{Kind: "cylinder", X: MonolithX, Y: MonolithY, Z: MonolithZ, Radius: 1.15, Height: 3.5})
 	return out
 }

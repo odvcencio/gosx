@@ -23,7 +23,7 @@ func TestGenerateAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb", "clipper-high.glb", "clipper-mid.glb", "clipper-low.glb", "jetty.glb", "wake-foam.png", "dune-grass.glb", "tideline-wrack.glb", "rock-rough.jpg"}
+	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb", "clipper-high.glb", "clipper-mid.glb", "clipper-low.glb", "jetty.glb", "wake-foam.png", "dune-grass.glb", "tideline-wrack.glb", "rock-rough.jpg", "beacon-beam.png"}
 	if len(first) != len(want) {
 		t.Fatalf("got %d output files, want %d", len(first), len(want))
 	}
@@ -50,12 +50,12 @@ func TestGenerateAssets(t *testing.T) {
 		t.Errorf("beach has %d vertices, want %d", count, 129*129)
 	}
 	t.Logf("beach-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, beach), len(first["beach-v2.glb"]))
-	if count := positionCount(t, stacks); count != 18847 {
-		t.Errorf("stacks and boulders have %d vertices, want 18847", count)
+	if count := positionCount(t, stacks); count != 14927 {
+		t.Errorf("stacks and boulders have %d vertices, want 14927", count)
 	}
 	t.Logf("stacks-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, stacks), len(first["stacks-v2.glb"]))
 	if count := positionCount(t, monolith); count < 150 || count > 400 {
-		t.Errorf("monolith has %d vertices, want a faceted shard of 150-400", count)
+		t.Errorf("monolith has %d vertices, want a bevelled obelisk of 150-400", count)
 	}
 	t.Logf("monolith-v2.glb: %d vertices, %d in-memory bytes", positionCount(t, monolith), len(first["monolith-v2.glb"]))
 
@@ -267,8 +267,8 @@ func checkGLBEncoding(t *testing.T, data []byte, doc *gltfedit.Document, texture
 				t.Fatalf("terrain has %d materials, want 1", len(root.Materials))
 			}
 			transform := root.Materials[0].NormalTexture.Extensions["KHR_texture_transform"].Scale
-			if root.Materials[0].NormalTexture.Scale != .6 || len(transform) != 2 || transform[0] != 60 || transform[1] != 45 {
-				t.Errorf("normal map parameters are scale=%g transform=%v, want 0.6 and [60 45]", root.Materials[0].NormalTexture.Scale, transform)
+			if root.Materials[0].NormalTexture.Scale != .6 || len(transform) != 2 || transform[0] != 480 || transform[1] != 360 {
+				t.Errorf("normal map parameters are scale=%g transform=%v, want 0.6 and [480 360]", root.Materials[0].NormalTexture.Scale, transform)
 			}
 			if (embedded.MIMEType != "image/png" && embedded.MIMEType != "image/jpeg") || embedded.BufferView < 0 || embedded.BufferView >= len(root.BufferViews) {
 				t.Errorf("invalid embedded image reference: %+v", embedded)
@@ -300,7 +300,7 @@ func checkRockMaterial(t *testing.T, data []byte) {
 	if err := json.Unmarshal(glbJSON(t, data), &root); err != nil {
 		t.Fatal(err)
 	}
-	if len(root.Images) != 1 || (root.Images[0].MIMEType != "image/png" && root.Images[0].MIMEType != "image/jpeg") || len(root.Materials) != 1 {
+	if len(root.Images) != 3 || (root.Images[0].MIMEType != "image/png" && root.Images[0].MIMEType != "image/jpeg") || len(root.Materials) != 1 {
 		t.Fatalf("rock material has %d embedded images and %d materials", len(root.Images), len(root.Materials))
 	}
 	material := root.Materials[0]
