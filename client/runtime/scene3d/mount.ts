@@ -3473,6 +3473,9 @@
         return applyMountedSceneCommands(commands, "commands");
       },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
+      get applyPendingPoseFrame() {
+        return sceneState._modelHydrationPromise ? this.applyPoseFrame : null;
+      },
       // applyMotionFrame: the GSP3 sibling of applyPoseFrame above -- see
       // command-runtime.ts's "GPU-driven crowd motion" section and
       // sceneUpdateRigidInstanceMotion's doc comment (mount-webgl.ts) for
@@ -3675,13 +3678,9 @@
       if (sentinelLayer.parentNode) sentinelLayer.parentNode.removeChild(sentinelLayer);
       if (mount.__gosxScene3DSentinels === sceneNodeSentinels) delete mount.__gosxScene3DSentinels;
       if (ownsMount) {
-        delete mount.__gosxScene3DState;
-        delete mount.__gosxScene3DTextureVariantContext;
-        delete mount.__gosxScene3DCSSDynamic;
-        delete mount.__gosxScene3DCSSRevision;
-        delete mount.__gosxScene3DCSSAnimationUntil;
-        delete mount.__gosxScene3DHandle;
-        delete mount.__gosxScene3DOwner;
+        for (const key of ["State", "TextureVariantContext", "CSSDynamic", "CSSRevision", "CSSAnimationUntil", "Handle", "Owner"]) {
+          delete mount["__gosxScene3D" + key];
+        }
         if (typeof mount.removeAttribute === "function") {
           mount.removeAttribute(sceneAttr("inspector-enabled"));
           mount.removeAttribute(sceneAttr("command-ready"));

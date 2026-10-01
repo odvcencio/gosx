@@ -160,6 +160,17 @@
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
       queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject };
+      // Advance compatible committed actors while assets load; keep the latest
+      // frame queued behind its membership command for final replay.
+      if (queue.waiting) {
+        var rec = record(target, opts);
+        if (rec && typeof rec.handle.applyPendingPoseFrame === "function") {
+          try {
+            var progress = rec.handle.applyPendingPoseFrame(decodePoseFrame(frame));
+            if (progress && progress.applied === true && progress.binary === true) queue.advanced = true;
+          } catch (_error) { /* The queued transaction remains authoritative. */ }
+        }
+      }
       if (!queue.running) runPoseQueue(queueKey, queue);
     });
   }
@@ -182,10 +193,18 @@
     if (!job) { queue.running = false; poseQueues.delete(queueKey); return; }
     queue.pending = null;
     queue.running = true;
+    queue.advanced = false;
     var operation;
     try {
-      operation = Array.isArray(job.opts.beforeCommands)
-        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() { return dispatchPoseFrameNow(job.target, job.frame, job.opts); })
+      queue.waiting = Array.isArray(job.opts.beforeCommands);
+      operation = queue.waiting
+        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() {
+          queue.waiting = false;
+          // Do not replay an older frame over poses advanced during loading.
+          return queue.advanced
+            ? { applied: false, binary: true, superseded: true }
+            : dispatchPoseFrameNow(job.target, job.frame, job.opts);
+        })
         : dispatchPoseFrameNow(job.target, job.frame, job.opts);
     } catch (error) {
       operation = Promise.reject(error);
@@ -203,6 +222,7 @@
       if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
         try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:pose-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
       }
+      queue.waiting = false;
       job.reject(error);
       runPoseQueue(queueKey, queue);
     });
@@ -240,17 +260,40 @@
       throw new Error("Scene3D pose frame rejected: " + reason);
     }
     if (!Array.isArray(batches)) reject("invalid-frame");
-    if (state._modelHydrationPromise || !state._hydratedModelRecords) reject("renderer-not-ready");
+    if (!state._hydratedModelRecords) reject("renderer-not-ready");
     var mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
     var targets = [];
+    var pending = Boolean(state._modelHydrationPromise || state._modelsPending);
+    var selected = pending ? [] : batches;
     for (var batch of batches) {
       var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
-      if (!current || !Array.isArray(batch.instances) || current.instances.length !== batch.instances.length) reject("membership-changed");
-      for (var index = 0; index < batch.instances.length; index++) {
-        if (current.instances[index].id !== batch.instances[index].id) reject("membership-order-changed");
+      if (!Array.isArray(batch.instances)) reject("membership-changed");
+      if (pending) {
+        // Filter future membership; the renderer checks committed ownership.
+        if (!current) continue;
+        var instances = [];
+        var poses = [];
+        var currentByID = new Map();
+        for (var instance of current.instances) currentByID.set(instance.id, instance);
+        for (var pose of batch.instances) {
+          var instance = currentByID.get(pose.id);
+          if (!instance) continue;
+          instances.push(instance);
+          poses.push(pose);
+        }
+        if (poses.length) {
+          targets.push({ instances: instances });
+          selected.push({ id: batch.id, instances: poses });
+        }
+      } else {
+        if (!current || current.instances.length !== batch.instances.length) reject("membership-changed");
+        for (var index = 0; index < batch.instances.length; index++) {
+          if (current.instances[index].id !== batch.instances[index].id) reject("membership-order-changed");
+        }
+        targets.push(current);
       }
-      targets.push(current);
     }
+    batches = selected;
     // Reuse one flat rollback buffer across frames. No per-instance maps,
     // patch objects, or snapshot arrays are created on the accepted path.
     var previous = handle.__gosxPosePrevious || (handle.__gosxPosePrevious = []);
@@ -267,7 +310,7 @@
     }
     previous.length = offset;
     var retained = false;
-    try { retained = updateRigidPoses(state); } catch (_error) { retained = false; }
+    try { retained = updateRigidPoses(state, null, batches); } catch (_error) { retained = false; }
     if (!retained) {
       offset = 0;
       for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
