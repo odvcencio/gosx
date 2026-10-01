@@ -5390,6 +5390,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
       sample = {
         durationMS: Math.max(rafIntervalMS, cpuDurationMS),
+        rendererDurationMS: 0,
         source: rendererTimingStale ? "cpu-raf-stale-renderer-timing" : "cpu-raf",
         atMS: now,
         rafIntervalMS,
