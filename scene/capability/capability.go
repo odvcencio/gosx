@@ -65,6 +65,7 @@ const (
 	FeatureSkyGradient    Feature = "sky-gradient"
 	FeatureSkyPhysical    Feature = "sky-physical"
 	FeatureOcean          Feature = "ocean"
+	FeatureTransmission   Feature = "transmission"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -110,6 +111,9 @@ func LightKindFeatures(kind string) []Feature {
 // Props.SceneIR applies the answer as a post-filter over Capable. See
 // TestCustomShaderHasNoFlatCellOnPurpose in customshader_test.go.
 var Matrix = map[Feature]map[Backend]bool{
+	// Both GPU backends capture the opaque scene and project a thickness ray.
+	// Low quality uses environment transmission; Canvas2D cannot shade glass.
+	FeatureTransmission: {BackendWebGPU: true, BackendWebGL: true},
 	// Both GPU backends skin a skinned mesh fully — positions, normals AND
 	// tangents — so both cells are true.
 	//

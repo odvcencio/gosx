@@ -7279,6 +7279,13 @@
     // the literal captures them even though 16 lexically follows 10.
     scenePBRDepthSort: typeof scenePBRDepthSort === "function" ? scenePBRDepthSort : undefined,
     scenePBRObjectRenderPass: typeof scenePBRObjectRenderPass === "function" ? scenePBRObjectRenderPass : undefined,
+    sceneTransmissionPublish: typeof sceneTransmissionPublish === "function" ? sceneTransmissionPublish : undefined,
+    sceneTransmissionMaterial: typeof sceneTransmissionMaterial === "function" ? sceneTransmissionMaterial : undefined,
+    sceneTransmissionPresent: typeof sceneTransmissionPresent === "function" ? sceneTransmissionPresent : undefined,
+    sceneTransmissionDepthWrite: typeof sceneTransmissionDepthWrite === "function" ? sceneTransmissionDepthWrite : undefined,
+    sceneTransmissionSettings: typeof sceneTransmissionSettings === "function" ? sceneTransmissionSettings : undefined,
+    sceneTransmissionVolume: typeof sceneTransmissionVolume === "function" ? sceneTransmissionVolume : undefined,
+    sceneTransmissionEffects: typeof sceneTransmissionEffects === "function" ? sceneTransmissionEffects : undefined,
     scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,

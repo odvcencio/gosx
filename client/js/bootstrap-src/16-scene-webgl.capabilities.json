@@ -15,5 +15,6 @@
   "sky-environment": true,
   "sky-gradient": true,
   "sky-physical": true,
-  "ocean": true
+  "ocean": true,
+  "transmission": true
 }

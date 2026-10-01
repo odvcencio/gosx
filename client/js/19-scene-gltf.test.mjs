@@ -1164,11 +1164,8 @@ test("KHR_materials_unlit selects the flat shading path", () => {
   assert.equal(extractMaterial(context, { extensions: { KHR_materials_unlit: {} } }).unlit, true);
 });
 
-test("KHR_materials_volume stays ignored while specular factors map", () => {
-  // Volume still has no StandardMaterial field to map onto, so the loader
-  // must leave thickness untouched rather than invent a value. Specular, in
-  // contrast, now maps onto real fields: intensity 0.3 with the white
-  // default colour.
+test("KHR_materials_volume keeps scalar controls alongside specular factors", () => {
+  // Volume and specular controls must coexist; omitted attenuation tint is white.
   const { context } = createLoaderContext();
   const material = extractMaterial(context, {
     extensions: {
@@ -1176,7 +1173,9 @@ test("KHR_materials_volume stays ignored while specular factors map", () => {
       KHR_materials_specular: { specularFactor: 0.3 },
     },
   });
-  assert.equal(material.thickness, undefined);
+  assert.equal(material.thickness, 0.5);
+  assert.equal(material.attenuationDistance, 2);
+  assert.deepEqual(material.attenuationColor, [1, 1, 1]);
   assert.equal(material.specularIntensity, 0.3);
   assert.deepEqual(material.specularColor, [1, 1, 1]);
 });

@@ -167,6 +167,7 @@ var outputs = []output{
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// The Environment.Ocean passes ship beside the renderer that calls them.
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
@@ -181,6 +182,7 @@ var outputs = []output{
 			// from wgpuCreatePostProcessor, which sits outside the renderer
 			// closure, so the packer cannot live inside that closure. It ships
 			// right after 16a because that placement compresses best.
+			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -473,6 +475,7 @@ var outputs = []output{
 			// factory ships in this same chunk, so a WebGPU page can never
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
@@ -515,6 +518,7 @@ var outputs = []output{
 			// It now ships once, in the base scene3d chunk, and this bridge
 			// hands 16a the two symbols it reads lexically.
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
+			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),

@@ -175,6 +175,13 @@
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
+  var sceneTransmissionPublish = sceneApi.sceneTransmissionPublish;
+  var sceneTransmissionMaterial = sceneApi.sceneTransmissionMaterial;
+  var sceneTransmissionPresent = sceneApi.sceneTransmissionPresent;
+  var sceneTransmissionDepthWrite = sceneApi.sceneTransmissionDepthWrite;
+  var sceneTransmissionSettings = sceneApi.sceneTransmissionSettings;
+  var sceneTransmissionVolume = sceneApi.sceneTransmissionVolume;
+  var sceneTransmissionEffects = sceneApi.sceneTransmissionEffects;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;

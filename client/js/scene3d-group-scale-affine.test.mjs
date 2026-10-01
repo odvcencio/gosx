@@ -364,7 +364,7 @@ test("browser direct, instanced, skinned and morph shaders share affine normal s
     assert.match(gl, /var reflectedDirect = directVertices && sceneAffineDeterminant\(obj\.modelMatrix, 0\) < 0;/);
     assert.match(gl, /if \(reflectedDirect\) gl\.frontFace\(gl\.CW\);[\s\S]*if \(reflectedDirect\) gl\.frontFace\(gl\.CCW\);/);
     assert.match(gpu, /function bindPBRPipeline\(reflected\)/);
-    assert.match(gpu, /getPBRPipeline\(blendMode, depthWrite, reflected \? "cw" : "ccw"\)/);
+    assert.match(gpu, /getPBRPipeline\(blendMode, objectDepthWrite, reflected \? "cw" : "ccw"\)/);
     assert.doesNotMatch(gl, /normalize\(mat3\(u_modelMatrix\) \* \(mat3\(selenaSkinMatrix\) \* a_normal\)\)/);
     assert.doesNotMatch(gpu, /morph\.model \* vec4<f32>\(localNormal, 0\.0\)/);
   }

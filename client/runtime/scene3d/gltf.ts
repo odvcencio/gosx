@@ -1967,6 +1967,16 @@
       record.transmission = gltfExtensionFactor(transmission, "transmissionFactor", 0, 0, 1);
     }
 
+    // Scalar KHR_materials_volume controls. Thickness textures are not sampled.
+    var volume = gltfExtension(mat, "KHR_materials_volume");
+    if (volume) {
+      Object.assign(record, {
+        thickness: Math.max(0, Number.isFinite(volume.thicknessFactor) ? volume.thicknessFactor : 0),
+        attenuationDistance: Math.max(0, Number.isFinite(volume.attenuationDistance) ? volume.attenuationDistance : 0),
+        attenuationColor: Array.isArray(volume.attenuationColor) ? volume.attenuationColor.slice(0, 3) : [1, 1, 1],
+      });
+    }
+
     // KHR_materials_iridescence -> StandardMaterial.Iridescence, 0 to 1.
     var iridescence = gltfExtension(mat, "KHR_materials_iridescence");
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (iridescence) {
@@ -2525,6 +2535,7 @@
     "EXT_mesh_gpu_instancing",
     "KHR_materials_emissive_strength",
     "KHR_materials_ior",
+    "KHR_materials_volume",
     "KHR_materials_clearcoat",
     "KHR_materials_sheen",
     "KHR_materials_transmission",
