@@ -13,14 +13,15 @@ test("Go ocean lowering retains disabled parameters through JSON and browser nor
   const h = await createBoardWebGPUHarness({ fresh: true });
   const api = h.env.context.__gosx_scene3d_api;
   for (const name of ["stopped", "roundTrip"]) {
-    const state = api.createSceneState({ scene: { environment: { ocean: wire[name] } } });
+    const ocean = wire[name].scene.environment.ocean;
+    const state = api.createSceneState(wire[name]);
     for (const key of ["choppiness", "speed", "foam", "surf"]) {
-      assert.equal(wire[name][key], 0, `${name} serializes the clamped ${key}`);
+      assert.equal(ocean[key], 0, `${name} serializes the clamped ${key}`);
       assert.equal(state.environment.ocean[key], 0, `${name} keeps ${key} disabled in the browser`);
     }
   }
-  const defaults = api.normalizeSceneOcean(wire.defaults);
-  assert.deepEqual(wire.defaults, {}, "Go leaves authored defaults absent");
+  const defaults = api.normalizeSceneOcean(wire.defaults.scene.environment.ocean);
+  assert.deepEqual(wire.defaults.scene.environment.ocean, {}, "Go leaves authored defaults absent");
   assert.equal(defaults.choppiness, 0.6); assert.equal(defaults.speed, 1);
   assert.equal(defaults.foam, 0.6); assert.equal(defaults.surf, 0.5);
   h.renderer.dispose();
