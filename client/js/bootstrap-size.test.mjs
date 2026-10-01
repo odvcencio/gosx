@@ -2187,9 +2187,11 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_580_900, // +100: persistent hub connections (approved exception, decision 0014)
+    // Ocean removal and PBR program restoration measure 1_646_444 raw and
+    // 381_081 Brotli bytes; each affected target rises one 100-byte step.
+    raw: 1_581_000, // +100: persistent hub connections (approved exception, decision 0014)
     gzip: 436_900,
-    brotli: 364_695, // +95: persistent hub connections (approved exception, decision 0014)
+    brotli: 364_795, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,

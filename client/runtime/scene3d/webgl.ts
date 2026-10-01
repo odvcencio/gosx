@@ -8692,7 +8692,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer && !oceanResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -8918,6 +8918,8 @@
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
         linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+      // Transparent mesh lists start with the static PBR program active.
+      gl.useProgram(program);
 
       // Draw alpha pass.
       if (drawList && drawList.alpha.length > 0) {

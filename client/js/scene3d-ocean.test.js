@@ -101,3 +101,76 @@ test("WebGL draws the ocean after opaque geometry from the gl_VertexID grid", ()
   assert.deepEqual(h.warnLog, []);
   h.renderer.dispose();
 });
+
+test("WebGL restores the PBR shader for alpha and additive meshes after the ocean", () => {
+  const h = createWebGLRendererForPost({ fresh: true });
+  const gl = h.canvas.getContext("webgl2");
+  gl.isEnabled = () => false;
+  gl.uniform4fv = () => {};
+  gl.blendFuncSeparate = () => {};
+  const bundle = makePointsBundle(null); bundle.points = [];
+  bundle.worldMeshPositions = new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
+  bundle.worldMeshNormals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  bundle.worldMeshColors = new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  bundle.meshObjects = [
+    { id: "alpha", vertexOffset: 0, vertexCount: 3, materialIndex: 0 },
+    { id: "additive", vertexOffset: 0, vertexCount: 3, materialIndex: 1 },
+  ];
+  bundle.materials = [
+    { kind: "standard", color: "#ffffff", opacity: 0.5, blendMode: "alpha" },
+    { kind: "standard", color: "#ffffff", blendMode: "additive" },
+  ];
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  const pbrDraws = gl.ops.filter(op => op[0] === "drawArrays" && op[3] === 3);
+  assert.equal(pbrDraws.length, 2);
+  const pbrProgram = pbrDraws[0][4];
+  gl.ops.length = 0;
+  bundle.environment.ocean = oceanRecord();
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  const draws = gl.ops.filter(op => op[0] === "drawArrays");
+  const oceanDraw = draws.find(op => op[3] > 3);
+  assert.ok(oceanDraw, "the ocean draws before transparent geometry");
+  assert.notEqual(oceanDraw[4], pbrProgram);
+  const transparentDraws = draws.filter(op => op[3] === 3);
+  assert.equal(transparentDraws.length, 2);
+  assert.ok(transparentDraws.every(op => op[4] === pbrProgram), "both transparent passes use PBR");
+  assert.deepEqual(h.warnLog, []);
+  h.renderer.dispose();
+});
+
+test("WebGL clears an ocean-only scene and resets its status after removal", () => {
+  const h = createWebGLRendererForPost({ fresh: true });
+  const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);
+  const gl = h.canvas.getContext("webgl2");
+  gl.isEnabled = () => false;
+  gl.uniform4fv = () => {};
+  gl.blendFuncSeparate = () => {};
+  const bundle = makePointsBundle(null); bundle.points = [];
+  bundle.environment.ocean = oceanRecord();
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface");
+  gl.ops.length = 0;
+  bundle.environment.ocean = null;
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "none");
+  assert.ok(gl.ops.some(op => op[0] === "clear" && (op[1] & gl.COLOR_BUFFER_BIT)), "the old ocean frame is cleared");
+  assert.ok(!gl.ops.some(op => op[0] === "drawArrays"), "no ocean is drawn after removal");
+  h.renderer.dispose();
+});
+
+test("WebGPU clears an ocean-only scene and resets its status after removal", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const bundle = makePointsBundle(null); bundle.points = [];
+  h.canvas.width = h.canvas.height = 64;
+  bundle.environment.ocean = oceanRecord();
+  h.renderer.render(bundle, { width: 64, height: 64 });
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ocean"), "surface");
+  const start = h.fake.state.renderPasses.length;
+  bundle.environment.ocean = null;
+  h.renderer.render(bundle, { width: 64, height: 64 });
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ocean"), "none");
+  const passes = h.fake.state.renderPasses.slice(start);
+  assert.ok(passes.some(p => p.descriptor.colorAttachments?.[0]?.loadOp === "clear"), "the old ocean frame is cleared");
+  assert.ok(!passes.flatMap(p => p.draws).some(d => d.pipeline?.desc?.label === "gosx-ocean"));
+  h.renderer.dispose();
+});
