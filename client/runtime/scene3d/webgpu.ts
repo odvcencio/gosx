@@ -221,6 +221,8 @@
     "    rimStrength: f32,",
     "    rimColor: vec3f,",
     "    _pad4: f32,",
+    "    volume: vec4f,",
+    "    attenuationColor: vec3f,",
     "};",
   ].join("\n");
 
@@ -1838,6 +1840,7 @@
     "    return out;",
     "}",
     "",
+    WGSL_TRANSMISSION,
     "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
     // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
@@ -1959,6 +1962,7 @@
       "    }",
     "",
     // Accumulate direct lighting.
+    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    var Lo = vec3f(0.0);",
     "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
@@ -2047,7 +2051,7 @@
     "        }",
     "",
     "        let radiance = lightColor * intensity * attenuation;",
-    "        Lo = Lo + (kD * albedo / PI + specular) * radiance * NdotL * shadowAtten;",
+    "        Lo = Lo + (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadowAtten;",
     "    }",
     "",
     "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
@@ -2061,7 +2065,7 @@
     "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
     "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
     "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
-    "        let diffuseIBL = irradiance * albedo * kDenv;",
+    "        let diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
     "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
@@ -2080,13 +2084,16 @@
     "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
+    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo;",
+    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "    }",
+    "    if (env.hasIBL == 0u && env.hasEnvMap == 0u) {",
+    "        ambient = ambient + transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "    }",
     "    ambient = ambient * ambientOcclusion;",
     "",
@@ -2121,9 +2128,9 @@
     "        color = mix(color, color * (vec3f(0.65) + iri * 0.7), iridescence * pow(1.0 - NoV, 2.0));",
     "    }",
     "",
-    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    if (transmission > 0.0001) {",
-    "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+    "        let Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
     "    }",
     "",
     // Exponential fog.
@@ -3576,6 +3583,9 @@
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
         { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
         { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 17, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
       ],
     });
   }
@@ -7448,7 +7458,7 @@
     // rimStrength term — see WGSL_MATERIAL_STRUCT above for the exact field
     // order and alignment. Only the material buffer grows; frame and shadow
     // buffers are untouched.
-    var _materialUniformBuf = new ArrayBuffer(256);
+    var _materialUniformBuf = new ArrayBuffer(288);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -14586,6 +14596,7 @@
       f[61] = rimColor[1];
       f[62] = rimColor[2];
       f[63] = 0;
+      f.set(sceneTransmissionVolume(mat), 64);
       return { data: f, u: u };
     }
 
@@ -14708,7 +14719,9 @@
     //
     // The cache compares identities, so a grown light buffer, a resized shadow
     // map or a device-loss recovery rebuilds it.
-    var _frameBindGroupCache = null;
+    // These opaque backend handles stay JavaScript-readable in raw-source tests.
+    var _frameBindGroupCache = JSON.parse("null");
+    var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
 
     function createFrameBindGroup(shadowView0, shadowView1) {
       var view0 = shadowView0 || dummyShadowView;
@@ -14735,7 +14748,7 @@
         cache.iblBRDF === iblBRDFView &&
         cache.iblSampler === linearSampler &&
         cache.envMap === envMapView &&
-        cache.envMapSampler === envMapSampler
+        cache.envMapSampler === envMapSampler && cache.transmission === transmissionView
       ) {
         return cache.bindGroup;
       }
@@ -14757,6 +14770,7 @@
         iblSampler: linearSampler,
         envMap: envMapView,
         envMapSampler: envMapSampler,
+        transmission: transmissionView,
         bindGroup: bindGroup,
       };
       return bindGroup;
@@ -14781,6 +14795,9 @@
           { binding: 12, resource: linearSampler },
           { binding: 13, resource: envMapView || placeholderView },
           { binding: 14, resource: envMapSampler },
+          { binding: 15, resource: transmissionView || placeholderView },
+          { binding: 16, resource: transmissionResources.sampler },
+          { binding: 17, resource: { buffer: transmissionResources.uniform } },
         ],
       });
     }
@@ -15905,6 +15922,7 @@
       var lastReceiveShadow = null;
       var lastMaterialOwner = null;
       var currentPipelineKind = "";
+      var objectDepthWrite = depthWrite;
 
       function bindMeshAttribute(attr, obj, offset, count) {
         var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
@@ -15935,8 +15953,9 @@
       function bindPBRPipeline(reflected, material = Object.create(null)) {
         var hasDetail = Boolean(material && material.detail);
         var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
+        kind += ":" + objectDepthWrite;
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(getPBRPipeline(blendMode, depthWrite, reflected ? "cw" : "ccw", hasDetail));
+        pass.setPipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -15948,6 +15967,7 @@
         var obj = objectList[i];
         var matIndex = sceneNumber(obj.materialIndex, 0);
         var mat = materials[matIndex] || null;
+        objectDepthWrite = sceneTransmissionDepthWrite(obj, mat, depthWrite);
         var receiveShadow = !!obj.receiveShadow;
         var offset = obj.vertexOffset;
         var count = obj.vertexCount;
@@ -16331,10 +16351,11 @@
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
 
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var mat = instancedMeshMaterial(mesh, materials);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh));
+        var mat = instancedMeshMaterial(mesh, materials);
+        var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh, null));
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
-        if (webGPUGPUDrivenHost().drawMesh(pass, mesh, depthWrite)) continue;
+        if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
@@ -16347,7 +16368,7 @@
           // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
           // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
           // standard pipeline (loc 8 = instanceColor vec4f).
-          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, depthWrite, Boolean(mat && mat.detail)));
+          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -16356,7 +16377,7 @@
           pass.drawIndirect(cullSys.drawArgsBuf, 0);
         } else {
           // Draw-all path (not-ready, no kernel, or capability absent).
-          pass.setPipeline(getPBRInstancedPipeline(blendMode, depthWrite, Boolean(mat && mat.detail)));
+          pass.setPipeline(getPBRInstancedPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -18283,11 +18304,16 @@
       // forever with a poisoned post-FX target.
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var authoredPostEffects = postEffects.length > 0;
+      var hasTransmission = sceneTransmissionPresent(bundle);
+      var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
+      transmissionSettings.screen = transmissionSettings.screen && hasTransmission && !postFXForceDisabled;
+      if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
-      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var postFXMaxPixels = authoredPostEffects && typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var postfxFactor = usePostProcessing
         ? resolvePostFXFactor(postFXMaxPixels, width * height)
         : 1;
@@ -18430,6 +18456,10 @@
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
       var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
+      if (!transmissionResources) transmissionResources = wgpuCreateTransmissionResources(device);
+      transmissionView = transmissionResources.prepare(scaledW, scaledH, targetFormat, transmissionSettings);
+      if (!transmissionView) transmissionResources.fallback();
+      sceneTransmissionPublish(canvas.parentNode, hasTransmission ? transmissionView ? "screen" : "environment" : "none");
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
       var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
         ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing)
@@ -18714,7 +18744,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: !webGPURenderBundlesEnabled() ||
+        disabled: hasTransmission || !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -18817,6 +18847,15 @@
           waterDrawnBeforeAlpha = true;
         }
         oceanOpts.drawn = wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
+        if (transmissionView && postTarget) {
+          mainPass.end();
+          transmissionResources.capture(encoder, postTarget.colorView);
+          mainColorAttachment.loadOp = "load";
+          mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
+          delete mainPassDescriptor["timestampWrites"];
+          mainPass = encoder.beginRenderPass(mainPassDescriptor);
+        }
+
 
         // Alpha pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.alpha.length > 0) {
@@ -18943,6 +18982,7 @@
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
+      if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null;
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;

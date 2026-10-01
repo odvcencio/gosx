@@ -45,5 +45,6 @@ var corroborationIndex = map[Feature]corroborationEntry{
 	FeatureSkyGradient:               {"sky_test.go", "FeatureSkyGradient"},
 	FeatureSkyPhysical:               {"sky_test.go", "FeatureSkyPhysical"},
 	FeatureSkyEnvironment:            {"sky_test.go", "FeatureSkyEnvironment"},
+	FeatureTransmission:              {"transmission_test.go", "FeatureTransmission"},
 	FeatureOcean:                     {"ocean_test.go", "FeatureOcean"},
 }

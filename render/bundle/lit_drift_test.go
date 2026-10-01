@@ -168,7 +168,7 @@ var litSharedTerms = []sharedTerm{
 		id:     "lambert-diffuse-normalization",
 		effect: "Diffuse brightness shifts by a factor of pi.",
 		goPat:  `kD \* baseColor / 3\.141592653589793`,
-		jsPat:  `kD \* albedo / PI`,
+		jsPat:  `kD \* albedo \* \(1\.0 - transmission\) / PI`,
 	},
 	{
 		id:     "clearcoat-power-range",
@@ -208,13 +208,6 @@ var litSharedTerms = []sharedTerm{
 		effect: "A metal becomes translucent on one backend.",
 		goPat:  `clamp\(material\.physicalParams\.z, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
 		jsPat:  `clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
-	},
-	{
-		id:     "transmission-mix-weights",
-		effect: "Glass reads more or less opaque between backends.",
-		goPat:  `mix\(color, ambient \+ baseColor \* ([0-9.]+), transmission \* ([0-9.]+)\)`,
-		jsPat:  `mix\(color, ambient \+ albedo \* ([0-9.]+), transmission \* ([0-9.]+)\)`,
-		want:   "0.1|0.55",
 	},
 	{
 		id:     "hemisphere-normal-blend",
@@ -326,7 +319,7 @@ var litSharedTerms = []sharedTerm{
 		id:     "ambient-scaled-by-base-colour",
 		effect: "Ambient light stops taking the surface colour, so every shadowed face turns grey.",
 		goPat:  `let ambient = envDiffuse \* baseColor;`,
-		jsPat:  `ambient = envDiffuse \* albedo;`,
+		jsPat:  `ambient = envDiffuse \* albedo \* \(1\.0 - transmission\);`,
 	},
 
 	// The rows below arrived with the scene light array. The native copy read
@@ -482,6 +475,15 @@ func TestLitAmbientIntensityReachesTheShaderOnce(t *testing.T) {
 	}
 
 	goSrc, jsSrc := litShaderCopies(t)
+	// The fragment and the environment transmission fallback each apply the
+	// raw intensity once. Count them separately so a duplicate in either path
+	// cannot hide behind the other path's reference.
+	fragmentStart := strings.Index(jsSrc, "@fragment")
+	if fragmentStart < 0 {
+		t.Fatal("browser fragment entry point missing")
+	}
+	jsFragment := jsSrc[fragmentStart:]
+	jsTransmission := jsShaderSource(t, readJSWebGPURenderer(t), "WGSL_TRANSMISSION")
 	for _, once := range []struct {
 		where  string
 		src    string
@@ -491,9 +493,12 @@ func TestLitAmbientIntensityReachesTheShaderOnce(t *testing.T) {
 		{goLitWhere, goSrc, "scene.skyColor", "the sky intensity is already inside .rgb, so a second mention risks a second factor"},
 		{goLitWhere, goSrc, "scene.groundColor", "the ground intensity is already inside .rgb, so a second mention risks a second factor"},
 		{goLitWhere, goSrc, "scene.ambientColor.a", "the ambient intensity belongs in the ambient term only"},
-		{jsLitWhere, jsSrc, "env.skyIntensity", "the browser holds the raw colour, so the shader must scale it once"},
-		{jsLitWhere, jsSrc, "env.groundIntensity", "the browser holds the raw colour, so the shader must scale it once"},
-		{jsLitWhere, jsSrc, "env.ambientIntensity", "the browser holds the raw colour, so the shader must scale it once"},
+		{jsLitWhere, jsFragment, "env.skyIntensity", "the fragment scales the raw sky colour once"},
+		{jsLitWhere, jsFragment, "env.groundIntensity", "the fragment scales the raw ground colour once"},
+		{jsLitWhere, jsFragment, "env.ambientIntensity", "the fragment scales the raw ambient colour once"},
+		{"WGSL_TRANSMISSION", jsTransmission, "env.skyIntensity", "the transmission fallback scales the raw sky colour once"},
+		{"WGSL_TRANSMISSION", jsTransmission, "env.groundIntensity", "the transmission fallback scales the raw ground colour once"},
+		{"WGSL_TRANSMISSION", jsTransmission, "env.ambientIntensity", "the transmission fallback scales the raw ambient colour once"},
 	} {
 		if got := strings.Count(once.src, once.needle); got != 1 {
 			t.Errorf("%s names %s %d times, want once: %s", once.where, once.needle, got, once.why)
@@ -784,6 +789,13 @@ type divergentTerm struct {
 // pass. A row that names a term neither copy carries any more is a guard that
 // stopped guarding.
 var litDivergentTerms = []divergentTerm{
+	{
+		id:      "volume-transmission",
+		effect:  "Browser glass refracts the captured opaque scene with Fresnel and absorption; native glass still mixes a surface tint.",
+		verdict: "Keep browser screen-space volume transmission. Native rendering has no opaque-scene capture or volume material carrier yet; it needs a separate implementation before this gap can close.",
+		goLine:  "color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);",
+		jsLine:  "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
+	},
 	{
 		// This row stayed open on purpose. The audit of 2026-07-26 moved the
 		// native copy to the browser form on seven numeric terms. In each of
@@ -1269,6 +1281,13 @@ var litSharedGuardMutations = []litGuardMutation{
 // litDivergentGuardMutations are edits that silently close a recorded
 // divergence on one backend only, or move it further apart.
 var litDivergentGuardMutations = []litGuardMutation{
+	{
+		name:    "browser reverts volume transmission to a colour mix",
+		side:    "js",
+		from:    "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
+		to:      "color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+		wantRow: "volume-transmission",
+	},
 	{
 		name:    "native renderer adopts the browser specular visibility without updating the ledger",
 		side:    "go",

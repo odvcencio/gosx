@@ -10,14 +10,14 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 998111,
-          "htmlWireBytes": 189187,
+          "frameworkJsWireBytes": 1001421,
+          "htmlWireBytes": 189293,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 230415,
           "lazyJsWireBytes": 206900,
           "requests": 8,
-          "totalWireBytes": 1133960,
+          "totalWireBytes": 1137376,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -29,20 +29,23 @@
         ],
         "raise": {
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
-          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 204852 bytes against the previous 186021-byte limit; the new 206900-byte limit uses the existing wire tolerance (decision 0014)."
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 204852 bytes against the previous 186021-byte limit; the new 206900-byte limit uses the existing wire tolerance (decision 0014).",
+          "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
+          "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
+          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured."
         }
       },
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 111656,
-          "htmlWireBytes": 202586,
+          "htmlWireBytes": 202914,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 260835,
+          "totalWireBytes": 260870,
           "wasmWireBytes": 256
         },
         "require": [
@@ -81,14 +84,14 @@
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 998111,
-          "htmlWireBytes": 223953,
+          "frameworkJsWireBytes": 1001421,
+          "htmlWireBytes": 224059,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 230415,
           "lazyJsWireBytes": 190667,
           "requests": 6,
-          "totalWireBytes": 1131857,
+          "totalWireBytes": 1135273,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -100,20 +103,23 @@
         ],
         "raise": {
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
-          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 188780 bytes against the previous 169789-byte limit; the new 190667-byte limit uses the existing wire tolerance (decision 0014)."
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 188780 bytes against the previous 169789-byte limit; the new 190667-byte limit uses the existing wire tolerance (decision 0014).",
+          "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
+          "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
+          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured."
         }
       },
       "/demos/water": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 998111,
-          "htmlWireBytes": 746234,
+          "frameworkJsWireBytes": 1001421,
+          "htmlWireBytes": 746339,
           "imageWireBytes": 230728,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 245264,
           "lazyJsWireBytes": 190667,
           "requests": 13,
-          "totalWireBytes": 1899715,
+          "totalWireBytes": 1903130,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -124,7 +130,10 @@
         ],
         "raise": {
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 242836 bytes against the previous 236674-byte limit; the new 245264-byte limit uses the existing wire tolerance (decision 0014).",
-          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 188780 bytes against the previous 169789-byte limit; the new 190667-byte limit uses the existing wire tolerance (decision 0014)."
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 188780 bytes against the previous 169789-byte limit; the new 190667-byte limit uses the existing wire tolerance (decision 0014).",
+          "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
+          "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +105 bytes measured.",
+          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3415 bytes measured."
         }
       },
       "/docs/getting-started/": {
@@ -150,14 +159,14 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 392469,
+          "frameworkJsWireBytes": 393684,
           "htmlWireBytes": 216679,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 62462,
+          "jsWireBytes": 62474,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 559677,
+          "totalWireBytes": 560892,
           "wasmWireBytes": 222126
         },
         "require": [
@@ -165,19 +174,25 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +1215 bytes measured.",
+          "jsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +12 bytes measured.",
+          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +1215 bytes measured.",
+          "wasmWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +1203 bytes measured."
+        }
       },
       "/performance/": {
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 178600,
+          "htmlWireBytes": 178763,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 236849,
+          "totalWireBytes": 237012,
           "wasmWireBytes": 256
         },
         "require": [
@@ -186,7 +201,11 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +163 bytes measured.",
+          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +163 bytes measured."
+        }
       }
     },
     "scaffold": {
@@ -213,14 +232,14 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 392464,
+          "frameworkJsWireBytes": 392476,
           "htmlWireBytes": 114660,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 59902,
+          "jsWireBytes": 59914,
           "lazyJsWireBytes": 256,
           "requests": 8,
-          "totalWireBytes": 400809,
+          "totalWireBytes": 400821,
           "wasmWireBytes": 222126
         },
         "require": [
@@ -228,7 +247,12 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
+          "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
+          "totalWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap."
+        }
       },
       "/stack/": {
         "limits": {

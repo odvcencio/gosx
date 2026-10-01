@@ -1538,14 +1538,20 @@ type MatteMaterial MaterialStyle
 
 // StandardMaterial is a PBR material using the roughness/metalness workflow.
 type StandardMaterial struct {
-	Detail            *Detail
-	Color             string
-	Texture           string
-	Roughness         float64
-	Metalness         float64
-	Clearcoat         float64
-	Sheen             float64
-	Transmission      float64
+	Detail       *Detail
+	Color        string
+	Texture      string
+	Roughness    float64
+	Metalness    float64
+	Clearcoat    float64
+	Sheen        float64
+	Transmission float64
+	// Thickness is the refraction path length in world units. Zero is a thin sheet.
+	Thickness float64
+	// AttenuationDistance is the Beer-Lambert reference distance; zero means no absorption.
+	AttenuationDistance float64
+	// AttenuationColor is linear RGB transmittance at AttenuationDistance; nil is white.
+	AttenuationColor  *[3]float64
 	Iridescence       float64
 	Anisotropy        float64
 	SpecularIntensity *float64
@@ -3077,6 +3083,11 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		record.Clearcoat = mapFloat64(materialProps["clearcoat"])
 		record.Sheen = mapFloat64(materialProps["sheen"])
 		record.Transmission = mapFloat64(materialProps["transmission"])
+		record.Thickness = mapFloat64(materialProps["thickness"])
+		record.AttenuationDistance = mapFloat64(materialProps["attenuationDistance"])
+		if color, ok := specularColorFromAny(materialProps["attenuationColor"]); ok {
+			record.AttenuationColor = &color
+		}
 		record.Iridescence = mapFloat64(materialProps["iridescence"])
 		record.Anisotropy = mapFloat64(materialProps["anisotropy"])
 		if ior, ok := mapFloat64OK(materialProps["ior"]); ok {
@@ -4186,6 +4197,11 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	record.Clearcoat = mapFloat64(props["clearcoat"])
 	record.Sheen = mapFloat64(props["sheen"])
 	record.Transmission = mapFloat64(props["transmission"])
+	record.Thickness = mapFloat64(props["thickness"])
+	record.AttenuationDistance = mapFloat64(props["attenuationDistance"])
+	if color, ok := specularColorFromAny(props["attenuationColor"]); ok {
+		record.AttenuationColor = &color
+	}
 	record.Iridescence = mapFloat64(props["iridescence"])
 	record.Anisotropy = mapFloat64(props["anisotropy"])
 	if ior, ok := mapFloat64OK(props["ior"]); ok {
@@ -4570,6 +4586,9 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Clearcoat = m.Clearcoat
 		record.Sheen = m.Sheen
 		record.Transmission = m.Transmission
+		record.Thickness = m.Thickness
+		record.AttenuationDistance = m.AttenuationDistance
+		record.AttenuationColor = copySpecularColor(m.AttenuationColor)
 		record.Iridescence = m.Iridescence
 		record.Anisotropy = m.Anisotropy
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
@@ -4621,6 +4640,9 @@ func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial
 	record.Clearcoat = material.Clearcoat
 	record.Sheen = material.Sheen
 	record.Transmission = material.Transmission
+	record.Thickness = material.Thickness
+	record.AttenuationDistance = material.AttenuationDistance
+	record.AttenuationColor = copySpecularColor(material.AttenuationColor)
 	record.Iridescence = material.Iridescence
 	record.Anisotropy = material.Anisotropy
 	if material.IOR != nil {
@@ -4749,6 +4771,11 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumeric(out, "clearcoat", m.Clearcoat)
 	setNumeric(out, "sheen", m.Sheen)
 	setNumeric(out, "transmission", m.Transmission)
+	setNumeric(out, "thickness", m.Thickness)
+	setNumeric(out, "attenuationDistance", m.AttenuationDistance)
+	if m.AttenuationColor != nil {
+		out["attenuationColor"] = *m.AttenuationColor
+	}
 	setNumeric(out, "iridescence", m.Iridescence)
 	setNumeric(out, "anisotropy", m.Anisotropy)
 	setNumericPtr(out, "ior", m.IOR)

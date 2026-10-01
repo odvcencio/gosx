@@ -256,6 +256,7 @@ class FakeWebGLContext {
     this._boundArrayBuffer = null;
     this._boundTexture = null;
     this._activeProgram = null;
+    this._enabledCapabilities = new Set();
     this._rejectShaderSources = Array.isArray(options.rejectShaderSources) ? options.rejectShaderSources : [];
     this._vendor = typeof options.vendor === "string" ? options.vendor : "FakeGPU Inc.";
     this._renderer = typeof options.renderer === "string" ? options.renderer : "FakeGPU Renderer";
@@ -295,6 +296,7 @@ class FakeWebGLContext {
     this.TEXTURE0 = 0x84C0;
     this.TEXTURE_MIN_FILTER = 0x2801;
     this.TEXTURE_MAG_FILTER = 0x2800;
+    this.TEXTURE_MAX_LEVEL = 0x813D;
     this.TEXTURE_WRAP_S = 0x2802;
     this.TEXTURE_WRAP_T = 0x2803;
     this.CLAMP_TO_EDGE = 0x812F;
@@ -303,6 +305,7 @@ class FakeWebGLContext {
     this.UNSIGNED_BYTE = 0x1401;
     this.UNSIGNED_INT = 0x1405;
     this.FRAMEBUFFER = 0x8D40;
+    this.FRAMEBUFFER_COMPLETE = 0x8CD5;
     this.DEPTH_ATTACHMENT = 0x8D00;
     this.DEPTH_COMPONENT = 0x1902;
     this.DEPTH_COMPONENT24 = 0x81A6;
@@ -534,6 +537,10 @@ class FakeWebGLContext {
     this.ops.push(["texParameteri", target, pname, param]);
   }
 
+  generateMipmap(target) {
+    this.ops.push(["generateMipmap", target]);
+  }
+
   texImage2D(...args) {
     const textureID = this._boundTexture && this._boundTexture.id;
     this.textureUploads.set(textureID, args.length);
@@ -596,6 +603,9 @@ class FakeWebGLContext {
     this.ops.push(["uniform1i", location && location.name, value]);
   }
 
+  uniform3fv(location, values) { this.ops.push(["uniform3fv", location && location.name, Array.from(values)]); }
+  uniform4fv(location, values) { this.ops.push(["uniform4fv", location && location.name, Array.from(values)]); }
+
   uniform2f(location, x, y) {
     this.ops.push(["uniform2f", location && location.name, x, y]);
   }
@@ -613,15 +623,24 @@ class FakeWebGLContext {
   }
 
   enable(capability) {
+    this._enabledCapabilities.add(capability);
     this.ops.push(["enable", capability]);
   }
 
   disable(capability) {
+    this._enabledCapabilities.delete(capability);
     this.ops.push(["disable", capability]);
+  }
+
+  isEnabled(capability) {
+    return this._enabledCapabilities.has(capability);
   }
 
   blendFunc(src, dst) {
     this.ops.push(["blendFunc", src, dst]);
+  }
+  blendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha) {
+    this.ops.push(["blendFuncSeparate", srcRGB, dstRGB, srcAlpha, dstAlpha]);
   }
 
   depthFunc(mode) {
@@ -756,6 +775,10 @@ class FakeWebGLContext {
   }
   blitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter) {
     this.ops.push(["blitFramebuffer", mask]);
+  }
+  checkFramebufferStatus(target) {
+    this.ops.push(["checkFramebufferStatus", target]);
+    return this.FRAMEBUFFER_COMPLETE;
   }
   vertexAttribIPointer(location, size, type, stride, offset) {
     this.ops.push(["vertexAttribIPointer", location, size, type, stride, offset]);

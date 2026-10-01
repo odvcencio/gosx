@@ -78,7 +78,7 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.match(webgpu, /bindPBRPipeline\(reflectedDirect, mat\)/);
   assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -activeSampleCount : activeSampleCount\)/);
-  assert.match(webgpu, /getPBRPipeline\(blendMode, depthWrite, reflected \? "cw" : "ccw", hasDetail\)/);
+  assert.match(webgpu, /getPBRPipeline\(blendMode, objectDepthWrite, reflected \? "cw" : "ccw", hasDetail\)/);
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {

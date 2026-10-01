@@ -692,7 +692,8 @@ const budgets = [
   // Persistent hub connections merged from main add 2,002 raw bytes (decision 0014).
   // Combined bundle: 1,887,915 raw / 528,221 gzip / 420,885 Brotli bytes.
   // Compressed targets rise in the smallest 100-byte steps that clear measured limits.
-  { file: "bootstrap.js", raw: 1_822_402, gzip: 511_900, brotli: 404_600 },
+  // Integrated volume transmission: raw 1822402 -> 1835400 (measured 1900894); gzip 511900 -> 515500 (measured 531860); brotli 404600 -> 407600 (measured 423962). Existing allowances stay fixed.
+  { file: "bootstrap.js", raw: 1_835_400, gzip: 515_500, brotli: 407_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1063,7 +1064,8 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 263_410 / 74_722 / 62_954; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 276_700, gzip: 79_500, brotli: 66_800 },
+  // Integrated volume transmission: raw 276700 -> 280700 (measured 294646); gzip 79500 -> 80600 (measured 84544); brotli 66800 -> 67700 (measured 70990). Existing allowances stay fixed.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 280_700, gzip: 80_600, brotli: 67_700 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1193,7 +1195,8 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 624_328 / 177_226 / 145_904; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d.js", raw: 610_500, gzip: 175_100, brotli: 144_350 },
+  // Integrated volume transmission: raw 610500 -> 612600 (measured 643229); gzip 175100 -> 175700 (measured 184411); brotli 144350 -> 144800 (measured 151967). Existing allowances stay fixed.
+  { file: "bootstrap-feature-scene3d.js", raw: 612_600, gzip: 175_700, brotli: 144_800 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1400,7 +1403,8 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 414_783 / 103_155 / 85_635; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 426_766, gzip: 107_996, brotli: 89_655 },
+  // Integrated volume transmission: raw 426766 -> 431400 (measured 452906); gzip 107996 -> 109300 (measured 114670); brotli 89655 -> 90600 (measured 95093). Existing allowances stay fixed.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 431_400, gzip: 109_300, brotli: 90_600 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1437,7 +1441,8 @@ const budgets = [
   // 44_944 / 16_128 / 14_351. The old 40_650 / 15_000 / 13_400 ceilings
   // move to 45_000 / 16_200 / 14_420, leaving 56 / 72 / 69 bytes of
   // rounding headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 45_000, gzip: 16_200, brotli: 14_420 },
+  // Volume transmission adds 340 raw / 97 gzip / 78 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 45_340, gzip: 16_297, brotli: 14_498 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
@@ -1686,6 +1691,8 @@ const routeBudgets = [
   // so they also cover the text-layout chunk. Neither route can meet the 25%
   // monolith fraction the video route holds — Scene3D IS most of the monolith —
   // so maxMonolithFraction stays unset for them.
+  // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
+  // Integrated volume transmission: raw 1368000 -> 1376100 (measured 1441615); gzip 378700 -> 380900 (measured 397252); brotli 315900 -> 317500 (measured 333305). Existing allowances stay fixed.
   {
     name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
@@ -1841,10 +1848,12 @@ const routeBudgets = [
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
-    raw: 1_368_000,
-    gzip: 378_700,
-    brotli: 315_900,
+    raw: 1_376_100,
+    gzip: 380_900,
+    brotli: 317_500,
   },
+  // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
+  // Integrated volume transmission: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
@@ -2023,11 +2032,13 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    raw: 1_215_500,
-    gzip: 348_800,
+    raw: 1_222_300,
+    gzip: 350_800,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
-    brotli: 293_300,
+    brotli: 294_500,
   },
+  // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
+  // Integrated volume transmission: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
     // ladder fetches the WebGL chunk on top of everything already loaded. This
@@ -2203,11 +2214,13 @@ const routeBudgets = [
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
-    raw: 1_657_700,
-    gzip: 461_900,
+    raw: 1_670_800,
+    gzip: 465_500,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
-    brotli: 385_400,
+    brotli: 388_000,
   },
+  // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
+  // Integrated volume transmission: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
     // no realtime hub and no text labels. It fetches the runtime, the base
@@ -2357,9 +2370,9 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_220_200,
-    gzip: 335_300,
-    brotli: 279_200,
+    raw: 1_227_800,
+    gzip: 337_500,
+    brotli: 280_800,
   },
 
 ];

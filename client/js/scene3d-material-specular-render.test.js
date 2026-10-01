@@ -1028,7 +1028,7 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
   assert.strictEqual(clean.data[42], -1, "stale cutoff must not survive a repack");
   assert.strictEqual(clean.data[41], 0);
   assert.strictEqual(clean.data[43], 0);
-  assert.strictEqual(clean.data.length, 64);
+  assert.strictEqual(clean.data.length, 72);
   for (let c = 0; c < 3; c++) assert.ok(close6(clean.data[44 + c], 0.04));
   assert.strictEqual(clean.data[47], 1);
   assert.strictEqual(clean.u[51], 0);
@@ -1047,7 +1047,7 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
     assert.ok(Number.isFinite(edge.data[48 + c]));
     assert.ok(Math.abs(edge.data[48 + c] - expectedLog) <= 1e-6);
   }
-  assert.strictEqual(edge.data.buffer.byteLength, 256);
+  assert.strictEqual(edge.data.buffer.byteLength, 288);
 });
 
 test("WebGPU fragment shaders pin coverage discard and corrected alpha selects", () => {
@@ -1090,7 +1090,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
   const { source, context } = setupWebGPURenderer();
   // The material buffer grew for the aligned vec3f plus the F90 scalar; the
   // earlier 176-byte layout must be gone.
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
 
@@ -1098,7 +1098,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
     "materialUniformData(" + literal + ", false, null, null)");
 
   const def = pack("{}");
-  assert.strictEqual(def.data.length, 64);
+  assert.strictEqual(def.data.length, 72);
   for (let c = 0; c < 3; c++) assert.ok(close6(def.data[44 + c], 0.04));
   assert.strictEqual(def.data[47], 1);
   // Finite pre-clamp log coefficients at 48..50, neutral loaded-color flag at 51.

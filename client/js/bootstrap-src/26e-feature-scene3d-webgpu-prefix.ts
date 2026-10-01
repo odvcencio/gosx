@@ -82,6 +82,13 @@
   var expandSceneThickLineIntoScratch = sceneApi.expandSceneThickLineIntoScratch;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
+  var sceneTransmissionPublish = sceneApi.sceneTransmissionPublish;
+  var sceneTransmissionMaterial = sceneApi.sceneTransmissionMaterial;
+  var sceneTransmissionPresent = sceneApi.sceneTransmissionPresent;
+  var sceneTransmissionDepthWrite = sceneApi.sceneTransmissionDepthWrite;
+  var sceneTransmissionSettings = sceneApi.sceneTransmissionSettings;
+  var sceneTransmissionVolume = sceneApi.sceneTransmissionVolume;
+  var sceneTransmissionEffects = sceneApi.sceneTransmissionEffects;
   var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
   var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
   var sceneCachedBuffer = sceneApi.sceneCachedBuffer;

@@ -651,7 +651,7 @@
   const sceneObjectMaterialInputKeys = [
     "detail", "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
     "emissive", "emissiveColor", "normalScale", "normalUVScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
-    "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineDash",
+    "clearcoat", "sheen", "thickness", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "lineDash",
     "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
     "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout",
     "shaderSource", "shaderSourceFiles", "normalMap", "roughnessMap", "metalnessMap",
@@ -750,6 +750,9 @@
       clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
       sheen: sceneNumberOrCSSVar(object && object.sheen, 0),
       transmission: sceneNumberOrCSSVar(object && object.transmission, 0),
+      thickness: Math.max(0, sceneNumber(object && object.thickness, 0)),
+      attenuationDistance: Math.max(0, sceneNumber(object && object.attenuationDistance, 0)),
+      attenuationColor: sceneCopyFiniteRGB(object && object.attenuationColor, [1, 1, 1]),
       iridescence: sceneNumberOrCSSVar(object && object.iridescence, 0),
       anisotropy: sceneNumberOrCSSVar(object && object.anisotropy, 0),
       lineDash: sceneBool(object && object.lineDash, false),
@@ -859,6 +862,9 @@
       sceneCSSVarReference(profile && profile.specularColor) ? String(profile.specularColor).trim() : JSON.stringify(sceneNormalizeMaterialSpecularColor(profile && profile.specularColor, null)),
       sceneCSSVarReference(profile && profile.clearcoat) ? String(profile.clearcoat).trim() : sceneNumber(profile && profile.clearcoat, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.sheen) ? String(profile.sheen).trim() : sceneNumber(profile && profile.sheen, 0).toFixed(3),
+      String(sceneNumber(profile && profile.thickness, 0)),
+      String(sceneNumber(profile && profile.attenuationDistance, 0)),
+      JSON.stringify(profile && profile.attenuationColor || [1, 1, 1]),
       sceneCSSVarReference(profile && profile.transmission) ? String(profile.transmission).trim() : sceneNumber(profile && profile.transmission, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.iridescence) ? String(profile.iridescence).trim() : sceneNumber(profile && profile.iridescence, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.anisotropy) ? String(profile.anisotropy).trim() : sceneNumber(profile && profile.anisotropy, 0).toFixed(3),
@@ -1129,4 +1135,12 @@
       triplanar: raw.triplanar == null ? null : sceneBool(raw.triplanar, true),
       stochastic: sceneBool(raw.stochastic, true),
     };
+  }
+
+  /** @param {*} mat */
+  function sceneTransmissionVolume(mat) {
+    var m = mat || {}, color = sceneCopyFiniteRGB(m.attenuationColor, [1, 1, 1]);
+    var distance = Math.max(0, sceneNumber(m.attenuationDistance, 0));
+    return [Math.max(0, sceneNumber(m.thickness, 0)), sceneNormalizeMaterialIor(m.ior, 1.5),
+      distance > 0 ? 1 / distance : 0, 0, Math.min(1, color[0]), Math.min(1, color[1]), Math.min(1, color[2]), 0];
   }

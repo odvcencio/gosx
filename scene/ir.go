@@ -130,91 +130,97 @@ type IREnvironment struct {
 
 // IRMaterial is a reusable material profile referenced by node materialIndex.
 type IRMaterial struct {
-	Name               string                       `json:"name,omitempty"`
-	Kind               string                       `json:"kind,omitempty"`
-	Color              string                       `json:"color,omitempty"`
-	Albedo             []float64                    `json:"albedo,omitempty"`
-	Opacity            float64                      `json:"opacity,omitempty"`
-	Emissive           float64                      `json:"emissive,omitempty"`
-	Roughness          float64                      `json:"roughness,omitempty"`
-	Metalness          float64                      `json:"metalness,omitempty"`
-	Clearcoat          float64                      `json:"clearcoat,omitempty"`
-	Sheen              float64                      `json:"sheen,omitempty"`
-	Transmission       float64                      `json:"transmission,omitempty"`
-	Iridescence        float64                      `json:"iridescence,omitempty"`
-	Anisotropy         float64                      `json:"anisotropy,omitempty"`
-	SpecularIntensity  *float64                     `json:"specularIntensity,omitempty"`
-	SpecularColor      *[3]float64                  `json:"specularColor,omitempty"`
-	IOR                *float64                     `json:"ior,omitempty"`
-	Texture            string                       `json:"texture,omitempty"`
-	NormalMap          string                       `json:"normalMap,omitempty"`
-	RoughnessMap       string                       `json:"roughnessMap,omitempty"`
-	MetalnessMap       string                       `json:"metalnessMap,omitempty"`
-	OcclusionMap       string                       `json:"occlusionMap,omitempty"`
-	EmissiveMap        string                       `json:"emissiveMap,omitempty"`
-	AlphaCutoff        AlphaCutoff                  `json:"alphaCutoff,omitzero"`
-	TextureDescriptors MaterialTextureDescriptors   `json:"textureDescriptors,omitzero"`
-	BlendMode          string                       `json:"blendMode,omitempty"`
-	RenderPass         string                       `json:"renderPass,omitempty"`
-	Wireframe          *bool                        `json:"wireframe,omitempty"`
-	DepthWrite         *bool                        `json:"depthWrite,omitempty"`
-	LineDash           *bool                        `json:"lineDash,omitempty"`
-	DashSize           float64                      `json:"dashSize,omitempty"`
-	GapSize            float64                      `json:"gapSize,omitempty"`
-	CustomVertex       string                       `json:"customVertex,omitempty"`
-	CustomFragment     string                       `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string                       `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string                       `json:"customFragmentWGSL,omitempty"`
-	CustomUniforms     map[string]any               `json:"customUniforms,omitempty"`
-	ShaderBackend      string                       `json:"shaderBackend,omitempty"`
-	ShaderLayout       map[string]any               `json:"shaderLayout,omitempty"`
-	ShaderSource       string                       `json:"shaderSource,omitempty"`
-	ShaderSourceFiles  map[string]string            `json:"shaderSourceFiles,omitempty"`
-	Variants           map[string]IRMaterialVariant `json:"variants,omitempty"`
+	Name                string                       `json:"name,omitempty"`
+	Kind                string                       `json:"kind,omitempty"`
+	Color               string                       `json:"color,omitempty"`
+	Albedo              []float64                    `json:"albedo,omitempty"`
+	Opacity             float64                      `json:"opacity,omitempty"`
+	Emissive            float64                      `json:"emissive,omitempty"`
+	Roughness           float64                      `json:"roughness,omitempty"`
+	Metalness           float64                      `json:"metalness,omitempty"`
+	Clearcoat           float64                      `json:"clearcoat,omitempty"`
+	Sheen               float64                      `json:"sheen,omitempty"`
+	Transmission        float64                      `json:"transmission,omitempty"`
+	Thickness           float64                      `json:"thickness,omitempty"`
+	AttenuationDistance float64                      `json:"attenuationDistance,omitempty"`
+	AttenuationColor    *[3]float64                  `json:"attenuationColor,omitempty"`
+	Iridescence         float64                      `json:"iridescence,omitempty"`
+	Anisotropy          float64                      `json:"anisotropy,omitempty"`
+	SpecularIntensity   *float64                     `json:"specularIntensity,omitempty"`
+	SpecularColor       *[3]float64                  `json:"specularColor,omitempty"`
+	IOR                 *float64                     `json:"ior,omitempty"`
+	Texture             string                       `json:"texture,omitempty"`
+	NormalMap           string                       `json:"normalMap,omitempty"`
+	RoughnessMap        string                       `json:"roughnessMap,omitempty"`
+	MetalnessMap        string                       `json:"metalnessMap,omitempty"`
+	OcclusionMap        string                       `json:"occlusionMap,omitempty"`
+	EmissiveMap         string                       `json:"emissiveMap,omitempty"`
+	AlphaCutoff         AlphaCutoff                  `json:"alphaCutoff,omitzero"`
+	TextureDescriptors  MaterialTextureDescriptors   `json:"textureDescriptors,omitzero"`
+	BlendMode           string                       `json:"blendMode,omitempty"`
+	RenderPass          string                       `json:"renderPass,omitempty"`
+	Wireframe           *bool                        `json:"wireframe,omitempty"`
+	DepthWrite          *bool                        `json:"depthWrite,omitempty"`
+	LineDash            *bool                        `json:"lineDash,omitempty"`
+	DashSize            float64                      `json:"dashSize,omitempty"`
+	GapSize             float64                      `json:"gapSize,omitempty"`
+	CustomVertex        string                       `json:"customVertex,omitempty"`
+	CustomFragment      string                       `json:"customFragment,omitempty"`
+	CustomVertexWGSL    string                       `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL  string                       `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms      map[string]any               `json:"customUniforms,omitempty"`
+	ShaderBackend       string                       `json:"shaderBackend,omitempty"`
+	ShaderLayout        map[string]any               `json:"shaderLayout,omitempty"`
+	ShaderSource        string                       `json:"shaderSource,omitempty"`
+	ShaderSourceFiles   map[string]string            `json:"shaderSourceFiles,omitempty"`
+	Variants            map[string]IRMaterialVariant `json:"variants,omitempty"`
 }
 
 // IRMaterialVariant is a partial material override selected by a runtime
 // capability tier such as "full", "balanced", or "constrained".
 type IRMaterialVariant struct {
-	Kind               string                     `json:"kind,omitempty"`
-	Color              string                     `json:"color,omitempty"`
-	Albedo             []float64                  `json:"albedo,omitempty"`
-	Opacity            float64                    `json:"opacity,omitempty"`
-	Emissive           float64                    `json:"emissive,omitempty"`
-	Roughness          float64                    `json:"roughness,omitempty"`
-	Metalness          float64                    `json:"metalness,omitempty"`
-	Clearcoat          float64                    `json:"clearcoat,omitempty"`
-	Sheen              float64                    `json:"sheen,omitempty"`
-	Transmission       float64                    `json:"transmission,omitempty"`
-	Iridescence        float64                    `json:"iridescence,omitempty"`
-	Anisotropy         float64                    `json:"anisotropy,omitempty"`
-	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
-	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
-	IOR                *float64                   `json:"ior,omitempty"`
-	Texture            string                     `json:"texture,omitempty"`
-	NormalMap          string                     `json:"normalMap,omitempty"`
-	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
-	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
-	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
-	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
-	AlphaCutoff        AlphaCutoff                `json:"alphaCutoff,omitzero"`
-	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
-	BlendMode          string                     `json:"blendMode,omitempty"`
-	RenderPass         string                     `json:"renderPass,omitempty"`
-	Wireframe          *bool                      `json:"wireframe,omitempty"`
-	DepthWrite         *bool                      `json:"depthWrite,omitempty"`
-	LineDash           *bool                      `json:"lineDash,omitempty"`
-	DashSize           float64                    `json:"dashSize,omitempty"`
-	GapSize            float64                    `json:"gapSize,omitempty"`
-	CustomVertex       string                     `json:"customVertex,omitempty"`
-	CustomFragment     string                     `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string                     `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string                     `json:"customFragmentWGSL,omitempty"`
-	CustomUniforms     map[string]any             `json:"customUniforms,omitempty"`
-	ShaderBackend      string                     `json:"shaderBackend,omitempty"`
-	ShaderLayout       map[string]any             `json:"shaderLayout,omitempty"`
-	ShaderSource       string                     `json:"shaderSource,omitempty"`
-	ShaderSourceFiles  map[string]string          `json:"shaderSourceFiles,omitempty"`
+	Kind                string                     `json:"kind,omitempty"`
+	Color               string                     `json:"color,omitempty"`
+	Albedo              []float64                  `json:"albedo,omitempty"`
+	Opacity             float64                    `json:"opacity,omitempty"`
+	Emissive            float64                    `json:"emissive,omitempty"`
+	Roughness           float64                    `json:"roughness,omitempty"`
+	Metalness           float64                    `json:"metalness,omitempty"`
+	Clearcoat           float64                    `json:"clearcoat,omitempty"`
+	Sheen               float64                    `json:"sheen,omitempty"`
+	Transmission        float64                    `json:"transmission,omitempty"`
+	Thickness           float64                    `json:"thickness,omitempty"`
+	AttenuationDistance float64                    `json:"attenuationDistance,omitempty"`
+	AttenuationColor    *[3]float64                `json:"attenuationColor,omitempty"`
+	Iridescence         float64                    `json:"iridescence,omitempty"`
+	Anisotropy          float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity   *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor       *[3]float64                `json:"specularColor,omitempty"`
+	IOR                 *float64                   `json:"ior,omitempty"`
+	Texture             string                     `json:"texture,omitempty"`
+	NormalMap           string                     `json:"normalMap,omitempty"`
+	RoughnessMap        string                     `json:"roughnessMap,omitempty"`
+	MetalnessMap        string                     `json:"metalnessMap,omitempty"`
+	OcclusionMap        string                     `json:"occlusionMap,omitempty"`
+	EmissiveMap         string                     `json:"emissiveMap,omitempty"`
+	AlphaCutoff         AlphaCutoff                `json:"alphaCutoff,omitzero"`
+	TextureDescriptors  MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
+	BlendMode           string                     `json:"blendMode,omitempty"`
+	RenderPass          string                     `json:"renderPass,omitempty"`
+	Wireframe           *bool                      `json:"wireframe,omitempty"`
+	DepthWrite          *bool                      `json:"depthWrite,omitempty"`
+	LineDash            *bool                      `json:"lineDash,omitempty"`
+	DashSize            float64                    `json:"dashSize,omitempty"`
+	GapSize             float64                    `json:"gapSize,omitempty"`
+	CustomVertex        string                     `json:"customVertex,omitempty"`
+	CustomFragment      string                     `json:"customFragment,omitempty"`
+	CustomVertexWGSL    string                     `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL  string                     `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms      map[string]any             `json:"customUniforms,omitempty"`
+	ShaderBackend       string                     `json:"shaderBackend,omitempty"`
+	ShaderLayout        map[string]any             `json:"shaderLayout,omitempty"`
+	ShaderSource        string                     `json:"shaderSource,omitempty"`
+	ShaderSourceFiles   map[string]string          `json:"shaderSourceFiles,omitempty"`
 }
 
 // IRNode is a discriminated union over Kind. Exactly one payload should be set
@@ -1019,84 +1025,90 @@ func canonicalMaterialKey(material IRMaterial) (string, error) {
 
 func materialFromObjectIR(object ObjectIR) IRMaterial {
 	return IRMaterial{
-		Kind:               firstNonEmptySceneString(object.MaterialKind, "standard"),
-		Color:              object.Color,
-		Texture:            object.Texture,
-		Opacity:            derefFloat64(object.Opacity),
-		Emissive:           derefFloat64(object.Emissive),
-		Roughness:          object.Roughness,
-		Metalness:          object.Metalness,
-		Clearcoat:          object.Clearcoat,
-		Sheen:              object.Sheen,
-		Transmission:       object.Transmission,
-		Iridescence:        object.Iridescence,
-		Anisotropy:         object.Anisotropy,
-		SpecularIntensity:  object.SpecularIntensity,
-		SpecularColor:      copySpecularColor(object.SpecularColor),
-		IOR:                object.IOR,
-		NormalMap:          object.NormalMap,
-		RoughnessMap:       object.RoughnessMap,
-		MetalnessMap:       object.MetalnessMap,
-		OcclusionMap:       object.OcclusionMap,
-		EmissiveMap:        object.EmissiveMap,
-		AlphaCutoff:        object.AlphaCutoff,
-		TextureDescriptors: object.TextureDescriptors,
-		BlendMode:          object.BlendMode,
-		RenderPass:         object.RenderPass,
-		Wireframe:          object.Wireframe,
-		DepthWrite:         object.DepthWrite,
-		LineDash:           object.LineDash,
-		DashSize:           object.DashSize,
-		GapSize:            object.GapSize,
-		CustomVertex:       object.CustomVertex,
-		CustomFragment:     object.CustomFragment,
-		CustomVertexWGSL:   object.CustomVertexWGSL,
-		CustomFragmentWGSL: object.CustomFragmentWGSL,
-		CustomUniforms:     cloneSceneAnyMap(object.CustomUniforms),
-		ShaderBackend:      object.ShaderBackend,
-		ShaderLayout:       cloneSceneAnyMap(object.ShaderLayout),
-		ShaderSource:       object.ShaderSource,
-		ShaderSourceFiles:  cloneSceneStringMap(object.ShaderSourceFiles),
+		Kind:                firstNonEmptySceneString(object.MaterialKind, "standard"),
+		Color:               object.Color,
+		Texture:             object.Texture,
+		Opacity:             derefFloat64(object.Opacity),
+		Emissive:            derefFloat64(object.Emissive),
+		Roughness:           object.Roughness,
+		Metalness:           object.Metalness,
+		Clearcoat:           object.Clearcoat,
+		Sheen:               object.Sheen,
+		Transmission:        object.Transmission,
+		Thickness:           object.Thickness,
+		AttenuationDistance: object.AttenuationDistance,
+		AttenuationColor:    copySpecularColor(object.AttenuationColor),
+		Iridescence:         object.Iridescence,
+		Anisotropy:          object.Anisotropy,
+		SpecularIntensity:   object.SpecularIntensity,
+		SpecularColor:       copySpecularColor(object.SpecularColor),
+		IOR:                 object.IOR,
+		NormalMap:           object.NormalMap,
+		RoughnessMap:        object.RoughnessMap,
+		MetalnessMap:        object.MetalnessMap,
+		OcclusionMap:        object.OcclusionMap,
+		EmissiveMap:         object.EmissiveMap,
+		AlphaCutoff:         object.AlphaCutoff,
+		TextureDescriptors:  object.TextureDescriptors,
+		BlendMode:           object.BlendMode,
+		RenderPass:          object.RenderPass,
+		Wireframe:           object.Wireframe,
+		DepthWrite:          object.DepthWrite,
+		LineDash:            object.LineDash,
+		DashSize:            object.DashSize,
+		GapSize:             object.GapSize,
+		CustomVertex:        object.CustomVertex,
+		CustomFragment:      object.CustomFragment,
+		CustomVertexWGSL:    object.CustomVertexWGSL,
+		CustomFragmentWGSL:  object.CustomFragmentWGSL,
+		CustomUniforms:      cloneSceneAnyMap(object.CustomUniforms),
+		ShaderBackend:       object.ShaderBackend,
+		ShaderLayout:        cloneSceneAnyMap(object.ShaderLayout),
+		ShaderSource:        object.ShaderSource,
+		ShaderSourceFiles:   cloneSceneStringMap(object.ShaderSourceFiles),
 	}
 }
 
 func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 	return IRMaterial{
-		Kind:               firstNonEmptySceneString(mesh.MaterialKind, "standard"),
-		Color:              mesh.Color,
-		Texture:            mesh.Texture,
-		Opacity:            derefFloat64(mesh.Opacity),
-		Emissive:           derefFloat64(mesh.Emissive),
-		Roughness:          mesh.Roughness,
-		Metalness:          mesh.Metalness,
-		Clearcoat:          mesh.Clearcoat,
-		Sheen:              mesh.Sheen,
-		Transmission:       mesh.Transmission,
-		Iridescence:        mesh.Iridescence,
-		Anisotropy:         mesh.Anisotropy,
-		SpecularIntensity:  mesh.SpecularIntensity,
-		SpecularColor:      copySpecularColor(mesh.SpecularColor),
-		IOR:                mesh.IOR,
-		NormalMap:          mesh.NormalMap,
-		RoughnessMap:       mesh.RoughnessMap,
-		MetalnessMap:       mesh.MetalnessMap,
-		OcclusionMap:       mesh.OcclusionMap,
-		EmissiveMap:        mesh.EmissiveMap,
-		AlphaCutoff:        mesh.AlphaCutoff,
-		TextureDescriptors: mesh.TextureDescriptors,
-		BlendMode:          mesh.BlendMode,
-		RenderPass:         mesh.RenderPass,
-		Wireframe:          mesh.Wireframe,
-		DepthWrite:         mesh.DepthWrite,
-		CustomVertex:       mesh.CustomVertex,
-		CustomFragment:     mesh.CustomFragment,
-		CustomVertexWGSL:   mesh.CustomVertexWGSL,
-		CustomFragmentWGSL: mesh.CustomFragmentWGSL,
-		CustomUniforms:     cloneSceneAnyMap(mesh.CustomUniforms),
-		ShaderBackend:      mesh.ShaderBackend,
-		ShaderLayout:       cloneSceneAnyMap(mesh.ShaderLayout),
-		ShaderSource:       mesh.ShaderSource,
-		ShaderSourceFiles:  cloneSceneStringMap(mesh.ShaderSourceFiles),
+		Kind:                firstNonEmptySceneString(mesh.MaterialKind, "standard"),
+		Color:               mesh.Color,
+		Texture:             mesh.Texture,
+		Opacity:             derefFloat64(mesh.Opacity),
+		Emissive:            derefFloat64(mesh.Emissive),
+		Roughness:           mesh.Roughness,
+		Metalness:           mesh.Metalness,
+		Clearcoat:           mesh.Clearcoat,
+		Sheen:               mesh.Sheen,
+		Transmission:        mesh.Transmission,
+		Thickness:           mesh.Thickness,
+		AttenuationDistance: mesh.AttenuationDistance,
+		AttenuationColor:    copySpecularColor(mesh.AttenuationColor),
+		Iridescence:         mesh.Iridescence,
+		Anisotropy:          mesh.Anisotropy,
+		SpecularIntensity:   mesh.SpecularIntensity,
+		SpecularColor:       copySpecularColor(mesh.SpecularColor),
+		IOR:                 mesh.IOR,
+		NormalMap:           mesh.NormalMap,
+		RoughnessMap:        mesh.RoughnessMap,
+		MetalnessMap:        mesh.MetalnessMap,
+		OcclusionMap:        mesh.OcclusionMap,
+		EmissiveMap:         mesh.EmissiveMap,
+		AlphaCutoff:         mesh.AlphaCutoff,
+		TextureDescriptors:  mesh.TextureDescriptors,
+		BlendMode:           mesh.BlendMode,
+		RenderPass:          mesh.RenderPass,
+		Wireframe:           mesh.Wireframe,
+		DepthWrite:          mesh.DepthWrite,
+		CustomVertex:        mesh.CustomVertex,
+		CustomFragment:      mesh.CustomFragment,
+		CustomVertexWGSL:    mesh.CustomVertexWGSL,
+		CustomFragmentWGSL:  mesh.CustomFragmentWGSL,
+		CustomUniforms:      cloneSceneAnyMap(mesh.CustomUniforms),
+		ShaderBackend:       mesh.ShaderBackend,
+		ShaderLayout:        cloneSceneAnyMap(mesh.ShaderLayout),
+		ShaderSource:        mesh.ShaderSource,
+		ShaderSourceFiles:   cloneSceneStringMap(mesh.ShaderSourceFiles),
 	}
 }
 
