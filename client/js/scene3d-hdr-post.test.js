@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  createBoardWebGPUHarness, waterPerfShapeScene, makeBundleWithCustomPost, flushAsyncWork,
+  createBoardWebGPUHarness, waterPerfShapeScene, makeBundleWithCustomPost, makePointsBundle, flushAsyncWork,
 } = require("./runtime-test-harness.js");
 
 async function harnessWithTargets() {
@@ -84,4 +84,68 @@ test("custom post and its pending fallback use HDR until presentation", async ()
   assert.equal(custom.pipeline.desc.fragment.targets[0].format, "rgba16float");
   assert.equal(passes.at(-1).descriptor.colorAttachments[0].view.__kind, "canvasTextureView");
   h.renderer.dispose();
+});
+
+for (const kind of ["contactShadows", "ssao", "dof", "customPost"]) {
+  test(`WebGPU ${kind} consumes current depth across MSAA transitions and resize`, async () => {
+    const h = await harnessWithTargets();
+    const bundle = makePointsBundle({ id: "p", count: 1, positions: [0, 0, 0] });
+    bundle.postEffects = [kind === "customPost" ? makeBundleWithCustomPost({
+      fragmentWGSL: "@group(0) @binding(2) var sceneDepth: texture_depth_2d; @fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(textureLoad(sceneDepth, vec2i(0), 0)); }",
+    }).postEffects[0] : { kind }];
+    if (kind === "customPost") {
+      h.renderer.render(bundle, { width: 64, height: 64 });
+      await flushAsyncWork();
+    }
+    try {
+      for (const [samples, size] of [[4, 64], [1, 64], [4, 64], [4, 96], [1, 96]]) {
+        const start = h.fake.state.renderPasses.length;
+        bundle.msaaSamples = samples;
+        h.canvas.width = h.canvas.height = size;
+        h.renderer.render(bundle, { width: size, height: size });
+        const passes = h.fake.state.renderPasses.slice(start);
+        const main = passes.find(p => p.descriptor.depthStencilAttachment && p.descriptor.colorAttachments.length);
+        const resolve = passes.find(p => p.descriptor.label === "gosx-post-depth-resolve");
+        const sampled = h.fake.state.textures.find(t => !t.destroyed && t.desc.format === "depth24plus" && !t.desc.sampleCount && t.desc.size[0] === size);
+        assert.equal(main.descriptor.depthStencilAttachment.view.texture.desc.sampleCount || 1, samples);
+        checkTargets(h, passes);
+        if (samples === 4) {
+          assert.ok(resolve, "4x must write sampled depth each frame, including the first and after 1x");
+          assert.ok(passes.indexOf(resolve) > passes.indexOf(main));
+          assert.equal(resolve.descriptor.depthStencilAttachment.view.texture, sampled);
+          assert.equal(resolve.descriptor.depthStencilAttachment.depthStoreOp, "store");
+          assert.equal(resolve.descriptor.colorAttachments.length, 0);
+          assert.equal(resolve.bindGroups[0].group.desc.entries[0].resource, main.descriptor.depthStencilAttachment.view);
+          const pipeline = resolve.draws[0].pipeline.desc;
+          assert.equal(pipeline.depthStencil.depthWriteEnabled, true);
+          assert.equal(pipeline.depthStencil.depthCompare, "always");
+          assert.equal(pipeline.multisample?.count || 1, 1);
+          assert.match(pipeline.fragment.module.code, /texture_depth_multisampled_2d/);
+          assert.match(pipeline.fragment.module.code, /@builtin\(frag_depth\)/);
+          assert.match(pipeline.fragment.module.code, /sample < 4/);
+          assert.match(pipeline.fragment.module.code, /min\(depth, textureLoad/);
+          assert.equal(resolve.draws[0].vertexCount, 4);
+        } else {
+          assert.equal(resolve, undefined, "1x writes sampled depth directly");
+          assert.equal(main.descriptor.depthStencilAttachment.view.texture, sampled);
+        }
+        const consumers = passes.filter(p => p.bindGroups.some(b => b.group.desc.entries.some(e => e.resource?.texture === sampled)));
+        assert.equal(consumers.length, 1, "the resolved effect must bind the sampled scene depth");
+        for (const consumer of consumers) assert.ok(passes.indexOf(consumer) > passes.indexOf(resolve || main));
+      }
+      assert.equal(h.fake.state.renderPipelines.filter(p => p.desc.label === "gosx-post-depth-resolve").length, 1,
+        "resize and sample-count changes reuse the resolve pipeline");
+    } finally { h.renderer.dispose(); }
+  });
+}
+
+test("WebGPU color-only MSAA post chains skip depth resolution", async () => {
+  const h = await harnessWithTargets();
+  const bundle = makePointsBundle({ id: "p", count: 1, positions: [0, 0, 0] });
+  bundle.msaaSamples = 4;
+  bundle.postEffects = [{ kind: "fxaa" }, { kind: "colorGrade" }];
+  try {
+    h.renderer.render(bundle, { width: 64, height: 64 });
+    assert.ok(!h.fake.state.renderPasses.some(p => p.descriptor.label === "gosx-post-depth-resolve"));
+  } finally { h.renderer.dispose(); }
 });
