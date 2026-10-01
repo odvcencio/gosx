@@ -2789,6 +2789,7 @@
     fxaa: "fxaa",
     godrays: "godRays",
     grain: "grain",
+    taa: "taa",
     custompost: "customPost",
     "custom-post": "customPost",
   };

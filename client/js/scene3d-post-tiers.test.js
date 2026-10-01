@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadSceneAdaptiveQualityAPI, FakeElement, createWebGLRendererForPost, makeWebGLBundleWithCustomPost } = require("./runtime-test-harness.js");
 
-const gatedKinds = ["ssao", "contactShadows"];
+const gatedKinds = ["ssao", "contactShadows", "taa"];
 function prime(tier, mobile, adaptive = false) {
   const h = loadSceneAdaptiveQualityAPI();
   h.context.navigator = { userAgent: mobile ? "Android Mobile" : "Desktop" };
@@ -29,6 +29,13 @@ test("mobile excludes expensive effects even when the renderer reports high GPU 
   const h = prime("full", true, true);
   assert.deepEqual(Array.from(h.scene.postEffects, e => e.kind), ["toneMapping", "fxaa"]);
   assert.equal(h.quality.activeTier, "full", "post admission does not change scene resolution or geometry");
+});
+
+test("a limited TAA-only chain retains one spatial edge pass", () => {
+  const h = prime("balanced", true);
+  h.scene._adaptiveSourcePostEffects = [{ kind: "taa" }];
+  h.api.scenePrimeAdaptiveQuality(h.quality, {}, h.mount, h.scene);
+  assert.deepEqual(Array.from(h.scene.postEffects, e => e.kind), ["fxaa"]);
 });
 
 test("an explicit quality ladder admits effects and removes them again without losing authored state", () => {

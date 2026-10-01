@@ -39,6 +39,7 @@ const (
 	PostEffectKindContactShadows = "contactShadows"
 	PostEffectKindDOF            = "dof"
 	PostEffectKindFXAA           = "fxaa"
+	PostEffectKindTAA            = "taa"
 	PostEffectKindCustomPost     = "customPost"
 	PostEffectKindGodRays        = "godRays"
 	PostEffectKindGrain          = "grain"
@@ -62,6 +63,7 @@ var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
 	PostEffectKindContactShadows: decodePostEffectIRAs[ContactShadowsIR],
 	PostEffectKindDOF:            decodePostEffectIRAs[DOFIR],
 	PostEffectKindFXAA:           decodePostEffectIRAs[FXAAIR],
+	PostEffectKindTAA:            decodePostEffectIRAs[TAAIR],
 	PostEffectKindCustomPost:     decodePostEffectIRAs[CustomPostIR],
 	PostEffectKindGodRays:        decodePostEffectIRAs[GodRaysIR],
 	PostEffectKindGrain:          decodePostEffectIRAs[GrainIR],
@@ -488,6 +490,18 @@ func (ir DOFIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// TAAIR lowers the opt-in temporal resolve.
+type TAAIR struct {
+	HistoryWeight  float64 `json:"historyWeight"`
+	ClampGamma     float64 `json:"clampGamma"`
+	DepthThreshold float64 `json:"depthThreshold"`
+}
+
+func (ir TAAIR) legacyProps() map[string]any {
+	return map[string]any{"kind": PostEffectKindTAA, "historyWeight": ir.HistoryWeight, "clampGamma": ir.ClampGamma, "depthThreshold": ir.DepthThreshold}
+}
+func (ir TAAIR) MarshalJSON() ([]byte, error) { return json.Marshal(ir.legacyProps()) }
+
 // FXAAIR lowers FXAA into the bundle.postEffects[i] shape:
 //
 //	{kind: "fxaa"}
@@ -663,6 +677,18 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 			out = append(out, GodRaysIR{Intensity: clampAtmosphereParam(float64(ev.Intensity), 0, 2), Decay: clampAtmosphereParam(float64(ev.Decay), 0, 1), Density: clampAtmosphereParam(float64(ev.Density), 0, 2), Samples: samples})
 		case Grain:
 			out = append(out, GrainIR{Intensity: clampAtmosphereParam(float64(ev.Intensity), 0, 0.1)})
+		case TAA:
+			ir := TAAIR{HistoryWeight: float64(ev.HistoryWeight), ClampGamma: float64(ev.ClampGamma), DepthThreshold: float64(ev.DepthThreshold)}
+			if ir.HistoryWeight <= 0 {
+				ir.HistoryWeight = 0.9
+			}
+			if ir.ClampGamma <= 0 {
+				ir.ClampGamma = 1
+			}
+			if ir.DepthThreshold <= 0 {
+				ir.DepthThreshold = 0.01
+			}
+			out = append(out, ir)
 		case FXAA:
 			out = append(out, FXAAIR{})
 		case CustomPost:

@@ -180,6 +180,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgl-taa.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
@@ -501,6 +502,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgl-taa.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},
