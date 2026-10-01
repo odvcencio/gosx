@@ -91,7 +91,7 @@ func TestGPUPickingWebGLEvidence(t *testing.T) {
 
 	evidenceFor(t, FeatureGPUPicking, BackendWebGL).
 		needs(inputPath, source,
-			"function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction)",
+			"function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction, interactiveEnabled, emitPointerPhase)",
 			"function sceneRaycastPick(",
 			"window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup",
 			"window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes = sceneRaycastPickInstancedMeshes",

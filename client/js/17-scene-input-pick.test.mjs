@@ -372,3 +372,5 @@ test("the pick path branches on no render backend", () => {
   assert.ok(code.includes("function sceneraycastpickpoints"));
   assert.ok(code.includes("function sceneraycastpick("));
 });
+
+export { createContext, baseBundle, quad };

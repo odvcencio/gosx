@@ -123,6 +123,7 @@ var baseAggregateNeeds = []string{
 	"go-race-tests",
 	"go-cli-tests",
 	"js-tests",
+	"wire-gates",
 	"wasm-tests",
 	"browser-tests",
 }

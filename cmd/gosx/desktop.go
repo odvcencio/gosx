@@ -40,9 +40,19 @@ type DesktopRunOptions struct {
 	SingleInstance             bool
 	NativeSmoke                bool
 	WebView2RuntimeVersion     bool
+	MuteAudio                  bool
+	GPUPreference              string
 }
 
 func cmdDesktop() {
+	if len(os.Args) > 2 && os.Args[2] == "verify-signature" {
+		cmdDesktopVerifySignature()
+		return
+	}
+	if len(os.Args) > 2 && os.Args[2] == "package" {
+		cmdDesktopPackage()
+		return
+	}
 	var options DesktopRunOptions
 	fs := flag.NewFlagSet("desktop", flag.ExitOnError)
 	fs.SetOutput(os.Stderr)
@@ -63,6 +73,8 @@ func cmdDesktop() {
 	fs.BoolVar(&options.NativeBridge, "native-bridge", false, "enable built-in desktop native APIs on window.gosxDesktop")
 	fs.BoolVar(&options.SingleInstance, "single-instance", false, "forward later launches to the first instance")
 	fs.BoolVar(&options.NativeSmoke, "native-smoke", false, "enable tray, notification, menu, and file-drop smoke hooks")
+	fs.BoolVar(&options.MuteAudio, "mute-audio", false, "mute HTML audio and video in the desktop window")
+	fs.StringVar(&options.GPUPreference, "gpu", "", "GPU for WebView2: high-performance or low-power (default: system choice)")
 	fs.BoolVar(&options.WebView2RuntimeVersion, "webview2-runtime-version", false, "print the selected WebView2 runtime version and exit")
 	parseArgs, devAlias := desktopArgsBeforeParse(os.Args[2:])
 	if err := fs.Parse(parseArgs); err != nil {
@@ -224,11 +236,12 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 		DevTools:                   options.DevTools,
 		NativeBridge:               options.NativeBridge,
 		UserDataDir:                options.UserDataDir,
+		MuteAudio:                  options.MuteAudio,
+		GPU:                        desktop.GPUOptions{Preference: desktop.GPUPreference(options.GPUPreference)},
 		BrowserExecutableFolder:    options.BrowserExecutableFolder,
 		AdditionalBrowserArguments: options.AdditionalBrowserArguments,
 		SingleInstance:             options.SingleInstance,
-		OnSecondInstance:           desktopSecondInstanceCallback(getDesktopApp),
-	}
+		OnSecondInstance:           desktopSecondInstanceCallback(getDesktopApp)}
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getDesktopApp)
 	}
@@ -353,11 +366,12 @@ func runDesktopHost(options DesktopRunOptions) error {
 		DevTools:                   options.DevTools,
 		NativeBridge:               options.NativeBridge || bundleRoot != "",
 		UserDataDir:                options.UserDataDir,
+		MuteAudio:                  options.MuteAudio,
+		GPU:                        desktop.GPUOptions{Preference: desktop.GPUPreference(options.GPUPreference)},
 		BrowserExecutableFolder:    options.BrowserExecutableFolder,
 		AdditionalBrowserArguments: options.AdditionalBrowserArguments,
 		SingleInstance:             options.SingleInstance,
-		OnSecondInstance:           desktopSecondInstanceCallback(getApp),
-	}
+		OnSecondInstance:           desktopSecondInstanceCallback(getApp)}
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getApp)
 	}

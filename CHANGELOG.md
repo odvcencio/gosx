@@ -2,6 +2,178 @@
 
 ## Unreleased
 
+### Added: opt-in Scene3D walking
+
+- Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
+  sliding, world bounds, slope and wading limits, sprint, and optional head bob.
+- Support pointer lock, focused keyboard navigation, simultaneous touch movement
+  and look, optional gamepads, and declarative camera reset buttons. Walking
+  loads a separate chunk only for scenes with walk props; existing controls keep
+  their behavior and browser defaults stay out of Go's JSON output.
+
+### Added: desktop update prompt
+
+- Add `App.OfferSignedUpdate` to check signed updates, prompt before opening
+  allowlisted download pages, and avoid host-specific check/confirm/open code.
+
+### Added: desktop rotating log files
+
+- Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
+  rotating log file.
+- Rotate before writes exceed the configured size, keeping the newest rotated
+  files as `Name.1.log` through `Name.<Keep>.log`.
+### Added: Azure Artifact Signing for desktop packages
+
+- Add `gosx desktop package --sign-provider azure-artifact-signing` with
+  SignTool or jsign, non-secret configuration, Authenticode verification, and
+  signing metadata. Sign staged PE files, the uninstaller, and per-user Setup.
+- Add `gosx desktop verify-signature`, a fake-tool CI packaging test, a gated
+  Azure release signing check, and [desktop code-signing documentation](docs/desktop-code-signing.md).
+
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
+### Added: desktop window placement
+
+- Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
+  bounds and maximized state across launches.
+- Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
+  provides the placement before the window is destroyed.
+
+### Added: desktop window handle, focus events, message box
+
+- Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
+  own window by title to call Win32 APIs.
+- Add `Options.OnFocusChanged(focused bool)`, fired from `WM_ACTIVATE` when
+  focus changes. With `NativeBridge`, the page also receives a
+  `gosx.window.focus` event with `{focused}`.
+- Add `desktop.ShowMessage` (works before `New`) and `App.ShowMessage`
+  (owned by the app window): info, warning, error, and question icons;
+  OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
+  it as `gosxDesktop.dialog.message`.
+
+### Added: physical sky for Scene3D
+
+- `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
+  scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`
+  (`scene.SunDirectionFromAngles` helps), `Turbidity`, `Rayleigh`,
+  `MieCoefficient`, `MieDirectionalG` and `SunDiskRadius`; zero means the
+  default. `Sky.PhysicalRadiance` evaluates the same model in Go, and
+  `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
+  Canvas2D gets gradient stops computed from the model. Capability
+  `sky-physical`.
+
+
+
+### Fixed and added: desktop single instance
+
+- Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
+  Windows session, so a second user signed in to the same PC could not start
+  the app. It is now `Local\gosx-<appID>` (one per session).
+- Add `desktop.AcquireSingleInstance(appID)` and `desktop.InstanceLock`, so an
+  app can reserve its ID at the top of `main`, before its own startup work,
+  and `desktop.ForwardToFirstInstance(appID, args, workingDir)`, which hands a
+  later launch to the running window (waiting up to 10 s for it to appear).
+  `Options.SingleInstance` reuses a lock the process already holds.
+- The running instance now restores its window if it is minimized, and the
+  forwarding process grants it foreground rights (`AllowSetForegroundWindow`)
+  so the window can come to the front.
+### Added: desktop sidecar processes
+
+- Add `desktop/sidecar`: `sidecar.Start` runs a helper process (a local game
+  server, an audio engine) without a console window, copies its output to a
+  writer, and returns once a stdout line matches `ReadyLine` (the first
+  submatch, such as a listen address, is returned by `Ready`) or `ReadyURL`
+  answers. On Windows the process starts suspended, joins a Job Object, and
+  then resumes, so it and anything it starts end when the app exits or
+  crashes. On Linux a crashed app's sidecar gets SIGKILL, but processes the
+  sidecar started do not (no unprivileged Job Object equivalent). `Stop` sends SIGTERM first on Unix, then kills the job or
+  process group after the grace period, including children that ignored
+  SIGTERM after the main process exited. On Unix, children left behind when
+  the sidecar exits on its own are killed too, as the Job Object does on
+  Windows.
+### Added: desktop permission requests
+
+- Add `Options.OnPermissionRequested`. It receives each browser permission
+  request (kind, origin, and whether a user gesture started it) and returns
+  `PermissionAllow`, `PermissionDeny`, or `PermissionAsk` (WebView2's own
+  prompt, the behavior without a handler). WebView2 reports Web MIDI requests,
+  including `requestMIDIAccess({sysex: false})`, as `PermissionMIDISysex`;
+  before this, a desktop app's Web MIDI request waited on a prompt.
+
+### Fixed: desktop WebView calls from goroutines
+
+- `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,
+  `OpenDevTools`, `PrependBootstrapScript`, and `Serve` now run on the window
+  thread when called from another goroutine. WebView2 rejects calls from
+  other threads with HRESULT 0x802A000C, so, for example, a host that
+  reloaded the page or pushed an event from a background goroutine failed
+  silently. Calls made on the window thread still run directly. If the
+  window thread cannot be woken, the call returns an error instead of running
+  off-thread. Bursts of calls post one wake message. After the window closes
+  and the WebView is released, calls that need a live WebView (`Reload`,
+  `PostMessage`, `ExecuteScript`, `OpenDevTools`) return "webview not ready";
+  `Navigate`, `SetHTML`, `PrependBootstrapScript`, and `Serve` store their
+  value and return nil.
+### Added: WebView2 GPU selection; fixed: operator browser arguments were dropped
+
+- Add `Options.GPU` (`GPUPreferenceHighPerformance`, `GPUPreferenceLowPower`,
+  or one adapter by `AdapterLUID`) and `desktop.GPUAdapters()`, which lists the
+  hardware DXGI adapters and their LUIDs. `gosx desktop --gpu` sets the
+  preference.
+- Fix: a desktop app that set `AdditionalBrowserArguments` replaced any
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` value already in the environment,
+  so operator and test overrides (for example a GPU adapter) were ignored.
+  The app's switches now come first and the operator's value last; an
+  operator GPU switch replaces the app's GPU switch.
+- `Options.MuteAudio` now also passes `--mute-audio`, which silences Web
+  Audio as well as media elements.
+### Added: desktop startup timeline, navigation event, and background color
+
+- Add `App.StartupTimeline()`, which reports when the window was created and
+  shown, when the WebView2 environment and controller were ready, and when the
+  first navigation finished, measured from `desktop.New`.
+- Add `Options.OnNavigationCompleted` (navigation ID, success, and WebView2
+  web error status).
+- Add `Options.BackgroundColor` (`#RGB` or `#RRGGBB`). It paints the native
+  window before WebView2 covers it, removing the white frame a dark app showed
+  for the first 200-450 ms, and sets the WebView2 controller's default
+  background.
+
+### Added: signed direct-download update checks
+
+- Add `App.CheckSignedUpdate` for the `latest.json` feed produced by
+  `gosx desktop package`. It verifies the detached Ed25519 signature, matches
+  the app and channel, and returns newer-version notes and a download page.
+- Persist check attempts in an app-selected state file and skip checks when
+  disabled, before startup completes, while offline, or within 24 hours of the
+  previous attempt. This path only notifies; players reinstall Setup to
+  upgrade. The existing `App.UpdateCheck()` / `App.UpdateApply()` MSIX feed
+  behavior is unchanged.
+
+### Added: per-user Windows desktop installer and packager
+
+- Add `gosx desktop package` to build a GUI Setup executable, a portable ZIP,
+  per-file SHA-256 manifest, direct-download update manifest and package
+  metadata from Linux without cgo or a third-party installer toolchain.
+- Setup verifies its payload before extraction, stages upgrades beside the
+  current install, creates a per-user Start menu shortcut and HKCU Uninstall
+  entry, and preserves the old version if extraction fails. The uninstaller
+  asks before deleting the app-selected data directory; it keeps player data
+  by default. Setup refuses to replace non-empty folders without a matching
+  app ID record, and each packaged uninstaller only removes its matching
+  install folder outside protected roots.
+- The packager downloads Microsoft's Evergreen WebView2 bootstrapper when no
+  local path is configured and records the downloaded file's SHA-256. Code
+  signing remains a command-template step and unsigned builds say so in
+  `package-metadata.json`.
+- Add `desktop.Options.MuteAudio` and `gosx desktop --mute-audio` for Windows
+  smoke apps that should mute HTML audio and video.
+
 ### Added: Windows WebView2 shipping controls
 
 - `WebView2RuntimeVersion` reports the selected Evergreen or Fixed Version
@@ -20,7 +192,6 @@
   its monitor and restores the earlier window state when fullscreen ends.
   The executable's first icon resource supplies the window's large and small
   icons when one is present.
-
 ### Fixed: Windows WebView2 shuts down before the desktop app closes
 
 - Retain the environment and controller references returned to asynchronous
@@ -5581,7 +5752,7 @@ For the current runtime, that trims the external graph to `github.com/odvcencio/
 
 When the active `go` binary is too new for TinyGo, `gosx build` now retries the TinyGo compile against compatible installed Go SDKs. It checks `GOSX_TINYGO_GOROOT`, `$HOME/sdk/go1.*`, and `/usr/local/go`, filters to Go 1.19 through Go 1.25, picks the newest compatible root, and runs TinyGo with that root first on `PATH` plus `GOTOOLCHAIN=local`.
 
-On the release machine, the build used Go 1.25.9 at `/home/draco/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
+On the release machine, the build used Go 1.25.9 at `$HOME/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
 
 Measured release output:
 

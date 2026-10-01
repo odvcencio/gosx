@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -232,13 +232,14 @@ test-wasm:
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
 
-# test-motion-parity: native↔WASM parity gate for the motion evaluator.
-# Runs TestGolden (and the full motion suite) under GOOS=js GOARCH=wasm so that
-# the native-generated golden corpus proves FMA/float parity across targets.
+# test-motion-parity: native↔WASM↔JavaScript parity gate for motion values.
+# The native-generated golden corpus proves evaluator parity across targets;
+# the bootstrap test runs every sample against the browser-side evaluator.
 test-motion-parity:
-	$(GO) test ./motion/
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+	GOWORK=off $(GO) test ./motion/
+	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
+	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+	$(NODE) --test ./client/js/motion-parity.test.mjs
 
 # test-physics-parity: native↔WASM parity gate for the rigid body engine.
 # Replays the golden corpus under GOOS=js GOARCH=wasm and demands bit equality,
@@ -295,6 +296,8 @@ test-desktop:
 	GOWORK=off nice -n 10 $(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'
 	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-amd64.test.exe ./desktop
 	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
+	GOWORK=off nice -n 10 $(GO) test ./desktop/sidecar
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-sidecar-windows-amd64.test.exe ./desktop/sidecar
 	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
 	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
 
@@ -306,6 +309,10 @@ test-desktop-windows-smoke:
 # WebView2 arguments, HTML fullscreen, and executable-icon assertions.
 test-desktop-windows-shipping-smoke:
 	bash scripts/test-desktop-windows-smoke.sh --shipping-features
+
+# Verifies signed direct-download updates from WSL against a local Windows client.
+test-desktop-windows-update-smoke:
+	bash scripts/test-wb-update-check-windows.sh
 
 test-desktop-macos:
 	mkdir -p build/desktop-test
@@ -320,6 +327,20 @@ perf-budget:
 
 perf-budget-ci:
 	$(SHELL) ./scripts/perf-budget-ci.sh
+
+# wire-gate builds a fresh `gosx init` app (plus one counter island) and the
+# docs site for production, serves both, and checks every route in
+# perf/budgets/wire.json: bytes on the wire by type, request count, largest
+# inline script, and the compression, cache and cookie policies. No browser is
+# involved, so the numbers are deterministic for a given build.
+wire-gate:
+	$(SHELL) ./scripts/wire-gate.sh
+
+# wire-gate-update rewrites perf/budgets/wire.json to the current measurements.
+# Limits only move down; a raise needs `-allow-raise` and a reason in the
+# route's raise map, which the CI ratchet check enforces.
+wire-gate-update:
+	WIRE_GATE_MODE=update $(SHELL) ./scripts/wire-gate.sh
 
 test-water-profile-evidence:
 	$(NODE) --test scripts/water-profile-evidence.test.mjs

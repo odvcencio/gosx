@@ -51,6 +51,9 @@
 
       objects.forEach(function(object, index) {
         var path = "objects[" + index + "]";
+        if (object && object.interactive === true && !sceneStrictString(object.label)) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path + ".label", object.id);
+        }
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, object && object.id, path + ".id", strict || !!(object && object.pickable));
         validateSceneStrictPrimitive(diagnostics, object || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, object || {}, path);
@@ -60,6 +63,9 @@
       });
       models.forEach(function(model, index) {
         var path = "models[" + index + "]";
+        if (model && model.interactive === true && !sceneStrictString(model.label)) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path + ".label", model.id);
+        }
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, model && model.id, path + ".id", strict || !!(model && model.pickable));
         validateSceneStrictPrimitive(diagnostics, model || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, model || {}, path);
@@ -405,6 +411,16 @@
     function validateSceneStrictHTML(diagnostics, seenIDs, knownIDs, htmlTargets, html, path, opts) {
       checkSceneStrictID(diagnostics, seenIDs, knownIDs, html.id, path + ".id", true);
       var mode = sceneStrictString(html.mode).toLowerCase() || "dom";
+      if (html.perspective != null && typeof html.perspective !== "boolean") {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.html.invalid_perspective", "HTML perspective must be a boolean", path + ".perspective", html.id);
+      }
+      if (html.perspective === true) {
+        if (mode !== "dom") {
+          pushSceneStrictDiagnostic(diagnostics, "warn", "scene.html.perspective_ignored_mode", "Perspective HTML positioning applies only to DOM mode", path + ".perspective", html.id, { mode: mode });
+        } else if (!(sceneStrictIsFiniteNumber(html.surfaceWidth) && html.surfaceWidth > 0) || !(sceneStrictIsFiniteNumber(html.surfaceHeight) && html.surfaceHeight > 0)) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.html.perspective_size_missing", "Perspective DOM HTML requires positive surfaceWidth and surfaceHeight", path, html.id, { surfaceWidth: html.surfaceWidth, surfaceHeight: html.surfaceHeight });
+        }
+      }
       if (["dom", "texture", "portal", "world", "screen"].indexOf(mode) < 0) {
         pushSceneStrictDiagnostic(diagnostics, "warn", "scene.html.unknown_mode", "HTML surface mode is not part of the formal mode set", path + ".mode", html.id, { mode: html.mode });
       }

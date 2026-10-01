@@ -1,0 +1,141 @@
+{
+  "name": "cubic_bezier_ease",
+  "tol": 1e-9,
+  "timeline": {
+    "ID": "",
+    "Children": [
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "",
+          "Keys": [
+            {
+              "T": 0,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": {
+                "Kind": 4,
+                "Args": [
+                  0.16,
+                  1,
+                  0.3,
+                  1
+                ]
+              },
+              "InTangent": null,
+              "OutTangent": null
+            },
+            {
+              "T": 1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  1,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            }
+          ],
+          "Gen": null,
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 1,
+          "PropID": 2
+        },
+        "Sub": null
+      }
+    ],
+    "Loop": 0,
+    "Alternate": false,
+    "Speed": 0,
+    "Autoplay": false
+  },
+  "samples": [
+    {
+      "t": 0,
+      "writes": [
+        1,
+        2,
+        0,
+        0
+      ]
+    },
+    {
+      "t": 0.1,
+      "writes": [
+        1,
+        2,
+        0,
+        0.49439061706387843
+      ]
+    },
+    {
+      "t": 0.25,
+      "writes": [
+        1,
+        2,
+        0,
+        0.8256223011579442
+      ]
+    },
+    {
+      "t": 0.5,
+      "writes": [
+        1,
+        2,
+        0,
+        0.9717791052635714
+      ]
+    },
+    {
+      "t": 0.75,
+      "writes": [
+        1,
+        2,
+        0,
+        0.9976770670744136
+      ]
+    },
+    {
+      "t": 0.9,
+      "writes": [
+        1,
+        2,
+        0,
+        0.9998783478324409
+      ]
+    },
+    {
+      "t": 1,
+      "writes": [
+        1,
+        2,
+        0,
+        1
+      ]
+    }
+  ]
+}

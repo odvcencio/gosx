@@ -165,6 +165,9 @@ run_deploy() {
 	cp "${tools_dir}/go" "${fake_go_root}/bin/go"
 	if (cd "$repo_dir" && \
 		PATH="${tools_dir}:$PATH" \
+		GOSX_DEPLOY_ENV=/dev/null \
+		GOSX_DOCS_REGISTRY="registry.example.com/test/gosx-docs" \
+		GOSX_DOCS_NAMESPACE="gosx-docs-test" \
 		GO="${tools_dir}/go" \
 		DOCKER="${tools_dir}/docker" \
 		KUBECTL="${tools_dir}/kubectl" \
@@ -235,6 +238,12 @@ assert_output_contains() {
 		exit 1
 	fi
 }
+
+repo_config="$(setup_repo missing-config)"
+result="$(run_deploy missing-config "$repo_config" env GOSX_DOCS_REGISTRY= GOSX_DOCS_NAMESPACE=)"
+assert_failed "$result"
+assert_output_contains "$result" "set GOSX_DOCS_REGISTRY"
+assert_no_side_effects "$(result_log "$result")"
 
 repo_fetch="$(setup_repo fetch-failure)"
 git -C "$repo_fetch" remote set-url origin "${tmp_dir}/missing.git"

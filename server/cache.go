@@ -55,7 +55,7 @@ func (p CachePolicy) headerValue() string {
 		case p.Private:
 			directives = append(directives, "private")
 		}
-		if p.MaxAge > 0 {
+		if p.MaxAge > 0 || (p.Public && p.MustRevalidate) {
 			directives = append(directives, "max-age="+strconv.FormatInt(int64(p.MaxAge/time.Second), 10))
 		}
 		if p.SMaxAge > 0 {
@@ -79,12 +79,13 @@ func (p CachePolicy) headerValue() string {
 
 // CacheState tracks response caching configuration for a single request.
 type CacheState struct {
-	policySet    bool
-	policy       CachePolicy
-	tags         []string
-	keys         []string
-	etag         string
-	lastModified time.Time
+	policySet     bool
+	defaultPolicy bool
+	policy        CachePolicy
+	tags          []string
+	keys          []string
+	etag          string
+	lastModified  time.Time
 
 	// bodyDigest holds the hash of the rendered response body. It stays empty
 	// until a caller reports the body through SetRepresentation. A validator
@@ -104,6 +105,7 @@ func (c *CacheState) SetPolicy(policy CachePolicy) {
 		return
 	}
 	c.policySet = true
+	c.defaultPolicy = false
 	c.policy = policy
 }
 

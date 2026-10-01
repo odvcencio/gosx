@@ -227,6 +227,8 @@
   }
 
   function sceneManagedFluidObjectRequestFrame(callback) {
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.request === "function") return motionScheduler.request(callback);
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
       return window.requestAnimationFrame(callback);
     }
@@ -235,6 +237,11 @@
 
   function sceneManagedFluidObjectCancelFrame(id) {
     if (!id) return;
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
+    if (motionScheduler && typeof motionScheduler.cancel === "function") {
+      motionScheduler.cancel(id);
+      return;
+    }
     if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
       window.cancelAnimationFrame(id);
       return;

@@ -16,6 +16,10 @@
     }
 
     const props = ctx.props || {};
+    if (sceneWalkEnabled(props)) {
+      await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -386,7 +390,9 @@
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute(sceneAttr("label-layer"), "true");
     labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.pointerEvents = "none";
     mount.appendChild(labelLayer);
+    const sceneFocusProxies = setupSceneNodeFocusProxies(mount);
     const statsOverlay = createSceneStatsOverlay(mount, sceneBool(props.stats, false));
     let inspectorOverlay = null;
 
@@ -444,6 +450,7 @@
       if (labelLayer.parentNode === mount) {
         mount.removeChild(labelLayer);
       }
+      disposeSceneNodeFocusProxies(sceneFocusProxies);
       if (statsOverlay) {
         statsOverlay.dispose();
       }
@@ -623,13 +630,16 @@
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
         renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+        syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
         renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       });
     });
 
-    let frameHandle = null;
+    let frameHandle = 0;
     let renderHandle = null;
     let initHandle = null;
+    const motionScheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler; const sceneFrameRegistration = motionScheduler && typeof motionScheduler.registerScene === "function" ? motionScheduler.registerScene(runSceneFrame) : null;
+    let detachMotionScene = function() {};
     let initPending = true;
     let initReason = "";
     let readySent = false;
@@ -707,14 +717,14 @@
 
     function sceneRenderLoopSnapshot(reason) {
       const animation = sceneAnimationState();
-      let active = frameHandle != null || renderHandle != null;
+      let active = frameHandle !== 0 || renderHandle != null;
       let loopReason = reason || lastRenderLoopReason || animation.reason || "unknown";
       if (!sceneCanRender()) {
         active = false;
         loopReason = lifecycle.pageVisible ? "offscreen" : "page-hidden";
       } else if (renderHandle != null) {
         loopReason = lastRenderReason || loopReason || "scheduled-render";
-      } else if (frameHandle != null) {
+      } else if (frameHandle !== 0) {
         loopReason = animation.reason || loopReason || "animation";
       } else if (!animation.wants) {
         loopReason = animation.reason || "static";
@@ -724,7 +734,7 @@
         wantsAnimation: animation.wants,
         reason: loopReason,
         scheduled: renderHandle != null,
-        animationFrame: frameHandle != null,
+        animationFrame: frameHandle !== 0,
       };
     }
 
@@ -1414,15 +1424,25 @@
     // promptly; the continuous chain stays single-owner and honors maxFrameRate.
     function scheduleNextAnimationFrame() {
       if (disposed) return;
-      if (frameHandle != null) return;
       const animation = sceneAnimationState();
-      if (!animation.wants || !sceneCanRender()) {
-        applySceneRenderLoopState(animation.reason);
-        return;
-      }
-      frameHandle = engineFrame(function(now) {
-        frameHandle = null;
-        if (framePacingEnabled) {
+      if (!animation.wants || !sceneCanRender()) { if (sceneFrameRegistration) sceneFrameRegistration.setActive(false); if (frameHandle === -1) frameHandle = 0; applySceneRenderLoopState(animation.reason); return; }
+      if (frameHandle !== 0) return;
+      if (sceneFrameRegistration) { frameHandle = -1; sceneFrameRegistration.setActive(true); applySceneRenderLoopState(animation.reason); return; }
+      frameHandle = engineFrame(runSceneFrame);
+      applySceneRenderLoopState(animation.reason);
+    }
+
+    function runSceneFrame() { return sceneRunFrameGuard(runSceneFrameInner, arguments, function() { return frameHandle === -1; }, function() { frameHandle = 0; }); }
+    function runSceneFrameInner() {
+        const now = motionScheduler && typeof motionScheduler.now === "function" ? motionScheduler.now() : arguments[0];
+        if (frameHandle !== -1) frameHandle = 0;
+        const scheduledRender = renderHandle === -1;
+        if (scheduledRender) renderHandle = null;
+        if (disposed) return;
+        const animation = sceneAnimationState();
+        if (initPending || (!animation.wants && !scheduledRender) || !sceneCanRender()) { if (sceneFrameRegistration) sceneFrameRegistration.setActive(false); if (frameHandle === -1) frameHandle = 0; applySceneRenderLoopState(animation.reason); return; }
+        if (scheduledRender) { renderFrame(now, lastRenderReason || "refresh"); return; }
+        if (animation.wants && framePacingEnabled) {
           var rawTickDeltaMS = lastAnimationFrameAt > 0 && typeof now === "number" ? Math.max(0, now - lastAnimationFrameAt) : 0;
           if (typeof now === "number") {
             lastAnimationFrameAt = now;
@@ -1431,16 +1451,7 @@
           framePacingTick2 = framePacingTick1;
           framePacingTick1 = rawTickDeltaMS;
           var vsyncSampleMS = sceneFramePacingMedianOf3(framePacingTick1, framePacingTick2, framePacingTick3);
-          var advanced = sceneFramePacingAdvanceOnTick(
-            vsyncSampleMS,
-            framePacingVsyncMS,
-            framePacingCostMS,
-            framePacingActiveK,
-            framePacingPendingK,
-            framePacingPendingStreak,
-            framePacingTicksSinceRender,
-            sceneAnimationFrameIntervalMS()
-          );
+          var advanced = sceneFramePacingAdvanceOnTick(vsyncSampleMS, framePacingVsyncMS, framePacingCostMS, framePacingActiveK, framePacingPendingK, framePacingPendingStreak, framePacingTicksSinceRender, sceneAnimationFrameIntervalMS());
           framePacingVsyncMS = advanced.vsyncEstimateMS;
           framePacingActiveK = advanced.activeK;
           framePacingPendingK = advanced.pendingK;
@@ -1457,22 +1468,24 @@
           framePacingCostMS = sceneFramePacingBlendCost(framePacingCostMS, Math.max(0, framePacingRenderEndMS - framePacingRenderStartMS));
           return;
         }
-        var interval = sceneAnimationFrameIntervalMS();
-        // Keep the fractional display tick after a capped frame. Resetting
-        // the clock to `now` turns a 60 FPS cap on a 100 Hz display into 50 FPS.
-        // A changed cap starts a new phase; it must not inherit old time debt.
-        var gate = sceneAnimationFrameGate(now, lastAnimationFrameAt, interval, animationIntervalMS);
-        animationIntervalMS = interval;
-        if (!gate.shouldRender) {
-          scheduleNextAnimationFrame();
+        if (animation.wants) {
+          var interval = sceneAnimationFrameIntervalMS();
+          // Keep the fractional display tick after a capped frame. Resetting
+          // the clock to `now` turns a 60 FPS cap on a 100 Hz display into 50 FPS.
+          // A changed cap starts a new phase; it must not inherit old time debt.
+          var gate = sceneAnimationFrameGate(now, lastAnimationFrameAt, interval, animationIntervalMS);
+          animationIntervalMS = interval;
+          if (!gate.shouldRender) {
+            scheduleNextAnimationFrame();
+            return;
+          }
+          if (typeof now === "number") {
+            lastAnimationFrameAt = gate.atMS;
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
+          renderFrame(now);
           return;
         }
-        if (typeof now === "number") {
-          lastAnimationFrameAt = gate.atMS;
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
-        renderFrame(now);
-      });
-      applySceneRenderLoopState(animation.reason);
+        renderFrame(now, lastRenderReason || "refresh");
     }
 
 	    let sceneRendererRecentlySwapped = false;
@@ -1801,6 +1814,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       return true;
     }
@@ -1923,23 +1937,18 @@
       return lifecycle.pageVisible && lifecycle.inViewport;
     }
 
+    detachMotionScene = attachSceneMotionBridge.call(null, mount, sceneState, scheduleRender);
     function sceneWantsAnimation() {
       return sceneShouldAnimate() && sceneCanRender();
     }
 
     function cancelFrame() {
-      if (frameHandle != null) {
-        cancelEngineFrame(frameHandle);
-        frameHandle = null;
-      }
+      if (frameHandle !== 0) { if (frameHandle === -1 && sceneFrameRegistration) sceneFrameRegistration.setActive(false); else cancelEngineFrame(frameHandle); frameHandle = 0; }
       applySceneRenderLoopState("");
     }
 
     function cancelScheduledRender() {
-      if (renderHandle != null) {
-        cancelEngineFrame(renderHandle);
-        renderHandle = null;
-      }
+      if (renderHandle != null) { if (renderHandle === -1 && sceneFrameRegistration) sceneFrameRegistration.clearPending(); else cancelEngineFrame(renderHandle); renderHandle = null; }
       applySceneRenderLoopState("");
     }
 
@@ -1974,6 +1983,7 @@
         applySceneRenderLoopState(lastRenderReason);
         return;
       }
+      if (sceneFrameRegistration) { renderHandle = -1; sceneFrameRegistration.invalidate(); applySceneRenderLoopState(lastRenderReason); return; }
       // Defer the viewport read+write into the RAF callback. The old
       // code called sceneViewportFromMount / applySceneViewport
       // synchronously, which meant every scroll event forced two
@@ -2240,7 +2250,7 @@
 	            : { type: "gosx:scene3d:input", detail: inputDetail };
 	          mount.dispatchEvent(inputEvent);
 	        }
-	      });
+	      }, sceneFocusEnabled.call(null, sceneState), sceneFocusPointerHandler.call(null, sceneFocusProxies));
 	      // Gizmo drags own pointer-down near an active TransformControls form.
 	      // Registered before the camera controls so stopImmediatePropagation can
 	      // reserve the gesture; presses away from the gizmo fall through.
@@ -2280,7 +2290,7 @@
 	      // drags still fall through to camera navigation.
 	      sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
 	        return viewport;
-	      }, readSceneSourceCamera, scheduleRender);
+	      }, readSceneSourceCamera, scheduleRender, sceneState);
 	      dragHandle = sceneControlHandle.controller
 	        ? { dispose() {} }
 	        : setupSceneDragInteractions(canvas, props, function() {
@@ -3036,8 +3046,8 @@
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
           const effectiveBundle = sceneBundleWithCameraOverride(
-            runtimeBundle,
-            sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
+            applySceneMotionBindings(runtimeBundle, sceneState, sceneControlHandle),
+            sceneCurrentControlCamera(sceneControlController(sceneControlHandle), runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
@@ -3052,6 +3062,7 @@
           recordSceneWaterFrame(mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+          syncSceneNodeFocusProxies.call(null, sceneFocusProxies, effectiveBundle, sceneState);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
@@ -3110,7 +3121,7 @@
       const computeQualityScale = sceneQualityLadderComputeBudgetScale(adaptiveQuality);
       const computeQualitySourceInstances = sceneComputeParticlesInstanceCount(sceneState.computeParticles);
       const computeQualityActiveInstances = sceneComputeParticlesInstanceCount(qualityScaledComputeParticles);
-      latestBundle = createSceneRenderBundle(
+      latestBundle = applySceneMotionBindings(createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
@@ -3134,9 +3145,8 @@
           rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
           meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
         },
-      );
-      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven;
-      sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
+      ), sceneState, sceneControlHandle);
+      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
       // this frame (0 when no ladder is active or nothing was tagged). Same
@@ -3169,6 +3179,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);
@@ -3239,11 +3250,11 @@
           || window.__gosx_telemetry_config.allowCanvasReadbackProbe !== true) {
         return;
       }
-      if (typeof window.requestAnimationFrame !== "function") {
+      if (typeof engineFrame !== "function") {
         return;
       }
-      window.requestAnimationFrame(function () {
-        window.requestAnimationFrame(function () {
+      engineFrame(function () {
+        engineFrame(function () {
           if (disposed || !renderer || renderer.kind !== "webgl") {
             return;
           }
@@ -3301,7 +3312,7 @@
           initHandle = null;
           if (disposed) return;
           initPending = false;
-          renderFrame(typeof now === "number" ? now : 0, initReason || "");
+          scheduleRender(initReason || "initial");
         });
       });
     }
@@ -3563,12 +3574,15 @@
           scheduleRender("update-props");
         }
       },
+      // @ts-ignore TS7005 -- the handle grows authority-specific methods at installation
+      resetCamera() { return sceneControlHandle && sceneControlHandle.reset ? (sceneControlHandle.reset(), true) : false; },
       dispose: disposeMountedScene,
     };
 
     function disposeMountedScene() {
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
       disposed = true;
+      if (sceneFrameRegistration) sceneFrameRegistration.dispose(); detachMotionScene(); detachMotionScene = function() {};
       if (sceneAnimationToggle) {
         if (typeof sceneAnimationToggle.removeEventListener === "function") {
           sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);

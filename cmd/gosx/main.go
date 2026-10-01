@@ -9,6 +9,7 @@
 //	gosx dev [--scene-inspector] <dir>
 //	                              Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
+//	gosx desktop package         Package a Windows desktop app for direct download
 //	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
@@ -152,12 +153,17 @@ Usage:
 
 `)
 	case "desktop":
+		if len(os.Args) > 2 && os.Args[2] == "package" {
+			desktopPackageUsage(w)
+			break
+		}
 		fmt.Fprintf(w, `gosx desktop - Run a GoSX app in a native desktop host
 
 Usage:
   gosx desktop [flags] [dev [dir]]
   gosx desktop --url <url>
   gosx desktop --html <html>
+  gosx desktop package --input <staged-app> --config <config.json> [flags]
 
 `)
 	case "export":

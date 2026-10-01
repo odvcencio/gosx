@@ -42,8 +42,12 @@ require_before "identity gate" "$identity_gate_line" "Docker build" "$docker_bui
 require_before "identity gate" "$identity_gate_line" "Docker push" "$docker_push_line"
 require_before "docs build" "$docs_build_line" "identity gate" "$identity_gate_line"
 
-if ! grep -F 'namespace="draco-quest"' "$script" >/dev/null; then
-	echo "gosx docs deploy order test: deployment namespace must remain draco-quest" >&2
+if ! grep -F 'namespace="${GOSX_DOCS_NAMESPACE:-}"' "$script" >/dev/null; then
+	echo "gosx docs deploy order test: deployment namespace must come from GOSX_DOCS_NAMESPACE" >&2
+	exit 1
+fi
+if ! grep -F 'registry="${GOSX_DOCS_REGISTRY:-}"' "$script" >/dev/null; then
+	echo "gosx docs deploy order test: image registry must come from GOSX_DOCS_REGISTRY" >&2
 	exit 1
 fi
 if ! grep -F 'deployment="gosx-docs"' "$script" >/dev/null; then
