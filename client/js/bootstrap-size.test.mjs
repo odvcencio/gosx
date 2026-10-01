@@ -708,7 +708,10 @@ const budgets = [
   // Integrated renderer changes: raw 1837300 -> 1844000 (measured 1909487); gzip 516200 -> 518300 (measured 534587); brotli 407700 -> 409300 (measured 425593). Existing allowances stay fixed.
   // Integrated renderer changes: raw 1844000 -> 1849600 (measured 1915132); gzip 518300 -> 520100 (measured 536390); brotli 409300 -> 410700 (measured 427029). Existing allowances stay fixed.
   // Integrated performance governor and retained geometry: raw 1849600 -> 1850300 (measured 1915746); gzip 520100 -> 520300 (measured 536600). Existing allowances stay fixed.
-  { file: "bootstrap.js", raw: 1_851_100, gzip: 520_500, brotli: 411_200 },
+  // Bounded WebGPU detail cache reuse and retirement adds 1,113 raw, 344 gzip,
+  // and 438 Brotli bytes. Raise only breached targets in 100-byte steps;
+  // the shared governed allowances remain fixed.
+  { file: "bootstrap.js", raw: 1_852_200, gzip: 520_900, brotli: 411_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1876,8 +1879,10 @@ const routeBudgets = [
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
-    raw: 1_381_500,
-    gzip: 382_600,
+    // Detail resource reuse and retirement adds 1,101 raw, 311 gzip and 305
+    // Brotli bytes to this route. Keep the shared allowances unchanged.
+    raw: 1_382_600,
+    gzip: 382_900,
     brotli: 318_900,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
@@ -2252,10 +2257,12 @@ const routeBudgets = [
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
-    raw: 1_686_400,
-    gzip: 470_300,
+    // WebGPU detail lifecycle adds 1,101 raw, 311 gzip and 305 Brotli bytes.
+    // Raise only breached targets; keep shared governed allowances fixed.
+    raw: 1_687_500,
+    gzip: 470_600,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
-    brotli: 392_100,
+    brotli: 392_400,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
