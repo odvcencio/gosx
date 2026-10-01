@@ -68,7 +68,12 @@ func momentMeshes(t *testing.T, name string, nodes []scene.Node) map[string]scen
 			t.Fatalf("duplicate mesh %q", mesh.ID)
 		}
 		material, ok := mesh.Material.(scene.StandardMaterial)
-		if !ok || material.Texture != "" || material.NormalMap != "" || material.EmissiveMap != "" {
+		if !ok {
+			flat, isFlat := mesh.Material.(scene.FlatMaterial)
+			if !isFlat || flat.Texture != blackglassBeachModelRoot+"beacon-beam.png" || flat.BlendMode != scene.BlendAdditive {
+				t.Fatalf("%s needs PBR or the procedural additive beam material", mesh.ID)
+			}
+		} else if material.Texture != "" || material.NormalMap != "" || material.EmissiveMap != "" {
 			t.Fatalf("%s must use an asset-free PBR material", mesh.ID)
 		}
 		if geometry, ok := mesh.Geometry.(scene.BufferGeometry); ok {
@@ -184,13 +189,13 @@ func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 			}
 			for _, id := range []string{"beacon-beam", "beacon-beam-halo"} {
 				m := meshes[id]
-				mat := m.Material.(scene.StandardMaterial)
+				mat := m.Material.(scene.FlatMaterial)
 				if m.Spin.Y != .45 || m.DepthWrite == nil || *m.DepthWrite || m.CastShadow || m.ReceiveShadow || mat.BlendMode != scene.BlendAdditive {
 					t.Fatalf("%s must be a spinning additive beam without depth/shadow writes", id)
 				}
 				g := m.Geometry.(scene.BufferGeometry)
-				if len(g.Positions)/3 != 28 || len(g.Indices)/3 != 48 {
-					t.Fatal("beam exceeds its 12-sided opposed-cone budget")
+				if len(g.Positions)/3 != 8 || len(g.Indices)/3 != 8 {
+					t.Fatal("beam exceeds its two-ribbon budget")
 				}
 			}
 			collider := blackglassBeachBeaconCollider()
@@ -204,10 +209,13 @@ func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 func TestBeachBeaconBrighterAtBlueHour(t *testing.T) {
 	day := blackglassBeachBeacon(beachgen.PeriodGolden)
 	blue := blackglassBeachBeacon(beachgen.PeriodBlue)
-	for _, i := range []int{3, 5, 6} {
-		d := day[i].(scene.Mesh).Material.(scene.StandardMaterial)
-		b := blue[i].(scene.Mesh).Material.(scene.StandardMaterial)
-		if i == 3 && b.Emissive <= d.Emissive || i != 3 && *b.Opacity <= *d.Opacity {
+	if blue[3].(scene.Mesh).Material.(scene.StandardMaterial).Emissive <= day[3].(scene.Mesh).Material.(scene.StandardMaterial).Emissive {
+		t.Fatal("blue-hour lantern must be brighter")
+	}
+	for _, i := range []int{5, 6} {
+		d := day[i].(scene.Mesh).Material.(scene.FlatMaterial)
+		b := blue[i].(scene.Mesh).Material.(scene.FlatMaterial)
+		if *b.Opacity <= *d.Opacity {
 			t.Fatalf("blue hour is not brighter for %s", day[i].(scene.Mesh).ID)
 		}
 	}

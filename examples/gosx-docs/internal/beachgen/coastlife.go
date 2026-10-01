@@ -30,6 +30,11 @@ func CoastLifeAssets(seed int64) (map[string][]byte, error) {
 		return nil, err
 	}
 	files["rock-rough.jpg"] = rough
+	beam, err := BeamTexture()
+	if err != nil {
+		return nil, err
+	}
+	files["beacon-beam.png"] = beam
 	return files, nil
 }
 

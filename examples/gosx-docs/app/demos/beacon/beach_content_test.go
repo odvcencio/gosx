@@ -44,7 +44,7 @@ func TestBeachContentPreservesWetnessAndEnablesGlass(t *testing.T) {
 				continue
 			}
 			material := m.Material.(scene.StandardMaterial)
-			if material.Transmission < .8 || material.IOR == nil || *material.IOR <= 1 {
+			if material.Transmission < .8 || material.Thickness < 1 || material.AttenuationDistance <= 0 || material.IOR == nil || *material.IOR <= 1 {
 				t.Fatal("monolith must request real glass rendering")
 			}
 		}
@@ -53,12 +53,38 @@ func TestBeachContentPreservesWetnessAndEnablesGlass(t *testing.T) {
 
 func TestBeachPeriodsHaveDistinctHorizonLight(t *testing.T) {
 	direction := scene.Vec3(0, .03, -1)
-	r, _, b := beachgen.PeriodSky(beachgen.PeriodBlue).PhysicalRadiance(direction, false)
+	r, _, b := beachgen.SkyRadiance(beachgen.PeriodSky(beachgen.PeriodBlue), scene.Vec3(0, .25, -1))
 	if b < 1.5*r {
-		t.Fatal("blue hour must lose the warm sunset at the horizon")
+		t.Fatal("blue hour must keep the dome blue above its warm horizon glow")
 	}
 	r, _, b = beachgen.PeriodSky(beachgen.PeriodGolden).PhysicalRadiance(direction, false)
 	if r <= b {
 		t.Fatal("golden hour must retain its warm sun path")
+	}
+}
+
+func TestBeachMobileKeepsDiscoveriesAndGlassWithOneShadowTraversal(t *testing.T) {
+	for _, ua := range []string{"Android Mobile", "iPhone Mobile"} {
+		p := blackglassBeachRequestProgram("glass", beachgen.PeriodBlue, ua)
+		if len(p.Graph.Nodes) != len(BlackglassBeachProgram("glass", beachgen.PeriodBlue).Graph.Nodes) || p.Walk == nil || p.Vessel == nil {
+			t.Fatal("mobile must retain the complete walkable scene")
+		}
+		for _, node := range p.Graph.Nodes {
+			switch n := node.(type) {
+			case scene.DirectionalLight:
+				if n.ShadowCascades != 1 || n.ShadowSize != 1024 {
+					t.Fatal("mobile needs one bounded shadow traversal")
+				}
+			case scene.Model:
+				if n.ID == "monolith" && n.Material.(scene.StandardMaterial).Thickness < 1 {
+					t.Fatal("mobile lost the solid glass optical path")
+				}
+			}
+		}
+	}
+	for _, node := range blackglassBeachRequestProgram("shore", beachgen.PeriodGolden, "desktop").Graph.Nodes {
+		if sun, ok := node.(scene.DirectionalLight); ok && sun.ShadowCascades != 3 {
+			t.Fatal("mobile settings leaked into the desktop scene")
+		}
 	}
 }

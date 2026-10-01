@@ -9,6 +9,7 @@ import (
 func init() {
 	docsapp.RegisterDocsPage("Blackglass Beach", "A black sand beach at golden hour, generated in Go and rendered by GoSX Scene3D on WebGPU or WebGL2.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			ctx.Header().Add("Vary", "User-Agent")
 			// This full-window scene uses ordinary links. Skip the 109 KB inline
 			// docs navigation runtime; the scene bootstrap still owns its controls.
 			ctx.SetNavigationHead(nil)
@@ -16,7 +17,7 @@ func init() {
 			view := blackglassBeachViewFor(ctx.Query("view"))
 			period := blackglassBeachPeriodFor(ctx.Query("period"))
 			return map[string]any{
-				"scene": BlackglassBeachProgram(view.ID, period.ID),
+				"scene": blackglassBeachRequestProgram(view.ID, period.ID, ctx.Request.UserAgent()),
 				"view":  view.ID, "period": period.ID,
 				"shoreHref":  "?view=shore&period=" + period.ID,
 				"glassHref":  "?view=glass&period=" + period.ID,

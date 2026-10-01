@@ -25,14 +25,33 @@ var Periods = []string{PeriodGolden, PeriodBlue, PeriodNoon}
 func PeriodSky(period string) scene.Sky {
 	switch period {
 	case PeriodBlue:
-		// Deeper twilight removes the residual sunset; increased optical depth
-		// keeps the upper dome cool as well as the horizon. The IBL shares it.
-		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(-4.5, -18), Turbidity: 3, Rayleigh: 48, MieCoefficient: 0.004, MieDirectionalG: 0.78, Intensity: 1.6}
+		// The daylight scattering model has no twilight illumination below
+		// its sun cutoff. Bake the blue-hour dome instead of overdriving it.
+		return scene.Sky{Mode: "environment", SunDirection: scene.SunDirectionFromAngles(-4.5, -18),
+			TopColor: "#182759", HorizonColor: "#625b88", BottomColor: "#18233f"}
 	case PeriodNoon:
 		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(50, 100), Turbidity: 3.5, Rayleigh: 1.2, MieCoefficient: 0.004, MieDirectionalG: 0.8}
 	default:
 		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(4.5, -6), Turbidity: 6, Rayleigh: 1.7, MieCoefficient: 0.006, MieDirectionalG: 0.82}
 	}
+}
+
+// SkyRadiance is shared by the blue-hour backdrop, IBL and distance haze.
+func SkyRadiance(sky scene.Sky, d scene.Vector3) (float64, float64, float64) {
+	if sky.Mode != "environment" {
+		return sky.PhysicalRadiance(d, false)
+	}
+	length := math.Sqrt(d.X*d.X + d.Y*d.Y + d.Z*d.Z)
+	if length > 0 {
+		d.X, d.Y, d.Z = d.X/length, d.Y/length, d.Z/length
+	}
+	t := smoothstepGo(0, .65, math.Max(0, d.Y))
+	low, high := [3]float64{.065, .055, .14}, [3]float64{.008, .018, .07}
+	// A narrow ember glow in the sunset azimuth leaves the dome cool.
+	sun := sky.SunDirection
+	azimuth := math.Max(0, d.X*sun.X+d.Z*sun.Z)
+	glow := .12 * math.Exp(-math.Pow((d.Y-.018)/.05, 2)) * math.Pow(azimuth, 12)
+	return lerp(low[0], high[0], t) + glow, lerp(low[1], high[1], t) + glow*.45, lerp(low[2], high[2], t)
 }
 
 // Sky IBL sizes: a 64 px radiance cube is sharp enough for the scene's
@@ -50,15 +69,15 @@ const (
 // land (+Z) it is black volcanic sand lit by the sky. Glossy surfaces (the
 // monolith, wet sand) then reflect a sea horizon instead of more sky.
 func groundRadiance(sky scene.Sky, d ibl.Vec3) (float64, float64, float64) {
-	r, g, b := sky.PhysicalRadiance(scene.Vector3{X: d.X, Y: d.Y, Z: d.Z}, false)
+	r, g, b := SkyRadiance(sky, scene.Vector3{X: d.X, Y: d.Y, Z: d.Z})
 	if d.Y >= 0 {
 		return r, g, b
 	}
-	ur, ug, ub := sky.PhysicalRadiance(scene.Vector3{Y: 1}, false)
+	ur, ug, ub := SkyRadiance(sky, scene.Vector3{Y: 1})
 	// Sea: reflect the direction about the surface and weight by Fresnel.
 	cosI := -d.Y
 	fresnel := 0.02 + 0.98*math.Pow(1-cosI, 5)
-	rr, rg, rb := sky.PhysicalRadiance(scene.Vector3{X: d.X, Y: -d.Y, Z: d.Z}, false)
+	rr, rg, rb := SkyRadiance(sky, scene.Vector3{X: d.X, Y: -d.Y, Z: d.Z})
 	deep := [3]float64{0.012, 0.045, 0.06} // linear deep-water body colour times sky light
 	sea := [3]float64{
 		fresnel*rr + (1-fresnel)*deep[0]*ur*3,
