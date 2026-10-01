@@ -109,7 +109,7 @@ test("WebGPU updates a stable detail group when quality changes", () => {
   const c = detailContext("webgpu"), writes = [];
   const material = { detail: { ground: { scale: 4 }, fadeStart: 6, fadeEnd: 13 } };
   const entry = { buffer: {}, group: {}, atlas: { masks: [1, 1, 0, 0, 0, 0] } };
-  const resources = { materials: new Map([[material, entry]]) };
+  const resources = { materials: new Map([[c.sceneWebGPUDetailMaterialKey(material.detail), entry]]) };
   const device = { queue: { writeBuffer: (buffer, offset, data) => writes.push({ buffer, offset, data: Array.from(data) }) } };
   assert.equal(c.sceneWebGPUUploadDetail(device, resources, material, true), entry.group);
   assert.equal(c.sceneWebGPUUploadDetail(device, resources, material, false), entry.group);

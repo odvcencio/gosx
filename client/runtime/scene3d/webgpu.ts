@@ -18365,13 +18365,13 @@
       beginGPUPassTimingFrame();
       var scopedFrameErrors = beginWebGPUErrorScope();
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
-      for (const material of bundle.materials || []) {
-        if (material && material.detail) {
-          if (!detailResources) detailResources = sceneWebGPUCreateDetailResources(device, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
-          sceneWebGPUPrepareDetail(device, detailResources, material, textureCache, placeholderView);
-          sceneWebGPUUploadDetail(device, detailResources, material, detailEnabled);
-        }
-      }
+      // Prepare the full detail draw set before retiring resources from earlier frames.
+      detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
+        frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout,
+        source: WGSL_PBR_FRAGMENT, placeholderView: placeholderView, enabled: detailEnabled,
+      });
+      // Reuse uniforms when color or detail controls change; retire buffers and
+      // atlases that no longer belong to the active draw set.
 
       var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
         ? frameMeta.nowMS
