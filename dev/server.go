@@ -350,7 +350,8 @@ func (s *Server) serveProxy(w http.ResponseWriter, r *http.Request) {
 	director := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		director(req)
-		req.Host = targetURL.Host
+		// Preserve the browser-facing Host so the app can compare it with
+		// Origin. The transport connects to targetURL through req.URL.Host.
 		req.Header.Del("Accept-Encoding")
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {

@@ -197,20 +197,15 @@ type fileRequestBindings struct {
 	csrf          any
 }
 
-// csrfBinding backs the `csrf` template value with a lazy mint. session.Token
-// dirties the session store (it writes the minted token as a value), and a
-// dirty store forces a Set-Cookie on every response. Binding a real token map
-// on every request — as the old code did — paid that Set-Cookie, and the
-// private-cache behavior it implies, on pages with no form or action that
-// ever reads csrf.token or csrf.field. selectValue's csrfBinding case defers
-// the mint to the first read, so a page that never reads csrf never dirties
-// the session.
+// csrfBinding reads the current session token only when a template needs it.
+// Anonymous csrf.token reads return empty and never create a cookie, including
+// during static export. Existing sessions keep their per-session form token.
 type csrfBinding struct {
 	request *http.Request
 }
 
 // selectField answers the two names a `.gsx` template reads off csrf:
-// csrf.token (the minted value) and csrf.field (the form field name it
+// csrf.token (empty for anonymous requests) and csrf.field (the form field name it
 // posts under). Any other name misses, matching the old map's behavior.
 func (c csrfBinding) selectField(name string) (any, bool) {
 	switch name {
@@ -359,12 +354,8 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	if resolvedUser, ok := auth.Current(ctx.Request); ok {
 		bindings.user = templateUser(resolvedUser)
 	}
-	// Bind csrf whenever a session store exists, but do not mint here:
-	// session.Current only reads whether Middleware ran for this request, so
-	// checking it — unlike the session.Token call this replaced — never
-	// dirties the store. The mint happens on first csrf.token/csrf.field
-	// read (see csrfBinding.selectField), so a page whose template never
-	// reads csrf never triggers a Set-Cookie.
+	// Bind csrf whenever Middleware ran. Anonymous reads stay empty; existing
+	// sessions expose their token and are kept out of shared caches.
 	if session.Current(ctx.Request) != nil {
 		bindings.csrf = csrfBinding{request: ctx.Request}
 	}

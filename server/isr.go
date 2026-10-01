@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/session"
 )
 
 const isrBypassHeader = "X-GoSX-ISR-Revalidate"
@@ -106,6 +107,11 @@ func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWrite
 		return false
 	}
 	if strings.TrimSpace(r.Header.Get(isrBypassHeader)) != "" {
+		return false
+	}
+	// Static HTML is the anonymous representation. Session visitors must
+	// render their own token, flash state and identity through the origin.
+	if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" || session.HasState(r) {
 		return false
 	}
 	return acceptsHTML(r)
@@ -476,6 +482,9 @@ func (c *isrConfig) regenerate(artifact isrArtifact, revalidator *Revalidator, d
 	if result.StatusCode != http.StatusOK {
 		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate %s: unexpected status %d", artifact.page.Path, result.StatusCode)
 	}
+	if len(result.Header.Values("Set-Cookie")) > 0 || responseDisallowsSharedCache(result.Header) {
+		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate %s: response is private", artifact.page.Path)
+	}
 
 	info, err := artifact.store.WriteArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File, rec.Body.Bytes())
 	if err != nil {
@@ -483,6 +492,19 @@ func (c *isrConfig) regenerate(artifact isrArtifact, revalidator *Revalidator, d
 	}
 	c.updateState(artifact, info.ModTime, revalidator)
 	return info, nil
+}
+
+func responseDisallowsSharedCache(headers http.Header) bool {
+	for _, value := range headers.Values("Cache-Control") {
+		for _, directive := range strings.Split(value, ",") {
+			name, _, _ := strings.Cut(strings.TrimSpace(directive), "=")
+			switch strings.ToLower(name) {
+			case "private", "no-store", "no-cache":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *isrConfig) updateState(artifact isrArtifact, generatedAt time.Time, revalidator *Revalidator) {
