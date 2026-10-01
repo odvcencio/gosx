@@ -1911,6 +1911,22 @@
       specularIntensityURL,
       specularColorURL
     );
+    // glTF samplers default to REPEAT on both axes, including transformed UVs.
+    var textureInfos = {
+      baseColor: pbr.baseColorTexture, normal: mat.normalTexture,
+      roughness: pbr.metallicRoughnessTexture, metalness: pbr.metallicRoughnessTexture,
+      occlusion: mat.occlusionTexture, emissive: mat.emissiveTexture,
+      specularIntensity: specular && specular.specularTexture,
+      specularColor: specular && specular.specularColorTexture,
+    };
+    for (var textureSlot of Object.keys(textureDescriptors)) {
+      var textureInfo = Reflect.get(textureInfos, textureSlot);
+      var texture = textureInfo && gltf.textures && gltf.textures[textureInfo.index];
+      var sampler = texture && gltf.samplers && gltf.samplers[texture.sampler] || {};
+      var descriptor = Reflect.get(textureDescriptors, textureSlot);
+      descriptor.wrapS = [33071, 33648, 10497].indexOf(sampler.wrapS) >= 0 ? sampler.wrapS : 10497;
+      descriptor.wrapT = [33071, 33648, 10497].indexOf(sampler.wrapT) >= 0 ? sampler.wrapT : 10497;
+    }
     var record = {
       kind: "standard",
       color: gltfBaseColorToHex(baseColorFactor),
@@ -2029,6 +2045,16 @@
     // KHR_texture_transform on the base colour texture. Record the matrix so
     // gltfExtractMeshNode can bake it into the UV buffer.
     var uvMatrix = gltfTextureTransformMatrix(pbr.baseColorTexture);
+    // A normal map may tile at its own scale (a detail map) while base colour
+    // spans the mesh. Baking covers one transform, so carry a pure scale on
+    // the normal texture to the shaders as normalUVScale.
+    var normalTransform = !uvMatrix && gltfExtension(mat.normalTexture, "KHR_texture_transform");
+    /* @ts-expect-error TS2551 -- this object literal grows fields after construction */ if (normalTransform && Array.isArray(normalTransform.scale)) {
+      record.normalUVScale = [0, 1].map(function(axis) {
+        var value = normalTransform.scale[axis];
+        return typeof value === "number" && Number.isFinite(value) ? value : 1;
+      });
+    }
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (uvMatrix) {
       record.uvTransform = uvMatrix;
     }
