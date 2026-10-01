@@ -27,6 +27,15 @@ func TestCompressionEdgeWorker(t *testing.T) {
 import assert from "node:assert/strict";
 import { brotliCompressSync, gzipSync } from "node:zlib";
 
+// Record the Workers-specific option at the runtime boundary. Node ignores it.
+const NativeResponse = Response;
+globalThis.Response = class extends NativeResponse {
+  constructor(body, options = {}) {
+    super(body, options);
+    this.encodeBody = options.encodeBody;
+  }
+};
+
 const raw = Buffer.from("<p>static HTML page</p>".repeat(128));
 const br = brotliCompressSync(raw);
 const gzip = gzipSync(raw);
@@ -52,7 +61,7 @@ const env = { ASSETS: { async fetch(request) {
   const headers = new Headers({
     "Content-Type": type,
     "Content-Length": String(body.length),
-    "Cache-Control": "private, no-store",
+    "Cache-Control": "public, max-age=60",
     "Vary": "Origin",
     "ETag": '"identity-body"',
   });
@@ -78,8 +87,9 @@ for (const [accept, want] of [
 ]) {
   const response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": accept } }), env);
   assert.equal(response.headers.get("Content-Encoding"), want, accept);
-  assert.equal(response.headers.get("Vary"), "Origin, Accept-Encoding");
-  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(response.encodeBody, "manual", "shared pages preserve precompressed bytes");
+  assert.equal(response.headers.get("Vary"), "Origin, Accept-Encoding, Cookie, Authorization");
+  assert.equal(response.headers.get("Cache-Control"), "public, max-age=0, must-revalidate");
   assert.match(response.headers.get("Content-Type"), /^text\/html/);
   assert.equal(response.headers.get("ETag"), want ? 'W/"identity-body"' : '"identity-body"');
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), want === "br" ? br : want === "gzip" ? gzip : raw);
@@ -105,7 +115,7 @@ for (const [method, extra, status, body] of [
   response = await worker.fetch(new Request("https://example.test/", { method, headers: { "Accept-Encoding": "br, gzip", ...extra } }), env);
   assert.equal(response.status, status);
   assert.equal(response.headers.get("Content-Encoding"), null);
-  assert.equal(response.headers.get("Vary"), "Origin, Accept-Encoding");
+  assert.equal(response.headers.get("Vary"), "Origin, Accept-Encoding, Cookie, Authorization");
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), body);
   assert.deepEqual(paths, ["/index.html"]);
 }
@@ -121,6 +131,22 @@ response = await worker.fetch(new Request("https://example.test/styles.css", { h
 assert.equal(response.headers.get("Content-Encoding"), "br");
 assert.equal(response.headers.get("Content-Type"), "text/css");
 assert.deepEqual(Buffer.from(await response.arrayBuffer()), br);
+
+// Private mapped pages must reach the origin without becoming shared responses.
+// Private static assets may still negotiate compression; compression is not caching.
+const privateEnv = { ASSETS: { async fetch(request) {
+  const response = await env.ASSETS.fetch(request);
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}}};
+response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": "br" } }), privateEnv);
+assert.equal(response.status, 502, "a private mapped page requires the origin fallback");
+response = await worker.fetch(new Request("https://example.test/styles.css", { headers: { "Accept-Encoding": "br" } }), privateEnv);
+assert.equal(response.headers.get("Content-Encoding"), "br");
+assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+assert.equal(response.headers.get("Vary"), "Origin, Accept-Encoding");
+assert.deepEqual(Buffer.from(await response.arrayBuffer()), br);
+
 `
 	cmd := exec.Command(node, "--input-type=module")
 	cmd.Stdin = strings.NewReader(script)

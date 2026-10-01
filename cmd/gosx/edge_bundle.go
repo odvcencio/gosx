@@ -181,7 +181,7 @@ func edgeWorkerSource(manifest exportManifest) string {
 		"  vary.add(\"Cookie\");",
 		"  vary.add(\"Authorization\");",
 		"  headers.set(\"Vary\", Array.from(vary).join(\", \"));",
-		"  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });",
+		"  return new Response(response.body, { status: response.status, statusText: response.statusText, headers, encodeBody: \"manual\" });",
 		"}",
 		"",
 		"function edgeProxyRequest(request, origin) {",
