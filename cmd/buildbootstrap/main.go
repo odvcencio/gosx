@@ -584,6 +584,10 @@ var outputs = []output{
 		},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-zoom.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-zoom.ts")},
+	},
+	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
 		name:    "bootstrap-feature-scene3d-walk.js",
 		sources: []source{sourceFile("../runtime/scene3d/walk-surfaces.ts"), sourceFile("../runtime/scene3d/mount-walk.ts")},

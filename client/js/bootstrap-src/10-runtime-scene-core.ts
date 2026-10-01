@@ -3036,7 +3036,7 @@
   // Keep authored desktop composition while widening the vertical view on portrait screens.
   function sceneViewportCamera(camera, sourceCamera, viewport) {
     const portraitFOV = sceneNumber(sourceCamera && sourceCamera.portraitFOV, 0);
-    return portraitFOV > 0 && viewport.cssWidth < viewport.cssHeight
+    return !camera._gosxZoomFOV && portraitFOV > 0 && viewport.cssWidth < viewport.cssHeight
       ? Object.assign({}, camera, { fov: Math.min(120, Math.max(1, portraitFOV)) })
       : camera;
   }

@@ -84,6 +84,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dDecompressPath string
 	// Walk is advertised only when a Scene3D engine carries walk props.
 	bootstrapFeatureScene3dWalkPath       string
+	bootstrapFeatureScene3dZoomPath       string
 	bootstrapFeatureScene3dVesselPath     string
 	bootstrapFeatureScene3dOceanQueryPath string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
@@ -230,6 +231,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
 	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
+	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
 	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
@@ -630,6 +632,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DWalkPath(path string) {
 	r.bootstrapFeatureScene3dWalkPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DZoomPath overrides the optional zoom chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DZoomPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dZoomPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DVesselPath overrides the optional sailing chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DVesselPath(path string) {
 	if r == nil {
@@ -737,6 +747,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-walk.js", r.bootstrapFeatureScene3dWalkPath, r.runtimeAssets.BootstrapFeatureScene3DWalk):
 		return r.runtimeAssets.BootstrapFeatureScene3DWalk, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-zoom.js", r.bootstrapFeatureScene3dZoomPath, r.runtimeAssets.BootstrapFeatureScene3DZoom):
+		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
 		return r.runtimeAssets.BootstrapFeatureScene3DVessel, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-ocean-query.js", r.bootstrapFeatureScene3dOceanQueryPath, r.runtimeAssets.BootstrapFeatureScene3DOceanQuery):
@@ -893,6 +905,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
 	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
+	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
 	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
 	r.SetVideoHLSPath(runtime.VideoHLS)
@@ -1168,6 +1181,11 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		if walkPath := r.bootstrapFeatureScene3dWalkPath; r.scene3DNeedsWalkChunk() && walkPath != "" {
 			b.WriteString(` data-gosx-scene3d-walk-url="`)
 			b.WriteString(html.EscapeString(walkPath))
+			b.WriteByte('"')
+		}
+		if zoomPath := r.bootstrapFeatureScene3dZoomPath; r.scene3DNeedsZoomChunk() && zoomPath != "" {
+			b.WriteString(` data-gosx-scene3d-zoom-url="`)
+			b.WriteString(html.EscapeString(zoomPath))
 			b.WriteByte('"')
 		}
 		if r.scene3DNeedsVesselChunk() {
@@ -2434,6 +2452,22 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		}
 	}
 	return needsCompute, needsDecompress
+}
+
+// Zoom is downloaded only for an explicit camera control opt-in.
+func (r *Renderer) scene3DNeedsZoomChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			ControlZoom bool `json:"controlZoom"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.ControlZoom {
+			return true
+		}
+	}
+	return false
 }
 
 // Walking depends on an object-valued top-level prop, not on SceneIR contents.

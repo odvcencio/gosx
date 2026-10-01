@@ -649,6 +649,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute, "scene3d"},
 		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress, "scene3d"},
 		{"bootstrap-feature-scene3d-walk", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-walk.js"), &manifest.Runtime.BootstrapFeatureScene3DWalk, "scene3d"},
+		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &manifest.Runtime.BootstrapFeatureScene3DZoom, "scene3d"},
 		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &manifest.Runtime.BootstrapFeatureScene3DVessel, "scene3d"},
 		{"bootstrap-feature-scene3d-ocean-query", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-ocean-query.js"), &manifest.Runtime.BootstrapFeatureScene3DOceanQuery, "scene3d"},
 		{"bootstrap-feature-scene3d-instance-stream", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-instance-stream.js"), &manifest.Runtime.BootstrapFeatureScene3DInstanceStream, "scene3d"},
@@ -1326,6 +1327,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCompute.File)
 	case "/gosx/bootstrap-feature-scene3d-walk.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWalk.File)
+	case "/gosx/bootstrap-feature-scene3d-zoom.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DZoom.File)
 	case "/gosx/bootstrap-feature-scene3d-vessel.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DVessel.File)
 	case "/gosx/bootstrap-feature-scene3d-ocean-query.js":

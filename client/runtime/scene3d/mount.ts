@@ -18,6 +18,10 @@
     const props = ctx.props || {};
     const renderBeforeModels = props.renderBeforeModels === true;
     let handle = null;
+    if (props.controlZoom === true) {
+      await ensureSceneGatedFeatureLoaded("zoom", "gosxScene3dZoomUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     if (sceneWalkEnabled(props)) {
       await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
       if (!scene3DFactoryCurrent()) return {};
