@@ -1,6 +1,6 @@
 {
   "schema": "gosx.beach-moments-budget/v1",
-  "reason": "Static pool rims, grotto, footprints and the wreck keel/prow use 16692 bytes of Go-generated quantized GLBs, with a combined 32 KB asset cap. Footprints omit buried faces; keel and prow share one draw. The 28 ribs keep their existing efficient instanced draw and avoid a WebGL shader-switch warning. Rib transforms retain 0.1 mm and 0.006 degree precision; walk data is unchanged; the graph has 28 nodes. Unique bgb class selectors omit redundant generated CSS scope prefixes. Complete golden-hour props measure 44137 JSON bytes and 22704 gzip bytes; caps ratchet from 63000/26000 to 44400/23000. The integrated shore page measures 149777 raw bytes at golden hour and 149810 at blue hour, including the caption contrast gradient, and meets the 150 KB program target; caps ratchet from 172000/50000 to 149900/42000. Runtime bundle growth is zero. The lighthouse uses narrower cones and lower emission to keep the blue-hour overlook visible without geometry or runtime growth.",
+  "reason": "Static pool rims, grotto, footprints and the wreck keel/prow use 16692 bytes of Go-generated quantized GLBs, with a combined 32 KB asset cap. Footprints omit buried faces; keel and prow share one draw. The 28 ribs keep their existing efficient instanced draw and avoid a WebGL shader-switch warning. Rib transforms retain 0.1 mm and 0.006 degree precision; walk data is unchanged; the graph has 28 nodes. Unique bgb class selectors omit redundant generated CSS scope prefixes. Complete golden-hour props measure 44137 JSON bytes and 22704 gzip bytes; caps ratchet from 63000/26000 to 44400/23000. The integrated shore page measures 149930 raw bytes at golden hour and 149963 at blue hour, including the caption contrast gradient, and meets the 150 KB program target; Caps are 149999/42000; the mobile helm and steering hint sit above the view controls and respect the safe area. The complete page remains below 150 KB. Runtime bundle growth is zero. The lighthouse uses narrower cones and lower emission to keep the blue-hour overlook visible without geometry or runtime growth.",
   "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page including inherited docs CSS. Gzip uses Go\u2019s default compressor. Runtime bundle growth is zero.",
   "moments": {
     "beacon": {
@@ -30,7 +30,7 @@
     "gzipBytes": 23000
   },
   "page": {
-    "htmlBytes": 149900,
+    "htmlBytes": 149999,
     "gzipBytes": 42000
   }
 }

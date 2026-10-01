@@ -48,6 +48,7 @@
 @media (max-width: 640px) {
   :global(.bgb__controls), :global(.bgb__reveal) { left: 12px; right: 12px; }
   :global(.bgb__controls) { bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px)); gap: 6px; }
+  :global(.bgb [data-gosx-scene3d-vessel="sailing"] > :is(span, .gosx-scene3d-vessel-controls)) { bottom: calc(180px + env(safe-area-inset-bottom)) !important; }
   :global(.bgb__link) { padding: 6px 9px; font-size: 11px; }
   :global(.bgb__instructions) { font-size: 11px; }
   :global(.bgb__discoveries) { display: none; }
