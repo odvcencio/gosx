@@ -28,6 +28,7 @@
     "scene3d/command-bridge.ts",
     "scene3d/mount-telemetry.ts",
     "scene3d/hydrate-input.ts",
-    "scene3d/command-runtime.ts"
+    "scene3d/command-runtime.ts",
+    "scene3d/webgl-depth-post.ts"
   ]
 }

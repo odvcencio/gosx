@@ -4418,7 +4418,14 @@ function freshFeatureBundleSource(name, options) {
   const clientJS = __dirname;
   const opts = options || {};
   function read(rel) {
-    return fs.readFileSync(path.join(clientJS, rel), "utf8");
+    const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
+    if (!rel.startsWith("../runtime/") || !rel.endsWith(".ts")) return source;
+    // The live source path now includes typed post-effect modules. Use the
+    // same TypeScript syntax contract as the bundle builder before VM execution.
+    const ts = require("../runtime/node_modules/typescript");
+    return ts.transpileModule(source, { compilerOptions: {
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None,
+    } }).outputText;
   }
   const sourceParts = bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read);
   let source = sourceParts.join("\n");
