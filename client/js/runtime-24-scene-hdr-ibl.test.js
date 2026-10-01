@@ -180,11 +180,11 @@ test("scene state and render bundles keep both specular texture slots distinct o
   const normalized = (value) => JSON.parse(JSON.stringify(value));
   assert.deepEqual(normalized(objects[0].textureDescriptors.specularIntensity), {
     uri: sharedUri, role: "specular-intensity", colorSpace: "linear", channels: "a",
-    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0, wrapS: 0, wrapT: 0,
   });
   assert.deepEqual(normalized(objects[0].textureDescriptors.specularColor), {
     uri: sharedUri, role: "specular-color", colorSpace: "srgb", channels: "rgb",
-    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0, wrapS: 0, wrapT: 0,
   });
 
   const bundle = api.createSceneRenderBundle(
@@ -200,11 +200,11 @@ test("scene state and render bundles keep both specular texture slots distinct o
   assert.equal(bundle.materials[0].textureDescriptors.specularIntensity.colorSpace, "linear");
   assert.deepEqual(normalized(bundle.materials[0].textureDescriptors.specularIntensity), {
     uri: sharedUri, role: "specular-intensity", colorSpace: "linear", channels: "a",
-    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0, wrapS: 0, wrapT: 0,
   });
   assert.deepEqual(normalized(bundle.materials[0].textureDescriptors.specularColor), {
     uri: sharedUri, role: "specular-color", colorSpace: "srgb", channels: "rgb",
-    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0, wrapS: 0, wrapT: 0,
   });
 
   // The normalized state and bundle descriptors must be copies, never aliases
