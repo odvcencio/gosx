@@ -14,6 +14,10 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 
 // Depth AO uses the measured post-effect output.
 // Targets increase only where measured output breaches the governed allowance.
+// Post tier admission uses the measured post-effect output.
+// Targets increase only where measured output breaches the governed allowance.
+// Post command admission guard uses the measured post-effect output.
+// Targets increase only where measured output breaches the governed allowance.
 const budgets = [
   // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
   // deck bob remain lazy. Dormant-wake guards avoid unnecessary ocean queries.

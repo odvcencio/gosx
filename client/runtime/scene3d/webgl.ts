@@ -4965,6 +4965,7 @@
               currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_SSAO:
+              projection = projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
               currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH, projection);
               break;
             case SCENE_POST_DOF:
