@@ -41,6 +41,7 @@
     "scene3d/vessel-input.ts",
     "scene3d/vessel-model.ts",
     "scene3d/mount-vessel.ts",
-    "scene3d/vessel-wake.ts"
+    "scene3d/vessel-wake.ts",
+    "scene3d/webgl-depth-post.ts"
   ]
 }

@@ -56,6 +56,7 @@
         "../runtime/scene3d/webgl-reflect.ts",
         "../runtime/scene3d/webgl-atmosphere.ts",
         "../runtime/scene3d/webgl-bloom.ts",
+        "../runtime/scene3d/webgl-depth-post.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
@@ -253,6 +254,7 @@
         "../runtime/scene3d/webgl-reflect.ts",
         "../runtime/scene3d/webgl-atmosphere.ts",
         "../runtime/scene3d/webgl-bloom.ts",
+        "../runtime/scene3d/webgl-depth-post.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },

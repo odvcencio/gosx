@@ -1930,42 +1930,6 @@
     "}",
   ].join("\n");
 
-  // Depthless SSAO-style contrast pass. It samples a local luminance ring and
-  // darkens pixels whose neighborhood suggests contact/creases; when a future
-  // depth texture is threaded through postfx this shader can swap to true
-  // depth reconstruction without changing the public effect kind.
-  const SCENE_POST_SSAO_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "in vec2 v_uv;",
-    "uniform sampler2D u_texture;",
-    "uniform float u_radius;",
-    "uniform float u_intensity;",
-    "out vec4 fragColor;",
-    "",
-    "float luminance(vec3 color) { return dot(color, vec3(0.2126, 0.7152, 0.0722)); }",
-    "",
-    "void main() {",
-    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
-    "    vec3 color = texture(u_texture, v_uv).rgb;",
-    "    float center = luminance(color);",
-    "    float r = max(1.0, u_radius);",
-    "    float neighbor = 0.0;",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r,  0.0)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r,  0.0)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(0.0,  r)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(0.0, -r)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r,  r)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r,  r)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r, -r)).rgb);",
-    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r, -r)).rgb);",
-    "    neighbor *= 0.125;",
-    "    float crease = clamp((neighbor - center) * 2.25, 0.0, 1.0);",
-    "    float occlusion = 1.0 - crease * clamp(u_intensity, 0.0, 2.0);",
-    "    fragColor = vec4(color * occlusion, 1.0);",
-    "}",
-  ].join("\n");
-
   const SCENE_POST_DOF_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -4528,10 +4492,10 @@
   // custom post pass silently reads 0 for every reserved uniform.
   function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
-    var sceneFBO = null;
-    var auxFBO = null;
-    var scratchFBO = null;
-    var pingPong = null;
+    var sceneFBO: any = null;
+    var auxFBO: any = null;
+    var scratchFBO: any = null;
+    var pingPong: any = null;
     var atmospherePost = createSceneAtmospherePostWebGL({ gl, quad, getProgram, beginPostPass });
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     var currentWidth = 0;
@@ -4826,10 +4790,16 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
-    function applySSAO(inputTex, effect, targetFBO, w, h) {
+    function applySSAO(inputTex, effect, targetFBO, w, h, projection: Float32Array) {
+      if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
       var prog = getProgram("ssao", SCENE_POST_SSAO_SOURCE);
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
+      gl.uniformMatrix4fv(gl.getUniformLocation(prog.program, "u_projection"), false, projection);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_bias"), Math.max(0, sceneNumber(effect.bias, 0.01)));
       gl.uniform1f(gl.getUniformLocation(prog.program, "u_radius"), sceneNumber(effect.radius, 4.0));
       gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 0.55));
       drawSceneFullscreenQuad(gl, quad.vao);
@@ -4928,8 +4898,9 @@
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
       // blit to the default framebuffer).
-      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, atmosphereContext = {}) {
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, atmosphereContext: any = {}) {
         atmospherePost.begin(effects);
+        var projection = atmosphereContext.projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -4961,12 +4932,12 @@
           var targetFBO = null;
           if (!isLast) {
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
-            if ((effect.kind === SCENE_POST_DOF || effect.kind === "atmosphere") && targetFBO === sceneFBO) {
+            if (sceneWebGLPostReadsDepth(effect.kind)) {
               if (!scratchFBO || scratchFBO.width !== scaledW || scratchFBO.height !== scaledH) {
                 /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
                 scratchFBO = createScenePostFBO(gl, scaledW, scaledH);
               }
-              targetFBO = scratchFBO;
+              targetFBO = currentTexture === auxFBO.colorTex ? scratchFBO : auxFBO;
             }
           }
 
@@ -4994,7 +4965,7 @@
               currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_SSAO:
-              currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH);
+              currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH, projection);
               break;
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
@@ -9010,7 +8981,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera, { environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
         }

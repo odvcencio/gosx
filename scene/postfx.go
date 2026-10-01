@@ -135,11 +135,12 @@ type ColorGrade struct {
 
 func (ColorGrade) isPostEffect() {}
 
-// SSAO applies a screen-space ambient-occlusion style darkening pass.
+// SSAO applies depth-based screen-space ambient occlusion.
+// It is opt-in: admit "ssao" only on QualityLadder rungs with frame headroom.
 type SSAO struct {
 	Radius    float32 // sample radius in pixels (default 4)
 	Intensity float32 // 0..2, default 0.55
-	Bias      float32 // reserved for the depth-backed SSAO path
+	Bias      float32 // world-space self-occlusion bias (default 0.01 on WebGL2)
 }
 
 func (SSAO) isPostEffect() {}
