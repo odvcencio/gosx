@@ -2129,7 +2129,7 @@
     "",
     "    if (transmission > 0.0001) {",
     "        let Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
+    "        color = color + transmission * albedo * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
     "    }",
     "",
     // Exponential fog.

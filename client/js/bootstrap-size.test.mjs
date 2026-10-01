@@ -693,7 +693,8 @@ const budgets = [
   // exception under decision 0014).
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Volume transmission adds 12891 raw / 4099 gzip / 2237 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap.js", raw: 1_759_093, gzip: 491_760, brotli: 389_354 },
+  { // Merged ocean fixes and transmission normalization measure 1829403 raw, 509468 gzip, 406551 Brotli bytes. Only exceeded targets rise in 100-byte steps.
+  file: "bootstrap.js", raw: 1_763_893, gzip: 493_160, brotli: 390_254 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1063,7 +1064,8 @@ const budgets = [
   // retain narrow rounding headroom so later growth remains visible.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Volume transmission adds 4913 raw / 1429 gzip / 1023 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 256_313, gzip: 72_729, brotli: 61_023 },
+  { // Merged ocean fixes and transmission normalization measure 269605 raw, 76528 gzip, 64267 Brotli bytes. Only exceeded targets rise in 100-byte steps.
+  file: "bootstrap-feature-scene3d-webgl.js", raw: 256_813, gzip: 72_929, brotli: 61_223 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1191,7 +1193,8 @@ const budgets = [
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Volume transmission adds 2173 raw / 661 gzip / 266 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap-feature-scene3d.js", raw: 596_373, gzip: 169_561, brotli: 139_616 },
+  { // Merged ocean fixes and transmission normalization measure 626738 raw, 178343 gzip, 146785 Brotli bytes. Only exceeded targets rise in 100-byte steps.
+  file: "bootstrap-feature-scene3d.js", raw: 596_973, gzip: 169_861, brotli: 139_816 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1397,7 +1400,8 @@ const budgets = [
   // exact measured values.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Volume transmission adds 5879 raw / 2052 gzip / 1423 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 401_045, gzip: 100_448, brotli: 83_078 },
+  { // Merged ocean fixes and transmission normalization measure 421573 raw, 105584 gzip, 87352 Brotli bytes. Only exceeded targets rise in 100-byte steps.
+  file: "bootstrap-feature-scene3d-webgpu.js", raw: 401_545, gzip: 100_648, brotli: 83_278 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1690,6 +1694,7 @@ const routeBudgets = [
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // Sampler wrap preservation and signed/zero normal scales measure 1,369,776 / 373,152 / 314,130 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  // Merged ocean fixes and transmission normalization measure 1393791 raw, 382098 gzip, 320382 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -1840,9 +1845,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_325_952,
-    gzip: 364_913,
-    brotli: 304_789,
+    raw: 1_328_352,
+    gzip: 365_813,
+    brotli: 305_189,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
@@ -1850,6 +1855,7 @@ const routeBudgets = [
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // Sampler wrap preservation and signed/zero normal scales measure 1,219,453 / 345,033 / 291,295 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  // Merged ocean fixes and transmission normalization measure 1241823 raw, 353042 gzip, 297297 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2027,9 +2033,9 @@ const routeBudgets = [
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_180_786,
-    gzip: 335_890,
-    brotli: 282_784, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_182_786,
+    gzip: 336_690,
+    brotli: 283_184, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
@@ -2046,6 +2052,7 @@ const routeBudgets = [
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // Sampler wrap preservation and signed/zero normal scales measure 1,624,495 / 444,629 / 374,619 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  // Merged ocean fixes and transmission normalization measure 1663396 raw, 458626 gzip, 384649 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2207,9 +2214,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_593_865, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 441_042,
-    brotli: 367_407, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_597_865, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 442_242,
+    brotli: 368_307, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
@@ -2231,6 +2238,7 @@ const routeBudgets = [
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // Sampler wrap preservation and signed/zero normal scales measure 1,217,332 / 329,751 / 275,600 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  // Merged ocean fixes and transmission normalization measure 1241347 raw, 338697 gzip, 281852 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2364,9 +2372,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_180_752,
-    gzip: 322_213,
-    brotli: 268_184, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_182_252,
+    gzip: 322_613,
+    brotli: 268_484, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];

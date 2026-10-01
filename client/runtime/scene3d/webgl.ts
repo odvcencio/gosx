@@ -780,7 +780,7 @@
     "",
     "    if (transmission > 0.0001) {",
     "        vec3 Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        color += transmission * ( vec3(1.0) - Ft) * volumeTransmission(v_worldPosition, N, V, roughness);",
+    "        color += transmission * albedo * ( vec3(1.0) - Ft) * volumeTransmission(v_worldPosition, N, V, roughness);",
     "    }",
     "",
     // Exponential fog.

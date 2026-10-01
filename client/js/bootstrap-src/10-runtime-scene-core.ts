@@ -865,6 +865,9 @@
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
+      thickness: Math.max(0, sceneNumber(sceneObjectMaterialValue(item, "thickness"), sceneNumber(current.thickness, 0))),
+      attenuationDistance: Math.max(0, sceneNumber(sceneObjectMaterialValue(item, "attenuationDistance"), sceneNumber(current.attenuationDistance, 0))),
+      attenuationColor: sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "attenuationColor"), sceneCopyFiniteRGB(current.attenuationColor, [1, 1, 1])),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
@@ -1497,6 +1500,14 @@
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
       }
+    }
+    for (const key of ["thickness", "attenuationDistance"]) {
+      if (sceneObjectMaterialHasValue(current, key)) {
+        override[key] = Math.max(0, sceneNumber(sceneObjectMaterialValue(current, key), 0));
+      }
+    }
+    if (sceneObjectMaterialHasValue(current, "attenuationColor")) {
+      override.attenuationColor = sceneCopyFiniteRGB(sceneObjectMaterialValue(current, "attenuationColor"), [1, 1, 1]);
     }
     if (sceneObjectBlendModeHasValue(current)) {
       override.blendMode = sceneObjectBlendModeValue(current);
@@ -2184,6 +2195,9 @@
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
+      thickness: Math.max(0, sceneNumber(sceneObjectMaterialValue(item, "thickness"), sceneNumber(current.thickness, 0))),
+      attenuationDistance: Math.max(0, sceneNumber(sceneObjectMaterialValue(item, "attenuationDistance"), sceneNumber(current.attenuationDistance, 0))),
+      attenuationColor: sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "attenuationColor"), sceneCopyFiniteRGB(current.attenuationColor, [1, 1, 1])),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
@@ -2664,6 +2678,9 @@
       clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(item.sheen, sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
+      thickness: Math.max(0, sceneNumber(item.thickness, sceneNumber(current.thickness, 0))),
+      attenuationDistance: Math.max(0, sceneNumber(item.attenuationDistance, sceneNumber(current.attenuationDistance, 0))),
+      attenuationColor: sceneCopyFiniteRGB(item.attenuationColor, sceneCopyFiniteRGB(current.attenuationColor, [1, 1, 1])),
       iridescence: sceneClampNumberOrCSSVar(item.iridescence, sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(item.anisotropy, sceneNumber(current.anisotropy, 0), -1, 1),
       normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
@@ -3458,6 +3475,9 @@
       clearcoat: material.clearcoat != null ? material.clearcoat : object.clearcoat,
       sheen: material.sheen != null ? material.sheen : object.sheen,
       transmission: material.transmission != null ? material.transmission : object.transmission,
+      thickness: material.thickness != null ? material.thickness : object.thickness,
+      attenuationDistance: material.attenuationDistance != null ? material.attenuationDistance : object.attenuationDistance,
+      attenuationColor: sceneCopyFiniteRGB(material.attenuationColor, object.attenuationColor),
       iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
       anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
       alphaCutoff: material.alphaCutoff !== undefined ? material.alphaCutoff : object.alphaCutoff,

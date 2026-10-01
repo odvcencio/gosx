@@ -839,7 +839,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return value;
   }
 
-  const SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS = new Set(["specularColor", "emissiveColor", "rimColor"]);
+  const SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS = new Set(["specularColor", "emissiveColor", "rimColor", "attenuationColor"]);
 
   function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
     if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
