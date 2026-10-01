@@ -8,6 +8,7 @@ import (
 func init() {
 	docsapp.RegisterStaticDocsPage("Geometry Zoo", "Turn a material study built from typed Go scene data.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			docsapp.AddScenePosterPreload(ctx, "/demos/posters/scene3d.webp")
 			return map[string]any{
 				"scene": GeometryZooProgram(),
 			}, nil

@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <main class="docs-live-example">
+	return <section class="docs-live-example">
 		<p class="eyebrow">Dynamic route parameter</p>
 		<h2>
 			You opened:
@@ -17,5 +17,5 @@ func Page() Node {
 			href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/routing/examples/%5Bslug%5D/page.gsx"
 			rel="noopener"
 		>View the parameter route source</a>
-	</main>
+	</section>
 }

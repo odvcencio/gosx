@@ -111,3 +111,18 @@ func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeBlockUsesKeyboardAccessibleFigureSemantics(t *testing.T) {
+	t.Parallel()
+
+	rendered := gosx.RenderHTML(CodeBlock("go", "fmt.Println(\"hello\")"))
+	if !strings.Contains(rendered, `<figure class="code-sample"`) {
+		t.Fatalf("CodeBlock should retain native figure semantics: %s", rendered)
+	}
+	if strings.Contains(rendered, `role="region"`) {
+		t.Fatalf("CodeBlock figure must not add a duplicate region landmark: %s", rendered)
+	}
+	if !strings.Contains(rendered, `<div class="code-sample__body" tabindex="0">`) {
+		t.Fatalf("scrollable code should be keyboard reachable: %s", rendered)
+	}
+}

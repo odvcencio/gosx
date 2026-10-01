@@ -101,7 +101,8 @@
 }
 
 .collab__self:empty {
-  display: none;
+  min-height: 1.4em;
+  visibility: hidden;
 }
 
 .collab__self::before {
