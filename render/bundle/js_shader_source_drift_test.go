@@ -47,8 +47,8 @@ func readJSWebGLRenderer(t *testing.T) string {
 //
 // The renderer normally declares each shader as `var NAME = [ "line",
 // OTHER_NAME, ... ].join("\n")`. Shared snippets may instead use one compact
-// quoted string to avoid shipping line-array punctuation. This function
-// resolves either form to the exact WGSL text the browser compiles. For arrays
+// quoted string or an unescaped template literal. This function
+// resolves these forms to the exact WGSL text the browser compiles. For arrays
 // it walks every element, unquotes string elements, and resolves bare
 // identifier elements by recursion.
 func jsShaderSource(t *testing.T, file, name string) string {
@@ -76,8 +76,8 @@ func jsShaderSourceAt(t *testing.T, file, name string, depth int) string {
 	return strings.Join(parts, "\n")
 }
 
-// jsQuotedShaderSource resolves `var NAME = "..."` declarations. It returns
-// false when NAME is not a compact quoted shader so the array reader can try
+// jsQuotedShaderSource resolves quoted strings and plain template literals.
+// It returns false for other declarations so the array reader can try
 // the normal representation.
 func jsQuotedShaderSource(t *testing.T, file, name string) (string, bool) {
 	t.Helper()
@@ -88,16 +88,26 @@ func jsQuotedShaderSource(t *testing.T, file, name string) (string, bool) {
 			continue
 		}
 		start := idx + len(needle)
-		if start >= len(file) || file[start] != '"' {
+		if start >= len(file) || (file[start] != '"' && file[start] != '`') {
 			return "", false
 		}
+		quote := file[start]
 		for i := start + 1; i < len(file); i++ {
 			if file[i] == '\\' {
+				if quote == '`' {
+					t.Fatalf("template shader constant %s contains escapes; extend this reader", name)
+				}
 				i++
 				continue
 			}
-			if file[i] != '"' {
+			if quote == '`' && strings.HasPrefix(file[i:], "${") {
+				t.Fatalf("template shader constant %s contains interpolation; extend this reader", name)
+			}
+			if file[i] != quote {
 				continue
+			}
+			if quote == '`' {
+				return file[start+1 : i], true
 			}
 			value, err := strconv.Unquote(file[start : i+1])
 			if err != nil {
