@@ -15,6 +15,7 @@ func Page() Node {
 		</div>
 		<a class="bgb__close" href="/demos" data-gosx-link="true" aria-label="Back to the demos">×</a>
 		<div class="bgb__controls">
+			<p class="bgb__instructions">Follow the sweeping light to the eastern headland. It shines brightest at blue hour.</p>
 			<p class="bgb__instructions">Walk out along the jetty · E to take the helm · A/D steer · W/S sail · V camera</p>
 			<nav class="bgb__group" aria-label="View">
 				<a class="bgb__link bgb__view-shore" href={data.shoreHref} data-gosx-link="true">Shore</a>

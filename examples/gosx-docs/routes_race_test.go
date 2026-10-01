@@ -87,6 +87,15 @@ func TestEveryDocsRouteServesConcurrently(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
+		// Directory routes redirect to their canonical trailing-slash URL.
+		// Race the rendered page too, rather than dropping these routes.
+		if rec.Code == http.StatusMovedPermanently || rec.Code == http.StatusPermanentRedirect {
+			location := rec.Header().Get("Location")
+			if strings.HasPrefix(location, "/") && !strings.HasPrefix(location, "//") {
+				rec = httptest.NewRecorder()
+				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, location, nil))
+			}
+		}
 		return rec.Code, rec.Body.String()
 	}
 	// A route that cannot serve at all (for example a missing optional asset)
