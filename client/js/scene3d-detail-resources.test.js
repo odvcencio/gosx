@@ -19,7 +19,7 @@ function detailRenderer() {
   };
   const c = createContext({}).context;
   Object.assign(c, { device, frameMeta: {}, bundle: {}, textureCache: {}, placeholderView: {},
-    frameBindGroupLayout: {}, materialBindGroupLayout: {}, WGSL_PBR_FRAGMENT: "", detailResources: null,
+    frameBindGroupLayout: {}, materialBindGroupLayout: {}, WGSL_PBR_FRAGMENT: "", detailResources: undefined,
     GPUShaderStage: { FRAGMENT: 2 }, GPUTextureUsage: { TEXTURE_BINDING: 1, RENDER_ATTACHMENT: 2 },
     GPUBufferUsage: { UNIFORM: 1, COPY_DST: 2 }, wgpuLoadTexture: () => null });
   for (const file of ["client/js/bootstrap-src/10-runtime-primitives.ts", "client/js/bootstrap-src/10-runtime-scene-utils.ts", "client/js/bootstrap-src/11-scene-math.ts", "client/js/bootstrap-src/13-scene-material.ts", "client/js/bootstrap-src/16c1-scene-detail.ts"]) {

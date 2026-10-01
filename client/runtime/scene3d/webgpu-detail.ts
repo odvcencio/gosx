@@ -136,7 +136,7 @@ function sceneWebGPUUploadDetail(device = Object.create(null), resources = Objec
   return entry.group;
 }
 
-function sceneWebGPUPrepareDetailFrame(device = Object.create(null), resources = Object.create(null), materials: any[] = [], textureCache = Object.create(null), options = Object.create(null)) {
+function sceneWebGPUPrepareDetailFrame(device = Object.create(null), resources: any = null, materials: any[] = [], textureCache = Object.create(null), options = Object.create(null)) {
   sceneWebGPUBeginDetailFrame(resources);
   for (const material of materials) {
     if (!material || !material.detail) continue;
