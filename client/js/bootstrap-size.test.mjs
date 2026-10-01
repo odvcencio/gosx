@@ -16,6 +16,8 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Targets increase only where measured output breaches the governed allowance.
 // Post tier admission uses the measured post-effect output.
 // Targets increase only where measured output breaches the governed allowance.
+// Post command admission guard uses the measured post-effect output.
+// Targets increase only where measured output breaches the governed allowance.
 const budgets = [
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
@@ -699,7 +701,7 @@ const budgets = [
   // Depth AO replaces the color filter with twelve depth taps and normal
   // reconstruction (+1,786 raw / +753 gzip / +519 Brotli bytes). Only
   // affected targets rise, by the measured growth with narrow rounding room.
-  { file: "bootstrap.js", raw: 1748200, gzip: 488_461, brotli: 387_617 },
+  { file: "bootstrap.js", raw: 1748300, gzip: 488561, brotli: 387_617 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -2197,7 +2199,7 @@ const routeBudgets = [
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO also ships when WebGPU falls back to WebGL2.
     raw: 1583000, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 437_700,
+    gzip: 437800,
     brotli: 365_300, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
