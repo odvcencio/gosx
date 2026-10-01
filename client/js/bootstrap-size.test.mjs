@@ -695,7 +695,8 @@ const budgets = [
   // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
   // exception under decision 0014).
   // Startup readiness with main's sky and walking features measures 1796431 raw, 497910 gzip and 399396 Brotli bytes.
-  { file: "bootstrap.js", raw: 1_730_900, gzip: 481_600, brotli: 383_100 },
+  // Authored compute readiness and batching fixes measure 1796675 raw; raise only the exceeded raw target by 300 bytes.
+  { file: "bootstrap.js", raw: 1_731_200, gzip: 481_600, brotli: 383_100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1063,7 +1064,8 @@ const budgets = [
   // persistent-buffer upload path. The build with frame caching measures
   // 251_292 / 70_024 / 59_410;
   // retain narrow rounding headroom so later growth remains visible.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 70_100, brotli: 59_500 },
+  // Authored compute readiness and batching fixes measure 73646 gzip; raise only the exceeded gzip target by 100 bytes.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 251_400, gzip: 70_200, brotli: 59_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -2013,9 +2015,10 @@ const routeBudgets = [
     // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_168_500,
+    // Authored compute readiness and batching fixes measure 1227106 raw and 293256 Brotli; raise only those exceeded targets by 200 and 100 bytes.
+    raw: 1_168_700,
     gzip: 331_000,
-    brotli: 279_200, // +95: persistent hub connections (approved exception, decision 0014)
+    brotli: 279_300, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Startup readiness with main's sky and walking features measures 1631038 raw, 446513 gzip and 376152 Brotli bytes.
   {
@@ -2188,9 +2191,10 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_565_600, // +100: persistent hub connections (approved exception, decision 0014)
+    // Authored compute readiness and batching fixes measure 1631271 raw and 376267 Brotli; raise only those exceeded targets by 200 and 100 bytes.
+    raw: 1_565_800, // +100: persistent hub connections (approved exception, decision 0014)
     gzip: 430_200,
-    brotli: 359_800, // +95: persistent hub connections (approved exception, decision 0014)
+    brotli: 359_900, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Startup readiness with main's sky and walking features measures 1216872 raw, 329520 gzip and 275521 Brotli bytes.
   {

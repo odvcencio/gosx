@@ -11,6 +11,9 @@ function runSource(source, context) {
   return vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
 }
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+const { FakeWebGLContext, createContext, installManualRAF, runScript,
+  bootstrapRuntimeSource, freshFeatureBundleSource, makePointsBundle, makeComputeParticleBundle,
+} = require("./runtime-test-harness.js");
 const webglSource = readSceneRendererBackendSrc("webgl");
 
 function sourceBetween(source, start, end) {
@@ -161,6 +164,76 @@ function shaderHarness({ extension = true, linkOK = true, scheduler = false } = 
 function callsNamed(harness, name) {
   return harness.calls.filter(call => call[0] === name);
 }
+
+function parallelRendererHarness(extension = true) {
+  let complete = false;
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  for (const name of ["scene3d", "scene3d-compute", "scene3d-webgl"]) {
+    runScript(freshFeatureBundleSource(name), env.context, name + ".js");
+  }
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320; canvas.height = 180;
+  const gl = new FakeWebGLContext();
+  gl.canvas = canvas;
+  const getExtension = gl.getExtension.bind(gl);
+  const getProgramParameter = gl.getProgramParameter.bind(gl);
+  gl.getExtension = name => name === "KHR_parallel_shader_compile"
+    ? (extension ? { COMPLETION_STATUS_KHR: 91 } : null) : getExtension(name);
+  gl.getProgramParameter = (program, parameter) => parameter === 91 ? complete : getProgramParameter(program, parameter);
+  const renderer = env.context.__gosx_scene3d_webgl_api.createScenePBRRendererOrFallback(gl, canvas, {});
+  assert.ok(renderer);
+  return { gl, renderer, raf, setComplete(value) { complete = value; } };
+}
+
+test("authored compute-particle shaders prepare before readiness and never draw while pending", () => {
+  const h = parallelRendererHarness();
+  h.setComplete(true);
+  h.raf.flush(16);
+  // Warm the builtin program so it cannot hide a late authored compilation.
+  const viewport = { width: 320, height: 180 };
+  const warmBundle = makePointsBundle({ id: "warm", count: 1, positions: [0, 0, 0] });
+  h.renderer.render(warmBundle, viewport);
+  h.raf.flush(32);
+  h.renderer.render(warmBundle, viewport);
+  h.gl.ops.length = 0;
+  h.setComplete(false);
+  const bundle = makeComputeParticleBundle({
+    id: "authored-compute", count: 4,
+    emitter: { kind: "point", lifetime: 10 }, material: { color: "#ffffff", size: 2 },
+    renderVertex: "attribute vec3 a_position; void main() { gl_Position = vec4(a_position, 1.0); gl_PointSize = 2.0; }",
+    renderFragment: "precision mediump float; uniform float brightness; void main() { gl_FragColor = vec4(brightness); }",
+    renderUniforms: { brightness: 1.25 },
+  });
+  h.renderer.render(bundle, viewport);
+  assert.ok(h.gl.programMatching("uniform float brightness"), "the authored shader is submitted before the frame check");
+  assert.equal(h.gl.ops.filter(op => op[0] === "useProgram" || op[0] === "drawArrays").length, 0);
+  assert.equal(h.gl.ops.filter(op => op[0] === "getUniformLocation" || op[0] === "getAttribLocation").length, 0);
+  h.raf.flush(48);
+  h.renderer.render(bundle, viewport);
+  assert.equal(h.gl.ops.filter(op => op[0] === "drawArrays").length, 0, "unfinished programs keep the frame parked");
+  h.setComplete(true);
+  h.raf.flush(64);
+  h.renderer.render(bundle, viewport);
+  assert.ok(h.gl.ops.some(op => op[0] === "drawArrays" && op[1] === h.gl.POINTS && op[3] === 4));
+  assert.ok(h.gl.ops.some(op => op[0] === "uniform1f" && op[1] === "brightness" && op[2] === 1.25));
+  h.renderer.dispose();
+});
+
+test("imported-mesh batching becomes available after parallel compilation completes", () => {
+  for (const extension of [false, true]) {
+    const h = parallelRendererHarness(extension);
+    if (extension) {
+      assert.equal(h.renderer.supportsRigidImportedBatches, false);
+      h.setComplete(true);
+      h.raf.flush(16);
+    }
+    assert.equal(h.renderer.supportsRigidImportedBatches, true, "completed programs preserve imported-mesh batching");
+    h.renderer.dispose();
+  }
+});
 
 test("parallel startup waits for completion before link status or location queries", async () => {
   const h = shaderHarness();

@@ -6880,7 +6880,13 @@
       const authored = hooks.ensurePointsAuthoredGLProgram(entry, entry.id || "points-" + i);
       if (!authored) hooks.ensurePointsProgram();
     }
-    if ((bundle.computeParticles || []).length) hooks.ensurePointsProgram();
+    for (let i = 0; i < (bundle.computeParticles || []).length; i++) {
+      const entry = bundle.computeParticles[i];
+      if (!entry) continue;
+      const authored = hooks.ensurePointsAuthoredGLProgram({ customVertex: entry.renderVertex, customFragment: entry.renderFragment },
+        entry.id || "scene-compute-points-" + i);
+      if (!authored) hooks.ensurePointsProgram();
+    }
     if (bundle.environment && bundle.environment.sky && !hooks.skyResources.renderer) {
       hooks.skyResources.renderer = createSceneSkyWebGLRenderer(gl, hooks.textureCache, hooks.placeholder);
     }
@@ -10678,7 +10684,7 @@
         // this layer (e.g. the builtin failed to compile in this
         // environment) — skip only this entry rather than aborting the rest
         // of the points pass.
-        if (!pp) continue;
+        if (!pp || !scenePBRProgramReady(gl, pp.program)) continue;
         if (currentProgram !== pp.program) {
           gl.useProgram(pp.program);
           currentProgram = pp.program;
@@ -11362,14 +11368,15 @@
     }
 
     const rigidImportedBatchProgram = ensureInstancedProgram();
-    const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
-      rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
 
     var frameTimer = createSceneWebGLFrameTimer(gl);
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
-      supportsRigidImportedBatches,
+      get supportsRigidImportedBatches() {
+        return Boolean(rigidImportedBatchProgram && scenePBRProgramReady(gl, rigidImportedBatchProgram.program) &&
+          rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
+      },
       prepareCrowdAtlas,
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads

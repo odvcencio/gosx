@@ -17,7 +17,7 @@
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 2866,
     "actualGovernanceLinesAtReview": 2866,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Startup shader readiness integrates the current physical-sky and walking sources; renderer function locations and limits use the merged source measurements."
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Startup shader readiness integrates the current physical-sky and walking sources; renderer function locations and limits use the merged source measurements. Preparing authored compute shaders before readiness, guarding pending point draws, and deriving batching support after compilation add seven WebGL lines; function locations and complexity limits match the measured source."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -304,8 +304,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 11532,
-      "maxFileLines": 11532
+      "maxLines": 11539,
+      "maxFileLines": 11539
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -332,7 +332,7 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 11532,
+    "../runtime/scene3d/webgl.ts": 11539,
     "../runtime/scene3d/webgpu.ts": 19328,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
@@ -359,7 +359,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10463:5",
+      "name": "applyPointsAuthoredCustomUniforms@10469:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -377,10 +377,10 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7765:3",
-      "lines": 3405,
-      "cyclomatic": 1013,
-      "cognitive": 1610,
+      "name": "createScenePBRRenderer@7771:3",
+      "lines": 3406,
+      "cyclomatic": 1015,
+      "cognitive": 1612,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -422,7 +422,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10940:5",
+      "name": "drawInstancedMeshes@10946:5",
       "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -431,7 +431,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@10028:5",
+      "name": "drawPBRObjectList@10034:5",
       "lines": 282,
       "cyclomatic": 82,
       "cognitive": 196,
@@ -440,16 +440,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10639:5",
+      "name": "drawPointsEntries@10645:5",
       "lines": 197,
-      "cyclomatic": 63,
-      "cognitive": 125,
+      "cyclomatic": 64,
+      "cognitive": 126,
       "maxNesting": 6,
       "parameters": 7
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9757:5",
+      "name": "prepareRigidMeshBatches@9763:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -467,7 +467,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8956:5",
+      "name": "renderFrame@8962:5",
       "lines": 307,
       "cyclomatic": 90,
       "cognitive": 131,
@@ -485,7 +485,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7525:3",
+      "name": "scenePBRUploadEnvironmentMap@7531:3",
       "lines": 126,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -494,7 +494,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@7164:3",
+      "name": "scenePBRUploadLights@7170:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -503,7 +503,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8748:5",
+      "name": "uploadCustomUniforms@8754:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -841,9 +841,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3405,
-      "cyclomatic": 1013,
-      "cognitive": 1610,
+      "lines": 3406,
+      "cyclomatic": 1015,
+      "cognitive": 1612,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -963,9 +963,9 @@
         "bootstrap-feature-scene3d-webgl.js"
       ],
       "raw": 845500,
-      "gzip": 237300,
+      "gzip": 237400,
       "brotli": 197200,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Startup readiness with the current sky and walking features measures 881393 raw, 249153 gzip and 206896 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step."
+      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Startup readiness with the current sky and walking features measures 881393 raw, 249153 gzip and 206896 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. The authored compute readiness and batching fixes measure 881626 raw, 249207 gzip, and 207011 Brotli bytes; only the exceeded gzip target rises by 100 bytes."
     },
     "base+webgpu": {
       "chunks": [
