@@ -145,15 +145,15 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 418381,
+          "frameworkJsWireBytes": 303692,
           "htmlWireBytes": 42050,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 60713,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 498078,
-          "wasmWireBytes": 336903
+          "totalWireBytes": 383373,
+          "wasmWireBytes": 222126
         },
         "require": [
           "html-compressed",
@@ -213,15 +213,15 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 425032,
+          "frameworkJsWireBytes": 310354,
           "htmlWireBytes": 29171,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 59902,
           "lazyJsWireBytes": 256,
           "requests": 8,
-          "totalWireBytes": 427269,
-          "wasmWireBytes": 336903
+          "totalWireBytes": 312580,
+          "wasmWireBytes": 222126
         },
         "require": [
           "html-compressed",
