@@ -60,7 +60,7 @@ function sceneWebGPUContactUniforms(effect: any, camera: any, width: number, hei
     var projection = scenePBRProjectionMatrixForCamera(camera, width / Math.max(1, height));
     var sun = (lights || []).find(function(light) { return light.kind === "directional"; });
     var direction = effect.direction || (sun ? { x: sun.directionX, y: sun.directionY, z: sun.directionZ } : { x: 0.5, y: -1, z: 0.3 });
-    var x = -sceneNumber(direction.x, 0.5), y = -sceneNumber(direction.y, -1), z = -sceneNumber(direction.z, 0.3);
+    var x = -sceneNumber(direction.x, 0), y = -sceneNumber(direction.y, 0), z = -sceneNumber(direction.z, 0);
     var length = Math.max(0.000001, Math.hypot(x, y, z));
     var data = new Float32Array(24); data.set(projection);
     data.set([(view[0] * x + view[4] * y + view[8] * z) / length,
