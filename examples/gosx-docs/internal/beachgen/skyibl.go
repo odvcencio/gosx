@@ -25,11 +25,13 @@ var Periods = []string{PeriodGolden, PeriodBlue, PeriodNoon}
 func PeriodSky(period string) scene.Sky {
 	switch period {
 	case PeriodBlue:
-		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(-1.5, -18), Turbidity: 3, Rayleigh: 3.2, MieCoefficient: 0.004, MieDirectionalG: 0.78}
+		// Deeper twilight removes the residual sunset; increased optical depth
+		// keeps the upper dome cool as well as the horizon. The IBL shares it.
+		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(-4.5, -18), Turbidity: 3, Rayleigh: 48, MieCoefficient: 0.004, MieDirectionalG: 0.78, Intensity: 1.6}
 	case PeriodNoon:
 		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(50, 100), Turbidity: 3.5, Rayleigh: 1.2, MieCoefficient: 0.004, MieDirectionalG: 0.8}
 	default:
-		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(4.5, -14), Turbidity: 6, Rayleigh: 1.7, MieCoefficient: 0.006, MieDirectionalG: 0.82}
+		return scene.Sky{Mode: "physical", SunDirection: scene.SunDirectionFromAngles(4.5, -6), Turbidity: 6, Rayleigh: 1.7, MieCoefficient: 0.006, MieDirectionalG: 0.82}
 	}
 }
 

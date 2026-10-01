@@ -30,7 +30,7 @@ func blackglassBeachPeriodFor(raw string) blackglassBeachPeriod {
 	case beachgen.PeriodBlue:
 		return blackglassBeachPeriod{beachgen.PeriodBlue, "Blue hour", "#9fb4ff", 0.6, 0.95}
 	case beachgen.PeriodNoon:
-		return blackglassBeachPeriod{beachgen.PeriodNoon, "Noon", "#fff4e6", 9, 0.5}
+		return blackglassBeachPeriod{beachgen.PeriodNoon, "Midday", "#fff4e6", 9, 0.5}
 	default:
 		return blackglassBeachPeriod{beachgen.PeriodGolden, "Golden hour", "#ffc690", 6.5, 0.62}
 	}
@@ -44,14 +44,14 @@ type blackglassBeachView struct {
 func blackglassBeachViewFor(raw string) blackglassBeachView {
 	switch raw {
 	case "glass":
-		return blackglassBeachView{"glass", "The glass", scene.Vec3(-2.2, 1.6, 8.8), scene.Vec3(-6.2, 1.9, 2.6)}
+		return blackglassBeachView{"glass", "The glass", scene.Vec3(-3.4, 1.65, 7.8), scene.Vec3(-6.2, 1.7, 2.6)}
 	case "ship":
 		// On the jetty deck beside the clipper's helm: press E to take it.
 		return blackglassBeachView{"ship", "At the helm", scene.Vec3(21, 4.2, -33.5), scene.Vec3(17, 5, -60)}
 	case "cliff":
-		return blackglassBeachView{"cliff", "From the cliff", scene.Vec3(-26, 17, 22), scene.Vec3(-2, 0, -18)}
+		return blackglassBeachView{"cliff", "From the cliff", scene.Vec3(-27, 15, 18), scene.Vec3(-1, 1, -29)}
 	default:
-		return blackglassBeachView{"shore", "The shore", scene.Vec3(0.5, 3, 22), scene.Vec3(5, 4, -25)}
+		return blackglassBeachView{"shore", "The shore", scene.Vec3(-3.8, 1.7, 11), scene.Vec3(-7.8, 1.95, -30)}
 	}
 }
 
@@ -83,7 +83,7 @@ func blackglassBeachPeriodIBL(period string) scene.EnvironmentIBL {
 
 // blackglassBeachHorizon is the sky's mean horizon color as sRGB hex, used
 // for distance fog so land haze matches the sea's horizon fade.
-func blackglassBeachHorizon(sky scene.Sky) string {
+func blackglassBeachHorizon(sky scene.Sky, exposure float32) string {
 	sun := sky.SunDirection
 	flat := math.Hypot(sun.X, sun.Z)
 	if flat < 1e-6 {
@@ -100,7 +100,7 @@ func blackglassBeachHorizon(sky scene.Sky) string {
 		c[2] += b / 4
 	}
 	enc := func(x float64) int {
-		x *= 0.6 // the scene exposure
+		x *= float64(exposure)
 		v := (x * (2.51*x + 0.03)) / (x*(2.43*x+0.59) + 0.14)
 		v = math.Max(0, math.Min(1, v))
 		if v <= 0.0031308 {
@@ -118,9 +118,9 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	period := blackglassBeachPeriodFor(periodID)
 	view := blackglassBeachViewFor(viewID)
 	sky := beachgen.PeriodSky(period.ID)
-	sky.Clouds = &scene.SkyClouds{Coverage: 0.42, Opacity: 0.9, Direction: 20}
+	sky.Clouds = &scene.SkyClouds{Coverage: 0.28, Opacity: 0.68, Direction: 20}
 	sun := sky.SunDirection
-	horizon := blackglassBeachHorizon(sky)
+	horizon := blackglassBeachHorizon(sky, period.Exposure)
 	return scene.Props{
 		Width: 1280, Height: 720,
 		Label:      "Blackglass Beach — " + view.Name + " at " + period.Name,
@@ -136,8 +136,8 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 		Environment: scene.Environment{
 			IBL: blackglassBeachPeriodIBL(period.ID), EnvIntensity: 0.7,
 			Sky:      &sky,
-			FogColor: horizon, FogDensity: 0.0035,
-			Haze: &scene.Haze{Density: 0.0015, HeightFalloff: 0.12, SunScatter: 0.35},
+			FogColor: horizon, FogDensity: 0.0018,
+			Haze: &scene.Haze{Density: 0.0032, HeightFalloff: 0.07, SunScatter: 0.32},
 			Ocean: &scene.Ocean{
 				WindDirection: 8, WaveHeight: 0.9, WaveLength: 17, Choppiness: 0.7, Speed: 1,
 				DeepColor: "#021019", ShallowColor: "#1b5d63", ScatterColor: "#1f8f7c", FoamColor: "#eef3f2",
@@ -151,12 +151,12 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			},
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels1440p, Effects: []scene.PostEffect{
-			scene.GodRays{Intensity: 0.22},
+			scene.GodRays{Intensity: 0.12},
 			scene.Bloom{Mode: "mip", Threshold: 1.6, Strength: 0.08, Radius: 5, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: period.Exposure},
 			scene.Vignette{Intensity: 0.18},
 			scene.FXAA{},
-			scene.Grain{Intensity: 0.012},
+			scene.Grain{Intensity: 0.008},
 		}},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels2048},
 		Graph: scene.NewGraph(append([]scene.Node{
@@ -168,9 +168,12 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			scene.Model{ID: "clipper", Src: blackglassBeachModelRoot + "clipper-high.glb", CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "clipper-mid", Src: blackglassBeachModelRoot + "clipper-mid.glb", Visible: scene.Bool(false), CastShadow: true, ReceiveShadow: true},
 			scene.Model{ID: "clipper-low", Src: blackglassBeachModelRoot + "clipper-low.glb", Visible: scene.Bool(false), CastShadow: true, ReceiveShadow: true},
+			scene.Model{ID: "dune-grass", Src: blackglassBeachModelRoot + "dune-grass.glb", ReceiveShadow: true},
+			scene.Model{ID: "tideline-wrack", Src: blackglassBeachModelRoot + "tideline-wrack.glb", CastShadow: true, ReceiveShadow: true},
+			blackglassBeachGulls(),
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
 				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: -1.16}, CastShadow: true, ReceiveShadow: true,
-				Material: scene.StandardMaterial{Color: "#050608", Roughness: 0.035, Metalness: 0, Clearcoat: 1}},
+				Material: scene.StandardMaterial{Color: "#8aaca9", Roughness: 0.065, Metalness: 0, Clearcoat: 0.75, Transmission: 0.88, IOR: scene.Float(1.48)}},
 		}, blackglassBeachMoments(period.ID)...)...),
 	}
 }

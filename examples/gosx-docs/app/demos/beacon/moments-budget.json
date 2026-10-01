@@ -1,14 +1,36 @@
 {
   "schema": "gosx.beach-moments-budget/v1",
-  "reason": "Initial discovery budgets cover complete scene props and served docs HTML, including the existing quantized terrain, sailing data and docs layout. Golden-hour props measure 59278 JSON bytes and 25086 gzip bytes; Shore HTML measures up to 274629 raw bytes and 76433 gzip bytes. Shared bundle and wire budgets stay unchanged.",
-  "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page. Gzip uses Go's default compressor. Asset and runtime bundle growth is zero.",
+  "reason": "Three content nodes add batched dune grass, tideline wrack and a retained gull flock. Complete golden-hour props measure 61813 JSON bytes and 25618 gzip bytes; the 26000 gzip cap stays unchanged. The page drops the inline docs navigation runtime and uses ordinary view links. Grass/wrack have a combined 64 KB asset cap and reuse generated sand/basalt detail maps instead of six scanned maps. The 172000-byte page cap ratchets down from 280000; the inherited docs CSS/layout still leaves the page above the 150 KB program target.",
+  "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page including inherited docs CSS. Gzip uses Go\u2019s default compressor. Runtime bundle growth is zero.",
   "moments": {
-    "beacon": { "nodes": 7, "jsonBytes": 5200 },
-    "pools": { "nodes": 4, "jsonBytes": 7400 },
-    "wreck": { "nodes": 3, "jsonBytes": 4700 },
-    "trail": { "nodes": 2, "jsonBytes": 6600 },
-    "grotto": { "nodes": 3, "jsonBytes": 5800 }
+    "beacon": {
+      "nodes": 7,
+      "jsonBytes": 5200
+    },
+    "pools": {
+      "nodes": 4,
+      "jsonBytes": 7400
+    },
+    "wreck": {
+      "nodes": 3,
+      "jsonBytes": 4700
+    },
+    "trail": {
+      "nodes": 2,
+      "jsonBytes": 6600
+    },
+    "grotto": {
+      "nodes": 3,
+      "jsonBytes": 5800
+    }
   },
-  "program": { "nodes": 27, "jsonBytes": 60000, "gzipBytes": 26000 },
-  "page": { "htmlBytes": 280000, "gzipBytes": 78000 }
+  "program": {
+    "nodes": 30,
+    "jsonBytes": 63000,
+    "gzipBytes": 26000
+  },
+  "page": {
+    "htmlBytes": 172000,
+    "gzipBytes": 50000
+  }
 }
