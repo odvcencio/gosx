@@ -693,7 +693,9 @@ const budgets = [
   // exception under decision 0014).
   // Normal-map tiling merged with main measures 1_788_852 / 495_502 / 397_774 bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-  { file: "bootstrap.js", raw: 1_723_400, gzip: 479_200, brotli: 381_400 },
+  { // Sampler wrap preservation and signed/zero normal scales measure 1,790,605 / 496,111 / 397,943 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  file: "bootstrap.js", raw: 1_725_100, gzip: 479_800, brotli: 381_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1189,7 +1191,9 @@ const budgets = [
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Normal-map tiling merged with main measures 619_158 / 175_346 / 144_510 bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 167_000, brotli: 137_850 },
+  { // Sampler wrap preservation and signed/zero normal scales measure 619,254 / 175,385 / 144,561 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 167_100, brotli: 137_850 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1682,7 +1686,9 @@ const routeBudgets = [
   {
     // Normal-map tiling merged with main measures 1_369_019 / 372_787 / 313_785 bytes.
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-    name: "Scene3D Chromium route (WebGPU, with labels)",
+    // Sampler wrap preservation and signed/zero normal scales measure 1,369,776 / 373,152 / 314,130 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -1831,14 +1837,16 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_303_900,
-    gzip: 356_500,
-    brotli: 298_900,
+    raw: 1_304_600,
+    gzip: 356_800,
+    brotli: 299_200,
   },
   {
     // Normal-map tiling merged with main measures 1_218_997 / 344_893 / 291_220 bytes.
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-    name: "Scene3D Safari and Firefox route (WebGL, with labels)",
+    // Sampler wrap preservation and signed/zero normal scales measure 1,219,453 / 345,033 / 291,295 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -2014,9 +2022,9 @@ const routeBudgets = [
     // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_161_000,
-    gzip: 328_600,
-    brotli: 277_400, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_161_400,
+    gzip: 328_700,
+    brotli: 277_500, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2030,7 +2038,9 @@ const routeBudgets = [
     // the alternative was a page that renders nothing.
     // Normal-map tiling merged with main measures 1_623_378 / 444_163 / 374_250 bytes.
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-    name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
+    // Sampler wrap preservation and signed/zero normal scales measure 1,624,495 / 444,629 / 374,619 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -2190,9 +2200,9 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_557_900, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 427_800,
-    brotli: 357_900, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_559_000, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 428_300,
+    brotli: 358_300, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2211,7 +2221,9 @@ const routeBudgets = [
     // verdict for each one. Gating them is the next cut.
     // Normal-map tiling merged with main measures 1_216_575 / 329_386 / 275_255 bytes.
     // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-    name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
+    // Sampler wrap preservation and signed/zero normal scales measure 1,217,332 / 329,751 / 275,600 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-scene3d.js",
@@ -2343,9 +2355,9 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_158_700,
-    gzip: 313_800,
-    brotli: 262_195, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_159_400,
+    gzip: 314_100,
+    brotli: 262_495, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
