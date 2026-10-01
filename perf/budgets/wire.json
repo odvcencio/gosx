@@ -14,8 +14,8 @@
           "htmlWireBytes": 189187,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 221825,
-          "lazyJsWireBytes": 186021,
+          "jsWireBytes": 230415,
+          "lazyJsWireBytes": 206900,
           "requests": 8,
           "totalWireBytes": 1133960,
           "wasmWireBytes": 665060
@@ -26,19 +26,23 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 204852 bytes against the previous 186021-byte limit; the new 206900-byte limit uses the existing wire tolerance (decision 0014)."
+        }
       },
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 111656,
-          "htmlWireBytes": 198700,
+          "htmlWireBytes": 202586,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 256469,
+          "totalWireBytes": 260835,
           "wasmWireBytes": 256
         },
         "require": [
@@ -49,7 +53,8 @@
           "html-shareable"
         ],
         "raise": {
-          "htmlWireBytes": "The physical daylight sky adds its capability row to the capabilities matrix: +224 HTML wire bytes measured in CI."
+          "htmlWireBytes": "The physical daylight sky adds its capability row to the capabilities matrix: +224 HTML wire bytes measured in CI. The capability matrix includes the integrated open-ocean feature. Production htmlWireBytes measured 200581 bytes against the previous 198700-byte limit; the new 202586-byte limit uses the existing wire tolerance (decision 0014).",
+          "totalWireBytes": "The capability matrix includes the integrated open-ocean feature. Production totalWireBytes measured 258253 bytes against the previous 256469-byte limit; the new 260835-byte limit uses the existing wire tolerance (decision 0014)."
         }
       },
       "/demos/": {
@@ -80,8 +85,8 @@
           "htmlWireBytes": 223953,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 221825,
-          "lazyJsWireBytes": 169789,
+          "jsWireBytes": 230415,
+          "lazyJsWireBytes": 190667,
           "requests": 6,
           "totalWireBytes": 1131857,
           "wasmWireBytes": 665060
@@ -92,7 +97,11 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 188780 bytes against the previous 169789-byte limit; the new 190667-byte limit uses the existing wire tolerance (decision 0014)."
+        }
       },
       "/demos/water": {
         "limits": {
@@ -101,8 +110,8 @@
           "htmlWireBytes": 746234,
           "imageWireBytes": 230728,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 236674,
-          "lazyJsWireBytes": 169789,
+          "jsWireBytes": 245264,
+          "lazyJsWireBytes": 190667,
           "requests": 13,
           "totalWireBytes": 1899715,
           "wasmWireBytes": 665060
@@ -112,7 +121,11 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 242836 bytes against the previous 236674-byte limit; the new 245264-byte limit uses the existing wire tolerance (decision 0014).",
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production lazyJsWireBytes measured 188780 bytes against the previous 169789-byte limit; the new 190667-byte limit uses the existing wire tolerance (decision 0014)."
+        }
       },
       "/docs/getting-started/": {
         "limits": {

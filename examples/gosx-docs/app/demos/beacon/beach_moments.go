@@ -11,7 +11,7 @@ import (
 // It is built from primitive meshes and one spinning beam mesh, so it adds no
 // asset bytes. The beam is strong at blue hour and faint in daylight.
 const (
-	beaconX, beaconZ = 43.0, -22.0
+	beaconX, beaconZ = 45.0, -14.0
 	beaconTower      = 9.0
 )
 
