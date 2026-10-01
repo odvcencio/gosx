@@ -1691,11 +1691,13 @@ function gosxConfigureSceneScript(script, role, src) {
     return fallback;
   }
 
+  var sceneGatedFeaturePromises = Object.create(null);
+
   // Cached promise for the WebGPU sub-feature chunk. Scene3D now treats
   // WebGPU as the default accelerated backend when the browser exposes it,
   // so the first mount awaits this before choosing its renderer. Failed or
   // unsupported probes still fall through to WebGL/canvas.
-  var sceneWebGPUFeaturePromise = null;
+
 
   function sceneHasNavigatorWebGPU() {
     return typeof navigator !== "undefined"
@@ -1713,31 +1715,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (window.__gosx_scene3d_webgpu_feature_promise) {
       return window.__gosx_scene3d_webgpu_feature_promise;
     }
-    if (sceneWebGPUFeaturePromise) {
-      return sceneWebGPUFeaturePromise;
-    }
-    sceneWebGPUFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-webgpu", resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_webgpu_api) {
-          resolve(window.__gosx_scene3d_webgpu_api);
-        } else {
-          sceneWebGPUFeaturePromise = null;
-          window.__gosx_scene3d_webgpu_feature_promise = null;
-          reject(new Error("scene3d-webgpu chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneWebGPUFeaturePromise = null;
-        window.__gosx_scene3d_webgpu_feature_promise = null;
-        reject(new Error("failed to load scene3d-webgpu chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    window.__gosx_scene3d_webgpu_feature_promise = sceneWebGPUFeaturePromise;
-    return sceneWebGPUFeaturePromise;
+    const promise = ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+    window.__gosx_scene3d_webgpu_feature_promise = promise;
+    return promise;
   }
 
   function sceneNextFrame() {
@@ -1786,7 +1766,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // never fetches it, which is the whole point of the split: it used to ride
   // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
-  var sceneWebGLFeaturePromise = null;
+
 
   function ensureWebGLFeatureLoaded() {
     // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
@@ -1799,31 +1779,9 @@ function gosxConfigureSceneScript(script, role, src) {
     if (window.__gosx_scene3d_webgl_feature_promise) {
       return window.__gosx_scene3d_webgl_feature_promise;
     }
-    if (sceneWebGLFeaturePromise) {
-      return sceneWebGLFeaturePromise;
-    }
-    sceneWebGLFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-webgl", resolveSceneSubFeatureURL("gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_webgl_api) {
-          resolve(window.__gosx_scene3d_webgl_api);
-        } else {
-          sceneWebGLFeaturePromise = null;
-          window.__gosx_scene3d_webgl_feature_promise = null;
-          reject(new Error("scene3d-webgl chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneWebGLFeaturePromise = null;
-        window.__gosx_scene3d_webgl_feature_promise = null;
-        reject(new Error("failed to load scene3d-webgl chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    window.__gosx_scene3d_webgl_feature_promise = sceneWebGLFeaturePromise;
-    return sceneWebGLFeaturePromise;
+    const promise = ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
+    window.__gosx_scene3d_webgl_feature_promise = promise;
+    return promise;
   }
 
   // sceneWebGLBackendRequest builds the same registry request
@@ -1930,33 +1888,10 @@ function gosxConfigureSceneScript(script, role, src) {
   // Cached promise for the GLTF sub-feature chunk. First call starts the
   // fetch; subsequent calls await the same promise. See 26f-feature-
   // scene3d-gltf-prefix.js for the split rationale.
-  var sceneGLTFFeaturePromise = null;
+
 
   function ensureGLTFFeatureLoaded() {
-    if (window.__gosx_scene3d_gltf_api) {
-      return Promise.resolve(window.__gosx_scene3d_gltf_api);
-    }
-    if (sceneGLTFFeaturePromise) {
-      return sceneGLTFFeaturePromise;
-    }
-    sceneGLTFFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-gltf", resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_gltf_api) {
-          resolve(window.__gosx_scene3d_gltf_api);
-        } else {
-          reject(new Error("scene3d-gltf chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneGLTFFeaturePromise = null; // allow retry on next attempt
-        reject(new Error("failed to load scene3d-gltf chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneGLTFFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
   }
 
   function scenePropsHasKTX2Textures(props: any) {
@@ -2021,33 +1956,10 @@ function gosxConfigureSceneScript(script, role, src) {
   // Cached promise for the animation sub-feature chunk. Consumers that
   // want to drive keyframe or skeletal animations can await this helper
   // and then use window.__gosx_scene3d_animation_api.
-  var sceneAnimationFeaturePromise = null;
+
 
   function ensureAnimationFeatureLoaded() {
-    if (window.__gosx_scene3d_animation_api) {
-      return Promise.resolve(window.__gosx_scene3d_animation_api);
-    }
-    if (sceneAnimationFeaturePromise) {
-      return sceneAnimationFeaturePromise;
-    }
-    sceneAnimationFeaturePromise = new Promise(function(resolve, reject) {
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-animation", resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js"));
-      s.onload = function() {
-        if (window.__gosx_scene3d_animation_api) {
-          resolve(window.__gosx_scene3d_animation_api);
-        } else {
-          reject(new Error("scene3d-animation chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneAnimationFeaturePromise = null;
-        reject(new Error("failed to load scene3d-animation chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneAnimationFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("animation", "gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
   }
 
   // Expose the animation lazy-loader for consumers that need to drive
@@ -2059,7 +1971,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // registry and the GPU instanced-cull system. A scene with one cube and one
   // directional light runs none of them, and used to pay 8_772 gzip bytes for
   // all of them. See 26k-feature-scene3d-compute-prefix.js.
-  var sceneComputeFeaturePromise = null;
+
 
   function ensureComputeFeatureLoaded() {
     if (window.__gosx_scene3d_compute_api) {
@@ -2071,37 +1983,7 @@ function gosxConfigureSceneScript(script, role, src) {
       && typeof window.__gosx_scene3d_api.createSceneParticleSystem === "function") {
       return Promise.resolve(window.__gosx_scene3d_api);
     }
-    if (sceneComputeFeaturePromise) {
-      return sceneComputeFeaturePromise;
-    }
-    sceneComputeFeaturePromise = new Promise(function(resolve, reject) {
-      var url = resolveSceneSubFeatureURL("gosxScene3dComputeUrl", "");
-      if (!url) {
-        // The server did not advertise the chunk, so this page's scene
-        // declared no particles and no instanced meshes. Refuse rather than
-        // guess a path: a 404 here would look like a broken deployment.
-        sceneComputeFeaturePromise = null;
-        reject(new Error("scene3d-compute chunk URL was not advertised"));
-        return;
-      }
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-compute", url);
-      s.onload = function() {
-        if (window.__gosx_scene3d_compute_api) {
-          resolve(window.__gosx_scene3d_compute_api);
-        } else {
-          sceneComputeFeaturePromise = null;
-          reject(new Error("scene3d-compute chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneComputeFeaturePromise = null; // allow retry on the next attempt
-        reject(new Error("failed to load scene3d-compute chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneComputeFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("compute", "gosxScene3dComputeUrl", "");
   }
 
   // Expose the compute lazy-loader so a runtime program that adds particles
@@ -2159,7 +2041,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // quantized-array decoder, the progressive and level-of-detail ladders, and
   // the procedural point generators. See
   // 26l-feature-scene3d-decompress-prefix.js.
-  var sceneDecompressFeaturePromise = null;
+
 
   // sceneDecompressAPIFunction resolves one decompress entry point. The
   // monolith keeps 11a and 11b inline, so the lookup finds the function on the
@@ -2171,43 +2053,42 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function ensureDecompressFeatureLoaded() {
-    if (sceneDecompressAPIFunction("sceneDecompressProps")) {
-      return Promise.resolve(window.__gosx_scene3d_api);
-    }
-    if (sceneDecompressFeaturePromise) {
-      return sceneDecompressFeaturePromise;
-    }
-    sceneDecompressFeaturePromise = new Promise(function(resolve, reject) {
-      var url = resolveSceneSubFeatureURL("gosxScene3dDecompressUrl", "");
-      if (!url) {
-        // The server did not advertise the chunk, so this page's scene carries
-        // no compressed array and no generator descriptor. Refuse rather than
-        // guess a path: a 404 here would look like a broken deployment.
-        sceneDecompressFeaturePromise = null;
-        reject(new Error("scene3d-decompress chunk URL was not advertised"));
-        return;
-      }
-      var s = document.createElement("script");
-      s.async = false;
-      gosxConfigureSceneScript(s, "feature-scene3d-decompress", url);
-      s.onload = function() {
-        if (sceneDecompressAPIFunction("sceneDecompressProps")) {
-          resolve(window.__gosx_scene3d_api);
-        } else {
-          sceneDecompressFeaturePromise = null;
-          reject(new Error("scene3d-decompress chunk loaded but did not publish API"));
-        }
-      };
-      s.onerror = function() {
-        sceneDecompressFeaturePromise = null; // allow retry on the next attempt
-        reject(new Error("failed to load scene3d-decompress chunk"));
-      };
-      document.head.appendChild(s);
-    });
-    return sceneDecompressFeaturePromise;
+    return ensureSceneGatedFeatureLoaded("decompress", "gosxScene3dDecompressUrl", "");
   }
 
   window.__gosx_ensure_scene3d_decompress_loaded = ensureDecompressFeatureLoaded;
+
+  // Share the URL, CSP, caching and retry path for content-gated authorities.
+  // No fallback URL: pages that do not advertise a feature cannot fetch it.
+
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneGatedFeatureAPI(kind) {
+    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : window["__gosx_scene3d_" + kind + "_api"];
+  }
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function ensureSceneGatedFeatureLoaded(kind, datasetKey, fallback) {
+    const api = sceneGatedFeatureAPI(kind);
+    if (api) return Promise.resolve(api);
+    if (sceneGatedFeaturePromises[kind]) return sceneGatedFeaturePromises[kind];
+    const name = "scene3d-" + kind, url = resolveSceneSubFeatureURL(datasetKey, fallback || "");
+    if (!url) return Promise.reject(new Error(name + " chunk URL was not advertised"));
+    const promise = new Promise(function(resolve, reject) {
+      const script = document.createElement("script"); script.async = false;
+      gosxConfigureSceneScript(script, "feature-" + name, url);
+      script.onload = function() {
+        const loaded = sceneGatedFeatureAPI(kind);
+        if (loaded) resolve(loaded); else reject(new Error(name + " chunk loaded but did not publish API"));
+      };
+      script.onerror = function() { reject(new Error("failed to load " + name + " chunk")); };
+      document.head.appendChild(script);
+    });
+    sceneGatedFeaturePromises[kind] = promise.catch(function(error) {
+      delete sceneGatedFeaturePromises[kind];
+      if (kind === "webgl" || kind === "webgpu") window["__gosx_scene3d_" + kind + "_feature_promise"] = null;
+      throw error;
+    });
+    return sceneGatedFeaturePromises[kind];
+  }
 
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can

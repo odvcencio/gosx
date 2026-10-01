@@ -15,9 +15,9 @@
   },
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
-    "revisedGovernanceLineBudget": 2808,
-    "actualGovernanceLinesAtReview": 2808,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Scene3D program readiness and KTX2 preparation add measured source growth; function complexity budgets remain unchanged."
+    "revisedGovernanceLineBudget": 2866,
+    "actualGovernanceLinesAtReview": 2866,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Startup shader readiness integrates the current physical-sky and walking sources; renderer function locations and limits use the merged source measurements."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -304,8 +304,8 @@
       "sources": [
         "../runtime/scene3d/webgl.ts"
       ],
-      "maxLines": 11530,
-      "maxFileLines": 11530
+      "maxLines": 11532,
+      "maxFileLines": 11532
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -332,12 +332,13 @@
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 11530,
+    "../runtime/scene3d/webgl.ts": 11532,
     "../runtime/scene3d/webgpu.ts": 19328,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 206,
     "../runtime/scene3d/hydrate-input.ts": 90,
-    "../runtime/scene3d/mount-webgl.ts": 5606,
-    "../runtime/scene3d/mount.ts": 3873
+    "../runtime/scene3d/mount-webgl.ts": 5486,
+    "../runtime/scene3d/mount.ts": 3878,
+    "../runtime/scene3d/mount-walk.ts": 387
   },
   "functionDefaults": {
     "lines": 200,
@@ -358,7 +359,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10461:5",
+      "name": "applyPointsAuthoredCustomUniforms@10463:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -376,28 +377,28 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7763:3",
-      "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "name": "createScenePBRRenderer@7765:3",
+      "lines": 3405,
+      "cyclomatic": 1013,
+      "cognitive": 1610,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor@4542:3",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
+      "lines": 539,
+      "cyclomatic": 139,
+      "cognitive": 199,
       "maxNesting": 5,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createSceneWaterRendererWebGL@3275:3",
-      "lines": 1296,
-      "cyclomatic": 363,
-      "cognitive": 451,
+      "lines": 1198,
+      "cyclomatic": 322,
+      "cognitive": 394,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -414,14 +415,14 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawFrame@3981:5",
       "lines": 407,
-      "cyclomatic": 112,
-      "cognitive": 140,
+      "cyclomatic": 110,
+      "cognitive": 138,
       "maxNesting": 4,
       "parameters": 1
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10938:5",
+      "name": "drawInstancedMeshes@10940:5",
       "lines": 184,
       "cyclomatic": 53,
       "cognitive": 109,
@@ -430,8 +431,8 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@10026:5",
-      "lines": 283,
+      "name": "drawPBRObjectList@10028:5",
+      "lines": 282,
       "cyclomatic": 82,
       "cognitive": 196,
       "maxNesting": 6,
@@ -439,7 +440,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10637:5",
+      "name": "drawPointsEntries@10639:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -448,7 +449,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9755:5",
+      "name": "prepareRigidMeshBatches@9757:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -459,15 +460,15 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "prepareScenePBRInitialPrograms@6688:3",
       "lines": 126,
-      "cyclomatic": 49,
-      "cognitive": 58,
+      "cyclomatic": 48,
+      "cognitive": 57,
       "maxNesting": 3,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8954:5",
-      "lines": 312,
+      "name": "renderFrame@8956:5",
+      "lines": 307,
       "cyclomatic": 90,
       "cognitive": 131,
       "maxNesting": 4,
@@ -502,7 +503,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8746:5",
+      "name": "uploadCustomUniforms@8748:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -796,6 +797,26 @@
       "cognitive": 88,
       "maxNesting": 5,
       "parameters": 6
+    },
+    {
+      "source": "../runtime/scene3d/mount-walk.ts",
+      "name": "anonymous@28:2",
+      "lines": 360,
+      "cyclomatic": 181,
+      "cognitive": 197,
+      "maxNesting": 3,
+      "parameters": 0,
+      "reason": "The lazy module closure isolates its helpers from other chunks. These aggregate metrics include all nested helpers, each checked separately by the inventory."
+    },
+    {
+      "source": "../runtime/scene3d/mount-walk.ts",
+      "name": "setup@219:3",
+      "lines": 159,
+      "cyclomatic": 105,
+      "cognitive": 110,
+      "maxNesting": 3,
+      "parameters": 6,
+      "reason": "The mount owns keyboard, pointer lock, two simultaneous touch pointers, gamepad connection events, reset and teardown. Metrics include nested handlers, each inventoried separately; physics remains in small independent helpers."
     }
   ],
   "symbols": [
@@ -820,27 +841,27 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3431,
-      "cyclomatic": 1025,
-      "cognitive": 1624,
+      "lines": 3405,
+      "cyclomatic": 1013,
+      "cognitive": 1610,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor",
-      "lines": 550,
-      "cyclomatic": 140,
-      "cognitive": 200,
+      "lines": 539,
+      "cyclomatic": 139,
+      "cognitive": 199,
       "maxNesting": 5,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createSceneWaterRendererWebGL",
-      "lines": 1296,
-      "cyclomatic": 363,
-      "cognitive": 451,
+      "lines": 1198,
+      "cyclomatic": 322,
+      "cognitive": 394,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -857,15 +878,15 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawFrame",
       "lines": 407,
-      "cyclomatic": 112,
-      "cognitive": 140,
+      "cyclomatic": 110,
+      "cognitive": 138,
       "maxNesting": 4,
       "parameters": 1
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "drawPBRObjectList",
-      "lines": 283,
+      "lines": 282,
       "cyclomatic": 82,
       "cognitive": 196,
       "maxNesting": 6,
@@ -942,9 +963,9 @@
         "bootstrap-feature-scene3d-webgl.js"
       ],
       "raw": 845500,
-      "gzip": 236500,
+      "gzip": 237300,
       "brotli": 197200,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room."
+      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Startup readiness with the current sky and walking features measures 881393 raw, 249153 gzip and 206896 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step."
     },
     "base+webgpu": {
       "chunks": [
@@ -1043,6 +1064,14 @@
         "supportsRetainedGeometry",
         "textureVariantContext",
         "type"
+      ]
+    }
+  },
+  "governedModules": {
+    "walk": {
+      "chunk": "bootstrap-feature-scene3d-walk.js",
+      "sources": [
+        "../runtime/scene3d/mount-walk.ts"
       ]
     }
   }

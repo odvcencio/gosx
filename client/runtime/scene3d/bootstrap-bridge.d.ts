@@ -243,3 +243,6 @@ declare var sceneFocusPointerHandler: any;
 declare var webGPUObjectModelMatrix: any;
 
 declare var sceneSkyUniformData: any;
+declare var sceneSkyPhysicalParams: any;
+declare var sceneSkyPhysicalShaderSource: any;
+declare var sceneSkyPhysicalSource: any;

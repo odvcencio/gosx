@@ -469,7 +469,10 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// chunk above on first use instead of requiring a caller to already have
 	// it loaded, the same way __gosx_scene3d_command_bridge's own dispatch
 	// wrappers lazy-load the command chunk.
-	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
+	// __gosx_scene3d_walk_api: the first-person walk controller published by
+	// the lazily loaded bootstrap-feature-scene3d-walk.js chunk
+	// (client/runtime/scene3d/mount-walk.ts); only walk scenes fetch it.
+	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_scene3d_walk_api", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

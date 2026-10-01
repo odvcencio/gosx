@@ -61,6 +61,102 @@
     out[19] = 0; // Backend supplies the available mip count.
     out[23] = sky.mode === "environment" ? 3 : 0; // Horizon fallback until a texture is ready.
     out[24] = linear ? 1 : 0;
+    if (sky.mode === "physical" && out.length >= 44) {
+      out[23] = 4;
+      sceneSkyPhysicalParams(sky, out, 28);
+    }
+    return out;
+  }
+
+  // GLSL and WGSL of the physical sky. Both renderers' sky passes and any
+  // pass that reflects the sky include these; inputs come from
+  // sceneSkyPhysicalParams.
+  var SCENE_SKY_PHYSICAL_GLSL = [
+    "vec3 gosxPhysicalSky(vec3 dir, vec4 betaR, vec4 betaM, vec4 sun, float g) {",
+    "  float zenith = acos(clamp(dir.y, 0., 1.));",
+    "  float inv = 1. / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));",
+    "  vec3 fex = exp(-(betaR.xyz * (8400. * inv) + betaM.xyz * (1250. * inv)));",
+    "  float ct = dot(dir, sun.xyz);",
+    "  float rPhase = 0.0596831 * (1. + ct * ct);",
+    "  float g2 = g * g;",
+    "  float mPhase = 0.0795775 * (1. - g2) / pow(max(1. - 2. * g * ct + g2, 1e-6), 1.5);",
+    "  vec3 scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3(1e-30));",
+    "  vec3 lin = pow(max(betaR.w * scatter * (1. - fex), vec3(0.)), vec3(1.5));",
+    "  lin *= mix(vec3(1.), pow(max(betaR.w * scatter * fex, vec3(0.)), vec3(.5)), clamp(pow(max(1. - sun.y, 0.), 5.), 0., 1.));",
+    "  float disk = sun.w <= 1. ? smoothstep(sun.w, sun.w + 0.00002, ct) : 0.;",
+    "  vec3 l0 = 0.1 * fex + betaR.w * 19000. * fex * disk;",
+    "  vec3 c = (lin + l0) * 0.04 + vec3(0., 0.0003, 0.00075);",
+    "  return pow(max(c, vec3(0.)), vec3(1. / (1.2 + 1.2 * betaM.w)));",
+    "}",
+  ].join("\n");
+
+  var SCENE_SKY_PHYSICAL_WGSL = [
+    "fn gosxPhysicalSky(dir: vec3f, betaR: vec4f, betaM: vec4f, sun: vec4f, g: f32) -> vec3f {",
+    "  let zenith = acos(clamp(dir.y, 0.0, 1.0));",
+    "  let inv = 1.0 / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));",
+    "  let fex = exp(-(betaR.xyz * (8400.0 * inv) + betaM.xyz * (1250.0 * inv)));",
+    "  let ct = dot(dir, sun.xyz);",
+    "  let rPhase = 0.0596831 * (1.0 + ct * ct);",
+    "  let g2 = g * g;",
+    "  let mPhase = 0.0795775 * (1.0 - g2) / pow(max(1.0 - 2.0 * g * ct + g2, 1e-6), 1.5);",
+    "  let scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3f(1e-30));",
+    "  var lin = pow(max(betaR.w * scatter * (1.0 - fex), vec3f(0.0)), vec3f(1.5));",
+    "  lin = lin * mix(vec3f(1.0), pow(max(betaR.w * scatter * fex, vec3f(0.0)), vec3f(0.5)), clamp(pow(max(1.0 - sun.y, 0.0), 5.0), 0.0, 1.0));",
+    "  var disk = 0.0;",
+    "  if (sun.w <= 1.0) { disk = smoothstep(sun.w, sun.w + 0.00002, ct); }",
+    "  let l0 = 0.1 * fex + betaR.w * 19000.0 * fex * disk;",
+    "  let c = (lin + l0) * 0.04 + vec3f(0.0, 0.0003, 0.00075);",
+    "  return pow(max(c, vec3f(0.0)), vec3f(1.0 / (1.2 + 1.2 * betaM.w)));",
+    "}",
+  ].join("\n");
+
+  // sceneSkyPhysicalShaderSource returns the GLSL ("glsl") or WGSL ("wgsl")
+  // gosxPhysicalSky function. A function, not a var, so the scene API object
+  // can export it before this file's assignments run.
+  function sceneSkyPhysicalShaderSource(kind) {
+    return kind === "wgsl" ? SCENE_SKY_PHYSICAL_WGSL : SCENE_SKY_PHYSICAL_GLSL;
+  }
+
+  // sceneSkyPhysicalSource is what renderers call when they build a sky
+  // pipeline. If the shared helper is absent (a renderer evaluated on its own)
+  // it returns a stub that draws black, so gradient and environment skies
+  // still compile.
+  function sceneSkyPhysicalSource(kind) {
+    if (typeof sceneSkyPhysicalShaderSource === "function") return sceneSkyPhysicalShaderSource(kind);
+    return kind === "wgsl"
+      ? "fn gosxPhysicalSky(dir: vec3f, betaR: vec4f, betaM: vec4f, sun: vec4f, g: f32) -> vec3f { return vec3f(0.0); }"
+      : "vec3 gosxPhysicalSky(vec3 dir, vec4 betaR, vec4 betaM, vec4 sun, float g) { return vec3(0.); }";
+  }
+
+  // sceneSkyPhysicalParams writes the view-independent terms of the physical
+  // sky (Preetham 1999; Hoffman and Preetham 2002) as four vec4s at offset:
+  // [betaR.xyz, sunE], [betaM.xyz, sunFade], [sun.xyz, diskCos], [g, 0, 0, 0].
+  // scene/sky_physical.go (newPhysicalSkyParams) computes the same values;
+  // scene3d-sky-physical.test.js pins both to one golden block.
+  function sceneSkyPhysicalParams(sky, out, offset) {
+    var sun = sky.sunDirection || {}, sx = sceneNumber(sun.x, 0), sy = sceneNumber(sun.y, 0), sz = sceneNumber(sun.z, 0);
+    var len = Math.sqrt(sx * sx + sy * sy + sz * sz);
+    if (!(len > 1e-9) || !isFinite(len)) { // Default: 6 degrees above the horizon over -Z.
+      sx = 0; sy = Math.sin(6 * Math.PI / 180); sz = -Math.cos(6 * Math.PI / 180); len = 1;
+    }
+    sx /= len; sy /= len; sz /= len;
+    var pick = function(v, d) { v = sceneNumber(v, 0); return v === 0 ? d : v; };
+    var turbidity = pick(sky.turbidity, 10), rayleigh = pick(sky.rayleigh, 2);
+    var mie = pick(sky.mieCoefficient, 0.005), g = pick(sky.mieDirectionalG, 0.8), disk = pick(sky.sunDiskRadius, 0.53);
+    var zenith = Math.acos(Math.max(-1, Math.min(1, sy)));
+    var sunE = 1000 * Math.max(0, 1 - Math.exp(-((Math.PI / 1.95 - zenith) / 1.5)));
+    var sunFade = 1 - Math.max(0, Math.min(1, 1 - Math.exp(sy)));
+    var rayleighCoefficient = Math.max(0, rayleigh - (1 - sunFade)), c = 0.2 * turbidity * 10e-18;
+    var totalRayleigh = [5.804542996261093e-6, 1.3562911419845635e-5, 3.0265902468824876e-5];
+    var mieConst = [1.8399918514433978e14, 2.7798023919660528e14, 4.0790479543861094e14];
+    for (var i = 0; i < 3; i++) {
+      out[offset + i] = totalRayleigh[i] * rayleighCoefficient;
+      out[offset + 4 + i] = 0.434 * c * mieConst[i] * mie;
+    }
+    out[offset + 3] = sunE; out[offset + 7] = sunFade;
+    out[offset + 8] = sx; out[offset + 9] = sy; out[offset + 10] = sz;
+    out[offset + 11] = disk < 0 ? 2 : Math.cos(disk * Math.PI / 180);
+    out[offset + 12] = g; out[offset + 13] = 0; out[offset + 14] = 0; out[offset + 15] = 0;
     return out;
   }
 

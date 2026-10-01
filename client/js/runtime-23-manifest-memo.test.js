@@ -102,9 +102,8 @@ test("textHasLabel is captured before the text is released", async () => {
     manifest: {
       runtime: { path: "/runtime.wasm" },
       islands: [],
-      // A property whose serialized form contains "label", as a scene label
-      // entry would.
-      engines: [{ component: "Probe", mountId: "x", props: { label: "sun" } }],
+      // A Scene3D label entry: a "labels" array of objects.
+      engines: [{ component: "Probe", mountId: "x", props: { labels: [{ id: "sun", text: "Sun" }] } }],
     },
   });
   const el = env.context.document.getElementById("gosx-manifest");
@@ -117,4 +116,27 @@ test("textHasLabel is captured before the text is released", async () => {
   assert.ok(memo);
   assert.equal(memo.textHasLabel, true, "label flag must come from the pre-release text");
   assert.equal(el.textContent, "");
+});
+
+test("textHasLabel ignores string-valued accessible labels", async () => {
+  for (const [props, want] of [
+    [{ label: "A beach at golden hour" }, false],
+    [{ ariaLabel: "A beach", objects: [{ id: "rock", label: "Sea stack" }] }, false],
+    [{ labels: [] }, false],
+    [{ labels: [{ id: "sign", text: "Blackglass" }] }, true],
+    [{ scene: { nodes: [{ id: "n", label: { text: "IR label" } }] } }, true],
+    [{ scene: { objects: [{ id: "o", kind: "label", text: "Kind label" }] } }, true],
+  ]) {
+    const env = createContext({
+      fetchRoutes: { "/runtime.wasm": { bytes: [0, 97, 115, 109] } },
+      manifest: {
+        runtime: { path: "/runtime.wasm" },
+        islands: [],
+        engines: [{ component: "Probe", mountId: "x", props }],
+      },
+    });
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+    await flushAsyncWork();
+    assert.equal(env.context.__gosx_manifest.textHasLabel, want, JSON.stringify(props));
+  }
 });

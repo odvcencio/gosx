@@ -1709,21 +1709,24 @@
     if (bootstrapMode !== "none" && bootstrapMode !== "lite" && bootstrapMode !== "full") {
       bootstrapMode = "none";
     }
-    return {
+    const runtime = {
       bootstrapMode,
       manifest: Boolean(assets.manifest),
       runtimePath: String(assets.runtimePath || ""),
       wasmExecPath: String(assets.wasmExecPath || ""),
       patchPath: String(assets.patchPath || ""),
       bootstrapPath: String(assets.bootstrapPath || ""),
-      bootstrapFeatureIslandsPath: String(assets.bootstrapFeatureIslandsPath || ""),
-      bootstrapFeatureEnginesPath: String(assets.bootstrapFeatureEnginesPath || ""),
-      bootstrapFeatureHubsPath: String(assets.bootstrapFeatureHubsPath || ""),
       hlsPath: String(assets.hlsPath || ""),
       islands: Math.max(0, gosxNumber(assets.islands, 0)),
       engines: Math.max(0, gosxNumber(assets.engines, 0)),
       hubs: Math.max(0, gosxNumber(assets.hubs, 0)),
     };
+    // Keep every feature chunk path: a dropped one sends the loader in
+    // 26-runtime-tail to an unhashed /gosx/ URL the server may not serve.
+    for (const key of Object.keys(assets)) {
+      if (/^bootstrapFeature/.test(key)) runtime[key] = String(assets[key] || "");
+    }
+    return runtime;
   }
 
   function gosxEnhancementAttrName(kind) {

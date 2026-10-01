@@ -2014,6 +2014,16 @@ func (item ObjectIR) legacyProps() map[string]any {
 		if len(v.UVs) > 0 {
 			vert["uvs"] = append([]float64(nil), v.UVs...)
 		}
+		if len(v.Tangents) > 0 {
+			vert["tangents"] = append([]float64(nil), v.Tangents...)
+		}
+		// Indexed BufferGeometry keeps UNIQUE vertices in the streams above, so
+		// the index list must travel with them. Dropping it made the browser
+		// draw only the first count/3 triangles of the unique-vertex stream
+		// (a two-triangle quad lost one triangle).
+		if len(v.Indices) > 0 {
+			vert["indices"] = append([]uint32(nil), v.Indices...)
+		}
 		record["vertices"] = vert
 	}
 	setNumeric(record, "lineWidth", item.LineWidth)
@@ -3284,6 +3294,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureEnvironmentMap,
 	capability.FeatureSkyEnvironment,
 	capability.FeatureSkyGradient,
+	capability.FeatureSkyPhysical,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3383,6 +3394,9 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	}
 	if skyRaisesGradientFeature(ir.Environment.Sky) {
 		seen[capability.FeatureSkyGradient] = true
+	}
+	if skyRaisesPhysicalFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyPhysical] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

@@ -45,6 +45,10 @@ type DesktopRunOptions struct {
 }
 
 func cmdDesktop() {
+	if len(os.Args) > 2 && os.Args[2] == "verify-signature" {
+		cmdDesktopVerifySignature()
+		return
+	}
 	if len(os.Args) > 2 && os.Args[2] == "package" {
 		cmdDesktopPackage()
 		return

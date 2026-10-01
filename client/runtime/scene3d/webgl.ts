@@ -7686,7 +7686,8 @@
     "#version 300 es",
     "precision highp float;",
     "in vec2 v_uv; out vec4 fragColor;",
-    "uniform vec4 u_sky[7]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
+    "uniform vec4 u_sky[11]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
+    "//GOSX_SKY_PHYSICAL",
     "void main() {",
     "  vec2 ndc = v_uv*2.-1.;",
     "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w);",
@@ -7697,7 +7698,8 @@
     "    vec2 uv = vec2(atan(d.z,d.x)/6.28318530718+.5, asin(clamp(d.y,-1.,1.))/3.14159265359+.5);",
     "    color = textureLod(u_skyImage, uv, u_sky[4].w).rgb;",
     "  } else if (u_sky[5].w == 2.) { color = textureLod(u_skyCube,d,u_sky[4].w).rgb;",
-    "  } else if (u_sky[5].w == 3.) { color = u_sky[4].xyz; }",
+    "  } else if (u_sky[5].w == 3.) { color = u_sky[4].xyz;",
+    "  } else if (u_sky[5].w == 4.) { color = gosxPhysicalSky(ray, u_sky[7], u_sky[8], u_sky[9], u_sky[10].x); }",
     "  color = max(color*u_sky[3].w,vec3(0));",
     "  if (u_sky[6].x == 0.) { color = mix(1.055*pow(color,vec3(1./2.4))-.055,color*12.92,lessThanEqual(color,vec3(.0031308))); }",
     "  fragColor = vec4(color,1);",
@@ -7706,9 +7708,9 @@
 
   // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
   function createSceneSkyWebGLRenderer(gl, textureCache, imagePlaceholder) {
-    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT);
+    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl")));
     if (!program) return null;
-    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(28);
+    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(44);
     var uniforms = null, imageUniform = null, cubeUniform = null;
     scenePBRWhenProgramReady(gl, program.program, function() {
       uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
@@ -7727,7 +7729,7 @@
         var env = opts.environment, sky = env.sky;
         sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
         var image = { texture: imagePlaceholder }, cube = scenePBRPlaceholderCube(gl, textureCache);
-        var state = "gradient";
+        var state = sky.mode === "physical" ? "physical" : "gradient";
         if (sky.mode === "environment") {
           var desc = env.ibl && env.ibl.radiance;
           var record = desc && desc.view === "cube" && desc.uri

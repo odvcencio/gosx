@@ -52,7 +52,18 @@ func TestCommittedPerformanceReceiptsMatchSchemaAndFreshness(t *testing.T) {
 //	GOSX_WRITE_RECEIPT_INPUTS_DIGEST=1 go test ./examples/gosx-docs/app/performance -run TestCommittedPerformanceReceiptInputsMatchDigest
 const receiptInputsDigestFile = "receipts.inputs-digest"
 
+// TestCommittedPerformanceReceiptInputsMatchDigest checks that the committed
+// receipt was measured with the current measurement inputs. It is a release
+// check (decision 0014): the governed release workflow sets
+// GOSX_REQUIRE_FRESH_RECEIPT=1, so a release cannot publish a stale receipt.
+// Pull requests do not run it, because a receipt takes a long, serialized
+// browser capture and every merge that touches an input invalidates the
+// others; per-route bytes, requests and delivery headers are gated on every
+// pull request by the wire gate (make wire-gate).
 func TestCommittedPerformanceReceiptInputsMatchDigest(t *testing.T) {
+	if os.Getenv("GOSX_REQUIRE_FRESH_RECEIPT") != "1" && os.Getenv("GOSX_WRITE_RECEIPT_INPUTS_DIGEST") != "1" {
+		t.Skip("receipt freshness is a release check; set GOSX_REQUIRE_FRESH_RECEIPT=1 to run it")
+	}
 	root := gitOutput(t, "rev-parse", "--show-toplevel")
 	inputs, err := docsPerformanceReceiptInputs(root)
 	if err != nil {

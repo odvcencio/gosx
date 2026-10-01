@@ -3078,10 +3078,20 @@
     const topColor = color("topColor"), horizonColor = color("horizonColor"), bottomColor = color("bottomColor");
     const mode = typeof raw.mode === "string" && raw.mode.trim()
       ? raw.mode.trim().toLowerCase() : (topColor || horizonColor || bottomColor ? "gradient" : "");
-    if (mode !== "gradient" && mode !== "environment") return null;
-    return { mode, topColor, horizonColor, bottomColor,
+    if (mode !== "gradient" && mode !== "environment" && mode !== "physical") return null;
+    const sky = { mode, topColor, horizonColor, bottomColor,
       blur: Math.max(0, Math.min(1, sceneNumber(raw.blur, 0))),
       intensity: Math.max(0, sceneNumber(raw.intensity, 1) || 1) };
+    if (mode !== "physical") return sky;
+    // Physical-sky parameters keep "zero means the default"; see scene/sky.go.
+    const sun = sceneIsPlainObject(raw.sunDirection) ? raw.sunDirection : {};
+    const clamp = (key, lo, hi) => { const v = sceneNumber(raw[key], 0); return v === 0 ? 0 : Math.max(lo, Math.min(hi, v)); };
+    return Object.assign(sky, {
+      sunDirection: { x: sceneNumber(sun.x, 0), y: sceneNumber(sun.y, 0), z: sceneNumber(sun.z, 0) },
+      turbidity: clamp("turbidity", 1, 20), rayleigh: clamp("rayleigh", 0, 8),
+      mieCoefficient: clamp("mieCoefficient", 0, 0.1), mieDirectionalG: clamp("mieDirectionalG", 0, 0.999),
+      sunDiskRadius: Math.min(5, sceneNumber(raw.sunDiskRadius, 0)),
+    });
   }
 
   function normalizeSceneEnvironment(raw, fallback) {
@@ -7119,6 +7129,9 @@
     engineFrame,
     normalizeSceneEnvironment,
     sceneSkyUniformData: typeof sceneSkyUniformData === "function" ? sceneSkyUniformData : undefined,
+    sceneSkyPhysicalParams: typeof sceneSkyPhysicalParams === "function" ? sceneSkyPhysicalParams : undefined,
+    sceneSkyPhysicalShaderSource: typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource : undefined,
+    sceneSkyPhysicalSource: typeof sceneSkyPhysicalSource === "function" ? sceneSkyPhysicalSource : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
     normalizeSceneLabel,

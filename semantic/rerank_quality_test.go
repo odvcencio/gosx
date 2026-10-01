@@ -154,6 +154,9 @@ func TestBoundedCandidateSetMatchesWholeStoreRerank(t *testing.T) {
 	)
 	encoder := embed.NewProviderEncoder(&hashProvider{dim: 128})
 	index := NewContentIndex(encoder, ContentOptions{})
+	// Fix the quantizer seed as well as the embeddings so candidate recall is
+	// reproducible. Match TestQuantizedRecallAgainstExactRanking's seed.
+	index.index = vecdb.NewWithSeed(encoder.Dim(), 3, 42)
 	for i := 0; i < docs; i++ {
 		index.Add(fmt.Sprintf("page-%d", i), fmt.Sprintf("content about topic %d with details", i), ContentMeta{})
 	}

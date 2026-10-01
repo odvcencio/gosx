@@ -58,7 +58,7 @@ test("WebGPU draws a sky-only scene, keeps depth, and caches format-specific pip
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-sky"), "none");
   assert.ok(h.fake.state.renderPasses.slice(start).some(p => p.descriptor.colorAttachments?.[0]?.loadOp === "clear"));
   h.renderer.dispose();
-  assert.ok(h.fake.state.buffers.filter(b => b.size === 112).every(b => b.destroyed));
+  assert.ok(h.fake.state.buffers.filter(b => b.size === 176).every(b => b.destroyed));
 });
 
 test("WebGL draws sky-only frames and restores the flat background after removal", () => {

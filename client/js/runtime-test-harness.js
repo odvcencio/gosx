@@ -928,6 +928,21 @@ class FakeElement {
     this.setAttribute("id", value);
   }
 
+  get parentElement() {
+    return this.parentNode && this.parentNode.nodeType === ELEMENT_NODE ? this.parentNode : null;
+  }
+
+  closest(selector) {
+    for (let element = this; element; element = element.parentElement) {
+      if (fakeElementMatchesSelector(element, selector)) return element;
+    }
+    return null;
+  }
+
+  remove() {
+    if (this.parentNode) this.parentNode.removeChild(this);
+  }
+
   get firstChild() {
     return this.childNodes[0] || null;
   }
