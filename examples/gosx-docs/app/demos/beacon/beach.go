@@ -44,14 +44,14 @@ type blackglassBeachView struct {
 func blackglassBeachViewFor(raw string) blackglassBeachView {
 	switch raw {
 	case "glass":
-		return blackglassBeachView{"glass", "The glass", scene.Vec3(-3.4, 1.65, 7.8), scene.Vec3(-6.2, 1.7, 2.6)}
+		return blackglassBeachView{"glass", "The glass", scene.Vec3(-4.8, 1.65, 7.8), scene.Vec3(beachgen.MonolithX, 1.7, beachgen.MonolithZ)}
 	case "ship":
 		// On the jetty deck beside the clipper's helm: press E to take it.
 		return blackglassBeachView{"ship", "At the helm", scene.Vec3(21, 4.2, -33.5), scene.Vec3(17, 5, -60)}
 	case "cliff":
 		return blackglassBeachView{"cliff", "From the cliff", scene.Vec3(-27, 15, 18), scene.Vec3(-1, 1, -29)}
 	default:
-		return blackglassBeachView{"shore", "The shore", scene.Vec3(-3.8, 1.7, 11), scene.Vec3(-7.8, 1.95, -30)}
+		return blackglassBeachView{"shore", "The shore", scene.Vec3(-3.8, 1.7, 11), scene.Vec3(-15, 1.95, -30)}
 	}
 }
 
@@ -128,7 +128,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	if period.ID == beachgen.PeriodBlue {
 		haze = nil
 	}
-	return scene.Props{
+	props := scene.Props{
 		Width: 1280, Height: 720,
 		Label:      "Blackglass Beach — " + view.Name + " at " + period.Name,
 		AriaLabel:  "A black sand beach at " + period.Name + ": footprints lead to an obsidian monolith, tide pools glint on the eastern shore, wreck ribs rise in the western dunes, a hollow catches the low sun, and a lighthouse sweeps the eastern headland. A three-masted clipper waits at the jetty.",
@@ -148,7 +148,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			Ocean: &scene.Ocean{
 				WindDirection: 8, WaveHeight: 0.9, WaveLength: 17, Choppiness: 0.7, Speed: 1,
 				DeepColor: "#021019", ShallowColor: "#1b5d63", ScatterColor: "#1f8f7c", FoamColor: "#eef3f2",
-				Clarity: 3.5, Roughness: 0.05, Foam: 0.7, Surf: 0.6, Extent: 4000,
+				Clarity: 3.5, Roughness: 0.05, Foam: 1, Surf: 0.22, Extent: 4000,
 				Reflections: &scene.OceanReflections{Mode: "ssr+planar", Resolution: 0.5, Strength: 1},
 				Bathymetry: &scene.OceanBathymetry{
 					Src:  blackglassBeachModelRoot + "beach-v2-height.png",
@@ -180,9 +180,10 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			blackglassBeachGulls(),
 			scene.Model{ID: "monolith", Static: scene.Bool(true), Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
 				Position: scene.Vec3(beachgen.MonolithX, beachgen.MonolithY, beachgen.MonolithZ), Rotation: scene.Euler{Y: beachgen.MonolithYaw}, CastShadow: true, ReceiveShadow: true,
-				Material: scene.StandardMaterial{Color: "#567b7d", Roughness: 0.025, Clearcoat: 0.75, Transmission: 0.94, IOR: scene.Float(1.52),
-					Thickness: 2.4, AttenuationDistance: 3, AttenuationColor: &[3]float64{.32, .46, .51},
-					RimColor: &[3]float64{.32, .62, .78}, RimPower: 3, RimStrength: .18}},
+				Material: scene.StandardMaterial{Color: "#08090b", Roughness: 0.055, Clearcoat: 0.4, IOR: scene.Float(1.52),
+					Thickness: 1.1, AttenuationDistance: .7, AttenuationColor: &[3]float64{.12, .13, .14}}},
 		}, blackglassBeachBakedMoments(period.ID)...)...),
 	}
+	blackglassBeachAddSwash(&props)
+	return props
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 )
 
 type embeddedImage struct {
@@ -35,6 +36,10 @@ func (b *binaryBuilder) addView(data []byte, target int) int {
 // writeGLB packs a quantized mesh and optional embedded PNGs into a minimal
 // glTF 2.0 binary container. Its output is stable for identical inputs.
 func writeGLB(mesh *geometry, material map[string]any, images []embeddedImage) ([]byte, error) {
+	return writeGLBWithMaterials(mesh, []map[string]any{material}, images)
+}
+
+func writeGLBWithMaterials(mesh *geometry, materials []map[string]any, images []embeddedImage) ([]byte, error) {
 	if mesh == nil || len(mesh.positions)%3 != 0 || len(mesh.normals) != len(mesh.positions) || len(mesh.uvs)*3 != len(mesh.positions)*2 {
 		return nil, fmt.Errorf("invalid mesh attribute lengths")
 	}
@@ -63,22 +68,33 @@ func writeGLB(mesh *geometry, material map[string]any, images []embeddedImage) (
 	positionView := bin.addView(positionBytes, 34962)
 	normalView := bin.addView(encodeNormals(mesh.normals), 34962)
 	uvView := bin.addView(encodeUVs(mesh.uvs), 34962)
-	indexView := bin.addView(encodeIndices(mesh.indices), 34963)
 
 	accessors := []map[string]any{
 		{"bufferView": positionView, "componentType": 5122, "normalized": true, "count": vertexCount, "type": "VEC3"},
 		{"bufferView": normalView, "componentType": 5120, "normalized": true, "count": vertexCount, "type": "VEC3"},
 		{"bufferView": uvView, "componentType": 5121, "normalized": true, "count": vertexCount, "type": "VEC2"},
-		{"bufferView": indexView, "componentType": 5123, "count": len(mesh.indices), "type": "SCALAR"},
 	}
-	primitive := map[string]any{"attributes": map[string]int{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 0, "mode": 4}
+	groups := mesh.materialIndices
+	if len(groups) == 0 {
+		groups = [][]uint16{mesh.indices}
+	}
+	if len(groups) != len(materials) {
+		return nil, fmt.Errorf("mesh material groups disagree: %d / %d", len(groups), len(materials))
+	}
+	primitives := make([]any, 0, len(groups))
+	for index, indices := range groups {
+		view := bin.addView(encodeIndices(indices), 34963)
+		accessor := len(accessors)
+		accessors = append(accessors, map[string]any{"bufferView": view, "componentType": 5123, "count": len(indices), "type": "SCALAR"})
+		primitives = append(primitives, map[string]any{"attributes": map[string]int{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": accessor, "material": index, "mode": 4})
+	}
 	root := map[string]any{
 		"asset":              map[string]any{"version": "2.0", "generator": "beachgen"},
 		"scene":              0,
 		"scenes":             []any{map[string]any{"nodes": []int{0}}},
 		"nodes":              []any{map[string]any{"mesh": 0, "scale": []float64{positionScale, positionScale, positionScale}, "translation": positionTranslation}},
-		"meshes":             []any{map[string]any{"primitives": []any{primitive}}},
-		"materials":          []any{material},
+		"meshes":             []any{map[string]any{"primitives": primitives}},
+		"materials":          materials,
 		"accessors":          accessors,
 		"bufferViews":        bin.views,
 		"buffers":            []any{map[string]any{"byteLength": len(bin.data)}},
@@ -91,6 +107,20 @@ func writeGLB(mesh *geometry, material map[string]any, images []embeddedImage) (
 		root["samplers"] = []any{map[string]any{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}} // trilinear: tiled maps must not alias at distance
 		root["extensionsUsed"] = []string{"KHR_mesh_quantization", "KHR_texture_transform"}
 	}
+	extensionNames := make(map[string]bool)
+	for _, material := range materials {
+		if extensions, ok := material["extensions"].(map[string]any); ok {
+			for name := range extensions {
+				extensionNames[name] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(extensionNames))
+	for name := range extensionNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	root["extensionsUsed"] = append(root["extensionsUsed"].([]string), names...)
 	jsonData, err := json.Marshal(root)
 	if err != nil {
 		return nil, err

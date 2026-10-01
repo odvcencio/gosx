@@ -1,0 +1,22 @@
+material BeaconMist {
+    param strength : float = 0.0
+    param origin : vec3
+    varying beamOffset : vec3
+    varying beamAxis : vec3
+    vertex(geo) -> vec4 {
+        beamOffset = geo.position - origin
+        beamAxis = normalize(cross(vec3f(0.0, 1.0, 0.0), geo.normal))
+        return mvp * vec4f(geo.position, 1.0)
+    }
+    surface(geo) -> color {
+        let axis = normalize(geo.beamAxis)
+        let along = dot(geo.beamOffset, axis)
+        let longitudinal = abs(along) / 70.0
+        let radius = mix(0.03, 4.0, longitudinal)
+        let transverse = length(geo.beamOffset - axis * along) / radius
+        let radial = pow(max(0.0, 1.0 - transverse * transverse), 2.0)
+        let distanceFade = exp(-2.8 * longitudinal) * (1.0 - smoothstep(0.65, 1.0, longitudinal))
+        let density = strength * radial * distanceFade
+        return vec4f(vec3f(1.0, 0.82, 0.55) * density, 1.0)
+    }
+}

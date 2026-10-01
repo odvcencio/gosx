@@ -14,10 +14,18 @@ func TestBeachHeroFramesGlassAndGlintPath(t *testing.T) {
 	horizontal := math.Tan(42*math.Pi/360) * (1440.0 / 900)
 	project := func(angle float64) float64 { return .5 + math.Tan(angle-yaw)/(2*horizontal) }
 	glass := project(math.Atan2(beachgen.MonolithX-view.Position.X, view.Position.Z-beachgen.MonolithZ))
+	stack := project(math.Atan2(-16-view.Position.X, view.Position.Z+32))
 	sun := beachgen.PeriodSky(beachgen.PeriodGolden).SunDirection
 	glint := project(math.Atan2(sun.X, -sun.Z))
-	if glass < .30 || glass > .38 || glint < .4 || glint > .65 {
+	if glass < .30 || glass > .38 || glint < .4 || glint > .78 {
 		t.Fatalf("hero glass %g, glint %g", glass, glint)
+	}
+	// Compare silhouette extents, not only centres: the thick glass must
+	// leave the iconic sea stack visible in the opening shot.
+	glassHalf := .85 / ((view.Position.Z - beachgen.MonolithZ) * 2 * horizontal)
+	stackHalf := 5.5 / ((view.Position.Z + 32) * 2 * horizontal)
+	if stack < .46 || stack > .54 || glass+glassHalf >= stack-stackHalf {
+		t.Fatalf("hero silhouettes overlap: glass %g, stack %g", glass, stack)
 	}
 	eye := view.Position.Y - beachgen.TerrainHeight(view.Position.X, view.Position.Z, beachgen.Seed)
 	if eye < .8 || eye > 1.3 {
@@ -44,8 +52,8 @@ func TestBeachContentPreservesWetnessAndEnablesGlass(t *testing.T) {
 				continue
 			}
 			material := m.Material.(scene.StandardMaterial)
-			if material.Transmission < .8 || material.Thickness < 1 || material.AttenuationDistance <= 0 || material.IOR == nil || *material.IOR <= 1 {
-				t.Fatal("monolith must request real glass rendering")
+			if material.Transmission != 0 || material.Thickness < 1 || material.AttenuationDistance <= 0 || material.IOR == nil || *material.IOR <= 1 {
+				t.Fatal("obsidian must retain a dark body and a refracted edge")
 			}
 		}
 	}

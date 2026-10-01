@@ -10,7 +10,7 @@ import (
 // A broken, surface-level glint shares the beam's pivot and sweep, keeping
 // the light present on those tiers without another reflection capture.
 func blackglassBeachBeamReflection(opacity float64) scene.Mesh {
-	g := scene.BufferGeometry{Immutable: true, Revision: 1}
+	g := scene.BufferGeometry{Revision: 1}
 	for _, dir := range []float64{1, -1} {
 		for i := 0; i < 12; i++ {
 			x := 5 + float64(i)*4.8
@@ -22,8 +22,8 @@ func blackglassBeachBeamReflection(opacity float64) scene.Mesh {
 				momentRound((x+2.4)/70), 1, momentRound(x/70), 1)
 		}
 	}
-	return scene.Mesh{ID: "beacon-water-glint", Geometry: g,
-		Material: scene.FlatMaterial{Color: "#ffe6b8", Texture: blackglassBeachModelRoot + "beacon-beam.png",
-			Emissive: scene.Float(1.5), Opacity: scene.Float(opacity * 1.4), BlendMode: scene.BlendAdditive, Wireframe: scene.Bool(false)},
+	return scene.Mesh{ID: "beacon-water-glint", Geometry: blackglassShaderGeometry(g),
+		Material: blackglassBeamMaterial(opacity*.15, scene.Vec3(beaconX, .07, beaconZ)),
+		Visible:  scene.Bool(opacity > 0),
 		Position: scene.Vec3(beaconX, .07, beaconZ), Spin: scene.Euler{Y: .45}, DepthWrite: scene.Bool(false)}
 }

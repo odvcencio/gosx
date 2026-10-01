@@ -1,0 +1,26 @@
+material ShoreSwash {
+    param time : float = 0.0
+    param brightness : float = 1.0
+    param foamTexture : texture2d
+    context {
+        modelMatrix : mat4
+        sunColor : vec3
+        ambient : vec3
+    }
+    varying foamUV : vec2
+    vertex(geo) -> vec4 {
+        let phase = fract(time / 9.0)
+        let runup = smoothstep(0.0, 0.28, phase) * (1.0 - smoothstep(0.28, 1.0, phase)) * 1.8
+        let world = (modelMatrix * vec4f(geo.position, 1.0)).xyz + vec3f(0.0, runup * 0.032, runup)
+        foamUV = geo.uv
+        return mvp * vec4f(world, 1.0)
+    }
+    surface(geo) -> color {
+        let foam = sample(foamTexture, geo.foamUV)
+        if (foam.a < 0.025) {
+            discard
+        }
+        let light = vec3f(0.35, 0.35, 0.35) + sunColor * 0.05 + ambient * 0.3
+        return vec4f(foam.rgb * light * brightness, min(1.0, foam.a * 1.6))
+    }
+}

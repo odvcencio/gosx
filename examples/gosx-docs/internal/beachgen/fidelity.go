@@ -23,15 +23,32 @@ func cliffLedges(t float64) float64 {
 }
 
 func shorelineHeight(z float64) float64 {
-	return lerp(.12*z, .045*z, smoothstep(-4, 4, z))
+	return lerp(.12*z, .032*z, smoothstep(-7, 2, z))
+}
+
+// Warped column spacing and independent depths avoid a vertical curtain.
+func cliffColumn(n noiseField, z float64) float64 {
+	phase := z*2.1 + 2*n.value(z*.28, 19)
+	depth := .25 + .45*(.5+.5*n.value(z*.9, 71))
+	return depth*math.Cos(phase) + .45*n.fbm(z*.5, 12, 3)
+}
+
+func stackColumns(n noiseField, angle, y float64) float64 {
+	x, z := math.Cos(angle), math.Sin(angle)
+	warp := 1.8 * n.value(x*2.1+41, z*2.1-9)
+	phase := angle*11 + warp
+	depth := .035 + .07*(.5+.5*n.value(x*3+11, z*3-7))
+	fracture := math.Pow(.5+.5*math.Cos(y*3.2+.8*n.value(x*2, z*2)), 16)
+	ledge := .03 * math.Sin(y*1.1+n.value(x*1.7, z*1.7))
+	return depth*math.Cos(phase) - .05*math.Pow(.5+.5*math.Cos(phase+math.Pi), 12) - .055*fracture + ledge
 }
 
 // Fractures, salt and sparse lichen are baked, including on inexpensive tiers.
 func basaltTint(n noiseField, x, y, z, top float64) [3]float64 {
 	mottle := n.fbm(x*1.5+17, z*.9+y*.7, 3)
 	fracture := math.Pow(1-math.Abs(n.value(x*3.3+y*.08, z*3.1)), 18)
-	strata := math.Pow(.5+.5*math.Sin(y*9+n.value(x*.4, z*.4)), 8)
-	shade := .88 + .22*mottle - .25*fracture - .12*strata
+	strata := math.Pow(.5+.5*math.Sin(y*4+.8*n.value(x*.4, z*.4)), 14)
+	shade := .88 + .3*mottle - .25*fracture - .24*strata
 	wet := 1 - smoothstep(.15, 1.6, y)
 	shade *= 1 - .45*wet
 	salt := smoothstep(top*.72, top*.97, y) * smoothstep(-.1, .45, n.value(x*2, z*2))

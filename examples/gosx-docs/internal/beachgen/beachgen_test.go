@@ -23,7 +23,7 @@ func TestGenerateAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb", "clipper-high.glb", "clipper-mid.glb", "clipper-low.glb", "jetty.glb", "wake-foam.png", "dune-grass.glb", "tideline-wrack.glb", "rock-rough.jpg", "beacon-beam.png"}
+	want := []string{"beach-v2.glb", "beach-v2-albedo.jpg", "beach-v2-mr.png", "beach-v2-height.png", "sand-normal.jpg", "rock-normal.jpg", "stacks-v2.glb", "monolith-v2.glb", "clipper-high.glb", "clipper-mid.glb", "clipper-low.glb", "jetty.glb", "wake-foam.png", "dune-grass.glb", "tideline-wrack.glb", "rock-rough.jpg", "beacon-beam.png", "shore-foam.png"}
 	if len(first) != len(want) {
 		t.Fatalf("got %d output files, want %d", len(first), len(want))
 	}
@@ -67,7 +67,7 @@ func TestGenerateAssets(t *testing.T) {
 	if beachLow[1] < -5.1 || beachLow[1] > -4.5 || beachHigh[1] < 20.5 || beachHigh[1] > 21.5 {
 		t.Errorf("terrain vertical bounds are [%.3f, %.3f], expected the sea basin and ridged headlands", beachLow[1], beachHigh[1])
 	}
-	stackLow, stackHigh := checkBounds(t, first["stacks-v2.glb"], stacks, [3]float64{-27, -6.1, -52}, [3]float64{34, 18.1, 2.5})
+	stackLow, stackHigh := checkBounds(t, first["stacks-v2.glb"], stacks, [3]float64{-27, -6.1, -52}, [3]float64{34, 18.1, 3.1})
 	checkNear(t, "stack bottoms", stackLow[1], -6, .01)
 	if stackHigh[1] < 17.9 || stackHigh[1] > 18.1 {
 		t.Errorf("stack tops reach %.3f m; want the main stack near 18 m", stackHigh[1])
@@ -111,7 +111,7 @@ func TestBouldersAvoidMonolith(t *testing.T) {
 		t.Fatalf("got %d boulders, want 14", len(boulders))
 	}
 	for i, boulder := range boulders {
-		if distance := math.Hypot(boulder.x+6.2, boulder.z-2.6); distance < 3 {
+		if distance := math.Hypot(boulder.x-MonolithX, boulder.z-MonolithZ); distance < 3 {
 			t.Errorf("boulder %d is %.3fm from the monolith, want at least 3m", i, distance)
 		}
 		for j := 0; j < i; j++ {
@@ -135,8 +135,8 @@ func TestBathymetryIncludesStackA(t *testing.T) {
 	x := int(math.Round((-16-BathymetryMinX)/(BathymetryMaxX-BathymetryMinX)*BathymetrySize - .5))
 	z := int(math.Round((-32-BathymetryMinZ)/(BathymetryMaxZ-BathymetryMinZ)*BathymetrySize - .5))
 	gray := color.GrayModel.Convert(img.At(x, z)).(color.Gray)
-	if BathymetryDecode(float64(gray.Y)/255) < 0 {
-		t.Errorf("bathymetry at stack A center encodes %.2fm, want at or above sea level", BathymetryDecode(float64(gray.Y)/255))
+	if height := BathymetryDecode(float64(gray.Y) / 255); height < -.12 || height >= 0 {
+		t.Errorf("bathymetry at stack A center encodes %.2fm; its shoal must remain just below sea level", height)
 	}
 }
 
@@ -151,10 +151,15 @@ func mustParse(t *testing.T, data []byte) *gltfedit.Document {
 
 func positionCount(t *testing.T, doc *gltfedit.Document) int {
 	t.Helper()
-	if len(doc.Meshes) != 1 || len(doc.Meshes[0].Primitives) != 1 {
-		t.Fatalf("expected one mesh with one primitive")
+	if len(doc.Meshes) != 1 || len(doc.Meshes[0].Primitives) == 0 {
+		t.Fatalf("expected one mesh with retained primitives")
 	}
 	accessor := doc.Meshes[0].Primitives[0].Attributes["POSITION"]
+	for _, primitive := range doc.Meshes[0].Primitives {
+		if primitive.Attributes["POSITION"] != accessor {
+			t.Fatal("material surfaces must share the vertex budget")
+		}
+	}
 	if accessor < 0 || accessor >= len(doc.Accessors) {
 		t.Fatalf("invalid POSITION accessor %d", accessor)
 	}

@@ -17,10 +17,11 @@ const generatorSeed int64 = 0xB1AC6A55
 
 type vec3 struct{ x, y, z float64 }
 type geometry struct {
-	positions []float64
-	normals   []float64
-	uvs       []float64
-	indices   []uint16
+	positions       []float64
+	normals         []float64
+	uvs             []float64
+	indices         []uint16
+	materialIndices [][]uint16
 	// seams pairs vertices duplicated only to carry a UV seam; they share
 	// one averaged normal so lighting stays continuous across the seam.
 	seams [][2]int
@@ -71,7 +72,20 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	monolithGLB, err := writeGLB(monolith, solidMaterial([4]float64{srgbLinear(12.0 / 255), srgbLinear(13.0 / 255), srgbLinear(16.0 / 255), 1}, .05, 0), nil)
+	monolithMat := solidMaterial([4]float64{srgbLinear(8.0 / 255), srgbLinear(9.0 / 255), srgbLinear(11.0 / 255), 1}, .055, 0)
+	monolithMat["extensions"] = map[string]any{
+		"KHR_materials_volume":       map[string]any{"thicknessFactor": 1.1, "attenuationDistance": .7, "attenuationColor": []float64{.12, .13, .14}},
+		"KHR_materials_transmission": map[string]any{"transmissionFactor": 0},
+		"KHR_materials_ior":          map[string]any{"ior": 1.52},
+		"KHR_materials_clearcoat":    map[string]any{"clearcoatFactor": .85},
+	}
+	edgeMat := solidMaterial([4]float64{srgbLinear(8.0 / 255), srgbLinear(9.0 / 255), srgbLinear(11.0 / 255), 1}, .055, 0)
+	edgeMat["extensions"] = map[string]any{
+		"KHR_materials_transmission": map[string]any{"transmissionFactor": .22},
+		"KHR_materials_ior":          map[string]any{"ior": 1.52},
+		"KHR_materials_volume":       map[string]any{"thicknessFactor": .12, "attenuationDistance": .7, "attenuationColor": []float64{.12, .13, .14}},
+	}
+	monolithGLB, err := writeGLBWithMaterials(monolith, []map[string]any{monolithMat, edgeMat}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("monolith GLB: %w", err)
 	}
@@ -95,6 +109,11 @@ func Generate(seed int64) (map[string][]byte, error) {
 	} {
 		files[name] = data
 	}
+	foam, err := swashTexture(noise)
+	if err != nil {
+		return nil, err
+	}
+	files["shore-foam.png"] = foam
 	ship, err := ShipAssets()
 	if err != nil {
 		return nil, err
@@ -145,7 +164,7 @@ func terrainHeight(n noiseField, x, z float64) float64 {
 	h += sand
 	// The same displaced ledges drive the mesh, walking surface and shore map.
 	zGate := smoothstep(-40, -30, z)
-	column := .45*math.Cos(z*2.8) + .7*n.fbm(z*.7, 12, 3)
+	column := cliffColumn(n, z)
 	left := cliffLedges(1-smoothstep(-34, -28, x+column)) * zGate
 	right := cliffLedges(smoothstep(34, 40, x-column)) * zGate
 	if left > 0 {
@@ -235,9 +254,9 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 					foam = (front + back) * breakup * .72
 				}
 				// Wet sand is darker; its roughness band makes it mirror the sky.
-				wet := smoothstep(.8, .12, h)
+				wet := 1 - smoothstep(.08, .65, h)
 				if z < 12 {
-					factor *= 1 - .55*wet
+					factor *= 1 - .65*wet
 				}
 			}
 			img.SetNRGBA(px, py, color.NRGBA{
@@ -290,7 +309,7 @@ func makeMetalRoughness(n noiseField) ([]byte, error) {
 			} else if h < -.2 {
 				roughness = .25
 			} else if z < 12 {
-				roughness = .12 + .72*smoothstep(.02, .65, h)
+				roughness = .09 + .75*smoothstep(.1, .65, h)
 			}
 			img.SetColorIndex(px, py, uint8(math.Round(clamp(roughness, 0, 1)*63)))
 		}
@@ -454,7 +473,7 @@ func boulderSpecs(seed int64) []boulderSpec {
 	for attempt := 0; len(out) < 14 && attempt < 10000; attempt++ {
 		x := -18 + rng.float64()*36
 		z := -7 + rng.float64()*9.5
-		if math.Hypot(x+6.2, z-2.6) < 3 {
+		if math.Hypot(x-MonolithX, z-MonolithZ) < 3 {
 			continue
 		}
 		spaced := true
@@ -555,7 +574,7 @@ func addStack(g *geometry, stack stackSpec) {
 			ridges := ridgeFbm3(noise, px/(r*.45)+5, worldY/(r*.45), pz/(r*.45)+9, 4)
 			cracks := fbm3(noise, px/(r*.22)+11, worldY*.07, pz/(r*.22)+7, 3)
 			strata := .018 * math.Sin(worldY*3.8+noiseValue3(noise, px*.1, worldY*.05, pz*.1))
-			columns := .075*math.Cos(angle*12+.2*math.Sin(worldY*.35)) - .06*math.Pow(math.Abs(math.Sin(angle*6+.1)), 18)
+			columns := stackColumns(noise, angle, worldY)
 			taper := 1 - .12*(worldY-baseY)/(topY-baseY)
 			// Bulges and waists that change with height break the bottle outline.
 			girth := noiseValue3(noise, stack.x*.31, worldY/(r*.9), stack.z*.31) + .5*noiseValue3(noise, stack.x*.7, worldY/(r*.4), stack.z*.7)
@@ -652,15 +671,15 @@ func averageVertexNormals(g *geometry) {
 // monolithGeometry builds a solid, bevelled obelisk with broad optical faces.
 // The crown is cut on a slant instead of tapering the whole slab to a blade.
 func monolithGeometry() (*geometry, error) {
-	g := &geometry{}
+	g := &geometry{materialIndices: make([][]uint16, 2)}
 	rings := make([][]vec3, 4)
 	for r, y := range []float64{0, .45, 2.85, 3.36} {
-		x := []float64{.92, .98, .86, .54}[r]
-		z := []float64{.42, .5, .46, .3}[r]
-		for _, p := range chamferedRect(x, z, .16) {
+		x := []float64{.58, .62, .54, .31}[r]
+		z := []float64{.4, .44, .4, .25}[r]
+		for _, p := range chamferedRect(x, z, .1) {
 			h := y
 			if r == 3 {
-				h += p[0] / .54 * .06
+				h += p[0] / .31 * .06
 			}
 			rings[r] = append(rings[r], vec3{p[0] + .035*float64(r), h, p[1]})
 		}
@@ -669,7 +688,10 @@ func monolithGeometry() (*geometry, error) {
 		for k := 0; k < 8; k++ {
 			a, b := rings[r][k], rings[r][(k+1)%8]
 			c, d := rings[r+1][(k+1)%8], rings[r+1][k]
+			first := len(g.indices)
 			addQuad(g, a, b, c, d, vec3{a.x + b.x, 0, a.z + b.z})
+			material := k % 2 // thin bevels transmit; thick faces absorb most light.
+			g.materialIndices[material] = append(g.materialIndices[material], g.indices[first:]...)
 		}
 	}
 	for _, r := range []int{0, 3} {
@@ -683,6 +705,7 @@ func monolithGeometry() (*geometry, error) {
 				b, c = c, b
 			}
 			addTriangle(g, a, b, c, normalize(cross(sub(b, a), sub(c, a))))
+			g.materialIndices[0] = append(g.materialIndices[0], g.indices[len(g.indices)-3:]...)
 		}
 	}
 	return g, nil
@@ -749,16 +772,16 @@ func makeBathymetry(n noiseField) ([]byte, error) {
 			height := terrainHeight(n, wx, z)
 			for _, stack := range stacks {
 				centerX := stack.x + 6*stack.lean
-				// A smooth mound, not a disk: the shallow-water and foam bands
-				// then ring the rock instead of drawing texel squares.
+				// Keep the seabed submerged around the notched rock base. A
+				// dry mound extending past that silhouette leaves a clipped ring.
 				d := math.Hypot(wx-centerX, z-stack.z)
-				rise := 1 - smoothstep(stack.radius*.92, stack.radius*1.08, d)
-				height = math.Max(height, lerp(height, stack.height, rise))
+				rise := 1 - smoothstep(stack.radius*.6, stack.radius*.96, d)
+				height = math.Max(height, lerp(height, -.08, rise))
 			}
 			for _, boulder := range boulders {
 				d := math.Hypot(wx-boulder.x, z-boulder.z)
-				rise := 1 - smoothstep(boulder.radius*.8, boulder.radius*1.15, d)
-				top := terrainHeight(n, boulder.x, boulder.z) + boulder.radius
+				rise := 1 - smoothstep(boulder.radius*.6, boulder.radius, d)
+				top := math.Min(-.04, terrainHeight(n, boulder.x, boulder.z)+boulder.radius)
 				height = math.Max(height, lerp(height, top, rise))
 			}
 			v := BathymetryEncode(height)

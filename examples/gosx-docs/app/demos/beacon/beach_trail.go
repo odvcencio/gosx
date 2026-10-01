@@ -16,7 +16,7 @@ func blackglassBeachTrail() []scene.Node {
 		Geometry: scene.CylinderGeometry{RadiusTop: 1, RadiusBottom: 1, Height: 1, Segments: 8}, Material: material, ReceiveShadow: true}
 	heel := sole
 	heel.ID = "glass-trail-heels"
-	dx, dz := -4.95, -15.8
+	dx, dz := beachgen.MonolithX+1.3-.15, beachgen.MonolithZ+1.6-20
 	length := math.Hypot(dx, dz)
 	fx, fz := dx/length, dz/length
 	yaw := math.Atan2(-fx, -fz)

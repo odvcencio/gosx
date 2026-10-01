@@ -8,7 +8,7 @@ import (
 )
 
 // The beacon: a lighthouse on the eastern headland whose beam sweeps the haze.
-// Primitive meshes share a tiny procedural beam falloff texture. The beam
+// A small analytic scattering shader gives its beam soft edges. The beam
 // and its water glint sweep together, strongest at blue hour.
 const (
 	beaconX, beaconZ = 45.0, -14.0
@@ -26,9 +26,9 @@ func blackglassBeachMoments(periodID string) []scene.Node {
 func blackglassBeachBeacon(periodID string) []scene.Node {
 	ground := beachgen.TerrainHeight(beaconX, beaconZ, beachgen.Seed)
 	lantern := ground + beaconTower + 0.8
-	glow, beamCore, beamHalo := 1.5, 0.0, 0.0
+	glow, beamCore := 1.5, 0.0
 	if periodID == beachgen.PeriodBlue {
-		glow, beamCore, beamHalo = 9, 0.08, 0.025
+		glow, beamCore = 9, 0.4
 	}
 	white := scene.StandardMaterial{Color: "#e9e4dc", Roughness: 0.7}
 	red := scene.StandardMaterial{Color: "#8e2a22", Roughness: 0.6}
@@ -37,8 +37,8 @@ func blackglassBeachBeacon(periodID string) []scene.Node {
 	light := scene.StandardMaterial{Color: "#fff1d6", EmissiveColor: &warm, Emissive: glow, Roughness: 0.2}
 	beam := func(id string, length, radius, opacity float64) scene.Mesh {
 		return scene.Mesh{ID: id, Geometry: blackglassBeamGeometry(length, radius),
-			Material: scene.FlatMaterial{Color: "#ffe9c4", Texture: blackglassBeachModelRoot + "beacon-beam.png", Emissive: scene.Float(.6), Opacity: scene.Float(opacity),
-				BlendMode: scene.BlendAdditive, Wireframe: scene.Bool(false)},
+			Material: blackglassBeamMaterial(opacity*.5, scene.Vec3(beaconX, lantern, beaconZ)),
+			Visible:  scene.Bool(opacity > 0),
 			Position: scene.Vec3(beaconX, lantern, beaconZ), Spin: scene.Euler{Y: 0.45},
 			DepthWrite: scene.Bool(false), CastShadow: false, ReceiveShadow: false}
 	}
@@ -54,24 +54,29 @@ func blackglassBeachBeacon(periodID string) []scene.Node {
 			Material: light, Position: y(beaconTower + 0.8)},
 		scene.Mesh{ID: "beacon-roof", Geometry: scene.CylinderGeometry{RadiusTop: 0.05, RadiusBottom: 1.1, Height: 0.9, Segments: 16},
 			Material: red, Position: y(beaconTower + 1.8), CastShadow: true},
-		beam("beacon-beam", 70, 2.5, beamCore),
-		beam("beacon-beam-halo", 55, 4, beamHalo),
+		beam("beacon-beam", 70, 4, beamCore),
 		blackglassBeachBeamReflection(beamCore),
 	}
 }
 
-// Tapered vertical ribbons approximate the cone's integrated haze density.
-// One surface per direction avoids intersecting planes forming bright seams.
+// Three axial planes approximate the cone's depth in one additive draw.
+// Smooth radial and exponential distance falloff soften its visible edges.
 func blackglassBeamGeometry(length, radius float64) scene.BufferGeometry {
-	g := scene.BufferGeometry{Immutable: true, Revision: 1}
+	g := scene.BufferGeometry{Revision: 1}
 	for _, dir := range []float64{1, -1} {
-		base := len(g.Positions) / 3
-		momentQuad(&g, scene.Vec3(0, -.03, 0), scene.Vec3(dir*length, -radius, 0),
-			scene.Vec3(dir*length, radius, 0), scene.Vec3(0, .03, 0))
-		g.UVs = append(g.UVs, 0, 0, 1, 0, 1, 1, 0, 1)
-		g.Indices = append(g.Indices, base, base+2, base+1, base, base+3, base+2)
+		for plane := 0; plane < 3; plane++ {
+			angle := float64(plane) * math.Pi / 3
+			base := len(g.Positions) / 3
+			for _, point := range [][2]float64{{0, -.03}, {dir * length, -radius}, {dir * length, radius}, {0, .03}} {
+				g.Positions = append(g.Positions, point[0], point[1]*math.Cos(angle), point[1]*math.Sin(angle))
+				g.Normals = append(g.Normals, 0, -math.Sin(angle), math.Cos(angle))
+			}
+			g.UVs = append(g.UVs, 0, 0, 1, 0, 1, 1, 0, 1)
+			g.Indices = append(g.Indices, base, base+1, base+2, base, base+2, base+3,
+				base, base+2, base+1, base, base+3, base+2)
+		}
 	}
-	return g
+	return blackglassShaderGeometry(g)
 }
 
 // Millimetre precision keeps procedural geometry compact on the wire.

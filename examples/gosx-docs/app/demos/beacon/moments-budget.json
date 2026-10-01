@@ -1,11 +1,11 @@
 {
   "schema": "gosx.beach-moments-budget/v1",
-  "reason": "Procedural cliff ledges, basalt color/wetness atlases and fine sand grains retain the existing 560 KiB terrain, 450 KiB stacks and 20 KiB monolith asset caps. The monolith has a solid bevelled silhouette and an explicit 2.4 m refraction path. Blue hour shares one twilight radiance evaluator between the sky bake, IBL and fog. A 5974-byte beam falloff texture softens two tapered light ribbons; one swept water-glint draw increases the graph from 28 to 29 nodes. Beacon props measure at most 8035 JSON bytes (cap 8200); complete props measure 47223 JSON / 23283 gzip bytes (caps rise from 44400/23000 to 47400/23500). Served golden-hour HTML measures 81675 raw bytes: the cap rises from 80000 to 82000 for beam UVs and the broken water reflection, below the 150 KB program limit. Runtime bundle growth is zero. Static scenery uses retained geometry; vessel and beam transforms remain live. Mobile keeps the embedded rock/sand maps and solid monolith, with one 1024 shadow map, no optional detail or planar capture, and the existing middle/low ship LODs to bound CPU deformation cost.",
+  "reason": "The second coastal fidelity round uses a narrower, smoky obsidian obelisk, irregular basalt columns and fractures, a shallower shore profile and polished dark wet sand. One 72-vertex, 24-triangle cone with three axial planes with analytic scattering, a smooth radial profile and longitudinal falloff replaces two flat ribbons. One 384-vertex, 128-triangle shader surface and a nine-second GPU vertex cycle add moving foam at the shore. The graph has 29 authored nodes; the opaque body and refracted bevels use distinct materials, and geometry and transfer remain bounded by the existing model caps and the 150 KB program HTML limit. Complete scene and served-page caps account for the portable shader sources; runtime bundle growth is zero. The portable foam shader keeps geometry static on the CPU; its texture is an additional small PNG. Mobile retains its existing bounded quality profile. Golden-hour and midday beam draws are hidden. The three tiny authored shader meshes use nonindexed aggregate BufferGeometry because the current WebGPU authored-material path does not bind retained direct vertex streams. Larger PBR scenery remains retained. Alpha feathering softens the foam edge; twilight reduces its light level. Shader and nonindexed triangle streams account for the scene and served-page caps without runtime bundle growth. Complete golden-hour props measure 73931 JSON / 27303 gzip bytes; the 74500/27600 scene caps and 109000-byte HTML cap cover the authored shader sources and nonindexed triangles, below the 150000-byte program limit.",
   "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page including inherited docs CSS. Gzip uses Go\u2019s default compressor. Runtime bundle growth is zero.",
   "moments": {
     "beacon": {
-      "nodes": 8,
-      "jsonBytes": 8200
+      "nodes": 7,
+      "jsonBytes": 17500
     },
     "pools": {
       "nodes": 4,
@@ -26,11 +26,11 @@
   },
   "program": {
     "nodes": 29,
-    "jsonBytes": 47400,
-    "gzipBytes": 23500
+    "jsonBytes": 74500,
+    "gzipBytes": 27600
   },
   "page": {
-    "htmlBytes": 82000,
-    "gzipBytes": 42000
+    "htmlBytes": 109000,
+    "gzipBytes": 36500
   }
 }

@@ -69,15 +69,19 @@ func momentMeshes(t *testing.T, name string, nodes []scene.Node) map[string]scen
 		}
 		material, ok := mesh.Material.(scene.StandardMaterial)
 		if !ok {
-			flat, isFlat := mesh.Material.(scene.FlatMaterial)
-			if !isFlat || flat.Texture != blackglassBeachModelRoot+"beacon-beam.png" || flat.BlendMode != scene.BlendAdditive {
-				t.Fatalf("%s needs PBR or the procedural additive beam material", mesh.ID)
+			custom, isCustom := mesh.Material.(scene.CustomMaterial)
+			if !isCustom || custom.ShaderBackend != "selena" || custom.BlendMode != scene.BlendAdditive {
+				t.Fatalf("%s needs PBR or the additive scattering material", mesh.ID)
 			}
-		} else if material.Texture != "" || material.NormalMap != "" || material.EmissiveMap != "" {
+		} else if material.Texture != "" || material.NormalMap != "" || (material.EmissiveMap != "" && material.EmissiveMap != blackglassBeachModelRoot+"beacon-beam.png") {
 			t.Fatalf("%s must use an asset-free PBR material", mesh.ID)
 		}
 		if geometry, ok := mesh.Geometry.(scene.BufferGeometry); ok {
 			checkMomentGeometry(t, geometry)
+			_, authored := mesh.Material.(scene.CustomMaterial)
+			if geometry.Immutable == authored {
+				t.Fatalf("%s must select the supported vertex stream", mesh.ID)
+			}
 		}
 		meshes[mesh.ID] = mesh
 	}
@@ -86,8 +90,8 @@ func momentMeshes(t *testing.T, name string, nodes []scene.Node) map[string]scen
 
 func checkMomentGeometry(t *testing.T, g scene.BufferGeometry) {
 	t.Helper()
-	if !g.Immutable || g.Revision != 1 || len(g.Positions)%3 != 0 || len(g.Positions) == 0 || len(g.Normals) != len(g.Positions) || len(g.Indices)%3 != 0 || len(g.Indices) == 0 {
-		t.Fatal("invalid retained triangle geometry")
+	if g.Revision != 1 || len(g.Positions)%3 != 0 || len(g.Positions) == 0 || len(g.Normals) != len(g.Positions) || len(g.Indices)%3 != 0 {
+		t.Fatal("invalid triangle geometry")
 	}
 	for _, values := range [][]float64{g.Positions, g.Normals} {
 		for _, v := range values {
@@ -157,7 +161,7 @@ func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 	ground := beachgen.TerrainHeight(beaconX, beaconZ, beachgen.Seed)
 	heights := map[string]float64{"beacon-tower": beaconTower / 2, "beacon-band": beaconTower * .55,
 		"beacon-gallery": beaconTower + .1, "beacon-lantern": beaconTower + .8, "beacon-roof": beaconTower + 1.8,
-		"beacon-beam": beaconTower + .8, "beacon-beam-halo": beaconTower + .8}
+		"beacon-beam": beaconTower + .8}
 	for _, period := range beachgen.Periods {
 		t.Run(period, func(t *testing.T) {
 			nodes := blackglassBeachBeacon(period)
@@ -187,15 +191,15 @@ func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 					t.Fatal("the tower footprint must rest on the headland rather than overhang its cliff")
 				}
 			}
-			for _, id := range []string{"beacon-beam", "beacon-beam-halo"} {
+			for _, id := range []string{"beacon-beam"} {
 				m := meshes[id]
-				mat := m.Material.(scene.FlatMaterial)
+				mat := m.Material.(scene.CustomMaterial)
 				if m.Spin.Y != .45 || m.DepthWrite == nil || *m.DepthWrite || m.CastShadow || m.ReceiveShadow || mat.BlendMode != scene.BlendAdditive {
 					t.Fatalf("%s must be a spinning additive beam without depth/shadow writes", id)
 				}
 				g := m.Geometry.(scene.BufferGeometry)
-				if len(g.Positions)/3 != 8 || len(g.Indices)/3 != 8 {
-					t.Fatal("beam exceeds its two-ribbon budget")
+				if len(g.Positions)/3 != 72 || len(g.Indices) != 0 {
+					t.Fatal("beam exceeds its integrated-density budget")
 				}
 			}
 			collider := blackglassBeachBeaconCollider()
@@ -213,9 +217,9 @@ func TestBeachBeaconBrighterAtBlueHour(t *testing.T) {
 		t.Fatal("blue-hour lantern must be brighter")
 	}
 	for _, i := range []int{5, 6} {
-		d := day[i].(scene.Mesh).Material.(scene.FlatMaterial)
-		b := blue[i].(scene.Mesh).Material.(scene.FlatMaterial)
-		if *b.Opacity <= *d.Opacity {
+		d := day[i].(scene.Mesh).Material.(scene.CustomMaterial)
+		b := blue[i].(scene.Mesh).Material.(scene.CustomMaterial)
+		if b.Uniforms["strength"].(float64) <= d.Uniforms["strength"].(float64) {
 			t.Fatalf("blue hour is not brighter for %s", day[i].(scene.Mesh).ID)
 		}
 	}
