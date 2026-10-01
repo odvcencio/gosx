@@ -468,6 +468,7 @@
     "    return 1.0 / max(pow(distance, decay), 0.0001);",
     "}",
     "",
+    GLSL_TRANSMISSION,
     "void main() {",
     // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
@@ -604,6 +605,7 @@
     "    }",
     "",
     // Accumulate direct lighting.
+    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    vec3 Lo = vec3(0.0);",
     "",
     // View-space positive depth of this fragment — used to pick a cascade
@@ -691,7 +693,7 @@
     "        }",
     "",
     "        vec3 radiance = lightColor * intensity * attenuation;",
-    "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
+    "        Lo += (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadow;",
     "    }",
     "",
     // Environment lighting: assetpipe split-sum IBL, legacy equirectangular
@@ -707,7 +709,7 @@
     "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
     "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
     "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
-    "        vec3 diffuseIBL = irradiance * albedo * kDenv;",
+    "        vec3 diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
     "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
     "    } else",
@@ -726,13 +728,19 @@
     "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
+    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo;",
+    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "    }",
+    "    if (!u_hasEnvMap) {",
+    "#if GOSX_HDR_IBL",
+    "        if (!u_hasIBL)",
+    "#endif",
+    "        ambient += transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "    }",
     "#if GOSX_HDR_IBL",
     "    ambient *= ambientOcclusion;",
@@ -770,9 +778,9 @@
     "        color = mix(color, color * (0.65 + iri * 0.7), iridescence * pow(1.0 - NoV, 2.0));",
     "    }",
     "",
-    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    if (transmission > 0.0001) {",
-    "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+    "        vec3 Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        color += transmission * ( vec3(1.0) - Ft) * volumeTransmission(v_worldPosition, N, V, roughness);",
     "    }",
     "",
     // Exponential fog.
@@ -5568,6 +5576,10 @@
       clearcoat: gl.getUniformLocation(program, "u_clearcoat"),
       sheen: gl.getUniformLocation(program, "u_sheen"),
       transmission: gl.getUniformLocation(program, "u_transmission"),
+      volume: gl.getUniformLocation(program, "u_volume"),
+      attenuationColor: gl.getUniformLocation(program, "u_attenuationColor"),
+      transmissionScene: gl.getUniformLocation(program, "u_transmissionScene"),
+      transmissionCapture: gl.getUniformLocation(program, "u_transmissionCapture"),
       iridescence: gl.getUniformLocation(program, "u_iridescence"),
       anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
@@ -7501,6 +7513,8 @@
     var postProcessor = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
     var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
+    var transmissionResources = sceneCreateTransmissionWebGL(gl);
+    var frameLinear = false;
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
     // Light matrices now live on the per-cascade objects in shadowSlots[s];
@@ -8475,6 +8489,8 @@
 
     function uploadMaterial(gl, uniforms, material, textureCache) {
       const mat = material || {};
+      const textureEpoch = textureCache ? Reflect.get(textureCache, "_sceneTextureEpoch") || 0 : 0;
+      if (uniforms.transmissionScene) transmissionResources.upload(uniforms, mat, scratchViewMatrix, scratchProjMatrix, selenaPlaceholderTexture);
       // Global material cache on the program's uniforms object. Skip the
       // 6 gl.uniform* calls + 5 texture binds when the same material is
       // re-applied consecutively. Unlike the per-draw-loop lastMaterialIndex
@@ -8489,12 +8505,13 @@
       // consumer mutates a material in place, they're expected to flip
       // the bundle's materialIndex, which gives a different reference
       // and naturally triggers a re-upload.
-      if (uniforms._lastMaterial === material && uniforms._lastMaterialTexturesReady) {
+      if (uniforms._lastMaterial === material && uniforms._lastMaterialTexturesReady && uniforms._lastMaterialTextureEpoch === textureEpoch) {
         uploadCustomUniforms(gl, uniforms, mat.customUniforms);
         return;
       }
       uniforms._lastMaterial = material;
       uniforms._lastMaterialTexturesReady = true;
+      uniforms._lastMaterialTextureEpoch = textureEpoch;
       const albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
       gl.uniform3f(
         uniforms.albedo,
@@ -8823,8 +8840,14 @@
       // --- Main Render Pass ---
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var authoredPostEffects = postEffects.length > 0;
+      var postFXMaxPixels = authoredPostEffects && typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
+      var hasTransmission = sceneTransmissionPresent(bundle);
+      var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
+      transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
+      if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
       var usePostProcessing = postEffects.length > 0;
+      frameLinear = usePostProcessing;
 
       // renderW/renderH reflect the actual render target. When postfx is
       // active with a cap, these may be smaller than canvas dims. All
@@ -8847,6 +8870,8 @@
         renderTarget = Object.assign({}, scaled, { linear: true });
       }
 
+      transmissionSettings.screen = transmissionResources.prepare(renderW, renderH, Boolean(renderTarget.hdrSupported), transmissionSettings);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, renderTarget.framebuffer);
       // Resize viewport to the render target (scaled when postfx caps are active).
       gl.viewport(0, 0, renderW, renderH);
 
@@ -8918,6 +8943,13 @@
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
         linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+      // The ocean owns a program and texture unit zero. Restore the PBR pass
+      // and invalidate material bindings before drawing glass against it.
+      gl.useProgram(program);
+      if (bundle.environment && bundle.environment.ocean) Reflect.set(textureCache, "_sceneTextureEpoch", (Reflect.get(textureCache, "_sceneTextureEpoch") || 0) + 1);
+
+      if (transmissionSettings.screen) transmissionResources.capture(renderTarget);
+      sceneTransmissionPublish(canvas.parentNode, hasTransmission ? transmissionSettings.screen ? "screen" : "environment" : "none");
 
       // Draw alpha pass.
       if (drawList && drawList.alpha.length > 0) {
@@ -9709,7 +9741,7 @@
       uploadMaterial(gl, ip.uniforms, mat, textureCache);
       gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
       gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
-      gl.depthMask(obj.depthWrite !== false);
+      gl.depthMask(sceneTransmissionDepthWrite(obj, mat, scenePBRObjectRenderPass(obj, mat) === "opaque"));
       const allowed = {};
       for (const [name, size, fallback] of [
         ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
@@ -9772,8 +9804,7 @@
         gl.uniformMatrix4fv(targetUniforms.projectionMatrix, false, scratchProjMatrix);
         gl.uniform3f(targetUniforms.cameraPosition, _frameCam.x, _frameCam.y, _frameCam.z);
 
-        var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-        scenePBRUploadExposure(gl, targetUniforms, bundle.environment, postEffects.length > 0);
+        scenePBRUploadExposure(gl, targetUniforms, bundle.environment, frameLinear);
 
         scenePBRUploadLights(gl, targetUniforms, bundle.lights, bundle.environment, _frameLightsHash);
         scenePBRUploadEnvironmentMap(gl, targetUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
@@ -9917,9 +9948,9 @@
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
 
         // Per-object depth write control.
-        var objDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null;
+        var objDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null || sceneTransmissionMaterial(mat);
         if (objDepthWriteOverride) {
-          gl.depthMask(obj.depthWrite !== false);
+          gl.depthMask(sceneTransmissionDepthWrite(obj, mat, scenePBRObjectRenderPass(obj, mat) === "opaque"));
         }
 
 	        // Skinning: upload joint matrices and enable skin flag.
@@ -10690,8 +10721,7 @@
       gl.uniformMatrix4fv(ip.uniforms.projectionMatrix, false, projMatrix);
       gl.uniform3f(ip.uniforms.cameraPosition, _frameCam.x, _frameCam.y, _frameCam.z);
 
-      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-      scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
+      scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, frameLinear);
 
       scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
       scenePBRUploadEnvironmentMap(gl, ip.uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
@@ -10726,6 +10756,7 @@
           };
         }
         if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
+        gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
         uploadMaterial(gl, ip.uniforms, mat, textureCache);
 
         // Per-object shadow receive control.
@@ -10880,6 +10911,7 @@
       if (skyResources.renderer) skyResources.renderer.dispose();
       if (oceanResources.renderer) oceanResources.renderer.dispose();
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
+      transmissionResources.dispose();
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
       // dispose() first) and normal teardown alike.
       sceneInvalidateGLConstantCache(gl);

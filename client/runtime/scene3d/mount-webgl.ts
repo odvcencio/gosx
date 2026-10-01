@@ -819,7 +819,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "thickness", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -912,6 +912,9 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
     sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
+    sceneAssignMaterialOverride(next, material, "thickness", "thickness", override);
+    sceneAssignMaterialOverride(next, material, "attenuationDistance", "attenuationDistance", override);
+    sceneAssignMaterialOverride(next, material, "attenuationColor", "attenuationColor", override);
     sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
     sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
     sceneAssignMaterialOverride(next, material, "rimColor", "rimColor", override);

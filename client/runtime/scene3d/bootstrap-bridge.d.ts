@@ -250,3 +250,15 @@ declare var sceneOceanUniformData: any;
 // The ocean passes ship in the same chunk as the renderer that calls them.
 declare function sceneOceanWebGLDraw(resources: any, gl: any, opts: any): void;
 declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;
+// Transmission shader/resource fragments precede their backend in each chunk.
+declare const GLSL_TRANSMISSION: string;
+declare const WGSL_TRANSMISSION: string;
+declare function sceneCreateTransmissionWebGL(gl: any): any;
+declare function wgpuCreateTransmissionResources(device: any): any;
+declare function sceneTransmissionPresent(bundle: any): boolean;
+declare function sceneTransmissionMaterial(material: any): boolean;
+declare function sceneTransmissionDepthWrite(object: any, material: any, defaultWrite: boolean): boolean;
+declare function sceneTransmissionSettings(frameMeta: any, mount: any): { screen: boolean; levels: number };
+declare function sceneTransmissionEffects(effects: any[], environment: any): any[];
+declare function sceneTransmissionVolume(material: any): number[];
+declare function sceneTransmissionPublish(mount: any, state: string): void;

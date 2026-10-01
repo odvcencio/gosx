@@ -1132,6 +1132,7 @@
 
   // Determine the render pass for an object given its material.
   function scenePBRObjectRenderPass(obj, material) {
+    if (sceneTransmissionMaterial(material)) return "alpha";
     // Derived object passes are cached defaults; after CSS substitution the
     // effective material must be allowed to choose the route again.
     if (obj && obj._renderPassDerived !== true &&
@@ -1173,4 +1174,47 @@
       return db - da;
     }
     return String(a && a.id || "").localeCompare(String(b && b.id || ""));
+  }
+
+  // Built-in PBR transmission is a separate draw phase; authored shader hooks
+  // keep control of their own shading and passes.
+  /** @param {*} mat */
+  function sceneTransmissionMaterial(mat) {
+    return Boolean(mat && !mat.unlit && mat.kind !== "flat" && mat.kind !== "custom" && mat.kind !== "selena" &&
+      !mat.customFragment && !mat.customFragmentWGSL && sceneNumber(mat.transmission, 0) > 0 && sceneNumber(mat.metalness, 0) < 1);
+  }
+
+  /** @param {*} bundle */
+  function sceneTransmissionPresent(bundle) {
+    return Array.isArray(bundle.materials) && bundle.materials.some(sceneTransmissionMaterial);
+  }
+
+  /** @param {*} object @param {*} mat @param {*} defaultWrite */
+  function sceneTransmissionDepthWrite(object, mat, defaultWrite) {
+    if (object && typeof object.depthWrite === "boolean") return object.depthWrite;
+    // Opaque glass must depth-test its own facets after the background capture.
+    return defaultWrite || sceneTransmissionMaterial(mat) && sceneNumber(mat.opacity, 1) >= 1;
+  }
+
+  /** @param {*} frameMeta @param {*} mount */
+  function sceneTransmissionSettings(frameMeta, mount) {
+    var tier = frameMeta && frameMeta.qualityProfile && frameMeta.qualityProfile.tier || frameMeta && frameMeta.qualityTier || "full";
+    if (mount && mount.getAttribute && mount.getAttribute("data-gosx-scene3d-quality-ladder") === "true") {
+      var rung = Number(mount.getAttribute("data-gosx-scene3d-quality-rung"));
+      tier = rung === 0 ? "constrained" : rung === 1 ? "balanced" : "full";
+    }
+    var low = tier === "constrained" || tier === "low" || tier === "minimal" || tier === "survival";
+    return { tier: tier, screen: !low, levels: tier === "balanced" || tier === "medium" ? 5 : 9 };
+  }
+
+  /** @param {*} effects @param {*} environment */
+  function sceneTransmissionEffects(effects, environment) {
+    if (effects.length) return effects;
+    var env = environment || {};
+    return [{ kind: "toneMapping", mode: env.toneMapping || "none", exposure: sceneNumber(env.exposure, 1) }];
+  }
+
+  /** @param {*} mount @param {*} state */
+  function sceneTransmissionPublish(mount, state) {
+    if (mount && mount.getAttribute("data-gosx-scene3d-transmission") !== state) mount.setAttribute("data-gosx-scene3d-transmission", state);
   }
