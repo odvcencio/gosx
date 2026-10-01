@@ -13,6 +13,10 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
 const budgets = [
+  // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
+  // deck bob remain lazy. Measured 21,333 raw / 8,635 gzip / 7,676 Brotli bytes;
+  // ceilings leave less than 100 bytes of headroom in each transport format.
+  { file: "bootstrap-feature-scene3d-vessel.js", raw: 21_400, gzip: 8_700, brotli: 7_700 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.

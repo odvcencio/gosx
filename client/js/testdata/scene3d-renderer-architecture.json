@@ -16,8 +16,8 @@
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 3616,
-    "actualGovernanceLinesAtReview": 3107,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Integration of the walk controller with the ocean, sky and bloom branches. The walk hook adds its lines to mount.ts on top of RenderBeforeModels. Detail layers add governed atlas/program helpers and opt-in draw hooks. Function exceptions and physical line limits track measured integration growth; default limits stay fixed. WebGPU detail adds a governed atlas module and cached pipeline/binding hooks. Limits reflect measured source and function growth. Integration of detail layers with the ocean, sky, bloom and walk branches. Ocean reflection hooks and new governed passes use measured physical lines and function metrics. Existing function exception locations move with the hooks; new orchestration growth is limited to reflection setup, pass splitting and disposal. Three nullable WebGPU target declarations and the optional pass callback retain plain-JS syntax; the typed bridge governs the new module interface without increasing the implicit-any ratchet. Living sky and atmosphere use governed pass modules with exact measured line caps; orchestration exceptions grow only for uniforms, quality shedding, and disposal. Shader variants depend on authored feature presence. Depth haze, reduced sun shafts, AgX and grain extend the same modules. Post-dispatch and cleanup exceptions record their measured growth; the WebGL planar draw scopes mirrored frame state and culling with guaranteed restoration. Integration of the atmosphere features with detail layers and the walk controller. The atmosphere tier is capped by the device capability tier. CPU ocean querying registers a lazy governed module and shares the generated wave packer with the GPU; its new files have measured line caps. Opt-in sailing and wake register bounded standalone authorities. Mount growth is the lazy URL gate and one per-render advance call; walking grows only by separate surfaces and suspension/carry/reset seams. New exceptions record measured cumulative IIFE and input-installation metrics, with reasons. Query defaults add five physical lines. Grounded retreat and friction add nine physics lines; phone guidance adds four input lines. Wake winding adds four lines. Caps and cumulative function exceptions equal the measured authored sources. Integration of the vessel controller with atmosphere, detail and walk. Clipper repairs add one physics line and two cloth lines; file caps match measured sources. The baked-buffer guard and wheel near plane add one conditional each; only their measured complexity exceptions rise."
+    "actualGovernanceLinesAtReview": 3127,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Integration of the walk controller with the ocean, sky and bloom branches. The walk hook adds its lines to mount.ts on top of RenderBeforeModels. Detail layers add governed atlas/program helpers and opt-in draw hooks. Function exceptions and physical line limits track measured integration growth; default limits stay fixed. WebGPU detail adds a governed atlas module and cached pipeline/binding hooks. Limits reflect measured source and function growth. Integration of detail layers with the ocean, sky, bloom and walk branches. Ocean reflection hooks and new governed passes use measured physical lines and function metrics. Existing function exception locations move with the hooks; new orchestration growth is limited to reflection setup, pass splitting and disposal. Three nullable WebGPU target declarations and the optional pass callback retain plain-JS syntax; the typed bridge governs the new module interface without increasing the implicit-any ratchet. Living sky and atmosphere use governed pass modules with exact measured line caps; orchestration exceptions grow only for uniforms, quality shedding, and disposal. Shader variants depend on authored feature presence. Depth haze, reduced sun shafts, AgX and grain extend the same modules. Post-dispatch and cleanup exceptions record their measured growth; the WebGL planar draw scopes mirrored frame state and culling with guaranteed restoration. Integration of the atmosphere features with detail layers and the walk controller. The atmosphere tier is capped by the device capability tier. CPU ocean querying registers a lazy governed module and shares the generated wave packer with the GPU; its new files have measured line caps. Opt-in sailing and wake register bounded standalone authorities. Mount growth is the lazy URL gate and one per-render advance call; walking grows only by separate surfaces and suspension/carry/reset seams. New exceptions record measured cumulative IIFE and input-installation metrics, with reasons. Query defaults add five physical lines. Grounded retreat and friction add nine physics lines; phone guidance adds four input lines. Wake winding adds four lines. Caps and cumulative function exceptions equal the measured authored sources. Integration of the vessel controller with atmosphere, detail and walk. Clipper repairs add one physics line and two cloth lines; file caps match measured sources. The baked-buffer guard and wheel near plane add one conditional each; only their measured complexity exceptions rise. Ocean-driven vessel motion adds wind-pressure heel and bow-entry impact detection. Cloth normals, pinching flutter, elastic rigging, bounded spray and reduced-motion camera bob remain in the optional vessel chunk. Caps and cumulative IIFE exceptions equal measured authored growth; deterministic buoyancy, wake, cloth and camera tests cover the changes."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -507,11 +507,11 @@
     "../runtime/scene3d/ocean-query.ts": 84,
     "../runtime/scene3d/ocean-waves.ts": 27,
     "../runtime/scene3d/walk-surfaces.ts": 14,
-    "../runtime/scene3d/vessel-physics.ts": 150,
+    "../runtime/scene3d/vessel-physics.ts": 169,
     "../runtime/scene3d/vessel-input.ts": 102,
-    "../runtime/scene3d/vessel-model.ts": 74,
-    "../runtime/scene3d/vessel-wake.ts": 51,
-    "../runtime/scene3d/mount-vessel.ts": 90
+    "../runtime/scene3d/vessel-model.ts": 103,
+    "../runtime/scene3d/vessel-wake.ts": 92,
+    "../runtime/scene3d/mount-vessel.ts": 94
   },
   "functionDefaults": {
     "lines": 200,
@@ -995,12 +995,12 @@
     {
       "source": "../runtime/scene3d/vessel-physics.ts",
       "name": "anonymous@2:2",
-      "lines": 149,
-      "cyclomatic": 110,
-      "cognitive": 122,
+      "lines": 168,
+      "cyclomatic": 115,
+      "cognitive": 127,
       "maxNesting": 3,
       "parameters": 0,
-      "reason": "The plain-JS IIFE includes the fixed-step helpers. Its measured cumulative limits cover point-of-sail propulsion, damped buoyancy, capsule collision and grounded retreat; physics unit tests exercise each behavior. The wheel camera adds one conditional near-plane selection; the paid-off rudder comment adds one line. Limits equal measured growth, with mooring and camera regressions. The backed-canvas authority now applies inside the no-go zone, adding one measured conditional. Exact recorded-input timing and authored terrain tests prove it escapes irons without increasing high-speed steering."
+      "reason": "The plain-JS IIFE includes the fixed-step helpers. Its measured cumulative limits cover point-of-sail propulsion, damped buoyancy, capsule collision and grounded retreat; physics unit tests exercise each behavior. The wheel camera adds one conditional near-plane selection; the paid-off rudder comment adds one line. Limits equal measured growth, with mooring and camera regressions. The backed-canvas authority now applies inside the no-go zone, adding one measured conditional. Exact recorded-input timing and authored terrain tests prove it escapes irons without increasing high-speed steering. Wind pressure replaces speed-based heel; relative bow water entry drives spray."
     },
     {
       "source": "../runtime/scene3d/vessel-input.ts",
@@ -1025,22 +1025,42 @@
     {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "anonymous@2:2",
-      "lines": 89,
-      "cyclomatic": 51,
-      "cognitive": 54,
+      "lines": 93,
+      "cyclomatic": 53,
+      "cognitive": 56,
       "maxNesting": 2,
       "parameters": 0,
-      "reason": "The measured mount owns the dynamic deck, asynchronous bathymetry, walker suspension, helm/camera transitions and reset. It uses the paced scene loop; model and wake authorities stay separate."
+      "reason": "The measured mount owns the dynamic deck, asynchronous bathymetry, walker suspension, helm/camera transitions and reset. It uses the paced scene loop; model and wake authorities stay separate. Reduced-motion deck bob is removed before deck-local carry, preventing accumulated camera drift."
     },
     {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "setup@25:3",
-      "lines": 64,
-      "cyclomatic": 44,
-      "cognitive": 46,
+      "lines": 68,
+      "cyclomatic": 46,
+      "cognitive": 48,
       "maxNesting": 2,
       "parameters": 5,
-      "reason": "The measured mount owns the dynamic deck, asynchronous bathymetry, walker suspension, helm/camera transitions and reset. It uses the paced scene loop; model and wake authorities stay separate."
+      "reason": "The measured mount owns the dynamic deck, asynchronous bathymetry, walker suspension, helm/camera transitions and reset. It uses the paced scene loop; model and wake authorities stay separate. Reduced-motion deck bob is removed before deck-local carry, preventing accumulated camera drift."
+    },
+    {
+      "source": "../runtime/scene3d/vessel-model.ts",
+      "name": "anonymous@2:2",
+      "lines": 102,
+      "cyclomatic": 42,
+      "cognitive": 62,
+      "maxNesting": 4,
+      "parameters": 0,
+      "reason": "Measured cumulative plain-JS IIFE for bounded vessel effects. Helpers keep deformation, triangle normals, wake aging and deterministic impact spray outside renderer orchestration. Tests cover anchors, world-space history, capacity and disposal."
+    },
+    {
+      "source": "../runtime/scene3d/vessel-wake.ts",
+      "name": "anonymous@2:2",
+      "lines": 91,
+      "cyclomatic": 42,
+      "cognitive": 53,
+      "maxNesting": 3,
+      "parameters": 0,
+      "reason": "Measured cumulative plain-JS IIFE for bounded vessel effects. Helpers keep deformation, triangle normals, wake aging and deterministic impact spray outside renderer orchestration. Tests cover anchors, world-space history, capacity and disposal."
     }
   ],
   "symbols": [
