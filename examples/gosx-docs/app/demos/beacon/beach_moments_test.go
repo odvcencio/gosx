@@ -167,7 +167,7 @@ func TestBeachMomentsIntegrated(t *testing.T) {
 	for _, period := range beachgen.Periods {
 		p := BlackglassBeachProgram("shore", period)
 		wire := momentWire(t, p.Graph.Nodes)
-		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims"} {
+		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims", "wreck-ribs", "wreck-prow"} {
 			if !bytes.Contains(wire, []byte(`"`+id+`"`)) {
 				t.Fatalf("%s missing from beach program", id)
 			}
