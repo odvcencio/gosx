@@ -3242,6 +3242,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.EnvMap == "" &&
 		item.IBL.IsZero() &&
 		item.Sky == nil && item.Haze == nil &&
+		item.Ocean == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -3274,6 +3275,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	}
 	if item.Haze != nil {
 		record["haze"] = item.Haze
+	}
+	if item.Ocean != nil {
+		record["ocean"] = item.Ocean
 	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
