@@ -66,6 +66,37 @@ test("WebGL water blends over the depth-tested world in one context", () => {
   assert.deepEqual(Array.from(result.degraded), []);
 });
 
+test("WebGL mounts a world composite for water and an ocean without models or sky", () => {
+  const draws = [], gl = {};
+  const context = {
+    sceneNumber: (value, fallback) => Number(value) || fallback,
+    sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+    window: { __gosx_scene3d_webgl_api: {
+      createSceneWaterRendererWebGL: () => ({ render() { draws.push("water"); }, dispose() {} }),
+      createScenePBRRendererOrFallback: () => ({
+        render(bundle, viewport, options) {
+          assert.ok(bundle.environment.ocean);
+          draws.push("world");
+          options.compositeBeforePost({});
+        },
+        renderSurfaces() { draws.push("surfaces"); }, dispose() {},
+      }),
+    } },
+  };
+  vm.createContext(context);
+  vm.runInContext(source, context, { filename: "mount-webgl.ts" });
+  const canvas = { getContext: () => gl };
+  const scene = { waterSystems: [{ id: "cove" }], environment: { ocean: {} } };
+  for (const props of [{ scene }, { scene: { waterSystems: scene.waterSystems }, environment: scene.environment }]) {
+    draws.length = 0;
+    const result = context.createSceneWaterWebGLResult(canvas, props, { tier: "full" }, "");
+    assert.equal(result.renderer.isWaterWorldComposite, true);
+    result.renderer.render({ environment: scene.environment }, { width: 64, height: 64 });
+    assert.deepEqual(draws, ["world", "water", "surfaces"]);
+    result.renderer.dispose();
+  }
+});
+
 const {
   FakeWebGLContext, createContext, runScript, bootstrapRuntimeSource, freshFeatureBundleSource,
 } = require('./runtime-test-harness.js');

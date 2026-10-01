@@ -890,12 +890,12 @@ test("glTF texture slots carry explicit color roles and transfer functions", () 
   assert.equal(material.emissiveMap, "emissive.png");
 
   assert.deepEqual(material.textureDescriptors, {
-    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d" },
-    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d" },
-    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d" },
-    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d" },
-    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d" },
-    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d" },
+    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d", wrapS: 10497, wrapT: 10497 },
+    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497 },
+    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d", wrapS: 10497, wrapT: 10497 },
+    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d", wrapS: 10497, wrapT: 10497 },
+    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d", wrapS: 10497, wrapT: 10497 },
+    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497 },
   });
 });
 
@@ -910,10 +910,10 @@ test("KHR_materials_specular textures resolve through the shared descriptor path
 
   // Intensity is the linear alpha mask; the colour is the sRGB F0 tint.
   assert.deepEqual(material.textureDescriptors.specularIntensity, {
-    uri: "spec.png", role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d",
+    uri: "spec.png", role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d", wrapS: 10497, wrapT: 10497,
   });
   assert.deepEqual(material.textureDescriptors.specularColor, {
-    uri: "spec.png", role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d",
+    uri: "spec.png", role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497,
   });
 
   // The SAME source URI must produce two distinct roles, never a merged slot.
@@ -1464,6 +1464,21 @@ test("KHR_texture_transform on the base colour texture reaches the material", ()
     },
   });
   assert.deepEqual(material.uvTransform, { m00: 2, m01: 0, m02: 0, m10: 0, m11: 2, m12: 0 });
+});
+
+test("a scale on the normal texture alone becomes normalUVScale (a tiling detail map)", () => {
+  const { context } = createLoaderContext();
+  const detail = extractMaterial(context, {
+    pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+    normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [60, 45] } } },
+  });
+  assert.deepEqual(Array.from(detail.normalUVScale), [60, 45]);
+  assert.equal(detail.uvTransform, undefined, "base colour UVs stay untransformed");
+  const shared = extractMaterial(context, {
+    pbrMetallicRoughness: { baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } } },
+    normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+  });
+  assert.equal(shared.normalUVScale, undefined, "a transform shared with base colour is baked once, not applied twice");
 });
 
 test("KHR_texture_transform never writes into the shared GLB buffer", () => {

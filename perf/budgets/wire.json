@@ -76,7 +76,7 @@
           "inlineScriptBytes": 110278,
           "cssWireBytes": 256,
           "lazyJsWireBytes": 256,
-          "wasmWireBytes": 220885,
+          "wasmWireBytes": 222126,
           "requests": 11,
           "htmlWireBytes": 216679,
           "imageWireBytes": 256

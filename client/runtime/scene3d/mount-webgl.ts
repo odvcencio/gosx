@@ -214,10 +214,10 @@ function gosxConfigureSceneScript(script, role, src) {
       return null;
     }
     if (!renderer) return null;
-    // Water and authored models share color and depth before post processing.
+    // Water, authored models, sky, and ocean share color and depth before post processing.
     var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
     var environment = sceneDoc && sceneDoc.environment || props && props.environment;
-    if (sceneDoc && ((Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) || (environment && environment.sky))) {
+    if (sceneDoc && ((Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) || (environment && (environment.sky || environment.ocean)))) {
       var pbrFactory = sceneWebGLRendererFactory();
       var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
       if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {

@@ -19,6 +19,34 @@ func TestNilOceanKeepsWireByteIdentical(t *testing.T) {
 	}
 }
 
+func TestOceanJSONUpdatesPreserveUnchangedParametersAndZeroIntent(t *testing.T) {
+	ocean := normalizeOcean(&Ocean{Speed: -1, Foam: 0.8})
+	if err := json.Unmarshal([]byte(`{"foam":0.3}`), ocean); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(ocean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["speed"]) != "0" || string(fields["foam"]) != "0.3" || string(fields["explicitZero"]) != `["speed"]` {
+		t.Fatalf("unrelated JSON update lost parameter intent: %s", wire)
+	}
+	if err := json.Unmarshal([]byte(`{"speed":0}`), ocean); err != nil {
+		t.Fatal(err)
+	}
+	wire, err = json.Marshal(ocean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(wire), `{"foam":0.3}`; got != want {
+		t.Fatalf("authored zero must restore the default marker: got %s, want %s", got, want)
+	}
+}
+
 func TestOceanLowersTrimmedAndClampedWithoutApplyingDefaults(t *testing.T) {
 	props := Props{Environment: Environment{Ocean: &Ocean{
 		Level: 3.5, WindDirection: -725,

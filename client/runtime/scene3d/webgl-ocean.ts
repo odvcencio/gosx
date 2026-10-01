@@ -177,30 +177,39 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
   return {
     draw: function(opts) {
       const env = opts.environment, ocean = env.ocean;
-      sceneOceanUniformData(ocean, env, opts.camera, opts.timeSeconds, opts.linear, opts.quality, data);
-      sceneMat4MultiplyInto(viewProj, opts.proj, opts.view);
-      let bathymetry = placeholder, state = "surface";
-      if (ocean.bathymetry && ocean.bathymetry.src) {
-        const record = scenePBRLoadTexture(gl, ocean.bathymetry.src, textureCache, null, "ocean-bathymetry", "linear");
-        if (record && record.loaded && !record.failed) { bathymetry = record.texture; state = "shore"; }
-        else { data[26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
+      const active = gl.getParameter(gl.ACTIVE_TEXTURE);
+      gl.activeTexture(gl.TEXTURE0);
+      const binding = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      try {
+        sceneOceanUniformData(ocean, env, opts.camera, opts.timeSeconds, opts.linear, opts.quality, data);
+        sceneMat4MultiplyInto(viewProj, opts.proj, opts.view);
+        let bathymetry = placeholder, state = "surface";
+        if (ocean.bathymetry && ocean.bathymetry.src) {
+          const record = scenePBRLoadTexture(gl, ocean.bathymetry.src, textureCache, null, "ocean-bathymetry", "linear");
+          if (record && record.loaded && !record.failed) { bathymetry = record.texture; state = "shore"; }
+          else { data[26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
+        }
+        const cull = gl.isEnabled(gl.CULL_FACE);
+        gl.useProgram(program);
+        gl.uniformMatrix4fv(viewProjLoc, false, viewProj);
+        gl.uniform4fv(oceanLoc, data);
+        scenePBRBindTexture(gl, 0, bathymetry, gl.TEXTURE_2D);
+        gl.uniform1i(bathymetryLoc, 0);
+        gl.enable(gl.BLEND);
+        gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(true);
+        gl.disable(gl.CULL_FACE);
+        gl.bindVertexArray(vao);
+        gl.drawArrays(gl.TRIANGLES, 0, data[32] * data[33] * 6);
+        gl.bindVertexArray(null);
+        gl.disable(gl.BLEND);
+        if (cull) gl.enable(gl.CULL_FACE);
+        return state;
+      } finally {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, binding);
+        gl.activeTexture(active);
       }
-      const cull = gl.isEnabled(gl.CULL_FACE);
-      gl.useProgram(program);
-      gl.uniformMatrix4fv(viewProjLoc, false, viewProj);
-      gl.uniform4fv(oceanLoc, data);
-      scenePBRBindTexture(gl, 0, bathymetry, gl.TEXTURE_2D);
-      gl.uniform1i(bathymetryLoc, 0);
-      gl.enable(gl.BLEND);
-      gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(true);
-      gl.disable(gl.CULL_FACE);
-      gl.bindVertexArray(vao);
-      gl.drawArrays(gl.TRIANGLES, 0, data[32] * data[33] * 6);
-      gl.bindVertexArray(null);
-      gl.disable(gl.BLEND);
-      if (cull) gl.enable(gl.CULL_FACE);
-      return state;
     },
     dispose: function() {
       gl.deleteVertexArray(vao);

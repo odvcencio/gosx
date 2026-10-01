@@ -1,7 +1,9 @@
 package scene
 
 import (
+	"encoding/json"
 	"math"
+	"slices"
 	"strings"
 )
 
@@ -40,6 +42,75 @@ type Ocean struct {
 	// Extent is in meters, 100-20000. Default: 4000.
 	Extent     float64          `json:"extent,omitempty"`
 	Bathymetry *OceanBathymetry `json:"bathymetry,omitempty"`
+	// Lowering tracks clamped zeros separately from authored default markers.
+	explicitZero uint8
+}
+
+var oceanZeroParameterNames = [...]string{"choppiness", "speed", "foam", "surf"}
+
+func (o Ocean) zeroParameterValues() [4]float64 {
+	return [4]float64{o.Choppiness, o.Speed, o.Foam, o.Surf}
+}
+
+// MarshalJSON preserves clamped zeros and identifies them for browser lowering.
+// Ordinary zero values remain omitted and continue to request defaults.
+// The explicitZero wire list identifies numeric zeros that disable a parameter.
+func (o Ocean) MarshalJSON() ([]byte, error) {
+	type plainOcean Ocean
+	wire, err := json.Marshal(plainOcean(o))
+	if err != nil || o.explicitZero == 0 {
+		return wire, err
+	}
+	var names []string
+	for i, value := range o.zeroParameterValues() {
+		if value == 0 && o.explicitZero&(1<<i) != 0 {
+			names = append(names, oceanZeroParameterNames[i])
+		}
+	}
+	if len(names) == 0 {
+		return wire, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		fields[name] = json.RawMessage("0")
+	}
+	fields["explicitZero"], err = json.Marshal(names)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON retains the distinction when normalized IR is read again.
+func (o *Ocean) UnmarshalJSON(data []byte) error {
+	type plainOcean Ocean
+	var wire struct {
+		plainOcean
+		ExplicitZero []string `json:"explicitZero"`
+	}
+	wire.plainOcean = plainOcean(*o)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*o = Ocean(wire.plainOcean)
+	_, markersUpdated := fields["explicitZero"]
+	for i, value := range o.zeroParameterValues() {
+		_, valueUpdated := fields[oceanZeroParameterNames[i]]
+		if value != 0 || valueUpdated || markersUpdated {
+			o.explicitZero &^= 1 << i
+		}
+		if value == 0 && slices.Contains(wire.ExplicitZero, oceanZeroParameterNames[i]) {
+			o.explicitZero |= 1 << i
+		}
+	}
+	return nil
 }
 
 // OceanBathymetry maps a grayscale image's R channel into world-space seabed
@@ -81,6 +152,13 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Roughness = clampOceanParam(ocean.Roughness, 0.01, 0.5)
 	out.Foam = clampOceanParam(ocean.Foam, 0, 1)
 	out.Surf = clampOceanParam(ocean.Surf, 0, 1)
+	for i, value := range ocean.zeroParameterValues() {
+		if value < 0 {
+			out.explicitZero |= 1 << i
+		} else if value != 0 {
+			out.explicitZero &^= 1 << i
+		}
+	}
 	out.Extent = clampOceanParam(ocean.Extent, 100, 20000)
 	out.Bathymetry = normalizeOceanBathymetry(ocean.Bathymetry)
 	return &out

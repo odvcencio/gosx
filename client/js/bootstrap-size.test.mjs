@@ -1686,7 +1686,11 @@ const routeBudgets = [
   // so maxMonolithFraction stays unset for them.
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
-    name: "Scene3D Chromium route (WebGPU, with labels)",
+    // Normal-map tiling merged with main measures 1_369_019 / 372_787 / 313_785 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,369,776 / 373,152 / 314,130 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -1842,7 +1846,11 @@ const routeBudgets = [
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
-    name: "Scene3D Safari and Firefox route (WebGL, with labels)",
+    // Normal-map tiling merged with main measures 1_218_997 / 344_893 / 291_220 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,219,453 / 345,033 / 291,295 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -2034,7 +2042,11 @@ const routeBudgets = [
     // (1_341_708 / 355_135 / 298_285), and it is the same seam cost the WebGL
     // route pays. Only a page whose GPU device actually fails reaches it, and
     // the alternative was a page that renders nothing.
-    name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
+    // Normal-map tiling merged with main measures 1_623_378 / 444_163 / 374_250 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,624,495 / 444,629 / 374,619 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -2215,7 +2227,11 @@ const routeBudgets = [
     // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
-    name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
+    // Normal-map tiling merged with main measures 1_216_575 / 329_386 / 275_255 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,217,332 / 329,751 / 275,600 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-scene3d.js",
