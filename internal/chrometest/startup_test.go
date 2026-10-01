@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto"
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
 )
@@ -278,6 +279,10 @@ func fakeCDP(t *testing.T, stall bool) (string, <-chan struct{}, <-chan struct{}
 }
 
 func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool) (string, <-chan struct{}, <-chan struct{}) {
+	return fakeCDPWithCommandError(t, stall, beforeUpgrade, nil)
+}
+
+func fakeCDPWithCommandError(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool, commandError func(string) *cdproto.Error) (string, <-chan struct{}, <-chan struct{}) {
 	t.Helper()
 	calls := make(chan struct{}, 1)
 	closed := make(chan struct{})
@@ -307,6 +312,14 @@ func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.Resp
 			}
 			if stall {
 				continue
+			}
+			if commandError != nil {
+				if failure := commandError(request.Method); failure != nil {
+					if err := conn.WriteJSON(map[string]any{"id": request.ID, "error": failure}); err != nil {
+						return
+					}
+					continue
+				}
 			}
 			result := any(map[string]any{})
 			switch request.Method {

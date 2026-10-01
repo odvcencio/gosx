@@ -19,8 +19,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
@@ -259,13 +257,7 @@ func launchAttempt(ctx context.Context, executable string, deadline time.Time, e
 		)
 		result := make(chan error, 1)
 		go func() {
-			result <- chromedp.Run(browserContext, chromedp.ActionFunc(func(ctx context.Context) error {
-				// RemoteAllocator creates a new tab beside Chrome's initial
-				// about:blank. Activate it before returning: an inactive tab
-				// suppresses requestAnimationFrame (including chromedp.Poll).
-				state := chromedp.FromContext(ctx)
-				return target.ActivateTarget(state.Target.TargetID).Do(cdp.WithExecutor(ctx, state.Browser))
-			}))
+			result <- bindInitialTab(browserContext)
 		}()
 		cleanup := func(join bool) {
 			// Cancel and kill before waiting: RemoteAllocator's socket has its
