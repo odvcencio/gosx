@@ -324,6 +324,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-zoom.js",
+      "sources": [
+        "../runtime/scene3d/mount-zoom.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-walk.js",
       "sources": [
         "../runtime/scene3d/walk-surfaces.ts",
