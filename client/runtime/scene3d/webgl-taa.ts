@@ -43,13 +43,11 @@ void main() {
     float weight = u_temporalParams.x * exp(-motion * 0.05) / (1.0 + change * 8.0);
     fragColor = vec4(mix(current.rgb, history, weight), current.a);
 }`;
-
 function sceneTemporalHalton(index: number, base: number) {
     var value = 0, fraction = 1;
     while (index > 0) { fraction /= base; value += fraction * (index % base); index = Math.floor(index / base); }
     return value;
 }
-
 function sceneTemporalJitter(projection: Float32Array, width: number, height: number, index: number) {
     var x = (sceneTemporalHalton(index % 8 + 1, 2) - 0.5) * 2 / width;
     var y = (sceneTemporalHalton(index % 8 + 1, 3) - 0.5) * 2 / height;
@@ -59,7 +57,6 @@ function sceneTemporalJitter(projection: Float32Array, width: number, height: nu
         projection[column * 4 + 1] += y * projection[column * 4 + 3];
     }
 }
-
 function createSceneTemporalHistory(gl: any, quad: any) {
     var targets: any[] | null = null, program: any = null, failed = false, index = 0, valid = false;
     var width = 0, height = 0, stamp = "", lastTime = 0;
@@ -69,8 +66,8 @@ function createSceneTemporalHistory(gl: any, quad: any) {
         if (targets) { disposeScenePostFBO(gl, targets[0]); disposeScenePostFBO(gl, targets[1]); }
         targets = null; valid = false; index = 0;
     }
-    function prepare(effects: any[], size: { width: number; height: number }, projection: Float32Array, view: Float32Array, canJitter: boolean) {
-        var effect = effects.find(function(e) { return e.kind === "taa"; });
+    function prepare(effects: any[], size: { width: number; height: number }, projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
+        var effect = effects.find(e => e.kind === "taa");
         if (!effect || !canJitter || failed) { release(); return false; }
         if (!gl.getExtension("EXT_color_buffer_float") || !gl.blitFramebuffer || !gl.checkFramebufferStatus) return false;
         if (!program) program = createScenePostProgram(gl, SCENE_POST_TAA_SOURCE);
@@ -83,7 +80,11 @@ function createSceneTemporalHistory(gl: any, quad: any) {
                 if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { release(); failed = true; return false; }
             }
         }
-        var nextStamp = effects.map(function(e) { return [e.kind, e.mode, e.exposure, e.intensity, e.radius, e.historyWeight, e.clampGamma].join(":"); }).join("|");
+        // Snapshot complete upstream wire descriptors, including nested and future parameters.
+        var upstream = effects.slice(0, effects.indexOf(effect) + 1),
+            nextStamp = JSON.stringify([upstream, upstream.some(e => e.kind === "contactShadows") ? lights : null]);
+        // Custom passes can read live clock/DOM auto-uniforms outside their descriptor.
+        if (upstream.some(e => e.kind === SCENE_POST_CUSTOM_POST)) valid = false;
         var now = performance.now(); inverseView = sceneInvertOrthonormalView(view);
         var cut = Math.hypot(inverseView[12] - previousInverseView[12], inverseView[13] - previousInverseView[13], inverseView[14] - previousInverseView[14]) > 2;
         var turn = inverseView[8] * previousInverseView[8] + inverseView[9] * previousInverseView[9] + inverseView[10] * previousInverseView[10] < 0.5;
@@ -98,8 +99,7 @@ function createSceneTemporalHistory(gl: any, quad: any) {
         var output = targets[index % 2], history = targets[(index + 1) % 2];
         for (var unit = 0; unit < 4; unit++) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, null); }
         gl.bindFramebuffer(gl.FRAMEBUFFER, output.fbo); gl.viewport(0, 0, width, height); gl.useProgram(program.program);
-        var textures = [input, source.depthTex, history.colorTex, history.depthTex];
-        var names = ["u_texture", "u_depthTexture", "u_history", "u_historyDepth"];
+        var textures = [input, source.depthTex, history.colorTex, history.depthTex], names = ["u_texture", "u_depthTexture", "u_history", "u_historyDepth"];
         for (var t = 0; t < 4; t++) { gl.activeTexture(gl.TEXTURE0 + t); gl.bindTexture(gl.TEXTURE_2D, textures[t]); gl.uniform1i(gl.getUniformLocation(program.program, names[t]), t); }
         var matrices = [frame.projection, inverseView, previousView, previousProjection];
         var uniforms = ["u_projection", "u_inverseView", "u_previousView", "u_previousProjection"];

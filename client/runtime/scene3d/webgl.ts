@@ -4893,10 +4893,10 @@
           };
 	      },
 
-      prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean) {
+      prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
         if (!canJitter) { if (temporal) temporal.reset(); temporalEnabled = false; return false; }
         if (!temporal) temporal = createSceneTemporalHistory(gl, quad);
-        temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter);
+        temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter, lights);
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
         return temporalEnabled;
       },
@@ -8857,7 +8857,7 @@
         }
         var temporalActive = false;
         if (temporalRequested) {
-          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true));
+          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true), bundle.lights);
           if (temporalActive) sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
         } else postProcessor.resetTemporal();
         var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";

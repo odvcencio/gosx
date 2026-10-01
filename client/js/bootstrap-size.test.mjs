@@ -697,7 +697,10 @@ const budgets = [
   // Depth AO replaces the color filter with twelve depth taps and normal
   // reconstruction (+1,786 raw / +753 gzip / +519 Brotli bytes). Only
   // affected targets rise, by the measured growth with narrow rounding room.
-  { file: "bootstrap.js", raw: 1761000, gzip: 492561, brotli: 390417 },
+  // Complete upstream TAA invalidation and contact-light inputs measure
+  // 406,848 monolith Brotli bytes. Raise only this target by the exact 47-byte
+  // ceiling overrun; raw and gzip targets retain their existing limits.
+  { file: "bootstrap.js", raw: 1761000, gzip: 492561, brotli: 390464 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1066,7 +1069,9 @@ const budgets = [
   // 251_292 / 70_024 / 59_410;
   // retain narrow rounding headroom so later growth remains visible.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 260800, gzip: 74300, brotli: 62600 },
+  // Complete upstream TAA invalidation adds 29 Brotli bytes (65,706 -> 65,735).
+  // A four-byte target raise clears the exact five-byte governed-cap overrun.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 260800, gzip: 74300, brotli: 62604 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -2196,7 +2201,9 @@ const routeBudgets = [
     // Depth AO also ships when WebGPU falls back to WebGL2.
     raw: 1595600, // +100: persistent hub connections (approved exception, decision 0014)
     gzip: 441600,
-    brotli: 368400, // +95: persistent hub connections (approved exception, decision 0014)
+    // Complete upstream TAA invalidation measures 384,796 Brotli bytes for
+    // this dual-backend route; raise only the exact 12-byte ceiling overrun.
+    brotli: 368412, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
