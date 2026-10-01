@@ -59,7 +59,7 @@
     islands: new Map(),   // islandID -> { component, listeners, root }
     computeIslands: new Map(), // compute island ID -> { component }
     engines: new Map(),   // engineID -> { component, kind, mount, handle }
-    hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
+    hubs: gosxNamespace.hubs || new Map(), // page hub ID -> shared connection
     controllers: new Map(), // controllerID -> { config, listeners, timers }
     textLayouts: new Map(), // textLayoutID -> { element, result, config }
     sharedSignals: {

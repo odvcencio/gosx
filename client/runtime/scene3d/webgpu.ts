@@ -6366,7 +6366,7 @@
   }
 
   var WGSL_SCENE_SKY = [
-    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f };",
+    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f, betaR: vec4f, betaM: vec4f, sun: vec4f, extra: vec4f };",
     "@group(0) @binding(0) var<uniform> sky: Sky;",
     "@group(0) @binding(1) var skySampler: sampler;",
     "@group(0) @binding(2) var skyImage: texture_2d<f32>;",
@@ -6385,7 +6385,7 @@
     "    let uv = vec2f(atan2(d.z,d.x)/6.28318530718+0.5, asin(clamp(d.y,-1.0,1.0))/3.14159265359+0.5);",
     "    color = textureSampleLevel(skyImage, skySampler, uv, sky.horizon.w).rgb;",
     "  } else if (sky.bottom.w == 2) { color = textureSampleLevel(skyCube, skySampler, d, sky.horizon.w).rgb;",
-    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; }",
+    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; } else if (sky.bottom.w == 4) { color = gosxPhysicalSky(ray, sky.betaR, sky.betaM, sky.sun, sky.extra.x); }",
     "  color = max(color * sky.top.w, vec3f(0));",
     "  if (sky.output.x == 0) { color = select(1.055*pow(color,vec3f(1.0/2.4))-0.055, color*12.92, color <= vec3f(0.0031308)); }",
     "  return vec4f(color, 1);",
@@ -6394,7 +6394,7 @@
 
   // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
   function wgpuCreateSkyRenderer(device, textureCache, imagePlaceholder, cubePlaceholder) {
-    var data = new Float32Array(28);
+    var data = new Float32Array(44);
     var uniform = device.createBuffer({ label: "gosx-sky", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     var sampler = device.createSampler({ addressModeU: "repeat", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
     var layout = device.createBindGroupLayout({ entries: [
@@ -6404,7 +6404,7 @@
       { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
     ] });
     var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY });
+    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY + "\n" + sceneSkyPhysicalSource("wgsl") });
     var pipelines = new Map();
     // @ts-ignore TS7018 -- bind-group identities become available on the first draw.
     var cached = { group: null, image: null, cube: null };
@@ -6413,7 +6413,7 @@
       draw: function(pass, opts) {
         var env = opts.environment, sky = env.sky;
         sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
-        var image = imagePlaceholder, cube = cubePlaceholder, state = "gradient";
+        var image = imagePlaceholder, cube = cubePlaceholder, state = sky.mode === "physical" ? "physical" : "gradient";
         if (sky.mode === "environment") {
           var desc = env.ibl && env.ibl.radiance;
           var record = desc && desc.view === "cube" && desc.uri

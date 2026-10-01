@@ -48,6 +48,7 @@ type PageRuntimeSummary struct {
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
 	BootstrapFeatureScene3DPath     string
+	BootstrapFeatureTextLayoutPath  string
 	HLSPath                         string
 	Islands                         int
 	ComputeIslands                  int
@@ -381,6 +382,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		BootstrapFeatureHubsPath:        summary.BootstrapFeatureHubsPath,
 		BootstrapFeatureControllersPath: summary.BootstrapFeatureControllersPath,
 		BootstrapFeatureScene3DPath:     summary.BootstrapFeatureScene3DPath,
+		BootstrapFeatureTextLayoutPath:  summary.BootstrapFeatureTextLayoutPath,
 		HLSPath:                         summary.HLSPath,
 		Islands:                         summary.Islands,
 		ComputeIslands:                  summary.ComputeIslands,

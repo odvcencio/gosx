@@ -16,6 +16,10 @@
     }
 
     const props = ctx.props || {};
+    if (sceneWalkEnabled(props)) {
+      await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -386,7 +390,9 @@
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute(sceneAttr("label-layer"), "true");
     labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.pointerEvents = "none";
     mount.appendChild(labelLayer);
+    const sceneFocusProxies = setupSceneNodeFocusProxies(mount);
     const statsOverlay = createSceneStatsOverlay(mount, sceneBool(props.stats, false));
     let inspectorOverlay = null;
 
@@ -444,6 +450,7 @@
       if (labelLayer.parentNode === mount) {
         mount.removeChild(labelLayer);
       }
+      disposeSceneNodeFocusProxies(sceneFocusProxies);
       if (statsOverlay) {
         statsOverlay.dispose();
       }
@@ -623,6 +630,7 @@
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
         renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+        syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
         renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       });
     });
@@ -1806,6 +1814,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       return true;
     }
@@ -2241,7 +2250,7 @@
 	            : { type: "gosx:scene3d:input", detail: inputDetail };
 	          mount.dispatchEvent(inputEvent);
 	        }
-	      });
+	      }, sceneFocusEnabled.call(null, sceneState), sceneFocusPointerHandler.call(null, sceneFocusProxies));
 	      // Gizmo drags own pointer-down near an active TransformControls form.
 	      // Registered before the camera controls so stopImmediatePropagation can
 	      // reserve the gesture; presses away from the gizmo fall through.
@@ -3053,6 +3062,7 @@
           recordSceneWaterFrame(mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+          syncSceneNodeFocusProxies.call(null, sceneFocusProxies, effectiveBundle, sceneState);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
@@ -3169,6 +3179,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);
@@ -3563,6 +3574,8 @@
           scheduleRender("update-props");
         }
       },
+      // @ts-ignore TS7005 -- the handle grows authority-specific methods at installation
+      resetCamera() { return sceneControlHandle && sceneControlHandle.reset ? (sceneControlHandle.reset(), true) : false; },
       dispose: disposeMountedScene,
     };
 

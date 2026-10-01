@@ -345,3 +345,27 @@ func parallelRows(rows int, body func(row int)) {
 	}
 	wg.Wait()
 }
+
+// CubeFromRadiance fills a cubemap by evaluating a radiance function at the
+// center direction of every texel. Use it to bake an analytic environment,
+// such as scene.Sky.PhysicalRadiance, into the same Prefilter and SH chain
+// that equirect sources use, so reflections match the drawn sky exactly.
+// Non-finite or negative results become zero.
+func CubeFromRadiance(size int, radiance func(dir Vec3) (r, g, b float64)) *Cube {
+	cube := NewCube(size)
+	clean := func(v float64) float64 {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return 0
+		}
+		return v
+	}
+	for face := range cube.Faces {
+		for y := 0; y < cube.Size; y++ {
+			for x := 0; x < cube.Size; x++ {
+				r, g, b := radiance(FaceDirection(face, x, y, cube.Size))
+				cube.Set(face, x, y, Vec3{clean(r), clean(g), clean(b)})
+			}
+		}
+	}
+	return cube
+}

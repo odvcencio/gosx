@@ -10,6 +10,73 @@
   transform, so such normal maps stretched across the whole mesh. A transform
   shared with base colour is still baked into the UVs once.
 
+### Added: opt-in Scene3D walking
+
+- Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
+  sliding, world bounds, slope and wading limits, sprint, and optional head bob.
+- Support pointer lock, focused keyboard navigation, simultaneous touch movement
+  and look, optional gamepads, and declarative camera reset buttons. Walking
+  loads a separate chunk only for scenes with walk props; existing controls keep
+  their behavior and browser defaults stay out of Go's JSON output.
+
+### Added: desktop update prompt
+
+- Add `App.OfferSignedUpdate` to check signed updates, prompt before opening
+  allowlisted download pages, and avoid host-specific check/confirm/open code.
+
+### Added: desktop rotating log files
+
+- Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
+  rotating log file.
+- Rotate before writes exceed the configured size, keeping the newest rotated
+  files as `Name.1.log` through `Name.<Keep>.log`.
+### Added: Azure Artifact Signing for desktop packages
+
+- Add `gosx desktop package --sign-provider azure-artifact-signing` with
+  SignTool or jsign, non-secret configuration, Authenticode verification, and
+  signing metadata. Sign staged PE files, the uninstaller, and per-user Setup.
+- Add `gosx desktop verify-signature`, a fake-tool CI packaging test, a gated
+  Azure release signing check, and [desktop code-signing documentation](docs/desktop-code-signing.md).
+
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
+### Added: desktop window placement
+
+- Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
+  bounds and maximized state across launches.
+- Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
+  provides the placement before the window is destroyed.
+
+### Added: desktop window handle, focus events, message box
+
+- Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
+  own window by title to call Win32 APIs.
+- Add `Options.OnFocusChanged(focused bool)`, fired from `WM_ACTIVATE` when
+  focus changes. With `NativeBridge`, the page also receives a
+  `gosx.window.focus` event with `{focused}`.
+- Add `desktop.ShowMessage` (works before `New`) and `App.ShowMessage`
+  (owned by the app window): info, warning, error, and question icons;
+  OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
+  it as `gosxDesktop.dialog.message`.
+
+### Added: physical sky for Scene3D
+
+- `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
+  scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`
+  (`scene.SunDirectionFromAngles` helps), `Turbidity`, `Rayleigh`,
+  `MieCoefficient`, `MieDirectionalG` and `SunDiskRadius`; zero means the
+  default. `Sky.PhysicalRadiance` evaluates the same model in Go, and
+  `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
+  Canvas2D gets gradient stops computed from the model. Capability
+  `sky-physical`.
+
+
+
 ### Fixed and added: desktop single instance
 
 - Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every

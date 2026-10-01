@@ -16,7 +16,7 @@ import (
 // Hub is the package-level hub that main.go mounts at /demos/livesim/ws.
 var Hub *hub.Hub
 
-// runner is the background sim runner. Leaked intentionally for this demo.
+// runner drives the live simulation for the lifetime of the docs process.
 var runner *sim.Runner
 
 // theGame is the package-level simulation instance. Kept as a var (rather
@@ -39,7 +39,9 @@ func init() {
 	Hub.MaxMessagesPerSecond = 60
 	Hub.MaxMessageBurst = 120
 	theGame = newGame()
-	runner = sim.New(Hub, theGame, sim.Options{TickRate: 20})
+	// This simulation never ends and has no replay consumer. Retaining every
+	// tick's inputs would grow memory even with no connected viewers.
+	runner = sim.New(Hub, theGame, sim.Options{TickRate: 20, DisableReplay: true})
 	runner.RegisterHandlers()
 	runner.Start()
 

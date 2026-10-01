@@ -606,10 +606,18 @@
 
   function renderSceneHTMLElement(element, htmlEntry, box, hidden, occluded) {
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(htmlEntry.priority, 0) * 10) - Math.round(sceneNumber(htmlEntry.depth, 0) * 10));
+    const perspective = htmlEntry.perspective === true && normalizeSceneHTMLMode(htmlEntry.mode, "dom") === "dom";
+    let isHidden = Boolean(hidden);
+    if (element.__gosxHTMLMarkup !== htmlEntry.html) {
+      element.innerHTML = htmlEntry.html;
+      element.__gosxHTMLMarkup = htmlEntry.html;
+    }
     setAttrValue(element, "data-gosx-scene-html", htmlEntry.id || "");
     setAttrValue(element, "class", htmlEntry.className ? ("gosx-scene-html " + htmlEntry.className) : "gosx-scene-html");
     setAttrValue(element, "data-gosx-scene-html-target", htmlEntry.target || "");
     setAttrValue(element, "data-gosx-scene-html-mode", htmlEntry.mode || "dom");
+    setAttrValue(element, "data-gosx-scene-html-perspective", perspective ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-perspective-error", htmlEntry.perspectiveError || (htmlEntry.perspective && !perspective ? "Perspective positioning applies only to DOM mode" : ""));
     setAttrValue(element, "data-gosx-scene-html-fallback", htmlEntry.fallback || "");
     setAttrValue(element, "data-gosx-scene-html-fallback-reason", htmlEntry.fallbackReason || "");
     // Raster keys may contain a complete data URL. This is renderer-owned
@@ -650,25 +658,35 @@
     );
     setAttrValue(element, "data-gosx-scene-html-occlude", htmlEntry.occlude ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-occluded", occluded ? "true" : "false");
-    setAttrValue(element, "data-gosx-scene-html-visibility", hidden ? "hidden" : "visible");
-    setAttrValue(element, "aria-hidden", hidden ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-priority", sceneNumber(htmlEntry.priority, 0));
     setAttrValue(element, "data-gosx-scene-html-depth", sceneNumber(htmlEntry.depth, 0));
     setAttrValue(element, "data-gosx-scene-html-pointer-events", normalizeSceneHTMLPointerEvents(htmlEntry.pointerEvents, "none"));
-    setStyleValue(element.style, "--gosx-scene-html-left", box.anchor.x + "px");
-    setStyleValue(element.style, "--gosx-scene-html-top", box.anchor.y + "px");
-    setStyleValue(element.style, "--gosx-scene-html-anchor-x", String(sceneNumber(htmlEntry.anchorX, 0.5)));
-    setStyleValue(element.style, "--gosx-scene-html-anchor-y", String(sceneNumber(htmlEntry.anchorY, 0.5)));
-    setStyleValue(element.style, "--gosx-scene-html-width", Math.max(1, sceneNumber(htmlEntry.width, 1)) + "px");
-    setStyleValue(element.style, "--gosx-scene-html-min-height", Math.max(1, sceneNumber(htmlEntry.height, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-html-left", perspective ? "0px" : box.anchor.x + "px");
+    setStyleValue(element.style, "--gosx-scene-html-top", perspective ? "0px" : box.anchor.y + "px");
+    setStyleValue(element.style, "--gosx-scene-html-anchor-x", perspective ? "0" : String(sceneNumber(htmlEntry.anchorX, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-html-anchor-y", perspective ? "0" : String(sceneNumber(htmlEntry.anchorY, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-html-width", perspective ? "auto" : Math.max(1, sceneNumber(htmlEntry.width, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-html-min-height", perspective ? "auto" : Math.max(1, sceneNumber(htmlEntry.height, 1)) + "px");
     setStyleValue(element.style, "--gosx-scene-html-opacity", String(clamp01(sceneNumber(htmlEntry.opacity, 1))));
     setStyleValue(element.style, "--gosx-scene-html-z-index", String(zIndex));
     setStyleValue(element.style, "--gosx-scene-html-depth", String(sceneNumber(htmlEntry.depth, 0)));
     setStyleValue(element.style, "--gosx-scene-html-pointer-events", normalizeSceneHTMLPointerEvents(htmlEntry.pointerEvents, "none"));
-    if (element.__gosxHTMLMarkup !== htmlEntry.html) {
-      element.innerHTML = htmlEntry.html;
-      element.__gosxHTMLMarkup = htmlEntry.html;
+    if (perspective) {
+      setStyleValue(element.style, "transform-origin", "0 0");
+      const transform = sceneHTMLPerspectiveTransform.call(null, element, htmlEntry.perspectiveCorners);
+      if (transform) {
+        setStyleValue(element.style, "transform", transform);
+      } else {
+        setStyleValue(element.style, "transform", "none");
+        isHidden = true;
+      }
+    } else {
+      setStyleValue(element.style, "transform", "");
+      setStyleValue(element.style, "transform-origin", "");
     }
+    setStyleValue(element.style, "visibility", isHidden ? "hidden" : "visible");
+    setAttrValue(element, "data-gosx-scene-html-visibility", isHidden ? "hidden" : "visible");
+    setAttrValue(element, "aria-hidden", isHidden ? "true" : "false");
   }
 
   function sceneHTMLTextureTargetID(htmlEntry) {
@@ -1548,4 +1566,45 @@
       const nextLifecycle = syncSceneHTMLTextureState(textureState, entries);
       setSceneHTMLTextureLayerAttrs(layer, sceneHTMLTextureStats(entries, nextLifecycle), entries.length);
     }
+  }
+
+  // arguments[0] is the overlay host (its measured size is cached on it) and
+  // arguments[1] the four projected plane corners, with null entries behind the
+  // camera. Read through arguments so the function adds no implicit-any
+  // parameters and stays plain JavaScript for the test harnesses.
+  function sceneHTMLPerspectiveTransform() {
+    const element = arguments[0], corners = arguments[1];
+    if (!Array.isArray(corners) || corners.length !== 4) return null;
+    for (const point of corners) {
+      if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
+    }
+    let size = element.__gosxHTMLPerspectiveSize;
+    if (!size) {
+      size = { width: Number(element.offsetWidth), height: Number(element.offsetHeight) };
+      element.__gosxHTMLPerspectiveSize = size;
+    }
+    const width = size.width, height = size.height;
+    if (!(width > 0) || !(height > 0)) return null;
+    const source = [[0, 0], [width, 0], [0, height], [width, height]];
+    const equations = [];
+    for (let index = 0; index < 4; index += 1) {
+      const x = source[index][0], y = source[index][1], u = Number(corners[index].x), v = Number(corners[index].y);
+      equations.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+      equations.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+    }
+    for (let pivot = 0; pivot < 8; pivot += 1) {
+      let best = pivot;
+      for (let row = pivot + 1; row < 8; row += 1) if (Math.abs(equations[row][pivot]) > Math.abs(equations[best][pivot])) best = row;
+      if (Math.abs(equations[best][pivot]) < 1e-12) return null;
+      if (best !== pivot) [equations[best], equations[pivot]] = [equations[pivot], equations[best]];
+      const divisor = equations[pivot][pivot];
+      for (let column = pivot; column <= 8; column += 1) equations[pivot][column] /= divisor;
+      for (let row = 0; row < 8; row += 1) {
+        if (row === pivot) continue;
+        const factor = equations[row][pivot];
+        for (let column = pivot; column <= 8; column += 1) equations[row][column] -= factor * equations[pivot][column];
+      }
+    }
+    const h = equations.map(function(row) { return row[8]; });
+    return "matrix3d(" + [h[0], h[3], 0, h[6], h[1], h[4], 0, h[7], 0, 0, 1, 0, h[2], h[5], 0, 1].join(",") + ")";
   }

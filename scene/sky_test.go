@@ -100,13 +100,14 @@ func TestSkyFeaturesMatchMode(t *testing.T) {
 		{"environment", &Sky{Mode: " ENVIRONMENT "}, capability.FeatureSkyEnvironment},
 		{"gradient", &Sky{Mode: "gradient"}, capability.FeatureSkyGradient},
 		{"implicit gradient", &Sky{TopColor: "#fff"}, capability.FeatureSkyGradient},
+		{"physical", &Sky{Mode: "physical"}, capability.FeatureSkyPhysical},
 		{"invalid", &Sky{Mode: "invalid"}, ""},
 		{"absent", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			props := Props{Environment: Environment{Sky: tc.sky}}
 			got := featureSet(collectFeatures(props.SceneIR()))
-			for _, f := range []capability.Feature{capability.FeatureSkyEnvironment, capability.FeatureSkyGradient} {
+			for _, f := range []capability.Feature{capability.FeatureSkyEnvironment, capability.FeatureSkyGradient, capability.FeatureSkyPhysical} {
 				if got[f] != (tc.feature == f) {
 					t.Fatalf("feature %s = %v, want %v", f, got[f], tc.feature == f)
 				}

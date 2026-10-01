@@ -40,6 +40,7 @@ var capabilityFeatureLabels = map[capability.Feature]string{
 	capability.FeatureLightProbeSH:              "Light probe spherical harmonics",
 	capability.FeatureSkyEnvironment:            "Environment sky",
 	capability.FeatureSkyGradient:               "Gradient sky",
+	capability.FeatureSkyPhysical:               "Physical sky",
 }
 
 // These reasons summarize the implementation recorded in capability.Matrix
@@ -119,6 +120,11 @@ var capabilityCellReasons = map[capability.Feature]map[capability.Backend]string
 		capability.BackendWebGPU:   "The renderer draws the authored gradient as a sky.",
 		capability.BackendWebGL:    "The renderer draws the authored gradient as a sky.",
 		capability.BackendCanvas2D: "Canvas2D keeps a flat clear color instead of a gradient sky.",
+	},
+	capability.FeatureSkyPhysical: {
+		capability.BackendWebGPU:   "The renderer draws analytic Rayleigh and Mie scattering with a sun disk.",
+		capability.BackendWebGL:    "The renderer draws analytic Rayleigh and Mie scattering with a sun disk.",
+		capability.BackendCanvas2D: "Canvas2D keeps a flat clear color; the server fills matching gradient stops.",
 	},
 }
 

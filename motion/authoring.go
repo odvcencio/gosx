@@ -63,6 +63,7 @@ const (
 	SignalClamp      SignalKind = "clamp"
 	SignalMix        SignalKind = "mix"
 	SignalVelocity   SignalKind = "velocity"
+	SignalCurve      SignalKind = "curve"
 )
 
 // MotionAxis names the axis for scroll and pointer sources.
@@ -114,6 +115,7 @@ type SignalSpec struct {
 	Max           float64             `json:"max,omitempty"`
 	Ease          *MotionEase         `json:"ease,omitempty"`
 	Frames        []MotionKeyframe    `json:"frames,omitempty"`
+	Smooth        bool                `json:"smooth,omitempty"`
 	ReducedMotion ReducedMotionPolicy `json:"reducedMotion,omitempty"`
 }
 
@@ -153,6 +155,9 @@ type Program struct {
 	Signals  []SignalSpec `json:"signals"`
 	Bindings []Binding    `json:"bindings,omitempty"`
 	Pins     []PinBinding `json:"pins,omitempty"`
+	// CSSCompiled lists the indexes of Bindings that CompileCSS turned into
+	// CSS. The browser runtime skips them when it supports scroll timelines.
+	CSSCompiled []int `json:"cssCompiled,omitempty"`
 }
 
 // SpringOptions configures a spring signal. Input, when set, retargets the
@@ -311,6 +316,13 @@ func (p *Program) Marshal() ([]byte, error) {
 		ids[id] = struct{}{}
 	}
 	for _, signal := range p.Signals {
+		if signal.Kind == SignalCurve {
+			if err := validateCurveSignal(signal); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, signal := range p.Signals {
 		for _, ref := range []SignalRef{signal.Input, signal.A, signal.B, signal.Weight} {
 			if ref == "" {
 				continue
@@ -329,6 +341,11 @@ func (p *Program) Marshal() ([]byte, error) {
 		}
 		if err := validateBinding(binding); err != nil {
 			return nil, err
+		}
+	}
+	for _, index := range p.CSSCompiled {
+		if index < 0 || index >= len(p.Bindings) {
+			return nil, fmt.Errorf("motion: cssCompiled index %d is outside the %d bindings", index, len(p.Bindings))
 		}
 	}
 	for _, pin := range p.Pins {

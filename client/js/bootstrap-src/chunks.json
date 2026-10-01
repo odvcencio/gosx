@@ -66,6 +66,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount.ts",
@@ -214,6 +215,7 @@
         "../runtime/scene3d/mount-viewport.ts",
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
@@ -265,6 +267,12 @@
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/26k-feature-scene3d-compute-suffix.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-walk.js",
+      "sources": [
+        "../runtime/scene3d/mount-walk.ts"
       ]
     },
     {
