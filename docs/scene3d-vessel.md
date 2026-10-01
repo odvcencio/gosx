@@ -24,7 +24,7 @@ Four hull samples use the renderer’s shared Gerstner evaluator to drive damped
 
 Sail meshes named `canvas-*` gather into visible canvas bundles below their yards while moored or furled, then fill as trim rises. Their UVs range from 0 to 1 across and down each sail. Wind pressure fills the canvas; pinching within 58° of upwind increases lower-edge luffing and flutter. Triangle normals follow the deformed cloth. Meshes named `rope-rigging` and `timber-spars` share a small elastic sway above their deck anchors. A `wind-flag` mesh points into world wind. These are optional conventions for procedural assets; other named models still sail. LOD NodeIDs refer to alternatives already in the graph, at ascending distances; the controller changes visibility without fetching or recompiling while sailing. Keep the models local and give them stable IDs.
 
-The wake is a bounded transparent ribbon plus two bow-wave strips. Its vertices sample ocean height every rendered frame. An optional alpha foam texture fades the sides and ages the trail over six seconds. Impact spray uses at most 20 ballistic droplets, or 10 at reduced detail. Droplets start at the bow, spread to both sides, and disappear when they reach the sampled ocean surface. Positions and velocities are deterministic; no random generator or extra animation loop is used. Set `Wake` to false to omit both water effects. Disposal removes controls, dynamic deck, wake and spray; asynchronous bathymetry loading checks mount ownership before applying.
+The wake is a bounded transparent ribbon plus two bow-wave strips. Visible foam vertices sample ocean height every rendered frame. Dormant effects skip queries; duplicate rows copy the last live row, limiting reduced-detail foam to 50 queries per frame. An optional alpha foam texture fades the sides and ages the trail over six seconds. Impact spray uses at most 20 ballistic droplets, or 10 at reduced detail. Droplets start at the bow, spread to both sides, and disappear when they reach the sampled ocean surface. Positions and velocities are deterministic; no random generator or extra animation loop is used. Set `Wake` to false to omit both water effects. Disposal removes controls, dynamic deck, wake and spray; asynchronous bathymetry loading checks mount ownership before applying.
 
 Unit and mount tests cover sailing, collision, controls, lazy URL gates, reset, pacing and shader reuse. Browser presentation and real-device touch feel need manual checks; the implementation does not provide authoritative multiplayer physics.
 
@@ -47,7 +47,7 @@ Optional runtime transfer, excluding existing Scene3D, renderer and walk chunks:
 | Chunk | Raw bytes | Gzip bytes | Brotli bytes |
 | --- | ---: | ---: | ---: |
 | Ocean query | 2,451 | 1,293 | 1,152 |
-| Vessel, cloth, wake and spray | 21,333 | 8,635 | 7,676 |
-| Total | 23,784 | 9,928 | 8,828 |
+| Vessel, cloth, wake and spray | 21,540 | 8,711 | 7,746 |
+| Total | 23,991 | 10,004 | 8,898 |
 
 Relative to the recovered ocean-query commits, Scene3D's lazy gates and advance hook add 609 raw bytes (252 gzip, 232 Brotli); moving walk surfaces and suspension add 654 raw bytes (258 gzip, 224 Brotli). Pages without `Props.Vessel` fetch neither optional chunk.

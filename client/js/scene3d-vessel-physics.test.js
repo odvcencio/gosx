@@ -165,6 +165,23 @@ test('wake ages in world space through turns; deterministic spray is bounded and
  a.wake.reset();a.wake.dispose();b.wake.dispose();assert.equal(a.scene.objects.size,0);
 });
 
+test('inactive wake skips ocean queries; reduced detail samples only distinct foam rows',()=>{
+ const scene={objects:new Map()},s=ship(),wake=context.window.__gosx_scene3d_vessel_wake.create(scene,{addObject:(s,id,p)=>s.objects.set(id,p)},{nodeId:'ship'});
+ let queries=0;const wave=(x,z,t)=>{queries++;return {y:.2*Math.sin(x+t),normal:{x:0,y:1,z:0}};};
+ wake.update(s,0,wave,1);assert.equal(queries,0);
+ s.mode='sailing';s.speed=5;
+ for(let i=0;i<30;i++){s.z=-i;wake.update(s,i*.25,wave,.4);}
+ queries=0;wake.update(s,7.4,wave,.4);assert.ok(queries<=50,`${queries} ocean queries at reduced detail`);
+ const p=wake.vertices.positions,n=wake.vertices.normals,u=wake.vertices.uvs;
+ for(let i=14;i<24;i++) {
+  assert.deepEqual(Array.from(p.slice(i*9,i*9+9)),Array.from(p.slice(13*9,14*9)));
+  assert.deepEqual(Array.from(n.slice(i*9,i*9+9)),Array.from(n.slice(13*9,14*9)));
+  assert.deepEqual(Array.from(u.slice(i*6,i*6+6)),Array.from(u.slice(13*6,14*6)));
+ }
+ s.speed=0;queries=0;wake.update(s,14,wave,1);assert.equal(queries,0);assert.equal(scene.objects.get('gosx-vessel-wake:ship').visible,false);
+ wake.dispose();
+});
+
 test('deck bob is gentle and reduced motion removes added bob and wheel roll',()=>{
  const s=ship();s.cameraMode='wheel';s.roll=.15;s.vy=.5;
  const h=api.localPoint(s,s.helm.x,s.helm.y,s.helm.z),normal=api.camera(s,{near:.1},1/60,1);

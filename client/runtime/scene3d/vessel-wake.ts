@@ -25,6 +25,7 @@
         const p=particles[i],age=time-p.time,x=p.x+p.vx*age,z=p.z+p.vz*age,y=p.y+p.vy*age-4.905*age*age;
         if(age>1.2||y<sample(x,z,time).y)particles.splice(i,1);
       }
+      if(!particles.length&&!object.visible)return;
       vertices.positions.fill(0);
       for(let i=0;i<particles.length;i++) {
         const p=particles[i],age=time-p.time,x=p.x+p.vx*age,y=p.y+p.vy*age-4.905*age*age,z=p.z+p.vz*age;
@@ -68,8 +69,12 @@
         trail.unshift({x:stern.x,z:stern.z,time,heading:state.heading});last=time;
       }
       while(trail.length>limit||(trail.length&&time-trail[trail.length-1].time>6))trail.pop();
+      if(!moving&&trail.length<2) {object.visible=false;impact.update(state,time,sample,detail,camera);return;}
       const current=physics.localPoint(state,0,0,state.length*.38);
       for(let i=0;i<count;i++) {
+        if(i&&i>=trail.length) {
+          positions.copyWithin(i*9,(i-1)*9,i*9);normals.copyWithin(i*9,(i-1)*9,i*9);uvs.copyWithin(i*6,(i-1)*6,i*6);continue;
+        }
         const point=trail[i]||trail[trail.length-1]||{x:current.x,z:current.z,time,heading:state.heading};
         const age=Math.min(1,(time-point.time)/6),width=state.beam*(.3+.7*age);
         for(let j=0;j<3;j++) {

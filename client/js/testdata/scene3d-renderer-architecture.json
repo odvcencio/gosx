@@ -510,7 +510,7 @@
     "../runtime/scene3d/vessel-physics.ts": 169,
     "../runtime/scene3d/vessel-input.ts": 102,
     "../runtime/scene3d/vessel-model.ts": 103,
-    "../runtime/scene3d/vessel-wake.ts": 92,
+    "../runtime/scene3d/vessel-wake.ts": 97,
     "../runtime/scene3d/mount-vessel.ts": 94
   },
   "functionDefaults": {
@@ -1055,12 +1055,12 @@
     {
       "source": "../runtime/scene3d/vessel-wake.ts",
       "name": "anonymous@2:2",
-      "lines": 91,
-      "cyclomatic": 42,
-      "cognitive": 53,
+      "lines": 96,
+      "cyclomatic": 48,
+      "cognitive": 60,
       "maxNesting": 3,
       "parameters": 0,
-      "reason": "Measured cumulative plain-JS IIFE for bounded vessel effects. Helpers keep deformation, triangle normals, wake aging and deterministic impact spray outside renderer orchestration. Tests cover anchors, world-space history, capacity and disposal."
+      "reason": "Measured cumulative plain-JS IIFE for bounded vessel effects. Helpers keep deformation, triangle normals, wake aging and deterministic impact spray outside renderer orchestration. Tests cover anchors, world-space history, capacity and disposal. Skip dormant effects and copy duplicate foam rows without resampling the ocean; the measured guard growth is covered by a query-budget and geometry-parity test."
     }
   ],
   "symbols": [
