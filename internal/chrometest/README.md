@@ -7,7 +7,7 @@ afterward, and call `browser.Close()` in cleanup. Startup gets at most two
 pipe, and CDP cleanup. The WebSocket handshake uses the remaining attempt/overall
 allowance. Startup deadlines and typed handshake timeouts can retry only while the
 process is alive and the caller is not canceled. Process exits, invalid endpoints,
-and non-timeout CDP errors fail immediately; assertions and page navigation are
+and other CDP errors fail immediately; assertions and page navigation are
 never retried.
 
 This package launches Chrome directly and uses chromedp's remote allocator for
@@ -33,8 +33,11 @@ rendering/codec settings. Product, visual, and performance launchers do not use
 this test helper.
 
 The remote allocator opens a new test tab beside Chrome's initial blank tab.
-Startup activates that tab before returning, preserving the exec allocator's
-visible-page behavior for requestAnimationFrame and chromedp's default polling.
+Chrome can publish DevTools before its headless window accepts new tabs. Startup
+waits for the specific typed `Target.createTarget` response "no browser is open"
+on the same connection, within the existing attempt and overall deadlines.
+Other target errors remain fatal. Startup activates the tab before returning,
+preserving the exec allocator's visible-page behavior for requestAnimationFrame and chromedp's default polling.
 
 Diagnostics remove terminal controls, URLs, profile paths, endpoint addresses,
 and common credential fields. A truncated first line is discarded so redaction
