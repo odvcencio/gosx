@@ -105,6 +105,48 @@ assert.equal(response.headers.get("Content-Encoding"), null);
 assert.deepEqual(Buffer.from(await response.arrayBuffer()), raw);
 files.set("/index.html.br", [br, "application/octet-stream"]);
 
+// A missing sidecar may return the SPA HTML fallback with a successful status.
+const spaEnv = { ASSETS: { async fetch(request) {
+  const path = new URL(request.url).pathname;
+  if (path.endsWith(".br") || path.endsWith(".gz")) {
+    paths.push(path);
+    return new Response(raw, { headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": String(raw.length),
+    }});
+  }
+  return env.ASSETS.fetch(request);
+}}};
+paths = [];
+response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": "br, gzip" } }), spaEnv);
+assert.equal(response.headers.get("Content-Encoding"), null, "HTML fallback must not be labeled as compressed");
+assert.deepEqual(Buffer.from(await response.arrayBuffer()), raw);
+assert.deepEqual(paths, ["/index.html", "/index.html.br", "/index.html.gz"]);
+
+// A rejected Brotli fallback must still allow a verified gzip sidecar.
+const mixedEnv = { ASSETS: { async fetch(request) {
+  if (new URL(request.url).pathname.endsWith(".br")) return spaEnv.ASSETS.fetch(request);
+  return env.ASSETS.fetch(request);
+}}};
+files.set("/index.html.gz", [gzip, "application/gzip"]);
+response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": "br, gzip" } }), mixedEnv);
+assert.equal(response.headers.get("Content-Encoding"), "gzip");
+assert.deepEqual(Buffer.from(await response.arrayBuffer()), gzip);
+
+// An absent media type or a conflicting encoding does not verify a sidecar.
+for (const [type, encoding] of [["", undefined], ["application/octet-stream", "gzip"]]) {
+  files.set("/index.html.br", [br, type, encoding]);
+  response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": "br" } }), env);
+  assert.equal(response.headers.get("Content-Encoding"), null);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), raw);
+}
+// Explicit encoding metadata supports sidecars served with the original media type.
+files.set("/index.html.br", [br, "text/html", "br"]);
+response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": "br" } }), env);
+assert.equal(response.headers.get("Content-Encoding"), "br");
+assert.deepEqual(Buffer.from(await response.arrayBuffer()), br);
+files.set("/index.html.br", [br, "application/octet-stream"]);
+
 for (const [method, extra, status, body] of [
   ["HEAD", {}, 200, Buffer.alloc(0)],
   ["GET", { Range: "bytes=0-9" }, 206, raw.subarray(0, 10)],

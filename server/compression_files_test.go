@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -222,5 +224,72 @@ func TestCompressionPublicSidecarTypesAndSize(t *testing.T) {
 				t.Fatalf("encoding = %q, want %q", w.Result().Header.Get("Content-Encoding"), tc.want)
 			}
 		})
+	}
+}
+
+func TestCompressionFilePreconditions(t *testing.T) {
+	for _, kind := range []string{"public", "isr"} {
+		for _, encoding := range []string{"br", "gzip"} {
+			t.Run(kind+"/"+encoding, func(t *testing.T) {
+				root := t.TempDir()
+				target, path := filepath.Join(root, "public", "styles.css"), "/styles.css"
+				if kind == "isr" {
+					target, path = filepath.Join(root, "static", "index.html"), "/"
+					writeISRManifest(t, root, isrManifest{Pages: []string{"/"}, Routes: []isrRoute{{Path: "/", File: "index.html"}}})
+				}
+				writeCompressionFixture(t, target, bytes.Repeat([]byte("page body "), 256), "br,gzip")
+				app := New()
+				app.SetPublicDir(filepath.Join(root, "public"))
+				app.SetRuntimeRoot(root)
+				if kind == "isr" {
+					app.EnableISR()
+				}
+				app.Use(func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("ETag", `"page"`)
+						next.ServeHTTP(w, r)
+					})
+				})
+				srv := httptest.NewServer(app.Build())
+				defer srv.Close()
+				for _, tc := range []struct {
+					name, header, value string
+					status              int
+				}{
+					{"if-match", "If-Match", `"different"`, http.StatusPreconditionFailed},
+					{"if-unmodified-since", "If-Unmodified-Since", time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat), http.StatusPreconditionFailed},
+					{"if-none-match", "If-None-Match", `W/"page"`, http.StatusNotModified},
+					{"if-modified-since", "If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat), http.StatusNotModified},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+						if err != nil {
+							t.Fatal(err)
+						}
+						req.Header.Set("Accept", "text/html")
+						req.Header.Set("Accept-Encoding", encoding)
+						req.Header.Set(tc.header, tc.value)
+						res, err := srv.Client().Do(req)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer res.Body.Close()
+						body, err := io.ReadAll(res.Body)
+						if err != nil {
+							t.Fatalf("reading conditional response: %v", err)
+						}
+						if res.StatusCode != tc.status || len(body) != 0 {
+							t.Fatalf("status = %d, body length = %d; want %d with no body", res.StatusCode, len(body), tc.status)
+						}
+						if res.Header.Get("Content-Encoding") != "" || (res.Header.Get("Content-Length") != "" && res.Header.Get("Content-Length") != "0") {
+							t.Fatalf("bodyless response advertises compressed bytes: %v", res.Header)
+						}
+						if !strings.Contains(strings.Join(res.Header.Values("Vary"), ","), "Accept-Encoding") {
+							t.Fatal("conditional response missing Vary")
+						}
+					})
+				}
+			})
+		}
 	}
 }

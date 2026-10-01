@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -568,9 +567,8 @@ func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrAr
 		addAcceptEncodingVary(w.Header())
 	}
 	if encoding != "" {
-		w.Header().Set("Content-Encoding", encoding)
-		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		weakenETag(w.Header())
+		w = &encodedContentWriter{ResponseWriter: w, encoding: encoding}
 	}
 	if mode != "" {
 		w.Header().Set("X-GoSX-ISR", mode)
