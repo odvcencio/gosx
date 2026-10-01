@@ -37,7 +37,7 @@ func blackglassBeachBeacon(periodID string) []scene.Node {
 	light := scene.StandardMaterial{Color: "#fff1d6", EmissiveColor: &warm, Emissive: glow, Roughness: 0.2}
 	beam := func(id string, length, radius, opacity float64) scene.Mesh {
 		return scene.Mesh{ID: id, Geometry: blackglassBeamGeometry(length, radius, 12),
-			Material: scene.StandardMaterial{Color: "#ffe9c4", EmissiveColor: &warm, Emissive: 2, Opacity: scene.Float(opacity),
+			Material: scene.StandardMaterial{Color: "#ffe9c4", EmissiveColor: &warm, Emissive: .7, Opacity: scene.Float(opacity),
 				BlendMode: scene.BlendAdditive},
 			Position: scene.Vec3(beaconX, lantern, beaconZ), Spin: scene.Euler{Y: 0.45},
 			DepthWrite: scene.Bool(false), CastShadow: false, ReceiveShadow: false}
@@ -54,8 +54,8 @@ func blackglassBeachBeacon(periodID string) []scene.Node {
 			Material: light, Position: y(beaconTower + 0.8)},
 		scene.Mesh{ID: "beacon-roof", Geometry: scene.CylinderGeometry{RadiusTop: 0.05, RadiusBottom: 1.1, Height: 0.9, Segments: 16},
 			Material: red, Position: y(beaconTower + 1.8), CastShadow: true},
-		beam("beacon-beam", 70, 6, beamCore),
-		beam("beacon-beam-halo", 55, 12, beamHalo),
+		beam("beacon-beam", 70, 2.5, beamCore),
+		beam("beacon-beam-halo", 55, 4, beamHalo),
 	}
 }
 
