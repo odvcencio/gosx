@@ -17,12 +17,14 @@
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function cloth(object, saved, state, seconds) {
     const vertices=object.vertices,base=saved.positions,uv=vertices.uvs,top=saved.top;
-    const trim=state.trim,wind=Math.min(1.5,state.strength/8),phase=seconds*2.2;
+    const trim=state.mode==='moored'?0:state.trim,wind=Math.min(1.5,state.strength/8),phase=seconds*2.2;
     for(let i=0;i<base.length;i+=3) {
       const u=uv ? uv[i/3*2] : .5,v=uv ? uv[i/3*2+1] : .5;
       const shape=Math.sin(u*Math.PI)*Math.sin(v*Math.PI);
-      vertices.positions[i+1]=base[i+1]+(top-base[i+1])*(1-trim)*.94;
-      vertices.positions[i+2]=base[i+2]+shape*wind*trim*(.24+.12*Math.sin(phase+u*4+base[i+1]*.7));
+      // A rounded canvas bundle remains below and in front of the yard.
+      const furledY=top-.12-.22*v,furledZ=saved.z+.12+.12*Math.sin(v*Math.PI);
+      vertices.positions[i+1]=furledY+(base[i+1]-furledY)*trim;
+      vertices.positions[i+2]=furledZ+(base[i+2]-furledZ)*trim+shape*wind*trim*(.24+.12*Math.sin(phase+u*4+base[i+1]*.7));
     }
     vertices.revision=(vertices.revision||0)+1;vertices.immutable=false;object.static=false;
   }
@@ -47,7 +49,7 @@
         const name=String(id);
         if(name.includes('/canvas-') && object.vertices) {
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-          if(!saved.has(object))saved.set(object,{positions:new Float32Array(object.vertices.positions),top:Math.max(...object.vertices.positions.filter((v,i)=>i%3===1))});
+          if(!saved.has(object))saved.set(object,{positions:new Float32Array(object.vertices.positions),top:Math.max(...object.vertices.positions.filter((v,i)=>i%3===1)),z:Math.min(...object.vertices.positions.filter((v,i)=>i%3===2))});
           cloth(object,saved.get(object),state,time);
         }
         if(name.includes('/wind-flag')) {

@@ -39,7 +39,9 @@ func clipperParts(lod int) []shipPart {
 	// Three masts, each with lower, top and topgallant square sails.
 	for mast, spec := range [][3]float64{{-6.3, 18.5, 5.9}, {0, 21, 6.5}, {6, 17, 5.1}} {
 		z, top, width := spec[0], spec[1], spec[2]
-		shipTube(timber, vec3{0, 2.5, z}, vec3{0, top, z}, .18, .065, sides)
+		mastMesh := &geometry{}
+		shipTube(mastMesh, vec3{0, 2.5, z}, vec3{0, top, z}, .18, .065, sides)
+		parts = append(parts, shipPart{fmt.Sprintf("mast-%d", mast), mastMesh, 1})
 		for tier := 0; tier < 3; tier++ {
 			yard := top - 1 - float64(tier)*4.1
 			w := width * (.53 + float64(tier)*.23)
@@ -82,7 +84,9 @@ func clipperParts(lod int) []shipPart {
 	shipTube(timber, vec3{0, 3, -9}, vec3{0, 4.2, -16}, .2, .055, sides) // bowsprit
 	shipTube(rope, vec3{0, 4.2, -16}, vec3{0, -.7, -10.8}, .025, .025, 3)
 	// Poop deckhouse, hatches, plank seams, bulwark stanchions and a helm wheel.
-	shipBox(timber, 0, 2.9, 8.8, 1.5, .8, 1.4)
+	deckhouse := &geometry{}
+	shipBox(deckhouse, 0, 2.9, 8.8, 1.5, .8, 1.4)
+	parts = append(parts, shipPart{"deckhouse", deckhouse, 1})
 	shipBox(timber, 0, 2.64, -3, 1.6, .28, 1.8)
 	shipBox(timber, 0, 2.64, 3, 1.6, .28, 1.8)
 	if lod < 2 {

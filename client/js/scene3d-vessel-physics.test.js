@@ -19,6 +19,19 @@ test('both tacks gather speed and crossing the no-go zone preserves momentum bef
 test('rudder turns both ways, even when caught in irons; sail raising and lowering is bounded',()=>{
  for(const rudder of [-1,1]) {const s=ship();s.mode='sailing';s.trim=0;sail(s,2,{rudder,sail:1});assert.equal(Math.sign(s.heading),-rudder);assert.ok(Math.abs(s.heading)>.1);assert.ok(s.trim>.7);sail(s,5,{rudder:0,sail:-1});near(s.trim,0);}
 });
+test('backed canvas pays off from the mooring by 30 degrees in five seconds and gathers speed in ten',()=>{
+ for(const rudder of [-1,1]) {
+  const s=ship({heading:8*radians,windDirection:8});s.mode='sailing';s.trim=1;
+  sail(s,5,{rudder});assert.ok(Math.abs(s.heading-8*radians)>=30*radians);
+  sail(s,5,{rudder});assert.ok(s.speed>1,`${s.speed} m/s after ten seconds`);
+ }
+});
+test('the recorded W hold and short D hold clear irons and continue sailing after key release',()=>{
+ const s=ship({heading:8*radians,windDirection:8});s.mode='sailing';
+ sail(s,1.5,{sail:1});sail(s,2.5,{rudder:1});sail(s,8);
+ assert.ok(api.speedCurve(s.heading-s.wind)>0,'the bow must leave the no-go zone');
+ assert.ok(s.speed>1,`${s.speed} m/s after the recorded input sequence`);
+});
 test('buoyancy samples bow, stern and beam; damping settles heave, pitch and roll',()=>{
  const s=ship();s.y=5;s.pitch=.3;s.roll=.3;let count=0;
  const wave=(x,z)=>{count++;return {y:.03*x-.02*z};};
@@ -51,7 +64,7 @@ test('helm state machine enforces proximity and leaves on deck; V toggles wheel 
  const s=ship();assert.equal(api.helm(s,{x:100,y:0,z:0}),'far');assert.equal(s.mode,'moored');
  const h=api.localPoint(s,s.helm.x,s.helm.y,s.helm.z);assert.equal(api.helm(s,h),'take');assert.equal(s.mode,'sailing');
  const stern=api.camera(s,{fov:60},1/60);assert.ok(stern.z>s.helm.z);assert.equal(api.toggleCamera(s),'wheel');
- const wheel=api.camera(s,{fov:60},1/60);near(wheel.z,h.z);assert.equal(wheel.fov,60);
+ const wheel=api.camera(s,{fov:60},1/60);near(wheel.z,h.z);assert.equal(wheel.fov,65);assert.equal(wheel.near,.05);
  assert.equal(api.helm(s,h),'leave');assert.equal(s.mode,'deck');near(s.trim,0);assert.equal(api.helm(s,h),'take');
 });
 test('touch steering and sail hold have independent pointer IDs and cancel only their own input',()=>{
@@ -60,8 +73,8 @@ test('touch steering and sail hold have independent pointer IDs and cancel only 
  touch.up(input,22);near(touch.value(input).rudder,1);near(touch.value(input).sail,0);touch.up(input,99);near(touch.value(input).rudder,1);
  touch.up(input,11);near(touch.value(input).rudder,0);input.keys.add('KeyA');input.keys.add('KeyW');near(touch.value(input).rudder,-1);touch.clear(input);near(touch.value(input).sail,0);
 });
-test('stern camera frames the full clipper rig and hull at the demo 42-degree field of view',()=>{
- const s=ship(),camera=api.camera(s,{fov:42},1/60),halfFOV=21*radians;
+test('stern camera frames the full clipper rig and hull at the sailing field of view',()=>{
+ const s=ship(),camera=api.camera(s,{fov:42},1/60),halfFOV=camera.fov/2*radians;
  for(const [height,z] of [[18.5,-6.3],[21,0],[17,6],[2.5,11],[-1.5,0]]) {
   const p=api.localPoint(s,0,height,z),pitch=Math.atan2(p.y-camera.y,Math.hypot(p.x-camera.x,p.z-camera.z));
   assert.ok(Math.abs(pitch-camera.rotationX)<halfFOV,'mastheads and keel fit in the stern view');
