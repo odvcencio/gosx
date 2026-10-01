@@ -12,7 +12,7 @@ import (
 
 func TestBeachPoolsConstructionAndTerrain(t *testing.T) {
 	nodes := blackglassBeachPools()
-	meshes := momentMeshes(t, nodes, 4, 7_400)
+	meshes := momentMeshes(t, "pools", nodes)
 	if !bytes.Equal(momentWire(t, nodes), momentWire(t, blackglassBeachPools())) {
 		t.Fatal("pools are not deterministic")
 	}

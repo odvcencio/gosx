@@ -124,7 +124,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 	return scene.Props{
 		Width: 1280, Height: 720,
 		Label:      "Blackglass Beach — " + view.Name + " at " + period.Name,
-		AriaLabel:  "A black sand beach at " + period.Name + ": waves run up the sand below basalt sea stacks, and an obsidian monolith stands at the waterline and a three-masted clipper waits at the jetty.",
+		AriaLabel:  "A black sand beach at " + period.Name + ": footprints lead to an obsidian monolith, tide pools glint on the eastern shore, wreck ribs rise in the western dunes, a hollow catches the low sun, and a lighthouse sweeps the eastern headland. A three-masted clipper waits at the jetty.",
 		Background: horizon, Controls: scene.ControlFirstPerson, Walk: blackglassBeachWalk(), Vessel: blackglassBeachVessel(), PointerLock: scene.Bool(true),
 		AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
 		PreferWebGPU: scene.Bool(true), CanvasAlpha: scene.Bool(false), Stats: scene.Bool(false),

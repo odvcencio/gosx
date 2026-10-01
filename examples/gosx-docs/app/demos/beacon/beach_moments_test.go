@@ -2,6 +2,8 @@ package docs
 
 import (
 	"bytes"
+	"compress/gzip"
+	_ "embed"
 	"encoding/json"
 	"math"
 	"testing"
@@ -9,6 +11,35 @@ import (
 	"m31labs.dev/gosx/examples/gosx-docs/internal/beachgen"
 	"m31labs.dev/gosx/scene"
 )
+
+//go:embed moments-budget.json
+var beachMomentsBudgetJSON []byte
+
+type beachMomentLimit struct {
+	Nodes, JSONBytes int
+}
+
+func beachMomentsLimits(t *testing.T) (limits struct {
+	Moments map[string]beachMomentLimit
+	Program struct{ Nodes, JSONBytes, GzipBytes int }
+}) {
+	t.Helper()
+	if err := json.Unmarshal(beachMomentsBudgetJSON, &limits); err != nil {
+		t.Fatal(err)
+	}
+	return limits
+}
+
+func checkMomentBudget(t *testing.T, name string, nodes []scene.Node) []byte {
+	t.Helper()
+	limit := beachMomentsLimits(t).Moments[name]
+	wire := momentWire(t, nodes)
+	if len(nodes) != limit.Nodes || len(wire) > limit.JSONBytes {
+		t.Fatalf("%s exceeded governance: %d nodes, %d JSON bytes", name, len(nodes), len(wire))
+	}
+	t.Logf("%s: %d nodes, %d JSON bytes", name, len(nodes), len(wire))
+	return wire
+}
 
 func momentWire(t *testing.T, nodes []scene.Node) []byte {
 	t.Helper()
@@ -24,17 +55,10 @@ func momentWire(t *testing.T, nodes []scene.Node) []byte {
 	return wire
 }
 
-func momentMeshes(t *testing.T, nodes []scene.Node, count, budget int) map[string]scene.Mesh {
+func momentMeshes(t *testing.T, name string, nodes []scene.Node) map[string]scene.Mesh {
 	t.Helper()
-	if len(nodes) != count {
-		t.Fatalf("moment has %d nodes, want %d", len(nodes), count)
-	}
-	wire := momentWire(t, nodes)
-	if len(wire) > budget {
-		t.Fatalf("moment wire = %d bytes, budget = %d", len(wire), budget)
-	}
-	t.Logf("moment: %d nodes, %d JSON bytes", count, len(wire))
-	meshes := make(map[string]scene.Mesh, count)
+	checkMomentBudget(t, name, nodes)
+	meshes := make(map[string]scene.Mesh, len(nodes))
 	for _, node := range nodes {
 		mesh, ok := node.(scene.Mesh)
 		if !ok || mesh.ID == "" {
@@ -95,6 +119,16 @@ func checkBeachApproach(t *testing.T, path []scene.Vector3) {
 				t.Fatalf("approach climbs an unwalkable slope at (%g,%g)", x, z)
 			}
 			for _, c := range w.Colliders {
+				if c.Kind == "box" {
+					if math.Abs(h-c.Y) <= c.SizeY/2 {
+						ox := math.Max(0, math.Abs(x-c.X)-c.SizeX/2)
+						oz := math.Max(0, math.Abs(z-c.Z)-c.SizeZ/2)
+						if math.Hypot(ox, oz) < .35 {
+							t.Fatalf("approach crosses box collider at (%g,%g)", x, z)
+						}
+					}
+					continue
+				}
 				radius := c.Radius
 				if c.Kind == "sphere" {
 					dy := h - c.Y
@@ -122,7 +156,7 @@ func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 	for _, period := range beachgen.Periods {
 		t.Run(period, func(t *testing.T) {
 			nodes := blackglassBeachBeacon(period)
-			meshes := momentMeshes(t, nodes, 7, 5_200)
+			meshes := momentMeshes(t, "beacon", nodes)
 			if !bytes.Equal(momentWire(t, nodes), momentWire(t, blackglassBeachBeacon(period))) {
 				t.Fatal("beacon construction is not deterministic")
 			}
@@ -163,11 +197,15 @@ func TestBeachBeaconBrighterAtBlueHour(t *testing.T) {
 	}
 }
 
+func TestBeachBeaconCanBeSeenFromEasternShore(t *testing.T) {
+	checkBeachApproach(t, []scene.Vector3{scene.Vec3(.5, 0, 22), scene.Vec3(29, 0, 7), scene.Vec3(32, 0, 2)})
+}
+
 func TestBeachMomentsIntegrated(t *testing.T) {
 	for _, period := range beachgen.Periods {
 		p := BlackglassBeachProgram("shore", period)
 		wire := momentWire(t, p.Graph.Nodes)
-		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims", "wreck-ribs", "wreck-prow", "glass-trail-soles", "glass-trail-heels"} {
+		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims", "wreck-ribs", "wreck-prow", "glass-trail-soles", "glass-trail-heels", "sun-grotto-arch", "sun-grotto-patch"} {
 			if !bytes.Contains(wire, []byte(`"`+id+`"`)) {
 				t.Fatalf("%s missing from beach program", id)
 			}
@@ -186,6 +224,20 @@ func TestBeachMomentsIntegrated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("%s beach runtime props: %d bytes", period, len(full))
+		var compressed bytes.Buffer
+		gz := gzip.NewWriter(&compressed)
+		if _, err := gz.Write(full); err != nil {
+			t.Fatal(err)
+		}
+		if err := gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s beach runtime props: %d bytes, %d gzip bytes", period, len(full), compressed.Len())
+		// Nineteen moment nodes, eight existing scene nodes; unchanged
+		// asset and runtime bundles. These limits ratchet the complete props.
+		limit := beachMomentsLimits(t).Program
+		if len(p.Graph.Nodes) != limit.Nodes || len(full) > limit.JSONBytes || compressed.Len() > limit.GzipBytes {
+			t.Fatal("beach moments exceeded the complete scene budget")
+		}
 	}
 }

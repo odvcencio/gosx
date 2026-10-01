@@ -21,6 +21,7 @@ func blackglassBeachWalk() *scene.Walk {
 	}
 	colliders = append(colliders, blackglassBeachBeaconCollider())
 	colliders = append(colliders, blackglassBeachWreckColliders()...)
+	colliders = append(colliders, blackglassBeachGrottoColliders()...)
 	var surfaces []scene.WalkSurface
 	for _, s := range beachgen.JettySurfaces() {
 		surfaces = append(surfaces, scene.WalkSurface{X: s[0], Y: s[1], Z: s[2], SizeX: s[3], SizeZ: s[4], SlopeX: s[5], SlopeZ: s[6]})

@@ -11,11 +11,10 @@ import (
 
 func TestBeachTrailConstructionAndTerrain(t *testing.T) {
 	nodes := blackglassBeachTrail()
-	wire := momentWire(t, nodes)
-	if len(nodes) != 2 || len(wire) > 6_600 || !bytes.Equal(wire, momentWire(t, blackglassBeachTrail())) {
-		t.Fatalf("trail must be deterministic and bounded: %d nodes, %d bytes", len(nodes), len(wire))
+	wire := checkMomentBudget(t, "trail", nodes)
+	if !bytes.Equal(wire, momentWire(t, blackglassBeachTrail())) {
+		t.Fatal("trail must be deterministic")
 	}
-	t.Logf("trail: %d nodes, %d JSON bytes", len(nodes), len(wire))
 	for _, node := range nodes {
 		b := node.(scene.InstancedMesh)
 		if b.Count != 24 || len(b.Positions) != 24 || len(b.Rotations) != 24 || len(b.Scales) != 24 || b.CastShadow || !b.ReceiveShadow {

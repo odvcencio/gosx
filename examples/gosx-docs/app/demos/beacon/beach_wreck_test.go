@@ -11,11 +11,10 @@ import (
 
 func TestBeachWreckConstructionAndTerrain(t *testing.T) {
 	nodes := blackglassBeachWreck()
-	wire := momentWire(t, nodes)
-	if len(nodes) != 3 || len(wire) > 4_700 || !bytes.Equal(wire, momentWire(t, blackglassBeachWreck())) {
-		t.Fatalf("wreck must be deterministic and bounded: %d nodes, %d bytes", len(nodes), len(wire))
+	wire := checkMomentBudget(t, "wreck", nodes)
+	if !bytes.Equal(wire, momentWire(t, blackglassBeachWreck())) {
+		t.Fatal("wreck must be deterministic")
 	}
-	t.Logf("wreck: %d nodes, %d JSON bytes", len(nodes), len(wire))
 	ribs := nodes[0].(scene.InstancedMesh)
 	if ribs.ID != "wreck-ribs" || ribs.Count != 28 || len(ribs.Positions) != 28 || len(ribs.Scales) != 28 || len(ribs.Rotations) != 28 || ribs.Geometry.(scene.CylinderGeometry).Segments != 6 {
 		t.Fatal("wreck ribs must use one bounded primitive batch")
