@@ -6,7 +6,7 @@ Add `Props.Vessel` alongside `Props.Walk` and `Environment.Ocean`. The lazy cont
 Vessel: &scene.Vessel{
     NodeID: "clipper", Position: scene.Vec3(18, 0, -42), Heading: 0.14,
     Length: 22, Beam: 5, Draft: 1.4, DeckHeight: 2.5,
-    Helm: scene.Vec3(0, 4.2, 6.5), WindDirection: 8, WindStrength: 8,
+    Helm: scene.Vec3(.65, 4.2, 8), WindDirection: 8, WindStrength: 8,
     LODs: []scene.VesselLOD{{NodeID: "clipper-low", Distance: 100}},
     WakeTexture: "/models/wake-foam.png",
 },
@@ -14,7 +14,7 @@ Vessel: &scene.Vessel{
 
 Walk within 4 m of the helm eye point, then press E or tap **Take the helm**. A/D steer; W/S raise/lower sail; V switches the following stern camera and wheel view. E leaves on deck, furls the sails and lets momentum decay. You can walk along the moving deck. Home or the scene's reset control returns the walker and ship to their starting positions. Touch uses a left thumb drag for the rudder and separate right-side sail buttons; releasing one pointer leaves the other control active. The controls are focus scoped and clear held input on blur or pointer-lock release.
 
-The stern camera follows 1.8 hull lengths behind the ship, at 0.45 lengths above its waterline, looking toward the lower rig. This frames the clipper's mastheads and hull together at the demo's 42° field of view. Wheel view stays at the configured helm eye point.
+The stern camera follows 1.8 hull lengths behind the ship, at 0.45 lengths above its waterline, looking toward the lower rig. Its 65° vertical field of view frames the full ship on desktop and portrait phones. Wheel view stays at the configured helm eye point, behind the wheel and offset from the mast, looking forward over the bow with a 0.05 m near plane.
 
 Wind direction names the direction wind travels, as Ocean does: 0 toward +Z. Heading 0 points the bow toward -Z, directly into that wind. The no-go zone spans 40° on either side of upwind and supplies no propulsion. Both tacks accelerate, reaching maximum speed on a broad reach and less speed dead downwind. Momentum carries the ship through a tack. A damped rudder still turns it slowly when caught in irons. `WindStrength` defaults to 8 m/s; `MaxSpeed` defaults to 10 m/s and initial `SailTrim` to 0.55.
 
@@ -22,7 +22,7 @@ Four hull samples drive damped heave, pitch and roll; wind adds restrained heel.
 
 `Walk.Surfaces` adds rectangular decks and sloped ramps above the heightfield. Its Y is the centre height; SizeX/SizeZ are full sizes, RotationY is yaw and SlopeX/SlopeZ are rise/run along local axes. The highest overlapping surface supplies the feet height, while piles and rocks still use feet-height collision. The vessel adds and removes its moving deck automatically.
 
-Sail meshes named `canvas-*` keep their yard edge and collapse upward as trim falls. Their UVs range from 0 to 1 across and down each sail; a small time-varying displacement adds cloth billow. A `wind-flag` mesh points into world wind. These are optional conventions for procedural assets; other named models still sail. LOD NodeIDs refer to alternatives already in the graph, at ascending distances; the controller changes visibility without fetching or recompiling while sailing. Keep the models local and give them stable IDs.
+Sail meshes named `canvas-*` gather into visible canvas bundles below their yards while moored or furled, then fill as trim rises. Their UVs range from 0 to 1 across and down each sail; a small time-varying displacement adds cloth billow. A `wind-flag` mesh points into world wind. These are optional conventions for procedural assets; other named models still sail. LOD NodeIDs refer to alternatives already in the graph, at ascending distances; the controller changes visibility without fetching or recompiling while sailing. Keep the models local and give them stable IDs.
 
 The wake is a bounded transparent ribbon plus two bow-wave strips. Its vertices sample ocean height every rendered frame. An optional alpha foam texture fades the sides and ages the trail over six seconds. Set `Wake` to false to omit it. Disposal removes controls, dynamic deck and wake; asynchronous bathymetry loading checks mount ownership before applying.
 
@@ -34,20 +34,20 @@ The regenerated demo adds these asset bytes; all three LODs are fetched during i
 
 | Asset | Bytes | Vertices | Sails |
 | --- | ---: | ---: | ---: |
-| `clipper-high.glb` | 105,536 | 6,594 | 9 |
-| `clipper-mid.glb` | 67,240 | 3,993 | 9 |
-| `clipper-low.glb` | 43,868 | 2,489 | 6 |
-| Ship LOD total | 216,644 | | |
+| `clipper-high.glb` | 108,748 | 6,594 | 9 |
+| `clipper-mid.glb` | 70,452 | 3,993 | 9 |
+| `clipper-low.glb` | 47,004 | 2,489 | 6 |
+| Ship LOD total | 226,204 | | |
 | `jetty.glb` | 73,940 | | |
 | `wake-foam.png` | 6,840 | | |
-| New model/image total | 297,424 | | |
+| New model/image total | 306,984 | | |
 
 Optional runtime transfer, excluding existing Scene3D, renderer and walk chunks:
 
 | Chunk | Raw bytes | Gzip bytes | Brotli bytes |
 | --- | ---: | ---: | ---: |
 | Ocean query | 2,451 | 1,293 | 1,152 |
-| Vessel, cloth and wake | 17,486 | 7,116 | 6,329 |
-| Total | 19,937 | 8,409 | 7,481 |
+| Vessel, cloth and wake | 17,656 | 7,172 | 6,386 |
+| Total | 20,107 | 8,465 | 7,538 |
 
 Relative to the recovered ocean-query commits, Scene3D's lazy gates and advance hook add 609 raw bytes (252 gzip, 232 Brotli); moving walk surfaces and suspension add 654 raw bytes (258 gzip, 224 Brotli). Pages without `Props.Vessel` fetch neither optional chunk.

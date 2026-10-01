@@ -15660,7 +15660,7 @@
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj) continue;
+        if (!obj || obj.directVertices) continue; // These draws bind their own streams.
         count = Math.max(count, Math.floor(sceneNumber(obj.vertexOffset, 0)) + Math.floor(sceneNumber(obj.vertexCount, 0)));
       }
       return count;

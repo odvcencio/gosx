@@ -13,7 +13,7 @@ type Vessel struct {
 	Beam          float64     `json:"beam,omitempty"`          // default 5
 	Draft         float64     `json:"draft,omitempty"`         // default 1.4
 	DeckHeight    float64     `json:"deckHeight,omitempty"`    // default 2.5
-	Helm          Vector3     `json:"helm"`                    // local eye position; default (0,4.2,6.5)
+	Helm          Vector3     `json:"helm"`                    // local eye position; default (0.65,4.2,8)
 	BoardRadius   float64     `json:"boardRadius,omitempty"`   // default 4
 	WindDirection float64     `json:"windDirection,omitempty"` // fallback Ocean.WindDirection
 	WindStrength  float64     `json:"windStrength,omitempty"`  // default 8 m/s

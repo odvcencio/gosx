@@ -18,7 +18,7 @@
     return { config: c, collision: collision || {}, ocean: ocean || {}, x: p.x || 0, y: p.y || 0, z: p.z || 0,
       heading: c.heading || 0, pitch: 0, roll: 0, vy: 0, vp: 0, vr: 0, vx: 0, vz: 0, yawVelocity: 0,
       length: c.length || 22, beam: c.beam || 5, draft: c.draft || 1.4, deck: c.deckHeight || 2.5,
-      helm: { x: helm.x || 0, y: helm.y || 4.2, z: helm.z || 6.5 }, trim: c.sailTrim == null ? .55 : c.sailTrim, rudder: 0,
+      helm: { x: helm.x == null ? .65 : helm.x, y: helm.y || 4.2, z: helm.z || 8 }, trim: c.sailTrim == null ? .55 : c.sailTrim, rudder: 0,
       wind: (c.windDirection == null ? (ocean.windDirection || 0) : c.windDirection) * radians,
       strength: c.windStrength || 8, maxSpeed: c.maxSpeed || 10, mode: "moored", cameraMode: "stern",
       grounded: false, accumulator: 0, speed: 0, tack: 0, cameraReady: false, camera: {x:0,y:0,z:0,rotationX:0,rotationY:0,rotationZ:0} };
@@ -112,7 +112,8 @@
     s.vz+=(drive*fz+drag*fx+Math.cos(s.wind)*drift)*dt;
     if(s.grounded) {const friction=Math.exp(-dt*6);s.vx*=friction;s.vz*=friction;}
     s.speed=Math.hypot(s.vx,s.vz);
-    const turn=-s.rudder*(.1+Math.min(s.speed,10)*.035);
+    // Backed canvas lets the helm pay off from rest without forward drive in irons.
+    const turn=-s.rudder*(.16+Math.min(s.speed,10)*.035);
     s.yawVelocity+=(turn-s.yawVelocity)*(1-Math.exp(-dt*3.5));
     const heading=angle(s.heading+s.yawVelocity*dt);
     if (allowed(s,s.x,s.z,heading,floor)) s.heading=heading; else s.yawVelocity*=.3;
@@ -135,9 +136,9 @@
   function camera(s, previous, dt) {
     const wheel=s.cameraMode === "wheel", h=s.helm;
     const p=localPoint(s,wheel?h.x:0,wheel?h.y:s.length*.45,wheel?h.z:s.length*1.8);
-    const target=localPoint(s,0,wheel?h.y:s.length*.4,wheel?-s.length: -s.length*.15);
+    const target=localPoint(s,wheel?h.x:0,wheel?s.deck:s.length*.4,wheel?-s.length*.35: -s.length*.15);
     const yaw=Math.atan2(-(target.x-p.x),-(target.z-p.z)), pitch=Math.atan2(target.y-p.y,Math.hypot(target.x-p.x,target.z-p.z));
-    const result=Object.assign({},previous,{x:p.x,y:p.y,z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel?s.roll*.35:0});
+    const result=Object.assign({},previous,{x:p.x,y:p.y,z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel?s.roll*.35:0,fov:65,near:wheel?.05:previous.near});
     if (!wheel && s.cameraReady && s.camera) {
       const alpha=1-Math.exp(-dt*5);
       for(const key of ['x','y','z','rotationX']) result[key]=s.camera[key]+(result[key]-s.camera[key])*alpha;
