@@ -4492,6 +4492,8 @@
   // custom post pass silently reads 0 for every reserved uniform.
   function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
+    var temporal = createSceneTemporalHistory(gl, quad);
+    var temporalEnabled = false;
     var sceneFBO: any = null;
     var auxFBO: any = null;
     var scratchFBO: any = null;
@@ -4899,6 +4901,12 @@
           };
 	      },
 
+      prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean) {
+        temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+        return temporalEnabled;
+      },
+      resetTemporal: function() { temporal.reset(); temporalEnabled = false; },
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
@@ -4988,6 +4996,11 @@
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
               break;
+            case "taa":
+              currentTexture = temporalEnabled
+                ? temporal.resolve(currentTexture, sceneFBO, effect, atmosphereContext)
+                : applyFXAA(currentTexture, effect, targetFBO, passW, passH);
+              break;
             case SCENE_POST_FXAA:
               currentTexture = applyFXAA(currentTexture, effect, targetFBO, passW, passH);
               break;
@@ -5070,6 +5083,7 @@
       // Release all post-processing GPU resources.
       dispose: function() {
         mipBloom.dispose(); atmospherePost.dispose();
+        temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = null;
@@ -8869,6 +8883,11 @@
         renderW = scaled.width;
         renderH = scaled.height;
         renderTarget = Object.assign({}, scaled, { linear: true });
+        var temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true));
+        sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
+        if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-antialiasing", temporalActive ? "taa" : postEffects.some(function(e: any) { return e.kind === "taa" || e.kind === "fxaa"; }) ? "fxaa" : "none");
+      } else if (postProcessor) {
+        postProcessor.resetTemporal();
       }
 
       renderTarget = sceneReflectWebGLBegin(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, target: renderTarget, width: renderW, height: renderH });

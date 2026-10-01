@@ -72,6 +72,7 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 			Saturation: float64(rtSaturation),
 		},
 	},
+	"TAA": {effect: TAA{HistoryWeight: 0.875, ClampGamma: 1.25, DepthThreshold: 0.015625}, wantIR: TAAIR{HistoryWeight: 0.875, ClampGamma: 1.25, DepthThreshold: 0.015625}},
 	"ContactShadows": {
 		effect: ContactShadows{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: Vec3(-1, -1, 0)},
 		wantIR: ContactShadowsIR{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: &Vector3{X: -1, Y: -1}},

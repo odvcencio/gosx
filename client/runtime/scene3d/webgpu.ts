@@ -4758,6 +4758,7 @@
               currentTexView = outputView;
               break;
             }
+            case "taa": // Temporal resolve is unsupported here: retain FXAA edges.
             case SCENE_POST_FXAA: {
               // Chain-end edge AA. Reuses the blit bind group layout
               // (texture + sampler, no uniforms) since FXAA has no params.

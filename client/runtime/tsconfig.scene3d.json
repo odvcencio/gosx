@@ -44,6 +44,7 @@
     "scene3d/vessel-wake.ts",
     "scene3d/webgl-depth-post.ts",
     "scene3d/webgl-contact-shadows.ts",
+    "scene3d/webgl-taa.ts",
     "scene3d/webgpu-contact-shadows.ts"
   ]
 }

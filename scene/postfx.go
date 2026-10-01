@@ -267,6 +267,18 @@ type FXAA struct{}
 
 func (FXAA) isPostEffect() {}
 
+// TAA accumulates jittered frames with depth reprojection and neighborhood clamping.
+// Place one TAA last, replacing FXAA, and admit "taa" only on quality rungs with
+// frame headroom. WebGL2 needs float targets and a depth copy; other paths use
+// FXAA. Camera cuts, resize, quality changes, and long frame gaps reset history.
+type TAA struct {
+	HistoryWeight  float32 // history contribution, 0..0.95 (default 0.9)
+	ClampGamma     float32 // neighborhood variance bound, 0.5..3 (default 1)
+	DepthThreshold float32 // relative depth rejection tolerance (default 0.01)
+}
+
+func (TAA) isPostEffect() {}
+
 // GameplayPostFX returns a post-processing chain sized for 60fps skinned
 // gameplay: half-resolution Bloom with a conservative threshold (so only
 // emissive/specular hot spots bloom, not general geometry), ACES Tonemap,
