@@ -6404,39 +6404,43 @@
     var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Points shader");
     if (!program) return null;
     return scenePBRDeferredProgramInfo(gl, program, function() {
-      var attributes = {
-        position: gl.getAttribLocation(program, "a_position"),
-        size: gl.getAttribLocation(program, "a_size"),
-        color: gl.getAttribLocation(program, "a_color"),
-      };
-
-      var uniforms = {
-        viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
-        projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
-        modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
-        defaultSize: gl.getUniformLocation(program, "u_defaultSize"),
-        defaultColor: gl.getUniformLocation(program, "u_defaultColor"),
-        hasPerVertexColor: gl.getUniformLocation(program, "u_hasPerVertexColor"),
-        hasPerVertexSize: gl.getUniformLocation(program, "u_hasPerVertexSize"),
-        sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
-        pointStyle: gl.getUniformLocation(program, "u_pointStyle"),
-        viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
-        minPixelSize: gl.getUniformLocation(program, "u_minPixelSize"),
-        maxPixelSize: gl.getUniformLocation(program, "u_maxPixelSize"),
-        opacity: gl.getUniformLocation(program, "u_opacity"),
-        hasFog: gl.getUniformLocation(program, "u_hasFog"),
-        fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
-        fogColor: gl.getUniformLocation(program, "u_fogColor"),
-      };
-
-      return {
-        program: program,
-        vertexShader: vertexShader,
-        fragmentShader: fragmentShader,
-        attributes: attributes,
-        uniforms: uniforms,
-      };
+      return scenePointsProgramInfo(gl, program, vertexShader, fragmentShader);
     }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
+  }
+
+  function scenePointsProgramInfo(gl: WebGL2RenderingContext, program: WebGLProgram, vertexShader: WebGLShader, fragmentShader: WebGLShader) {
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      size: gl.getAttribLocation(program, "a_size"),
+      color: gl.getAttribLocation(program, "a_color"),
+    };
+
+    var uniforms = {
+      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
+      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
+      modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+      defaultSize: gl.getUniformLocation(program, "u_defaultSize"),
+      defaultColor: gl.getUniformLocation(program, "u_defaultColor"),
+      hasPerVertexColor: gl.getUniformLocation(program, "u_hasPerVertexColor"),
+      hasPerVertexSize: gl.getUniformLocation(program, "u_hasPerVertexSize"),
+      sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
+      pointStyle: gl.getUniformLocation(program, "u_pointStyle"),
+      viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
+      minPixelSize: gl.getUniformLocation(program, "u_minPixelSize"),
+      maxPixelSize: gl.getUniformLocation(program, "u_maxPixelSize"),
+      opacity: gl.getUniformLocation(program, "u_opacity"),
+      hasFog: gl.getUniformLocation(program, "u_hasFog"),
+      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
+      fogColor: gl.getUniformLocation(program, "u_fogColor"),
+    };
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
   }
 
   // Compile the instanced PBR vertex shader with the shared PBR fragment shader.
@@ -6875,12 +6879,18 @@
       if (!selena && !skinned) hooks.ensureCustomProgram(material);
     }
     if ((bundle.instancedMeshes || []).length) hooks.ensureInstancedProgram();
-    for (let i = 0; i < (bundle.points || []).length; i++) {
-      const entry = bundle.points[i];
+    for (const [i, entry] of (bundle.points || []).entries()) {
       const authored = hooks.ensurePointsAuthoredGLProgram(entry, entry.id || "points-" + i);
       if (!authored) hooks.ensurePointsProgram();
     }
-    if ((bundle.computeParticles || []).length) hooks.ensurePointsProgram();
+    for (const [i, entry] of (bundle.computeParticles || []).entries()) {
+      if (!entry || typeof entry !== "object") continue;
+      const authored = hooks.ensurePointsAuthoredGLProgram({
+        customVertex: entry.renderVertex,
+        customFragment: entry.renderFragment,
+      }, entry.id || "scene-compute-points-" + i);
+      if (!authored) hooks.ensurePointsProgram();
+    }
     if (bundle.environment && bundle.environment.sky && !hooks.skyResources.renderer) {
       hooks.skyResources.renderer = createSceneSkyWebGLRenderer(gl, hooks.textureCache, hooks.placeholder);
     }
@@ -7823,7 +7833,6 @@
     var pointsProgram = null;
     // Per-layer authored GLSL program cache: layerID → {program, attrs, uniforms} | {failed:true}
     var pointsAuthoredGLPrograms = new Map();
-    var pointsAuthoredGLFailed = new Map();
 
     // Per-typed-array VBO cache.
     //
@@ -10381,69 +10390,30 @@
     // ensurePointsAuthoredGLProgram: compile+link a per-layer GLSL program from
     // entry.customVertex/customFragment. Locations are cached after link completion.
     // Returns the program record or null (fallback to builtin with one console.warn).
+    function failPointsAuthoredGLProgram(layerID: string, stage: string) {
+      console.warn("[gosx] Points authored " + stage + " failed for layer '" + layerID + "'; falling back to builtin.");
+      pointsAuthoredGLPrograms.set(layerID, { failed: true });
+      return null;
+    }
+
     function ensurePointsAuthoredGLProgram(entry, layerID) {
+      var vertSrc = typeof entry.customVertex === "string" ? entry.customVertex.trim() : "";
+      var fragSrc = typeof entry.customFragment === "string" ? entry.customFragment.trim() : "";
+      if (!vertSrc || !fragSrc) return null;
       var cached = pointsAuthoredGLPrograms.get(layerID);
       if (cached) return cached.failed ? null : scenePBRUsableProgramInfo(cached);
-      var vertSrc = typeof entry.customVertex === "string" ? sceneWebGLNormalizeCustomShaderSource(entry.customVertex.trim()) : "";
-      var fragSrc = typeof entry.customFragment === "string" ? sceneWebGLNormalizeCustomShaderSource(entry.customFragment.trim()) : "";
-      if (!vertSrc || !fragSrc) return null;
-      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertSrc);
-      if (!vs) {
-        if (!pointsAuthoredGLFailed.get(layerID)) {
-          pointsAuthoredGLFailed.set(layerID, true);
-          console.warn("[gosx] Points authored vertex shader failed for layer '" + layerID + "'; falling back to builtin.");
-        }
-        pointsAuthoredGLPrograms.set(layerID, { failed: true });
-        return null;
-      }
-      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, sceneWebGLNormalizeCustomShaderSource(vertSrc));
+      if (!vs) return failPointsAuthoredGLProgram(layerID, "vertex shader");
+      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, sceneWebGLNormalizeCustomShaderSource(fragSrc));
       if (!fs) {
         gl.deleteShader(vs);
-        if (!pointsAuthoredGLFailed.get(layerID)) {
-          pointsAuthoredGLFailed.set(layerID, true);
-          console.warn("[gosx] Points authored fragment shader failed for layer '" + layerID + "'; falling back to builtin.");
-        }
-        pointsAuthoredGLPrograms.set(layerID, { failed: true });
-        return null;
+        return failPointsAuthoredGLProgram(layerID, "fragment shader");
       }
       var prog = scenePBRLinkProgram(gl, vs, fs, "Points authored '" + layerID + "'");
-      if (!prog) {
-        if (!pointsAuthoredGLFailed.get(layerID)) {
-          pointsAuthoredGLFailed.set(layerID, true);
-          console.warn("[gosx] Points authored program link failed for layer '" + layerID + "'; falling back to builtin.");
-        }
-        pointsAuthoredGLPrograms.set(layerID, { failed: true });
-        return null;
-      }
+      if (!prog) return failPointsAuthoredGLProgram(layerID, "program link");
       // Cache attribute and uniform locations — same contract as builtin.
       var deferred = scenePBRDeferredProgramInfo(gl, prog, function() {
-        var attrs = {
-          position: gl.getAttribLocation(prog, "a_position"),
-          size: gl.getAttribLocation(prog, "a_size"),
-          color: gl.getAttribLocation(prog, "a_color"),
-        };
-        var uniforms = {
-          viewMatrix: gl.getUniformLocation(prog, "u_viewMatrix"),
-          projectionMatrix: gl.getUniformLocation(prog, "u_projectionMatrix"),
-          modelMatrix: gl.getUniformLocation(prog, "u_modelMatrix"),
-          defaultSize: gl.getUniformLocation(prog, "u_defaultSize"),
-          defaultColor: gl.getUniformLocation(prog, "u_defaultColor"),
-          hasPerVertexColor: gl.getUniformLocation(prog, "u_hasPerVertexColor"),
-          hasPerVertexSize: gl.getUniformLocation(prog, "u_hasPerVertexSize"),
-          sizeAttenuation: gl.getUniformLocation(prog, "u_sizeAttenuation"),
-          pointStyle: gl.getUniformLocation(prog, "u_pointStyle"),
-          viewportHeight: gl.getUniformLocation(prog, "u_viewportHeight"),
-          minPixelSize: gl.getUniformLocation(prog, "u_minPixelSize"),
-          maxPixelSize: gl.getUniformLocation(prog, "u_maxPixelSize"),
-          opacity: gl.getUniformLocation(prog, "u_opacity"),
-          hasFog: gl.getUniformLocation(prog, "u_hasFog"),
-          fogDensity: gl.getUniformLocation(prog, "u_fogDensity"),
-          fogColor: gl.getUniformLocation(prog, "u_fogColor"),
-        };
-        // Upload author-defined uniforms (customUniforms).
-        var record = { program: prog, vertexShader: vs, fragmentShader: fs, attributes: attrs, uniforms: uniforms };
-        pointsAuthoredGLPrograms.set(layerID, record);
-        return record;
+        return scenePointsProgramInfo(gl, prog, vs, fs);
       }, { vertexShader: vs, fragmentShader: fs });
       pointsAuthoredGLPrograms.set(layerID, deferred);
       return deferred;
@@ -10641,16 +10611,8 @@
         return;
       }
 
-      // NOTE: the builtin program is intentionally NOT compiled here. Every
-      // layer prefers its own authored (Selena-compiled) GLSL program — the
-      // builtin is only a per-layer fallback for entries that ship no
-      // authored shader. Eagerly compiling it up front made one optional,
-      // rarely-needed program a single point of failure for the ENTIRE
-      // points pass: if it failed to compile (or the compile triggered a
-      // WebGL context loss on a constrained/software backend), every layer
-      // — including ones with perfectly good authored programs — silently
-      // stopped rendering. See ensurePointsProgram(), called lazily below
-      // only for entries that actually need it.
+      // Compile the builtin only for layers needing a fallback, so its
+      // failure cannot prevent valid authored layers from rendering.
 
       // Upload fog uniforms once (shared by all entries in this call).
       var env = environment || {};
@@ -10669,16 +10631,14 @@
         webglRenderTruthStats.pointsSubmitted += 1;
         // Select program: authored (GLSL) when customVertex/Fragment present, else builtin.
         var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
-        var hasAuthoredGL = (typeof entry.customVertex === "string" && entry.customVertex.trim()) &&
-                            (typeof entry.customFragment === "string" && entry.customFragment.trim());
-        var pp = hasAuthoredGL ? ensurePointsAuthoredGLProgram(entry, layerID) : null;
-        var usedAuthored = Boolean(pp);
+        var pp = ensurePointsAuthoredGLProgram(entry, layerID);
+        var usedAuthored = !!pp;
         if (!pp) pp = ensurePointsProgram();
         // Neither an authored program nor the builtin fallback compiled for
         // this layer (e.g. the builtin failed to compile in this
         // environment) — skip only this entry rather than aborting the rest
         // of the points pass.
-        if (!pp) continue;
+        if (!scenePBRPassReady(gl, pp)) continue;
         if (currentProgram !== pp.program) {
           gl.useProgram(pp.program);
           currentProgram = pp.program;
@@ -11258,7 +11218,6 @@
         gl.deleteProgram(authoredRecord.program);
       }
       pointsAuthoredGLPrograms.clear();
-      pointsAuthoredGLFailed.clear();
 
       // Clean up instanced PBR program.
       if (instancedProgram) {
@@ -11361,15 +11320,15 @@
       renderScenePBRSurfaces(gl, bundle, canvas, lineResources, target);
     }
 
-    const rigidImportedBatchProgram = ensureInstancedProgram();
-    const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
-      rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
+    ensureInstancedProgram();
 
     var frameTimer = createSceneWebGLFrameTimer(gl);
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
-      supportsRigidImportedBatches,
+      get supportsRigidImportedBatches() {
+        return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
+      },
       prepareCrowdAtlas,
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
