@@ -7390,7 +7390,7 @@
     // Post-processor.
     var postProcessor = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null };
+    var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -18242,7 +18242,7 @@
       webGPUBeginRetainedMeshFrame(bundle);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return;
       }
@@ -18502,8 +18502,7 @@
       var skyState = "none";
       if (bundle.environment && bundle.environment.sky) {
         if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
-        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix,
-          camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
+        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
       }
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
@@ -18692,7 +18691,7 @@
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
-        hasWater: hasWaterData,
+        hasWater: hasWaterData || Boolean(bundle.environment && bundle.environment.ocean),
         hasPoints: hasPointsData,
         hasLabels: hasLabels,
         hasScreenLines: hasScreenLines,
@@ -18752,7 +18751,7 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false;
+      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false };
       // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
@@ -18787,6 +18786,7 @@
           Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
           waterDrawnBeforeAlpha = true;
         }
+        oceanOpts.drawn = wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
 
         // Alpha pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.alpha.length > 0) {
@@ -18830,9 +18830,9 @@
       }
 
       if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
-        Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
-        Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
+        Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup), drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
       }
+      if (!oceanOpts.drawn) wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
 
       // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
       // board fills so the alpha-blended glyphs composite over the rects. Lives
@@ -18912,7 +18912,7 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
-      if (skyResources.renderer) skyResources.renderer.dispose();
+      if (skyResources.renderer) skyResources.renderer.dispose(); if (oceanResources.renderer) oceanResources.renderer.dispose();
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;

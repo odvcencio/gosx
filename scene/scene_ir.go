@@ -1097,6 +1097,7 @@ type EnvironmentIR struct {
 	EnvMap           string         `json:"envMap,omitempty"`
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
 	Sky              *Sky           `json:"sky,omitempty"`
+	Ocean            *Ocean         `json:"ocean,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -3255,6 +3256,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		Sky:              normalizeSky(environment.Sky),
+		Ocean:            normalizeOcean(environment.Ocean),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
@@ -3295,6 +3297,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureSkyEnvironment,
 	capability.FeatureSkyGradient,
 	capability.FeatureSkyPhysical,
+	capability.FeatureOcean,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3397,6 +3400,9 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	}
 	if skyRaisesPhysicalFeature(ir.Environment.Sky) {
 		seen[capability.FeatureSkyPhysical] = true
+	}
+	if ir.Environment.Ocean != nil {
+		seen[capability.FeatureOcean] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

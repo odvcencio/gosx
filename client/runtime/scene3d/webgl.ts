@@ -7500,7 +7500,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null };
+    var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
     // Light matrices now live on the per-cascade objects in shadowSlots[s];
@@ -8692,7 +8692,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -8916,6 +8916,8 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
+      sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+        linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
 
       // Draw alpha pass.
       if (drawList && drawList.alpha.length > 0) {
@@ -10876,7 +10878,8 @@
 
     function dispose() {
       if (skyResources.renderer) skyResources.renderer.dispose();
-      skyResources.renderer = null;
+      if (oceanResources.renderer) oceanResources.renderer.dispose();
+      skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
       // dispose() first) and normal teardown alike.
       sceneInvalidateGLConstantCache(gl);
