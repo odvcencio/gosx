@@ -113,7 +113,7 @@
     if(s.grounded) {const friction=Math.exp(-dt*6);s.vx*=friction;s.vz*=friction;}
     s.speed=Math.hypot(s.vx,s.vz);
     // Backed canvas lets the helm pay off from rest without forward drive in irons.
-    const turn=-s.rudder*(.16+Math.min(s.speed,10)*.035);
+    const turn=-s.rudder*Math.max(curve===0?.34:.1,.1+Math.min(s.speed,10)*.035);
     s.yawVelocity+=(turn-s.yawVelocity)*(1-Math.exp(-dt*3.5));
     const heading=angle(s.heading+s.yawVelocity*dt);
     if (allowed(s,s.x,s.z,heading,floor)) s.heading=heading; else s.yawVelocity*=.3;

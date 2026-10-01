@@ -26,6 +26,12 @@ test('backed canvas pays off from the mooring by 30 degrees in five seconds and 
   sail(s,5,{rudder});assert.ok(s.speed>1,`${s.speed} m/s after ten seconds`);
  }
 });
+test('the recorded W hold and short D hold clear irons and continue sailing after key release',()=>{
+ const s=ship({heading:8*radians,windDirection:8});s.mode='sailing';
+ sail(s,1.5,{sail:1});sail(s,2.5,{rudder:1});sail(s,8);
+ assert.ok(api.speedCurve(s.heading-s.wind)>0,'the bow must leave the no-go zone');
+ assert.ok(s.speed>1,`${s.speed} m/s after the recorded input sequence`);
+});
 test('buoyancy samples bow, stern and beam; damping settles heave, pitch and roll',()=>{
  const s=ship();s.y=5;s.pitch=.3;s.roll=.3;let count=0;
  const wave=(x,z)=>{count++;return {y:.03*x-.02*z};};

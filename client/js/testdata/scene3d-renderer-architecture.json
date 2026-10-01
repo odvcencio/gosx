@@ -996,11 +996,11 @@
       "source": "../runtime/scene3d/vessel-physics.ts",
       "name": "anonymous@2:2",
       "lines": 149,
-      "cyclomatic": 109,
-      "cognitive": 121,
+      "cyclomatic": 110,
+      "cognitive": 122,
       "maxNesting": 3,
       "parameters": 0,
-      "reason": "The plain-JS IIFE includes the fixed-step helpers. Its measured cumulative limits cover point-of-sail propulsion, damped buoyancy, capsule collision and grounded retreat; physics unit tests exercise each behavior. The wheel camera adds one conditional near-plane selection; the paid-off rudder comment adds one line. Limits equal measured growth, with mooring and camera regressions."
+      "reason": "The plain-JS IIFE includes the fixed-step helpers. Its measured cumulative limits cover point-of-sail propulsion, damped buoyancy, capsule collision and grounded retreat; physics unit tests exercise each behavior. The wheel camera adds one conditional near-plane selection; the paid-off rudder comment adds one line. Limits equal measured growth, with mooring and camera regressions. The backed-canvas authority now applies inside the no-go zone, adding one measured conditional. Exact recorded-input timing and authored terrain tests prove it escapes irons without increasing high-speed steering."
     },
     {
       "source": "../runtime/scene3d/vessel-input.ts",

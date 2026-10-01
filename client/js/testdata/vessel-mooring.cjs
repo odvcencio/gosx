@@ -23,3 +23,10 @@ for(const rudder of [1]) {
  assert.ok(s.speed>1,`rudder ${rudder}: ${s.speed} m/s in ten seconds`);
  console.log(JSON.stringify({rudder,degreesAtFiveSeconds:five,speedAtTenSeconds:s.speed}));
 }
+const s=physics.create(vessel,ocean,walk);s.mode='sailing';
+for(let i=0;i<720;i++) {
+ physics.advance(s,1/60,i/60,{sail:i<90?1:0,rudder:i>=90&&i<240?1:0},()=>({y:0}),floor);
+}
+assert.ok(physics.speedCurve(s.heading-s.wind)>0,'recorded input sequence must clear irons at the real mooring');
+assert.ok(s.speed>1,`recorded input sequence: ${s.speed} m/s`);
+console.log(JSON.stringify({sequence:'W 1.5s, D 2.5s, coast 8s',speed:s.speed}));

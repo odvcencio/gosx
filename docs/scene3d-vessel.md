@@ -16,7 +16,7 @@ Walk within 4 m of the helm eye point, then press E or tap **Take the helm**. A/
 
 The stern camera follows 1.8 hull lengths behind the ship, at 0.45 lengths above its waterline, looking toward the lower rig. Its 65° vertical field of view frames the full ship on desktop and portrait phones. Wheel view stays at the configured helm eye point, behind the wheel and offset from the mast, looking forward over the bow with a 0.05 m near plane.
 
-Wind direction names the direction wind travels, as Ocean does: 0 toward +Z. Heading 0 points the bow toward -Z, directly into that wind. The no-go zone spans 40° on either side of upwind and supplies no propulsion. Both tacks accelerate, reaching maximum speed on a broad reach and less speed dead downwind. Momentum carries the ship through a tack. A damped rudder still turns it slowly when caught in irons. `WindStrength` defaults to 8 m/s; `MaxSpeed` defaults to 10 m/s and initial `SailTrim` to 0.55.
+Wind direction names the direction wind travels, as Ocean does: 0 toward +Z. Heading 0 points the bow toward -Z, directly into that wind. The no-go zone spans 40° on either side of upwind and supplies no propulsion. Both tacks accelerate, reaching maximum speed on a broad reach and less speed dead downwind. Momentum carries the ship through a tack. Backed canvas supplies enough damped rudder authority to pay off from rest when caught in irons; normal steering resumes outside the no-go zone. `WindStrength` defaults to 8 m/s; `MaxSpeed` defaults to 10 m/s and initial `SailTrim` to 0.55.
 
 Four hull samples drive damped heave, pitch and roll; wind adds restrained heel. Movement integrates in fixed 1/60 s steps inside the existing paced scene loop. Three capsule footprint samples block terrain shallower than the draft, walk colliders and bounds, with sliding and damped contact. Grounded hulls slow under keel friction and can turn or retreat over equal/deeper seabed. Vessel bounds fall back to Walk.Bounds. The terrain heightfield remains collision data; the CPU query samples the actual ocean bathymetry texture for visual shoaling and run-up parity, using deep water while it loads, as the GPU does. The controller samples the renderer's wall clock for ocean motion. The same hardware gate selects the GPU's four or six waves. Adaptive quality chooses a smaller model earlier and shortens the wake. No controller RAF loop or per-frame shader compilation is added.
 
@@ -47,7 +47,7 @@ Optional runtime transfer, excluding existing Scene3D, renderer and walk chunks:
 | Chunk | Raw bytes | Gzip bytes | Brotli bytes |
 | --- | ---: | ---: | ---: |
 | Ocean query | 2,451 | 1,293 | 1,152 |
-| Vessel, cloth and wake | 17,656 | 7,172 | 6,386 |
-| Total | 20,107 | 8,465 | 7,538 |
+| Vessel, cloth and wake | 17,676 | 7,183 | 6,391 |
+| Total | 20,127 | 8,476 | 7,543 |
 
 Relative to the recovered ocean-query commits, Scene3D's lazy gates and advance hook add 609 raw bytes (252 gzip, 232 Brotli); moving walk surfaces and suspension add 654 raw bytes (258 gzip, 224 Brotli). Pages without `Props.Vessel` fetch neither optional chunk.
