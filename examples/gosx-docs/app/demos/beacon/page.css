@@ -1,5 +1,5 @@
 /* Blackglass Beach: the scene fills the window above the docs chrome. */
-html:has(.bgb), body:has(.bgb) { overflow: hidden; }
+:global(html:has(.bgb)), :global(body:has(.bgb)) { overflow: hidden; }
 .bgb {
   position: fixed;
   inset: 0;

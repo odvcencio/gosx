@@ -9779,6 +9779,7 @@
     }
 
     function drawPBRObjectList(gl, objectList, bundle, materials) {
+      gl.useProgram(program);
       var lastMaterialIndex = -1;
       // Track which program is currently bound so we can switch between
       // the static PBR program and the skinned variant per object.

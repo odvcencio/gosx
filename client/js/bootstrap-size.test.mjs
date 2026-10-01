@@ -2025,7 +2025,8 @@ const routeBudgets = [
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
     raw: 1_215_500,
     gzip: 348_800,
-    brotli: 293_100,
+    // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
+    brotli: 293_300,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2204,7 +2205,8 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     raw: 1_657_700,
     gzip: 461_900,
-    brotli: 385_200,
+    // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
+    brotli: 385_400,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
