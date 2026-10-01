@@ -32,7 +32,7 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 111656,
-          "htmlWireBytes": 198220,
+          "htmlWireBytes": 198700,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
@@ -47,7 +47,10 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "htmlWireBytes": "The physical daylight sky adds its capability row to the capabilities matrix: +224 HTML wire bytes measured in CI."
+        }
       },
       "/demos/": {
         "limits": {
@@ -134,15 +137,15 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 507247,
+          "frameworkJsWireBytes": 392469,
           "htmlWireBytes": 216679,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 62462,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 674456,
-          "wasmWireBytes": 336903
+          "totalWireBytes": 559677,
+          "wasmWireBytes": 222126
         },
         "require": [
           "no-cookie",
@@ -197,15 +200,15 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 507242,
+          "frameworkJsWireBytes": 392464,
           "htmlWireBytes": 114660,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 59902,
           "lazyJsWireBytes": 256,
           "requests": 8,
-          "totalWireBytes": 515588,
-          "wasmWireBytes": 336903
+          "totalWireBytes": 400809,
+          "wasmWireBytes": 222126
         },
         "require": [
           "no-cookie",

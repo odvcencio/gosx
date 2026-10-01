@@ -5,7 +5,7 @@
 // Chunks: bootstrap.js only. Soft navigation calls disposePage, which keeps
 // the scene engines the reuse rule allows and disposes the rest.
 // Calls into 30d, 30e and 30f.
-  async function disposePage(reuseEngineIDs) {
+  async function disposePage(reuseEngineIDs, nextDoc) {
     const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     goWASMEnginePageGeneration += 1;
     for (const pending of Array.from(pendingEngineRuntimes.values())) {
@@ -27,9 +27,7 @@
       }
       gosxHost.engines.dispose(engineID);
     }
-    for (const hubID of Array.from(window.__gosx.hubs.keys())) {
-      gosxHost.hubs.disconnect(hubID);
-    }
+    gosxHost.hubs.preparePage(nextDoc);
     if (window.__gosx.controllers) {
       for (const controllerID of Array.from(window.__gosx.controllers.keys())) {
         gosxHost.controllers.dispose(controllerID);

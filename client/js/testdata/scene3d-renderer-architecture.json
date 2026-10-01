@@ -980,7 +980,7 @@
       "cognitive": 199,
       "maxNesting": 3,
       "parameters": 0,
-      "reason": "Measured scoped plain-JS authority includes nested helpers and input installation. Limits cover fixed-step physics, deck ownership, focus and independent touch pointers; renderer shaders are outside this module."
+      "reason": "Measured scoped plain-JS authority includes nested helpers and input installation. Limits cover fixed-step physics, deck ownership, focus and independent touch pointers; renderer shaders are outside this module. The lazy module closure isolates its helpers from other chunks. These aggregate metrics include all nested helpers, each checked separately by the inventory."
     },
     {
       "source": "../runtime/scene3d/mount-walk.ts",
@@ -990,7 +990,7 @@
       "cognitive": 112,
       "maxNesting": 3,
       "parameters": 6,
-      "reason": "Measured scoped plain-JS authority includes nested helpers and input installation. Limits cover fixed-step physics, deck ownership, focus and independent touch pointers; renderer shaders are outside this module."
+      "reason": "Measured scoped plain-JS authority includes nested helpers and input installation. Limits cover fixed-step physics, deck ownership, focus and independent touch pointers; renderer shaders are outside this module. The mount owns keyboard, pointer lock, two simultaneous touch pointers, gamepad connection events, reset and teardown. Metrics include nested handlers, each inventoried separately; physics remains in small independent helpers."
     },
     {
       "source": "../runtime/scene3d/vessel-physics.ts",

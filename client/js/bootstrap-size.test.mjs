@@ -689,7 +689,10 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 1_811_342 / 503_343 / 402_536; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap.js", raw: 1_820_400, gzip: 511_300, brotli: 403_900 },
+  // Persistent hub connections merged from main add 2,002 raw bytes (decision 0014).
+  // Combined bundle: 1,887,915 raw / 528,221 gzip / 420,885 Brotli bytes.
+  // Compressed targets rise in the smallest 100-byte steps that clear measured limits.
+  { file: "bootstrap.js", raw: 1_822_402, gzip: 511_900, brotli: 404_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1199,6 +1202,12 @@ const budgets = [
   // The host caps instance-buffer growth at the binding limit. Measured:
   // 61_176 / 17_826 / 16_072. Targets 61_100 / 17_800 / 16_100 ->
   // 61_200 / 17_900 / 16_100, rounded up to the next 100 bytes.
+  // Opt-in grounded first-person controls, physics, accessible inputs and DOM
+  // overlays live in a separate lazy chunk. Measured 11_013 / 4_596 / 4_116;
+  // caps round up by at most 100 bytes. Sharing sub-feature loaders keeps the
+  // base Scene3D chunk below its previous raw, gzip and Brotli sizes, so these
+  // bytes are excluded from every existing first-load route budget.
+  { file: "bootstrap-feature-scene3d-walk.js", raw: 11_100, gzip: 4_600, brotli: 4_200 },
   { file: "bootstrap-feature-scene3d-compute.js", raw: 61_200, gzip: 17_900, brotli: 16_100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount
@@ -1525,7 +1534,9 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
+  // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
+  // hard limit had only 10 bytes left; targets grow by the measured change.
+  { file: "bootstrap-feature-hubs.js", raw: 47_903, gzip: 14_843, brotli: 13_361 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -1829,7 +1840,8 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_367_900,
+    // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
+    raw: 1_368_000,
     gzip: 378_700,
     brotli: 315_900,
   },
@@ -2010,9 +2022,10 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_215_400,
+    // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
+    raw: 1_215_500,
     gzip: 348_800,
-    brotli: 293_000,
+    brotli: 293_100,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2188,9 +2201,10 @@ const routeBudgets = [
     // Environment.Ocean (the two ocean passes and the shared packing) measures
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_657_600,
-    gzip: 461_800,
-    brotli: 385_100,
+    // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
+    raw: 1_657_700,
+    gzip: 461_900,
+    brotli: 385_200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
