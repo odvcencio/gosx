@@ -468,6 +468,7 @@
         colorGrade: true,
         "color-grade": true,
         ssao: true,
+        contactShadows: true,
         dof: true,
         customPost: true
       };

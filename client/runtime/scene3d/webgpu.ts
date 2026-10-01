@@ -4550,6 +4550,17 @@
       fullscreenPass(encoder, pipeline, blitBG, outputView, { markTruth: false });
     }
 
+    function applyContactShadows(encoder: any, input: any, output: any, effect: any, camera: any, size: { width: number; height: number }) {
+      var pipeline = getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout());
+      var buffer = getParamBuffer("contactShadows", 96);
+      device.queue.writeBuffer(buffer, 0, sceneWebGPUContactUniforms(effect, camera, size.width, size.height, camera && camera.postLights));
+      var group = device.createBindGroup({ layout: getSSAOLayout(), entries: [
+        { binding: 0, resource: input }, { binding: 1, resource: linearSampler },
+        { binding: 2, resource: depthTexView }, { binding: 3, resource: { buffer: buffer } },
+      ] });
+      fullscreenPass(encoder, pipeline, group, output, {});
+    }
+
     return {
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
@@ -4716,6 +4727,10 @@
               currentTexView = outputView;
               break;
             }
+            case "contactShadows":
+              applyContactShadows(encoder, currentTexView, outputView, effect, camera, { width: canvasW, height: canvasH });
+              currentTexView = outputView;
+              break;
             case SCENE_POST_DOF: {
               var dofPipeline = getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout());
               var dofBuf = getParamBuffer("dof", 32);
@@ -7404,7 +7419,7 @@
     var placeholderCubeView = null;
 
     // Post-processor.
-    var postProcessor = null;
+    var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
     var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
 
@@ -18945,7 +18960,7 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, { environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
+        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, Object.assign({}, bundle.camera, { postLights: bundle.lights }), { environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);

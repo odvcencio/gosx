@@ -57,6 +57,7 @@
         "../runtime/scene3d/webgl-atmosphere.ts",
         "../runtime/scene3d/webgl-bloom.ts",
         "../runtime/scene3d/webgl-depth-post.ts",
+        "../runtime/scene3d/webgl-contact-shadows.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
@@ -66,6 +67,7 @@
         "../runtime/scene3d/webgpu-reflect.ts",
         "../runtime/scene3d/webgpu-atmosphere.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
+        "../runtime/scene3d/webgpu-contact-shadows.ts",
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -255,6 +257,7 @@
         "../runtime/scene3d/webgl-atmosphere.ts",
         "../runtime/scene3d/webgl-bloom.ts",
         "../runtime/scene3d/webgl-depth-post.ts",
+        "../runtime/scene3d/webgl-contact-shadows.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },
@@ -289,6 +292,7 @@
         "../runtime/scene3d/webgpu-reflect.ts",
         "../runtime/scene3d/webgpu-atmosphere.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
+        "../runtime/scene3d/webgpu-contact-shadows.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },
