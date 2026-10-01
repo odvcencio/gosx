@@ -4541,10 +4541,10 @@
       fullscreenPass(encoder, pipeline, blitBG, outputView, { markTruth: false });
     }
 
-    function applyContactShadows(encoder: any, input: any, output: any, effect: any, camera: any, size: { width: number; height: number }) {
+    function applyContactShadows(encoder: any, input: any, output: any, effect: any, camera: any, size: { width: number; height: number }, lights: any) {
       var pipeline = getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout());
       var buffer = getParamBuffer("contactShadows", 96);
-      device.queue.writeBuffer(buffer, 0, sceneWebGPUContactUniforms(effect, camera, size.width, size.height, camera && camera.postLights));
+      device.queue.writeBuffer(buffer, 0, sceneWebGPUContactUniforms(effect, camera, size.width, size.height, lights));
       var group = device.createBindGroup({ layout: getSSAOLayout(), entries: [
         { binding: 0, resource: input }, { binding: 1, resource: linearSampler },
         { binding: 2, resource: depthTexView }, { binding: 3, resource: { buffer: buffer } },
@@ -4558,7 +4558,7 @@
         return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
-      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera, lights: any) {
         ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
@@ -4716,7 +4716,7 @@
               break;
             }
             case "contactShadows":
-              applyContactShadows(encoder, currentTexView, outputView, effect, camera, { width: canvasW, height: canvasH });
+              applyContactShadows(encoder, currentTexView, outputView, effect, camera, { width: canvasW, height: canvasH }, lights);
               currentTexView = outputView;
               break;
             case SCENE_POST_DOF: {
@@ -18891,7 +18891,7 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, Object.assign({}, bundle.camera, { postLights: bundle.lights })));
+        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, bundle.lights));
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);

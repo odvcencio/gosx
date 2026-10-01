@@ -4905,8 +4905,7 @@
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
       // blit to the default framebuffer).
-      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, frame: any) {
-        var projection = frame && frame.projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, projection: any, view: any, lights: any) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -4969,10 +4968,11 @@
               currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_SSAO:
+              projection = projection || scenePBRProjectionMatrixForCamera(camera, canvasW / Math.max(1, canvasH));
               currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH, projection);
               break;
             case "contactShadows":
-              currentTexture = applyContactShadows(currentTexture, effect, targetFBO, passW, passH, frame);
+              currentTexture = applyContactShadows(currentTexture, effect, targetFBO, passW, passH, { projection: projection, view: view, lights: lights });
               break;
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
@@ -8951,7 +8951,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights });
+        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, projMatrix, viewMatrix, bundle.lights);
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
         }
