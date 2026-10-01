@@ -25,10 +25,11 @@
   function setup(canvas,props,base,sceneState,helpers) {
     const physics=window.__gosx_scene3d_vessel_physics,query=window.__gosx_scene3d_ocean_query;
     const ocean=sceneState.environment.ocean||{},walk=props.walk||{},state=physics.create(props.vessel,ocean,walk);
+    const motion=typeof window.matchMedia==='function'?window.matchMedia('(prefers-reduced-motion: reduce)'):null;
     const walkAPI=window.__gosx_scene3d_walk_api,ground=walk.ground&&walkAPI?walkAPI.decodeGround(walk.ground):null;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     const floor=(x,z)=>ground?walkAPI.sampleGround(ground,x,z):-1e4;
-    let waveFloor=()=>-1e4,disposed=false,first=true;
+    let waveFloor=()=>-1e4,disposed=false,first=true,lastBob=0;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     const high=query.create(ocean,'high',(x,z)=>waveFloor(x,z),true),low=query.create(ocean,'low',(x,z)=>waveFloor(x,z),true);
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
@@ -60,12 +61,14 @@
     if(base.bindReset)base.bindReset(reset);
     sceneState._gosxMotionController=controller;
     const wake=window.__gosx_scene3d_vessel_wake&&props.vessel.wake!==false?window.__gosx_scene3d_vessel_wake.create(sceneState,helpers,props.vessel):null;
-    function reset() {leave();window.__gosx_scene3d_vessel_input.clear(controls.input);if(wake)wake.reset();if(base.reset)base.reset();Object.assign(state,physics.create(props.vessel,ocean,walk));first=true;helpers.schedule('vessel-reset');}
+    function reset() {leave();window.__gosx_scene3d_vessel_input.clear(controls.input);if(wake)wake.reset();if(base.reset)base.reset();Object.assign(state,physics.create(props.vessel,ocean,walk));first=true;lastBob=0;helpers.schedule('vessel-reset');}
   // @ts-ignore TS7006 -- plain JS method parameters are exercised without transpilation.
     return {controller,state,reset,stopInertia:()=>false,advance(dt,seconds,detail,paused) {
       if(disposed)return;
+      state.reduced=!!(motion&&motion.matches);
       const camera=read(),before=new Float32Array(model.pose),aboard=state.mode==='deck'&&!first;
-      const local=aboard?window.__gosx_scene3d_vessel_model.inversePoint(before,camera):null;
+      const local=aboard?window.__gosx_scene3d_vessel_model.inversePoint(before,Object.assign({},camera,{y:camera.y-lastBob})):null;
+      lastBob=0;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
       const q=helpers.lowHardware()?low:high,sample=(x,z,t)=>query.sample(q,x,z,t);
       if(first) {state.y=sample(state.x,state.z,seconds).y;first=false;}
@@ -73,11 +76,12 @@
       deck(state,physics,surface);
       if(local&&Math.abs(local.x)<surface.sizeX/2+.3&&Math.abs(local.z)<surface.sizeZ/2+.3&&Math.abs(local.y-state.helm.y)<2) {
         const p=physics.localPoint(state,local.x,local.y,local.z);
+        lastBob=physics.deckBob(state,seconds);p.y+=lastBob;
         if(base.controller&&base.controller.carryCamera)base.controller.carryCamera(Object.assign({},camera,p));
       }
-      if(state.mode==='sailing')state.camera=physics.camera(state,camera,dt);
+      if(state.mode==='sailing')state.camera=physics.camera(state,camera,dt,seconds);
       model.update(state,controller.currentCamera(),seconds,detail);
-      if(wake)wake.update(state,seconds,sample,detail);
+      if(wake)wake.update(state,seconds,sample,detail,controller.currentCamera());
       controls.refresh(physics.canBoard(state,read()));
       mount.setAttribute('data-gosx-scene3d-vessel',state.mode);
     },dispose() {

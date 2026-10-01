@@ -21,6 +21,7 @@
       helm: { x: helm.x == null ? .65 : helm.x, y: helm.y || 4.2, z: helm.z || 8 }, trim: c.sailTrim == null ? .55 : c.sailTrim, rudder: 0,
       wind: (c.windDirection == null ? (ocean.windDirection || 0) : c.windDirection) * radians,
       strength: c.windStrength || 8, maxSpeed: c.maxSpeed || 10, mode: "moored", cameraMode: "stern",
+      pressure: 0, luff: 1, bowImpact: 0, bowWater: NaN, reduced: false,
       grounded: false, accumulator: 0, speed: 0, tack: 0, cameraReady: false, camera: {x:0,y:0,z:0,rotationX:0,rotationY:0,rotationZ:0} };
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
@@ -49,13 +50,28 @@
     s[velocity] += ((goal-s[key])*frequency*frequency-2*frequency*s[velocity])*dt;
     s[key] += s[velocity]*dt;
   }
+  // @ts-ignore TS7006 -- shared plain-JS sailing helper, exercised in Node.
+  function windLoad(s) {
+    const off=angle(s.heading-s.wind);
+    s.luff=clamp((58*radians-Math.abs(off))/(22*radians),0,1);
+    s.pressure=s.trim*Math.min(2.25,(s.strength/8)**2)*Math.sin(off)*(.18+.82*speedCurve(off));
+  }
+  // @ts-ignore TS7006 -- shared plain-JS sailing helper, exercised in Node.
+  function bowImpact(s, bow, dt, length) {
+    const p=localPoint(s,0,0,-length);
+    const closing=Number.isFinite(s.bowWater)?(bow-s.bowWater)/dt-s.vy-s.vp*length:0;
+    s.bowImpact=Math.max(s.bowImpact*Math.exp(-dt*5),bow>p.y+.06?clamp(closing-.65,0,3):0);
+    s.bowWater=bow;
+  }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function buoyancy(s, dt, time, sample, floor) {
     const l = s.length*.35, b = s.beam*.4;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     const water = (x,z) => { const p=localPoint(s,x,0,z); return sample(p.x,p.z,time).y; };
     const bow=water(0,-l), stern=water(0,l), port=water(-b,0), starboard=water(b,0);
-    const off = angle(s.heading-s.wind), heel = Math.sin(off)*s.trim*s.speed*.009;
+    windLoad(s);
+    bowImpact(s,bow,dt,l);
+    const heel = s.mode==='moored'?0:s.pressure*.15;
     const base = (bow+stern+port+starboard)/4;
     let bottom = floor(s.x,s.z);
     for(const along of [-s.length*.36,s.length*.36]) {
@@ -133,12 +149,13 @@
     while(s.accumulator>=tick-1e-9) { s.accumulator-=tick;step(s,tick,time-s.accumulator,input,sample,floor); }
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-  function camera(s, previous, dt) {
+  function camera(s, previous, dt, seconds=0) {
     const wheel=s.cameraMode === "wheel", h=s.helm;
     const p=localPoint(s,wheel?h.x:0,wheel?h.y:s.length*.45,wheel?h.z:s.length*1.8);
     const target=localPoint(s,wheel?h.x:0,wheel?s.deck:s.length*.4,wheel?-s.length*.35: -s.length*.15);
     const yaw=Math.atan2(-(target.x-p.x),-(target.z-p.z)), pitch=Math.atan2(target.y-p.y,Math.hypot(target.x-p.x,target.z-p.z));
-    const result=Object.assign({},previous,{x:p.x,y:p.y,z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel?s.roll*.35:0,fov:65,near:wheel?.05:previous.near});
+    const bob=deckBob(s,seconds);
+    const result=Object.assign({},previous,{x:p.x,y:p.y+(wheel?bob:0),z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel&&!s.reduced?s.roll*.35:0,fov:65,near:wheel?.05:previous.near});
     if (!wheel && s.cameraReady && s.camera) {
       const alpha=1-Math.exp(-dt*5);
       for(const key of ['x','y','z','rotationX']) result[key]=s.camera[key]+(result[key]-s.camera[key])*alpha;
@@ -146,5 +163,7 @@
     }
     s.camera=result;s.cameraReady=true;return result;
   }
-  window.__gosx_scene3d_vessel_physics={create,speedCurve,localPoint,canBoard,helm,toggleCamera,buoyancy,allowed,step,advance,camera};
+  // @ts-ignore TS7006 -- cosmetic deck motion never affects physics or boarding.
+  function deckBob(s, seconds) { return s.reduced?0:.018*Math.sin(seconds*1.8)+clamp(s.vy,-1,1)*.018; }
+  window.__gosx_scene3d_vessel_physics={create,speedCurve,localPoint,canBoard,helm,toggleCamera,buoyancy,allowed,step,advance,camera,deckBob,windLoad};
 })();

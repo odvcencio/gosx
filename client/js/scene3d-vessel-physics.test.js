@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const context={window:{}};
-for(const name of ['vessel-physics','vessel-input','vessel-model','walk-surfaces'])vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../runtime/scene3d',name+'.ts'),'utf8'),context);
+for(const name of ['ocean-waves','ocean-query','vessel-physics','vessel-input','vessel-model','walk-surfaces'])vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../runtime/scene3d',name+'.ts'),'utf8'),context);
 const api=context.window.__gosx_scene3d_vessel_physics,touch=context.window.__gosx_scene3d_vessel_input;
 const flat=(x,z,t)=>({y:0}),deep=()=>-10,radians=Math.PI/180;
 function ship(config={},collision={}) {return api.create({nodeId:'ship',...config},{windDirection:0},collision);}
@@ -120,4 +120,82 @@ test('wake is bounded, follows wave height, uses alpha without depth writes and 
  }
  wake.update(s,8,wave,.4);assert.ok(wake.trail.length<=14);wake.reset();assert.equal(wake.trail.length,0);assert.equal(object.visible,false);
  wake.update(s,0,wave,1);assert.equal(wake.trail.length,1);wake.dispose();assert.equal(scene.objects.size,0);
+});
+
+test('Gerstner buoyancy is deterministic across render batching and responds to swell on both axes',()=>{
+ const query=context.window.__gosx_scene3d_ocean_query,q=query.create({waveHeight:1.8,waveLength:24,choppiness:.7,windDirection:18},'high',deep);
+ const sample=(x,z,t)=>query.sample(q,x,z,t),a=ship({heading:1.2}),b=ship({heading:1.2});a.mode=b.mode='sailing';a.trim=b.trim=.8;
+ let heave=0,pitch=0,roll=0;
+ for(let i=1;i<=480;i++) {api.advance(a,1/60,i/60,{rudder:.08},sample,deep);heave=Math.max(heave,Math.abs(a.y));pitch=Math.max(pitch,Math.abs(a.pitch));roll=Math.max(roll,Math.abs(a.roll));}
+ for(let i=1;i<=80;i++)api.advance(b,.1,i/10,{rudder:.08},sample,deep);
+ for(const key of ['x','y','z','heading','pitch','roll','vy','vp','vr','bowImpact'])near(a[key],b[key],1e-6);
+ assert.ok(heave>.08);assert.ok(pitch>.005);assert.ok(roll>.04);
+});
+
+test('wind pressure heels a stationary hull on either tack, eases with trim and strength, and luffs when pinching',()=>{
+ for(const sign of [-1,1]) {
+  const s=ship({heading:sign*Math.PI/2});s.mode='sailing';s.trim=1;
+  for(let i=0;i<360;i++)api.buoyancy(s,1/60,i/60,flat,deep);
+  assert.ok(sign*s.roll>.1);near(s.speed,0);assert.equal(s.luff,0);
+  const full=Math.abs(s.pressure);s.strength=4;api.windLoad(s);near(Math.abs(s.pressure),full*.25);
+  s.trim=.5;api.windLoad(s);near(Math.abs(s.pressure),full*.125);
+  s.heading=sign*35*radians;api.windLoad(s);assert.equal(s.luff,1);
+  s.trim=0;api.windLoad(s);near(s.pressure,0);
+ }
+});
+
+test('bow spray triggers on relative water entry, never on first sampling, and impact decays',()=>{
+ const s=ship();s.mode='sailing';s.speed=5;
+ api.buoyancy(s,1/60,0,()=>({y:.4}),deep);near(s.bowImpact,0);
+ api.buoyancy(s,1/60,1/60,()=>({y:.7}),deep);assert.ok(s.bowImpact>1);
+ for(let i=0;i<240;i++)api.buoyancy(s,1/60,i/60,flat,deep);
+ assert.ok(s.bowImpact<.001);
+});
+
+test('wake ages in world space through turns; deterministic spray is bounded and disappears on landing',()=>{
+ const create=()=>{const scene={objects:new Map()},wake=context.window.__gosx_scene3d_vessel_wake.create(scene,{addObject:(s,id,p)=>s.objects.set(id,p)},{nodeId:'ship'});return {scene,wake};};
+ const a=create(),b=create(),s=ship();s.mode='sailing';s.speed=6;s.bowImpact=2;
+ for(let i=0;i<40;i++) {s.z=-i*.4;s.heading=i*.025;for(const effect of [a,b])effect.wake.update(s,i*.1,flat,.4,{rotationY:.5});}
+ assert.ok(a.wake.trail.length<=14);assert.ok(a.wake.spray.particles.length<=10);assert.ok(a.wake.spray.particles.length>0);
+ assert.deepEqual(Array.from(a.wake.spray.vertices.positions),Array.from(b.wake.spray.vertices.positions));
+ const point={...a.wake.trail[4]};s.heading=2;s.speed=0;s.bowImpact=0;
+ a.wake.update(s,4,flat,1);near(a.wake.trail[4].x,point.x);near(a.wake.trail[4].z,point.z);
+ const spray=a.scene.objects.get('gosx-vessel-spray:ship');assert.equal(spray.depthWrite,false);assert.equal(spray.castShadow,false);
+ a.wake.update(s,11,flat,1);assert.equal(a.wake.trail.length,0);assert.equal(a.wake.spray.particles.length,0);assert.equal(spray.visible,false);
+ a.wake.reset();a.wake.dispose();b.wake.dispose();assert.equal(a.scene.objects.size,0);
+});
+
+test('inactive wake skips ocean queries; reduced detail samples only distinct foam rows',()=>{
+ const scene={objects:new Map()},s=ship(),wake=context.window.__gosx_scene3d_vessel_wake.create(scene,{addObject:(s,id,p)=>s.objects.set(id,p)},{nodeId:'ship'});
+ let queries=0;const wave=(x,z,t)=>{queries++;return {y:.2*Math.sin(x+t),normal:{x:0,y:1,z:0}};};
+ wake.update(s,0,wave,1);assert.equal(queries,0);
+ s.mode='sailing';s.speed=5;
+ for(let i=0;i<30;i++){s.z=-i;wake.update(s,i*.25,wave,.4);}
+ queries=0;wake.update(s,7.4,wave,.4);assert.ok(queries<=50,`${queries} ocean queries at reduced detail`);
+ const p=wake.vertices.positions,n=wake.vertices.normals,u=wake.vertices.uvs;
+ for(let i=14;i<24;i++) {
+  assert.deepEqual(Array.from(p.slice(i*9,i*9+9)),Array.from(p.slice(13*9,14*9)));
+  assert.deepEqual(Array.from(n.slice(i*9,i*9+9)),Array.from(n.slice(13*9,14*9)));
+  assert.deepEqual(Array.from(u.slice(i*6,i*6+6)),Array.from(u.slice(13*6,14*6)));
+ }
+ s.speed=0;queries=0;wake.update(s,14,wave,1);assert.equal(queries,0);assert.equal(scene.objects.get('gosx-vessel-wake:ship').visible,false);
+ wake.dispose();
+});
+
+test('deck bob is gentle and reduced motion removes added bob and wheel roll',()=>{
+ const s=ship();s.cameraMode='wheel';s.roll=.15;s.vy=.5;
+ const h=api.localPoint(s,s.helm.x,s.helm.y,s.helm.z),normal=api.camera(s,{near:.1},1/60,1);
+ assert.ok(Math.abs(normal.y-h.y)<.04);assert.ok(Math.abs(normal.y-h.y)>.01);assert.ok(normal.rotationZ>0);
+ s.reduced=true;const reduced=api.camera(s,{near:.1},1/60,1);near(reduced.y,h.y);near(reduced.rotationZ,0);near(api.deckBob(s,1),0);
+});
+
+test('pinching flutters the lower sail, keeps yard anchors fixed and deforms rig without accumulating drift',()=>{
+ const make=()=>({positions:new Float32Array([-1,4,0,1,4,0,-1,1,0,1,1,0,0,1,0]),normals:new Float32Array(15),uvs:new Float32Array([0,0,1,0,0,1,1,1,.5,1]),indices:new Uint16Array([0,1,4,0,4,2,1,3,4]),revision:0});
+ const canvas={vertices:make()},rope={vertices:make()},scene={objects:new Map([['ship/canvas-test',canvas],['ship/rope-rigging',rope]])};
+ const s=ship({heading:35*radians});s.mode='sailing';s.trim=1;api.windLoad(s);
+ const model=context.window.__gosx_scene3d_vessel_model.create(scene,{nodeId:'ship'},api),camera={x:0,y:5,z:10};
+ model.update(s,camera,1,1);const first=Array.from(canvas.vertices.positions),rig=Array.from(rope.vertices.positions);
+ model.update(s,camera,1.13,1);assert.notEqual(canvas.vertices.positions[14],first[14]);near(canvas.vertices.positions[0],first[0]);near(canvas.vertices.positions[1],first[1]);
+ for(let i=0;i<canvas.vertices.normals.length;i+=3)near(Math.hypot(...canvas.vertices.normals.slice(i,i+3)),1,1e-5);
+ model.update(s,camera,1,1);assert.deepEqual(Array.from(rope.vertices.positions),rig);near(rope.vertices.positions[7],1);near(rope.vertices.positions[6],-1);
 });
