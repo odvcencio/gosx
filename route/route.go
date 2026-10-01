@@ -487,6 +487,7 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 	if ctx.StatusCode() == 0 {
 		ctx.SetStatus(defaultStatus)
 	}
+	ctx.PrepareCache(ctx.Request)
 
 	requestNonce := ctx.Nonce()
 	// Drop the nonce before the layouts run when a shared cache may store the
