@@ -43,9 +43,11 @@ func blackglassBeachGrotto(periodID string) []scene.Node {
 	momentQuad(&patch, floor(grottoX-.9, 10.7), floor(grottoX-.9, 12.6), floor(grottoX+.55, 12.6), floor(grottoX+.55, 10.7))
 	warm := [3]float64{1, .42, .12}
 	return []scene.Node{
-		scene.Mesh{ID: "sun-grotto-arch", Geometry: arch, Material: rock, CastShadow: true, ReceiveShadow: true},
+		// The thin vault casts onto the sand without receiving its own
+		// coarse cascade samples on the interior walls.
+		scene.Mesh{ID: "sun-grotto-arch", Geometry: arch, Material: rock, CastShadow: true},
 		scene.Mesh{ID: "sun-grotto-back", Geometry: scene.BoxGeometry{Width: 3.6, Height: 2.7, Depth: .5},
-			Position: scene.Vec3(grottoX, backGround+1.15, grottoBackZ+.25), Material: rock, CastShadow: true, ReceiveShadow: true},
+			Position: scene.Vec3(grottoX, backGround+1.15, grottoBackZ+.25), Material: rock, CastShadow: true},
 		scene.Mesh{ID: "sun-grotto-patch", Geometry: patch, Visible: scene.Bool(periodID == beachgen.PeriodGolden),
 			Material: scene.StandardMaterial{Color: "#93602e", Roughness: .88, EmissiveColor: &warm, Emissive: .16}, ReceiveShadow: true},
 	}

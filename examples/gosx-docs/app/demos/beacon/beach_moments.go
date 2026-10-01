@@ -28,7 +28,7 @@ func blackglassBeachBeacon(periodID string) []scene.Node {
 	lantern := ground + beaconTower + 0.8
 	glow, beamCore, beamHalo := 1.5, 0.0, 0.0
 	if periodID == beachgen.PeriodBlue {
-		glow, beamCore, beamHalo = 9, 0.004, 0.0015
+		glow, beamCore, beamHalo = 9, 0.001, 0.0002
 	}
 	white := scene.StandardMaterial{Color: "#e9e4dc", Roughness: 0.7}
 	red := scene.StandardMaterial{Color: "#8e2a22", Roughness: 0.6}
