@@ -74,6 +74,46 @@ func checkMomentGeometry(t *testing.T, g scene.BufferGeometry) {
 	}
 }
 
+// Sample the approach at walking step scale, including an uphill look-ahead.
+func checkBeachApproach(t *testing.T, path []scene.Vector3) {
+	t.Helper()
+	w := blackglassBeachWalk()
+	for i := 1; i < len(path); i++ {
+		a, b := path[i-1], path[i]
+		steps := int(math.Ceil(math.Hypot(b.X-a.X, b.Z-a.Z) / .15))
+		for j := 0; j <= steps; j++ {
+			f := float64(j) / float64(steps)
+			x, z := a.X+(b.X-a.X)*f, a.Z+(b.Z-a.Z)*f
+			h := beachgen.TerrainHeight(x, z, beachgen.Seed)
+			if h < w.Water.Level-w.Water.MaxDepth {
+				t.Fatalf("approach enters deep water at (%g,%g)", x, z)
+			}
+			dx, dz := (b.X-a.X)/float64(steps), (b.Z-a.Z)/float64(steps)
+			span := .5 / math.Hypot(dx, dz)
+			rise := beachgen.TerrainHeight(x+dx*span, z+dz*span, beachgen.Seed) - h
+			if rise > .3 && rise > .5*math.Tan(w.MaxSlope*math.Pi/180) {
+				t.Fatalf("approach climbs an unwalkable slope at (%g,%g)", x, z)
+			}
+			for _, c := range w.Colliders {
+				radius := c.Radius
+				if c.Kind == "sphere" {
+					dy := h - c.Y
+					if math.Abs(dy) > radius {
+						continue
+					}
+					radius = math.Sqrt(radius*radius - dy*dy)
+				}
+				if c.Kind == "cylinder" && (h < c.Y || c.Height > 0 && h > c.Y+c.Height) {
+					continue
+				}
+				if c.Kind != "box" && math.Hypot(x-c.X, z-c.Z) < radius+.35 {
+					t.Fatalf("approach crosses %s collider at (%g,%g)", c.Kind, x, z)
+				}
+			}
+		}
+	}
+}
+
 func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 	ground := beachgen.TerrainHeight(beaconX, beaconZ, beachgen.Seed)
 	heights := map[string]float64{"beacon-tower": beaconTower / 2, "beacon-band": beaconTower * .55,
@@ -127,8 +167,10 @@ func TestBeachMomentsIntegrated(t *testing.T) {
 	for _, period := range beachgen.Periods {
 		p := BlackglassBeachProgram("shore", period)
 		wire := momentWire(t, p.Graph.Nodes)
-		if !bytes.Contains(wire, []byte(`"beacon-beam"`)) {
-			t.Fatal("beacon missing from beach program")
+		for _, id := range []string{"beacon-beam", "tide-pool-0", "tide-pool-rims"} {
+			if !bytes.Contains(wire, []byte(`"`+id+`"`)) {
+				t.Fatalf("%s missing from beach program", id)
+			}
 		}
 		if p.Controls != scene.ControlFirstPerson || p.Walk == nil || p.Environment.Ocean == nil {
 			t.Fatal("moments must preserve the walking beach")

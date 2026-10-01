@@ -15,6 +15,11 @@ const (
 	beaconTower      = 9.0
 )
 
+func blackglassBeachMoments(periodID string) []scene.Node {
+	nodes := blackglassBeachBeacon(periodID)
+	return append(nodes, blackglassBeachPools()...)
+}
+
 func blackglassBeachBeacon(periodID string) []scene.Node {
 	ground := beachgen.TerrainHeight(beaconX, beaconZ, beachgen.Seed)
 	lantern := ground + beaconTower + 0.8
@@ -78,6 +83,19 @@ func blackglassBeamGeometry(length, radius float64, segments int) scene.BufferGe
 
 // Millimetre precision keeps procedural geometry compact on the wire.
 func momentRound(v float64) float64 { return math.Round(v*1000) / 1000 }
+
+// Add a flat-shaded quad with shared triangle vertices and compact normals.
+func momentQuad(g *scene.BufferGeometry, a, b, c, d scene.Vector3) {
+	u, v := scene.Vec3(b.X-a.X, b.Y-a.Y, b.Z-a.Z), scene.Vec3(c.X-a.X, c.Y-a.Y, c.Z-a.Z)
+	n := scene.Vec3(u.Y*v.Z-u.Z*v.Y, u.Z*v.X-u.X*v.Z, u.X*v.Y-u.Y*v.X)
+	length := math.Sqrt(n.X*n.X + n.Y*n.Y + n.Z*n.Z)
+	base := len(g.Positions) / 3
+	for _, p := range []scene.Vector3{a, b, c, d} {
+		g.Positions = append(g.Positions, momentRound(p.X), momentRound(p.Y), momentRound(p.Z))
+		g.Normals = append(g.Normals, momentRound(n.X/length), momentRound(n.Y/length), momentRound(n.Z/length))
+	}
+	g.Indices = append(g.Indices, base, base+1, base+2, base, base+2, base+3)
+}
 
 func blackglassBeachBeaconCollider() scene.WalkCollider {
 	return scene.WalkCollider{Kind: "cylinder", X: beaconX, Z: beaconZ,
