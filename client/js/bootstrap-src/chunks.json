@@ -50,6 +50,7 @@
         "../runtime/scene3d/webgl-ocean.ts",
         "../runtime/scene3d/webgl-depth-post.ts",
         "../runtime/scene3d/webgl-contact-shadows.ts",
+        "../runtime/scene3d/webgl-taa.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
@@ -237,6 +238,7 @@
         "../runtime/scene3d/webgl-ocean.ts",
         "../runtime/scene3d/webgl-depth-post.ts",
         "../runtime/scene3d/webgl-contact-shadows.ts",
+        "../runtime/scene3d/webgl-taa.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },
