@@ -186,10 +186,9 @@
     // neutral until createMaterialBindGroup sets the real flag.
     "    hasSpecularIntensityMap: u32,",
     // f32 alpha cutoff at u32 index 42 (reusing the old padding word);
-    // index 41 above carries the specular flag and index 43 stays
-    // padding, keeping the struct at 208 bytes total (41 flag,
-    // 42 cutoff, 43 pad).
-    "    alphaCutoff: f32,",
+    // index 41 carries the specular flag and index 43 carries the
+    // normal-map V scale, keeping the struct layout unchanged.
+    "    alphaCutoff: f32, normalUVScaleV: f32,",
     "    specularF0: vec3f,",
     "    specularF90: f32,",
     // Per-channel log2 of the authored dielectric specular coefficient
@@ -1909,7 +1908,7 @@
     "        let T = normalize(in.tangent);",
     "        let B = normalize(in.bitangent);",
     "        let TBN = mat3x3f(T, B, N);",
-    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        var mapNormal = textureSample(normalTex, normalSamp, in.uv * vec2f(material.modelScaleSigns.w, material.normalUVScaleV)).rgb * 2.0 - 1.0;",
     "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -3277,6 +3276,8 @@
       width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
       height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
       faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
+      wrapS: [33071, 33648, 10497].indexOf(descriptor.wrapS) >= 0 ? descriptor.wrapS : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
+      wrapT: [33071, 33648, 10497].indexOf(descriptor.wrapT) >= 0 ? descriptor.wrapT : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
     };
   }
 
@@ -3291,8 +3292,34 @@
       descriptor.height,
       descriptor.faces,
       descriptor.mipLevels,
+      descriptor.wrapS,
+      descriptor.wrapT,
     ].join("\u0000");
   }
+
+  var wgpuMaterialSamplerCache = new WeakMap();
+
+  function wgpuMaterialSampler(device, linearSampler, rawDescriptor, role) {
+    var descriptor = wgpuTextureDescriptor(rawDescriptor, "", role, "linear");
+    if (descriptor.wrapS === 33071 && descriptor.wrapT === 33071) return linearSampler;
+    var cache = wgpuMaterialSamplerCache.get(device);
+    if (!cache) {
+      cache = new Map();
+      wgpuMaterialSamplerCache.set(device, cache);
+    }
+    var key = descriptor.wrapS + ":" + descriptor.wrapT;
+    if (!cache.has(key)) {
+      function addressMode(wrap) {
+        return wrap === 33071 ? "clamp-to-edge" : (wrap === 33648 ? "mirror-repeat" : "repeat");
+      }
+      cache.set(key, device.createSampler({
+        addressModeU: addressMode(descriptor.wrapS), addressModeV: addressMode(descriptor.wrapT),
+        magFilter: "linear", minFilter: "linear", mipmapFilter: "linear",
+      }));
+    }
+    return cache.get(key);
+  }
+
 
   function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
     if (!cache) return null;
@@ -14527,22 +14554,22 @@
         f[20 + mi] = model ? sceneNumber(model[mi], mi % 5 === 0 ? 1 : 0) : (mi % 5 === 0 ? 1 : 0);
       }
       f[36] = f[37] = f[38] = 1;
-      f[39] = 0;
+      f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
       // Dedicated trailing material scalars: normal-incidence dielectric F0
       // from the authored IOR, then the vec3f alignment word at index 41
       // reused as the hasSpecularIntensityMap flag (u[41], set by
       // createMaterialBindGroup and zeroed here so a plain pack stays
       // neutral), then the effective specular factors (F0 rgb, F90 =
       // intensity) at the vec3f-aligned slots 44..47. Slot 42 carries the
-      // float32 alpha cutoff; slot 43 stays zeroed so the packed material
-      // bytes stay deterministic.
+      // float32 alpha cutoff; slot 43 carries the normal-map V scale.
+      // Absent scales upload [1, 1], preserving explicit zero and negatives.
       f[40] = sceneWebGPUDielectricF0(mat.ior);
       f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
       var alphaCutoff = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
       f[42] = (typeof alphaCutoff === "number" && Number.isFinite(alphaCutoff) && alphaCutoff >= 0)
         ? (alphaCutoff <= 1 ? Math.fround(alphaCutoff) : 2)
         : -1; // alphaCutoff, normalized the same way as the WebGL renderer
-      f[43] = 0;
+      f[43] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 1; // normalUVScaleV
       var specular = sceneWebGPUSpecularFactors(mat);
       f[44] = specular.f0[0];
       f[45] = specular.f0[1];
@@ -14628,6 +14655,7 @@
       ];
 
       var texViews = [];
+      var texSamplers = [];
       for (var ti = 0; ti < textureMaps.length; ti++) {
         var tm = textureMaps[ti];
         var descriptor = mat.textureDescriptors && mat.textureDescriptors[tm.descriptor];
@@ -14638,6 +14666,7 @@
         var loaded = Boolean(record && record.loaded);
         u[tm.index] = loaded ? 1 : 0;
         texViews.push(loaded ? record.view : placeholderView);
+        texSamplers.push(wgpuMaterialSampler(device, linearSampler, descriptor, tm.role));
       }
 
       var owner = (cacheOwner && typeof cacheOwner === "object")
@@ -14662,7 +14691,7 @@
       if (bgCache && bgCache.device === device && bgCache.materialBuffer === materialBuffer) {
         var viewsMatch = true;
         for (var ti2 = 0; ti2 < texViews.length && viewsMatch; ti2++) {
-          if (bgCache.texViews[ti2] !== texViews[ti2]) viewsMatch = false;
+          if (bgCache.texViews[ti2] !== texViews[ti2] || bgCache.texSamplers[ti2] !== texSamplers[ti2]) viewsMatch = false;
         }
         if (viewsMatch) return bgCache.bg;
       }
@@ -14672,24 +14701,24 @@
         entries: [
           { binding: 0, resource: { buffer: materialBuffer } },
           { binding: 1, resource: texViews[0] },
-          { binding: 2, resource: linearSampler },
+          { binding: 2, resource: texSamplers[0] },
           { binding: 3, resource: texViews[1] },
-          { binding: 4, resource: linearSampler },
+          { binding: 4, resource: texSamplers[1] },
           { binding: 5, resource: texViews[2] },
-          { binding: 6, resource: linearSampler },
+          { binding: 6, resource: texSamplers[2] },
           { binding: 7, resource: texViews[3] },
-          { binding: 8, resource: linearSampler },
+          { binding: 8, resource: texSamplers[3] },
           { binding: 9, resource: texViews[4] },
-          { binding: 10, resource: linearSampler },
+          { binding: 10, resource: texSamplers[4] },
           { binding: 11, resource: texViews[5] },
-          { binding: 12, resource: linearSampler },
+          { binding: 12, resource: texSamplers[5] },
           { binding: 13, resource: texViews[6] },
-          { binding: 14, resource: linearSampler },
+          { binding: 14, resource: texSamplers[6] },
           { binding: 15, resource: texViews[7] },
-          { binding: 16, resource: linearSampler },
+          { binding: 16, resource: texSamplers[7] },
         ],
       });
-      owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, bg: matBG };
+      owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, texSamplers: texSamplers, bg: matBG };
       return matBG;
     }
 
