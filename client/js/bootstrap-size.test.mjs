@@ -691,7 +691,9 @@ const budgets = [
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
   // exception under decision 0014).
-  { file: "bootstrap.js", raw: 1_722_102, gzip: 478_861, brotli: 381_317 },
+  // Retained-actor hydration correction, measured at 38590b49: 495,335 gzip / 397,850 brotli.
+  // Owner-approved targets yield those exact hard caps under the unchanged allowance policy; no extra headroom.
+  { file: "bootstrap.js", raw: 1_722_102, gzip: 478_951, brotli: 381_466 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1185,7 +1187,9 @@ const budgets = [
   // pacing also adds its governor and telemetry. The build with frame
   // caching measures 594_098 / 166_371 / 137_740.
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 166_900, brotli: 137_850 },
+  // Retained-actor hydration correction, measured at 38590b49: 175,339 gzip.
+  // Owner-approved targets yield those exact hard caps under the unchanged allowance policy; no extra headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 166_989, brotli: 137_850 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1825,9 +1829,11 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Retained-actor hydration correction, measured at 38590b49: 372,699 gzip / 313,905 brotli.
+    // Owner-approved targets yield those exact hard caps under the unchanged allowance policy; no extra headroom.
     raw: 1_303_200,
-    gzip: 356_200,
-    brotli: 298_800,
+    gzip: 356_315,
+    brotli: 298_957,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -2006,9 +2012,11 @@ const routeBudgets = [
     // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Retained-actor hydration correction, measured at 38590b49: 344,804 gzip / 291,232 brotli.
+    // Owner-approved targets yield those exact hard caps under the unchanged allowance policy; no extra headroom.
     raw: 1_160_200,
-    gzip: 328_400,
-    brotli: 277_295, // +95: persistent hub connections (approved exception, decision 0014)
+    gzip: 328_420,
+    brotli: 277_363, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2180,9 +2188,11 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Retained-actor hydration correction, measured at 38590b49: 443,993 gzip / 374,243 brotli.
+    // Owner-approved targets yield those exact hard caps under the unchanged allowance policy; no extra headroom.
     raw: 1_556_800, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 427_500,
-    brotli: 357_695, // +95: persistent hub connections (approved exception, decision 0014)
+    gzip: 427_609,
+    brotli: 357_859, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2331,9 +2341,11 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Retained-actor hydration correction, measured at 38590b49: 329,298 gzip / 275,375 brotli.
+    // Owner-approved targets yield those exact hard caps under the unchanged allowance policy; no extra headroom.
     raw: 1_158_000,
-    gzip: 313_600,
-    brotli: 262_195, // +95: persistent hub connections (approved exception, decision 0014)
+    gzip: 313_617,
+    brotli: 262_261, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
