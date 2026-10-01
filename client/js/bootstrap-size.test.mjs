@@ -1196,7 +1196,9 @@ const budgets = [
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   { // Sampler wrap preservation and signed/zero normal scales measure 619,254 / 175,385 / 144,561 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-  file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 167_100, brotli: 137_850 },
+  // Shared clock API grows this chunk by 23 raw, 149 gzip and 174 brotli bytes.
+  // Allocate only the compressed metrics that reach their prior ceilings.
+  file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 167_250, brotli: 138_025 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2028,9 +2030,10 @@ const routeBudgets = [
     // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_161_400,
-    gzip: 328_700,
-    brotli: 277_500, // +95: persistent hub connections (approved exception, decision 0014)
+    // The shared clock adds 23 raw / 149 gzip / 174 brotli bytes.
+    raw: 1_161_425,
+    gzip: 328_850,
+    brotli: 277_675, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2207,8 +2210,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_559_000, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 428_300,
-    brotli: 358_300, // +95: persistent hub connections (approved exception, decision 0014)
+    // Shared clock API adds 149 gzip bytes to this two-backend route.
+    gzip: 428_450,
+    brotli: 358_475, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2362,8 +2366,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_159_400,
-    gzip: 314_100,
-    brotli: 262_495, // +95: persistent hub connections (approved exception, decision 0014)
+    // The shared declarative clock adds 149 gzip bytes here as well.
+    gzip: 314_250,
+    // Shared clock API adds 174 brotli bytes.
+    brotli: 262_670, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
