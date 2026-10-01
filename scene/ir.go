@@ -155,6 +155,7 @@ type IRMaterial struct {
 	MetalnessMap        string                       `json:"metalnessMap,omitempty"`
 	OcclusionMap        string                       `json:"occlusionMap,omitempty"`
 	EmissiveMap         string                       `json:"emissiveMap,omitempty"`
+	Detail              *Detail                      `json:"detail,omitempty"`
 	AlphaCutoff         AlphaCutoff                  `json:"alphaCutoff,omitzero"`
 	TextureDescriptors  MaterialTextureDescriptors   `json:"textureDescriptors,omitzero"`
 	BlendMode           string                       `json:"blendMode,omitempty"`
@@ -1048,6 +1049,7 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		MetalnessMap:        object.MetalnessMap,
 		OcclusionMap:        object.OcclusionMap,
 		EmissiveMap:         object.EmissiveMap,
+		Detail:              cloneDetail(object.Detail),
 		AlphaCutoff:         object.AlphaCutoff,
 		TextureDescriptors:  object.TextureDescriptors,
 		BlendMode:           object.BlendMode,
@@ -1094,6 +1096,7 @@ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 		MetalnessMap:        mesh.MetalnessMap,
 		OcclusionMap:        mesh.OcclusionMap,
 		EmissiveMap:         mesh.EmissiveMap,
+		Detail:              cloneDetail(mesh.Detail),
 		AlphaCutoff:         mesh.AlphaCutoff,
 		TextureDescriptors:  mesh.TextureDescriptors,
 		BlendMode:           mesh.BlendMode,
