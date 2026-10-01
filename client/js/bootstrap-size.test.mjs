@@ -700,7 +700,9 @@ const budgets = [
   // Complete upstream TAA invalidation and contact-light inputs measure
   // 406,848 monolith Brotli bytes. Raise only this target by the exact 47-byte
   // ceiling overrun; raw and gzip targets retain their existing limits.
-  { file: "bootstrap.js", raw: 1761000, gzip: 492561, brotli: 390464 },
+  // TAA coverage stabilization: raw 1761000 -> 1761931 (measured 1827467), gzip 492561 -> 492748 (measured 509132).
+  // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
+  { file: "bootstrap.js", raw: 1761931, gzip: 492748, brotli: 390464 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1071,7 +1073,9 @@ const budgets = [
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Complete upstream TAA invalidation adds 29 Brotli bytes (65,706 -> 65,735).
   // A four-byte target raise clears the exact five-byte governed-cap overrun.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 260800, gzip: 74300, brotli: 62604 },
+  // TAA coverage stabilization: raw 260800 -> 261717 (measured 274803), gzip 74300 -> 74462 (measured 78186), brotli 62604 -> 62763 (measured 65902).
+  // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 261717, gzip: 74462, brotli: 62763 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1845,6 +1849,8 @@ const routeBudgets = [
     brotli: 303900,
   },
   {
+    // TAA coverage stabilization: raw 1183400 -> 1184359 (measured 1243577), gzip 337200 -> 337387 (measured 353771), brotli 283900 -> 284042 (measured 298245).
+    // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2023,9 +2029,9 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO adds one bounded pass to the WebGL2 chunk.
-    raw: 1183400,
-    gzip: 337200,
-    brotli: 283900, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1184359,
+    gzip: 337387,
+    brotli: 284042, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2037,6 +2043,8 @@ const routeBudgets = [
     // (1_341_708 / 355_135 / 298_285), and it is the same seam cost the WebGL
     // route pays. Only a page whose GPU device actually fails reaches it, and
     // the alternative was a page that renders nothing.
+    // TAA coverage stabilization: raw 1595600 -> 1596563 (measured 1662099), gzip 441600 -> 441756 (measured 458140), brotli 368412 -> 368424 (measured 384808).
+    // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
     name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2199,11 +2207,11 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO also ships when WebGPU falls back to WebGL2.
-    raw: 1595600, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 441600,
+    raw: 1596563, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 441756,
     // Complete upstream TAA invalidation measures 384,796 Brotli bytes for
     // this dual-backend route; raise only the exact 12-byte ceiling overrun.
-    brotli: 368412, // +95: persistent hub connections (approved exception, decision 0014)
+    brotli: 368424, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,

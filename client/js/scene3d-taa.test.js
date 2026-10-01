@@ -24,15 +24,33 @@ function temporalHarness(options = {}) {
     const ext = gl.getExtension.bind(gl);
     gl.getExtension = name => name === "EXT_color_buffer_float" ? {} : ext(name);
   }
-  const params = [], projections = [];
+  const params = [], projections = [], jitters = [];
   const uniform4f = gl.uniform4f.bind(gl), uniformMatrix = gl.uniformMatrix4fv.bind(gl);
-  gl.uniform4f = (loc, ...v) => { if (loc.name === "u_temporalParams") params.push(v); uniform4f(loc, ...v); };
+  gl.uniform4f = (loc, ...v) => {
+    if (loc.name === "u_temporalParams") params.push(v);
+    if (loc.name === "u_temporalJitter") jitters.push(v);
+    uniform4f(loc, ...v);
+  };
   gl.uniformMatrix4fv = (loc, transpose, v) => { if (loc.name === "u_projection") projections.push(Array.from(v)); uniformMatrix(loc, transpose, v); };
   const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);
   const bundle = makeWebGLBundleWithCustomPost();
   bundle.postEffects = [{ kind: "toneMapping" }, { kind: "taa", historyWeight: 0.9, clampGamma: 1.25, depthThreshold: 0.01 }];
-  return { ...h, gl, params, projections, mount, bundle, frame: () => h.renderer.render(bundle, { width: h.canvas.width, height: h.canvas.height }) };
+  return { ...h, gl, params, projections, jitters, mount, bundle, frame: () => h.renderer.render(bundle, { width: h.canvas.width, height: h.canvas.height }) };
 }
+
+test("TAA uploads current and previous jitter in history UV units", () => {
+  const h = temporalHarness();
+  try {
+    h.frame(); h.frame(); h.frame();
+    assert.equal(h.jitters.length, 3);
+    assert.deepEqual(h.jitters[0].slice(2), [0, 0]);
+    for (let frame = 0; frame < 3; frame++) {
+      assert.ok(Math.abs(h.jitters[frame][0] + h.projections[frame][8] * 0.5) < 1e-8);
+      assert.ok(Math.abs(h.jitters[frame][1] + h.projections[frame][9] * 0.5) < 1e-8);
+      if (frame) assert.deepEqual(h.jitters[frame].slice(2), h.jitters[frame - 1].slice(0, 2));
+    }
+  } finally { h.renderer.dispose(); }
+});
 
 test("TAA jitters the rendered projection and reuses only valid color and depth history", () => {
   const h = temporalHarness();
@@ -186,7 +204,7 @@ test("WebGPU TAA fallback uploads changed upstream parameters on the next frame"
   } finally { h.renderer.dispose(); }
 });
 
-test("software TAA pixels stabilize a static edge and reject disoccluded or reset history", t => {
+test("software TAA pixels stabilize jittered foreground/clear-depth silhouettes and reject disocclusion", t => {
   const { spawnSync } = require("node:child_process");
   const path = require("node:path");
   const python = require("node:fs").existsSync("/usr/bin/python3") ? "/usr/bin/python3" : "python3";

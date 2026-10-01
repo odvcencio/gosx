@@ -4543,7 +4543,7 @@
 
     function applyContactShadows(encoder: any, input: any, output: any, effect: any, camera: any, size: { width: number; height: number }, lights: any) {
       var pipeline = getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout());
-      var buffer = getParamBuffer("contactShadows", 96);
+      var buffer = getParamBuffer("contactShadows:" + activePostIndex, 96);
       device.queue.writeBuffer(buffer, 0, sceneWebGPUContactUniforms(effect, camera, size.width, size.height, lights));
       var group = device.createBindGroup({ layout: getSSAOLayout(), entries: [
         { binding: 0, resource: input }, { binding: 1, resource: linearSampler },

@@ -77,7 +77,8 @@ upload = api("glTexImage2D", None, uint, integer, integer, integer, integer, int
 for unit, name in enumerate([b"u_texture", b"u_depthTexture", b"u_history", b"u_historyDepth"]):
     active(0x84C0 + unit)
     bind(0x0DE1, textures[unit])
-    for option, value in [(0x2801, 0x2600), (0x2800, 0x2600), (0x2802, 0x812F), (0x2803, 0x812F)]:
+    filtering = 0x2601 if unit in (0, 2) else 0x2600
+    for option, value in [(0x2801, filtering), (0x2800, filtering), (0x2802, 0x812F), (0x2803, 0x812F)]:
         parameter(0x0DE1, option, value)
     api("glUniform1i", None, integer, integer)(location(program, name), unit)
 temporal = api("glUniform4f", None, integer, floating, floating, floating, floating)
@@ -85,7 +86,9 @@ read = api("glReadPixels", None, integer, integer, integer, integer, uint, uint,
 
 
 def resolve(current, history, depth=0.5, old_depth=0.5, valid=True):
-    for unit, values in enumerate([current, [depth] * width, history, [old_depth] * width]):
+    depth = [depth] * width if isinstance(depth, (float, int)) else depth
+    old_depth = [old_depth] * width if isinstance(old_depth, (float, int)) else old_depth
+    for unit, values in enumerate([current, depth, history, old_depth]):
         data = (floating * (width * height * 4))(*[v for _ in range(height) for value in values for v in [value, value, value, 1]])
         active(0x84C0 + unit)
         bind(0x0DE1, textures[unit])
@@ -121,6 +124,115 @@ disocclusion_error = max(abs(a - b) for a, b in zip(current, rejected))
 reset_error = max(abs(a - b) for a, b in zip(current, reset))
 assert abs(accepted[15] - current[15]) > 0.02, "fixture must expose stale blending"
 assert disocclusion_error < 0.006 and reset_error < 0.006
+
+# Rasterize a stationary half-plane with the same eight clip-space Halton
+# translations as the renderer. Coverage and depth come from real geometry,
+# rather than the uniform foreground-depth fixture above.
+geometry_program = api("glCreateProgram", uint)()
+attach(geometry_program, shader(0x8B31, """#version 300 es
+precision highp float;
+uniform mat4 u_projection;
+uniform float u_edge;
+void main() {
+    vec2 corners[6] = vec2[6](vec2(0,-1),vec2(1,-1),vec2(1,1),vec2(0,-1),vec2(1,1),vec2(0,1));
+    vec2 p = corners[gl_VertexID];
+    gl_Position = u_projection * vec4(mix(u_edge, 2.0, p.x), p.y * 2.0, -2.0, 1);
+}
+"""))
+attach(geometry_program, shader(0x8B30, """#version 300 es
+precision highp float;
+out vec4 color;
+void main() { color = vec4(1); }
+"""))
+api("glLinkProgram", None, uint)(geometry_program)
+api("glGetProgramiv", None, uint, uint, c.POINTER(integer))(geometry_program, 0x8B82, c.byref(status))
+assert status.value, "coverage geometry did not link"
+framebuffer = uint()
+api("glGenFramebuffers", None, integer, c.POINTER(uint))(1, c.byref(framebuffer))
+bind_framebuffer = api("glBindFramebuffer", None, uint, uint)
+bind_framebuffer(0x8D40, framebuffer)
+attachments = (uint * 2)()
+api("glGenTextures", None, integer, c.POINTER(uint))(2, attachments)
+for index, attachment in enumerate(attachments):
+    bind(0x0DE1, attachment)
+    parameter(0x0DE1, 0x2801, 0x2600)
+    parameter(0x0DE1, 0x2800, 0x2600)
+    upload(0x0DE1, 0, 0x8814 if index == 0 else 0x8CAC, width, height, 0,
+           0x1908 if index == 0 else 0x1902, 0x1406, None)
+    api("glFramebufferTexture2D", None, uint, uint, uint, uint, integer)(
+        0x8D40, 0x8CE0 if index == 0 else 0x8D00, 0x0DE1, attachment, 0)
+assert api("glCheckFramebufferStatus", uint, uint)(0x8D40) == 0x8CD5
+bind_framebuffer(0x8D40, 0)
+
+
+def halton(index, base):
+    value, fraction = 0, 1
+    while index:
+        fraction /= base
+        value += fraction * (index % base)
+        index //= base
+    return value
+
+
+def jittered_projection(index):
+    data = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -11 / 9, -1, 0, 0, -20 / 9, 0]
+    for column in range(4):
+        data[column * 4] += (halton(index % 8 + 1, 2) - 0.5) * 2 / width * data[column * 4 + 3]
+        data[column * 4 + 1] += (halton(index % 8 + 1, 3) - 0.5) * 2 / height * data[column * 4 + 3]
+    return (floating * 16)(*data)
+
+
+def rasterize(proj, edge_position=-2 / width):
+    bind_framebuffer(0x8D40, framebuffer)
+    api("glEnable", None, uint)(0x0B71)
+    api("glClearColor", None, floating, floating, floating, floating)(0, 0, 0, 1)
+    api("glClearDepth", None, c.c_double)(1)
+    api("glClear", None, uint)(0x4000 | 0x0100)
+    api("glUseProgram", None, uint)(geometry_program)
+    matrix(location(geometry_program, b"u_projection"), 1, 0, proj)
+    api("glUniform1f", None, integer, floating)(location(geometry_program, b"u_edge"), edge_position)
+    api("glDrawArrays", None, uint, integer, integer)(0x0004, 0, 6)
+    color = (floating * (width * height * 4))()
+    depths = (floating * (width * height))()
+    read(0, 0, width, height, 0x1908, 0x1406, color)
+    read(0, 0, width, height, 0x1902, 0x1406, depths)
+    api("glDisable", None, uint)(0x0B71)
+    bind_framebuffer(0x8D40, 0)
+    api("glUseProgram", None, uint)(program)
+    return list(color)[0:width * 4:4], list(depths)[:width]
+
+
+history, old_depths, previous = [0] * width, [1] * width, jittered_projection(0)
+silhouette_raw, silhouette_resolved, silhouette_depths = [], [], []
+for index in range(16):
+    proj = jittered_projection(index)
+    current, depths = rasterize(proj)
+    matrix(location(program, b"u_projection"), 1, 0, proj)
+    matrix(location(program, b"u_previousProjection"), 1, 0, previous)
+    api("glUniform4f", None, integer, floating, floating, floating, floating)(
+        location(program, b"u_temporalJitter"),
+        (halton(index % 8 + 1, 2) - 0.5) / width, (halton(index % 8 + 1, 3) - 0.5) / height,
+        (halton((index - 1) % 8 + 1, 2) - 0.5) / width, (halton((index - 1) % 8 + 1, 3) - 0.5) / height)
+    history = resolve(current, history, depths, old_depths, valid=index > 0)
+    if index >= 8:
+        silhouette_raw.append(current[15])
+        silhouette_resolved.append(history[15])
+        silhouette_depths.append(depths[15])
+    assert max(abs(history[x] - current[x]) for x in list(range(12)) + list(range(20, width))) < 0.006
+    old_depths, previous = depths, proj
+silhouette_range = max(silhouette_resolved) - min(silhouette_resolved)
+assert min(silhouette_depths) < 0.999999 <= max(silhouette_depths), silhouette_depths
+assert max(silhouette_raw) - min(silhouette_raw) == 1, silhouette_raw
+assert silhouette_range < 0.25, (silhouette_raw, silhouette_resolved, silhouette_range)
+# A genuinely uncovered region must lose its foreground history immediately.
+current, depths = rasterize(previous, edge_position=0.75)
+uncovered = resolve(current, history, depths, old_depths)
+uncovered_error = max(abs(uncovered[x] - current[x]) for x in range(15, 20))
+background_error = max(abs(value) for value in resolve([0] * width, history, 1, old_depths))
+assert uncovered_error < 0.006 and background_error < 0.006
 print(json.dumps({"renderer": renderer, "rawEdgeRange": raw_range, "resolvedEdgeRange": resolved_range,
-                  "disocclusionError": disocclusion_error, "resetError": reset_error}))
+                  "disocclusionError": disocclusion_error, "resetError": reset_error,
+                  "silhouetteRaw": silhouette_raw, "silhouetteResolved": silhouette_resolved,
+                  "silhouetteRange": silhouette_range, "uncoveredError": uncovered_error,
+                  "backgroundError": background_error}))
 api("OSMesaDestroyContext", None, pointer)(context)

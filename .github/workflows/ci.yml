@@ -244,6 +244,11 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install CPU rasterizer for TAA shader regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libosmesa6
+
       - name: JavaScript runtime contract tests
         run: make test-js
 
