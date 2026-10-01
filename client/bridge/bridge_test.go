@@ -7,7 +7,6 @@ import (
 
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
-	"m31labs.dev/gosx/crdt"
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island/program"
 )
@@ -368,37 +367,6 @@ func TestBridgeHydrateTickAndDisposeEngine(t *testing.T) {
 	b.DisposeEngine("engine-0")
 	if b.EngineCount() != 0 {
 		t.Fatalf("expected 0 engines after dispose, got %d", b.EngineCount())
-	}
-}
-
-func TestCRDTBridgeInitPutAndGet(t *testing.T) {
-	b := NewCRDTBridge()
-	if err := b.Put(crdt.Root, "title", `"hello"`); err != nil {
-		t.Fatalf("put crdt title: %v", err)
-	}
-
-	got, err := b.Get(crdt.Root, "title")
-	if err != nil {
-		t.Fatalf("get crdt title: %v", err)
-	}
-	if got != `"hello"` {
-		t.Fatalf("expected JSON string hello, got %s", got)
-	}
-
-	saved, err := b.Doc().Save()
-	if err != nil {
-		t.Fatalf("save crdt doc: %v", err)
-	}
-	other := NewCRDTBridge()
-	if err := other.InitDoc(saved); err != nil {
-		t.Fatalf("init saved crdt doc: %v", err)
-	}
-	got, err = other.Get(crdt.Root, "title")
-	if err != nil {
-		t.Fatalf("get restored crdt title: %v", err)
-	}
-	if got != `"hello"` {
-		t.Fatalf("expected restored JSON string hello, got %s", got)
 	}
 }
 

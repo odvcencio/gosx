@@ -1,4 +1,4 @@
-//go:build !gosx_tiny_islands_only
+//go:build !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
 
 // Engine-surface hydration is the JS-side counterpart to the Go-side
 // CanvasHostReceiver bridge larch shipped in PR #18 (gosx v0.22.1). Where

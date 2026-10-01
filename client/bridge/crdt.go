@@ -1,3 +1,5 @@
+//go:build !gosx_tiny_runtime || gosx_runtime_collab || gosx_runtime_full
+
 package bridge
 
 import (
