@@ -1431,7 +1431,9 @@ const budgets = [
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
   // Integrated renderer changes: raw 426766 -> 431400 (measured 452906); gzip 107996 -> 109300 (measured 114670); brotli 89655 -> 90600 (measured 95093). Existing allowances stay fixed.
   // Integrated renderer changes: raw 431400 -> 435000 (measured 456669); gzip 109300 -> 110400 (measured 115831); brotli 90600 -> 91500 (measured 95974). Existing allowances stay fixed.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 435_000, gzip: 110_400, brotli: 91_500 },
+  { // Detail cache lifecycle adds 1,101 raw / 311 gzip / 305 Brotli WebGPU bytes.
+    // Raise only breached measured targets; the size policy stays fixed.
+    file: "bootstrap-feature-scene3d-webgpu.js", raw: 436_000, gzip: 110_700, brotli: 91_800 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1883,7 +1885,7 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     raw: 1_382_600,
     gzip: 382_900,
-    brotli: 318_900,
+    brotli: 319_200,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2285,6 +2287,8 @@ const routeBudgets = [
     // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
+    // Detail cache lifecycle adds 1,101 raw / 311 gzip / 305 Brotli WebGPU bytes.
+    // Raise only breached measured targets; the size policy stays fixed.
     name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
@@ -2419,9 +2423,9 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_232_900,
-    gzip: 339_200,
-    brotli: 282_300,
+    raw: 1_234_000,
+    gzip: 339_500,
+    brotli: 282_500,
   },
 
 ];
