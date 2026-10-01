@@ -138,7 +138,7 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) 
     180,
     "#000000",
     { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
-    [object],
+    Array.isArray(object) ? object : [object],
     [],
     [],
     [],
@@ -219,6 +219,28 @@ test("Scene3D retains eligible local mesh arrays and updates only compact transf
   );
 });
 
+test("Scene3D mixed baked meshes keep exact, independent frame payloads", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const moving = retainedTriangle({ id: "moving", x: 0, spinZ: 0, geometryDirty: true }, F32);
+  const retained = retainedTriangle({ id: "retained", spinZ: 0 }, F32);
+  const wire = retainedTriangle({ id: "wire", x: 4, spinZ: 0, wireframe: true }, F32);
+  const first = renderBundle(api, [moving, retained, wire]);
+  const saved = Array.from(first.worldMeshPositions);
+  assert.equal(first.worldBakedMeshObjectCount, 2);
+  assert.equal(first.retainedMeshObjectCount, 1);
+  for (const [name, stride] of [["Positions", 3], ["Colors", 4], ["Normals", 3], ["UVs", 2], ["Tangents", 4]]) {
+    assert.equal(first["worldMesh" + name].length, 6 * stride, name);
+  }
+  moving.x = 1;
+  wire.visible = false;
+  const second = renderBundle(api, [moving, retained, wire]);
+  assert.equal(second.worldMeshPositions.length, 9);
+  assert.equal(second.worldBakedMeshObjectCount, 1);
+  assertVectorClose(Array.from(second.worldMeshPositions), [0, -1, 0, 2, -1, 0, 1, 1, 0]);
+  assert.deepEqual(Array.from(first.worldMeshPositions), saved, "later frames cannot overwrite earlier geometry");
+});
+
 test("Scene3D retained geometry uses explicit semantic fallbacks", () => {
   const { env, api } = loadFreshSceneAPI();
   const F32 = vm.runInContext("Float32Array", env.context);
@@ -246,6 +268,36 @@ test("Scene3D retained geometry uses explicit semantic fallbacks", () => {
   assert.equal(backendNeutral.retainedMeshObjectCount, 0);
   assert.equal(backendNeutral.worldBakedMeshObjectCount, 1);
   assert.equal(backendNeutral.worldMeshPositions.length, 9);
+});
+
+test("Scene3D immutable meshes complete missing attributes once and retain indexed geometry", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const raw = {
+    id: "untextured-moment", kind: "mesh", wireframe: false,
+    vertices: {
+      positions: [-1, 0, 0, 1, 0, 0, 1, 0, 2, -1, 0, 2],
+      indices: [0, 2, 1, 0, 3, 2], immutable: true, revision: 1,
+    },
+  };
+  const object = api.normalizeSceneObject(raw, 0);
+  const again = api.normalizeSceneObject(raw, 0);
+  assert.equal(again.vertices, object.vertices, "the completed snapshot is shared across normalization");
+  assert.deepEqual(Array.from(object.vertices.normals), [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  assert.deepEqual(Array.from(object.vertices.uvs), new Array(8).fill(0));
+  assert.deepEqual(Array.from(object.vertices.tangents), [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]);
+  const retained = renderBundle(api, object, 0);
+  const baked = renderBundle(api, object, 0, [], false);
+  assert.equal(retained.retainedMeshObjectCount, 1);
+  assert.equal(retained.worldMeshPositions.length, 0);
+  assert.deepEqual(Array.from(retained.meshObjects[0].vertices.indices), raw.vertices.indices);
+  assert.deepEqual(Array.from(baked.worldMeshUVs), new Array(12).fill(0), "CPU fallback keeps the same defaults");
+  const mutable = api.normalizeSceneObject({ ...raw, vertices: { ...raw.vertices, immutable: false } }, 0);
+  assert.equal(mutable.vertices.uvs.length, 0, "mutable geometry keeps the live baked fallback");
+  raw.vertices.revision = 2;
+  raw.vertices.positions[0] = -2;
+  const revised = api.normalizeSceneObject(raw, 0);
+  assert.notEqual(revised.vertices, object.vertices, "a new revision must rebuild the snapshot");
+  assert.equal(revised.vertices.positions[0], -2);
 });
 
 test("Scene3D retains unindexed shadow casters with positive non-uniform scale", () => {

@@ -48,7 +48,7 @@
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
-    let sample = sceneAdaptiveRendererSample(renderer, now);
+    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS);
     if (sample) state.missingRendererSamples = 0;
     else if (rendererTimingLocked) state.missingRendererSamples += 1;
     else state.missingRendererSamples = 0;
@@ -94,7 +94,8 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(isRAFMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
+    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     // rungPromoteRule: which promotion rule this frame's measurement source

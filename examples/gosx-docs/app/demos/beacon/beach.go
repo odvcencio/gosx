@@ -129,7 +129,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 		AutoRotate: scene.Bool(false), Responsive: scene.Bool(true), FillHeight: scene.Bool(true),
 		PreferWebGPU: scene.Bool(true), CanvasAlpha: scene.Bool(false), Stats: scene.Bool(false),
 		UnsupportedMessage: "Interactive 3D is unavailable in this browser.",
-		MaxFPS:             60, MaxDevicePixelRatio: 2, MaxPixels: scene.PostFXMaxPixels1440p,
+		MaxFPS:             120, MaxDevicePixelRatio: 2, MaxPixels: scene.PostFXMaxPixels1440p,
 		RenderBeforeModels: scene.Bool(true),
 		AdaptiveQuality:    scene.Bool(true), AdaptiveTargetFrameMS: 16.7, AdaptiveWarmupFrames: 24, AdaptivePostFX: scene.Bool(true),
 		Camera: scene.PerspectiveCamera{Position: view.Position, Rotation: blackglassBeachLookRotation(view.Position, view.Target), FOV: 42, PortraitFOV: 70, Near: 0.1, Far: 900},

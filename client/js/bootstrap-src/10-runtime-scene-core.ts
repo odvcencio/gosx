@@ -663,6 +663,17 @@
     return out;
   }
 
+  function sceneMeshSnapshotAttribute(data, count, fallback, snapshot) {
+    const length = count * fallback.length;
+    if (data.length >= length) return data.slice(0, length);
+    if (!snapshot) return new Float32Array(0);
+    // Match the baked path's missing-attribute defaults once per immutable
+    // snapshot, so ordinary untextured meshes can keep their geometry on GPU.
+    const out = new Float32Array(length);
+    for (let i = 0; i < length; i += fallback.length) out.set(fallback, i);
+    return out;
+  }
+
   function sceneNormalizeMeshVertexData(value) {
     const item = value && typeof value === "object" ? value : {};
     const positions = sceneNormalizeMeshFloatArray(item.positions, 3);
@@ -692,6 +703,7 @@
       Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
         ? Math.floor(Number(item.revision))
         : null;
+    const snapshot = item.immutable === true && revision !== null && item.dynamic !== true;
     const attributes = sceneNormalizeCustomAttributes(
       item.attributes,
       count,
@@ -704,9 +716,9 @@
     }
     return {
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
-      normals: normals.length >= count * 3 ? normals.slice(0, count * 3) : new Float32Array(0),
-      uvs: uvs.length >= count * 2 ? uvs.slice(0, count * 2) : new Float32Array(0),
-      tangents: tangents.length >= count * 4 ? tangents.slice(0, count * 4) : new Float32Array(0),
+      normals: sceneMeshSnapshotAttribute(normals, count, [0, 1, 0], snapshot),
+      uvs: sceneMeshSnapshotAttribute(uvs, count, [0, 0], snapshot),
+      tangents: sceneMeshSnapshotAttribute(tangents, count, [1, 0, 0, 1], snapshot),
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
       indices: indices || null,
@@ -5129,6 +5141,20 @@
     sceneReserveFloat32Builder(bundle.worldMeshTangents, count * 4);
   }
 
+  function sceneReserveBakedObjectAttributes(bundle, objects) {
+    let count = 0;
+    for (const object of objects || []) {
+      const vertices = object && object.vertices;
+      if (!vertices || !vertices.count || object.visible === false || object.skin) continue;
+      const wire = bundle.meshWireframeFallback || object.wireframe || object.selected;
+      if (sceneMeshHasStableLocalGeometry(bundle, object, vertices, wire)) continue;
+      count += vertices.indices ? vertices.indices.length : vertices.count;
+    }
+    // Reserve the complete dynamic payload once. Growing each of its five
+    // attributes after every sail otherwise copies the earlier sails again.
+    sceneReserveWorldMeshAttributes(bundle, count);
+  }
+
   function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
@@ -5214,8 +5240,10 @@
     if (sceneBool(showDebugGrid, false)) {
       appendSceneGridToBundle(bundle, width, height);
     }
+    const selectedObjects = sceneSelectLODObjects(objects, renderCamera);
+    sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
-      sceneSelectLODObjects(objects, renderCamera), bundle.lights, resolvedEnvironment, timeSeconds);
+      selectedObjects, bundle.lights, resolvedEnvironment, timeSeconds);
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
     }
