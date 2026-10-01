@@ -3033,6 +3033,8 @@
       width: Math.max(0, Math.floor(sceneNumber(source.width, 0))),
       height: Math.max(0, Math.floor(sceneNumber(source.height, 0))),
       faces: Math.max(0, Math.floor(sceneNumber(source.faces, 0))),
+      wrapS: [33071, 33648, 10497].indexOf(source.wrapS) >= 0 ? source.wrapS : 0,
+      wrapT: [33071, 33648, 10497].indexOf(source.wrapT) >= 0 ? source.wrapT : 0,
     };
   }
 
