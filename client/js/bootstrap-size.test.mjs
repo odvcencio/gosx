@@ -695,7 +695,10 @@ const budgets = [
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   { // Sampler wrap preservation and signed/zero normal scales measure 1,790,605 / 496,111 / 397,943 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
-  file: "bootstrap.js", raw: 1_725_100, gzip: 479_800, brotli: 381_600 },
+  // Public clock API: raw 1,790,605 -> 1,790,620; gzip 496,111 -> 496,092;
+  // brotli 397,943 -> 398,332. Allocate 400 bytes only to brotli;
+  // keep the existing raw/gzip targets and governed regression allowances.
+  file: "bootstrap.js", raw: 1_725_100, gzip: 479_800, brotli: 382_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1838,8 +1841,11 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_304_600,
-    gzip: 356_800,
-    brotli: 299_200,
+    // Public clock API adds 149 gzip bytes to the shared Scene3D chunk.
+    // Allocate 150 compressed bytes; raw and regression allowances stay fixed.
+    gzip: 356_950,
+    // Same shared clock API adds 174 brotli bytes; allocate 175 bytes.
+    brotli: 299_375,
   },
   {
     // Normal-map tiling merged with main measures 1_218_997 / 344_893 / 291_220 bytes.

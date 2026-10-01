@@ -178,3 +178,30 @@ Environment mode uses the IBL radiance cube when it is ready, then the legacy en
 Physical mode (`Sky{Mode: "physical"}`) draws an analytic daylight sky: Rayleigh and Mie single scattering after Preetham, Shirley and Smits (1999) in the real-time form of Hoffman and Preetham (2002), with a sun disk. `SunDirection` points toward the sun; `scene.SunDirectionFromAngles(elevation, azimuth)` builds it in degrees, with azimuth 0 facing -Z. Give the key `DirectionalLight` the opposite direction so shadows agree with the drawn sun. `Turbidity` (1-20, default 10), `Rayleigh` (0-8, default 2), `MieCoefficient` (0-0.1, default 0.005), `MieDirectionalG` (0-0.999, default 0.8) and `SunDiskRadius` (degrees, default 0.53; negative hides the disk) shape it; zero means the default. The output suits the ACES tone mapper at an exposure near 0.5. The server fills any unset gradient stop from the same model, so Canvas2D shows matching colors. `Sky.PhysicalRadiance` evaluates the model in Go; with `ibl.CubeFromRadiance` it bakes IBL that matches the drawn sky. The mount reports `data-gosx-scene3d-sky="physical"`.
 
 Sky draws share the scene target and post chain. They do not write depth. A water scene with a sky uses the world composite even when it has no imported models.
+
+### Controlling the Scene3D animation clock
+
+Mounted Scene3D handles expose `getAnimationClock()` and
+`setAnimationClock({ timeSeconds, paused })`. Use the handle registered on the
+mount as `mount.__gosxScene3DHandle`, after command readiness.
+
+```js
+handle.setAnimationClock({ timeSeconds: 1.25 }); // seek and pause
+handle.setAnimationClock({ timeSeconds: 0.5 });  // seek backward
+handle.setAnimationClock({ timeSeconds: 0.5, paused: false }); // resume
+```
+
+Time must be a finite number from zero to 86,400 seconds. `paused` defaults to
+true. Invalid arguments leave state unchanged; disposed surfaces reject writes.
+The setter schedules a render and resets the wall-clock baseline, so resuming
+does not include time spent paused. `getAnimationClock()` returns `timeSeconds`,
+`paused`. Existing animation controls reflect this state.
+
+This is an absolute clock for declarative motion, animation clips, spin/drift,
+material programs and shader time. Reduced-motion preferences still govern
+declarative movement. Stateful water/particle simulations and event-driven glTF
+mixers retain their own state; exact reproduction of those requires explicit
+pose/state replay. The API does not claim to rewind their simulation history.
+
+A host can keep the native clock paused and drive it from one presentation
+playhead. Wait for the scheduled render to settle before capturing its pixels.

@@ -18,7 +18,42 @@ const {
   createContext,
   runScript,
   flushAsyncWork,
+	installManualRAF,
+	flushSceneInitialFrameBoundary,
 } = require("./runtime-test-harness.js");
+
+test("mounted declarative clock seeks, reverses and resumes without wall-time jumps", async () => {
+	const mount = new FakeElement("div", null);
+	mount.id = "scene-clock-root";
+	const env = createContext({elements:[mount],manifest:starfieldLikeManifest(CLOCK_POINTS)});
+	const raf = installManualRAF(env.context);
+	runScript(bootstrapSource,env.context,"bootstrap.js");
+	await flushAsyncWork();await flushAsyncWork();
+	await flushSceneInitialFrameBoundary(raf);
+	const handle=mount.__gosxScene3DHandle;
+	assert.ok(handle);
+	handle.setAnimationClock({timeSeconds:3.25});
+	raf.flush(1000);
+	await flushAsyncWork();
+	assert.equal(handle.getAnimationClock().timeSeconds,3.25);
+	assert.equal(handle.getAnimationClock().paused,true);
+	assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"),"3.250");
+	handle.setAnimationClock({timeSeconds:.75});raf.flush(2000);await flushAsyncWork();
+	assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"),"0.750");
+	handle.setAnimationClock({timeSeconds:.75,paused:false});raf.flush(100000);
+	assert.equal(handle.getAnimationClock().timeSeconds,.75);
+	raf.flush(100100);
+	assert.ok(Math.abs(handle.getAnimationClock().timeSeconds-.85)<1e-9);
+	for (const timeSeconds of [-1,NaN,Infinity,86401,"1"]) {
+		assert.throws(()=>handle.setAnimationClock({timeSeconds}),/timeSeconds/);
+	}
+	assert.throws(()=>handle.setAnimationClock({timeSeconds:0,paused:"true"}),/paused/);
+	handle.setAnimationClock({timeSeconds:0});raf.flush(100200);
+	assert.equal(handle.getAnimationClock().timeSeconds,0);
+	assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"),"paused");
+	handle.dispose();
+	assert.throws(()=>handle.setAnimationClock({timeSeconds:0}),/disposed/);
+});
 
 function starfieldLikeManifest(points) {
   return {
