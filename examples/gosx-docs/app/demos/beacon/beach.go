@@ -174,6 +174,6 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 			scene.Model{ID: "monolith", Src: blackglassBeachModelRoot + "monolith-v2.glb", Bounds: 4,
 				Position: scene.Vec3(-6.2, 0.05, 2.6), Rotation: scene.Euler{Y: -1.16}, CastShadow: true, ReceiveShadow: true,
 				Material: scene.StandardMaterial{Color: "#8aaca9", Roughness: 0.065, Metalness: 0, Clearcoat: 0.75, Transmission: 0.88, IOR: scene.Float(1.48)}},
-		}, blackglassBeachMoments(period.ID)...)...),
+		}, blackglassBeachBakedMoments(period.ID)...)...),
 	}
 }

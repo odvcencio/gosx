@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	docs "m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon"
 	"m31labs.dev/gosx/examples/gosx-docs/internal/beachgen"
 )
 
@@ -27,6 +28,15 @@ func main() {
 func run(out, env, descriptors string) error {
 	if err := beachgen.Write(out, beachgen.Seed); err != nil {
 		return err
+	}
+	static, err := docs.BlackglassBeachStaticAssets()
+	if err != nil {
+		return err
+	}
+	for name, data := range static {
+		if err := os.WriteFile(filepath.Join(out, name), data, 0644); err != nil {
+			return err
+		}
 	}
 	for _, dir := range []string{env, descriptors} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
