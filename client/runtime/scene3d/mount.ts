@@ -325,7 +325,6 @@
       }
       publishSceneAnimationState();
     }
-    bindSceneAnimationToggle();
     if (!mount.style.position) {
       mount.style.position = "relative";
     }
@@ -3704,6 +3703,7 @@
     }
     scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
     sceneState._modelOwner = null;
+    bindSceneAnimationToggle();
     return handle;
   });
 

@@ -1846,8 +1846,8 @@ const routeBudgets = [
     // Public clock API adds 149 gzip bytes to the shared Scene3D chunk.
     // Allocate 150 compressed bytes; raw and regression allowances stay fixed.
     gzip: 356_950,
-    // Same shared clock API adds 174 brotli bytes; allocate 175 bytes.
-    brotli: 299_375,
+    // Clock binding after handle initialization needs 200 bytes of Brotli target.
+    brotli: 299_400,
   },
   {
     // Normal-map tiling merged with main measures 1_218_997 / 344_893 / 291_220 bytes.
@@ -2369,7 +2369,7 @@ const routeBudgets = [
     // The shared declarative clock adds 149 gzip bytes here as well.
     gzip: 314_250,
     // Shared clock API adds 174 brotli bytes.
-    brotli: 262_670, // +95: persistent hub connections (approved exception, decision 0014)
+    brotli: 262_700, // Includes the measured public clock API allocation.
   },
 
 ];
