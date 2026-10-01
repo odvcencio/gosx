@@ -146,7 +146,8 @@
     let sceneAnimationToggleBound = false;
 
     function sceneAnimationState() {
-      if (motion.reducedMotion) return { wants: false, reason: "reduced-motion" };
+      // Sailing is user-controlled motion; the vessel separately suppresses camera bob.
+      if (motion.reducedMotion) return { wants: !sceneAnimationPaused && sceneVesselEnabled(props) && Boolean(sceneState._gosxMotionController?.active), reason: "reduced-motion" };
       // A user-paused declarative scene stops the loop outright: wants
       // flips false with reason "paused", so the settle render scheduled by
       // the toggle is the last frame until resume and the mount reports
@@ -3040,7 +3041,7 @@
       const advanceVessel = sceneControlHandle && sceneControlHandle.advance;
       if (advanceVessel) {
         advanceVessel(frameDeltaSeconds, frameStart / 1000,
-          sceneQualityLadderPointBudgetScale(adaptiveQuality), sceneAnimationPaused || motion.reducedMotion);
+          sceneQualityLadderPointBudgetScale(adaptiveQuality), sceneAnimationPaused);
       }
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
