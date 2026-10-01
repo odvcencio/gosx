@@ -138,6 +138,60 @@ test("WebGL restores the PBR shader for alpha and additive meshes after the ocea
   h.renderer.dispose();
 });
 
+test("WebGL ocean draws and bathymetry uploads preserve cached mesh textures", async () => {
+  const h = createWebGLRendererForPost({ fresh: true });
+  const gl = h.canvas.getContext("webgl2");
+  gl.isEnabled = () => false;
+  gl.uniform4fv = () => {};
+  gl.blendFuncSeparate = () => {};
+  gl.ACTIVE_TEXTURE = 0x84e0; gl.TEXTURE_BINDING_2D = 0x8069;
+  let active = gl.TEXTURE0;
+  const bindings = new Map();
+  const activeTexture = gl.activeTexture.bind(gl), bindTexture = gl.bindTexture.bind(gl);
+  const getParameter = gl.getParameter.bind(gl), drawArrays = gl.drawArrays.bind(gl);
+  gl.activeTexture = unit => { active = unit; activeTexture(unit); };
+  gl.bindTexture = (target, texture) => {
+    if (target === gl.TEXTURE_2D) bindings.set(active, texture);
+    bindTexture(target, texture);
+  };
+  gl.getParameter = parameter => parameter === gl.ACTIVE_TEXTURE ? active
+    : parameter === gl.TEXTURE_BINDING_2D ? bindings.get(active) || null : getParameter(parameter);
+  const meshTextures = [];
+  gl.drawArrays = (mode, first, count) => {
+    if (count === 3) meshTextures.push(bindings.get(gl.TEXTURE0));
+    drawArrays(mode, first, count);
+  };
+  const bundle = makePointsBundle(null); bundle.points = [];
+  bundle.worldMeshPositions = new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
+  bundle.worldMeshNormals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  bundle.worldMeshUVs = new Float32Array([0, 0, 1, 0, 0.5, 1]);
+  bundle.worldMeshColors = new Float32Array(9).fill(1);
+  bundle.meshObjects = [{ id: "textured", vertexOffset: 0, vertexCount: 3, materialIndex: 0 }];
+  bundle.materials = [{ kind: "standard", color: "#ffffff", texture: "/albedo.png" }];
+  const render = () => h.renderer.render(bundle, { width: 320, height: 180 });
+  render();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  render();
+  const albedo = meshTextures.at(-1);
+  assert.ok(albedo, "the loaded mesh texture is bound");
+  meshTextures.length = 0;
+  bundle.environment.ocean = oceanRecord();
+  render(); render();
+  assert.ok(meshTextures.every(texture => texture === albedo), "consecutive ocean frames retain the cached albedo");
+  bundle.environment.ocean.bathymetry = { src: "/bathymetry.png", minX: -10, minZ: -10, maxX: 10, maxZ: 10, minHeight: -5, maxHeight: 2 };
+  render();
+  assert.equal(bindings.get(gl.TEXTURE0), albedo, "starting bathymetry loading preserves the mesh binding");
+  const priorActive = active;
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(active, priorActive, "bathymetry upload preserves the active unit");
+  assert.equal(bindings.get(gl.TEXTURE0), albedo, "the asynchronous bathymetry upload preserves the mesh binding");
+  render(); render();
+  bundle.environment.ocean = null;
+  render();
+  assert.ok(meshTextures.every(texture => texture === albedo), "loaded bathymetry and ocean removal retain cached albedo");
+  h.renderer.dispose();
+});
+
 test("WebGL clears an ocean-only scene and resets its status after removal", () => {
   const h = createWebGLRendererForPost({ fresh: true });
   const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);

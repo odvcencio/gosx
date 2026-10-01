@@ -381,6 +381,7 @@ test("GLB external image URIs use the explicit renderer context before extractio
     colorSpace: "srgb",
     channels: "rgba",
     view: "2d",
+    wrapS: 10497, wrapT: 10497,
   });
 });
 

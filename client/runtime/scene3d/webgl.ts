@@ -209,7 +209,7 @@
     "uniform float u_emissive;",
     "uniform vec3 u_emissiveColor;",
     "uniform bool u_hasEmissiveColor;",
-    "uniform float u_normalScale;",
+    "uniform float u_normalScale; uniform vec2 u_normalUVScale;",
     "uniform float u_occlusionStrength;",
     "uniform vec3 u_rimColor;",
     "uniform float u_rimPower;",
@@ -550,7 +550,7 @@
     "        vec3 T = normalize(v_tangent);",
     "        vec3 B = normalize(v_bitangent);",
     "        mat3 TBN = mat3(T, B, N);",
-    "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        vec3 mapNormal = texture(u_normalMap, v_uv * u_normalUVScale).rgb * 2.0 - 1.0;",
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -5181,23 +5181,31 @@
       if (record.disposed || record.generation && record.generation.disposed) {
         return record;
       }
-      ktx2.uploadWebGL2(gl, image, { texture: record.texture });
-      if (record.disposed || record.generation && record.generation.disposed) {
-        return record;
-      }
-      var target = image.faces === 6 ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
-      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER,
-        image.levels.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
-      gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      record.width = image.width;
-      record.height = image.height;
-      record.faces = image.faces;
-      record.levels = image.levels.length;
-      record.vkFormat = image.vkFormat;
-      record.target = target;
-      record.keyValues = image.keyValues || {};
-      record.ktx2 = true;
-      record.loaded = true;
+      const upload = function() {
+        ktx2.uploadWebGL2(gl, image, { texture: record.texture });
+        if (record.disposed || record.generation && record.generation.disposed) {
+          return record;
+        }
+        var target = image.faces === 6 ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
+        gl.texParameteri(target, gl.TEXTURE_MIN_FILTER,
+          image.levels.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+        gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        // The KTX2 uploader initializes clamped sampling; restore the material sampler.
+        if (target === gl.TEXTURE_2D && record.descriptor) {
+          gl.texParameteri(target, gl.TEXTURE_WRAP_S, record.descriptor.wrapS);
+          gl.texParameteri(target, gl.TEXTURE_WRAP_T, record.descriptor.wrapT);
+        }
+        record.width = image.width;
+        record.height = image.height;
+        record.faces = image.faces;
+        record.levels = image.levels.length;
+        record.vkFormat = image.vkFormat;
+        record.target = target;
+        record.keyValues = image.keyValues || {};
+        record.ktx2 = true;
+        record.loaded = true;
+      };
+      if (record.withTextureUpload) record.withTextureUpload(upload); else upload();
       scenePBRNotifyTextureSettled(record);
       return record;
     }).catch(function(error) {
@@ -5252,16 +5260,19 @@
         if (record.disposed || record.generation && record.generation.disposed) return;
         var parsed = sceneParseRadianceHDR(buffer);
         var linear = scenePBRLinearHDRPixels(parsed);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F || 0x881A, linear.width, linear.height, 0, gl.RGBA, gl.FLOAT, linear.pixels);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        record.loaded = true;
-        record.width = linear.width;
-        record.height = linear.height;
-        record.hdr = true;
-        record.colorSpace = "linear";
-        record.format = "rgba16f";
+        const upload = function() {
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F || 0x881A, linear.width, linear.height, 0, gl.RGBA, gl.FLOAT, linear.pixels);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          record.loaded = true;
+          record.width = linear.width;
+          record.height = linear.height;
+          record.hdr = true;
+          record.colorSpace = "linear";
+          record.format = "rgba16f";
+        };
+        if (record.withTextureUpload) record.withTextureUpload(upload); else upload();
         scenePBRNotifyTextureSettled(record);
       })
       .catch(function(error) {
@@ -5290,6 +5301,8 @@
       width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
       height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
       faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
+      wrapS: [33071, 33648, 10497].indexOf(descriptor.wrapS) >= 0 ? descriptor.wrapS : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
+      wrapT: [33071, 33648, 10497].indexOf(descriptor.wrapT) >= 0 ? descriptor.wrapT : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
     };
   }
 
@@ -5304,6 +5317,8 @@
       descriptor.height,
       descriptor.faces,
       descriptor.mipLevels,
+      descriptor.wrapS,
+      descriptor.wrapT,
     ].join("\u0000");
   }
 
@@ -5332,26 +5347,41 @@
       failed: false,
       generation: textureMap._gosxGeneration || null,
       disposed: false,
+      // Bathymetry uploads must preserve bindings cached by mesh materials.
+      // @ts-ignore TS7006 -- raw-source renderer tests require JavaScript callback signatures.
+      withTextureUpload: descriptor.role === "ocean-bathymetry" ? function(upload) {
+        const active = gl.getParameter(gl.ACTIVE_TEXTURE);
+        gl.activeTexture(gl.TEXTURE0);
+        const binding = gl.getParameter(gl.TEXTURE_BINDING_2D);
+        try { upload(); } finally {
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, binding);
+          gl.activeTexture(active);
+        }
+      } : null,
     };
     textureMap.set(cacheKey, record);
 
     // Initialize with a 1x1 white pixel placeholder.
-    gl.bindTexture(target, texture);
-    var placeholder = new Uint8Array([255, 255, 255, 255]);
-    if (target === gl.TEXTURE_CUBE_MAP) {
-      for (var face = 0; face < 6; face++) {
-        gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, placeholder);
+    const upload = function() {
+      gl.bindTexture(target, texture);
+      var placeholder = new Uint8Array([255, 255, 255, 255]);
+      if (target === gl.TEXTURE_CUBE_MAP) {
+        for (var face = 0; face < 6; face++) {
+          gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, placeholder);
+        }
+      } else {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, placeholder);
       }
-    } else {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, placeholder);
-    }
-    gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    if (target === gl.TEXTURE_CUBE_MAP && gl.TEXTURE_WRAP_R !== undefined) {
-      gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-    }
+      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_WRAP_S, target === gl.TEXTURE_CUBE_MAP ? gl.CLAMP_TO_EDGE : descriptor.wrapS);
+      gl.texParameteri(target, gl.TEXTURE_WRAP_T, target === gl.TEXTURE_CUBE_MAP ? gl.CLAMP_TO_EDGE : descriptor.wrapT);
+      if (target === gl.TEXTURE_CUBE_MAP && gl.TEXTURE_WRAP_R !== undefined) {
+        gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+      }
+    };
+    if (record.withTextureUpload) record.withTextureUpload(upload); else upload();
 
     if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
       return record;
@@ -5374,24 +5404,28 @@
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        var srgb = descriptor.colorSpace === "srgb";
-        var internalFormat = srgb ? (gl.SRGB8_ALPHA8 || 0x8C43) : (gl.RGBA8 || 0x8058);
-        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
-          gl.generateMipmap(gl.TEXTURE_2D);
-          record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        } else {
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.colorSpace = srgb ? "srgb" : "linear";
-        record.format = srgb ? "srgb8-alpha8" : "rgba8";
-        // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
-        record.width = image.naturalWidth || image.width || 0;
-        // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
-        record.height = image.naturalHeight || image.height || 0;
-        record.loaded = true;
+        const upload = function() {
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          var srgb = descriptor.colorSpace === "srgb";
+          var internalFormat = srgb ? (gl.SRGB8_ALPHA8 || 0x8C43) : (gl.RGBA8 || 0x8058);
+          gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
+          // WebGL2 permits repeating and mipmapping NPOT images as well.
+          if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
+            gl.generateMipmap(gl.TEXTURE_2D);
+            record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          } else {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.colorSpace = srgb ? "srgb" : "linear";
+          record.format = srgb ? "srgb8-alpha8" : "rgba8";
+          // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
+          record.width = image.naturalWidth || image.width || 0;
+          // @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files)
+          record.height = image.naturalHeight || image.height || 0;
+          record.loaded = true;
+        };
+        if (record.withTextureUpload) record.withTextureUpload(upload); else upload();
         scenePBRNotifyTextureSettled(record);
       };
       image.onerror = function() {
@@ -5576,7 +5610,7 @@
       emissive: gl.getUniformLocation(program, "u_emissive"),
       emissiveColor: gl.getUniformLocation(program, "u_emissiveColor"),
       hasEmissiveColor: gl.getUniformLocation(program, "u_hasEmissiveColor"),
-      normalScale: gl.getUniformLocation(program, "u_normalScale"),
+      normalScale: gl.getUniformLocation(program, "u_normalScale"), normalUVScale: gl.getUniformLocation(program, "u_normalUVScale"),
       occlusionStrength: gl.getUniformLocation(program, "u_occlusionStrength"),
       rimColor: gl.getUniformLocation(program, "u_rimColor"),
       rimPower: gl.getUniformLocation(program, "u_rimPower"),
@@ -8518,7 +8552,7 @@
       var emissiveColor = scenePBREmissiveColor(mat);
       gl.uniform3f(uniforms.emissiveColor, emissiveColor[0], emissiveColor[1], emissiveColor[2]);
       gl.uniform1i(uniforms.hasEmissiveColor, scenePBRHasEmissiveColor(mat) ? 1 : 0);
-      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1));
+      gl.uniform1f(uniforms.normalScale, sceneNumber(mat.normalScale, 1)); if (uniforms.normalUVScale) gl.uniform2f(uniforms.normalUVScale, mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1, mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 1);
       gl.uniform1f(uniforms.occlusionStrength, clamp01(sceneNumber(mat.occlusionStrength, 1)));
       var rimColor = scenePBRRimColor(mat);
       gl.uniform3f(uniforms.rimColor, rimColor[0], rimColor[1], rimColor[2]);
