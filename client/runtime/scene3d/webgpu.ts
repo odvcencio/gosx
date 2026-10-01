@@ -4195,7 +4195,8 @@
     var pingPongWidth = 0;
     var pingPongHeight = 0;
     var depthTex = null;
-    var depthTexView = null;
+    var depthTexView: any = null;
+    var depthResolvePipeline: any = null, depthResolveLayout: any = null;
     var currentWidth = 0;
     var currentHeight = 0;
 
@@ -4552,7 +4553,43 @@
       fullscreenPass(encoder, pipeline, group, output, {});
     }
 
+    // Resolve nearest covered depth, retaining clear depth when all samples are clear.
+    // Color keeps its normal MSAA average; depth consumers receive this frame's surface.
+    function resolveSceneDepth(encoder: any, sourceView: any, effects: any[]) {
+      var needsDepth = false;
+      for (var di = 0; di < effects.length; di++) {
+        var kind = effects[di].kind;
+        if (kind === SCENE_POST_SSAO || kind === SCENE_POST_DOF || kind === "contactShadows" || kind === SCENE_POST_CUSTOM_POST) needsDepth = true;
+      }
+      if (!needsDepth) return;
+      if (!depthResolvePipeline) {
+        depthResolveLayout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: true } }] });
+        var module = device.createShaderModule({ label: "post-depth-resolve", code: [
+          "@group(0) @binding(0) var source: texture_depth_multisampled_2d;",
+          "@fragment fn fragmentMain(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {",
+          "  var depth = 1.0;",
+          "  for (var sample = 0; sample < 4; sample++) { depth = min(depth, textureLoad(source, vec2i(pos.xy), sample)); }",
+          "  return depth;",
+          "}",
+        ].join("\n") });
+        depthResolvePipeline = device.createRenderPipeline({ label: "gosx-post-depth-resolve", layout: device.createPipelineLayout({ bindGroupLayouts: [depthResolveLayout] }),
+          vertex: { module: device.createShaderModule({ code: WGSL_POST_VERTEX }), entryPoint: "vertexMain" },
+          fragment: { module: module, entryPoint: "fragmentMain", targets: [] },
+          primitive: { topology: "triangle-strip" },
+          depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "always" },
+        });
+      }
+      var group = device.createBindGroup({ layout: depthResolveLayout, entries: [{ binding: 0, resource: sourceView }] });
+      var pass = encoder.beginRenderPass({ label: "gosx-post-depth-resolve", colorAttachments: [],
+        depthStencilAttachment: { view: depthTexView, depthLoadOp: "clear", depthClearValue: 1, depthStoreOp: "store" } });
+      pass.setPipeline(depthResolvePipeline);
+      pass.setBindGroup(0, group);
+      pass.draw(4);
+      pass.end();
+    }
+
     return {
+      resolveDepth: resolveSceneDepth,
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
         return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
@@ -18890,6 +18927,7 @@
 
       // Post-processing.
       if (usePostProcessing && postProcessor) {
+        if (sampleCount > 1) postProcessor.resolveDepth(encoder, mainDepthTargetView, postEffects);
         var screenView = gpuCtx.getCurrentTexture().createView();
         Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, bundle.lights));
       }
