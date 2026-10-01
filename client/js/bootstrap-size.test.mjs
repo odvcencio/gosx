@@ -12,11 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
-// Contact shadows and TAA add bounded depth rays and temporal resolve.
-// Targets increase only where measured output breaches the governed allowance.
-// Post tier admission uses the measured post-effect output.
-// Targets increase only where measured output breaches the governed allowance.
-// Post command admission guard uses the measured post-effect output.
+// Post-effect budgets retain depth AO, contact shadows, TAA, and tier admission guards.
 // Targets increase only where measured output breaches the governed allowance.
 const budgets = [
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
