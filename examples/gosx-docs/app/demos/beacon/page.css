@@ -1,4 +1,5 @@
 /* Blackglass Beach: the scene fills the window above the docs chrome. */
+html:has(.bgb), body:has(.bgb) { overflow: hidden; }
 .bgb {
   position: fixed;
   inset: 0;
@@ -8,6 +9,10 @@
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 .bgb__canvas, .bgb__canvas > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.bgb::after {
+  content: ""; position: absolute; inset: auto 0 0; height: 200px; z-index: 1;
+  background: linear-gradient(transparent, rgba(10, 12, 14, 0.65)); pointer-events: none;
+}
 .bgb__close {
   position: absolute; top: 14px; right: 16px; z-index: 2;
   width: 36px; height: 36px; display: grid; place-items: center;

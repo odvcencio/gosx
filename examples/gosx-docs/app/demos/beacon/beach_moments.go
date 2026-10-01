@@ -11,7 +11,7 @@ import (
 // It is built from primitive meshes and one spinning beam mesh, so it adds no
 // asset bytes. The beam is strong at blue hour and faint in daylight.
 const (
-	beaconX, beaconZ = 39.0, -33.0
+	beaconX, beaconZ = 43.0, -22.0
 	beaconTower      = 9.0
 )
 
@@ -26,7 +26,7 @@ func blackglassBeachMoments(periodID string) []scene.Node {
 func blackglassBeachBeacon(periodID string) []scene.Node {
 	ground := beachgen.TerrainHeight(beaconX, beaconZ, beachgen.Seed)
 	lantern := ground + beaconTower + 0.8
-	glow, beamCore, beamHalo := 1.5, 0.05, 0.02
+	glow, beamCore, beamHalo := 1.5, 0.005, 0.002
 	if periodID == beachgen.PeriodBlue {
 		glow, beamCore, beamHalo = 9, 0.22, 0.07
 	}
@@ -46,7 +46,7 @@ func blackglassBeachBeacon(periodID string) []scene.Node {
 	return []scene.Node{
 		scene.Mesh{ID: "beacon-tower", Geometry: scene.CylinderGeometry{RadiusTop: 1.1, RadiusBottom: 1.6, Height: beaconTower, Segments: 24},
 			Material: white, Position: y(beaconTower / 2), CastShadow: true, ReceiveShadow: true},
-		scene.Mesh{ID: "beacon-band", Geometry: scene.CylinderGeometry{RadiusTop: 1.24, RadiusBottom: 1.33, Height: 1.6, Segments: 24},
+		scene.Mesh{ID: "beacon-band", Geometry: scene.CylinderGeometry{RadiusTop: 1.33, RadiusBottom: 1.44, Height: 1.6, Segments: 24},
 			Material: red, Position: y(beaconTower * 0.55), CastShadow: true, ReceiveShadow: true},
 		scene.Mesh{ID: "beacon-gallery", Geometry: scene.CylinderGeometry{RadiusTop: 1.5, RadiusBottom: 1.5, Height: 0.25, Segments: 24},
 			Material: dark, Position: y(beaconTower + 0.1), CastShadow: true, ReceiveShadow: true},

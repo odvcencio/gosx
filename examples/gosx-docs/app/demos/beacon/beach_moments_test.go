@@ -166,6 +166,22 @@ func TestBeachBeaconConstructionAndTerrain(t *testing.T) {
 					t.Fatalf("%s is not anchored to the terrain: %+v", id, m.Position)
 				}
 			}
+			tower := meshes["beacon-tower"].Geometry.(scene.CylinderGeometry)
+			band := meshes["beacon-band"].Geometry.(scene.CylinderGeometry)
+			bandCentre := meshes["beacon-band"].Position.Y - ground
+			towerRadius := func(h float64) float64 {
+				return tower.RadiusBottom + (tower.RadiusTop-tower.RadiusBottom)*h/tower.Height
+			}
+			if band.RadiusTop <= towerRadius(bandCentre+band.Height/2) || band.RadiusBottom <= towerRadius(bandCentre-band.Height/2) {
+				t.Fatal("the red band must cover the tower rather than intersect its interior")
+			}
+			for i := 0; i < 12; i++ {
+				angle := 2 * math.Pi * float64(i) / 12
+				h := beachgen.TerrainHeight(beaconX+tower.RadiusBottom*math.Cos(angle), beaconZ+tower.RadiusBottom*math.Sin(angle), beachgen.Seed)
+				if math.Abs(h-ground) > 1 {
+					t.Fatal("the tower footprint must rest on the headland rather than overhang its cliff")
+				}
+			}
 			for _, id := range []string{"beacon-beam", "beacon-beam-halo"} {
 				m := meshes[id]
 				mat := m.Material.(scene.StandardMaterial)
