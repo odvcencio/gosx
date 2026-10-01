@@ -68,7 +68,7 @@ function shaderHarness({ extension = true, linkOK = true, scheduler = false } = 
       calls.push(["createShader", shader.id]);
       return shader;
     },
-    shaderSource(shader) { calls.push(["shaderSource", shader.id]); },
+    shaderSource(shader, source) { calls.push(["shaderSource", shader.id, source]); },
     compileShader(shader) { calls.push(["compileShader", shader.id]); },
     createProgram() {
       const program = { kind: "program", id: ++sequence };
@@ -421,6 +421,118 @@ function submitProgram(h, label) {
   const fragment = h.context.scenePBRCompileShader(h.gl, h.gl.FRAGMENT_SHADER, label + " fragment");
   return h.context.scenePBRLinkProgram(h.gl, vertex, fragment, label);
 }
+
+function pointsHarness(h) {
+  for (const name of ["enable", "disable", "useProgram", "uniformMatrix4fv", "uniform1f", "uniform1i",
+    "uniform3f", "uniform4f", "depthMask", "depthFunc", "bindBuffer", "enableVertexAttribArray",
+    "vertexAttribPointer", "disableVertexAttribArray", "vertexAttrib1f", "vertexAttrib4f", "drawArrays"]) {
+    h.gl[name] = (...args) => h.calls.push([name, ...args]);
+  }
+  h.gl.POINTS = 100;
+  Object.assign(h.context, {
+    gl: h.gl, program: {}, pointsAuthoredGLPrograms: new Map(),
+    sceneWebGLNormalizeCustomShaderSource: source => source,
+    sceneNumber: (value, fallback) => typeof value === "number" ? value : fallback,
+    sceneColorRGBA: (_value, fallback) => fallback,
+    clamp01: value => Math.max(0, Math.min(1, value)),
+    scenePointStyleCode: () => 0,
+    sceneEulerMatrixInto() {}, sceneWebGLUploadPointModelMatrix() {},
+    ensureStaticPointVBO: () => ({}),
+    webglRenderTruthStats: { pointsSubmitted: 0, pointInstancesSubmitted: 0, pointsDrawn: 0, pointInstancesDrawn: 0 },
+    webglComputeParticleDrawStats: { drawEntries: 0, drawInstances: 0, drawCalls: 0,
+      authoredDrawEntries: 0, authoredDrawInstances: 0, authoredDrawCalls: 0 },
+    ensurePointsProgram: () => { throw new Error("authored particles must prepare their own program"); },
+  });
+  runSource(sourceBetween(webglSource, "function scenePointsProgramInfo", "// Compile the instanced PBR vertex shader"), h.context);
+  runSource(sourceBetween(webglSource, "function failPointsAuthoredGLProgram", "function disposeComputeParticleSystemRecord"), h.context);
+  runSource(sourceBetween(webglSource, "function drawPointsEntries(gl, pointsArray", "// Ensure the instanced PBR program"), h.context);
+  return {
+    ensurePointsAuthoredGLProgram: h.context.ensurePointsAuthoredGLProgram,
+    ensurePointsProgram: h.context.ensurePointsProgram,
+    skyResources: {},
+  };
+}
+
+test("compute-particle preparation submits authored programs before frame readiness", () => {
+  const h = shaderHarness({ scheduler: true });
+  const hooks = pointsHarness(h);
+  const entries = ["sparks", ""].map(id => ({ id, renderVertex: "particle vertex",
+    renderFragment: "particle fragment", renderUniforms: { brightness: 1.25 } }));
+  h.context.scenePBRPrepareBundlePrograms(h.gl, { computeParticles: entries }, hooks);
+  assert.equal(callsNamed(h, "linkProgram").length, 2);
+  assert.deepEqual(callsNamed(h, "shaderSource").map(call => call[2]),
+    ["particle vertex", "particle fragment", "particle vertex", "particle fragment"]);
+  assert.ok(h.context.pointsAuthoredGLPrograms.has("sparks"));
+  assert.ok(h.context.pointsAuthoredGLPrograms.has("scene-compute-points-1"));
+  assert.equal(h.context.scenePBRFrameProgramsReady(h.gl, {}), false);
+  h.flushScheduled();
+  assert.equal(callsNamed(h, "getAttribLocation").length, 0);
+  assert.equal(callsNamed(h, "getUniformLocation").length, 0);
+  assert.equal(h.context.scenePBRFrameProgramsReady(h.gl, {}), false);
+  h.setComplete(true);
+  h.flushScheduled();
+  assert.equal(h.context.scenePBRFrameProgramsReady(h.gl, {}), true);
+  assert.ok(callsNamed(h, "getAttribLocation").length > 0);
+});
+
+test("points draw skips a late authored program until completion without querying uniforms", () => {
+  const h = shaderHarness({ scheduler: true });
+  pointsHarness(h);
+  const entry = { id: "sparks", count: 1, customVertex: "particle vertex", customFragment: "particle fragment",
+    customUniforms: { brightness: 1.25 }, _cachedPos: new Float32Array([0, 0, 0]), _computeParticlesSynthetic: true };
+  const draw = () => h.context.drawPointsEntries(h.gl, [entry], {}, new Float32Array(16), new Float32Array(16), 2, 180);
+  draw();
+  assert.equal(callsNamed(h, "useProgram").some(call => call[1]?.kind === "program"), false);
+  assert.equal(callsNamed(h, "uniformMatrix4fv").length, 0);
+  assert.equal(callsNamed(h, "getUniformLocation").length, 0);
+  assert.equal(callsNamed(h, "drawArrays").length, 0);
+  h.flushScheduled();
+  draw();
+  assert.equal(callsNamed(h, "drawArrays").length, 0);
+  h.setComplete(true);
+  h.flushScheduled();
+  draw();
+  assert.equal(callsNamed(h, "linkProgram").length, 1, "later draws reuse the completed program");
+  assert.equal(callsNamed(h, "drawArrays").length, 1);
+  assert.ok(callsNamed(h, "uniform1f").some(call => call[1]?.name === "brightness" && call[2] === 1.25));
+  assert.equal(h.context.webglComputeParticleDrawStats.authoredDrawCalls, 1);
+});
+
+function importedBatchCapabilityHarness(h) {
+  Object.assign(h.context, {
+    gl: h.gl, instancedProgram: null, instancedProgramFailed: false,
+    createSceneWebGLFrameTimer: () => ({}),
+    prepareCrowdAtlas() {}, prepareCrowdMotionShaders() {}, diagnostics() {}, textureVariantContext: {},
+  });
+  runSource(sourceBetween(webglSource, "function ensureInstancedProgram()", "// Look up or generate geometry for an instanced mesh entry."), h.context);
+  runSource("function createCapabilityRenderer() {" + sourceBetween(webglSource,
+    "function renderSurfaces(bundle, target)", "function sceneWebGLCommandSequence"), h.context);
+  return h.context.createCapabilityRenderer();
+}
+
+test("imported-mesh batching becomes available after instanced program completion", () => {
+  const h = shaderHarness({ scheduler: true });
+  const renderer = importedBatchCapabilityHarness(h);
+  assert.equal(renderer.supportsRigidImportedBatches, false);
+  assert.equal(callsNamed(h, "getAttribLocation").length, 0);
+  h.flushScheduled();
+  assert.equal(renderer.supportsRigidImportedBatches, false);
+  h.setComplete(true);
+  h.flushScheduled();
+  assert.equal(renderer.supportsRigidImportedBatches, true);
+  assert.equal(callsNamed(h, "linkProgram").length, 1);
+});
+
+test("imported-mesh batching preserves synchronous readiness and rejects failed parallel links", () => {
+  const sync = shaderHarness({ scheduler: true, extension: false });
+  assert.equal(importedBatchCapabilityHarness(sync).supportsRigidImportedBatches, true);
+  const failed = shaderHarness({ scheduler: true, linkOK: false });
+  const renderer = importedBatchCapabilityHarness(failed);
+  assert.equal(renderer.supportsRigidImportedBatches, false);
+  failed.setComplete(true);
+  failed.flushScheduled();
+  assert.equal(renderer.supportsRigidImportedBatches, false);
+});
 
 function waterPassHarness(h, program) {
   for (const name of ["bindFramebuffer", "viewport", "disable", "useProgram", "activeTexture", "bindTexture", "bindVertexArray", "drawArrays"]) {
