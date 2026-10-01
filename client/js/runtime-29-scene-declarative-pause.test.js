@@ -30,7 +30,7 @@ const {
   flushAsyncWork,
 } = require("./runtime-test-harness.js");
 
-function clockManifest(points) {
+function clockManifest(points, environment) {
   return {
     engines: [
       {
@@ -43,7 +43,7 @@ function clockManifest(points) {
           width: 480,
           height: 300,
           autoRotate: false,
-          scene: { points },
+          scene: { points, environment },
         },
         capabilities: ["canvas", "animation"],
       },
@@ -62,7 +62,7 @@ const CLOCK_POINTS = [{
   customUniforms: { time: 0 },
 }];
 
-async function mountPausedHarness() {
+async function mountPausedHarness(ocean = false) {
   const mount = new FakeElement("div", null);
   mount.id = "scene-pause-root";
   const toggle = new FakeElement("button", null);
@@ -85,7 +85,7 @@ async function mountPausedHarness() {
 
   const env = createContext({
     elements: [mount],
-    manifest: clockManifest(CLOCK_POINTS),
+    manifest: clockManifest(ocean ? [] : CLOCK_POINTS, ocean ? { ocean: {} } : undefined),
   });
   const raf = installManualRAF(env.context);
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -93,6 +93,33 @@ async function mountPausedHarness() {
   await flushSceneInitialFrameBoundary(raf);
   return { mount, toggle, raf, env };
 }
+
+test("an ocean-only scene pauses, resumes without a wall-time jump, and obeys reduced motion", async () => {
+  const { mount, toggle, raf, env } = await mountPausedHarness(true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "ocean");
+  raf.flush(16);
+  await flushAsyncWork();
+  toggle.dispatchEvent({ type: "click" });
+  raf.flush(48);
+  await flushAsyncWork();
+  const frozen = mount.getAttribute("data-gosx-scene3d-animation-clock");
+  assert.equal(raf.count(), 0);
+  toggle.dispatchEvent({ type: "click" });
+  raf.flush(60000);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"), frozen);
+  raf.flush(60032);
+  await flushAsyncWork();
+  const played = mount.getAttribute("data-gosx-scene3d-animation-clock");
+  assert.ok(Number(played) > Number(frozen));
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(true);
+  await flushAsyncWork();
+  raf.flush(60048);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"), played);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "reduced-motion");
+  assert.equal(raf.count(), 0);
+});
 
 test("declarative pause stops the render loop instead of spinning at a frozen clock", async () => {
   const { mount, toggle, raf } = await mountPausedHarness();

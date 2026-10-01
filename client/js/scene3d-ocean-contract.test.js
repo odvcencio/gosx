@@ -47,6 +47,16 @@ test("ocean normalization applies defaults, clamps values, wraps direction, and 
   assert.equal(environment.ocean.waveHeight, 2);
   const updated = api.normalizeSceneEnvironment({ exposure: 2 }, environment);
   assert.equal(updated.ocean.waveHeight, 2, "an unrelated environment update keeps the ocean");
+  const stopped = api.normalizeSceneEnvironment({ ocean: { speed: -1, choppiness: -1, foam: -1, surf: -1 } });
+  const changed = api.normalizeSceneEnvironment({ exposure: 2 }, stopped);
+  for (const key of ["speed", "choppiness", "foam", "surf"]) {
+    assert.equal(stopped.ocean[key], 0);
+    assert.equal(changed.ocean[key], 0, `${key} stays zero across an unrelated update`);
+  }
+  assert.deepEqual(plain(changed.ocean), plain(stopped.ocean));
+  assert.notEqual(changed.ocean, stopped.ocean, "environment updates own their ocean settings");
+  assert.equal(api.normalizeSceneEnvironment({ ocean: { speed: 0 } }, changed).ocean.speed, 1,
+    "an authored zero still requests the default");
   assert.equal(api.normalizeSceneEnvironment({ ocean: null }, updated).ocean, null,
     "an explicit null removes the ocean");
   h.renderer.dispose();

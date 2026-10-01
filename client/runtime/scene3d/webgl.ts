@@ -8916,7 +8916,7 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
-      sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+      sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: bundle.timeSeconds,
         linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Transparent mesh lists start with the static PBR program active.
       gl.useProgram(program);

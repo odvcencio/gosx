@@ -3153,7 +3153,7 @@
       envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
-      ocean: normalizeSceneOcean(Object.prototype.hasOwnProperty.call(source, "ocean") ? source.ocean : base.ocean),
+      ocean: Object.prototype.hasOwnProperty.call(source, "ocean") ? normalizeSceneOcean(source.ocean) : sceneCloneData(base.ocean) || null,
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),

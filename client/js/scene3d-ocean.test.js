@@ -174,3 +174,39 @@ test("WebGPU clears an ocean-only scene and resets its status after removal", as
   assert.ok(!passes.flatMap(p => p.draws).some(d => d.pipeline?.desc?.label === "gosx-ocean"));
   h.renderer.dispose();
 });
+
+for (const backend of ["WebGL", "WebGPU"]) {
+  test(`${backend} ocean uniforms follow the scene clock across pause, resume, and reduced motion`, async () => {
+    const h = backend === "WebGPU"
+      ? await createBoardWebGPUHarness({ fresh: true })
+      : createWebGLRendererForPost({ fresh: true });
+    const bundle = makePointsBundle(null); bundle.points = [];
+    bundle.environment.ocean = oceanRecord();
+    let wallMS = 1000, oceanTime;
+    h.env.context.performance.now = () => wallMS;
+    if (backend === "WebGL") {
+      const gl = h.canvas.getContext("webgl2");
+      gl.isEnabled = () => false;
+      gl.blendFuncSeparate = () => {};
+      gl.uniform4fv = (_location, data) => { if (data.length === 140) oceanTime = data[2]; };
+    }
+    for (const [phase, wall, clock] of [
+      ["playing", 1000, 1.25],
+      ["paused interaction", 60000, 1.25],
+      ["first resumed frame", 61000, 1.25],
+      ["playing again", 61032, 1.282],
+      ["reduced motion interaction", 120000, 1.282],
+    ]) {
+      wallMS = wall;
+      bundle.timeSeconds = clock;
+      h.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: wallMS });
+      if (backend === "WebGPU") {
+        const write = h.fake.state.writeBufferCalls.findLast(call => call.data?.length === 16 + 140);
+        assert.ok(write, "the ocean uniform buffer is uploaded");
+        oceanTime = write.data[18];
+      }
+      assert.equal(oceanTime, Math.fround(clock), `${phase} uses played time instead of wall time`);
+    }
+    h.renderer.dispose();
+  });
+}

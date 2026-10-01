@@ -18751,7 +18751,7 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, timeSeconds: bundle.timeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false };
       // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.

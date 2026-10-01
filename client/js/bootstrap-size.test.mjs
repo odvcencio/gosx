@@ -692,7 +692,9 @@ const budgets = [
   // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
   // exception under decision 0014).
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap.js", raw: 1_746_202, gzip: 487_661, brotli: 387_117 },
+  // Ocean settings preservation, scene-clock use, and water mounting fixes measure 1,811,752 raw bytes.
+  // Raise only the raw target by the smallest 100-byte step needed to clear the hard limit.
+  { file: "bootstrap.js", raw: 1_746_302, gzip: 487_661, brotli: 387_117 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -2190,7 +2192,9 @@ const routeBudgets = [
     // Ocean removal and PBR program restoration measure 1_646_444 raw and
     // 381_081 Brotli bytes; each affected target rises one 100-byte step.
     raw: 1_581_000, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 436_900,
+    // Ocean lifecycle fixes measure 453_286 gzip bytes, two above the old hard limit.
+    // Raise only gzip by the smallest 100-byte target step.
+    gzip: 437_000,
     brotli: 364_795, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
