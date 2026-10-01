@@ -2767,6 +2767,7 @@
     "contact-shadows": "contactShadows",
     dof: "dof",
     fxaa: "fxaa",
+    taa: "taa",
     custompost: "customPost",
     "custom-post": "customPost",
   };
