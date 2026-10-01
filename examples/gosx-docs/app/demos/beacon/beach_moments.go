@@ -26,7 +26,7 @@ func blackglassBeachMoments(periodID string) []scene.Node {
 func blackglassBeachBeacon(periodID string) []scene.Node {
 	ground := beachgen.TerrainHeight(beaconX, beaconZ, beachgen.Seed)
 	lantern := ground + beaconTower + 0.8
-	glow, beamCore, beamHalo := 1.5, 0.05, 0.02
+	glow, beamCore, beamHalo := 1.5, 0.012, 0.004
 	if periodID == beachgen.PeriodBlue {
 		glow, beamCore, beamHalo = 9, 0.22, 0.07
 	}

@@ -74,7 +74,11 @@ func Generate(seed int64) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := map[string][]byte{
+	files, err := CoastLifeAssets(seed)
+	if err != nil {
+		return nil, err
+	}
+	for name, data := range map[string][]byte{
 		"beach-v2-height.png": height,
 		"beach-v2.glb":        beachGLB,
 		"beach-v2-albedo.jpg": albedo,
@@ -83,6 +87,8 @@ func Generate(seed int64) (map[string][]byte, error) {
 		"rock-normal.jpg":     rockNormal,
 		"stacks-v2.glb":       stacksGLB,
 		"monolith-v2.glb":     monolithGLB,
+	} {
+		files[name] = data
 	}
 	ship, err := ShipAssets()
 	if err != nil {
@@ -202,6 +208,7 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 			ao := ambientOcclusion(n, x, z, h)
 			factor := .45 + .55*ao
 			base := [3]float64{80, 74, 68}
+			foam := 0.0
 			if rock {
 				base = [3]float64{58, 60, 63}
 			} else {
@@ -209,23 +216,25 @@ func makeAlbedo(seed int64, n noiseField) ([]byte, error) {
 				streaks := n.fbm(x/9+float64(seed%7), z*1.4, 3) * .08 // wind streaks run across the beach
 				grain := n.value(x*18+float64(seed%19), z*18-float64(seed%23)) * .10
 				factor *= 1 + mottle + streaks + grain
-				// Swash marks: thin light lines of shell grit left along the
-				// contours the surge reached, broken up by noise.
-				if h > .25 && h < 1.0 && z < 10 {
-					phase := h*38 + 2.2*n.fbm(x/6, z/6, 2)
-					line := math.Pow(math.Max(0, math.Cos(phase)), 24) * smoothstep(.2, .6, n.fbm(x/2.5+3, z/2.5, 2))
-					factor *= 1 + .45*line
+				// Broken filaments left by the retreating wash. The live ocean
+				// supplies moving run-up; these narrow lines remain on sand.
+				if z > .6 && z < 6 && h < .6 {
+					contour := z + .35*n.fbm(x*.15, z*.2, 3) + .08*math.Sin(x*.8)
+					front := math.Exp(-math.Pow((contour-1.7)/.075, 2))
+					back := .48 * math.Exp(-math.Pow((contour-4.2)/.055, 2))
+					breakup := smoothstep(-.22, .3, n.value(x*2, z*3))
+					foam = (front + back) * breakup * .72
 				}
 				// Wet sand is darker; its roughness band makes it mirror the sky.
-				wet := smoothstep(.5, .2, h)
-				if z < 4 {
+				wet := smoothstep(.8, .12, h)
+				if z < 12 {
 					factor *= 1 - .55*wet
 				}
 			}
 			img.SetNRGBA(px, py, color.NRGBA{
-				R: uint8(math.Round(base[0] * factor)),
-				G: uint8(math.Round(base[1] * factor)),
-				B: uint8(math.Round(base[2] * factor)), A: 255,
+				R: uint8(math.Round(lerp(base[0]*factor, 185, foam))),
+				G: uint8(math.Round(lerp(base[1]*factor, 192, foam))),
+				B: uint8(math.Round(lerp(base[2]*factor, 188, foam))), A: 255,
 			})
 		}
 	}
@@ -271,8 +280,8 @@ func makeMetalRoughness(n noiseField) ([]byte, error) {
 				roughness = .70
 			} else if h < -.2 {
 				roughness = .25
-			} else if z < 4 && h > -.2 && h < .45 {
-				roughness = .1 + .7*smoothstep(-.2, .45, h)
+			} else if z < 12 {
+				roughness = .065 + .735*smoothstep(.12, .8, h)
 			}
 			img.SetColorIndex(px, py, uint8(math.Round(clamp(roughness, 0, 1)*15)))
 		}

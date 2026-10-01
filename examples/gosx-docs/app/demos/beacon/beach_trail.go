@@ -11,7 +11,7 @@ import (
 // and end beside the glass. Two primitive batches make toes and heels for
 // 24 prints; no decals, textures, proximity loop or extra walk obstacles.
 func blackglassBeachTrail() []scene.Node {
-	material := scene.StandardMaterial{Color: "#090d10", Roughness: .3}
+	material := scene.StandardMaterial{Color: "#090d10", Roughness: .88}
 	sole := scene.InstancedMesh{ID: "glass-trail-soles", Count: 24,
 		Geometry: scene.CylinderGeometry{RadiusTop: 1, RadiusBottom: 1, Height: 1, Segments: 8}, Material: material, ReceiveShadow: true}
 	heel := sole

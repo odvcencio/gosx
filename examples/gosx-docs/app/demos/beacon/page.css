@@ -1,46 +1,55 @@
-/* Blackglass Beach: the scene fills the window above the docs chrome. */
+/* The beach owns the window; the docs shell stays outside the experience. */
+:global(html:has(.bgb)), :global(body:has(.bgb)) { overflow: hidden; margin: 0; }
+:global(body:has(.bgb) :is(.pill-nav, .nav-overlay, .skip-link, .demo-dock, .demo-meta, .demo-details, .site-footer)) { display: none; }
 .bgb {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: #0b0d10;
-  color: #f4f1ec;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  position: fixed; inset: 0; z-index: 1000; background: #0b0d10;
+  color: #f4f1ec; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 .bgb__canvas, .bgb__canvas > * { position: absolute; inset: 0; width: 100%; height: 100%; }
 .bgb__close {
-  position: absolute; top: 14px; right: 16px; z-index: 2;
+  position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px; z-index: 2;
   width: 36px; height: 36px; display: grid; place-items: center;
-  border-radius: 50%; color: rgba(255, 255, 255, 0.78); text-decoration: none; font-size: 22px; line-height: 1;
-  background: rgba(10, 12, 14, 0.28); backdrop-filter: blur(8px);
+  border-radius: 50%; color: rgba(255,255,255,.78); text-decoration: none; font-size: 22px; line-height: 1;
+  background: rgba(10,12,14,.22);
 }
-.bgb__controls {
-  position: absolute; left: 16px; bottom: 16px; z-index: 2;
-  display: flex; flex-wrap: wrap; gap: 8px;
+.bgb__controls, .bgb__reveal {
+  position: absolute; left: max(20px, env(safe-area-inset-left)); right: 20px; z-index: 2;
+  opacity: 0; visibility: hidden; transform: translateY(8px);
+  transition: opacity .7s ease, transform .7s ease, visibility .7s;
 }
-.bgb__group {
-  display: flex; gap: 2px; padding: 3px; border-radius: 999px;
-  background: rgba(10, 12, 14, 0.32); backdrop-filter: blur(10px);
+.bgb[data-revealed="true"] :is(.bgb__controls, .bgb__reveal), .bgb:focus-within :is(.bgb__controls, .bgb__reveal) {
+  opacity: 1; visibility: visible; transform: translateY(0);
 }
+.bgb__controls { bottom: max(62px, calc(env(safe-area-inset-bottom) + 62px)); display: flex; flex-wrap: wrap; gap: 8px; }
+.bgb__group { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(10,12,14,.36); backdrop-filter: blur(10px); }
 .bgb__link {
-  padding: 6px 12px; border-radius: 999px; font-size: 13px; letter-spacing: 0.01em;
-  color: rgba(255, 255, 255, 0.72); text-decoration: none; white-space: nowrap;
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; letter-spacing: .01em;
+  color: rgba(255,255,255,.78); text-decoration: none; white-space: nowrap;
 }
-.bgb__link:hover, .bgb__link:focus-visible { color: #fff; background: rgba(255, 255, 255, 0.1); }
-.bgb__link:focus-visible, .bgb canvas:focus-visible { outline: 2px solid #f2c38c; outline-offset: 2px; }
+.bgb__link:hover, .bgb__link:focus-visible { color: #fff; background: rgba(255,255,255,.12); }
+.bgb__link:focus-visible, .bgb__close:focus-visible, .bgb__reveal a:focus-visible, .bgb canvas:focus-visible { outline: 2px solid #f2c38c; outline-offset: 3px; }
 .bgb__reset { border: 0; background: transparent; font-family: inherit; cursor: pointer; }
-/* The walk hint sits at the top so it never covers the controls bar. */
-.bgb .gosx-scene3d-walk-hint { top: 16px; bottom: auto; }
+.bgb__instructions { flex-basis: 100%; margin: 0; font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px #101318; }
+.bgb__discoveries { max-width: 660px; font-size: 11px; color: rgba(255,255,255,.68); }
+.bgb__reveal { bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; font-size: 12px; line-height: 1.6; color: rgba(255,255,255,.8); text-shadow: 0 1px 4px #101318; }
+.bgb .bgb__reveal output[data-gosx-scene3d-status] { display: inline !important; font-variant-numeric: tabular-nums; }
+.bgb__reveal a { margin-left: 12px; color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .bgb[data-view="shore"] .bgb__view-shore,
 .bgb[data-view="glass"] .bgb__view-glass,
 .bgb[data-view="cliff"] .bgb__view-cliff,
 .bgb[data-view="ship"] .bgb__view-ship,
 .bgb[data-period="golden-hour"] .bgb__period-golden-hour,
 .bgb[data-period="blue-hour"] .bgb__period-blue-hour,
-.bgb[data-period="noon"] .bgb__period-noon { color: #16130f; background: rgba(255, 244, 230, 0.92); }
+.bgb[data-period="noon"] .bgb__period-noon { color: #16130f; background: rgba(255,244,230,.92); }
 @media (max-width: 640px) {
-  .bgb__controls { left: 10px; right: 10px; bottom: 10px; justify-content: center; }
+  .bgb__controls, .bgb__reveal { left: 12px; right: 12px; }
+  .bgb__controls { bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px)); gap: 6px; }
+  .bgb__link { padding: 6px 9px; font-size: 11px; }
+  .bgb__instructions { font-size: 11px; }
+  .bgb__discoveries { display: none; }
+  .bgb__reveal { font-size: 11px; max-width: 350px; }
+  .bgb__reveal a { display: block; margin-left: 0; }
 }
-
-.bgb__instructions { flex-basis: 100%; margin: 0 0 4px; font-size: 12px; color: rgba(255,255,255,.75); }
-@media (pointer: coarse) { .bgb__instructions { font-size: 11px; text-align: center; } }
+@media (pointer: coarse) { .bgb__instructions { display: none; } }
+@media (prefers-reduced-motion: reduce) { .bgb__controls, .bgb__reveal { transition: none; transform: none; } }
+@media (scripting: none) { .bgb__controls { opacity: 1; visibility: visible; transform: none; } }
