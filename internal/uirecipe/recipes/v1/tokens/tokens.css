@@ -1,0 +1,54 @@
+:root {
+  color-scheme: dark;
+
+  --gsx-font-display: "Space Grotesk", sans-serif;
+  --gsx-font-body: "Inter", sans-serif;
+  --gsx-font-mono: "JetBrains Mono", monospace;
+
+  --gsx-type-xs: 0.75rem;
+  --gsx-type-sm: 0.875rem;
+  --gsx-type-md: 1rem;
+  --gsx-type-lg: 1.2rem;
+  --gsx-type-xl: 1.44rem;
+  --gsx-type-display: clamp(1.75rem, 1.4rem + 1.5vw, 2.488rem);
+
+  --gsx-color-canvas: #050506;
+  --gsx-color-surface: rgb(255 255 255 / 0.04);
+  --gsx-color-surface-hover: rgb(255 255 255 / 0.075);
+  --gsx-color-surface-raised: #121214;
+  --gsx-color-text: #f5f2e9;
+  --gsx-color-text-secondary: #c9c4b9;
+  --gsx-color-text-muted: #9b978e;
+  --gsx-color-accent: #d4af37;
+  --gsx-color-accent-hover: #e1c45c;
+  --gsx-color-on-accent: #111006;
+  --gsx-color-focus: #f2cf66;
+  --gsx-color-danger: #ff8f82;
+  --gsx-color-border: rgb(255 255 255 / 0.1);
+  --gsx-color-border-strong: rgb(255 255 255 / 0.2);
+  --gsx-color-backdrop: rgb(0 0 0 / 0.64);
+
+  --gsx-space-xs: clamp(0.5rem, 0.46rem + 0.18vw, 0.75rem);
+  --gsx-space-sm: clamp(0.75rem, 0.69rem + 0.24vw, 1rem);
+  --gsx-space-md: clamp(1rem, 0.9rem + 0.48vw, 1.5rem);
+  --gsx-space-lg: clamp(1.5rem, 1.3rem + 0.78vw, 2rem);
+  --gsx-space-xl: clamp(2rem, 1.7rem + 1.2vw, 3rem);
+  --gsx-space-2xl: clamp(3rem, 2.5rem + 2vw, 4rem);
+  --gsx-space-3xl: clamp(4rem, 3rem + 4vw, 6rem);
+
+  --gsx-radius-sm: 0.375rem;
+  --gsx-radius-md: 0.625rem;
+  --gsx-radius-lg: 0.875rem;
+  --gsx-control-sm: 2rem;
+  --gsx-control-md: 2.5rem;
+  --gsx-control-lg: 3rem;
+  --gsx-content-measure: 68ch;
+
+  --gsx-shadow-raised: 0 1.25rem 4rem var(--gsx-color-backdrop);
+  --gsx-shadow-focus: 0 0 0 0.2rem rgb(242 207 102 / 0.2);
+
+  --gsx-duration-fast: 150ms;
+  --gsx-duration-standard: 200ms;
+  --gsx-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --gsx-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
