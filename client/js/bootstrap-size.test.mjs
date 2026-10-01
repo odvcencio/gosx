@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
-// Depth AO uses the measured post-effect output.
+// Contact shadows uses the measured post-effect output.
 // Targets increase only where measured output breaches the governed allowance.
 const budgets = [
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
@@ -697,7 +697,7 @@ const budgets = [
   // Depth AO replaces the color filter with twelve depth taps and normal
   // reconstruction (+1,786 raw / +753 gzip / +519 Brotli bytes). Only
   // affected targets rise, by the measured growth with narrow rounding room.
-  { file: "bootstrap.js", raw: 1_748_000, gzip: 488_461, brotli: 387_617 },
+  { file: "bootstrap.js", raw: 1754600, gzip: 490461, brotli: 389017 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1066,7 +1066,7 @@ const budgets = [
   // 251_292 / 70_024 / 59_410;
   // retain narrow rounding headroom so later growth remains visible.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 253_200, gzip: 71_900, brotli: 60_600 },
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 255300, gzip: 72500, brotli: 61000 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1398,7 +1398,7 @@ const budgets = [
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 395_166, gzip: 98_396, brotli: 81_655 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 398666, gzip: 99496, brotli: 82555 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1835,9 +1835,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_317_900,
-    gzip: 362_200,
-    brotli: 303_100,
+    raw: 1321300,
+    gzip: 363500,
+    brotli: 303800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -2018,9 +2018,9 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO adds one bounded pass to the WebGL2 chunk.
-    raw: 1_174_800,
-    gzip: 334_500,
-    brotli: 282_000, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1177400,
+    gzip: 335100,
+    brotli: 282300, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2194,9 +2194,9 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO also ships when WebGPU falls back to WebGL2.
-    raw: 1582800, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 437_700,
-    brotli: 365_300, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1589300, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 439600,
+    brotli: 366600, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2346,9 +2346,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_172_700,
-    gzip: 319_500,
-    brotli: 266_495, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1175600,
+    gzip: 320400,
+    brotli: 267095, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];

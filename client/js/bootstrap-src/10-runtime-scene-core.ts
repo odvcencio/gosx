@@ -2763,6 +2763,8 @@
     "color-grade": "colorGrade",
     "color-grading": "colorGrade",
     ssao: "ssao",
+    contactshadows: "contactShadows",
+    "contact-shadows": "contactShadows",
     dof: "dof",
     fxaa: "fxaa",
     custompost: "customPost",

@@ -31,14 +31,15 @@ type PostEffectIR interface {
 // runtime reads the same strings (SCENE_POST_* in 10-runtime-scene-core.js), so
 // treat them as a wire contract and do not rename one without the runtime.
 const (
-	PostEffectKindTonemap    = "toneMapping"
-	PostEffectKindBloom      = "bloom"
-	PostEffectKindVignette   = "vignette"
-	PostEffectKindColorGrade = "colorGrade"
-	PostEffectKindSSAO       = "ssao"
-	PostEffectKindDOF        = "dof"
-	PostEffectKindFXAA       = "fxaa"
-	PostEffectKindCustomPost = "customPost"
+	PostEffectKindTonemap        = "toneMapping"
+	PostEffectKindBloom          = "bloom"
+	PostEffectKindVignette       = "vignette"
+	PostEffectKindColorGrade     = "colorGrade"
+	PostEffectKindSSAO           = "ssao"
+	PostEffectKindContactShadows = "contactShadows"
+	PostEffectKindDOF            = "dof"
+	PostEffectKindFXAA           = "fxaa"
+	PostEffectKindCustomPost     = "customPost"
 )
 
 // ErrUnknownPostEffectKind reports a postEffects entry whose "kind" field no
@@ -51,14 +52,15 @@ var ErrUnknownPostEffectKind = errors.New("scene: unknown post effect kind")
 // one entry per concrete PostEffectIR type; TestPostEffectIRRoundTripCoversEveryType
 // fails when a type has no entry.
 var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
-	PostEffectKindTonemap:    decodePostEffectIRAs[TonemapIR],
-	PostEffectKindBloom:      decodePostEffectIRAs[BloomIR],
-	PostEffectKindVignette:   decodePostEffectIRAs[VignetteIR],
-	PostEffectKindColorGrade: decodePostEffectIRAs[ColorGradeIR],
-	PostEffectKindSSAO:       decodePostEffectIRAs[SSAOIR],
-	PostEffectKindDOF:        decodePostEffectIRAs[DOFIR],
-	PostEffectKindFXAA:       decodePostEffectIRAs[FXAAIR],
-	PostEffectKindCustomPost: decodePostEffectIRAs[CustomPostIR],
+	PostEffectKindTonemap:        decodePostEffectIRAs[TonemapIR],
+	PostEffectKindBloom:          decodePostEffectIRAs[BloomIR],
+	PostEffectKindVignette:       decodePostEffectIRAs[VignetteIR],
+	PostEffectKindColorGrade:     decodePostEffectIRAs[ColorGradeIR],
+	PostEffectKindSSAO:           decodePostEffectIRAs[SSAOIR],
+	PostEffectKindContactShadows: decodePostEffectIRAs[ContactShadowsIR],
+	PostEffectKindDOF:            decodePostEffectIRAs[DOFIR],
+	PostEffectKindFXAA:           decodePostEffectIRAs[FXAAIR],
+	PostEffectKindCustomPost:     decodePostEffectIRAs[CustomPostIR],
 }
 
 // decodePostEffectIRAs decodes one entry into the concrete IR type T. The
@@ -391,6 +393,24 @@ func (ir SSAOIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// ContactShadowsIR lowers the opt-in contact shadow pass.
+type ContactShadowsIR struct {
+	Distance  float64  `json:"distance"`
+	Thickness float64  `json:"thickness"`
+	Bias      float64  `json:"bias"`
+	Intensity float64  `json:"intensity"`
+	Direction *Vector3 `json:"direction,omitempty"`
+}
+
+func (ir ContactShadowsIR) legacyProps() map[string]any {
+	out := map[string]any{"kind": PostEffectKindContactShadows, "distance": ir.Distance, "thickness": ir.Thickness, "bias": ir.Bias, "intensity": ir.Intensity}
+	if ir.Direction != nil {
+		out["direction"] = ir.Direction
+	}
+	return out
+}
+func (ir ContactShadowsIR) MarshalJSON() ([]byte, error) { return json.Marshal(ir.legacyProps()) }
+
 // DOFIR lowers DOF.
 type DOFIR struct {
 	FocusDistance float64
@@ -586,6 +606,25 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Intensity: float64(ev.Intensity),
 				Bias:      float64(ev.Bias),
 			})
+		case ContactShadows:
+			ir := ContactShadowsIR{Distance: float64(ev.Distance), Thickness: float64(ev.Thickness), Bias: float64(ev.Bias), Intensity: float64(ev.Intensity)}
+			if ir.Distance <= 0 {
+				ir.Distance = 1
+			}
+			if ir.Thickness <= 0 {
+				ir.Thickness = 0.15
+			}
+			if ir.Bias <= 0 {
+				ir.Bias = 0.01
+			}
+			if ir.Intensity <= 0 {
+				ir.Intensity = 0.45
+			}
+			if ev.Direction != (Vector3{}) {
+				direction := ev.Direction
+				ir.Direction = &direction
+			}
+			out = append(out, ir)
 		case DOF:
 			out = append(out, DOFIR{
 				FocusDistance: float64(ev.FocusDistance),

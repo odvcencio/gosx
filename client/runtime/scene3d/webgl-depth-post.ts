@@ -63,5 +63,5 @@ void main() {
 
 // A sampled depth attachment must never belong to the active draw framebuffer.
 function sceneWebGLPostReadsDepth(kind: string) {
-    return kind === SCENE_POST_SSAO || kind === SCENE_POST_DOF || kind === SCENE_POST_CUSTOM_POST;
+    return kind === "contactShadows" || kind === SCENE_POST_SSAO || kind === SCENE_POST_DOF || kind === SCENE_POST_CUSTOM_POST;
 }

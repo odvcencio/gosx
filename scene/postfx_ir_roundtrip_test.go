@@ -70,6 +70,10 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 			Saturation: float64(rtSaturation),
 		},
 	},
+	"ContactShadows": {
+		effect: ContactShadows{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: Vec3(-1, -1, 0)},
+		wantIR: ContactShadowsIR{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: &Vector3{X: -1, Y: -1}},
+	},
 	"SSAO": {
 		effect: SSAO{Radius: rtSSAORadius, Intensity: rtSSAOIntensity, Bias: rtSSAOBias},
 		wantIR: SSAOIR{
