@@ -5319,7 +5319,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return scratch[Math.max(0, Math.ceil(count * 0.95) - 1)];
   }
 
-  function sceneAdaptiveRendererSample(renderer, nowMS) {
+  function sceneAdaptiveRendererSample(renderer, nowMS, cpuDurationMS = 0) {
     if (!renderer || typeof renderer.pollPerformanceSample !== "function") return null;
     let sample = null;
     try { sample = renderer.pollPerformanceSample(); } catch (e) { return null; }
@@ -5328,12 +5328,17 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!sample || typeof sample !== "object") return null;
     const durationMS = sceneNumber(sample.durationMS != null ? sample.durationMS : (sample.frameMS != null ? sample.frameMS : sample.gpuMS), 0);
     if (!(durationMS > 0) || !Number.isFinite(durationMS)) return null;
+    const cpuMS = Math.max(0, sceneNumber(cpuDurationMS, 0));
+    const source = String(sample.source || sample.measurement || "renderer");
     return {
-      durationMS,
-      source: String(sample.source || sample.measurement || "renderer"),
+      // CPU and GPU work overlap. Govern by the slower stage, preserving the
+      // renderer duration separately so a CPU-bound frame is never called GPU time.
+      durationMS: Math.max(durationMS, cpuMS),
+      rendererDurationMS: durationMS,
+      source: cpuMS > durationMS ? "cpu-work+" + source : source,
       atMS: sceneNumber(sample.atMS, nowMS),
       rafIntervalMS: 0,
-      cpuDurationMS: 0,
+      cpuDurationMS: cpuMS,
     };
   }
 
@@ -5377,7 +5382,7 @@ function gosxConfigureSceneScript(script, role, src) {
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
-    let sample = sceneAdaptiveRendererSample(renderer, now);
+    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS);
     if (sample) state.missingRendererSamples = 0;
     else if (rendererTimingLocked) state.missingRendererSamples += 1;
     else state.missingRendererSamples = 0;
@@ -5411,7 +5416,8 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(sample.source.indexOf("cpu-raf") === 0 ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const cpuMeasured = sample.source.indexOf("cpu-raf") === 0 || sample.source.indexOf("cpu-work+") === 0;
+    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {

@@ -27,6 +27,7 @@ type FilePage struct {
 	Layouts   []string
 	Config    FileRouteConfig
 	ErrorPage *FilePage
+	cssAssets *fileCSSAssets
 }
 
 // FileRoutes is the discovered result of scanning a file-based route tree.
@@ -48,6 +49,10 @@ type FileRouteScope struct {
 
 // FileRoutesOptions configures AddDir.
 type FileRoutesOptions struct {
+	// ExternalCSS is a local URL prefix for immutable sidecar stylesheet assets.
+	// Empty keeps styles inline. Use a distinct, stable prefix for each AddDir
+	// so exported pages also work after deployment moves.
+	ExternalCSS  string
 	Render       FileRenderFunc
 	Modules      *FileModuleRegistry
 	DirModules   *DirModuleRegistry
@@ -85,6 +90,7 @@ type fileRouteRegistrar struct {
 	moduleRegistry    *FileModuleRegistry
 	dirModuleRegistry *DirModuleRegistry
 	layoutCache       map[string]LayoutFunc
+	cssAssets         *fileCSSAssets
 }
 
 type fileRouteScanner struct {
@@ -282,6 +288,13 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 		return err
 	}
 	registrar := newFileRouteRegistrar(r, root, opts)
+	if opts.ExternalCSS != "" {
+		if !strings.HasPrefix(opts.ExternalCSS, "/") || strings.ContainsAny(opts.ExternalCSS, "?#{}") {
+			return fmt.Errorf("ExternalCSS must be a local URL path prefix")
+		}
+		registrar.cssAssets = newFileCSSAssets(opts.ExternalCSS)
+		r.Handle(registrar.cssAssets.prefix+"{asset}", registrar.cssAssets)
+	}
 	if err := registrar.registerSpecialPages(bundle); err != nil {
 		return err
 	}
@@ -324,6 +337,11 @@ func newFileRouteRegistrar(router *Router, root string, opts FileRoutesOptions) 
 }
 
 func (r *fileRouteRegistrar) resolve(page FilePage) (resolvedFilePage, error) {
+	page.cssAssets = r.cssAssets
+	if r.cssAssets != nil {
+		// An exported page may request CSS before this process renders any page.
+		addRouteFileCSSHead(&RouteContext{}, page)
+	}
 	module, _ := resolveFileModule(r.moduleRegistry, r.root, page)
 	dirModules := resolveDirModules(r.dirModuleRegistry, r.root, page.Dir)
 	layout, err := loadFileLayoutChain(r.layoutCache, page.Layouts, r.opts.Layout, r.root, r.moduleRegistry)

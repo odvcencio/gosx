@@ -702,7 +702,9 @@ const budgets = [
   // Integrated volume transmission: raw 1822402 -> 1835400 (measured 1900894); gzip 511900 -> 515500 (measured 531860); brotli 404600 -> 407600 (measured 423962). Existing allowances stay fixed.
   // Integrated volume transmission: raw 1835400 -> 1837200 (measured 1902707); gzip 515500 -> 516200 (measured 532498); brotli 407600 -> 407700 (measured 424069). Existing allowances stay fixed.
   // Integrated volume transmission: raw 1837200 -> 1837300 (measured 1902801). Existing allowances stay fixed.
-  { file: "bootstrap.js", raw: 1_837_300, gzip: 516_200, brotli: 407_700 },
+  // Immutable mesh defaults, dynamic payload reservation and CPU frame governance measure 1903373/532800/424215 bytes.
+  // Only breached targets rise; existing allowances stay fixed.
+  { file: "bootstrap.js", raw: 1_837_900, gzip: 516_500, brotli: 408_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1208,7 +1210,9 @@ const budgets = [
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
   // Integrated volume transmission: raw 610500 -> 612600 (measured 643229); gzip 175100 -> 175700 (measured 184411); brotli 144350 -> 144800 (measured 151967). Existing allowances stay fixed.
   // Integrated volume transmission: raw 612600 -> 612700 (measured 643254). Existing allowances stay fixed.
-  { file: "bootstrap-feature-scene3d.js", raw: 612_700, gzip: 175_700, brotli: 144_800 },
+  // Immutable mesh defaults, dynamic payload reservation and CPU frame governance measure 643822/184654/152315 bytes.
+  // Only breached targets rise; existing allowances stay fixed.
+  { file: "bootstrap-feature-scene3d.js", raw: 613_200, gzip: 175_900, brotli: 145_100 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1861,9 +1865,11 @@ const routeBudgets = [
     // 1_384_507 / 378_461 / 317_677; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
-    raw: 1_376_200,
-    gzip: 380_900,
-    brotli: 317_500,
+    // Immutable mesh defaults, dynamic payload reservation and CPU frame governance measure 1442208/397495/333653 bytes.
+    // Only breached targets rise; existing allowances stay fixed.
+    raw: 1_376_700,
+    gzip: 381_200,
+    brotli: 317_800,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated volume transmission: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2047,10 +2053,12 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    raw: 1_224_100,
-    gzip: 351_500,
+    // Immutable mesh defaults, dynamic payload reservation and CPU frame governance measure 1285830/368070/310177 bytes.
+    // Only breached targets rise; existing allowances stay fixed.
+    raw: 1_224_600,
+    gzip: 351_700,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
-    brotli: 295_200,
+    brotli: 295_500,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated volume transmission: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2231,10 +2239,12 @@ const routeBudgets = [
     // 1_647_917 / 453_183 / 380_631; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
-    raw: 1_672_700,
-    gzip: 466_200,
+    // Immutable mesh defaults, dynamic payload reservation and CPU frame governance measure 1738736/482740/405270 bytes.
+    // Only breached targets rise; existing allowances stay fixed.
+    raw: 1_673_200,
+    gzip: 466_400,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
-    brotli: 388_700,
+    brotli: 388_900,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated volume transmission: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2388,9 +2398,11 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1_227_900,
-    gzip: 337_500,
-    brotli: 280_800,
+    // Immutable mesh defaults, dynamic payload reservation and CPU frame governance measure 1289764/354094/295123 bytes.
+    // Only breached targets rise; existing allowances stay fixed.
+    raw: 1_228_400,
+    gzip: 337_800,
+    brotli: 281_100,
   },
 
 ];
