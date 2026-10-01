@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {FakeElement,createContext,installManualRAF,runScript,flushAsyncWork,bootstrapSource}=require('./runtime-test-harness.js');
 const sources={};for(const part of ['walk','ocean-query','vessel'])sources[part]=fs.readFileSync(path.join(__dirname,'bootstrap-feature-scene3d-'+part+'.js'),'utf8');
-async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spectator=false) {
+async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spectator=false,reduced=false) {
  const mount=new FakeElement('div',null);mount.id='mounted-vessel';mount.setAttribute('data-gosx-engine','GoSXScene3D');
  const camera={x:0,y:4.2,z:6.5,rotationX:0,rotationY:0,fov:60,near:.1,far:200};
  const props={controls:'first-person',walk:{headBob:0},camera,maxFPS,scene:{camera,objects:[{id:'ship/hull',kind:'box',geometry:'box',size:3}]}};
@@ -18,7 +18,7 @@ async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spec
   }
  }
  const env=createContext({elements:[mount],enableWebGL:true,disableCanvas2D:true,performanceNow:()=>0,
-  matchMedia:{'(pointer: coarse)':coarse},
+  matchMedia:{'(pointer: coarse)':coarse},prefersReducedMotion:reduced,
   fetchRoutes:routes,
   manifest:{engines:[{id:'ship-scene',component:'GoSXScene3D',kind:'surface',mountId:mount.id,props}]}});
  env.context.atob=atob;const script=env.document.createElement('script');script.setAttribute('data-gosx-script','feature-scene3d');
@@ -78,4 +78,19 @@ test('mounted vessel does not create another RAF loop and respects MaxFPS frame 
  const before=h.gl.ops.filter(op=>op[0]==='drawArrays'||op[0]==='drawElements').length;for(let t=300;t<600;t+=8)h.raf.flush(t);
  // One mesh and one ocean draw per paced frame, plus renderer setup passes.
  assert.ok(h.gl.ops.filter(op=>op[0]==='drawArrays'||op[0]==='drawElements').length-before<60);assert.ok(h.raf.count()<=1);h.handle.dispose();
+});
+
+test('reduced motion keeps held sailing inputs responsive while removing wheel bob and roll',async()=>{
+ const h=await mountScene(true,60,false,false,false,true),api=h.env.context.__gosx_scene3d_vessel_physics,advance=api.advance;let state;
+ api.advance=(...args)=>{state=args[0];return advance(...args);};
+ h.canvas.focus();h.event(h.env.document,'keydown',{code:'KeyE'});h.event(h.env.document,'keydown',{code:'KeyW'});
+ for(let t=250;t<2500;t+=17)h.raf.flush(t);
+ assert.ok(state.trim>.9);assert.ok(state.speed>2);assert.equal(state.reduced,true);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-animation-clock'),'0.000','declarative animation stays frozen');
+ h.event(h.env.document,'keyup',{code:'KeyW'});h.event(h.env.document,'keydown',{code:'KeyV'});h.raf.flush(2550);
+ const wheel=h.handle.getCamera(),helm=api.localPoint(state,state.helm.x,state.helm.y,state.helm.z);
+ assert.ok(Math.abs(wheel.y-helm.y)<1e-5);assert.equal(wheel.rotationZ,0);assert.ok(h.raf.count()<=1);
+ h.event(h.env.document,'keydown',{code:'KeyE'});h.raf.flush(2600);h.raf.flush(2700);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-vessel'),'deck');assert.equal(h.mount.getAttribute('data-gosx-scene3d-render-loop-wants-animation'),'false');
+ h.handle.dispose();
 });

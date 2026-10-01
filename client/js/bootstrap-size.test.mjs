@@ -697,7 +697,10 @@ const budgets = [
   // Persistent hub connections merged from main add 2,002 raw bytes (decision 0014).
   // Combined bundle: 1,887,915 raw / 528,221 gzip / 420,885 Brotli bytes.
   // Compressed targets rise in the smallest 100-byte steps that clear measured limits.
-  { file: "bootstrap.js", raw: 1_822_402, gzip: 511_900, brotli: 404_600 },
+  // User-controlled sailing remains responsive under reduced motion while
+  // decorative clocks stay frozen. Measured 1,887,940 raw; raise the reviewed
+  // raw target by the smallest 100-byte step. Compressed limits stay fixed.
+  { file: "bootstrap.js", raw: 1_822_500, gzip: 511_900, brotli: 404_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1198,7 +1201,9 @@ const budgets = [
   // Environment.Ocean (the two ocean passes and the shared packing) measures
   // 624_328 / 177_226 / 145_904; targets rise by the smallest 100-byte steps.
   // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-  { file: "bootstrap-feature-scene3d.js", raw: 610_500, gzip: 175_100, brotli: 144_350 },
+  // The user-controlled reduced-motion sailing gate measures 151,647 Brotli
+  // bytes. Raise only Brotli by 100 bytes; raw and gzip still fit.
+  { file: "bootstrap-feature-scene3d.js", raw: 610_500, gzip: 175_100, brotli: 144_450 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1848,7 +1853,9 @@ const routeBudgets = [
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
     raw: 1_368_000,
     gzip: 378_700,
-    brotli: 315_900,
+    // The reduced-motion sailing loop hook measures 331,715 route Brotli
+    // bytes; raise this target by 100 bytes, retaining the shared allowance.
+    brotli: 316_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -2030,7 +2037,9 @@ const routeBudgets = [
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
     raw: 1_215_500,
     gzip: 348_800,
-    brotli: 293_100,
+    // Shared reduced-motion sailing gate: 307,781 Brotli bytes. Raise only
+    // this target by 100 bytes; the shared allowance stays fixed.
+    brotli: 293_200,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2209,7 +2218,8 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     raw: 1_657_700,
     gzip: 461_900,
-    brotli: 385_200,
+    // Shared reduced-motion sailing gate: 401,604 Brotli bytes; +100 target.
+    brotli: 385_300,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2362,7 +2372,8 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1_220_200,
     gzip: 335_300,
-    brotli: 279_200,
+    // Shared reduced-motion sailing gate: 293,185 Brotli bytes; +100 target.
+    brotli: 279_300,
   },
 
 ];
