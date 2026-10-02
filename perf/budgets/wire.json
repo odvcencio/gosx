@@ -10,7 +10,7 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 941239,
+          "frameworkJsWireBytes": 925006,
           "htmlWireBytes": 40583,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
