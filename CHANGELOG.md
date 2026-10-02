@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.57.4
+
+### Fixed: responsive scenes inside scaled containers
+
+- Measure responsive Scene3D canvases in local CSS coordinates. Fitted slides
+  no longer shrink projected labels or clip a fill-height canvas when an
+  ancestor is scaled.
+- Position the label layer relative to the canvas in the mount's coordinate
+  system, preserving padding, borders and the backing-pixel budget.
+- Cover scaled containers with viewport regression tests and refresh the
+  published performance receipts for this runtime.
+
 ## v0.57.3
 
 ### Fixed: shader shapes beside retained meshes on WebGPU

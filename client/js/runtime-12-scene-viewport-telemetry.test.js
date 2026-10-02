@@ -120,6 +120,34 @@ test("responsive-height alias also measures its mount instead of a stale intrins
   assert.equal(viewport.pixelHeight, 620);
 });
 
+test("responsive Scene3D keeps canvas and labels in CSS coordinates under parent scaling", () => {
+  const api = loadSceneViewportAPI({ devicePixelRatio: 2 });
+  const props = { responsive: true, fillHeight: true, maxDevicePixelRatio: 2, maxPixels: 600000 };
+  const base = api.sceneViewportBase(props);
+  for (const scale of [0.7, 1.6]) {
+    const mount = {
+      clientWidth: 940, clientHeight: 340, style: {}, setAttribute() {},
+      computedStyle: { paddingTop: "12px", paddingBottom: "8px" },
+      getBoundingClientRect: () => ({ left: 30, top: 40, width: 944 * scale, height: 344 * scale }),
+    };
+    const canvas = {
+      clientWidth: 916, clientHeight: 320, offsetParent: mount, offsetLeft: 12, offsetTop: 12,
+      style: {}, setAttribute() {},
+      getBoundingClientRect: () => ({ left: 30 + 14 * scale, top: 40 + 14 * scale, width: 916 * scale, height: 320 * scale }),
+    };
+    const layer = { style: {} };
+    const viewport = api.sceneViewportFromMount(mount, props, base, canvas, { tier: "full" }, null);
+    assert.equal(viewport.cssWidth, 916, "CSS width must not inherit the parent's visual scale");
+    assert.equal(viewport.cssHeight, 320, "height uses the same unscaled coordinate system");
+    assert.ok(viewport.pixelWidth * viewport.pixelHeight <= props.maxPixels, "transforms must preserve the backing-pixel budget");
+    api.applySceneViewport(mount, canvas, layer, viewport, base);
+    assert.equal(layer.style.width, "916px");
+    assert.equal(layer.style.height, "320px");
+    assert.equal(layer.style.left, "12px", "overlay origin must use the canvas's local CSS offset");
+    assert.equal(layer.style.top, "12px");
+  }
+});
+
 test("responsive fill-height viewport converges when its mount is content-sized", () => {
   const api = loadSceneViewportAPI();
   const props = { width: 1920, height: 1080, responsive: true, fillHeight: true };
