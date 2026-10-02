@@ -15,7 +15,7 @@
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 242853,
-          "lazyJsWireBytes": 178853,
+          "lazyJsWireBytes": 174586,
           "requests": 9,
           "totalWireBytes": 1010715,
           "wasmWireBytes": 665060
@@ -93,7 +93,7 @@
           "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 224864,
-          "lazyJsWireBytes": 179013,
+          "lazyJsWireBytes": 174586,
           "requests": 7,
           "totalWireBytes": 963063,
           "wasmWireBytes": 665060
@@ -124,7 +124,7 @@
           "imageWireBytes": 191105,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 231393,
-          "lazyJsWireBytes": 179013,
+          "lazyJsWireBytes": 174586,
           "requests": 14,
           "totalWireBytes": 1198638,
           "wasmWireBytes": 665060
