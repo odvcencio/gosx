@@ -2490,8 +2490,8 @@
       dropEvents: normalizeSceneWaterOneShotEvents(item.dropEvents, current.dropEvents),
       computeBackend: typeof item.computeBackend === "string" && item.computeBackend ? item.computeBackend : (typeof current.computeBackend === "string" ? current.computeBackend : "elio"),
       materialBackend: typeof item.materialBackend === "string" && item.materialBackend ? item.materialBackend : (typeof current.materialBackend === "string" ? current.materialBackend : "selena"),
-      computeSource: sceneFallbackString(item, current, "computeSource"),
-      materialSource: sceneFallbackString(item, current, "materialSource"),
+      computeSource: typeof item.computeSource === "string" ? item.computeSource : (typeof current.computeSource === "string" ? current.computeSource : ""),
+      materialSource: typeof item.materialSource === "string" ? item.materialSource : (typeof current.materialSource === "string" ? current.materialSource : ""),
       computeSourceFiles: sceneIsPlainObject(item.computeSourceFiles) ? sceneCloneData(item.computeSourceFiles) : (sceneIsPlainObject(current.computeSourceFiles) ? sceneCloneData(current.computeSourceFiles) : null),
       materialSourceFiles: sceneIsPlainObject(item.materialSourceFiles) ? sceneCloneData(item.materialSourceFiles) : (sceneIsPlainObject(current.materialSourceFiles) ? sceneCloneData(current.materialSourceFiles) : null),
       // shaderDescriptors carries the per-shader Selena host binding descriptor
