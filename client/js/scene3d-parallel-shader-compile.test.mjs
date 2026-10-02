@@ -193,6 +193,37 @@ function gpuCreations(gl) {
   return gl.ops.filter(op => gpuCreationOps.has(op[0])).length;
 }
 
+test("ocean locations and draws wait for parallel shader completion", t => {
+  const h = parallelRendererHarness();
+  t.after(() => h.renderer.dispose());
+  h.setComplete(true);
+  h.raf.flush(16);
+  const bundle = makePointsBundle(null);
+  bundle.points = [];
+  h.renderer.render(bundle, {width:320,height:180});
+  h.setComplete(false);
+  const locations = [], draws = [];
+  const getUniformLocation = h.gl.getUniformLocation.bind(h.gl), drawArrays = h.gl.drawArrays.bind(h.gl);
+  h.gl.getUniformLocation = (program, name) => {
+    if (program.attached.some(shader => shader.source.includes("u_ocean[35]"))) locations.push(name);
+    return getUniformLocation(program, name);
+  };
+  h.gl.drawArrays = (mode, first, count) => {
+    if (h.gl._activeProgram.attached.some(shader => shader.source.includes("u_ocean[35]"))) draws.push(count);
+    drawArrays(mode, first, count);
+  };
+  bundle.environment.ocean = {level:0,waveHeight:0.8,extent:4000};
+  h.renderer.render(bundle, {width:320,height:180});
+  assert.deepEqual(locations, [], "pending ocean programs cannot query locations");
+  assert.deepEqual(draws, [], "pending ocean programs cannot draw");
+  h.setComplete(true);
+  h.raf.flush(32);
+  h.renderer.render(bundle, {width:320,height:180});
+  assert.deepEqual(locations, ["u_viewProj", "u_ocean[0]", "u_bathymetry"]);
+  assert.equal(draws.length, 1, "the completed ocean shader draws its grid");
+  assert.ok(draws[0] > 3);
+});
+
 function cssPostRendererHarness(extension) {
   const h = parallelRendererHarness(extension);
   const bundle = makePointsBundle({ id: "css-point", count: 1, positions: [0, 0, 0] });

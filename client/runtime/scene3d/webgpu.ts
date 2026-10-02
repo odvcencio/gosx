@@ -2775,7 +2775,8 @@
     "}",
     "",
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
-    "    var color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let inputColor = textureSample(inputTex, inputSamp, uv);",
+    "    var color = inputColor.rgb;",
     "    color = color * params.exposure;",
     "    let mode = i32(params.toneMapMode);",
     "    if (mode == 0) {",
@@ -2790,10 +2791,9 @@
     "    if (mode != 3) {",
     "        color = pow(max(color, vec3f(0.0)), vec3f(1.0 / 2.2));",
     "    }",
-    "    return vec4f(color, 1.0);",
+    "    return vec4f(color, inputColor.a);",
     "}",
   ].join("\n");
-
   function sceneWebGPUToneMapMode(mode) {
     if (typeof mode === "string") {
       var normalized = mode.trim().toLowerCase();

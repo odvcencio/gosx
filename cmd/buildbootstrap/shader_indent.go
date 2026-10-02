@@ -9,6 +9,7 @@ import (
 var shaderWholeFloat = regexp.MustCompile(`\b([0-9]+)\.0\b`)
 var shaderCommaSpaces = regexp.MustCompile(`[ \t]*,[ \t]*`)
 var shaderEqualsSpaces = regexp.MustCompile(`[ \t]*=[ \t]*`)
+var shaderDivisionSpaces = regexp.MustCompile(`[ \t]+/[ \t]+`)
 var shaderArrayStart = regexp.MustCompile(`^\s*(const|var|let) SCENE_[A-Z0-9_]+_(SOURCE|GLSL) = \[$`)
 
 // compactShaderIndentation keeps authored shader text and line origins intact
@@ -40,6 +41,7 @@ func compactShaderIndentation(code string) string {
 		compact := strings.TrimLeft(text, " \t")
 		compact = shaderCommaSpaces.ReplaceAllString(compact, ",")
 		compact = shaderEqualsSpaces.ReplaceAllString(compact, "=")
+		compact = shaderDivisionSpaces.ReplaceAllString(compact, "/")
 		compact = shaderWholeFloat.ReplaceAllString(compact, "${1}.")
 		if compact == text {
 			continue

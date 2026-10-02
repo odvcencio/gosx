@@ -1215,7 +1215,7 @@
   function sceneTransmissionEffects(effects, environment) {
     if (effects.length) return effects;
     var env = environment || {};
-    return [{ kind: "toneMapping", mode: env.toneMapping || "none", exposure: sceneNumber(env.exposure, 1) }];
+    return [{ kind: "toneMapping", mode: env.toneMapping || "aces", exposure: sceneNumber(env.exposure, 1) }];
   }
 
   /** @param {*} mount @param {*} state */

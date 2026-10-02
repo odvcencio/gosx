@@ -430,7 +430,7 @@
   "functionExceptions": [
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4945:14",
+      "name": "anonymous@4946:14",
       "lines": 136,
       "cyclomatic": 34,
       "cognitive": 74,
@@ -440,7 +440,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10389:5",
+      "name": "applyPointsAuthoredCustomUniforms@10381:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -450,7 +450,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3802:5",
+      "name": "applyWaterQualityProfile@3803:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -460,7 +460,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7715:3",
+      "name": "createScenePBRRenderer@7716:3",
       "lines": 3427,
       "cyclomatic": 1025,
       "cognitive": 1623,
@@ -470,7 +470,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4550:3",
+      "name": "createScenePostProcessor@4551:3",
       "lines": 539,
       "cyclomatic": 139,
       "cognitive": 199,
@@ -480,7 +480,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@3283:3",
+      "name": "createSceneWaterRendererWebGL@3284:3",
       "lines": 1198,
       "cyclomatic": 322,
       "cognitive": 394,
@@ -490,7 +490,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2509:3",
+      "name": "createSceneWaterSimWebGL@2510:3",
       "lines": 256,
       "cyclomatic": 78,
       "cognitive": 84,
@@ -500,7 +500,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3989:5",
+      "name": "drawFrame@3990:5",
       "lines": 407,
       "cyclomatic": 110,
       "cognitive": 138,
@@ -510,7 +510,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10856:5",
+      "name": "drawInstancedMeshes@10848:5",
       "lines": 184,
       "cyclomatic": 52,
       "cognitive": 108,
@@ -520,7 +520,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9994:5",
+      "name": "drawPBRObjectList@9986:5",
       "lines": 282,
       "cyclomatic": 82,
       "cognitive": 196,
@@ -530,7 +530,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10565:5",
+      "name": "drawPointsEntries@10557:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -540,7 +540,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9723:5",
+      "name": "prepareRigidMeshBatches@9715:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -550,7 +550,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8925:5",
+      "name": "renderFrame@8914:5",
       "lines": 323,
       "cyclomatic": 101,
       "cognitive": 143,
@@ -560,7 +560,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3960:5",
+      "name": "renderMeshTextureTarget@3961:5",
       "lines": 28,
       "cyclomatic": 6,
       "cognitive": 5,
@@ -570,7 +570,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7475:3",
+      "name": "scenePBRUploadEnvironmentMap@7476:3",
       "lines": 126,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -580,7 +580,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@7114:3",
+      "name": "scenePBRUploadLights@7115:3",
       "lines": 116,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -600,7 +600,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3471:5",
+      "name": "waterShadowSignature@3472:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,

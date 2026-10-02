@@ -1,12 +1,8 @@
 // The WebGL2 open-ocean pass for Environment.Ocean.
-//
-// One draw of a camera-centred polar grid (no vertex buffers; gl_VertexID
-// builds the grid) displaced by Gerstner swell, shaded with the scene sky
-// (the physical model when the sky is physical), a GGX sun glint, crest
-// scatter, whitecaps from horizontal compression, and, with a bathymetry map,
-// depth-aware shallow water, shore foam and a run-up surge. The pass draws
-// after opaque geometry with premultiplied alpha, so shallow water shows the
-// terrain beneath it. Uniform layout: sceneOceanUniformData (16c).
+// A camera-centred polar grid uses gl_VertexID and Gerstner swell with sky,
+// sun glint, crest scatter, whitecaps and bathymetry-driven shore foam.
+// It draws after opaque geometry with premultiplied alpha and depth.
+// Uniform layout: sceneOceanUniformData (16c).
 
 const SCENE_OCEAN_GLSL_COMMON = [
   "uniform vec4 u_ocean[35];",
@@ -169,13 +165,15 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
   if (!vertex || !fragment) return null;
   const program = scenePBRLinkProgram(gl, vertex, fragment, "Scene ocean");
   if (!program) return null;
-  const viewProjLoc = gl.getUniformLocation(program, "u_viewProj");
-  const oceanLoc = gl.getUniformLocation(program, "u_ocean[0]");
-  const bathymetryLoc = gl.getUniformLocation(program, "u_bathymetry");
+  let uniforms: ReturnType<typeof scenePBRNamedUniforms<"viewProj ocean[0] bathymetry">> | undefined;
+  scenePBRWhenProgramReady(gl, program, function() {
+    uniforms = scenePBRNamedUniforms(gl, program, "viewProj ocean[0] bathymetry");
+  });
   const vao = gl.createVertexArray();
   const data = new Float32Array(140 /* sceneOceanUniformData: 35 vec4 */), viewProj = new Float32Array(16);
   return {
     draw: function(opts) {
+      if (!uniforms) return "unavailable";
       const env = opts.environment, ocean = env.ocean;
       const active = gl.getParameter(gl.ACTIVE_TEXTURE);
       gl.activeTexture(gl.TEXTURE0);
@@ -191,10 +189,10 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
         }
         const cull = gl.isEnabled(gl.CULL_FACE);
         gl.useProgram(program);
-        gl.uniformMatrix4fv(viewProjLoc, false, viewProj);
-        gl.uniform4fv(oceanLoc, data);
+        gl.uniformMatrix4fv(uniforms.viewProj, false, viewProj);
+        gl.uniform4fv(uniforms["ocean[0]"], data);
         scenePBRBindTexture(gl, 0, bathymetry, gl.TEXTURE_2D);
-        gl.uniform1i(bathymetryLoc, 0);
+        gl.uniform1i(uniforms.bathymetry, 0);
         gl.enable(gl.BLEND);
         gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(true);
@@ -217,7 +215,6 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder) {
     },
   };
 }
-
 // sceneOceanWebGLDraw is the one call the WebGL renderer makes per frame.
 function sceneOceanWebGLDraw(resources, gl, opts) {
   const env = opts.environment;
