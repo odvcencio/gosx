@@ -78,7 +78,7 @@ function sceneReflectOpaqueList(list, materials) {
 
 function sceneAtmosphereTier(state, deviceTier) {
   const ladder = !state || state.mode !== "ladder" ? null
-    : state.rungIndex === 0 ? "full" : state.rungIndex >= state.ladder.length-1 ? "survival" : "balanced";
+    : state.rungIndex === 0 ? "survival" : state.rungIndex >= state.ladder.length-1 ? "full" : "balanced";
   // GPU timing cannot see a CPU-bound device, so the capability tier caps the
   // ladder: a balanced device never runs full atmosphere, a constrained one
   // runs survival.

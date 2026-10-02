@@ -292,6 +292,8 @@ class FakeWebGLContext {
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
+    this.VIEWPORT = 0x0BA2;
+    this._viewport = [0,0,0,0];
     this.TEXTURE_2D = 0x0DE1;
     this.TEXTURE_2D_ARRAY = 0x8C1A;
     this.NONE = 0;
@@ -457,6 +459,7 @@ class FakeWebGLContext {
   }
 
   viewport(x, y, width, height) {
+    this._viewport = [x,y,width,height];
     this.ops.push(["viewport", x, y, width, height]);
   }
 
@@ -711,6 +714,7 @@ class FakeWebGLContext {
   }
 
   getParameter(param) {
+    if (param === this.VIEWPORT) return this._viewport.slice();
     if (param === 0x9245) {
       return this._unmaskedVendor;
     }
@@ -785,6 +789,10 @@ class FakeWebGLContext {
   vertexAttribIPointer(location, size, type, stride, offset) {
     this.ops.push(["vertexAttribIPointer", location, size, type, stride, offset]);
   }
+  texStorage3D(target, levels, internalFormat, width, height, depth) {
+    this.ops.push(["texStorage3D", target, levels, internalFormat, width, height, depth]);
+  }
+
   texStorage2D(target, levels, internalFormat, width, height) {
     this.ops.push(["texStorage2D", target, levels, internalFormat, width, height]);
   }

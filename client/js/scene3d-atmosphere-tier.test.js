@@ -15,19 +15,43 @@ const tier = context.__tier;
 const ladder = (rungIndex) => ({ mode: "ladder", rungIndex, ladder: [0, 1, 2, 3] });
 
 test("a full device follows the adaptive ladder", () => {
-  assert.equal(tier(ladder(0), "full"), "full");
+  assert.equal(tier(ladder(0), "full"), "survival");
   assert.equal(tier(ladder(1), "full"), "balanced");
-  assert.equal(tier(ladder(3), "full"), "survival");
+  assert.equal(tier(ladder(3), "full"), "full");
   assert.equal(tier(null, "full"), null);
 });
 
 test("a balanced device never runs the full atmosphere", () => {
-  assert.equal(tier(ladder(0), "balanced"), "balanced");
-  assert.equal(tier(ladder(3), "balanced"), "survival");
+  assert.equal(tier(ladder(0), "balanced"), "survival");
+  assert.equal(tier(ladder(3), "balanced"), "balanced");
   assert.equal(tier(null, "balanced"), "balanced");
 });
 
 test("a constrained device runs survival", () => {
   assert.equal(tier(ladder(0), "constrained"), "survival");
   assert.equal(tier(null, "constrained"), "survival");
+});
+
+
+test("ladder demotion only sheds atmosphere work and promotion restores it", () => {
+  vm.runInContext(fs.readFileSync(path.join(__dirname,"../runtime/scene3d/mount-quality.ts"),"utf8"), context);
+  const state = {...ladder(3), rungRevision:0, cooldownMS:0};
+  const work = () => context.sceneAtmosphereQuality({atmosphereTier:tier(state,"full")});
+  const measure = q => [q.reflections,q.planar,q.reflectionSteps,q.clouds,q.cloudOctaves,q.godRays,q.raySamples,q.haze,q.grain].map(Number);
+  let previous = measure(work());
+  assert.equal(tier(state,"full"),"full");
+  for (let rung=2; rung>=0; rung--) {
+    assert.equal(context.sceneQualityLadderSetRung(state,rung,"sustained",0),true);
+    const next = measure(work());
+    assert.ok(next.every((value,i) => value<=previous[i]),"demotion cannot enable more expensive work");
+    previous=next;
+  }
+  assert.equal(tier(state,"full"),"survival");
+  for (let rung=1; rung<=3; rung++) {
+    context.sceneQualityLadderSetRung(state,rung,"recovered",0);
+    const next = measure(work());
+    assert.ok(next.every((value,i) => value>=previous[i]),"promotion restores atmosphere work");
+    previous=next;
+  }
+  assert.equal(tier(state,"full"),"full");
 });

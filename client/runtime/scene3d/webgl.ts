@@ -1803,7 +1803,8 @@
     "}",
     "",
     "void main() {",
-    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    vec4 texColor = texture(u_texture, v_uv);",
+    "    vec3 color = texColor.rgb;",
     "    color *= u_exposure;",
     "    if (u_toneMapMode == 0) {",
     "        color = clamp(color, 0.0, 1.0);",
@@ -1817,7 +1818,7 @@
     "    if (u_toneMapMode != 3) {",
     "        color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));",
     "    }",
-    "    fragColor = vec4(color, 1.0);",
+    "    fragColor = vec4(color, texColor.a);",
     "}",
   ].join("\n");
 
@@ -8424,8 +8425,7 @@
     var instancedGeometryCache = {};
 
     // Local texture cache for this renderer instance.
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const textureCache = new Map();
-    textureCache._gosxGeneration = {
+    const textureCache = Object.assign(new Map(), { _sceneTextureEpoch: 0, _gosxGeneration: {
       disposed: false,
       onResourceReady: function() {
         if (canvas && typeof canvas.dispatchEvent === "function") {
@@ -8435,7 +8435,7 @@
           canvas.dispatchEvent(event);
         }
       },
-    };
+    } });
 
     // Persistent shadow pass state — reuses one GL buffer and one scratch
     // Float32Array across all objects and lights, grown as needed.
@@ -8599,22 +8599,11 @@
     function uploadMaterial(gl, uniforms, material, textureCache) {
 
       const mat = material || {};
-      const textureEpoch = textureCache ? Reflect.get(textureCache, "_sceneTextureEpoch") || 0 : 0;
+      const textureEpoch = textureCache && textureCache._sceneTextureEpoch || 0;
       if (uniforms.transmissionScene) transmissionResources.upload(uniforms, mat, scratchViewMatrix, scratchProjMatrix, selenaPlaceholderTexture);
-      // Global material cache on the program's uniforms object. Skip the
-      // 6 gl.uniform* calls + 5 texture binds when the same material is
-      // re-applied consecutively. Unlike the per-draw-loop lastMaterialIndex
-      // check that callers already do, this survives program swaps and
-      // covers the A→B→A pattern where material A is used, then B, then A
-      // again — without this cache the second A upload would re-issue
-      // every uniform even though the GL state is already correct.
-      //
-      // Reference equality is sufficient because materials in the scene
-      // bundle are stable objects across frames (the materialLookup Map
-      // in createSceneRenderBundle dedupes them by content hash). If a
-      // consumer mutates a material in place, they're expected to flip
-      // the bundle's materialIndex, which gives a different reference
-      // and naturally triggers a re-upload.
+      // Reuse consecutive material uploads while their texture bindings
+      // remain valid. Materials are stable bundle objects; post passes
+      // advance the epoch whenever they replace the shared texture units.
       if (uniforms._lastMaterial === material && uniforms._lastMaterialTexturesReady && uniforms._lastMaterialTextureEpoch === textureEpoch) {
         uploadCustomUniforms(gl, uniforms, mat.customUniforms);
         return;
@@ -8790,9 +8779,7 @@
       }
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
-      for (const material of bundle.materials || []) {
-        if (material && material.detail) sceneWebGLPrepareDetail(gl, detailResources, material, textureCache);
-      }
+      sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
       scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation);
@@ -8981,6 +8968,7 @@
       var renderTarget = sceneWebGLRenderTarget(canvas, null);
 
       if (usePostProcessing) {
+        textureCache._sceneTextureEpoch++;
         var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
         renderW = scaled.width;
         renderH = scaled.height;
@@ -9068,10 +9056,12 @@
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: usePostProcessing, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
         meta: frameMeta, aspect, linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+      // Shared water must be present in the opaque capture sampled by glass.
+      scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
       // and invalidate material bindings before drawing glass against it.
       gl.useProgram(program);
-      if (bundle.environment && bundle.environment.ocean) Reflect.set(textureCache, "_sceneTextureEpoch", (Reflect.get(textureCache, "_sceneTextureEpoch") || 0) + 1);
+      if (bundle.environment && bundle.environment.ocean || scenePBRHasComposite(frameMeta)) textureCache._sceneTextureEpoch++;
 
       if (transmissionSettings.screen) transmissionResources.capture(renderTarget);
       sceneTransmissionPublish(canvas.parentNode, hasTransmission ? transmissionSettings.screen ? "screen" : "environment" : "none");
@@ -9115,12 +9105,12 @@
       publishWebGLComputeParticleDrawStats();
 
       sceneReflectWebGLEnd(oceanResources, renderW, renderH);
-      // Complete the shared scene target before any post effect reads it.
-      scenePBRCompositePass(gl, frameMeta, renderTarget);
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
         var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        // Post passes replace material texture bindings, including unit zero.
+        textureCache._sceneTextureEpoch++;
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
         }
@@ -11031,7 +11021,6 @@
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
-/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
       textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {
         if (record) {

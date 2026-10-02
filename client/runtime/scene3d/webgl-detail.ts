@@ -6,7 +6,6 @@ function sceneWebGLDetailFragment(source = "", detail = false) {
     albedo = detailResult.albedo; N = detailResult.normal; roughness = detailResult.roughness;
     vec3 V = normalize(u_cameraPosition - v_worldPosition);`);
 }
-
 function sceneWebGLDetailProgram(gl = Object.create(null), resources = Object.create(null), kind = "base") {
   const key = sceneDetailVariantKey(kind, true);
   if (resources.programs.has(key)) return resources.programs.get(key);
@@ -18,14 +17,10 @@ function sceneWebGLDetailProgram(gl = Object.create(null), resources = Object.cr
     motion: function() { return createScenePBRCrowdMotionProgram(gl, true); },
   }));
   const program = factories.get(kind)();
-  if (program) {
-    Object.assign(program.uniforms, { detail: gl.getUniformLocation(program.program, "u_detail[0]"),
-      detailAtlas: gl.getUniformLocation(program.program, "u_detailAtlas") });
-  }
+  if (program) Object.assign(program.uniforms, { detail: gl.getUniformLocation(program.program, "u_detail[0]"), detailAtlas: gl.getUniformLocation(program.program, "u_detailAtlas") });
   resources.programs.set(key, program);
   return program;
 }
-
 function sceneWebGLDetailBakeResources(gl = Object.create(null), resources = Object.create(null)) {
   if (resources.bake) return resources.bake;
   const vertex = "#version 300 es\nprecision highp float;\nout vec2 uv;\nvoid main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));uv=p;gl_Position=vec4(p*2.0-1.0,0,1);}";
@@ -40,7 +35,6 @@ function sceneWebGLDetailBakeResources(gl = Object.create(null), resources = Obj
   resources.bake = { placeholder: placeholder, program: linked, vs: vs, fs: fs, vao: gl.createVertexArray(), fbo: gl.createFramebuffer() };
   return resources.bake;
 }
-
 function sceneWebGLBakeDetailAtlas(gl = Object.create(null), resources = Object.create(null), atlas = Object.create(null), records = Object.create(null), masks = Object.create(null)) {
   const bake = sceneWebGLDetailBakeResources(gl, resources);
   const previous = {
@@ -68,10 +62,9 @@ function sceneWebGLBakeDetailAtlas(gl = Object.create(null), resources = Object.
   if (previous.depth) gl.enable(gl.DEPTH_TEST); if (previous.blend) gl.enable(gl.BLEND);
   gl.activeTexture(previous.active);
 }
-
 function sceneWebGLPrepareDetail(gl = Object.create(null), resources = Object.create(null), material = Object.create(null), textureCache = Object.create(null)) {
   const detail = material.detail;
-  const key = JSON.stringify([detail.ground, detail.steep]);
+  const key = JSON.stringify([detail.ground, detail.steep].map(layer => layer ? [layer.albedo || "", layer.normal || "", layer.roughness || ""] : null));
   let atlas = resources.atlases.get(key);
   if (!atlas) {
     atlas = { texture: gl.createTexture(), signature: "", masks: [], sources: [] };
@@ -95,7 +88,15 @@ function sceneWebGLPrepareDetail(gl = Object.create(null), resources = Object.cr
   }
   resources.materials.set(material, atlas);
 }
-
+// Prepare the complete frame before retiring atlases shared by its materials.
+function sceneWebGLPrepareDetailFrame(gl: any, resources: any, materials: any[], textureCache: any) {
+  resources.materials.clear();
+  for (const material of materials || []) if (material && material.detail) sceneWebGLPrepareDetail(gl, resources, material, textureCache);
+  const active = new Set(resources.materials.values());
+  for (const [key, atlas] of resources.atlases) {
+    if (!active.has(atlas)) { gl.deleteTexture(atlas.texture); resources.atlases.delete(key); }
+  }
+}
 function sceneWebGLUploadDetail(gl = Object.create(null), resources = Object.create(null), uniforms = Object.create(null), material = Object.create(null), enabled = true) {
   if (!uniforms.detail || !material || !material.detail) return;
   const atlas = resources.materials.get(material);
@@ -103,12 +104,11 @@ function sceneWebGLUploadDetail(gl = Object.create(null), resources = Object.cre
   scenePBRBindTexture(gl, 14, atlas.texture, gl.TEXTURE_2D_ARRAY);
   gl.uniform1i(uniforms.detailAtlas, 14);
 }
-
 function sceneWebGLDisposeDetail(gl = Object.create(null), resources = Object.create(null)) {
   for (const atlas of resources.atlases.values()) gl.deleteTexture(atlas.texture);
   for (const program of resources.programs.values()) {
     if (program) { gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader); }
   }
-  const bake = resources.bake;
+  resources.atlases.clear(); resources.materials.clear(); resources.programs.clear(); const bake = resources.bake; resources.bake = null;
   if (bake) { gl.deleteTexture(bake.placeholder); gl.deleteProgram(bake.program); gl.deleteShader(bake.vs); gl.deleteShader(bake.fs); gl.deleteVertexArray(bake.vao); gl.deleteFramebuffer(bake.fbo); }
 }

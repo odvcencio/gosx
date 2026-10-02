@@ -790,6 +790,18 @@
   }
 
 
+  function sceneNormalizeMaterialLobes(item, current) {
+    const out = {};
+    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
+      out[key] = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, key), sceneNumber(current[key], 0), key === "anisotropy" ? -1 : 0, 1);
+    }
+    for (const key of ["thickness", "attenuationDistance"]) {
+      out[key] = Math.max(0, sceneNumber(sceneObjectMaterialValue(item, key), sceneNumber(current[key], 0)));
+    }
+    out.attenuationColor = sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "attenuationColor"), current.attenuationColor || [1, 1, 1]);
+    return out;
+  }
+
   function normalizeSceneObject(object, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(object) ? object : {};
@@ -874,11 +886,7 @@
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
-      clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
-      sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
-      transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
-      iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
-      anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      ...sceneNormalizeMaterialLobes(item, current),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
@@ -2195,11 +2203,7 @@
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
-      clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
-      sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
-      transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
-      iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
-      anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      ...sceneNormalizeMaterialLobes(item, current),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
@@ -2676,11 +2680,7 @@
       occlusionStrength: clamp01(sceneNumber(item.occlusionStrength, sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
-      clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
-      sheen: sceneClampNumberOrCSSVar(item.sheen, sceneNumber(current.sheen, 0), 0, 1),
-      transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
-      iridescence: sceneClampNumberOrCSSVar(item.iridescence, sceneNumber(current.iridescence, 0), 0, 1),
-      anisotropy: sceneClampNumberOrCSSVar(item.anisotropy, sceneNumber(current.anisotropy, 0), -1, 1),
+      ...sceneNormalizeMaterialLobes(item, current),
       detail: sceneNormalizeDetail(item.detail === undefined ? current.detail : item.detail),
       normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
@@ -3465,30 +3465,15 @@
   }
 
   function sceneApplyNamedMaterialToObject(object, material) {
-    return Object.assign({}, object, {
+    const resolved = Object.assign({}, object, {
       // Named materials are public live state. A derived wrapper cannot keep
       // the engine-owned immutable material promise used by rigid batching.
       _rigidMaterialProfileStable: false,
       materialKind: material.kind || object.materialKind,
       color: material.color || object.color,
       texture: material.texture || object.texture,
-      opacity: material.opacity != null ? material.opacity : object.opacity,
       unlit: material.unlit !== undefined ? material.unlit : object.unlit,
-      emissive: material.emissive != null ? material.emissive : object.emissive,
       emissiveColor: sceneCopyFiniteRGB(material.emissiveColor, object.emissiveColor),
-      normalScale: material.normalScale != null ? material.normalScale : object.normalScale,
-      normalUVScale: material.normalUVScale != null ? material.normalUVScale : object.normalUVScale,
-      occlusionStrength: material.occlusionStrength != null ? material.occlusionStrength : object.occlusionStrength,
-      roughness: material.roughness != null ? material.roughness : object.roughness,
-      metalness: material.metalness != null ? material.metalness : object.metalness,
-      ior: material.ior != null ? material.ior : object.ior,
-      specularIntensity: material.specularIntensity != null ? material.specularIntensity : object.specularIntensity,
-      specularColor: material.specularColor != null ? material.specularColor : object.specularColor,
-      clearcoat: material.clearcoat != null ? material.clearcoat : object.clearcoat,
-      sheen: material.sheen != null ? material.sheen : object.sheen,
-      transmission: material.transmission != null ? material.transmission : object.transmission,
-      iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
-      anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
       alphaCutoff: material.alphaCutoff !== undefined ? material.alphaCutoff : object.alphaCutoff,
       detail: material.detail || object.detail,
       normalMap: material.normalMap || object.normalMap,
@@ -3507,11 +3492,6 @@
       _renderPassDerived: material.renderPass
         ? material._renderPassDerived === true
         : object._renderPassDerived,
-      wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
-      depthWrite: material.depthWrite != null ? material.depthWrite : object.depthWrite,
-      lineDash: material.lineDash != null ? material.lineDash : object.lineDash,
-      dashSize: material.dashSize != null ? material.dashSize : object.dashSize,
-      gapSize: material.gapSize != null ? material.gapSize : object.gapSize,
       customVertex: typeof material.customVertex === "string" ? material.customVertex : object.customVertex,
       customFragment: typeof material.customFragment === "string" ? material.customFragment : object.customFragment,
       customVertexWGSL: typeof material.customVertexWGSL === "string" ? material.customVertexWGSL : object.customVertexWGSL,
@@ -3523,6 +3503,10 @@
       shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneCloneData(material.shaderSourceFiles) : object.shaderSourceFiles,
       variantKey: material.variantKey || object.variantKey,
     });
+    for (const key of "normalScale normalUVScale occlusionStrength roughness metalness ior specularIntensity specularColor clearcoat sheen transmission iridescence anisotropy thickness attenuationDistance attenuationColor opacity emissive wireframe depthWrite lineDash dashSize gapSize".split(" ")) {
+      if (material[key] != null) resolved[key] = material[key];
+    }
+    return resolved;
   }
 
   function sceneApplyNamedMaterialToInstancedMesh(mesh, material) {

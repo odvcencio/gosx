@@ -992,6 +992,9 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 
 		raw := normalizeNewlines(string(data))
 		bodyForCompaction := raw
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+			bodyForCompaction = compactBrowserSource(src, raw)
+		}
 		var lineOrigins []int
 		if language == sourceTypeScript {
 			// Validate against the original file before the chunk swallows a
@@ -1006,7 +1009,7 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 			// the whole chunk's. A .js source beside a .ts source must never
 			// reach the TypeScript parser: reparsing `a < b > (c)` as a
 			// generic-argument call silently drops the comparison against b.
-			erased, mappings, err := transpileSource(src, raw)
+			erased, mappings, err := transpileSource(src, bodyForCompaction)
 			if err != nil {
 				return builtBundle{}, err
 			}
@@ -1101,7 +1104,14 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 		raws = append(raws, normalizeNewlines(string(data)))
 	}
 
-	joinedRaw, sectionStartLines := joinChunkSources(raws)
+	buildSources := make([]string, len(raws))
+	for i, raw := range raws {
+		buildSources[i] = raw
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+			buildSources[i] = compactBrowserSource(entry.sources[i], raw)
+		}
+	}
+	joinedRaw, sectionStartLines := joinChunkSources(buildSources)
 	erased, mappings, err := transpileChunkBody(entry, joinedRaw, labels, sectionStartLines)
 	if err != nil {
 		return builtBundle{}, err
