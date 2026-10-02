@@ -171,6 +171,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 			return exportManifest{}, err
 		}
 	}
+	if err := writeTextSidecars(outputDir, opts.BundlePolicy); err != nil {
+		return exportManifest{}, fmt.Errorf("compress static export: %w", err)
+	}
 
 	return manifest, nil
 }
@@ -472,6 +475,8 @@ func fetchExportPageWithStatus(client *http.Client, url string) (string, int, er
 		return "", 0, err
 	}
 	req.Header.Set("Accept", "text/html")
+	// Export the identity representation, then compress the rewritten files.
+	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", 0, err

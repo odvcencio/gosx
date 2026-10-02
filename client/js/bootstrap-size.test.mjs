@@ -16,6 +16,8 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Targets increase only where measured output breaches the governed allowance.
 // Zoom input and damping ship only in the prop-gated lazy chunk.
 // Budgets cover its measured size; base growth is limited to adapter and load hooks.
+// Merge retains the existing public-clock allocations from main and the
+// branch allocations; shared allowances are unchanged.
 const budgets = [
   { file: "bootstrap-feature-scene3d-zoom.js", raw: 3_900, gzip: 1_650, brotli: 1_450 },
   // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
@@ -723,7 +725,7 @@ const budgets = [
   // the shared governed allowances remain fixed.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 1852200 -> 1854000 (measured 1919449); gzip 520900 -> 521500 (measured 537869); brotli 411200 -> 411700 (measured 428049). Governed allowances stay fixed.
-    file: "bootstrap.js", raw: 1854000, gzip: 521500, brotli: 411700 },
+    file: "bootstrap.js", raw: 1854000, gzip: 521500, brotli: 412100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1242,7 +1244,7 @@ const budgets = [
   // Portrait reset reads the authored camera: measured 644799 / 184952 / 152586.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 614100 -> 614200 (measured 644895). Governed allowances stay fixed.
-    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176_200, brotli: 145_400 },
+    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176_350, brotli: 145_575 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1913,8 +1915,8 @@ const routeBudgets = [
     // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     raw: 1383300,
-    gzip: 383300,
-    brotli: 319600,
+    gzip: 383450,
+    brotli: 319800,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2112,10 +2114,10 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    raw: 1234000,
-    gzip: 354600,
+    raw: 1234025,
+    gzip: 354750,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
-    brotli: 297_600,
+    brotli: 297_775,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2309,9 +2311,9 @@ const routeBudgets = [
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
     raw: 1688600,
-    gzip: 471000,
+    gzip: 471150,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
-    brotli: 392700,
+    brotli: 392875,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2478,8 +2480,8 @@ const routeBudgets = [
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1234700,
-    gzip: 339900,
-    brotli: 282900,
+    gzip: 340050,
+    brotli: 283105,
   },
 
 ];

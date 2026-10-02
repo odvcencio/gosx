@@ -1062,7 +1062,7 @@
       controller.syncCamera(readSourceCamera());
       return controller.mode === "orbit" ? sceneOrbitCamera(controller.orbit, readSourceCamera()) : sceneFlyCamera(controller.fly, readSourceCamera());
     };
-    return window.__gosx_scene3d_zoom_api.setup(canvas, props, base, {
+    return window.__gosx_runtime_api.scene3DZoom.setup(canvas, props, base, {
       read,
       // @ts-ignore TS7006 -- viewport FOV is sampled at view reset, before optical zoom.
       fov: camera => sceneViewportCamera(camera, sceneState.camera || readSourceCamera(), readViewport()).fov,

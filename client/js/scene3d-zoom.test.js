@@ -25,9 +25,10 @@ class Target {
 }
 function harness(mode = 'first-person', reduced = false, enabled = true) {
   const window = new Target(), canvas = new Target(), document = { activeElement: canvas }, media = new Target();
+  window.__gosx_runtime_api = {};
   media.matches = reduced; window.matchMedia = () => media;
   vm.runInNewContext(source, { window, document, Map, Math, Number, Array });
-  const api = window.__gosx_scene3d_zoom_api, frames = new Map(), reasons = [];
+  const api = window.__gosx_runtime_api.scene3DZoom, frames = new Map(), reasons = [];
   let id = 0, now = 0, pose = { x: 1, y: 2, z: 3, fov: 75 }, cancelled = 0, disposed = 0;
   const controller = { mode, touched: false, zoomScale: 1, minDistance: 2, maxDistance: 100, orbit: { radius: 20 }, syncCamera() {},
     currentCamera: () => pose, applyCamera: c => { pose = c; } };
@@ -119,7 +120,7 @@ test('portrait framing provides the default FOV and preserves optical zoom throu
   const env={sceneNumber:(v,f)=>v??f}; vm.runInNewContext(core.slice(start,end),env);
   assert.equal(env.sceneViewportCamera(zoomed,{portraitFOV:70},{cssWidth:390,cssHeight:844}).fov,30);
   let adapter;
-  env.window={__gosx_scene3d_zoom_api:{setup:(_canvas,_props,_base,helpers)=>{adapter=helpers;}}};
+  env.window={__gosx_runtime_api:{scene3DZoom:{setup:(_canvas,_props,_base,helpers)=>{adapter=helpers;}}}};
   env.sceneMotionRequestFrame=()=>{}; env.sceneMotionCancelFrame=()=>{}; env.sceneNowMilliseconds=()=>0;
   vm.runInNewContext(fs.readFileSync(require.resolve('../runtime/scene3d/mount-controls.ts'),'utf8'),env);
   env.setupSceneBaseControls=()=>({controller:{currentCamera:()=>({fov:42}),syncCamera(){}}}); env.sceneVesselEnabled=()=>false;

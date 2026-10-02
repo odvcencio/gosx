@@ -8,7 +8,7 @@ function sceneWebGPUDetailFragment(source = "", detail = false) {
     let V = normalize(frame.cameraPos - in.worldPos);`);
 }
 
-function sceneWebGPUCreateDetailResources(device = Object.create(null), frameLayout = Object.create(null), materialLayout = Object.create(null), source = "") {
+function sceneWebGPUCreateDetailResources(device: any, frameLayout: any, materialLayout: any, source = "") {
   const layout = device.createBindGroupLayout({ label: "detail", entries: [
     { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
     { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d-array" } },
@@ -22,7 +22,7 @@ function sceneWebGPUCreateDetailResources(device = Object.create(null), frameLay
   };
 }
 
-function sceneWebGPUDetailBakeResources(device = Object.create(null), resources = Object.create(null), placeholderView = Object.create(null)) {
+function sceneWebGPUDetailBakeResources(device: any, resources: any, placeholderView: any) {
   if (resources.bake) return resources.bake;
   const code = `
     @group(0) @binding(0) var src: texture_2d<f32>;
@@ -49,7 +49,7 @@ function sceneWebGPUDetailBakeResources(device = Object.create(null), resources 
   return resources.bake;
 }
 
-function sceneWebGPUBakeDetailAtlas(device = Object.create(null), resources = Object.create(null), atlas = Object.create(null), inputs = Object.create(null), placeholderView = Object.create(null)) {
+function sceneWebGPUBakeDetailAtlas(device: any, resources: any, atlas: any, inputs: any, placeholderView: any) {
   const bake = sceneWebGPUDetailBakeResources(device, resources, placeholderView);
   const encoder = device.createCommandEncoder({ label: "detail-atlas-bake" });
   for (let layer = 0; layer < 4; layer++) {
@@ -72,22 +72,22 @@ function sceneWebGPUBakeDetailAtlas(device = Object.create(null), resources = Ob
   device.queue.submit([encoder.finish()]);
 }
 
-function sceneWebGPUDetailAtlasKey(detail = Object.create(null)) {
+function sceneWebGPUDetailAtlasKey(detail: any) {
   return JSON.stringify([detail.ground, detail.steep].map(function(layer = Object.create(null)) {
     return layer ? [layer.albedo || "", layer.normal || "", layer.roughness || ""] : null;
   }));
 }
 
-function sceneWebGPUDetailMaterialKey(detail = Object.create(null)) {
-  return JSON.stringify([sceneWebGPUDetailAtlasKey(detail), Array.from(sceneDetailUniformData(detail, null, true))]);
+function sceneWebGPUDetailMaterialKey(detail: any) {
+  return sceneWebGPUDetailAtlasKey(detail) + sceneDetailUniformData(detail, null, true).join();
 }
 
-function sceneWebGPUBeginDetailFrame(resources = Object.create(null)) {
+function sceneWebGPUBeginDetailFrame(resources: any) {
   if (!resources || !resources.materials) return;
   for (const entry of resources.materials.values()) entry.active = false;
 }
 
-function sceneWebGPUReuseDetailEntry(resources = Object.create(null), atlas = Object.create(null), key = "") {
+function sceneWebGPUReuseDetailEntry(resources: any, atlas: any, key: string) {
   for (const [previousKey, entry] of resources.materials) {
     if (entry.active || entry.atlas !== atlas) continue;
     resources.materials.delete(previousKey);
@@ -97,7 +97,7 @@ function sceneWebGPUReuseDetailEntry(resources = Object.create(null), atlas = Ob
   return null;
 }
 
-function sceneWebGPUPrepareDetail(device = Object.create(null), resources = Object.create(null), material = Object.create(null), textureCache = Object.create(null), placeholderView = Object.create(null)) {
+function sceneWebGPUPrepareDetail(device: any, resources: any, material: any, textureCache: any, placeholderView: any) {
   const detail = material.detail, key = sceneWebGPUDetailAtlasKey(detail);
   let atlas = resources.atlases.get(key);
   if (!atlas) {
@@ -111,8 +111,8 @@ function sceneWebGPUPrepareDetail(device = Object.create(null), resources = Obje
     return wgpuLoadTexture(device, url, textureCache, null, role === "albedo" ? "base-color" : role, "linear");
   });
   const signature = inputs.masks.join("");
-  const sources = inputs.records.map(function(record = Object.create(null)) { return record && record.loaded ? record.texture : null; });
-  if (signature !== atlas.signature || sources.some(function(texture = Object.create(null), i = 0) { return !atlas.sources || atlas.sources[i] !== texture; })) {
+  const sources = inputs.records.map(function(record: any) { return record && record.loaded ? record.texture : null; });
+  if (signature !== atlas.signature || sources.some(function(texture: any, i: number) { return !atlas.sources || atlas.sources[i] !== texture; })) {
     sceneWebGPUBakeDetailAtlas(device, resources, atlas, inputs, placeholderView);
     atlas.signature = signature; atlas.masks = inputs.masks;
     atlas.sources = sources;
@@ -130,13 +130,13 @@ function sceneWebGPUPrepareDetail(device = Object.create(null), resources = Obje
   return entry;
 }
 
-function sceneWebGPUUploadDetail(device = Object.create(null), resources = Object.create(null), material = Object.create(null), enabled = true) {
+function sceneWebGPUUploadDetail(device: any, resources: any, material: any, enabled = true) {
   const entry = resources.materials.get(sceneWebGPUDetailMaterialKey(material.detail));
   device.queue.writeBuffer(entry.buffer, 0, sceneDetailUniformData(material.detail, entry.atlas.masks, enabled));
   return entry.group;
 }
 
-function sceneWebGPUPrepareDetailFrame(device = Object.create(null), resources: any = null, materials: any[] = [], textureCache = Object.create(null), options = Object.create(null)) {
+function sceneWebGPUPrepareDetailFrame(device: any, resources: any, materials: any[], textureCache: any, options: any) {
   sceneWebGPUBeginDetailFrame(resources);
   for (const material of materials) {
     if (!material || !material.detail) continue;
@@ -144,19 +144,16 @@ function sceneWebGPUPrepareDetailFrame(device = Object.create(null), resources: 
     sceneWebGPUPrepareDetail(device, resources, material, textureCache, options.placeholderView);
     sceneWebGPUUploadDetail(device, resources, material, options.enabled);
   }
-  sceneWebGPUPruneDetail(resources, materials);
+  sceneWebGPUPruneDetail(resources);
   return resources;
 }
 
 // Retire detail resources after preparing the complete draw set for this frame.
-function sceneWebGPUPruneDetail(resources = Object.create(null), materials: any[] = []) {
+function sceneWebGPUPruneDetail(resources: any) {
   if (!resources || !resources.atlases) return;
-  const active = new Set(materials.filter(function(material = Object.create(null)) {
-    return material && material.detail;
-  }).map(function(material = Object.create(null)) { return sceneWebGPUDetailMaterialKey(material.detail); }));
   const atlases = new Set();
   for (const [key, entry] of resources.materials) {
-    if (active.has(key)) atlases.add(entry.atlas);
+    if (entry.active) atlases.add(entry.atlas);
     else { entry.buffer.destroy(); resources.materials.delete(key); }
   }
   for (const [key, atlas] of resources.atlases) {
@@ -167,6 +164,7 @@ function sceneWebGPUPruneDetail(resources = Object.create(null), materials: any[
   }
 }
 
-function sceneWebGPUDisposeDetail(resources = Object.create(null)) {
-  sceneWebGPUPruneDetail(resources, []);
+function sceneWebGPUDisposeDetail(resources: any) {
+  sceneWebGPUBeginDetailFrame(resources);
+  sceneWebGPUPruneDetail(resources);
 }

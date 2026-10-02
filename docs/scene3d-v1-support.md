@@ -254,3 +254,30 @@ Full quality uses five noise octaves; balanced uses three; survival removes the 
 Use `scene.Tonemap{Mode: scene.TonemapAgX, Exposure: 0.7}` for a fitted AgX log-exposure sigmoid with a toe, shoulder and highlight desaturation, followed by one sRGB transfer. Put `scene.Grain{Intensity: 0.015}` after tonemap and before FXAA. Grain uses a fixed pixel pattern; grading and haze dither without frame seeds. Survival removes grain and retains tonemap. New Go zero fields are omitted so browser defaults apply; nil haze and absent effects preserve existing wire data and shader variants. JS can explicitly set zero intensity to disable an effect.
 
 A restrained coastal chain is GodRays, mip Bloom (`Threshold: 1.2, Strength: 0.12, Radius: 3, Scale: 0.5`), AgX, Grain and FXAA. Keeping bloom above diffuse daylight and its strength low avoids broad halos. Estimated additional 1440p desktop cost for shafts, haze and grade: 0.4–0.9 ms, unmeasured. Combined atmosphere estimates are 1.5–3.4 ms; planar geometry can dominate. Hardware frame-time and Chrome/Edge/Firefox visual acceptance remain required.
+
+### Controlling the Scene3D animation clock
+
+Mounted Scene3D handles expose `getAnimationClock()` and
+`setAnimationClock({ timeSeconds, paused })`. Use the handle registered on the
+mount as `mount.__gosxScene3DHandle`, after command readiness.
+
+```js
+handle.setAnimationClock({ timeSeconds: 1.25 }); // seek and pause
+handle.setAnimationClock({ timeSeconds: 0.5 });  // seek backward
+handle.setAnimationClock({ timeSeconds: 0.5, paused: false }); // resume
+```
+
+Time must be a finite number from zero to 86,400 seconds. `paused` defaults to
+true. Invalid arguments leave state unchanged; disposed surfaces reject writes.
+The setter schedules a render and resets the wall-clock baseline, so resuming
+does not include time spent paused. `getAnimationClock()` returns `timeSeconds`,
+`paused`. Existing animation controls reflect this state.
+
+This is an absolute clock for declarative motion, animation clips, spin/drift,
+material programs and shader time. Reduced-motion preferences still govern
+declarative movement. Stateful water/particle simulations and event-driven glTF
+mixers retain their own state; exact reproduction of those requires explicit
+pose/state replay. The API does not claim to rewind their simulation history.
+
+A host can keep the native clock paused and drive it from one presentation
+playhead. Wait for the scheduled render to settle before capturing its pixels.

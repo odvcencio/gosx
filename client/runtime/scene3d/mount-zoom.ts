@@ -119,5 +119,5 @@ interface SceneZoomState { value: number; target: number; min: number; max: numb
     };
     return base;
   }
-  window.__gosx_scene3d_zoom_api = { setup, create, change, advance, wheel, distance, pinch, scale };
+  window.__gosx_runtime_api.scene3DZoom = { setup, create, change, advance, wheel, distance, pinch, scale };
 })();

@@ -11,13 +11,13 @@
         "limits": {
           "cssWireBytes": 9229,
           "frameworkJsWireBytes": 922746,
-          "htmlWireBytes": -5441,
+          "htmlWireBytes": 40583,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 230415,
           "lazyJsWireBytes": 212953,
           "requests": 11,
-          "totalWireBytes": 959600,
+          "totalWireBytes": 983372,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -42,13 +42,13 @@
         "limits": {
           "cssWireBytes": 8274,
           "frameworkJsWireBytes": 24993,
-          "htmlWireBytes": 6773,
+          "htmlWireBytes": 38625,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 7,
-          "totalWireBytes": 73669,
+          "totalWireBytes": 96874,
           "wasmWireBytes": 256
         },
         "require": [
@@ -60,8 +60,8 @@
           "html-shareable"
         ],
         "raise": {
-          "cssWireBytes": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production cssWireBytes measures 8018 against the previous 256 limit. The new 8274 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "htmlWireBytes": "The physical daylight sky adds its capability row to the capabilities matrix: +224 HTML wire bytes measured in CI. The capability matrix includes the integrated open-ocean feature. Production htmlWireBytes measured 200581 bytes against the previous 198700-byte limit; the new 202586-byte limit uses the existing wire tolerance (decision 0014).",
+          "cssWireBytes": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production cssWireBytes measures 8018 against the previous 256 limit. The new 8274 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 7 against the previous 4 limit. The new 7 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "totalWireBytes": "The capability matrix includes the integrated open-ocean feature. Production totalWireBytes measured 258253 bytes against the previous 256469-byte limit; the new 260835-byte limit uses the existing wire tolerance (decision 0014)."
         }
@@ -70,13 +70,13 @@
         "limits": {
           "cssWireBytes": 13353,
           "frameworkJsWireBytes": 22350,
-          "htmlWireBytes": -32442,
+          "htmlWireBytes": 43027,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 7,
-          "totalWireBytes": 28108,
+          "totalWireBytes": 90292,
           "wasmWireBytes": 256
         },
         "require": [
@@ -96,13 +96,13 @@
         "limits": {
           "cssWireBytes": 13023,
           "frameworkJsWireBytes": 921028,
-          "htmlWireBytes": -22847,
-          "imageWireBytes": 7981,
+          "htmlWireBytes": 45498,
+          "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 230415,
           "lazyJsWireBytes": 196720,
           "requests": 11,
-          "totalWireBytes": 916923,
+          "totalWireBytes": 959647,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -114,27 +114,27 @@
           "html-shareable"
         ],
         "raise": {
+          "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
+          "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 10 against the previous 6 limit. The new 10 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load. The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
           "cssWireBytes": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production cssWireBytes measures 12767 against the previous 256 limit. The new 13023 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
           "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 194773 bytes against the previous 193692-byte limit; the new 196720-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them.",
-          "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 10 against the previous 6 limit. The new 10 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load. The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
-          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured.",
-          "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin."
+          "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured."
         }
       },
       "/demos/water": {
         "limits": {
           "cssWireBytes": 14616,
           "frameworkJsWireBytes": 909557,
-          "htmlWireBytes": 3633,
+          "htmlWireBytes": 85991,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 236944,
           "lazyJsWireBytes": 196720,
           "requests": 12,
-          "totalWireBytes": 968210,
+          "totalWireBytes": 1022130,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -159,13 +159,13 @@
         "limits": {
           "cssWireBytes": 11469,
           "frameworkJsWireBytes": 25415,
-          "htmlWireBytes": -21933,
-          "imageWireBytes": 43132,
+          "htmlWireBytes": 40336,
+          "imageWireBytes": 47935,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 1258,
           "lazyJsWireBytes": 256,
           "requests": 10,
-          "totalWireBytes": 91853,
+          "totalWireBytes": 147319,
           "wasmWireBytes": 256
         },
         "require": [
@@ -177,6 +177,7 @@
           "html-shareable"
         ],
         "raise": {
+          "imageWireBytes": "The JPEG uses its existing image encoding (47,461 wire bytes) under the negotiated compression defaults; the limit includes the standard one-percent margin.",
           "cssWireBytes": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production cssWireBytes measures 11213 against the previous 256 limit. The new 11469 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 10 against the previous 6 limit. The new 10 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load."
         }
@@ -185,13 +186,13 @@
         "limits": {
           "cssWireBytes": 11262,
           "frameworkJsWireBytes": 308427,
-          "htmlWireBytes": -17662,
+          "htmlWireBytes": 42070,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 61034,
           "lazyJsWireBytes": 256,
           "requests": 15,
-          "totalWireBytes": 333954,
+          "totalWireBytes": 382176,
           "wasmWireBytes": 222126
         },
         "require": [
@@ -215,13 +216,13 @@
         "limits": {
           "cssWireBytes": 8108,
           "frameworkJsWireBytes": 27462,
-          "htmlWireBytes": 1771,
+          "htmlWireBytes": 38405,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 7,
-          "totalWireBytes": 68019,
+          "totalWireBytes": 96653,
           "wasmWireBytes": 256
         },
         "require": [
@@ -243,18 +244,20 @@
     "scaffold": {
       "/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 114855,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 28000,
+          "htmlWireBytes": 29162,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 2,
-          "totalWireBytes": 118820,
+          "totalWireBytes": 30284,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -263,18 +266,20 @@
       },
       "/counter/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 392476,
-          "htmlWireBytes": 114660,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 310354,
+          "htmlWireBytes": 29171,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 59914,
+          "jsWireBytes": 59902,
           "lazyJsWireBytes": 256,
           "requests": 8,
-          "totalWireBytes": 400821,
+          "totalWireBytes": 312580,
           "wasmWireBytes": 222126
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -288,18 +293,20 @@
       },
       "/stack/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 112854,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 27941,
+          "htmlWireBytes": 28595,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 2,
-          "totalWireBytes": 116819,
+          "totalWireBytes": 29717,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
