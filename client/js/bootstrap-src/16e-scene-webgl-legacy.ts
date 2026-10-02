@@ -45,6 +45,8 @@
       kind: "webgl",
       supportsRetainedGeometry: false,
       render(bundle) {
+        if (typeof scenePBRProgramsPending === "function" && scenePBRProgramsPending(gl)) return;
+        if (typeof scenePBRProgramReady === "function" && !scenePBRProgramReady(gl, program)) return;
         const geometry = sceneWebGLBundleGeometry(bundle);
         prepareSceneWebGLFrame(gl, canvas, bundle, geometry.usePerspective, resources);
         if (!bundle) {
@@ -64,6 +66,7 @@
         renderSceneWebGLFallbackBundle(gl, geometry, resources);
       },
       dispose() {
+        if (typeof scenePBRDisposeProgramQueue === "function") scenePBRDisposeProgramQueue(gl);
         disposeSceneWebGLRenderer(gl, program, resources);
       },
     };
@@ -75,7 +78,7 @@
     // gl.LINES path. Buffers exist up-front so the draw path doesn't allocate
     // per frame.
     const thickLineProgram = createSceneThickLineProgram(gl);
-    return {
+    const result = {
       program,
       surfaceProgram,
       fallbackBuffers: createSceneWebGLBufferSet(gl),
@@ -89,29 +92,29 @@
       thickLineProgram,
       thickLineBuffers: createSceneThickLineBufferSet(gl),
       thickLineScratch: createSceneThickLineScratch(),
-      positionLocation: gl.getAttribLocation(program, "a_position"),
-      colorLocation: gl.getAttribLocation(program, "a_color"),
-      materialLocation: gl.getAttribLocation(program, "a_material"),
-      cameraLocation: gl.getUniformLocation(program, "u_camera"),
-      cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
-      depthRangeLocation: gl.getUniformLocation(program, "u_depth_range"),
-      aspectLocation: gl.getUniformLocation(program, "u_aspect"),
-      perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
-      cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
-      orthoLocation: gl.getUniformLocation(program, "u_ortho"),
+      positionLocation: -1,
+      colorLocation: -1,
+      materialLocation: -1,
+      cameraLocation: null,
+      cameraRotationLocation: null,
+      depthRangeLocation: null,
+      aspectLocation: null,
+      perspectiveLocation: null,
+      cameraModeLocation: null,
+      orthoLocation: null,
       surfaceBuffers: createSceneWebGLSurfaceBufferSet(gl),
-      surfacePositionLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_position") : -1,
-      surfaceUVLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1,
-      surfaceCameraLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null,
-      surfaceCameraRotationLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null,
-      surfaceDepthRangeLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_depth_range") : null,
-      surfaceAspectLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null,
-      surfaceCameraModeLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_mode") : null,
-      surfaceOrthoLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_ortho") : null,
-      surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
-      surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
-      surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
-      surfaceOutputLinearLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_outputLinear") : null,
+      surfacePositionLocation: -1,
+      surfaceUVLocation: -1,
+      surfaceCameraLocation: null,
+      surfaceCameraRotationLocation: null,
+      surfaceDepthRangeLocation: null,
+      surfaceAspectLocation: null,
+      surfaceCameraModeLocation: null,
+      surfaceOrthoLocation: null,
+      surfaceTintLocation: null,
+      surfaceEmissiveLocation: null,
+      surfaceTextureLocation: null,
+      surfaceOutputLinearLocation: null,
       floatType: typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406,
       arrayBuffer: typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892,
       staticDraw: typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4,
@@ -142,6 +145,37 @@
         depthMode: "",
       },
     };
+    function initializeprogram() {
+      result.positionLocation = gl.getAttribLocation(program, "a_position");
+      result.colorLocation = gl.getAttribLocation(program, "a_color");
+      result.materialLocation = gl.getAttribLocation(program, "a_material");
+      result.cameraLocation = gl.getUniformLocation(program, "u_camera");
+      result.cameraRotationLocation = gl.getUniformLocation(program, "u_camera_rotation");
+      result.depthRangeLocation = gl.getUniformLocation(program, "u_depth_range");
+      result.aspectLocation = gl.getUniformLocation(program, "u_aspect");
+      result.perspectiveLocation = gl.getUniformLocation(program, "u_use_perspective");
+      result.cameraModeLocation = gl.getUniformLocation(program, "u_camera_mode");
+      result.orthoLocation = gl.getUniformLocation(program, "u_ortho");
+    }
+    if (typeof scenePBRWhenProgramReady === "function") scenePBRWhenProgramReady(gl, program, initializeprogram);
+    else initializeprogram();
+    function initializeSurface() {
+      result.surfacePositionLocation = surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_position") : -1;
+      result.surfaceUVLocation = surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1;
+      result.surfaceCameraLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null;
+      result.surfaceCameraRotationLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null;
+      result.surfaceDepthRangeLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_depth_range") : null;
+      result.surfaceAspectLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null;
+      result.surfaceCameraModeLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_mode") : null;
+      result.surfaceOrthoLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_ortho") : null;
+      result.surfaceTintLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null;
+      result.surfaceEmissiveLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null;
+      result.surfaceTextureLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null;
+      result.surfaceOutputLinearLocation = surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_outputLinear") : null;
+    }
+    if (surfaceProgram && typeof scenePBRWhenProgramReady === "function") scenePBRWhenProgramReady(gl, surfaceProgram, initializeSurface);
+    else initializeSurface();
+    return result;
   }
 
   function sceneWebGLBundleGeometry(bundle) {
@@ -390,6 +424,7 @@
   }
 
   function renderSceneWebGLTexturedMeshObject(gl, bundle, canvas, resources, object, material, vertexOffset, vertexCount) {
+    if (typeof scenePBRProgramReady === "function" && !scenePBRProgramReady(gl, resources.surfaceProgram)) return false;
     const materialTexture = material && typeof material.texture === "string" ? material.texture.trim() : "";
     const objectTexture = object && typeof object.texture === "string" ? object.texture.trim() : "";
     const texture = materialTexture || objectTexture;
@@ -449,6 +484,7 @@
   }
 
   function renderSceneWebGLSurfaces(gl, bundle, canvas, resources, renderPass) {
+    if (typeof scenePBRProgramReady === "function" && !scenePBRProgramReady(gl, resources.surfaceProgram)) return false;
     const surfaces = sceneBundleSurfaceEntries(bundle, renderPass);
     if (!surfaces.length || !resources.surfaceProgram) {
       return false;
@@ -619,7 +655,9 @@
 
   function createSceneWebGLImage() {
     if (typeof Image === "function") {
-      return new Image();
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      return image;
     }
     return null;
   }
@@ -1150,13 +1188,17 @@
       return null;
     }
 
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn("[gosx] Scene3D WebGL link failed");
-      return null;
+    const parallelLink = typeof scenePBRLinkProgram === "function";
+    const program = parallelLink ? scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Scene3D lines") : gl.createProgram();
+    if (!program) return null;
+    if (!parallelLink) {
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.warn("[gosx] Scene3D WebGL link failed");
+        return null;
+      }
     }
     return program;
   }
@@ -1231,18 +1273,23 @@
       return null;
     }
 
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn("[gosx] Scene3D WebGL surface link failed");
-      return null;
+    const parallelLink = typeof scenePBRLinkProgram === "function";
+    const program = parallelLink ? scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Scene3D surfaces") : gl.createProgram();
+    if (!program) return null;
+    if (!parallelLink) {
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.warn("[gosx] Scene3D WebGL surface link failed");
+        return null;
+      }
     }
     return program;
   }
 
   function createSceneShader(gl, type, source) {
+    if (typeof scenePBRCompileShader === "function") return scenePBRCompileShader(gl, type, source);
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
@@ -1358,31 +1405,39 @@
     if (!vertexShader || !fragmentShader) {
       return null;
     }
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn("[gosx] Scene3D thick-line link failed");
-      return null;
+    const parallelLink = typeof scenePBRLinkProgram === "function";
+    const program = parallelLink ? scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Scene3D thick lines") : gl.createProgram();
+    if (!program) return null;
+    if (!parallelLink) {
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.warn("[gosx] Scene3D thick-line link failed");
+        return null;
+      }
     }
-    return {
-      program,
-      positionALocation: gl.getAttribLocation(program, "a_positionA"),
-      positionBLocation: gl.getAttribLocation(program, "a_positionB"),
-      colorALocation: gl.getAttribLocation(program, "a_colorA"),
-      colorBLocation: gl.getAttribLocation(program, "a_colorB"),
-      sideLocation: gl.getAttribLocation(program, "a_side"),
-      endpointLocation: gl.getAttribLocation(program, "a_endpoint"),
-      widthLocation: gl.getAttribLocation(program, "a_width"),
-      cameraLocation: gl.getUniformLocation(program, "u_camera"),
-      cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
-      depthRangeLocation: gl.getUniformLocation(program, "u_depth_range"),
-      aspectLocation: gl.getUniformLocation(program, "u_aspect"),
-      viewportLocation: gl.getUniformLocation(program, "u_viewport"),
-      cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
-      orthoLocation: gl.getUniformLocation(program, "u_ortho"),
-    };
+    function finalize() {
+      return {
+        program,
+        positionALocation: gl.getAttribLocation(program, "a_positionA"),
+        positionBLocation: gl.getAttribLocation(program, "a_positionB"),
+        colorALocation: gl.getAttribLocation(program, "a_colorA"),
+        colorBLocation: gl.getAttribLocation(program, "a_colorB"),
+        sideLocation: gl.getAttribLocation(program, "a_side"),
+        endpointLocation: gl.getAttribLocation(program, "a_endpoint"),
+        widthLocation: gl.getAttribLocation(program, "a_width"),
+        cameraLocation: gl.getUniformLocation(program, "u_camera"),
+        cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
+        depthRangeLocation: gl.getUniformLocation(program, "u_depth_range"),
+        aspectLocation: gl.getUniformLocation(program, "u_aspect"),
+        viewportLocation: gl.getUniformLocation(program, "u_viewport"),
+        cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
+        orthoLocation: gl.getUniformLocation(program, "u_ortho"),
+      };
+    }
+    return typeof scenePBRDeferredProgramInfo === "function"
+      ? scenePBRDeferredProgramInfo(gl, program, finalize, { vertexShader, fragmentShader }) : finalize();
   }
 
   function createSceneThickLineBufferSet(gl) {
@@ -1446,6 +1501,7 @@
     if (!thickProgram || !thickProgram.program) {
       return false;
     }
+    if (typeof scenePBRProgramReady === "function" && !scenePBRProgramReady(gl, thickProgram.program)) return false;
     const widths = bundle && bundle.worldLineWidths;
     const passes = bundle && bundle.worldLinePasses;
     const vertexCount = Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0));

@@ -207,7 +207,10 @@ type Props struct {
 	// authored cap needs a longer interval than four vsync ticks. An
 	// empty value, or any other string, keeps the existing
 	// fixed-interval behavior.
-	FramePacing         string  `json:"framePacing,omitempty"`
+	FramePacing string `json:"framePacing,omitempty"`
+	// MaxDevicePixelRatio overrides the automatic 1.5 DPR cap on phones
+	// (coarse pointer and a screen short side of at most 600 CSS pixels).
+	// Capability, adaptive-quality and MaxPixels budgets still apply.
 	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
 	// Zero leaves the render target governed by the DPR cap alone.

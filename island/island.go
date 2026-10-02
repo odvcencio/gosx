@@ -1966,6 +1966,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 		}
 	}
 
+	r.writeScene3DPreloads(&b)
 	return gosx.RawHTML(b.String())
 }
 
@@ -2192,7 +2193,7 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 		// Scene3D engine AND the WebGPU sub-feature bundle exists.
 		// The inline loader in RenderEntrypoints gates the actual
 		// download on navigator.gpu so Safari / Firefox skip it.
-		if !r.hasSceneEngines() {
+		if !r.scene3DCanUseWebGPU() {
 			return ""
 		}
 		return r.bootstrapFeatureScene3dWebGPUPath

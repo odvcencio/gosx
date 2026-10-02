@@ -264,8 +264,8 @@ test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
   assert.match(core, /float clipZ = \(\(nearDepth \+ farDepth\) \* rangeInv\) \* local\.z \+ \(2\.0 \* nearDepth \* farDepth \* rangeInv\);/);
   assert.match(core, /vec4\(local\.x \* focal \/ max\(u_aspect, 0\.0001\), local\.y \* focal, clipZ, depth\)/);
   assert.match(core, /float clipDepth = \(\(depth - nearDepth\) \/ max\(farDepth - nearDepth, 0\.0001\)\) \* 2\.0 - 1\.0/);
-  assert.match(core, /depthRangeLocation: gl\.getUniformLocation\(program, "u_depth_range"\)/);
-  assert.match(core, /surfaceDepthRangeLocation: surfaceProgram \? gl\.getUniformLocation\(surfaceProgram, "u_depth_range"\)/);
+  assert.match(core, /result\.depthRangeLocation = gl\.getUniformLocation\(program, "u_depth_range"\)/);
+  assert.match(core, /result\.surfaceDepthRangeLocation = surfaceProgram \? gl\.getUniformLocation\(surfaceProgram, "u_depth_range"\)/);
   assert.match(core, /gl\.uniform2f\(resources\.depthRangeLocation, camera\.near, camera\.far\)/);
   assert.match(core, /gl\.uniform2f\(resources\.surfaceDepthRangeLocation, camera\.near, camera\.far\)/);
   assert.match(core, /gl\.uniform2f\(thickProgram\.depthRangeLocation, camera\.near, camera\.far\)/);

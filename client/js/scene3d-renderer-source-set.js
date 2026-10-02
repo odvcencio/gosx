@@ -251,7 +251,14 @@ function readSceneRendererBackendSrc(backend, options = {}) {
   const tree = ts.createSourceFile("renderer.ts", source, ts.ScriptTarget.Latest, true);
   const ranges = [];
   function visit(node) {
-    if (node.type && (ts.isParameter(node) || ts.isVariableDeclaration(node) || ts.isFunctionLike(node))) {
+    if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
+      ranges.push([node.getStart(tree), node.end]);
+      return;
+    }
+    if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+      ranges.push([node.expression.end, node.end]);
+    }
+    if (node.type && (ts.isParameter(node) || ts.isVariableDeclaration(node) || (ts.isFunctionLike(node) && node.body))) {
       const colon = source.lastIndexOf(":", node.type.getStart(tree));
       ranges.push([colon, node.type.end]);
     }
@@ -260,7 +267,8 @@ function readSceneRendererBackendSrc(backend, options = {}) {
   visit(tree);
   let result = source;
   for (const [start, end] of ranges.sort((a, b) => b[0] - a[0])) {
-    result = result.slice(0, start) + result.slice(start, end).replace(/[^\r\n]/g, " ") + result.slice(end);
+    const erased = result.slice(start, end).replace(/[^\r\n]/g, " ");
+    result = result.slice(0, start) + erased + result.slice(end);
   }
   return result;
 }

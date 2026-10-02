@@ -60,6 +60,11 @@ function gosxConfigureSceneScript(script, role, src) {
       : null;
   }
 
+  function sceneWebGLChunkFunction(name: string) {
+    const api = sceneWebGLChunkAPI();
+    return api && typeof api[name] === "function" ? api[name] : null;
+  }
+
   // sceneLegacyWebGLRendererFactory resolves the legacy vertex-colour
   // renderer. It lived in 10-runtime-scene-core.js, so this file used to call
   // it lexically. It now ships in 16e-scene-webgl-legacy.ts inside the WebGL
@@ -80,34 +85,27 @@ function gosxConfigureSceneScript(script, role, src) {
     if (typeof createScenePBRRendererOrFallback === "function") {
       return createScenePBRRendererOrFallback;
     }
-    const api = sceneWebGLChunkAPI();
-    return api && typeof api.createScenePBRRendererOrFallback === "function"
-      ? api.createScenePBRRendererOrFallback
-      : null;
+    return sceneWebGLChunkFunction("createScenePBRRendererOrFallback");
   }
 
   function sceneWaterWebGLRendererFactory() {
     if (typeof createSceneWaterRendererWebGL === "function") {
       return createSceneWaterRendererWebGL;
     }
-    const api = sceneWebGLChunkAPI();
-    return api && typeof api.createSceneWaterRendererWebGL === "function"
-      ? api.createSceneWaterRendererWebGL
-      : null;
+    return sceneWebGLChunkFunction("createSceneWaterRendererWebGL");
   }
 
   function sceneWebGLInitialProgramAPI() {
-    const api = sceneWebGLChunkAPI();
     return {
       createContext: typeof createScenePBRContext === "function"
         ? createScenePBRContext
-        : (api && typeof api.createScenePBRContext === "function" ? api.createScenePBRContext : null),
+        : sceneWebGLChunkFunction("createScenePBRContext"),
       prepare: typeof prepareScenePBRInitialRenderer === "function"
         ? prepareScenePBRInitialRenderer
-        : (api && typeof api.prepareScenePBRInitialRenderer === "function" ? api.prepareScenePBRInitialRenderer : null),
+        : sceneWebGLChunkFunction("prepareScenePBRInitialRenderer"),
       discard: typeof discardScenePBRInitialPrograms === "function"
         ? discardScenePBRInitialPrograms
-        : (api && typeof api.discardScenePBRInitialPrograms === "function" ? api.discardScenePBRInitialPrograms : null),
+        : sceneWebGLChunkFunction("discardScenePBRInitialPrograms"),
     };
   }
 
@@ -130,7 +128,7 @@ function gosxConfigureSceneScript(script, role, src) {
         unsupportedReason: "water-webgl2-unavailable",
       };
     }
-    const pbrFactory = sceneWebGLRendererFactory();
+    const pbrFactory = fallbackReason === "webgl-shader-failed" ? null : sceneWebGLRendererFactory();
     if (pbrFactory) {
       const initialAPI = sceneWebGLInitialProgramAPI();
       const gl = initialAPI.createContext
@@ -1702,7 +1700,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // so the first mount awaits this before choosing its renderer. Failed or
   // unsupported probes still fall through to WebGL/canvas.
 
-
   function sceneHasNavigatorWebGPU() {
     return typeof navigator !== "undefined"
       && navigator.gpu
@@ -1770,7 +1767,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // never fetches it, which is the whole point of the split: it used to ride
   // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
-
 
   function ensureWebGLFeatureLoaded() {
     // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
@@ -1893,9 +1889,26 @@ function gosxConfigureSceneScript(script, role, src) {
   // fetch; subsequent calls await the same promise. See 26f-feature-
   // scene3d-gltf-prefix.js for the split rationale.
 
-
   function ensureGLTFFeatureLoaded() {
     return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
+  }
+
+  function scenePropsHasKTX2Textures(props: any) {
+    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : props;
+    if (!scene) return false;
+    const isKTX2 = (src: any) => typeof src === "string" && /\.ktx2(?:[?#]|$)/i.test(src.trim());
+    if (isKTX2(scene.environment && scene.environment.envMap)) return true;
+    for (const list of [scene.objects, scene.models, scene.instancedMeshes, scene.points, scene.sprites]) {
+      for (const node of Array.isArray(list) ? list : []) {
+        if (!node) continue;
+        for (const key of ["texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "specularIntensityMap", "specularColorMap"]) {
+          if (isKTX2(node[key])) return true;
+        }
+        const descriptors: any[] = Object.values(node.textureDescriptors || {});
+        if (descriptors.some(descriptor => descriptor && isKTX2(descriptor.uri))) return true;
+      }
+    }
+    return false;
   }
 
   function scenePropsHasIBLProducts(props) {
@@ -1914,12 +1927,12 @@ function gosxConfigureSceneScript(script, role, src) {
     );
   }
 
-  // IBL products use the small KTX2 reader that currently ships ahead of the
+  // IBL products and authored KTX2 textures use the reader that ships with the
   // glTF parser in the glTF sub-feature. Settle it before renderer creation so
   // WebGPU cannot silently construct a frame layout that ignores an authored
   // Environment.IBL descriptor. The parser chunk is cached page-wide.
   async function settleSceneIBLFeature(props) {
-    if (!scenePropsHasIBLProducts(props)) return true;
+    if (!scenePropsHasIBLProducts(props) && !scenePropsHasKTX2Textures(props)) return true;
     try {
       await ensureGLTFFeatureLoaded();
       var ready = Boolean(window.__gosx_scene3d_ktx2);
@@ -1943,7 +1956,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // want to drive keyframe or skeletal animations can await this helper
   // and then use window.__gosx_scene3d_animation_api.
 
-
   function ensureAnimationFeatureLoaded() {
     return ensureSceneGatedFeatureLoaded("animation", "gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
   }
@@ -1957,7 +1969,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // registry and the GPU instanced-cull system. A scene with one cube and one
   // directional light runs none of them, and used to pay 8_772 gzip bytes for
   // all of them. See 26k-feature-scene3d-compute-prefix.js.
-
 
   function ensureComputeFeatureLoaded() {
     if (window.__gosx_scene3d_compute_api) {
@@ -2027,7 +2038,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // quantized-array decoder, the progressive and level-of-detail ladders, and
   // the procedural point generators. See
   // 26l-feature-scene3d-decompress-prefix.js.
-
 
   // sceneDecompressAPIFunction resolves one decompress entry point. The
   // monolith keeps 11a and 11b inline, so the lookup finds the function on the

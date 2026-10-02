@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import rendererSourceSet from "./scene3d-renderer-source-set.js";
 
 const { readSceneRendererBackendSrc } = rendererSourceSet;
+
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -48,7 +51,7 @@ function createCoreContext({ mount = false } = {}) {
   }
   vm.runInContext(trimBeforeSharedAPI(readSource("10-runtime-scene-core.ts")), context, { filename: "10-runtime-scene-core.ts" });
   if (mount) {
-    vm.runInContext(readRuntime("mount-webgl.ts"), context, { filename: "mount-webgl.ts" });
+    vm.runInContext(ts.transpileModule(readRuntime("mount-webgl.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "mount-webgl.ts" });
   }
   return context;
 }
