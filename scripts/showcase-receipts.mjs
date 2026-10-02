@@ -151,7 +151,7 @@ const receipt = {
   gpu: {
     label: 'RTX 5070 Ti desktop, not a mid-range laptop',
     browser: browserVersion,
-    method: 'Windows Chrome with ANGLE D3D11 at 1440x900; forced WebGL2 runs; each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled.',
+    method: 'Windows Chrome with ANGLE D3D11 at 1440x900; separate WebGPU and forced WebGL2 runs; each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled.',
     scenes,
   },
   bundles,
