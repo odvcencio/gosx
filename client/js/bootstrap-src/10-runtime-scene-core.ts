@@ -3108,10 +3108,10 @@
     const number = key => sceneNumber(raw[key], 0);
     const parameter = (key, fallback, minimum, maximum) => Math.max(minimum, Math.min(maximum, number(key) || fallback));
     const color = (key, fallback) => sceneEnvironmentText(raw, key).trim() || fallback;
-    let windDirection = number("windDirection") % 360;
+    let windDirection = number("windDirection") % 360 || 0;
     if (windDirection < 0) windDirection += 360;
     const source = sceneIsPlainObject(raw.bathymetry) ? raw.bathymetry : null;
-    if (windDirection === 0) windDirection = 0;
+    // The fallback above canonicalizes negative zero before wrapping.
     let bathymetry = null;
     if (source) {
       const src = typeof source.src === "string" ? source.src.trim() : "";
