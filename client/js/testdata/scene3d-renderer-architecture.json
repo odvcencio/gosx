@@ -1104,7 +1104,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderShadowPass@15846:116",
+      "name": "renderShadowPass@15844:116",
       "lines": 102,
       "cyclomatic": 31,
       "cognitive": 61,
@@ -1113,7 +1113,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPBRObjects@15965:5",
+      "name": "drawPBRObjects@15963:5",
       "lines": 197,
       "cyclomatic": 93,
       "cognitive": 182,
@@ -1122,7 +1122,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "instancedMeshColorData@16206:5",
+      "name": "instancedMeshColorData@16204:5",
       "lines": 48,
       "cyclomatic": 20,
       "cognitive": 35,
@@ -1131,7 +1131,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPointsEntries@16932:5",
+      "name": "drawPointsEntries@16930:5",
       "lines": 158,
       "cyclomatic": 51,
       "cognitive": 86,
@@ -1140,7 +1140,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawComputeParticleEntries@17107:5",
+      "name": "drawComputeParticleEntries@17105:5",
       "lines": 155,
       "cyclomatic": 44,
       "cognitive": 60,
@@ -1149,7 +1149,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "publishWebGPUFrameStats@17330:5",
+      "name": "publishWebGPUFrameStats@17328:5",
       "lines": 313,
       "cyclomatic": 257,
       "cognitive": 257,
@@ -1158,7 +1158,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawBoardLabels@18003:5",
+      "name": "drawBoardLabels@18001:5",
       "lines": 117,
       "cyclomatic": 39,
       "cognitive": 76,
@@ -1167,7 +1167,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "render@18238:5",
+      "name": "render@18236:5",
       "lines": 733,
       "cyclomatic": 223,
       "cognitive": 283,
@@ -1176,7 +1176,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "dispose@19026:5",
+      "name": "dispose@19024:5",
       "lines": 145,
       "cyclomatic": 37,
       "cognitive": 61,
@@ -1186,7 +1186,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@19284:5",
+      "name": "diagnostics@19282:5",
       "lines": 90,
       "cyclomatic": 49,
       "cognitive": 49,

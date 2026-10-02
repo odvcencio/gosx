@@ -15714,16 +15714,14 @@
     }
 
     function webGPUSceneMeshVertexCount(bundle) {
-      var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0)));
-      var positions = bundle && bundle.worldMeshPositions;
-      if (positions && typeof positions.length === "number") {
+      var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0))), positions = bundle && bundle.worldMeshPositions;
+      if (positions && Number.isFinite(positions.length)) {
         count = Math.max(count, Math.floor(positions.length / 3));
       }
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
-      for (var i = 0; i < objects.length; i++) {
-        var obj = objects[i];
-        if (!obj || obj.directVertices) continue; // These draws bind their own streams.
-        count = Math.max(count, Math.floor(sceneNumber(obj.vertexOffset, 0)) + Math.floor(sceneNumber(obj.vertexCount, 0)));
+      for (var obj of objects) {
+        if (!sceneWebGPUUsesSharedMeshStreams(obj)) continue;
+        count = Math.max(count, Math.floor(sceneNumber(obj.vertexOffset, 0) + sceneNumber(obj.vertexCount, 0)));
       }
       return count;
     }
@@ -19427,6 +19425,8 @@
     var probe = _externalProbe();
     return probe.ready && probe.adapter !== false && probe.adapter !== null;
   }
+
+  function sceneWebGPUUsesSharedMeshStreams(obj) { return obj && !obj.directVertices; }
 
   // Open the KTX2 variant-swap gate.
   //

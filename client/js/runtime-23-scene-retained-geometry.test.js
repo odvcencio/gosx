@@ -657,3 +657,38 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   assert.equal(retiredStats.liveBytes, 0);
 });
 }
+
+for (const fresh of [true, false]) {
+  test(`Scene3D WebGPU ${fresh ? 'source' : 'generated'} mixed meshes preserve baked vertex uploads`, async () => {
+    const harness = await createBoardWebGPUHarness({ fresh });
+    harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
+    const api = harness.env.context.__gosx_scene3d_api;
+    const F32 = vm.runInContext('Float32Array', harness.env.context);
+    const retained = retainedTriangle({ id: 'large-retained' }, F32);
+    for (const key of ['positions', 'normals', 'uvs', 'tangents']) {
+      retained.vertices[key] = new F32(Array.from(retained.vertices[key]).concat(...Array(3).fill(Array.from(retained.vertices[key]))));
+    }
+    retained.vertices.count = 12;
+    const baked = retainedTriangle({ id: 'small-baked', x: -2, spinZ: 0 }, F32);
+    baked.vertices.immutable = false;
+    baked.vertices.revision = null;
+    const viewport = { cssWidth: 640, cssHeight: 480, pixelWidth: 640, pixelHeight: 480, pixelRatio: 1 };
+    for (const objects of [[retained, baked], [baked, retained]]) {
+      const bundle = renderBundle(api, objects, 0);
+      assert.equal(bundle.retainedMeshObjectCount, 1);
+      assert.equal(bundle.worldBakedMeshObjectCount, 1);
+      assert.ok(bundle.meshObjects.find(o => o.retainedGeometry).vertexCount > bundle.worldMeshVertexCount);
+      const start = harness.fake.state.renderPasses.length;
+      harness.renderer.render(bundle, viewport);
+      const bindings = harness.fake.state.renderPasses.slice(start).flatMap(pass => pass.vertexBuffers);
+      for (const [slot, values] of [bundle.worldMeshPositions, bundle.worldMeshNormals, bundle.worldMeshUVs, bundle.worldMeshTangents].entries()) {
+        const binding = bindings.find(b => b.slot === slot && b.size === values.byteLength);
+        assert.ok(binding, `baked attribute slot ${slot} must be bound`);
+        const write = harness.fake.state.writeBufferCalls.filter(w => w.buffer === binding.buffer).at(-1);
+        const data = write ? write.data : new Float32Array(binding.buffer.getMappedRange());
+        assert.deepEqual(Array.from(data), Array.from(values), `slot ${slot} must upload authored baked values, without retained-mesh padding/defaults`);
+      }
+    }
+    harness.renderer.dispose();
+  });
+}

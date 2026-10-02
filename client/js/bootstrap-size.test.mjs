@@ -2481,7 +2481,7 @@ const routeBudgets = [
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1235900,
-    gzip: 340300,
+    gzip: 340400,
     brotli: 283305,
   },
 
