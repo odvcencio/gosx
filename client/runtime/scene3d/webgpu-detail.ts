@@ -1,5 +1,5 @@
 // Opt-in WebGPU detail resources. The base material layout and maps stay intact.
-function sceneWebGPUDetailFragment(source = "", detail = false) {
+function sceneWebGPUDetailFragment(source: string, detail: boolean) {
   if (!detail) return source;
   return source.replace("@fragment fn fragmentMain(in: VertexOutput)", sceneDetailShaderSource("wgsl") + "\n@fragment fn fragmentMain(in: VertexOutput)")
     .replace("-> @location(0) vec4f {\n    var albedo = material.albedo;", "-> @location(0) vec4f {\n    let detailDx = dpdx(in.worldPos);\n    let detailDy = dpdy(in.worldPos);\n    var albedo = material.albedo;")
@@ -8,7 +8,7 @@ function sceneWebGPUDetailFragment(source = "", detail = false) {
     let V = normalize(frame.cameraPos - in.worldPos);`);
 }
 
-function sceneWebGPUCreateDetailResources(device: any, frameLayout: any, materialLayout: any, source = "") {
+function sceneWebGPUCreateDetailResources(device: any, frameLayout: any, materialLayout: any, source: string) {
   const layout = device.createBindGroupLayout({ label: "detail", entries: [
     { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
     { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d-array" } },
@@ -107,7 +107,7 @@ function sceneWebGPUPrepareDetail(device: any, resources: any, material: any, te
     for (let i = 0; i < 4; i++) atlas.flags.push(device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
     resources.atlases.set(key, atlas);
   }
-  const inputs = sceneDetailTextureRecords(detail, function(url = "", role = "") {
+  const inputs = sceneDetailTextureRecords(detail, function(url: string, role: string) {
     return wgpuLoadTexture(device, url, textureCache, null, role === "albedo" ? "base-color" : role, "linear");
   });
   const signature = inputs.masks.join("");
@@ -130,7 +130,7 @@ function sceneWebGPUPrepareDetail(device: any, resources: any, material: any, te
   return entry;
 }
 
-function sceneWebGPUUploadDetail(device: any, resources: any, material: any, enabled = true) {
+function sceneWebGPUUploadDetail(device: any, resources: any, material: any, enabled: boolean) {
   const entry = resources.materials.get(sceneWebGPUDetailMaterialKey(material.detail));
   device.queue.writeBuffer(entry.buffer, 0, sceneDetailUniformData(material.detail, entry.atlas.masks, enabled));
   return entry.group;

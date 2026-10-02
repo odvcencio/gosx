@@ -343,6 +343,9 @@ jobs:
           TINYGO_VERSION: 0.41.1
         run: scripts/install-ci-tinygo.sh
 
+      - name: Install production WASM optimizer
+        run: scripts/install-ci-binaryen.sh
+
       # The ratchet compares with the base branch's budget. A failed fetch
       # fails this step; only a base tree verified to lack the budget file
       # skips the ratchet (the PR that introduces the file).

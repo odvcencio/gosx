@@ -52,13 +52,15 @@ type FileRoutesOptions struct {
 	// ExternalCSS is a local URL prefix for immutable sidecar stylesheet assets.
 	// Empty keeps styles inline. Use a distinct, stable prefix for each AddDir
 	// so exported pages also work after deployment moves.
-	ExternalCSS  string
-	Render       FileRenderFunc
-	Modules      *FileModuleRegistry
-	DirModules   *DirModuleRegistry
-	Middleware   []Middleware
-	Layout       LayoutFunc
-	ErrorHandler ErrorHandler
+	ExternalCSS string
+	// ExternalCSSFilter selects pages using ExternalCSS; nil selects every page.
+	ExternalCSSFilter func(FilePage) bool
+	Render            FileRenderFunc
+	Modules           *FileModuleRegistry
+	DirModules        *DirModuleRegistry
+	Middleware        []Middleware
+	Layout            LayoutFunc
+	ErrorHandler      ErrorHandler
 }
 
 // FileRenderFunc renders a discovered file page for a request.
@@ -338,7 +340,10 @@ func newFileRouteRegistrar(router *Router, root string, opts FileRoutesOptions) 
 
 func (r *fileRouteRegistrar) resolve(page FilePage) (resolvedFilePage, error) {
 	page.cssAssets = r.cssAssets
-	if r.cssAssets != nil {
+	if r.opts.ExternalCSSFilter != nil && !r.opts.ExternalCSSFilter(page) {
+		page.cssAssets = nil
+	}
+	if page.cssAssets != nil {
 		// An exported page may request CSS before this process renders any page.
 		addRouteFileCSSHead(&RouteContext{}, page)
 	}

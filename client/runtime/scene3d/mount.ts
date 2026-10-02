@@ -94,15 +94,16 @@
     // guard also covers an unexpected producer/listener exception without
     // leaving a long gap in which the browser can report unhandledrejection.
     const sceneModelHydration = Promise.resolve(hydrateSceneStateModels(sceneState, props)).catch(function(error) {
+      const message = error && error.message ? error.message : error;
       console.warn("[gosx] Scene3D model hydration failed; mounting without the affected model(s):",
-        error && error.message ? error.message : error);
+        message);
       const generation = Math.max(0, Math.floor(sceneNumber(sceneState._modelHydrationGeneration, 0)));
       gosxSceneEmit("warn", "model-hydration-failed", {
         generation,
         committed: false,
         stale: false,
         stage: "unexpected",
-        error: error && error.message ? String(error.message) : String(error),
+        error: String(message),
       });
       return {
         generation,

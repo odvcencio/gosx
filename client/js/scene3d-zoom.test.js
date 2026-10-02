@@ -130,3 +130,12 @@ test('portrait framing provides the default FOV and preserves optical zoom throu
   near(h.controller.zoomScale,h.api.scale(30,70));
   h.helpers.fov=adapter.fov; h.base.reset(); assert.equal(h.controller.currentCamera().fov,70);
 });
+
+test('the lazy zoom loader finds the controller in the runtime API', () => {
+ const source = fs.readFileSync(require.resolve('../runtime/scene3d/mount-webgl.ts'), 'utf8');
+ const start = source.indexOf('  function sceneGatedFeatureAPI(kind)');
+ const end = source.indexOf('  // @ts-ignore', start);
+ const api = { setup() {} }, env = { window: { __gosx_runtime_api: { scene3DZoom: api } } };
+ vm.runInNewContext(source.slice(start, end), env);
+ assert.equal(env.sceneGatedFeatureAPI('zoom'), api);
+});
