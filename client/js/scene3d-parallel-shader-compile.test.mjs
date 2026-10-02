@@ -11,7 +11,7 @@ function runSource(source, context) {
   return vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
 }
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
-const { FakeWebGLContext, createContext, installManualRAF, runScript,
+const { FakeWebGLContext, createContext, installManualRAF, runScript, flushAsyncWork,
   bootstrapRuntimeSource, freshFeatureBundleSource, makePointsBundle, makeComputeParticleBundle,
 } = require("./runtime-test-harness.js");
 const webglSource = readSceneRendererBackendSrc("webgl");
@@ -185,8 +185,129 @@ function parallelRendererHarness(extension = true) {
   gl.getProgramParameter = (program, parameter) => parameter === 91 ? complete : getProgramParameter(program, parameter);
   const renderer = env.context.__gosx_scene3d_webgl_api.createScenePBRRendererOrFallback(gl, canvas, {});
   assert.ok(renderer);
-  return { gl, renderer, raf, setComplete(value) { complete = value; } };
+  return { env, canvas, gl, renderer, raf, setComplete(value) { complete = value; } };
 }
+
+const gpuCreationOps = new Set(["createProgram", "createShader", "createTexture", "createFramebuffer", "createBuffer", "createVertexArray"]);
+function gpuCreations(gl) {
+  return gl.ops.filter(op => gpuCreationOps.has(op[0])).length;
+}
+
+function cssPostRendererHarness(extension) {
+  const h = parallelRendererHarness(extension);
+  const bundle = makePointsBundle({ id: "css-point", count: 1, positions: [0, 0, 0] });
+  const viewport = { width: 320, height: 180 };
+  h.setComplete(true);
+  h.raf.flush(16);
+  h.renderer.render(bundle, viewport);
+  h.raf.flush(32);
+  h.renderer.render(bundle, viewport);
+  const mount = h.env.document.createElement("div");
+  mount.computedStyle = { "--scene-filter": "vignette(intensity 0.5)" };
+  mount.__gosxScene3DCSSRevision = 1;
+  mount.appendChild(h.canvas);
+  h.gl.ops.length = 0;
+  return { ...h, bundle, viewport };
+}
+
+test("CSS-only post programs prepare before readiness and skip pending draws", t => {
+  const h = cssPostRendererHarness(true);
+  t.after(() => h.renderer.dispose());
+  h.setComplete(false);
+  h.renderer.render(h.bundle, h.viewport);
+  assert.ok(h.gl.ops.some(op => op[0] === "createProgram"), "CSS submits post programs before checking readiness");
+  assert.equal(h.gl.ops.filter(op => /^(useProgram|drawArrays|drawElements|getUniformLocation|getAttribLocation|uniform)/.test(op[0])).length,
+    0, "CSS post effects cannot draw or query locations before completion");
+  h.setComplete(true);
+  h.raf.flush(48);
+  h.renderer.render(h.bundle, h.viewport);
+  assert.ok(h.gl.ops.some(op => op[0] === "drawArrays" && op[1] === h.gl.TRIANGLE_STRIP));
+});
+
+for (const extension of [false, true]) {
+  test(`CSS-only post resources are reused across frames (parallel=${extension})`, t => {
+    const h = cssPostRendererHarness(extension);
+    t.after(() => h.renderer.dispose());
+    h.renderer.render(h.bundle, h.viewport);
+    h.raf.flush(48);
+    h.renderer.render(h.bundle, h.viewport);
+    const initial = gpuCreations(h.gl);
+    const perFrame = [];
+    for (let frame = 0; frame < 3; frame++) {
+      const before = gpuCreations(h.gl);
+      h.renderer.render(h.bundle, h.viewport);
+      h.raf.flush(64 + frame * 16);
+      perFrame.push(gpuCreations(h.gl) - before);
+    }
+    t.diagnostic(`CSS post GPU resource creations: initial=${initial}, subsequent_frames=${perFrame.join(",")}`);
+    assert.deepEqual(perFrame, [0, 0, 0], "completed CSS effects retain their programs, buffers, textures and framebuffers");
+  });
+}
+
+test("a rejected asynchronous base shader recovers through the mounted legacy fallback", async t => {
+  let complete = false;
+  const contexts = [];
+  const env = createContext({ disableCanvas2D: true, createWebGL2Context() {
+    const gl = new FakeWebGLContext();
+    contexts.push(gl);
+    const getExtension = gl.getExtension.bind(gl);
+    const getProgramParameter = gl.getProgramParameter.bind(gl);
+    gl.getExtension = name => name === "KHR_parallel_shader_compile" ? { COMPLETION_STATUS_KHR: 91 } : getExtension(name);
+    gl.getProgramParameter = (program, parameter) => parameter === 91 ? complete
+      : (parameter === gl.LINK_STATUS && gl.programShaderSources(program).includes("u_normalUVScale")
+        && !gl.programShaderSources(program).includes("a_instanceMatrix") ? false : getProgramParameter(program, parameter));
+    return gl;
+  } });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  env.context.Event = Event;
+  const createElement = env.document.createElement.bind(env.document);
+  env.document.createElement = tag => {
+    const element = createElement(tag);
+    if (tag === "canvas") {
+      const dispatch = element.dispatchEvent.bind(element);
+      element.dispatchEvent = event => {
+        const result = dispatch(event);
+        if (event.bubbles && element.parentNode) element.parentNode.dispatchEvent(event);
+        return result;
+      };
+      const getContext = element.getContext.bind(element);
+      element.getContext = (...args) => {
+        const gl = getContext(...args);
+        if (gl instanceof FakeWebGLContext) gl.canvas = element;
+        return gl;
+      };
+    }
+    return element;
+  };
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  let factory;
+  const register = env.context.__gosx_register_engine_factory;
+  env.context.__gosx_register_engine_factory = (name, value) => {
+    if (name === "GoSXScene3D") factory = value;
+    register(name, value);
+  };
+  for (const name of ["scene3d", "scene3d-webgl"]) runScript(freshFeatureBundleSource(name), env.context, name + ".js");
+  // Exercise the cold factory path also used for registry creation and restoration.
+  env.context.__gosx_scene3d_webgl_api.prepareScenePBRInitialRenderer = null;
+  const mount = env.document.createElement("div");
+  env.document.body.appendChild(mount);
+  const pending = factory({ mount, props: { width: 320, height: 180, forceWebGL: true,
+    objects: [{ id: "fallback-box", kind: "box", width: 1, height: 1, depth: 1, color: "#ffffff" }] } });
+  for (let frame = 0; frame < 8; frame++) { await flushAsyncWork(); raf.flush(16 + frame * 16); }
+  const controller = await pending;
+  t.after(() => controller.dispose());
+  const initial = contexts.find(gl => gl.programMatching("u_normalUVScale"));
+  assert.ok(initial, "the cold renderer submitted its base PBR program");
+  assert.equal(initial.ops.filter(op => op[0] === "drawArrays").length, 0, "the pending base program does not draw");
+  complete = true;
+  for (let frame = 0; frame < 8; frame++) { raf.flush(160 + frame * 16); await flushAsyncWork(); }
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgl-shader-failed", "required-program failure reaches the mount fallback ladder");
+  const fallback = contexts.find(gl => gl !== initial && gl.programs.length > 0);
+  assert.ok(fallback, "legacy fallback owns a fresh canvas/context");
+  assert.ok(fallback.ops.some(op => op[0] === "drawArrays" || op[0] === "drawElements"), "fallback renders after its own programs complete");
+  assert.ok(initial.ops.some(op => op[0] === "deleteBuffer"), "failed PBR resources are released");
+});
 
 test("authored compute-particle shaders prepare before readiness and never draw while pending", () => {
   const h = parallelRendererHarness();

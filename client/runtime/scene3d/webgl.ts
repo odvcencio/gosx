@@ -8964,15 +8964,28 @@
         return;
       }
 
+      const preparedScene = typeof prepareScene === "function"
+        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
+          mount: canvas && canvas.parentNode || null,
+          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
+        })
+        : null;
+      if (preparedScene) {
+        lastPreparedScene = preparedScene;
+        bundle = preparedScene.ir || bundle;
+        if (canvas && canvas.parentNode) {
+          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+        }
+      }
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
       scenePBRPrepareBundlePrograms(gl, bundle, programPreparation);
       postProcessor = programPreparation.postProcessor;
       if (!scenePBRFrameProgramsReady(gl, program)) return;
 
-      return renderFrame(bundle, viewport, frameMeta);
+      return renderFrame(bundle, viewport, frameMeta, preparedScene);
     }
 
-    function renderFrame(bundle: any, viewport: any, frameMeta: any) {
+    function renderFrame(bundle: any, viewport: any, frameMeta: any, preparedScene: any) {
       // Optional browser-bench instrumentation brackets complete frame draws.
       resetWebGLRenderTruthStats();
       var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
@@ -8995,19 +9008,6 @@
         (Array.isArray(bundle.surfaces) && bundle.surfaces.some(function(surface) {
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
-      const preparedScene = typeof prepareScene === "function"
-        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
-          mount: canvas && canvas.parentNode || null,
-          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
-        })
-        : null;
-      if (preparedScene) {
-        lastPreparedScene = preparedScene;
-        bundle = preparedScene.ir || bundle;
-        if (canvas && canvas.parentNode) {
-          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
-        }
-      }
       beginWebGLDirectMeshBufferFrame(bundle);
       if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
@@ -9158,12 +9158,6 @@
       var renderTarget = sceneWebGLRenderTarget(canvas, null);
 
       if (usePostProcessing) {
-        if (!postProcessor) {
-          // Inject the Selena uniform resolver so custom post passes receive
-          // reserved auto-uniforms (time and friends), matching the WebGPU
-          // path's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
-          postProcessor = createScenePostProcessor(gl, selenaUniformValue);
-        }
         var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
         renderW = scaled.width;
         renderH = scaled.height;
@@ -11336,6 +11330,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
+      getFailureReason: function() { return scenePBRProgramFailed(program) ? "webgl-shader-failed" : ""; },
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },

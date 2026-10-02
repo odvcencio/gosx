@@ -1622,8 +1622,9 @@
 	      // device itself is still alive. webgpu-persistent-frame-error's
 	      // canvas was claimed by the (still-alive-but-broken) WebGPU
 	      // renderer exactly like webgpu-device-lost's was, so it needs the
-	      // same fresh-canvas treatment.
-	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error";
+	      // same fresh-canvas treatment. Failed PBR shaders also need a fresh
+	      // context so their teardown cannot cancel the legacy shader queue.
+	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
 	    }
 
     // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
@@ -1778,6 +1779,11 @@
     function ensureRendererCanCoverBundle(bundle) {
       if (!renderer || !bundle) {
         return true;
+      }
+      const failureReason = typeof renderer.getFailureReason === "function" ? renderer.getFailureReason() : "";
+      if (failureReason) {
+        if (fallbackSceneRenderer(failureReason)) scheduleRenderWithViewport(failureReason);
+        return false;
       }
       let feature = "";
       if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {

@@ -8,6 +8,7 @@ import (
 func init() {
 	docsapp.RegisterDocsPage("Blackglass Coast", "A Studio-authored volcanic cove bound to GoSX Scene3D water, gameplay anchors, and performance telemetry.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			docsapp.AddScenePosterPreload(ctx, "/demos/posters/beacon.webp")
 			view := blackglassViewID(ctx.Query("view"))
 			period := blackglassPeriodFor(ctx.Query("period"))
 			data := map[string]any{

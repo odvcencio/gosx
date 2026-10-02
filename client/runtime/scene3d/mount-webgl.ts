@@ -130,7 +130,7 @@ function gosxConfigureSceneScript(script, role, src) {
         unsupportedReason: "water-webgl2-unavailable",
       };
     }
-    const pbrFactory = sceneWebGLRendererFactory();
+    const pbrFactory = fallbackReason === "webgl-shader-failed" ? null : sceneWebGLRendererFactory();
     if (pbrFactory) {
       const initialAPI = sceneWebGLInitialProgramAPI();
       const gl = initialAPI.createContext
