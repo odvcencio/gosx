@@ -3438,7 +3438,9 @@
       if (setModelsCommands) {
         cancelSceneProgressiveModelLifecycle(sceneState);
       }
+      const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
+      if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
         domRegionTracker.configure(sceneState.postEffects);
