@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("node:module").createRequire(path.join(__dirname, "../runtime/package.json"))("typescript");
 
 function runtime() {
   const context = vm.createContext({ window: {}, console });
@@ -450,7 +451,7 @@ test("rigid declarations omit pose metadata while explicit empty clips retain bi
 
 test("default opaque instanced batch reaches crowd staging with its resolved material override", async () => {
   const api = runtime();
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../runtime/scene3d/mount-webgl.ts'), 'utf8'), api);
+  vm.runInContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../runtime/scene3d/mount-webgl.ts'), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, api);
   const batch = api.normalizeSceneInstancedGLBMeshEntry({id:'mite',src:'/mite.glb',blendMode:'opaque',instances:[{id:'10000',animation:'Idle',animationTime:.3,animationLoop:true}]}, 0, null);
   const model = api.sceneCloneHydrationModel(api.sceneInstancedGLBMeshToModels(batch,0)[0]);
   assert.equal(model.materialOverride.blendMode, 'opaque');
