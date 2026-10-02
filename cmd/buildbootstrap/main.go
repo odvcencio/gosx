@@ -7,7 +7,9 @@
 // Minification defaults to esbuild's native Go library (esbuild is written in
 // Go; the npm package was only a wrapper around it), which keeps the minified
 // bundles byte-identical to what the retired Node pipeline produced and keeps
-// composed source maps. A pure tdewolff/minify backend is available via
+// composed source maps. Production WebGL also uses tdewolff after esbuild;
+// GOSX_BUNDLE_DEBUG=1 retains esbuild's output and accurate map for debugging.
+// A pure tdewolff/minify backend is available via
 // -minifier=tdewolff for A/B comparison; as of the migration it produces
 // smaller raw/brotli output on the large bundles but breaches three committed
 // size gates (see docs in the repo history), so it is not the default.
@@ -1142,7 +1144,7 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
 	input := built.code + "\n//# sourceMappingURL=" + dataURL
-	result := esbuild.Transform(input, esbuild.TransformOptions{
+	options := esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,
 		Loader:            esbuild.LoaderJS,
@@ -1152,7 +1154,12 @@ func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 		Sourcefile:        entry.name,
 		Sourcemap:         esbuild.SourceMapExternal,
 		Target:            esbuild.ES2020,
-	})
+	}
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+		options.MangleProps = webGLPrivatePropertyPattern
+		options.MangleQuoted = esbuild.MangleQuotedTrue
+	}
+	result := esbuild.Transform(input, options)
 	if len(result.Errors) > 0 {
 		return builtBundle{}, fmt.Errorf("esbuild %s: %s", entry.name, result.Errors[0].Text)
 	}
@@ -1230,6 +1237,15 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 		minified, err := minifyESBuild(entry, built)
 		if err != nil {
 			return builtBundle{}, err
+		}
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" && !debugSourcemaps {
+			// The existing tdewolff backend compacts esbuild's normalized
+			// WebGL output further. Debug builds keep esbuild's output and
+			// composed map together; tdewolff cannot compose source maps.
+			minified.code, err = minifyTdewolff(minified.code)
+			if err != nil {
+				return builtBundle{}, fmt.Errorf("compact WebGL release: %w", err)
+			}
 		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified.code, entry.name+".map", debugSourcemaps),

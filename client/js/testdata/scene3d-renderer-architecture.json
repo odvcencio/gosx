@@ -824,7 +824,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7355:3",
+      "name": "scenePBRUploadEnvironmentMap@7347:3",
       "lines": 126,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -833,7 +833,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7596:3",
+      "name": "createScenePBRRenderer@7588:3",
       "lines": 3464,
       "cyclomatic": 1062,
       "cognitive": 1694,
@@ -842,7 +842,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8582:5",
+      "name": "uploadCustomUniforms@8574:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -851,7 +851,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8813:5",
+      "name": "renderFrame@8805:5",
       "lines": 337,
       "cyclomatic": 114,
       "cognitive": 164,
@@ -860,7 +860,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9621:5",
+      "name": "prepareRigidMeshBatches@9613:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -869,7 +869,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9895:5",
+      "name": "drawPBRObjectList@9887:5",
       "lines": 292,
       "cyclomatic": 89,
       "cognitive": 219,
@@ -878,7 +878,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10302:5",
+      "name": "applyPointsAuthoredCustomUniforms@10294:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -887,7 +887,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10478:5",
+      "name": "drawPointsEntries@10470:5",
       "lines": 197,
       "cyclomatic": 63,
       "cognitive": 125,
@@ -896,7 +896,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10770:5",
+      "name": "drawInstancedMeshes@10762:5",
       "lines": 191,
       "cyclomatic": 57,
       "cognitive": 116,

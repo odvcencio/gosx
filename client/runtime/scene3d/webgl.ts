@@ -7196,14 +7196,6 @@
     }
   }
 
-  function scenePBREnvironmentHasMap(environment) {
-    var ibl = environment && environment.ibl;
-    return Boolean(
-      (environment && typeof environment.envMap === "string" && environment.envMap.trim()) ||
-      (ibl && ibl.radiance && ibl.irradiance && ibl.brdfLUT)
-    );
-  }
-
   function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment, maxUnits) {
     // Reserve array and cube units even while their feature is inactive.
     // Active sampler types must not alias material sampler2D units.

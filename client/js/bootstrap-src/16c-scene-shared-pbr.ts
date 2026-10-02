@@ -71,44 +71,40 @@
   // GLSL and WGSL of the physical sky. Both renderers' sky passes and any
   // pass that reflects the sky include these; inputs come from
   // sceneSkyPhysicalParams.
-  var SCENE_SKY_PHYSICAL_GLSL = [
-    "vec3 gosxPhysicalSky(vec3 dir, vec4 betaR, vec4 betaM, vec4 sun, float g) {",
-    "  float zenith = acos(clamp(dir.y, 0., 1.));",
-    "  float inv = 1. / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));",
-    "  vec3 fex = exp(-(betaR.xyz * (8400. * inv) + betaM.xyz * (1250. * inv)));",
-    "  float ct = dot(dir, sun.xyz);",
-    "  float rPhase = 0.0596831 * (1. + ct * ct);",
-    "  float g2 = g * g;",
-    "  float mPhase = 0.0795775 * (1. - g2) / pow(max(1. - 2. * g * ct + g2, 1e-6), 1.5);",
-    "  vec3 scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3(1e-30));",
-    "  vec3 lin = pow(max(betaR.w * scatter * (1. - fex), vec3(0.)), vec3(1.5));",
-    "  lin *= mix(vec3(1.), pow(max(betaR.w * scatter * fex, vec3(0.)), vec3(.5)), clamp(pow(max(1. - sun.y, 0.), 5.), 0., 1.));",
-    "  float disk = sun.w <= 1. ? smoothstep(sun.w, sun.w + 0.00002, ct) : 0.;",
-    "  vec3 l0 = 0.1 * fex + betaR.w * 19000. * fex * disk;",
-    "  vec3 c = (lin + l0) * 0.04 + vec3(0., 0.0003, 0.00075);",
-    "  return pow(max(c, vec3(0.)), vec3(1. / (1.2 + 1.2 * betaM.w)));",
-    "}",
-  ].join("\n");
+  var SCENE_SKY_PHYSICAL_GLSL = `vec3 gosxPhysicalSky(vec3 dir, vec4 betaR, vec4 betaM, vec4 sun, float g) {
+  float zenith = acos(clamp(dir.y, 0., 1.));
+  float inv = 1. / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));
+  vec3 fex = exp(-(betaR.xyz * (8400. * inv) + betaM.xyz * (1250. * inv)));
+  float ct = dot(dir, sun.xyz);
+  float rPhase = 0.0596831 * (1. + ct * ct);
+  float g2 = g * g;
+  float mPhase = 0.0795775 * (1. - g2) / pow(max(1. - 2. * g * ct + g2, 1e-6), 1.5);
+  vec3 scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3(1e-30));
+  vec3 lin = pow(max(betaR.w * scatter * (1. - fex), vec3(0.)), vec3(1.5));
+  lin *= mix(vec3(1.), pow(max(betaR.w * scatter * fex, vec3(0.)), vec3(.5)), clamp(pow(max(1. - sun.y, 0.), 5.), 0., 1.));
+  float disk = sun.w <= 1. ? smoothstep(sun.w, sun.w + 0.00002, ct) : 0.;
+  vec3 l0 = 0.1 * fex + betaR.w * 19000. * fex * disk;
+  vec3 c = (lin + l0) * 0.04 + vec3(0., 0.0003, 0.00075);
+  return pow(max(c, vec3(0.)), vec3(1. / (1.2 + 1.2 * betaM.w)));
+}`;
 
-  var SCENE_SKY_PHYSICAL_WGSL = [
-    "fn gosxPhysicalSky(dir: vec3f, betaR: vec4f, betaM: vec4f, sun: vec4f, g: f32) -> vec3f {",
-    "  let zenith = acos(clamp(dir.y, 0.0, 1.0));",
-    "  let inv = 1.0 / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));",
-    "  let fex = exp(-(betaR.xyz * (8400.0 * inv) + betaM.xyz * (1250.0 * inv)));",
-    "  let ct = dot(dir, sun.xyz);",
-    "  let rPhase = 0.0596831 * (1.0 + ct * ct);",
-    "  let g2 = g * g;",
-    "  let mPhase = 0.0795775 * (1.0 - g2) / pow(max(1.0 - 2.0 * g * ct + g2, 1e-6), 1.5);",
-    "  let scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3f(1e-30));",
-    "  var lin = pow(max(betaR.w * scatter * (1.0 - fex), vec3f(0.0)), vec3f(1.5));",
-    "  lin = lin * mix(vec3f(1.0), pow(max(betaR.w * scatter * fex, vec3f(0.0)), vec3f(0.5)), clamp(pow(max(1.0 - sun.y, 0.0), 5.0), 0.0, 1.0));",
-    "  var disk = 0.0;",
-    "  if (sun.w <= 1.0) { disk = smoothstep(sun.w, sun.w + 0.00002, ct); }",
-    "  let l0 = 0.1 * fex + betaR.w * 19000.0 * fex * disk;",
-    "  let c = (lin + l0) * 0.04 + vec3f(0.0, 0.0003, 0.00075);",
-    "  return pow(max(c, vec3f(0.0)), vec3f(1.0 / (1.2 + 1.2 * betaM.w)));",
-    "}",
-  ].join("\n");
+  var SCENE_SKY_PHYSICAL_WGSL = `fn gosxPhysicalSky(dir: vec3f, betaR: vec4f, betaM: vec4f, sun: vec4f, g: f32) -> vec3f {
+  let zenith = acos(clamp(dir.y, 0.0, 1.0));
+  let inv = 1.0 / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));
+  let fex = exp(-(betaR.xyz * (8400.0 * inv) + betaM.xyz * (1250.0 * inv)));
+  let ct = dot(dir, sun.xyz);
+  let rPhase = 0.0596831 * (1.0 + ct * ct);
+  let g2 = g * g;
+  let mPhase = 0.0795775 * (1.0 - g2) / pow(max(1.0 - 2.0 * g * ct + g2, 1e-6), 1.5);
+  let scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3f(1e-30));
+  var lin = pow(max(betaR.w * scatter * (1.0 - fex), vec3f(0.0)), vec3f(1.5));
+  lin = lin * mix(vec3f(1.0), pow(max(betaR.w * scatter * fex, vec3f(0.0)), vec3f(0.5)), clamp(pow(max(1.0 - sun.y, 0.0), 5.0), 0.0, 1.0));
+  var disk = 0.0;
+  if (sun.w <= 1.0) { disk = smoothstep(sun.w, sun.w + 0.00002, ct); }
+  let l0 = 0.1 * fex + betaR.w * 19000.0 * fex * disk;
+  let c = (lin + l0) * 0.04 + vec3f(0.0, 0.0003, 0.00075);
+  return pow(max(c, vec3f(0.0)), vec3f(1.0 / (1.2 + 1.2 * betaM.w)));
+}`;
 
   // --- Ocean ---
   //
