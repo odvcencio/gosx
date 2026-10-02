@@ -3039,19 +3039,21 @@
     if (!source || typeof source.uri !== "string" || !source.uri.trim()) {
       return null;
     }
+    const text = key => typeof source[key] === "string" ? source[key].trim().toLowerCase() : (key === "view" ? "2d" : "");
+    const wrap = value => value === 33071 || value === 33648 || value === 10497 ? value : 0;
     return {
       uri: source.uri.trim(),
-      role: typeof source.role === "string" ? source.role.trim().toLowerCase() : "",
-      colorSpace: typeof source.colorSpace === "string" ? source.colorSpace.trim().toLowerCase() : "",
-      channels: typeof source.channels === "string" ? source.channels.trim().toLowerCase() : "",
-      view: typeof source.view === "string" ? source.view.trim().toLowerCase() : "2d",
-      format: typeof source.format === "string" ? source.format.trim().toLowerCase() : "",
+      role: text("role"),
+      colorSpace: text("colorSpace"),
+      channels: text("channels"),
+      view: text("view"),
+      format: text("format"),
       mipLevels: Math.max(0, Math.floor(sceneNumber(source.mipLevels, 0))),
       width: Math.max(0, Math.floor(sceneNumber(source.width, 0))),
       height: Math.max(0, Math.floor(sceneNumber(source.height, 0))),
       faces: Math.max(0, Math.floor(sceneNumber(source.faces, 0))),
-      wrapS: [33071, 33648, 10497].indexOf(source.wrapS) >= 0 ? source.wrapS : 0,
-      wrapT: [33071, 33648, 10497].indexOf(source.wrapT) >= 0 ? source.wrapT : 0,
+      wrapS: wrap(source.wrapS),
+      wrapT: wrap(source.wrapT),
     };
   }
 
@@ -3168,21 +3170,12 @@
     const source = sceneIsPlainObject(raw) ? raw : {};
     const lifecycle = sceneNormalizeLifecycle(source, base);
     const environment = {
-      ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
-      ambientIntensity: sceneClampNumberOrCSSVar(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0), 0, 4),
-      skyColor: typeof source.skyColor === "string" && source.skyColor ? source.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
-      skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
-      groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
-      groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
-      envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
       ocean: Object.prototype.hasOwnProperty.call(source, "ocean") ? normalizeSceneOcean(source.ocean) : sceneCloneData(base.ocean) || null,
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
-      toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
-      fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
       fogDensity: sceneClampNumberOrCSSVar(source.fogDensity, sceneNumber(base.fogDensity, 0), 0, Number.POSITIVE_INFINITY),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
@@ -3190,6 +3183,13 @@
       _live: lifecycle.live,
       specified: false,
     };
+    for (const key of ["ambientColor", "skyColor", "groundColor", "envMap", "toneMapping", "fogColor"]) {
+      environment[key] = (typeof source[key] === "string" && source[key])
+        || (typeof base[key] === "string" && base[key]) || "";
+    }
+    for (const key of ["ambientIntensity", "skyIntensity", "groundIntensity"]) {
+      environment[key] = sceneClampNumberOrCSSVar(source[key], sceneNumber(base[key], 0), 0, 4);
+    }
     environment.specified = Boolean(raw || base.specified) && (
       environment.ambientColor ||
       environment.ambientIntensity !== 0 ||

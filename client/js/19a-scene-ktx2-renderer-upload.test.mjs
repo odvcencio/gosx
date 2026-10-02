@@ -45,6 +45,7 @@ function makeWindow() {
   const warnings = [];
   const win = {
     __gosx_scene3d_api: {},
+    __gosx_register_engine_factory() {},
     __gosx_scene3d_webgpu_probe() {
       return { adapter: false, device: null, ready: true };
     },
@@ -65,6 +66,7 @@ function makeWindow() {
 function loadGateGlobal(chunkSource) {
   const win = makeWindow();
   const context = vm.createContext(win);
+  vm.runInContext(freshFeatureBundleSource("scene3d"), context, { filename: "scene3d.js" });
   vm.runInContext(chunkSource, context, { filename: "chunk.js" });
   return win;
 }
@@ -72,6 +74,7 @@ function loadGateGlobal(chunkSource) {
 function loadInternalTextureLoader(chunkSource, functionName) {
   const win = makeWindow();
   const context = vm.createContext(win);
+  vm.runInContext(freshFeatureBundleSource("scene3d"), context, { filename: "scene3d.js" });
   const marker = "})();";
   const end = chunkSource.lastIndexOf(marker);
   assert.ok(end >= 0, "fresh feature bundle must end in an IIFE");

@@ -42,31 +42,21 @@
 
   // --- Primitives and scalar helpers (10-runtime-primitives.js,
   // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).
-  var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
-  var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
-  var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds || function() { return { mode: "off", bounds: null }; };
-  var clamp01 = sceneApi.clamp01 || function(v) { return Math.max(0, Math.min(1, Number(v) || 0)); };
-  var sceneFiniteNumber = sceneApi.sceneFiniteNumber || function(v, d) {
-    return typeof v === "number" && isFinite(v) ? v : d;
-  };
-  var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
+  var sceneBool = sceneApi.sceneBool;
+  var sceneNumber = sceneApi.sceneNumber;
+  var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds;
+  var clamp01 = sceneApi.clamp01;
+  var sceneFiniteNumber = sceneApi.sceneFiniteNumber;
+  var sceneColorRGBA = sceneApi.sceneColorRGBA;
   var sceneMat4Multiply = sceneApi.sceneMat4Multiply;
   var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto;
-  var sceneAffineDeterminant = sceneApi.sceneAffineDeterminant || function() { return 1; };
+  var sceneAffineDeterminant = sceneApi.sceneAffineDeterminant;
   var sceneAffineNormalMatrix = sceneApi.sceneAffineNormalMatrix;
   var sceneEulerMatrixInto = sceneApi.sceneEulerMatrixInto;
-  var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
-  var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
-  var sceneIsNumericTypedArray = sceneApi.sceneIsNumericTypedArray || function(value) {
-    return value != null &&
-      typeof value === "object" &&
-      typeof value.length === "number" &&
-      typeof ArrayBuffer !== "undefined" &&
-      typeof ArrayBuffer.isView === "function" &&
-      ArrayBuffer.isView(value) &&
-      Object.prototype.toString.call(value) !== "[object DataView]";
-  };
-  var sceneCanvasAlpha = sceneApi.sceneCanvasAlpha || function() { return true; };
+  var sceneRenderCamera = sceneApi.sceneRenderCamera;
+  var scenePointStyleCode = sceneApi.scenePointStyleCode;
+  var sceneIsNumericTypedArray = sceneApi.sceneIsNumericTypedArray;
+  var sceneCanvasAlpha = sceneApi.sceneCanvasAlpha;
   var notifySceneTextureLoaded = sceneApi.notifySceneTextureLoaded;
 
   // --- Culling (11-scene-math.js). The WebGL2 CPU-cull fallback calls both.
@@ -78,8 +68,8 @@
   var sceneMaterialProfileKey = sceneApi.sceneMaterialProfileKey;
 
   // --- Draw planning (15b-scene-planner.js).
-  var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
-  var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
+  var prepareScene = sceneApi.prepareScene;
+  var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence;
   var sceneCachedBuffer = sceneApi.sceneCachedBuffer;
 
   // --- Backend registry (15c-scene-backend-registry.js). The tail of
@@ -151,8 +141,8 @@
   // --- Post-FX scalars (15a-scene-postfx-shared.js). The texture-unit table
   // and the Radiance HDR decoder are lexical in this chunk now: 15a1 and 16b-
   // scene-hdr.js ship here, beside the only renderer that reads them.
-  var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
-  var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
+  var resolvePostFXFactor = sceneApi.resolvePostFXFactor;
+  var resolveShadowSize = sceneApi.resolveShadowSize;
 
   // --- Backend-agnostic PBR helpers (16c-scene-shared-pbr.js). These stayed
   // in the base chunk because 15b, 10-runtime-scene-core and the WebGPU chunk
@@ -170,7 +160,7 @@
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
-  var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
+  var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource;
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;

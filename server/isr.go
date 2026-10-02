@@ -176,8 +176,19 @@ func (a *App) regenerateISRArtifact(ctx context.Context, artifact isrArtifact, d
 		}
 	}()
 
+	// Another request may have generated the artifact between our first stat
+	// and acquiring its released lease. Recheck while holding the lease.
+	info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
+	if err == nil {
+		artifact.modTime = info.ModTime
+		return artifact, "MISS", true
+	}
+	if !errors.Is(err, ErrISRArtifactNotFound) {
+		return isrArtifact{}, "", false
+	}
+
 	started := time.Now()
-	info, err := a.isr.regenerate(artifact, a.Revalidator(), dispatch)
+	info, err = a.isr.regenerate(artifact, a.Revalidator(), dispatch)
 	if err != nil {
 		a.observeOperation(OperationEvent{
 			Component: "isr",

@@ -4,13 +4,13 @@
 // concatenation order, same bundle set, same .gz/.br sidecars, same --check
 // mode, same output paths — with no npm, no node_modules, and no JS toolchain.
 //
-// Minification defaults to esbuild's native Go library (esbuild is written in
-// Go; the npm package was only a wrapper around it), which keeps the minified
-// bundles byte-identical to what the retired Node pipeline produced and keeps
-// composed source maps. A pure tdewolff/minify backend is available via
-// -minifier=tdewolff for A/B comparison; as of the migration it produces
-// smaller raw/brotli output on the large bundles but breaches three committed
-// size gates (see docs in the repo history), so it is not the default.
+// Minification uses esbuild's native Go library and composed source maps.
+// The release WebGL chunk and compatibility monolith also run the existing
+// tdewolff minifier to keep parallel shader preparation and transmission
+// within their combined budget.
+// Their release maps record function origins; GOSX_BUNDLE_DEBUG=1
+// keeps esbuild's full token mappings and sourceMappingURL trailers.
+// -minifier=tdewolff remains available for A/B comparison of other bundles.
 //
 // Usage:
 //
@@ -940,7 +940,7 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 		}
 
 		raw := normalizeNewlines(string(data))
-		bodyForCompaction := raw
+		bodyForCompaction := compactBrowserSource(src, raw)
 		var lineOrigins []int
 		if language == sourceTypeScript {
 			// Validate against the original file before the chunk swallows a
@@ -955,7 +955,7 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 			// the whole chunk's. A .js source beside a .ts source must never
 			// reach the TypeScript parser: reparsing `a < b > (c)` as a
 			// generic-argument call silently drops the comparison against b.
-			erased, mappings, err := transpileSource(src, raw)
+			erased, mappings, err := transpileSource(src, bodyForCompaction)
 			if err != nil {
 				return builtBundle{}, err
 			}
@@ -1050,7 +1050,11 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 		raws = append(raws, normalizeNewlines(string(data)))
 	}
 
-	joinedRaw, sectionStartLines := joinChunkSources(raws)
+	buildSources := make([]string, len(raws))
+	for i, raw := range raws {
+		buildSources[i] = compactBrowserSource(entry.sources[i], raw)
+	}
+	joinedRaw, sectionStartLines := joinChunkSources(buildSources)
 	erased, mappings, err := transpileChunkBody(entry, joinedRaw, labels, sectionStartLines)
 	if err != nil {
 		return builtBundle{}, err
@@ -1182,6 +1186,12 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 		if err != nil {
 			return builtBundle{}, err
 		}
+		if (entry.name == "bootstrap-feature-scene3d-webgl.js" || entry.name == "bootstrap.js") && !debugSourcemaps {
+			minified, err = minifyCompactBundle(entry, minified)
+			if err != nil {
+				return builtBundle{}, err
+			}
+		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified.code, entry.name+".map", debugSourcemaps),
 			m:    minified.m,
@@ -1287,7 +1297,7 @@ func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
 	closureOnly := flag.Bool("closure", false, "run only the chunk closure check and exit")
-	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, byte-stable) or tdewolff (A/B comparison)")
+	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, compact release renderer bundles) or tdewolff (A/B comparison)")
 	flag.Parse()
 
 	dir, err := findClientJS(*dirFlag)

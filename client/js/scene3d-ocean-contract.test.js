@@ -6,6 +6,26 @@ const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { createBoardWebGPUHarness } = require("./runtime-test-harness.js");
 
+test("Go environment replacement diffs remove oceans in both IR shapes", async () => {
+  const wire = JSON.parse(execFileSync("go", ["run", "./client/js/testdata/ocean-go-writer-fixture"], {
+    cwd: path.resolve(__dirname, "../.."), env: { ...process.env, GOWORK: "off" }, encoding: "utf8",
+  }));
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  try {
+    const api = h.env.context.__gosx_scene3d_api;
+    for (const name of ["sceneIRRemoval", "canonicalIRRemoval"]) {
+      const state = api.createSceneState(wire.previous);
+      assert.ok(state.environment.ocean, `${name} starts with an ocean`);
+      assert.equal(wire[name][0].data.environment.ocean, null, `${name} sends explicit removal`);
+      api.applySceneCommands(state, wire[name]);
+      assert.equal(state.environment.ocean, null, `${name} removes the ocean`);
+      assert.equal(state.environment.exposure, 2, `${name} keeps other environment changes`);
+    }
+  } finally {
+    h.renderer.dispose();
+  }
+});
+
 test("Go ocean lowering retains disabled parameters through JSON and browser normalization", async () => {
   const wire = JSON.parse(execFileSync("go", ["run", "./client/js/testdata/ocean-go-writer-fixture"], {
     cwd: path.resolve(__dirname, "../.."), env: { ...process.env, GOWORK: "off" }, encoding: "utf8",

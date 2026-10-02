@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -246,6 +247,32 @@ func TestISRColdStartRunsOneRegeneration(t *testing.T) {
 	mu.Unlock()
 	if got != 1 {
 		t.Fatalf("expected one cold render under %d concurrent requests, got %d", concurrency, got)
+	}
+}
+
+func TestISRColdStartRechecksArtifactAfterAcquiringLease(t *testing.T) {
+	root := t.TempDir()
+	app := New()
+	app.EnableISR()
+	artifact := isrArtifact{
+		page:       isrRoute{Path: "/", File: "index.html"},
+		bundleRoot: root,
+		staticDir:  filepath.Join(root, "static"),
+		store:      app.ISRStore(),
+	}
+	// A competing request finishes after the initial miss but before we acquire
+	// its released lease. Regeneration must use that artifact without rendering.
+	info, err := artifact.store.WriteArtifact(artifact.staticDir, "/", "index.html", []byte("generated home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renders := 0
+	got, mode, ok := app.regenerateISRArtifact(context.Background(), artifact, func(w http.ResponseWriter, r *http.Request, bypass bool) {
+		renders++
+		_, _ = io.WriteString(w, "duplicate home")
+	})
+	if !ok || mode != "MISS" || !got.modTime.Equal(info.ModTime) || renders != 0 {
+		t.Fatalf("ok=%v mode=%q modTime=%v renders=%d, want cached artifact without rendering", ok, mode, got.modTime, renders)
 	}
 }
 

@@ -14,6 +14,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("node:module").createRequire(path.join(__dirname, "..", "runtime", "package.json"))("typescript");
 
 const srcDir = path.join(__dirname, "bootstrap-src");
 const SHARED_API_EXPORT_MARKER = "// Scene3D shared API";
@@ -33,7 +34,7 @@ function trimBeforeSharedApiExport(source) {
 }
 
 function runFragment(context, source, filename) {
-  vm.runInContext(source, context, { filename });
+  vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename });
 }
 
 function sliceBetween(source, startMarker, endMarker) {
