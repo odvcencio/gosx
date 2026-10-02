@@ -257,6 +257,13 @@ func Page() Node {
 							<td>no</td>
 						</tr>
 						<tr>
+							<th scope="row">transmission</th>
+							<td>yes</td>
+							<td>yes</td>
+							<td>no</td>
+							<td>no</td>
+						</tr>
+						<tr>
 							<th scope="row">ocean</th>
 							<td>yes</td>
 							<td>yes</td>
@@ -1076,6 +1083,21 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", data.sample035)}
 		</section>
+		<section id="transmission">
+			<h2>Volume transmission</h2>
+			<p>
+				Set StandardMaterial.Transmission above zero to refract the opaque scene, including the ocean, on WebGPU and WebGL2. Glass draws after the opaque scene even when Opacity is one. Roughness selects the blur level of a separate mipmapped scene texture.
+			</p>
+			<p>
+				Thickness is the ray length in world units; zero gives a thin sheet. IOR controls Snell refraction and Fresnel reflection (default 1.5). AttenuationColor is a linear RGB triple that gives transmittance at AttenuationDistance. A zero distance disables absorption; positive distances apply Beer–Lambert attenuation. HDR environment radiance retains the PBR Fresnel reflection.
+			</p>
+			<p>
+				Full quality builds up to nine mip levels; balanced builds up to five. Constrained quality uses environment transmission and allocates no scene capture. Quality ladders use the environment approximation at rung zero, balanced capture at rung one, and full capture above it. Inspect data-gosx-scene3d-transmission for the active path.
+			</p>
+			<p>
+				The screen-space ray projects the exit point of the authored thickness. Off-screen rays fade to the environment. Transparent layers are excluded from the captured background, and the renderer does not trace hidden geometry or solve multiple internal bounces. WebGL2 uses a bounded RGBA8 fallback when HDR color targets are unavailable.
+			</p>
+		</section>
 		<section id="gltf">
 			<h2>glTF Loading</h2>
 			<p>
@@ -1089,7 +1111,7 @@ func Page() Node {
 				normalize an asset into a target box, which saves guessing the author's unit scale.
 			</p>
 			{CodeBlock("go", data.sample036)}
-			<h3>Nine material extensions parse</h3>
+			<h3>Material extensions</h3>
 			<ul>
 				<li>
 					<span class="inline-code">KHR_materials_clearcoat</span>
@@ -1098,6 +1120,10 @@ func Page() Node {
 				<li>
 					<span class="inline-code">KHR_materials_transmission</span>
 					— maps to Transmission.
+				</li>
+				<li>
+					<span class="inline-code">KHR_materials_volume</span>
+					— scalar thickness, attenuation distance, and linear attenuation color. Thickness textures are not sampled.
 				</li>
 				<li>
 					<span class="inline-code">KHR_materials_iridescence</span>

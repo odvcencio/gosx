@@ -900,6 +900,7 @@
   }
 
   function sceneWebGLPassBufferByteLength(values) {
+    if (Array.isArray(values)) return values.length * Float32Array.BYTES_PER_ELEMENT;
     return values && Number.isFinite(values.byteLength) ? values.byteLength : 0;
   }
 
@@ -982,11 +983,11 @@
 
   function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, materialBuffer, positions, colors, materials) {
     gl.bindBuffer(arrayBuffer, positionBuffer);
-    gl.bufferData(arrayBuffer, positions, usage);
+    gl.bufferData(arrayBuffer, sceneTypedFloatArray(positions), usage);
     gl.bindBuffer(arrayBuffer, colorBuffer);
-    gl.bufferData(arrayBuffer, colors, usage);
+    gl.bufferData(arrayBuffer, sceneTypedFloatArray(colors), usage);
     gl.bindBuffer(arrayBuffer, materialBuffer);
-    gl.bufferData(arrayBuffer, materials, usage);
+    gl.bufferData(arrayBuffer, sceneTypedFloatArray(materials), usage);
   }
 
   function drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, positionSize) {

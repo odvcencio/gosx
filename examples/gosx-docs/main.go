@@ -101,7 +101,12 @@ func buildDocsApp(root, port string) (*server.App, error) {
 		return server.HTMLDocument(ctx.Document("GoSX", body))
 	})
 
-	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
+	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{
+		ExternalCSS: "/_gosx/docs-css/",
+		ExternalCSSFilter: func(page route.FilePage) bool {
+			return page.RoutePath == "/demos/beacon" || strings.HasPrefix(page.RoutePath, "/demos/beacon/")
+		},
+	}); err != nil {
 		return nil, err
 	}
 

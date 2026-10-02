@@ -1655,6 +1655,8 @@ func scene3DChunkGateRenderer(t *testing.T, props any) string {
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
 		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
+		BootstrapFeatureScene3DVessel:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
+		BootstrapFeatureScene3DOceanQuery: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1793,6 +1795,8 @@ func TestRequiredScene3DChunksPreloadWithoutEagerScriptTags(t *testing.T) {
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
 		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
+		BootstrapFeatureScene3DVessel:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
+		BootstrapFeatureScene3DOceanQuery: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)

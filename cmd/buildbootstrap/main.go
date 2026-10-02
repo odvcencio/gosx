@@ -7,7 +7,9 @@
 // Minification defaults to esbuild's native Go library (esbuild is written in
 // Go; the npm package was only a wrapper around it), which keeps the minified
 // bundles byte-identical to what the retired Node pipeline produced and keeps
-// composed source maps. A pure tdewolff/minify backend is available via
+// composed source maps. Production WebGL also uses tdewolff after esbuild;
+// GOSX_BUNDLE_DEBUG=1 retains esbuild's output and accurate map for debugging.
+// A pure tdewolff/minify backend is available via
 // -minifier=tdewolff for A/B comparison; as of the migration it produces
 // smaller raw/brotli output on the large bundles but breaches three committed
 // size gates (see docs in the repo history), so it is not the default.
@@ -162,14 +164,22 @@ var outputs = []output{
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
+			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// The Environment.Ocean passes ship beside the renderer that calls them.
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgl-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgl-taa.ts"),
@@ -184,9 +194,14 @@ var outputs = []output{
 			// from wgpuCreatePostProcessor, which sits outside the renderer
 			// closure, so the packer cannot live inside that closure. It ships
 			// right after 16a because that placement compresses best.
+			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgpu-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgpu-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
@@ -421,7 +436,10 @@ var outputs = []output{
 			// webgpu chunk carried a second copy until v0.35.8, which cost a
 			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
 			// the tiny stub + adapter probe.
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
+			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
 			sourceFile("bootstrap-src/18-scene-canvas.ts"),
@@ -477,8 +495,13 @@ var outputs = []output{
 			// factory ships in this same chunk, so a WebGPU page can never
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgl-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgl-taa.ts"),
@@ -522,9 +545,14 @@ var outputs = []output{
 			// It now ships once, in the base scene3d chunk, and this bridge
 			// hands 16a the two symbols it reads lexically.
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
+			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgpu-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgpu-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
@@ -543,9 +571,28 @@ var outputs = []output{
 		},
 	},
 	{
+		// CPU surface query is optional and independently reusable.
+		name:    "bootstrap-feature-scene3d-ocean-query.js",
+		sources: []source{sourceFile("../runtime/scene3d/ocean-query.ts")},
+	},
+	{
+		name: "bootstrap-feature-scene3d-vessel.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/vessel-physics.ts"),
+			sourceFile("../runtime/scene3d/vessel-input.ts"),
+			sourceFile("../runtime/scene3d/vessel-model.ts"),
+			sourceFile("../runtime/scene3d/vessel-wake.ts"),
+			sourceFile("../runtime/scene3d/mount-vessel.ts"),
+		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-zoom.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-zoom.ts")},
+	},
+	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
 		name:    "bootstrap-feature-scene3d-walk.js",
-		sources: []source{sourceFile("../runtime/scene3d/mount-walk.ts")},
+		sources: []source{sourceFile("../runtime/scene3d/walk-surfaces.ts"), sourceFile("../runtime/scene3d/mount-walk.ts")},
 	},
 	{
 		// Decompress chunk: the quantized-array decoder, the progressive and
@@ -950,6 +997,9 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 
 		raw := normalizeNewlines(string(data))
 		bodyForCompaction := raw
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+			bodyForCompaction = compactBrowserSource(src, raw)
+		}
 		var lineOrigins []int
 		if language == sourceTypeScript {
 			// Validate against the original file before the chunk swallows a
@@ -964,7 +1014,7 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 			// the whole chunk's. A .js source beside a .ts source must never
 			// reach the TypeScript parser: reparsing `a < b > (c)` as a
 			// generic-argument call silently drops the comparison against b.
-			erased, mappings, err := transpileSource(src, raw)
+			erased, mappings, err := transpileSource(src, bodyForCompaction)
 			if err != nil {
 				return builtBundle{}, err
 			}
@@ -1059,7 +1109,14 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 		raws = append(raws, normalizeNewlines(string(data)))
 	}
 
-	joinedRaw, sectionStartLines := joinChunkSources(raws)
+	buildSources := make([]string, len(raws))
+	for i, raw := range raws {
+		buildSources[i] = raw
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+			buildSources[i] = compactBrowserSource(entry.sources[i], raw)
+		}
+	}
+	joinedRaw, sectionStartLines := joinChunkSources(buildSources)
 	erased, mappings, err := transpileChunkBody(entry, joinedRaw, labels, sectionStartLines)
 	if err != nil {
 		return builtBundle{}, err
@@ -1102,11 +1159,13 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
 	code := built.code
-	if entry.name == "bootstrap-feature-scene3d-webgl.js" || entry.name == "bootstrap.js" {
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
 		code = packBuiltinGLSL(code)
+	} else if entry.name == "bootstrap-feature-scene3d-webgpu.js" {
+		code = packBuiltinPostWGSL(code)
 	}
 	input := code + "\n//# sourceMappingURL=" + dataURL
-	result := esbuild.Transform(input, esbuild.TransformOptions{
+	options := esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,
 		Loader:            esbuild.LoaderJS,
@@ -1116,7 +1175,12 @@ func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 		Sourcefile:        entry.name,
 		Sourcemap:         esbuild.SourceMapExternal,
 		Target:            esbuild.ES2020,
-	})
+	}
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+		options.MangleProps = webGLPrivatePropertyPattern
+		options.MangleQuoted = esbuild.MangleQuotedTrue
+	}
+	result := esbuild.Transform(input, options)
 	if len(result.Errors) > 0 {
 		return builtBundle{}, fmt.Errorf("esbuild %s: %s", entry.name, result.Errors[0].Text)
 	}
@@ -1194,6 +1258,15 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 		minified, err := minifyESBuild(entry, built)
 		if err != nil {
 			return builtBundle{}, err
+		}
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" && !debugSourcemaps {
+			// The existing tdewolff backend compacts esbuild's normalized
+			// WebGL output further. Debug builds keep esbuild's output and
+			// composed map together; tdewolff cannot compose source maps.
+			minified.code, err = minifyTdewolff(minified.code)
+			if err != nil {
+				return builtBundle{}, fmt.Errorf("compact WebGL release: %w", err)
+			}
 		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified.code, entry.name+".map", debugSourcemaps),

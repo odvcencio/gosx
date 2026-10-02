@@ -17,6 +17,7 @@ type Walk struct {
 	StepHeight       float64        `json:"stepHeight,omitempty"`       // default 0.3
 	HeadBob          *float64       `json:"headBob,omitempty"`          // default 0.03; 0 disables
 	LookSpeed        float64        `json:"lookSpeed,omitempty"`        // radians/1000px, default 2.2
+	Surfaces         []WalkSurface  `json:"surfaces,omitempty"`
 	Ground           *WalkGround    `json:"ground,omitempty"`
 	Water            *WalkWater     `json:"water,omitempty"`
 	Colliders        []WalkCollider `json:"colliders,omitempty"`

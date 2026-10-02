@@ -115,8 +115,8 @@ do
 	assert_ignored_effective "$path"
 done
 
-assert_tracked_mode "examples/gosx-docs/app/demos/beacon/contract.go" 100644
-assert_tracked_mode "examples/gosx-docs/app/demos/beacon/evidence_test.go" 100644
+assert_tracked_mode "examples/gosx-docs/app/demos/beacon/beach.go" 100644
+assert_tracked_mode "examples/gosx-docs/app/demos/beacon/beach_baked_test.go" 100644
 assert_tracked_mode "editor/intelligenceassets/assets/gotreesitter.wasm" 100644
 
 assert_tracked_mode "editor/intelligenceassets/assets/go.bin" 100644

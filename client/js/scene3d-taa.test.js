@@ -3,17 +3,6 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createWebGLRendererForPost, makeWebGLBundleWithCustomPost, createBoardWebGPUHarness, makePointsBundle } = require("./runtime-test-harness.js");
 
-const parameterClasses = {
-  toneMapping: { mode: ["aces", "reinhard"], exposure: [1, 1.7] },
-  colorGrade: { contrast: [1, 1.7], saturation: [1, 0.3], exposure: [1, 1.7] },
-  bloom: { threshold: [0.8, 1.7], scale: [0.5, 0.25], radius: [5, 9], intensity: [0.5, 0.7] },
-  dof: { focusDistance: [8, 12], aperture: [0.04, 0.07], maxBlur: [8, 12] },
-  ssao: { bias: [0.01, 0.07], radius: [4, 7], intensity: [0.55, 0.7] },
-  contactShadows: { distance: [1, 1.7], thickness: [0.1, 0.07], bias: [0.01, 0.07], intensity: [0.5, 0.7], direction: [{ x: 0, y: -1, z: 0 }, { x: 1, y: -1, z: 0 }] },
-  vignette: { intensity: [1, 0.7] },
-  taa: { historyWeight: [0.9, 0.7], clampGamma: [1.25, 1.7], depthThreshold: [0.01, 0.07] },
-};
-
 function temporalHarness(options = {}) {
   const h = createWebGLRendererForPost({ fresh: true, ...options });
   const gl = h.canvas.getContext("webgl2");
@@ -37,20 +26,6 @@ function temporalHarness(options = {}) {
   bundle.postEffects = [{ kind: "toneMapping" }, { kind: "taa", historyWeight: 0.9, clampGamma: 1.25, depthThreshold: 0.01 }];
   return { ...h, gl, params, projections, jitters, sceneProjections, mount, bundle, frame: () => h.renderer.render(bundle, { width: h.canvas.width, height: h.canvas.height }) };
 }
-
-test("TAA uploads current and previous jitter in history UV units", () => {
-  const h = temporalHarness();
-  try {
-    h.frame(); h.frame(); h.frame();
-    assert.equal(h.jitters.length, 3);
-    assert.deepEqual(h.jitters[0].slice(2), [0, 0]);
-    for (let frame = 0; frame < 3; frame++) {
-      assert.ok(Math.abs(h.jitters[frame][0] + h.projections[frame][8] * 0.5) < 1e-8);
-      assert.ok(Math.abs(h.jitters[frame][1] + h.projections[frame][9] * 0.5) < 1e-8);
-      if (frame) assert.deepEqual(h.jitters[frame].slice(2), h.jitters[frame - 1].slice(0, 2));
-    }
-  } finally { h.renderer.dispose(); }
-});
 
 test("TAA jitters the rendered projection and reuses only valid color and depth history", () => {
   const h = temporalHarness();
@@ -91,6 +66,31 @@ test("WebGPU accepts a TAA quality rung and dispatches FXAA as its supported fal
   assert.ok(fxaa);
   assert.ok(h.fake.state.renderPasses.flatMap(p => p.draws).some(d => d.pipeline?.desc?.fragment?.module === fxaa));
   h.renderer.dispose();
+});
+
+const parameterClasses = {
+  toneMapping: { mode: ["aces", "reinhard"], exposure: [1, 1.7] },
+  colorGrade: { contrast: [1, 1.7], saturation: [1, 0.3], exposure: [1, 1.7] },
+  bloom: { threshold: [0.8, 1.7], scale: [0.5, 0.25], radius: [5, 9], intensity: [0.5, 0.7] },
+  dof: { focusDistance: [8, 12], aperture: [0.04, 0.07], maxBlur: [8, 12] },
+  ssao: { bias: [0.01, 0.07], radius: [4, 7], intensity: [0.55, 0.7] },
+  contactShadows: { distance: [1, 1.7], thickness: [0.1, 0.07], bias: [0.01, 0.07], intensity: [0.5, 0.7], direction: [{ x: 0, y: -1, z: 0 }, { x: 1, y: -1, z: 0 }] },
+  vignette: { intensity: [1, 0.7] },
+  taa: { historyWeight: [0.9, 0.7], clampGamma: [1.25, 1.7], depthThreshold: [0.01, 0.07] },
+};
+
+test("TAA uploads current and previous jitter in history UV units", () => {
+  const h = temporalHarness();
+  try {
+    h.frame(); h.frame(); h.frame();
+    assert.equal(h.jitters.length, 3);
+    assert.deepEqual(h.jitters[0].slice(2), [0, 0]);
+    for (let frame = 0; frame < 3; frame++) {
+      assert.ok(Math.abs(h.jitters[frame][0] + h.projections[frame][8] * 0.5) < 1e-8);
+      assert.ok(Math.abs(h.jitters[frame][1] + h.projections[frame][9] * 0.5) < 1e-8);
+      if (frame) assert.deepEqual(h.jitters[frame].slice(2), h.jitters[frame - 1].slice(0, 2));
+    }
+  } finally { h.renderer.dispose(); }
 });
 
 test("disabling TAA keeps FXAA without temporal allocations, reprojection uploads, or history copies", () => {

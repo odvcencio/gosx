@@ -671,6 +671,17 @@
     return out;
   }
 
+  function sceneMeshSnapshotAttribute(data, count, fallback, snapshot) {
+    const length = count * fallback.length;
+    if (data.length >= length) return data.slice(0, length);
+    if (!snapshot) return new Float32Array(0);
+    // Match the baked path's missing-attribute defaults once per immutable
+    // snapshot, so ordinary untextured meshes can keep their geometry on GPU.
+    const out = new Float32Array(length);
+    for (let i = 0; i < length; i += fallback.length) out.set(fallback, i);
+    return out;
+  }
+
   function sceneNormalizeMeshVertexData(value) {
     const item = value && typeof value === "object" ? value : {};
     const positions = sceneNormalizeMeshFloatArray(item.positions, 3);
@@ -700,6 +711,7 @@
       Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
         ? Math.floor(Number(item.revision))
         : null;
+    const snapshot = item.immutable === true && revision !== null && item.dynamic !== true;
     const attributes = sceneNormalizeCustomAttributes(
       item.attributes,
       count,
@@ -712,9 +724,9 @@
     }
     return {
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
-      normals: normals.length >= count * 3 ? normals.slice(0, count * 3) : new Float32Array(0),
-      uvs: uvs.length >= count * 2 ? uvs.slice(0, count * 2) : new Float32Array(0),
-      tangents: tangents.length >= count * 4 ? tangents.slice(0, count * 4) : new Float32Array(0),
+      normals: sceneMeshSnapshotAttribute(normals, count, [0, 1, 0], snapshot),
+      uvs: sceneMeshSnapshotAttribute(uvs, count, [0, 0], snapshot),
+      tangents: sceneMeshSnapshotAttribute(tangents, count, [1, 0, 0, 1], snapshot),
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
       indices: indices || null,
@@ -806,6 +818,18 @@
     };
   }
 
+  function sceneNormalizeMaterialLobes(item, current) {
+    const out = {};
+    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
+      out[key] = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, key), sceneNumber(current[key], 0), key === "anisotropy" ? -1 : 0, 1);
+    }
+    for (const key of ["thickness", "attenuationDistance"]) {
+      out[key] = Math.max(0, sceneNumber(sceneObjectMaterialValue(item, key), sceneNumber(current[key], 0)));
+    }
+    out.attenuationColor = sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "attenuationColor"), current.attenuationColor || [1, 1, 1]);
+    return out;
+  }
+
   function normalizeSceneObject(object, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(object) ? object : {};
@@ -890,12 +914,9 @@
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
-      clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
-      sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
-      transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
-      iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
-      anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      ...sceneNormalizeMaterialLobes(item, current),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
+      detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
       normalMap: sceneMaterialString(item, current, "normalMap", true),
       roughnessMap: sceneMaterialString(item, current, "roughnessMap", true),
       metalnessMap: sceneMaterialString(item, current, "metalnessMap", true),
@@ -1498,6 +1519,7 @@
     if (sceneObjectMaterialValue(current, "alphaCutoff") !== undefined) {
       override.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(current, "alphaCutoff"), null);
     }
+    if (sceneObjectMaterialHasValue(current, "detail")) override.detail = sceneNormalizeDetail(sceneObjectMaterialValue(current, "detail"));
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
@@ -2177,12 +2199,9 @@
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
-      clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
-      sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
-      transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
-      iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
-      anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      ...sceneNormalizeMaterialLobes(item, current),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
+      detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
       normalMap: sceneMaterialString(item, current, "normalMap", true),
       roughnessMap: sceneMaterialString(item, current, "roughnessMap", true),
       metalnessMap: sceneMaterialString(item, current, "metalnessMap", true),
@@ -2641,11 +2660,8 @@
       occlusionStrength: clamp01(sceneFallbackNumber(item, current, "occlusionStrength", 1)),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
-      clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
-      sheen: sceneClampNumberOrCSSVar(item.sheen, sceneNumber(current.sheen, 0), 0, 1),
-      transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
-      iridescence: sceneClampNumberOrCSSVar(item.iridescence, sceneNumber(current.iridescence, 0), 0, 1),
-      anisotropy: sceneClampNumberOrCSSVar(item.anisotropy, sceneNumber(current.anisotropy, 0), -1, 1),
+      ...sceneNormalizeMaterialLobes(item, current),
+      detail: sceneNormalizeDetail(item.detail === undefined ? current.detail : item.detail),
       normalMap: sceneMaterialString(item, current, "normalMap", false),
       roughnessMap: sceneMaterialString(item, current, "roughnessMap", false),
       metalnessMap: sceneMaterialString(item, current, "metalnessMap", false),
@@ -2743,6 +2759,8 @@
     "contact-shadows": "contactShadows",
     dof: "dof",
     fxaa: "fxaa",
+    godrays: "godRays",
+    grain: "grain",
     taa: "taa",
     custompost: "customPost",
     "custom-post": "customPost",
@@ -2783,6 +2801,8 @@
       mode: sceneFallbackString(item, current, "mode"),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     });
+    if (kind === SCENE_POST_BLOOM) normalized.mode = normalized.mode.trim().toLowerCase() === "mip" ? "mip" : "";
+    if (kind === "godRays" || kind === "grain") return sceneAtmospherePostEffect(Object.assign({}, current, item, {kind}));
     return Object.assign({}, current, item, normalized);
   }
 
@@ -2841,6 +2861,7 @@
         if (scale === 0) return 1;
         return Math.max(0, Math.min(1, scale));
       })(),
+      detail: item.detail == null ? undefined : sceneBool(item.detail, true),
       pointBudgetScale: (function() {
         const scale = sceneNumber(item.pointBudgetScale, 0);
         if (scale === 0) return 1;
@@ -2977,7 +2998,7 @@
   // Keep authored desktop composition while widening the vertical view on portrait screens.
   function sceneViewportCamera(camera, sourceCamera, viewport) {
     const portraitFOV = sceneNumber(sourceCamera && sourceCamera.portraitFOV, 0);
-    return portraitFOV > 0 && viewport.cssWidth < viewport.cssHeight
+    return !camera._gosxZoomFOV && portraitFOV > 0 && viewport.cssWidth < viewport.cssHeight
       ? Object.assign({}, camera, { fov: Math.min(120, Math.max(1, portraitFOV)) })
       : camera;
   }
@@ -3053,6 +3074,7 @@
     const sky = { mode, topColor, horizonColor, bottomColor,
       blur: Math.max(0, Math.min(1, sceneNumber(raw.blur, 0))),
       intensity: Math.max(0, sceneNumber(raw.intensity, 1) || 1) };
+    if (raw.clouds && mode === "physical") sky.clouds = sceneSkyClouds(raw.clouds);
     if (mode !== "physical") return sky;
     // Physical-sky parameters keep "zero means the default"; see scene/sky.go.
     const sun = sceneIsPlainObject(raw.sunDirection) ? raw.sunDirection : {};
@@ -3085,7 +3107,7 @@
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
       }
     }
-    return {
+    const out = {
       level: number("level"), windDirection,
       waveHeight: parameter("waveHeight", 0.8, 0.05, 6),
       waveLength: parameter("waveLength", 18, 2, 120),
@@ -3102,6 +3124,8 @@
       extent: parameter("extent", 4000, 100, 20000),
       bathymetry,
     };
+    if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
+    return out;
   }
 
   function sceneEnvironmentText(source, key) {
@@ -3115,6 +3139,7 @@
     const has = key => Object.prototype.hasOwnProperty.call(source, key);
     const text = key => sceneEnvironmentText(source, key) || sceneEnvironmentText(base, key);
     const scalar = (key, minimum, maximum) => sceneClampNumberOrCSSVar(source[key], sceneNumber(base[key], 0), minimum, maximum);
+    const haze = Object.prototype.hasOwnProperty.call(source, "haze") ? source.haze : base.haze;
     const environment = {
       ambientColor: text("ambientColor"),
       ambientIntensity: scalar("ambientIntensity", 0, 4),
@@ -3126,6 +3151,7 @@
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
       ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
+      haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
@@ -3175,6 +3201,7 @@
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
         ocean: environment.ocean || null,
+        haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
@@ -3398,31 +3425,17 @@
   }
 
   function sceneApplyNamedMaterialToObject(object, material) {
-    return Object.assign({}, object, {
+    const resolved = Object.assign({}, object, {
       // Named materials are public live state. A derived wrapper cannot keep
       // the engine-owned immutable material promise used by rigid batching.
       _rigidMaterialProfileStable: false,
       materialKind: material.kind || object.materialKind,
       color: material.color || object.color,
       texture: material.texture || object.texture,
-      opacity: material.opacity != null ? material.opacity : object.opacity,
       unlit: material.unlit !== undefined ? material.unlit : object.unlit,
-      emissive: material.emissive != null ? material.emissive : object.emissive,
       emissiveColor: sceneCopyFiniteRGB(material.emissiveColor, object.emissiveColor),
-      normalScale: material.normalScale != null ? material.normalScale : object.normalScale,
-      normalUVScale: material.normalUVScale != null ? material.normalUVScale : object.normalUVScale,
-      occlusionStrength: material.occlusionStrength != null ? material.occlusionStrength : object.occlusionStrength,
-      roughness: material.roughness != null ? material.roughness : object.roughness,
-      metalness: material.metalness != null ? material.metalness : object.metalness,
-      ior: material.ior != null ? material.ior : object.ior,
-      specularIntensity: material.specularIntensity != null ? material.specularIntensity : object.specularIntensity,
-      specularColor: material.specularColor != null ? material.specularColor : object.specularColor,
-      clearcoat: material.clearcoat != null ? material.clearcoat : object.clearcoat,
-      sheen: material.sheen != null ? material.sheen : object.sheen,
-      transmission: material.transmission != null ? material.transmission : object.transmission,
-      iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
-      anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
       alphaCutoff: material.alphaCutoff !== undefined ? material.alphaCutoff : object.alphaCutoff,
+      detail: material.detail || object.detail,
       normalMap: material.normalMap || object.normalMap,
       roughnessMap: material.roughnessMap || object.roughnessMap,
       metalnessMap: material.metalnessMap || object.metalnessMap,
@@ -3439,11 +3452,6 @@
       _renderPassDerived: material.renderPass
         ? material._renderPassDerived === true
         : object._renderPassDerived,
-      wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
-      depthWrite: material.depthWrite != null ? material.depthWrite : object.depthWrite,
-      lineDash: material.lineDash != null ? material.lineDash : object.lineDash,
-      dashSize: material.dashSize != null ? material.dashSize : object.dashSize,
-      gapSize: material.gapSize != null ? material.gapSize : object.gapSize,
       customVertex: typeof material.customVertex === "string" ? material.customVertex : object.customVertex,
       customFragment: typeof material.customFragment === "string" ? material.customFragment : object.customFragment,
       customVertexWGSL: typeof material.customVertexWGSL === "string" ? material.customVertexWGSL : object.customVertexWGSL,
@@ -3455,6 +3463,10 @@
       shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneCloneData(material.shaderSourceFiles) : object.shaderSourceFiles,
       variantKey: material.variantKey || object.variantKey,
     });
+    for (const key of "normalScale normalUVScale occlusionStrength roughness metalness ior specularIntensity specularColor clearcoat sheen transmission iridescence anisotropy thickness attenuationDistance attenuationColor opacity emissive wireframe depthWrite lineDash dashSize gapSize".split(" ")) {
+      if (material[key] != null) resolved[key] = material[key];
+    }
+    return resolved;
   }
 
   function sceneApplyNamedMaterialToInstancedMesh(mesh, material) {
@@ -5075,6 +5087,20 @@
     sceneReserveFloat32Builder(bundle.worldMeshTangents, count * 4);
   }
 
+  function sceneReserveBakedObjectAttributes(bundle, objects) {
+    let count = 0;
+    for (const object of objects || []) {
+      const vertices = object && object.vertices;
+      if (!vertices || !vertices.count || object.visible === false || object.skin) continue;
+      const wire = bundle.meshWireframeFallback || object.wireframe || object.selected;
+      if (sceneMeshHasStableLocalGeometry(bundle, object, vertices, wire)) continue;
+      count += vertices.indices ? vertices.indices.length : vertices.count;
+    }
+    // Reserve the complete dynamic payload once. Growing each of its five
+    // attributes after every sail otherwise copies the earlier sails again.
+    sceneReserveWorldMeshAttributes(bundle, count);
+  }
+
   function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
@@ -5160,8 +5186,10 @@
     if (sceneBool(showDebugGrid, false)) {
       appendSceneGridToBundle(bundle, width, height);
     }
+    const selectedObjects = sceneSelectLODObjects(objects, renderCamera);
+    sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
-      sceneSelectLODObjects(objects, renderCamera), bundle.lights, resolvedEnvironment, timeSeconds);
+      selectedObjects, bundle.lights, resolvedEnvironment, timeSeconds);
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
     }
@@ -7151,6 +7179,19 @@
     sceneSkyPhysicalParams: typeof sceneSkyPhysicalParams === "function" ? sceneSkyPhysicalParams : undefined,
     sceneSkyPhysicalShaderSource: typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource : undefined,
     sceneSkyPhysicalSource: typeof sceneSkyPhysicalSource === "function" ? sceneSkyPhysicalSource : undefined,
+    sceneAtmosphereQuality: typeof sceneAtmosphereQuality === "function" ? sceneAtmosphereQuality : undefined,
+    sceneOceanReflections: typeof sceneOceanReflections === "function" ? sceneOceanReflections : undefined,
+    sceneReflectDispose: typeof sceneReflectDispose === "function" ? sceneReflectDispose : undefined,
+    sceneReflectOpaqueList: typeof sceneReflectOpaqueList === "function" ? sceneReflectOpaqueList : undefined,
+    sceneReflectionMatrices: typeof sceneReflectionMatrices === "function" ? sceneReflectionMatrices : undefined,
+    sceneSkyClouds: typeof sceneSkyClouds === "function" ? sceneSkyClouds : undefined,
+    sceneCloudDispose: typeof sceneCloudDispose === "function" ? sceneCloudDispose : undefined,
+    sceneCloudUniformData: typeof sceneCloudUniformData === "function" ? sceneCloudUniformData : undefined,
+    sceneAtmosphereBundle: typeof sceneAtmosphereBundle === "function" ? sceneAtmosphereBundle : undefined,
+    sceneAtmosphereEffects: typeof sceneAtmosphereEffects === "function" ? sceneAtmosphereEffects : undefined,
+    sceneAtmospherePostUniforms: typeof sceneAtmospherePostUniforms === "function" ? sceneAtmospherePostUniforms : undefined,
+    sceneAgXSource: typeof sceneAgXSource === "function" ? sceneAgXSource : undefined,
+    sceneAtmospherePostKey: typeof sceneAtmospherePostKey === "function" ? sceneAtmospherePostKey : undefined,
     sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
@@ -7249,6 +7290,13 @@
     // the literal captures them even though 16 lexically follows 10.
     scenePBRDepthSort: typeof scenePBRDepthSort === "function" ? scenePBRDepthSort : undefined,
     scenePBRObjectRenderPass: typeof scenePBRObjectRenderPass === "function" ? scenePBRObjectRenderPass : undefined,
+    sceneTransmissionPublish: typeof sceneTransmissionPublish === "function" ? sceneTransmissionPublish : undefined,
+    sceneTransmissionMaterial: typeof sceneTransmissionMaterial === "function" ? sceneTransmissionMaterial : undefined,
+    sceneTransmissionPresent: typeof sceneTransmissionPresent === "function" ? sceneTransmissionPresent : undefined,
+    sceneTransmissionDepthWrite: typeof sceneTransmissionDepthWrite === "function" ? sceneTransmissionDepthWrite : undefined,
+    sceneTransmissionSettings: typeof sceneTransmissionSettings === "function" ? sceneTransmissionSettings : undefined,
+    sceneTransmissionVolume: typeof sceneTransmissionVolume === "function" ? sceneTransmissionVolume : undefined,
+    sceneTransmissionEffects: typeof sceneTransmissionEffects === "function" ? sceneTransmissionEffects : undefined,
     scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,

@@ -85,3 +85,30 @@ func TestCompactionPreservesTemplateShaderMarkersAndWhitespace(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinShaderPackingPreservesIndentedReplacementTargets(t *testing.T) {
+	source := "const SCENE_TEST_SOURCE = [\"void main() {\", \"    vec3 V = normalize(u_cameraPosition - v_worldPosition);\", \"    float payloadValue = V.x;\", \"    float localValue = payloadValue;\", \"}\"].join(\"\\n\");\n" +
+		"SCENE_TEST_SOURCE.replace(\"    vec3 V = normalize(u_cameraPosition - v_worldPosition);\", `detailApply(payloadValue);`);\n"
+	packed := packBuiltinGLSL(source)
+	if !strings.Contains(packed, "\"    vec3 V = normalize(u_cameraPosition - v_worldPosition);") {
+		t.Fatalf("indented shader hook changed: %s", packed)
+	}
+	if !strings.Contains(packed, "float payloadValue") {
+		t.Fatal("replacement expression lost its source binding")
+	}
+	if strings.Contains(packed, "float localValue") {
+		t.Fatal("unprotected shader locals were not packed")
+	}
+}
+
+func TestPostWGSLPackingPreservesShaderTextAndPinnedBase(t *testing.T) {
+	source := "const WGSL_PBR_FRAGMENT = [\"    pinned base shader\"].join(\"\\n\");\n" +
+		"const WGSL_POST_TEST = [\"fn shade() {\", \"    let originalName = 1.0;\", \"    return originalName;\", \"}\"].join(\"\\n\");\n"
+	packed := packBuiltinPostWGSL(source)
+	if !strings.Contains(packed, "\"    pinned base shader\"") || !strings.Contains(packed, "\"let originalName = 1.0;\"") || !strings.Contains(packed, "\"return originalName;\"") {
+		t.Fatalf("WGSL packing changed tokens or the base shader: %s", packed)
+	}
+	if strings.Count(packed, "\n") != strings.Count(source, "\n") {
+		t.Fatal("line map changed")
+	}
+}

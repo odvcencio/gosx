@@ -176,6 +176,15 @@ func (a *App) regenerateISRArtifact(ctx context.Context, artifact isrArtifact, d
 		}
 	}()
 
+	// Another request may have finished between the initial cache lookup and
+	// this lease acquisition. Reuse its artifact instead of rendering twice.
+	if info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File); err == nil {
+		artifact.modTime = info.ModTime
+		return a.isrServeArtifact(artifact, dispatch)
+	} else if !errors.Is(err, ErrISRArtifactNotFound) {
+		return isrArtifact{}, "", false
+	}
+
 	started := time.Now()
 	info, err := a.isr.regenerate(artifact, a.Revalidator(), dispatch)
 	if err != nil {

@@ -473,6 +473,13 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// the lazily loaded bootstrap-feature-scene3d-walk.js chunk
 	// (client/runtime/scene3d/mount-walk.ts); only walk scenes fetch it.
 	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_scene3d_walk_api", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
+	// The shared wave packer and optional query, vessel and walk-surface
+	// authorities extend the full source inventory. Keep the pinned historical
+	// receipt unchanged and explicitly reconcile every added authority name.
+	wantFullOnly = uniqueStrings(append(wantFullOnly,
+		"__gosx_scene3d_ocean_query", "__gosx_scene3d_ocean_query_api", "__gosx_scene3d_ocean_waves",
+		"__gosx_scene3d_vessel_api", "__gosx_scene3d_vessel_input", "__gosx_scene3d_vessel_model",
+		"__gosx_scene3d_vessel_physics", "__gosx_scene3d_vessel_wake", "__gosx_scene3d_walk_surfaces"))
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

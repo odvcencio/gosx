@@ -38,8 +38,9 @@ type Ocean struct {
 	// Surf is the shore run-up amount, 0-1. Default: 0.5.
 	Surf float64 `json:"surf,omitempty"`
 	// Extent is in meters, 100-20000. Default: 4000.
-	Extent     float64          `json:"extent,omitempty"`
-	Bathymetry *OceanBathymetry `json:"bathymetry,omitempty"`
+	Extent      float64           `json:"extent,omitempty"`
+	Bathymetry  *OceanBathymetry  `json:"bathymetry,omitempty"`
+	Reflections *OceanReflections `json:"reflections,omitempty"`
 }
 
 // OceanBathymetry maps a grayscale image's R channel into world-space seabed
@@ -83,6 +84,7 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Surf = clampOceanParam(ocean.Surf, 0, 1)
 	out.Extent = clampOceanParam(ocean.Extent, 100, 20000)
 	out.Bathymetry = normalizeOceanBathymetry(ocean.Bathymetry)
+	out.Reflections = normalizeOceanReflections(ocean.Reflections)
 	return &out
 }
 

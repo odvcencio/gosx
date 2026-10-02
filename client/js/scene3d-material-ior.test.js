@@ -691,7 +691,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
     const flagLine = indexOfMatch(source, new RegExp('"\\s+' + flag + ': u32,"'));
     assert.ok(flagLine > structStart && flagLine < matrixLine, flag + " texture-flag slot preserved");
   }
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
   // Fragment shader consumes the effective specular factors; the fixed 0.04
   // default is gone.
@@ -705,7 +705,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // declarations (whitespace-tolerant) with the real shared numeric/color
   // helpers — no hand copies of the buffer views or the math.
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
-  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(256\);/);
+  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
   assert.match(bufferDecls, /var\s+_materialUniformF\s*=/);
   assert.match(bufferDecls, /var\s+_materialUniformU\s*=/);
   const context = createSceneCoreContext();
@@ -738,7 +738,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
 
   const packed = callIn(context,
     'materialUniformData({ color: "#ffffff", roughness: 0.25, metalness: 0.5, ior: 2.42 }, true, null, null)');
-  assert.strictEqual(packed.data.length, 64);
+  assert.strictEqual(packed.data.length, 72);
   // PBR scalars keep their slots.
   assert.ok(Math.abs(packed.data[3] - 0.25) <= 1e-6);
   assert.ok(Math.abs(packed.data[4] - 0.5) <= 1e-6);

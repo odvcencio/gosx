@@ -39,6 +39,10 @@
   }
 
   var sceneApi = window.__gosx_scene3d_api;
+  var sceneDetailVariantKey = sceneApi.sceneDetailVariantKey;
+  var sceneDetailUniformData = sceneApi.sceneDetailUniformData;
+  var sceneDetailTextureRecords = sceneApi.sceneDetailTextureRecords;
+  var sceneDetailShaderSource = sceneApi.sceneDetailShaderSource;
 
   // --- Primitives and scalar helpers (10-runtime-primitives.js,
   // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).
@@ -169,12 +173,32 @@
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
+  var sceneAtmosphereQuality = sceneApi.sceneAtmosphereQuality;
+  var sceneOceanReflections = sceneApi.sceneOceanReflections;
+  var sceneReflectDispose = sceneApi.sceneReflectDispose;
+  var sceneReflectOpaqueList = sceneApi.sceneReflectOpaqueList;
+  var sceneReflectionMatrices = sceneApi.sceneReflectionMatrices;
+  var sceneSkyClouds = sceneApi.sceneSkyClouds;
+  var sceneCloudDispose = sceneApi.sceneCloudDispose;
+  var sceneCloudUniformData = sceneApi.sceneCloudUniformData;
+  var sceneAtmosphereBundle = sceneApi.sceneAtmosphereBundle;
+  var sceneAtmosphereEffects = sceneApi.sceneAtmosphereEffects;
+  var sceneAtmospherePostUniforms = sceneApi.sceneAtmospherePostUniforms;
+  var sceneAgXSource = sceneApi.sceneAgXSource;
+  var sceneAtmospherePostKey = sceneApi.sceneAtmospherePostKey;
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
+  var sceneTransmissionPublish = sceneApi.sceneTransmissionPublish;
+  var sceneTransmissionMaterial = sceneApi.sceneTransmissionMaterial;
+  var sceneTransmissionPresent = sceneApi.sceneTransmissionPresent;
+  var sceneTransmissionDepthWrite = sceneApi.sceneTransmissionDepthWrite;
+  var sceneTransmissionSettings = sceneApi.sceneTransmissionSettings;
+  var sceneTransmissionVolume = sceneApi.sceneTransmissionVolume;
+  var sceneTransmissionEffects = sceneApi.sceneTransmissionEffects;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;

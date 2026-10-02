@@ -90,7 +90,7 @@ test("Scene3D adaptive profiles start balanced and expose exact frame contract",
   assert.equal(state.requestedTier, "balanced");
   assert.equal(state.activeTier, "balanced");
   assert.deepEqual(JSON.parse(JSON.stringify(state.activeProfile)), {
-    tier: "balanced", dprCap: 1.25, surfaceResolution: 128,
+    tier: "balanced", detail: true, dprCap: 1.25, surfaceResolution: 128,
     causticsResolution: 384, objectShadowResolution: 384,
     objectTextureMaxSide: 384, objectTexturePixelBudget: 442368,
     expensivePassCadence: 2,
@@ -145,6 +145,40 @@ test("Scene3D adaptive measurement escapes stale renderer timing and respects au
   assert.equal(capdRate.state.measurement, "cpu-raf");
   assert.equal(capdRate.state.activeTier, "balanced", "authored maxFrameRate cadence must not trigger a false downshift");
   assert.ok(capdRate.state.cpuRAFBudgetMS >= 1000 / 30 - 0.1, "cpu-raf budget must honor maxFrameRate, got " + capdRate.state.cpuRAFBudgetMS);
+});
+
+test("Scene3D tier and rung governors shed sustained CPU work even with fast GPU timestamps", () => {
+  for (const h of [createAdaptiveQualityHarness({ qualityTier: "full" }),
+    createQualityLadderHarness(THREE_RUNG_LADDER, { qualityStartRung: 2 })]) {
+    const initial = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    for (let i = 0; i < 24; i++) {
+      h.clock.now += 34;
+      h.renderer.sample = { source: "gpu-timestamp", durationMS: 2, atMS: h.clock.now };
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, h.renderer);
+    }
+    const current = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    assert.notEqual(current, initial, "CPU frame work must drive a downshift");
+    assert.equal(h.state.measurement, "cpu-work+gpu-timestamp");
+    assert.equal(h.state.lastMeasurement.durationMS, 30);
+    assert.equal(h.state.lastMeasurement.rendererDurationMS, 2, "preserve the actual GPU measurement");
+    assert.equal(h.state.lastMeasurement.cpuDurationMS, 30);
+    h.clock.now += 34;
+    h.renderer.sample = { durationMS: 36, source: "gpu-timestamp" };
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 3, h.clock.now, h.renderer);
+    assert.equal(h.state.lastMeasurement.durationMS, 36, "GPU-bound work still governs");
+    assert.equal(h.state.lastMeasurement.source, "gpu-timestamp");
+  }
+});
+
+test("Scene3D CPU work sampling honors an authored 30 FPS cadence", () => {
+  const h = createAdaptiveQualityHarness({ maxFrameRate: 30 });
+  for (let i = 0; i < 30; i++) {
+    h.clock.now += 34;
+    h.renderer.sample = { source: "gpu-timestamp", durationMS: 2 };
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 25, h.clock.now, h.renderer);
+  }
+  assert.equal(h.state.activeTier, "balanced");
+  assert.equal(h.state.measurement, "cpu-work+gpu-timestamp");
 });
 
 test("Scene3D adaptive controller is hysteretic, cooldown-safe, and recovers one tier", () => {

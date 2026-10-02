@@ -71,44 +71,40 @@
   // GLSL and WGSL of the physical sky. Both renderers' sky passes and any
   // pass that reflects the sky include these; inputs come from
   // sceneSkyPhysicalParams.
-  var SCENE_SKY_PHYSICAL_GLSL = [
-    "vec3 gosxPhysicalSky(vec3 dir, vec4 betaR, vec4 betaM, vec4 sun, float g) {",
-    "  float zenith = acos(clamp(dir.y, 0., 1.));",
-    "  float inv = 1. / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));",
-    "  vec3 fex = exp(-(betaR.xyz * (8400. * inv) + betaM.xyz * (1250. * inv)));",
-    "  float ct = dot(dir, sun.xyz);",
-    "  float rPhase = 0.0596831 * (1. + ct * ct);",
-    "  float g2 = g * g;",
-    "  float mPhase = 0.0795775 * (1. - g2) / pow(max(1. - 2. * g * ct + g2, 1e-6), 1.5);",
-    "  vec3 scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3(1e-30));",
-    "  vec3 lin = pow(max(betaR.w * scatter * (1. - fex), vec3(0.)), vec3(1.5));",
-    "  lin *= mix(vec3(1.), pow(max(betaR.w * scatter * fex, vec3(0.)), vec3(.5)), clamp(pow(max(1. - sun.y, 0.), 5.), 0., 1.));",
-    "  float disk = sun.w <= 1. ? smoothstep(sun.w, sun.w + 0.00002, ct) : 0.;",
-    "  vec3 l0 = 0.1 * fex + betaR.w * 19000. * fex * disk;",
-    "  vec3 c = (lin + l0) * 0.04 + vec3(0., 0.0003, 0.00075);",
-    "  return pow(max(c, vec3(0.)), vec3(1. / (1.2 + 1.2 * betaM.w)));",
-    "}",
-  ].join("\n");
+  var SCENE_SKY_PHYSICAL_GLSL = `vec3 gosxPhysicalSky(vec3 dir, vec4 betaR, vec4 betaM, vec4 sun, float g) {
+  float zenith = acos(clamp(dir.y, 0., 1.));
+  float inv = 1. / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));
+  vec3 fex = exp(-(betaR.xyz * (8400. * inv) + betaM.xyz * (1250. * inv)));
+  float ct = dot(dir, sun.xyz);
+  float rPhase = 0.0596831 * (1. + ct * ct);
+  float g2 = g * g;
+  float mPhase = 0.0795775 * (1. - g2) / pow(max(1. - 2. * g * ct + g2, 1e-6), 1.5);
+  vec3 scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3(1e-30));
+  vec3 lin = pow(max(betaR.w * scatter * (1. - fex), vec3(0.)), vec3(1.5));
+  lin *= mix(vec3(1.), pow(max(betaR.w * scatter * fex, vec3(0.)), vec3(.5)), clamp(pow(max(1. - sun.y, 0.), 5.), 0., 1.));
+  float disk = sun.w <= 1. ? smoothstep(sun.w, sun.w + 0.00002, ct) : 0.;
+  vec3 l0 = 0.1 * fex + betaR.w * 19000. * fex * disk;
+  vec3 c = (lin + l0) * 0.04 + vec3(0., 0.0003, 0.00075);
+  return pow(max(c, vec3(0.)), vec3(1. / (1.2 + 1.2 * betaM.w)));
+}`;
 
-  var SCENE_SKY_PHYSICAL_WGSL = [
-    "fn gosxPhysicalSky(dir: vec3f, betaR: vec4f, betaM: vec4f, sun: vec4f, g: f32) -> vec3f {",
-    "  let zenith = acos(clamp(dir.y, 0.0, 1.0));",
-    "  let inv = 1.0 / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));",
-    "  let fex = exp(-(betaR.xyz * (8400.0 * inv) + betaM.xyz * (1250.0 * inv)));",
-    "  let ct = dot(dir, sun.xyz);",
-    "  let rPhase = 0.0596831 * (1.0 + ct * ct);",
-    "  let g2 = g * g;",
-    "  let mPhase = 0.0795775 * (1.0 - g2) / pow(max(1.0 - 2.0 * g * ct + g2, 1e-6), 1.5);",
-    "  let scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3f(1e-30));",
-    "  var lin = pow(max(betaR.w * scatter * (1.0 - fex), vec3f(0.0)), vec3f(1.5));",
-    "  lin = lin * mix(vec3f(1.0), pow(max(betaR.w * scatter * fex, vec3f(0.0)), vec3f(0.5)), clamp(pow(max(1.0 - sun.y, 0.0), 5.0), 0.0, 1.0));",
-    "  var disk = 0.0;",
-    "  if (sun.w <= 1.0) { disk = smoothstep(sun.w, sun.w + 0.00002, ct); }",
-    "  let l0 = 0.1 * fex + betaR.w * 19000.0 * fex * disk;",
-    "  let c = (lin + l0) * 0.04 + vec3f(0.0, 0.0003, 0.00075);",
-    "  return pow(max(c, vec3f(0.0)), vec3f(1.0 / (1.2 + 1.2 * betaM.w)));",
-    "}",
-  ].join("\n");
+  var SCENE_SKY_PHYSICAL_WGSL = `fn gosxPhysicalSky(dir: vec3f, betaR: vec4f, betaM: vec4f, sun: vec4f, g: f32) -> vec3f {
+  let zenith = acos(clamp(dir.y, 0.0, 1.0));
+  let inv = 1.0 / (cos(zenith) + 0.15 * pow(93.885 - zenith * 57.29577951, -1.253));
+  let fex = exp(-(betaR.xyz * (8400.0 * inv) + betaM.xyz * (1250.0 * inv)));
+  let ct = dot(dir, sun.xyz);
+  let rPhase = 0.0596831 * (1.0 + ct * ct);
+  let g2 = g * g;
+  let mPhase = 0.0795775 * (1.0 - g2) / pow(max(1.0 - 2.0 * g * ct + g2, 1e-6), 1.5);
+  let scatter = (betaR.xyz * rPhase + betaM.xyz * mPhase) / max(betaR.xyz + betaM.xyz, vec3f(1e-30));
+  var lin = pow(max(betaR.w * scatter * (1.0 - fex), vec3f(0.0)), vec3f(1.5));
+  lin = lin * mix(vec3f(1.0), pow(max(betaR.w * scatter * fex, vec3f(0.0)), vec3f(0.5)), clamp(pow(max(1.0 - sun.y, 0.0), 5.0), 0.0, 1.0));
+  var disk = 0.0;
+  if (sun.w <= 1.0) { disk = smoothstep(sun.w, sun.w + 0.00002, ct); }
+  let l0 = 0.1 * fex + betaR.w * 19000.0 * fex * disk;
+  let c = (lin + l0) * 0.04 + vec3f(0.0, 0.0003, 0.00075);
+  return pow(max(c, vec3f(0.0)), vec3f(1.0 / (1.2 + 1.2 * betaM.w)));
+}`;
 
   // --- Ocean ---
   //
@@ -190,19 +186,7 @@
     out[30] = sceneNumber(camera && camera.z, 0); out[31] = linear ? 1 : 0;
     var rings = low ? 96 : 192, segments = low ? 128 : 256, inner = 0.35;
     out[32] = rings; out[33] = segments; out[34] = inner; out[35] = Math.log(out[1] / inner + 1) / rings;
-    var height = sceneNumber(o.waveHeight, 0.8), length = sceneNumber(o.waveLength, 18);
-    var chop = sceneNumber(o.choppiness, 0.6), wind = sceneNumber(o.windDirection, 0) * Math.PI / 180;
-    var weights = 0;
-    for (var w = 0; w < waves; w++) weights += SCENE_OCEAN_WAVE_WEIGHT[w] * SCENE_OCEAN_WAVE_WEIGHT[w];
-    for (var i = 0; i < waves; i++) {
-      var base = 36 + i * 8, angle = wind + SCENE_OCEAN_WAVE_ANGLE[i];
-      var k = 2 * Math.PI / (length * SCENE_OCEAN_WAVE_RATIO[i]);
-      out[base] = Math.sin(angle); out[base + 1] = Math.cos(angle); out[base + 2] = k;
-      out[base + 3] = Math.sqrt(9.81 * k) * out[3];
-      out[base + 4] = SCENE_OCEAN_WAVE_WEIGHT[i] * height / Math.sqrt(8 * weights);
-      out[base + 5] = chop / (k * waves);
-      out[base + 6] = ((i * 0.6180339887) % 1) * 2 * Math.PI;
-    }
+    window.__gosx_scene3d_ocean_waves.write(o, quality, out);
     var sky = environment && environment.sky;
     var skyEnv = sky ? environment : { sky: { mode: "gradient", topColor: "#6d8fb0", horizonColor: "#c8d6e0", bottomColor: "#c8d6e0" } };
     sceneSkyUniformData(sceneOceanSkyScratch, skyEnv, sceneOceanViewScratch, { fov: 60 }, 1, true);
@@ -1132,6 +1116,7 @@
 
   // Determine the render pass for an object given its material.
   function scenePBRObjectRenderPass(obj, material) {
+    if (sceneTransmissionMaterial(material)) return "alpha";
     // Derived object passes are cached defaults; after CSS substitution the
     // effective material must be allowed to choose the route again.
     if (obj && obj._renderPassDerived !== true &&
@@ -1173,4 +1158,47 @@
       return db - da;
     }
     return String(a && a.id || "").localeCompare(String(b && b.id || ""));
+  }
+
+  // Built-in PBR transmission is a separate draw phase; authored shader hooks
+  // keep control of their own shading and passes.
+  /** @param {*} mat */
+  function sceneTransmissionMaterial(mat) {
+    return Boolean(mat && !mat.unlit && mat.kind !== "flat" && mat.kind !== "custom" && mat.kind !== "selena" &&
+      !mat.customFragment && !mat.customFragmentWGSL && sceneNumber(mat.transmission, 0) > 0 && sceneNumber(mat.metalness, 0) < 1);
+  }
+
+  /** @param {*} bundle */
+  function sceneTransmissionPresent(bundle) {
+    return Array.isArray(bundle.materials) && bundle.materials.some(sceneTransmissionMaterial);
+  }
+
+  /** @param {*} object @param {*} mat @param {*} defaultWrite */
+  function sceneTransmissionDepthWrite(object, mat, defaultWrite) {
+    if (object && typeof object.depthWrite === "boolean") return object.depthWrite;
+    // Opaque glass must depth-test its own facets after the background capture.
+    return defaultWrite || sceneTransmissionMaterial(mat) && sceneNumber(mat.opacity, 1) >= 1;
+  }
+
+  /** @param {*} frameMeta @param {*} mount */
+  function sceneTransmissionSettings(frameMeta, mount) {
+    var tier = frameMeta && frameMeta.qualityProfile && frameMeta.qualityProfile.tier || frameMeta && frameMeta.qualityTier || "full";
+    if (mount && mount.getAttribute && mount.getAttribute("data-gosx-scene3d-quality-ladder") === "true") {
+      var rung = Number(mount.getAttribute("data-gosx-scene3d-quality-rung"));
+      tier = rung === 0 ? "constrained" : rung === 1 ? "balanced" : "full";
+    }
+    var low = tier === "constrained" || tier === "low" || tier === "minimal" || tier === "survival";
+    return { tier: tier, screen: !low, levels: tier === "balanced" || tier === "medium" ? 5 : 9 };
+  }
+
+  /** @param {*} effects @param {*} environment */
+  function sceneTransmissionEffects(effects, environment) {
+    if (effects.length) return effects;
+    var env = environment || {};
+    return [{ kind: "toneMapping", mode: env.toneMapping || "aces", exposure: sceneNumber(env.exposure, 1) }];
+  }
+
+  /** @param {*} mount @param {*} state */
+  function sceneTransmissionPublish(mount, state) {
+    if (mount && mount.getAttribute("data-gosx-scene3d-transmission") !== state) mount.setAttribute("data-gosx-scene3d-transmission", state);
   }

@@ -1,8 +1,6 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { createWebGLRendererForPost, makeWebGLBundleWithCustomPost, createBoardWebGPUHarness, makePointsBundle } = require("./runtime-test-harness.js");
 
 test("WebGL contact shadows bind view-space sunlight, bounded parameters, and a separate depth target", () => {
@@ -18,6 +16,20 @@ test("WebGL contact shadows bind view-space sunlight, bounded parameters, and a 
   assert.equal(gl.ops.filter(op => op[0] === "uniform1i" && op[1] === "u_depthTexture").length, 2);
   h.renderer.dispose();
 });
+
+test("WebGPU contact shadows use depth, aligned camera uniforms, and an actual fullscreen dispatch", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const bundle = makePointsBundle({ id: "p", count: 1, positions: [0, 0, 0] });
+  bundle.postEffects = [{ kind: "contactShadows", distance: 1.5, thickness: 0.125, intensity: 0.5, bias: 0.01, direction: { x: 0, y: -1, z: 0 } }];
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  const shader = h.fake.state.shaderModules.find(m => m.label === "post-contactShadows");
+  assert.ok(shader, "the contact shadow shader is compiled");
+  assert.match(shader.code, /textureLoad\(depthTex/);
+  assert.ok(h.fake.state.renderPasses.flatMap(p => p.draws).some(d => d.pipeline?.desc?.fragment?.module === shader));
+  h.renderer.dispose();
+});
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const axes = [[0, -1, 0], [0, 1, 0], [-1, 0, 0], [1, 0, 0], [0, 0, -1], [0, 0, 1]];
 const wireCases = JSON.parse(execFileSync("go", ["run", "./client/js/testdata/contact-shadow-directions.go"], {
@@ -97,16 +109,4 @@ test("WebGPU contact passes retain separate settings, reuse slot buffers, and de
     assert.deepEqual(latestUniforms(h, buffers[1]).slice(20), [2, 0.25, 0.03125, 0.25]);
   } finally { h.renderer.dispose(); }
   assert.ok(buffers.every(buffer => buffer.destroyed), "dispose releases each slot's uniform storage");
-});
-
-test("WebGPU contact shadows use depth, aligned camera uniforms, and an actual fullscreen dispatch", async () => {
-  const h = await createBoardWebGPUHarness({ fresh: true });
-  const bundle = makePointsBundle({ id: "p", count: 1, positions: [0, 0, 0] });
-  bundle.postEffects = [{ kind: "contactShadows", distance: 1.5, thickness: 0.125, intensity: 0.5, bias: 0.01, direction: { x: 0, y: -1, z: 0 } }];
-  h.renderer.render(bundle, { width: 320, height: 180 });
-  const shader = h.fake.state.shaderModules.find(m => m.label === "post-contactShadows");
-  assert.ok(shader, "the contact shadow shader is compiled");
-  assert.match(shader.code, /textureLoad\(depthTex/);
-  assert.ok(h.fake.state.renderPasses.flatMap(p => p.draws).some(d => d.pipeline?.desc?.fragment?.module === shader));
-  h.renderer.dispose();
 });

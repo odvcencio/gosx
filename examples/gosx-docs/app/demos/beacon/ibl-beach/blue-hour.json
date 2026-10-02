@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": "physical-sky:blue-hour",
+  "radiance": {
+    "uri": "/env/blackglass-beach/blue-hour.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 7,
+    "width": 64,
+    "height": 64,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/env/blackglass-beach/blue-hour.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 8,
+    "height": 8,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/env/blackglass-beach/blue-hour.brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      0.04401573690519832,
+      0.10397141867539082,
+      0.15616499491341776
+    ],
+    [
+      0.04291018336494841,
+      0.06293198594641715,
+      0.0909348001128422
+    ],
+    [
+      0.0017086470388969289,
+      -0.006536873314305364,
+      -0.011510334528526482
+    ],
+    [
+      1.1709277583725041e-17,
+      -3.5743096308236966e-17,
+      -3.8352804818727465e-17
+    ],
+    [
+      2.6276020815012464e-18,
+      4.067875729188777e-18,
+      -4.4915616094053784e-17
+    ],
+    [
+      -0.0015176075980528113,
+      0.003927563596483616,
+      0.007834916609063018
+    ],
+    [
+      -0.01606099818442364,
+      0.004229636827501752,
+      0.006396273712505546
+    ],
+    [
+      3.1613387173898624e-18,
+      3.975549137938059e-18,
+      2.981555974335137e-19
+    ],
+    [
+      -0.027818415584789084,
+      0.00732593276857071,
+      0.011078651546659959
+    ]
+  ]
+}

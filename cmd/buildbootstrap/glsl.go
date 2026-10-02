@@ -229,6 +229,14 @@ func shaderLiteral(code []byte, node *gotreesitter.Node, grammar *gotreesitter.L
 	return start, end, string(masked)
 }
 func packBuiltinGLSL(code string) string {
+	return packBuiltinShaders(code, false)
+}
+
+func packBuiltinPostWGSL(code string) string {
+	return packBuiltinShaders(code, true)
+}
+
+func packBuiltinShaders(code string, postWGSL bool) string {
 	grammar := grammars.TypescriptLanguage()
 	tree, err := gotreesitter.NewParser(grammar).Parse([]byte(code))
 	if err != nil || tree.RootNode() == nil {
@@ -237,7 +245,25 @@ func packBuiltinGLSL(code string) string {
 	defer tree.Release()
 	bytes := []byte(code)
 	pinned := map[string]bool{}
+	var replacementText []string
 	var constants []*gotreesitter.Node
+	var pinReplacement func(*gotreesitter.Node)
+	pinReplacement = func(node *gotreesitter.Node) {
+		kind := node.Type(grammar)
+		if kind == "string" || kind == "template_string" {
+			_, _, value := shaderLiteral(bytes, node, grammar)
+			replacementText = append(replacementText, value)
+			for _, token := range shaderTokens(value) {
+				if token.identifier {
+					pinned[token.text] = true
+				}
+			}
+			return
+		}
+		for i := 0; i < int(node.ChildCount()); i++ {
+			pinReplacement(node.Child(i))
+		}
+	}
 	var walk func(*gotreesitter.Node)
 	walk = func(node *gotreesitter.Node) {
 		kind := node.Type(grammar)
@@ -245,27 +271,19 @@ func packBuiltinGLSL(code string) string {
 			callee := node.ChildByFieldName("function", grammar)
 			arguments := node.ChildByFieldName("arguments", grammar)
 			if callee != nil && arguments != nil && strings.HasSuffix(callee.Text(bytes), ".replace") {
-				for i := 0; i < int(arguments.ChildCount()); i++ {
-					child := arguments.Child(i)
-					if child.Type(grammar) != "string" {
-						continue
-					}
-					_, _, value := shaderLiteral(bytes, child, grammar)
-					for _, token := range shaderTokens(value) {
-						if token.identifier {
-							pinned[token.text] = true
-						}
-					}
-					break
-				}
+				pinReplacement(arguments)
 			}
 		}
 		if kind == "variable_declarator" && !node.HasError() {
 			name := node.ChildByFieldName("name", grammar)
 			value := node.ChildByFieldName("value", grammar)
-			if name != nil && value != nil && strings.HasPrefix(name.Text(bytes), "SCENE_") {
+			if name != nil && value != nil {
 				text := name.Text(bytes)
-				if strings.Contains(text, "SOURCE") || strings.Contains(text, "GLSL") || text == "SCENE_SKY_FRAGMENT" {
+				selected := strings.HasPrefix(text, "SCENE_") && (strings.Contains(text, "SOURCE") || strings.Contains(text, "GLSL") || text == "SCENE_SKY_FRAGMENT")
+				if postWGSL {
+					selected = strings.HasPrefix(text, "WGSL_POST_")
+				}
+				if selected {
 					if !strings.Contains(value.Text(bytes), ".replace(") {
 						constants = append(constants, value)
 					}
@@ -297,12 +315,35 @@ func packBuiltinGLSL(code string) string {
 		}
 		gather(constant)
 		for _, piece := range pieces {
+			var protected []shaderPiece
+			literal := string(bytes[piece.start:piece.end])
+			for _, needle := range replacementText {
+				if needle == "" {
+					continue
+				}
+				for offset := 0; offset < len(literal); {
+					found := strings.Index(literal[offset:], needle)
+					if found < 0 {
+						break
+					}
+					start := piece.start + offset + found
+					protected = append(protected, shaderPiece{start: start, end: start + len(needle)})
+					offset += found + len(needle)
+				}
+			}
 			for row := piece.start; row < piece.end; {
 				end := row
 				for end < piece.end && (bytes[end] == ' ' || bytes[end] == '\t') {
 					end++
 				}
-				if end > row {
+				keep := false
+				for _, span := range protected {
+					if row < span.end && end > span.start {
+						keep = true
+						break
+					}
+				}
+				if end > row && !keep {
 					edits = append(edits, shaderEdit{row, end, ""})
 				}
 				next := row
@@ -311,6 +352,9 @@ func packBuiltinGLSL(code string) string {
 				}
 				row = next + 1
 			}
+		}
+		if postWGSL {
+			continue
 		}
 		for _, edit := range shaderLocalEdits(joined.String(), pinned) {
 			for _, piece := range pieces {

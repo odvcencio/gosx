@@ -37,6 +37,11 @@
     return props && normalizeSceneControlsMode(props.controls) === "first-person" && props.walk && typeof props.walk === "object" && !Array.isArray(props.walk);
   }
 
+  // @ts-ignore TS7006 -- prop gate is also evaluated by plain JS tests
+  function sceneVesselEnabled(props) {
+    return props && props.vessel && typeof props.vessel === "object" && typeof props.vessel.nodeId === "string" && props.vessel.nodeId.length > 0;
+  }
+
   // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
   function sceneRunFrameGuard(callback, args, shouldRecover, recover) {
     try { return callback.apply(null, args); } catch (error) { if (shouldRecover()) recover(); throw error; }
@@ -843,9 +848,9 @@
       deltaY: sceneNumber(event && event.movementY, 0),
     } : sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
     const fly = sceneFlyEnsureState(controls, readSourceCamera);
-    fly.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.lookSpeed;
+    fly.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.lookSpeed * (controls.zoomScale || 1);
     fly.pitch = sceneClamp(
-      fly.pitch + (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * controls.lookSpeed,
+      fly.pitch + (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * controls.lookSpeed * (controls.zoomScale || 1),
       -1.52,
       1.52,
     );
@@ -987,7 +992,7 @@
       return false;
     }
     const fly = sceneFlyEnsureState(controls, readSourceCamera);
-    const speed = controls.moveSpeed * Math.max(0.001, deltaSeconds || 1 / 60);
+    const speed = controls.moveSpeed * (controls.zoomScale || 1) * Math.max(0.001, deltaSeconds || 1 / 60);
     const yaw = sceneNumber(fly.yaw, 0);
     const pitch = controls.mode === "fly" ? sceneNumber(fly.pitch, 0) : 0;
     const cosPitch = Math.cos(pitch);
@@ -1031,6 +1036,47 @@
 
   // @ts-ignore TS7006 -- keep this call site JavaScript-compatible in the runtime bundle
   function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
+    let base = Object.create(null);
+    // @ts-ignore TS7006 -- this source is also evaluated as plain JavaScript.
+    const schedule = reason => {
+      if (base && base.resetZoom && (reason === "controls-reset" || reason === "vessel-reset")) base.resetZoom();
+      scheduleRender(reason);
+    };
+    base = setupSceneBaseControls(canvas, props, readViewport, readSourceCamera, schedule, sceneState);
+    if (sceneVesselEnabled(props)) base = window.__gosx_scene3d_vessel_api.setup(canvas, props, base, sceneState, {
+      schedule, current: sceneCurrentControlCamera,
+      // @ts-ignore TS7006 -- renderer-neutral creation seam for the lazy wake
+      addObject: (state, id, object) => state.objects.set(id, normalizeSceneObject(Object.assign({ id, kind: "mesh" }, object), id)),
+      // @ts-ignore TS2339 -- Chromium deviceMemory is also used by the ocean quality gate
+      lowHardware: () => gosxLowEndHardware(navigator.deviceMemory, navigator.hardwareConcurrency),
+    });
+    if (!props.controlZoom || !base.controller) return base;
+    const controller = base.controller, current = controller.currentCamera;
+    // @ts-ignore TS7006 -- plain JavaScript control adapter.
+    if (!current) controller.syncCamera = camera => {
+      if (controller.touched) return;
+      if (controller.mode === "orbit") controller.orbit = sceneOrbitStateFromCamera(camera, controller.target, controller);
+      else controller.fly = sceneFlyStateFromCamera(camera);
+    };
+    const read = current ? () => current() : () => {
+      controller.syncCamera(readSourceCamera());
+      return controller.mode === "orbit" ? sceneOrbitCamera(controller.orbit, readSourceCamera()) : sceneFlyCamera(controller.fly, readSourceCamera());
+    };
+    return window.__gosx_runtime_api.scene3DZoom.setup(canvas, props, base, {
+      read,
+      // @ts-ignore TS7006 -- viewport FOV is sampled at view reset, before optical zoom.
+      fov: camera => sceneViewportCamera(camera, sceneState.camera || readSourceCamera(), readViewport()).fov,
+      // @ts-ignore TS7006 -- plain JavaScript control adapter.
+      apply: camera => {
+        controller.active = false; controller.touched = true; controller.pointerId = null; sceneOrbitStopInertia(controller);
+        controller.keys.clear();
+        if (controller.mode === "orbit") controller.orbit = sceneOrbitStateFromCamera(camera, controller.target, controller);
+        else controller.fly = sceneFlyStateFromCamera(camera);
+      }, schedule: scheduleRender, requestFrame: sceneMotionRequestFrame, cancelFrame: sceneMotionCancelFrame, now: sceneNowMilliseconds,
+    });
+  }
+  // @ts-ignore TS7006 -- shared JavaScript control entrypoint
+  function setupSceneBaseControls(canvas, props, readViewport, readSourceCamera, scheduleRender, sceneState) {
     if (sceneWalkEnabled(props)) {
       return window.__gosx_scene3d_walk_api.setup(canvas, props, readSourceCamera, scheduleRender, sceneState, {
         camera: sceneRenderCamera, requestLock: sceneRequestPointerLock, exitLock: sceneExitPointerLock,
@@ -1224,7 +1270,7 @@
     canvas.addEventListener("pointerup", finishPointerDrag);
     canvas.addEventListener("pointercancel", finishPointerDrag);
     canvas.addEventListener("lostpointercapture", finishPointerDrag);
-    canvas.addEventListener("wheel", onWheel);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
     document.addEventListener("keydown", onKeyDown);
     if (flyMode) {
       document.addEventListener("keyup", onKeyUp);
@@ -1237,6 +1283,7 @@
 
     return {
       controller: controls,
+      cancelTouch() { controls.active = false; controls.pointerId = null; detachDocumentListeners(); cancelOrbitInertia(); sceneOrbitStopInertia(controls); },
       // stopInertia cancels an orbit glide. The managed control-forms camera
       // callback used to read flyMode, cancelOrbitInertia and controls
       // directly, but those are locals of this function, so the callback threw

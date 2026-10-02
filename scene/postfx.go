@@ -79,6 +79,8 @@ const (
 	TonemapReinhard
 	// TonemapFilmic is a compact filmic curve with a softer shoulder.
 	TonemapFilmic
+	// TonemapAgX uses the AgX log-space sigmoid, with colour-preserving highlights.
+	TonemapAgX
 )
 
 // Tonemap maps HDR scene colors into the displayable [0,1] range.
@@ -91,14 +93,18 @@ func (Tonemap) isPostEffect() {}
 
 // Bloom adds an HDR-driven glow around bright pixels.
 //
-// Implementation: bright-pass extracts pixels above the luminance Threshold
+// By default, bright-pass extracts pixels above the luminance Threshold
 // into a half-resolution FBO, separable Gaussian blur runs horizontally and
 // vertically, and the result is additively composited back onto the scene at
 // Strength.
 type Bloom struct {
+	// Mode selects soft-knee mip-chain bloom when set to "mip".
+	// Empty and unknown values preserve the legacy bright-pass blur.
+	Mode string
+
 	Threshold float32 // luminance above which pixels bloom (default 0.8)
 	Strength  float32 // intensity of the bloom contribution (default 0.5)
-	Radius    float32 // blur radius in pixels (default 5)
+	Radius    float32 // blur radius in pixels (default 5); mip tent radius is Radius / 5
 
 	// Scale is an additional bloom-internal downscale applied on top of
 	// the PostFX.MaxPixels factor. The zero value maps to 0.5 (runtime
@@ -333,3 +339,20 @@ func migrateEnvironmentTonemap(env Environment, existing []PostEffectIR) PostEff
 	}
 	return TonemapIR{Mode: mode, Exposure: exposure}
 }
+
+// GodRays adds depth-occluded radial sun scattering before bloom and tonemap.
+type GodRays struct {
+	Intensity float32 `json:"intensity,omitempty"` // 0..2; default 0.18
+	Decay     float32 `json:"decay,omitempty"`     // 0..1; default 0.96
+	Density   float32 `json:"density,omitempty"`   // 0..2; default 0.9
+	Samples   int     `json:"samples,omitempty"`   // 8..64; default 32
+}
+
+func (GodRays) isPostEffect() {}
+
+// Grain adds a stable, subtle display-space film grain. Place after Tonemap.
+type Grain struct {
+	Intensity float32 `json:"intensity,omitempty"` // 0..0.1; default 0.015
+}
+
+func (Grain) isPostEffect() {}

@@ -238,3 +238,13 @@ test("walk leaves rendering to an animating scene's paced loop", () => {
   assert.ok(h.handle.controller.currentCamera().z < 0, "the camera still moves for the animation loop to draw");
   h.event(h.env.document, "keyup", { code: "KeyW" }); h.handle.dispose();
 });
+
+test("optical zoom scales walking travel and every look input with the same projection ratio", () => {
+  const full = model({ headBob: 0 }), zoomed = model({ headBob: 0 });
+  zoomed.state.zoomScale = 0.4;
+  full.api.advance(full.state, 0.1, 0, 1, false); zoomed.api.advance(zoomed.state, 0.1, 0, 1, false);
+  near(zoomed.state.z, full.state.z * 0.4);
+  full.api.look(full.state, 0.5, 0.3); zoomed.api.look(zoomed.state, 0.5, 0.3);
+  near(zoomed.state.yaw, full.state.yaw * 0.4);
+  near(zoomed.state.pitch - camera.rotationX, (full.state.pitch - camera.rotationX) * 0.4);
+});
