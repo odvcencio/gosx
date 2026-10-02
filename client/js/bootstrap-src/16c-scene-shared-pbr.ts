@@ -42,6 +42,10 @@
   var SCENE_POST_FXAA = "fxaa";
 
   // Shared sky layout: camera basis, linear gradient stops, and sampling controls.
+  function sceneSRGBChannelToLinear(value) {
+    return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+  }
+
   function sceneSkyUniformData(out, environment, view, camera, aspect, linear) {
     var sky = environment.sky;
     var spread = camera.kind === "orthographic" || camera.mode === "ortho2d"
@@ -54,7 +58,7 @@
     for (var stop = 0; stop < 3; stop++) {
       for (var channel = 0; channel < 3; channel++) {
         var c = colors[stop][channel];
-        out[12 + stop * 4 + channel] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        out[12 + stop * 4 + channel] = sceneSRGBChannelToLinear(c);
       }
     }
     out[15] = Math.max(0, sceneNumber(sky.intensity, 1) || 1);
@@ -136,7 +140,7 @@
 
   function sceneOceanLinear(hex, out, offset) {
     var c = sceneColorRGBA(hex, [0, 0, 0, 1]);
-    for (var i = 0; i < 3; i++) out[offset + i] = c[i] <= 0.04045 ? c[i] / 12.92 : Math.pow((c[i] + 0.055) / 1.055, 2.4);
+    for (var i = 0; i < 3; i++) out[offset + i] = sceneSRGBChannelToLinear(c[i]);
   }
 
   // sceneSkyPhysicalRadianceInto evaluates gosxPhysicalSky on the CPU (no sun

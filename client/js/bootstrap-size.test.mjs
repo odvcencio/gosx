@@ -695,7 +695,8 @@ const budgets = [
   // Ocean settings preservation, scene-clock use, and water mounting fixes measure 1,811,752 raw bytes.
   // Raise only the raw target by the smallest 100-byte step needed to clear the hard limit.
   // Ocean texture binding and explicit-zero fixes with current normal-map sampling measure 1815573 raw, 505204 gzip, and 403876 Brotli bytes. Only exceeded targets rise in 100-byte steps.
-  { file: "bootstrap.js", raw: 1_750_102, gzip: 488_861, brotli: 387_517 },
+  // Preserve main's 400-byte public clock Brotli allocation alongside the ocean allocation.
+  { file: "bootstrap.js", raw: 1_750_102, gzip: 488_861, brotli: 387_917 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1193,7 +1194,8 @@ const budgets = [
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Ocean texture binding and explicit-zero fixes with current normal-map sampling measure 623515 raw, 177450 gzip, and 146137 Brotli bytes. Only exceeded targets rise in 100-byte steps.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 169_000, brotli: 139_350 },
+  // Preserve main's public clock allocations: 150 gzip and 175 Brotli bytes.
+  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 169_150, brotli: 139_525 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1841,9 +1843,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Preserve main's public clock allocations: 150 gzip and 200 Brotli bytes.
     raw: 1_319_200,
-    gzip: 362_800,
-    brotli: 303_300,
+    gzip: 362_950,
+    brotli: 303_500,
   },
   // Ocean texture binding and explicit-zero fixes with current normal-map sampling measure 1233811 raw, 350734 gzip, and 295671 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   {
@@ -2028,9 +2031,10 @@ const routeBudgets = [
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_175_100,
-    gzip: 334_400,
-    brotli: 281_595, // +95: persistent hub connections (approved exception, decision 0014)
+    // Preserve main's public clock allocations: 25 raw, 150 gzip and 175 Brotli bytes.
+    raw: 1_175_125,
+    gzip: 334_550,
+    brotli: 281_770, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Ocean texture binding and explicit-zero fixes with current normal-map sampling measure 1649496 raw, 454284 gzip, and 381655 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   {
@@ -2213,8 +2217,9 @@ const routeBudgets = [
     raw: 1_584_000, // +100: persistent hub connections (approved exception, decision 0014)
     // Ocean lifecycle fixes measure 453_286 gzip bytes, two above the old hard limit.
     // Raise only gzip by the smallest 100-byte target step.
-    gzip: 437_900,
-    brotli: 365_295, // +95: persistent hub connections (approved exception, decision 0014)
+    // Preserve main's public clock allocations: 150 gzip and 175 Brotli bytes.
+    gzip: 438_050,
+    brotli: 365_470, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Ocean texture binding and explicit-zero fixes with current normal-map sampling measure 1232236 raw, 335770 gzip, and 279836 Brotli bytes. Only exceeded targets rise in 100-byte steps.
   {
@@ -2369,9 +2374,10 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Preserve main's public clock allocations: 150 gzip and 205 Brotli bytes.
     raw: 1_173_600,
-    gzip: 319_800,
-    brotli: 266_595, // +95: persistent hub connections (approved exception, decision 0014)
+    gzip: 319_950,
+    brotli: 266_800, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];

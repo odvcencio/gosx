@@ -95,7 +95,7 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 	if !ok {
 		return false
 	}
-	a.isr.serve(w, r, artifact, mode)
+	a.isr.serve(w, r, artifact, mode, !a.compressionOff)
 	return true
 }
 
@@ -176,8 +176,19 @@ func (a *App) regenerateISRArtifact(ctx context.Context, artifact isrArtifact, d
 		}
 	}()
 
+	// Another request may have generated the artifact between our first stat
+	// and acquiring its released lease. Recheck while holding the lease.
+	info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
+	if err == nil {
+		artifact.modTime = info.ModTime
+		return artifact, "MISS", true
+	}
+	if !errors.Is(err, ErrISRArtifactNotFound) {
+		return isrArtifact{}, "", false
+	}
+
 	started := time.Now()
-	info, err := a.isr.regenerate(artifact, a.Revalidator(), dispatch)
+	info, err = a.isr.regenerate(artifact, a.Revalidator(), dispatch)
 	if err != nil {
 		a.observeOperation(OperationEvent{
 			Component: "isr",
@@ -524,11 +535,29 @@ func (c *isrConfig) updateState(artifact isrArtifact, generatedAt time.Time, rev
 	_ = artifact.store.SaveState(artifact.bundleRoot, artifact.page.Path, state)
 }
 
-func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrArtifact, mode string) {
+func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrArtifact, mode string, compression bool) {
 	if w == nil || r == nil {
 		return
 	}
 	data := artifact.body
+	encoding := ""
+	// A stale body is already a snapshot. Compress that snapshot dynamically
+	// rather than loading a variant that a background refresh could replace.
+	if compression && data == nil && canServeCompressedFile(r) && w.Header().Get("Content-Encoding") == "" {
+		if store, ok := artifact.store.(ISRCompressedStore); ok {
+			for _, candidate := range []string{"br", "gzip"} {
+				if !requestAcceptsEncoding(r, candidate) {
+					continue
+				}
+				stored, err := store.ReadCompressedArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File, candidate, artifact.modTime)
+				if err == nil {
+					data = stored.Body
+					encoding = candidate
+					break
+				}
+			}
+		}
+	}
 	if data == nil {
 		stored, err := artifact.store.ReadArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
 		if err != nil {
@@ -545,6 +574,13 @@ func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrAr
 	}
 	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if compression {
+		addAcceptEncodingVary(w.Header())
+	}
+	if encoding != "" {
+		weakenETag(w.Header())
+		w = &encodedContentWriter{ResponseWriter: w, encoding: encoding}
+	}
 	if mode != "" {
 		w.Header().Set("X-GoSX-ISR", mode)
 	}

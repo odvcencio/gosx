@@ -6,16 +6,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"m31labs.dev/gosx/internal/httpcompress"
 )
 
 type deploymentDescriptor struct {
-	Version         int    `json:"version"`
-	StaticDir       string `json:"staticDir"`
-	ServerEntry     string `json:"serverEntry,omitempty"`
-	EdgeEntry       string `json:"edgeEntry"`
-	RoutesManifest  string `json:"routesManifest"`
-	AssetsNamespace string `json:"assetsNamespace"`
-	OriginEnv       string `json:"originEnv"`
+	Version         int                   `json:"version"`
+	StaticDir       string                `json:"staticDir"`
+	ServerEntry     string                `json:"serverEntry,omitempty"`
+	EdgeEntry       string                `json:"edgeEntry"`
+	RoutesManifest  string                `json:"routesManifest"`
+	AssetsNamespace string                `json:"assetsNamespace"`
+	OriginEnv       string                `json:"originEnv"`
+	Compression     deploymentCompression `json:"compression"`
+}
+
+type deploymentCompression struct {
+	Encodings    []string          `json:"encodings"`
+	Suffixes     map[string]string `json:"suffixes"`
+	Vary         string            `json:"vary"`
+	MinimumBytes int               `json:"minimumBytes"`
 }
 
 func writeEdgeBundle(distDir string, manifest exportManifest, builtServer bool) error {
@@ -39,6 +49,12 @@ func writeEdgeBundle(distDir string, manifest exportManifest, builtServer bool) 
 		RoutesManifest:  "export.json",
 		AssetsNamespace: "ASSETS",
 		OriginEnv:       "GOSX_ORIGIN",
+		Compression: deploymentCompression{
+			Encodings:    []string{"br", "gzip"},
+			Suffixes:     map[string]string{"br": ".br", "gzip": ".gz"},
+			Vary:         "Accept-Encoding",
+			MinimumBytes: httpcompress.MinimumSize,
+		},
 	}
 	if builtServer {
 		descriptor.ServerEntry = filepath.ToSlash(filepath.Join("server", "app"))
@@ -83,11 +99,83 @@ func edgeWorkerSource(manifest exportManifest) string {
 		"  return GOSX_STATIC_PREFIXES.some((prefix) => pathname.startsWith(prefix)) || /\\.[a-z0-9]+$/i.test(pathname);",
 		"}",
 		"",
+		"function acceptsEncoding(header, encoding) {",
+		"  let wildcard = false;",
+		"  for (const part of (header || \"\").split(\",\")) {",
+		"    const [name, ...params] = part.split(\";\");",
+		"    const token = name.trim().toLowerCase();",
+		"    if (token !== encoding && token !== \"*\") continue;",
+		"    let allowed = true;",
+		"    for (const param of params) {",
+		"      const [key, value] = param.trim().split(\"=\");",
+		"      if (key.trim().toLowerCase() !== \"q\") continue;",
+		"      const q = Number(value);",
+		"      allowed = Number.isFinite(q) && q > 0 && q <= 1;",
+		"    }",
+		"    if (token === encoding) return allowed;",
+		"    wildcard = allowed;",
+		"  }",
+		"  return wildcard;",
+		"}",
+		"",
+		"function varyAcceptEncoding(headers) {",
+		"  const tokens = (headers.get(\"Vary\") || \"\").split(\",\").map((value) => value.trim().toLowerCase());",
+		"  if (!tokens.includes(\"*\") && !tokens.includes(\"accept-encoding\")) headers.append(\"Vary\", \"Accept-Encoding\");",
+		"}",
+		"",
+		"function isEncodedSidecar(response, encoding) {",
+		"  if (!response || response.status !== 200) return false;",
+		"  const declaredEncoding = response.headers.get(\"Content-Encoding\");",
+		"  if (declaredEncoding !== null) return declaredEncoding === encoding;",
+		"  // Asset routing can return an HTML SPA fallback with status 200.",
+		"  // Unencoded sidecars must have a binary compression media type.",
+		"  const type = (response.headers.get(\"Content-Type\") || \"\").split(\";\")[0].trim().toLowerCase();",
+		"  return type === \"application/octet-stream\" || (encoding === \"br\"",
+		"    ? [\"application/brotli\", \"application/x-brotli\"].includes(type)",
+		"    : [\"application/gzip\", \"application/x-gzip\"].includes(type));",
+		"}",
+		"",
 		"async function fetchStatic(request, assetPath, env) {",
 		"  if (!env || !env.ASSETS || typeof env.ASSETS.fetch !== \"function\") return null;",
 		"  const url = new URL(request.url);",
 		"  url.pathname = assetPath;",
-		"  return env.ASSETS.fetch(new Request(url.toString(), request));",
+		"  const sourceRequest = new Request(url.toString(), request);",
+		"  sourceRequest.headers.set(\"Accept-Encoding\", \"identity\");",
+		"  const response = await env.ASSETS.fetch(sourceRequest);",
+		"  if (!response) return null;",
+		"  const headers = new Headers(response.headers);",
+		"  varyAcceptEncoding(headers);",
+		"  const identity = () => new Response(response.body, { status: response.status, statusText: response.statusText, headers, encodeBody: \"manual\" });",
+		"  const accept = request.headers.get(\"Accept-Encoding\");",
+		"  if (response.status === 304 && (acceptsEncoding(accept, \"br\") || acceptsEncoding(accept, \"gzip\"))) {",
+		"    const etag = headers.get(\"ETag\");",
+		"    if (etag && !etag.startsWith(\"W/\")) headers.set(\"ETag\", \"W/\" + etag);",
+		"  }",
+		"  const length = headers.get(\"Content-Length\");",
+		"  if (request.method !== \"GET\" || request.headers.has(\"Range\") ||",
+		"      (request.headers.get(\"Upgrade\") || \"\").toLowerCase() === \"websocket\" ||",
+		"      response.status !== 200 || headers.has(\"Content-Encoding\") ||",
+		"      (length !== null && Number(length) < 1024)) return identity();",
+		"  for (const [encoding, suffix] of [[\"br\", \".br\"], [\"gzip\", \".gz\"]]) {",
+		"    if (!acceptsEncoding(accept, encoding)) continue;",
+		"    const variantURL = new URL(url);",
+		"    variantURL.pathname += suffix;",
+		"    const variantRequest = new Request(variantURL.toString(), sourceRequest);",
+		"    for (const name of [\"If-None-Match\", \"If-Modified-Since\", \"If-Match\", \"If-Unmodified-Since\"]) variantRequest.headers.delete(name);",
+		"    const variant = await env.ASSETS.fetch(variantRequest);",
+		"    if (!isEncodedSidecar(variant, encoding)) {",
+		"      if (variant && variant.body) await variant.body.cancel();",
+		"      continue;",
+		"    }",
+		"    headers.set(\"Content-Encoding\", encoding);",
+		"    headers.delete(\"Content-Length\");",
+		"    if (variant.headers.has(\"Content-Length\")) headers.set(\"Content-Length\", variant.headers.get(\"Content-Length\"));",
+		"    const etag = headers.get(\"ETag\");",
+		"    if (etag && !etag.startsWith(\"W/\")) headers.set(\"ETag\", \"W/\" + etag);",
+		"    if (response.body) await response.body.cancel();",
+		"    return new Response(variant.body, { status: 200, headers, encodeBody: \"manual\" });",
+		"  }",
+		"  return identity();",
 		"}",
 		"",
 		"function sharedPageResponse(response, route) {",
@@ -99,7 +187,7 @@ func edgeWorkerSource(manifest exportManifest) string {
 		"  vary.add(\"Cookie\");",
 		"  vary.add(\"Authorization\");",
 		"  headers.set(\"Vary\", Array.from(vary).join(\", \"));",
-		"  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });",
+		"  return new Response(response.body, { status: response.status, statusText: response.statusText, headers, encodeBody: \"manual\" });",
 		"}",
 		"",
 		"function edgeProxyRequest(request, origin) {",
@@ -152,25 +240,56 @@ func edgeWorkerSource(manifest exportManifest) string {
 	}, "\n")
 }
 
+// vercelSidecarMedia lists the file types whose .br and .gz sidecars the
+// production build writes (text types, plus the runtime WASM).
+var vercelSidecarMedia = []struct{ ext, contentType string }{
+	{"html", "text/html; charset=utf-8"},
+	{"css", "text/css; charset=utf-8"},
+	{"js", "application/javascript; charset=utf-8"},
+	{"mjs", "application/javascript; charset=utf-8"},
+	{"json", "application/json; charset=utf-8"},
+	{"map", "application/json; charset=utf-8"},
+	{"webmanifest", "application/manifest+json; charset=utf-8"},
+	{"xml", "application/xml; charset=utf-8"},
+	{"svg", "image/svg+xml"},
+	{"txt", "text/plain; charset=utf-8"},
+	{"wasm", "application/wasm"},
+}
+
 func vercelConfigSource() string {
-	return strings.Join([]string{
-		"{",
-		"  \"$schema\": \"https://openapi.vercel.sh/vercel.json\",",
-		"  \"cleanUrls\": true,",
-		"  \"trailingSlash\": false,",
-		"  \"headers\": [",
-		"    {",
-		"      \"source\": \"/assets/(.*)\",",
-		"      \"headers\": [{ \"key\": \"Cache-Control\", \"value\": \"public, max-age=31536000, immutable\" }]",
-		"    },",
-		"    {",
-		"      \"source\": \"/gosx/(.*)\",",
-		"      \"headers\": [{ \"key\": \"Cache-Control\", \"value\": \"public, max-age=31536000, immutable\" }]",
-		"    }",
-		"  ]",
-		"}",
-		"",
-	}, "\n")
+	type header struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	type rule struct {
+		Source  string   `json:"source"`
+		Headers []header `json:"headers"`
+	}
+	rules := []rule{
+		{"/assets/(.*)", []header{{"Cache-Control", "public, max-age=31536000, immutable"}}},
+		{"/gosx/(.*)", []header{{"Cache-Control", "public, max-age=31536000, immutable"}}},
+		{"/(.*)", []header{{"Vary", "Accept-Encoding"}}},
+	}
+	// Content-Encoding is declared only for sidecars of the media types the
+	// build precompresses. A standalone archive such as /downloads/app.tar.gz
+	// must keep its bytes: a blanket "/(.*).gz" rule would make browsers
+	// decode it on download.
+	for _, variant := range []struct{ encoding, suffix string }{{"br", ".br"}, {"gzip", ".gz"}} {
+		for _, media := range vercelSidecarMedia {
+			rules = append(rules, rule{"/(.*)." + media.ext + variant.suffix, []header{
+				{"Content-Encoding", variant.encoding},
+				{"Content-Type", media.contentType},
+			}})
+		}
+	}
+	config := struct {
+		Schema        string `json:"$schema"`
+		CleanURLs     bool   `json:"cleanUrls"`
+		TrailingSlash bool   `json:"trailingSlash"`
+		Headers       []rule `json:"headers"`
+	}{"https://openapi.vercel.sh/vercel.json", true, false, rules}
+	data, _ := json.MarshalIndent(config, "", "  ")
+	return string(data) + "\n"
 }
 
 func normalizeExportRoutePath(value string) string {
