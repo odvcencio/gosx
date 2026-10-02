@@ -10,14 +10,14 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 908455,
+          "frameworkJsWireBytes": 925006,
           "htmlWireBytes": 40583,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 221825,
-          "lazyJsWireBytes": 186021,
-          "requests": 8,
-          "totalWireBytes": 983372,
+          "jsWireBytes": 239814,
+          "lazyJsWireBytes": 171867,
+          "requests": 9,
+          "totalWireBytes": 1007299,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -27,7 +27,13 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "Scene-aware startup preloads move the required 16072-byte compute chunk to the initial load (8 to 9 requests), and asynchronous shader readiness adds renderer code. CI measured 1009816; the limit includes the standard margin.",
+          "jsWireBytes": "Scene-aware startup preloads move the required 16072-byte compute chunk to the initial load (8 to 9 requests), and asynchronous shader readiness adds renderer code. CI measured 237440; the limit includes the standard margin.",
+          "requests": "Scene-aware startup preloads move the required 16072-byte compute chunk to the initial load (8 to 9 requests), and asynchronous shader readiness adds renderer code. CI measured 9; the limit includes the standard margin.",
+          "totalWireBytes": "Scene-aware startup preloads move the required 16072-byte compute chunk to the initial load (8 to 9 requests), and asynchronous shader readiness adds renderer code. CI measured 1144552; the limit includes the standard margin."
+        }
       },
       "/capabilities/": {
         "limits": {
@@ -84,7 +90,7 @@
           "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 221825,
-          "lazyJsWireBytes": 169789,
+          "lazyJsWireBytes": 171867,
           "requests": 7,
           "totalWireBytes": 959647,
           "wasmWireBytes": 665060
@@ -99,7 +105,8 @@
         ],
         "raise": {
           "imageWireBytes": "The image uses its existing WebP encoding (8,148 wire bytes) under the negotiated compression defaults; the limit includes the standard 256-byte margin.",
-          "requests": "The accessible Scene3D poster adds one image request to the initial page load (6 to 7)."
+          "requests": "The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
+          "lazyJsWireBytes": "Asynchronous WebGL shader readiness adds renderer code; CI measured 170166 lazy-script wire bytes across the scene chunks. The limit includes the standard margin."
         }
       },
       "/demos/water": {
@@ -107,12 +114,12 @@
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 906247,
           "htmlWireBytes": 85991,
-          "imageWireBytes": 25909,
+          "imageWireBytes": 191105,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 228354,
-          "lazyJsWireBytes": 169789,
-          "requests": 8,
-          "totalWireBytes": 1022130,
+          "lazyJsWireBytes": 171867,
+          "requests": 14,
+          "totalWireBytes": 1195223,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -122,7 +129,13 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "lazyJsWireBytes": "Asynchronous WebGL shader readiness adds renderer code; CI measured 170166 lazy-script wire bytes across the scene chunks. The limit includes the standard margin.",
+          "totalWireBytes": "Scene-aware startup hints preload the first water tile and five cube-map faces alongside the accessible poster. Default response compression and lossless texture encoding reduce the combined initial load.",
+          "imageWireBytes": "Scene-aware startup hints preload the first water tile and five cube-map faces alongside the accessible poster. Lossless progressive JPEG encoding preserves every decoded pixel while reducing the required image bytes.",
+          "requests": "Scene-aware startup hints preload the first water tile and five cube-map faces alongside the accessible poster. CI measured 1197674 total wire bytes, 191704 image wire bytes and 14 requests (8 to 14); this limit is 14 with the standard margin."
+        }
       },
       "/docs/getting-started/": {
         "limits": {

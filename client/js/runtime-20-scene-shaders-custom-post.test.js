@@ -57,8 +57,10 @@ test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () =>
   assert.match(webgl, /fragmentSource = sceneWebGLNormalizeCustomShaderSource\(fragmentSource\);/);
   assert.match(webgl, /var vertexSource = sceneWebGLNormalizeCustomShaderSource\(material\.customVertex\);/);
   assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(material\.customFragment\);/);
-  assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customVertex\.trim\(\)\)/);
-  assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customFragment\.trim\(\)\)/);
+  assert.match(webgl, /var vertSrc = typeof entry\.customVertex === "string" \? entry\.customVertex\.trim\(\) : "";/);
+  assert.match(webgl, /var fragSrc = typeof entry\.customFragment === "string" \? entry\.customFragment\.trim\(\) : "";/);
+  assert.match(webgl, /scenePBRCompileShader\(gl, gl\.VERTEX_SHADER, sceneWebGLNormalizeCustomShaderSource\(vertSrc\)\)/);
+  assert.match(webgl, /scenePBRCompileShader\(gl, gl\.FRAGMENT_SHADER, sceneWebGLNormalizeCustomShaderSource\(fragSrc\)\)/);
 });
 
 test("compute particle payload kernel: invalid WGSL (async rejection) falls back to builtin, caches failure, warns once", async () => {

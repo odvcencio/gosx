@@ -215,6 +215,14 @@ var docsCatalog = []DocSection{
 				Demo:        "scene3d",
 			},
 			{
+				Title:       "Scene3D performance",
+				Href:        "/docs/scene3d-performance",
+				Description: "Automatic scene preloads, parallel shaders, and phone canvas resolution limits.",
+				Section:     "visual",
+				Source:      "examples/gosx-docs/app/docs/scene3d-performance/page.gsx",
+				Keywords:    []string{"scene3d", "performance", "preload", "webgl", "mobile"},
+			},
+			{
 				Title:       "Debugging Scene3D",
 				Href:        "/docs/debugging-scene3d",
 				Description: "Diagnose invisible geometry, capture failures, fallback, and GPU compositor bugs.",
