@@ -697,6 +697,7 @@ const budgets = [
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
   // exception under decision 0014).
+  // Mixed-mesh sizing adds 17 raw bytes; existing targets and allowances stay fixed.
   // Normal-map tiling merged with main measures 1_788_852 / 495_502 / 397_774 bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
@@ -2398,7 +2399,8 @@ const routeBudgets = [
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Preserve main's existing public-clock allocations: 150 gzip / 205 Brotli.
     raw: 1180149,
-    gzip: 321847,
+    // Preserve main's 100-byte mixed-mesh allocation.
+    gzip: 321947,
     brotli: 268157, // +95: persistent hub connections (approved exception, decision 0014)
   },
 

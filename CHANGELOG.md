@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.57.3
+
+### Fixed: shader shapes beside retained meshes on WebGPU
+
+- Size shared world-baked vertex streams independently of retained meshes.
+  Large retained geometry no longer replaces smaller custom shader geometry
+  with default positions and UVs, restoring the API box in GoSX Slides scenes.
+- Verify exact shared vertex uploads in both mesh orders and visible shader
+  pixels in the Slides browser regression.
+
 ## v0.57.2
 
 ### Added: default response compression
