@@ -2,6 +2,7 @@ package route
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -14,8 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andybalholm/brotli"
+
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
+	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/server"
 )
 
@@ -25,10 +29,30 @@ const fileCSSAssetHistory = 512
 
 var fileCSSAssetScope = regexp.MustCompile(`^[a-f0-9]{12}$`)
 
+type fileCSSAsset struct {
+	raw    []byte
+	gzip   []byte
+	brotli []byte
+	once   sync.Once
+}
+
+func (asset *fileCSSAsset) compress() {
+	asset.once.Do(func() {
+		var gz, br bytes.Buffer
+		zw, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
+		_, _ = zw.Write(asset.raw)
+		_ = zw.Close()
+		bw := brotli.NewWriterLevel(&br, brotli.BestCompression)
+		_, _ = bw.Write(asset.raw)
+		_ = bw.Close()
+		asset.gzip, asset.brotli = gz.Bytes(), br.Bytes()
+	})
+}
+
 type fileCSSAssets struct {
 	prefix string
 	mu     sync.RWMutex
-	data   map[string][]byte
+	data   map[string]*fileCSSAsset
 	files  map[string]string
 	order  []string
 }
@@ -36,7 +60,7 @@ type fileCSSAssets struct {
 func newFileCSSAssets(prefix string) *fileCSSAssets {
 	return &fileCSSAssets{
 		prefix: strings.TrimRight(prefix, "/") + "/",
-		data:   make(map[string][]byte),
+		data:   make(map[string]*fileCSSAsset),
 		files:  make(map[string]string),
 	}
 }
@@ -51,7 +75,7 @@ func (a *fileCSSAssets) put(text, source, path, scope string) string {
 			delete(a.data, a.order[0])
 			a.order = a.order[1:]
 		}
-		a.data[key] = []byte(text)
+		a.data[key] = &fileCSSAsset{raw: []byte(text)}
 		a.order = append(a.order, key)
 	}
 	query := url.Values{"source": {source}, "scope": {scope}}
@@ -66,11 +90,13 @@ func (a *fileCSSAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimPrefix(r.URL.Path, a.prefix)
 	a.mu.RLock()
-	data, ok := a.data[key]
+	asset, ok := a.data[key]
 	file := a.files[r.URL.Query().Get("source")]
 	a.mu.RUnlock()
 	if !ok && file != "" {
+		var data []byte
 		data, ok = restoreFileCSSAsset(file, key, r.URL.Query().Get("scope"))
+		asset = &fileCSSAsset{raw: data}
 	}
 	if !ok {
 		http.NotFound(w, r)
@@ -78,7 +104,24 @@ func (a *fileCSSAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	w.Header().Set("ETag", strconv.Quote(strings.TrimSuffix(key, ".css")))
+	data, encoding := asset.raw, ""
+	if r.Header.Get("Range") == "" {
+		switch {
+		case httpcompress.Accepts(r.Header.Get("Accept-Encoding"), "br"):
+			asset.compress()
+			data, encoding = asset.brotli, "br"
+		case httpcompress.Accepts(r.Header.Get("Accept-Encoding"), "gzip"):
+			asset.compress()
+			data, encoding = asset.gzip, "gzip"
+		}
+	}
+	w.Header().Set("Vary", "Accept-Encoding")
+	etag := strings.TrimSuffix(key, ".css")
+	if encoding != "" {
+		w.Header().Set("Content-Encoding", encoding)
+		etag += "." + encoding
+	}
+	w.Header().Set("ETag", strconv.Quote(etag))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, key, time.Time{}, bytes.NewReader(data))
 }

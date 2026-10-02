@@ -1,7 +1,9 @@
 package route
 
 import (
+	"bytes"
 	"compress/gzip"
+
 	"html"
 	"io"
 	"net/http"
@@ -9,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/andybalholm/brotli"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/perf/wire"
@@ -59,7 +63,7 @@ func Page() Node {
 		t.Fatal("content-addressed stylesheet must be immutable")
 	}
 	compressedRequest := httptest.NewRequest(http.MethodGet, link[1], nil)
-	compressedRequest.Header.Set("Accept-Encoding", "br, gzip")
+	compressedRequest.Header.Set("Accept-Encoding", "gzip")
 	compressed := httptest.NewRecorder()
 	handler.ServeHTTP(compressed, compressedRequest)
 	if compressed.Header().Get("Content-Encoding") != "gzip" ||
@@ -144,5 +148,54 @@ func TestExternalFileCSSBoundsEditHistory(t *testing.T) {
 	assets.ServeHTTP(w, httptest.NewRequest(http.MethodGet, first, nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatal("the oldest edit should retire")
+	}
+}
+
+func TestExternalFileCSSNegotiatesCachedVariants(t *testing.T) {
+	assets := newFileCSSAssets("/_gosx/test-css/")
+	text := strings.Repeat(".page { color: seagreen; }\n", 100)
+	path := assets.put(text, "page.css", "", "")
+	for _, tc := range []struct{ accept, encoding string }{
+		{"br, gzip", "br"}, {"gzip", "gzip"}, {"br;q=0, gzip", "gzip"}, {"br;q=0, gzip;q=0", ""},
+	} {
+		t.Run(tc.accept, func(t *testing.T) {
+			t.Parallel()
+			get := func(method, etag string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(method, path, nil)
+				r.Header.Set("Accept-Encoding", tc.accept)
+				r.Header.Set("If-None-Match", etag)
+				w := httptest.NewRecorder()
+				assets.ServeHTTP(w, r)
+				return w
+			}
+			w := get(http.MethodGet, "")
+			if w.Code != http.StatusOK || w.Header().Get("Content-Encoding") != tc.encoding || w.Header().Get("Vary") != "Accept-Encoding" {
+				t.Fatalf("negotiation: %d %v", w.Code, w.Header())
+			}
+			var reader io.Reader = bytes.NewReader(w.Body.Bytes())
+			if tc.encoding == "br" {
+				reader = brotli.NewReader(reader)
+			}
+			if tc.encoding == "gzip" {
+				gz, err := gzip.NewReader(reader)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer gz.Close()
+				reader = gz
+			}
+			raw, err := io.ReadAll(reader)
+			if err != nil || string(raw) != text {
+				t.Fatalf("decoded CSS differs: %v", err)
+			}
+			head := get(http.MethodHead, "")
+			if head.Body.Len() != 0 || head.Header().Get("Content-Length") != w.Header().Get("Content-Length") {
+				t.Fatal("HEAD differs from GET")
+			}
+			conditional := get(http.MethodGet, w.Header().Get("ETag"))
+			if conditional.Code != http.StatusNotModified || conditional.Body.Len() != 0 {
+				t.Fatal("conditional response must be empty")
+			}
+		})
 	}
 }
