@@ -4484,6 +4484,8 @@
   // custom post pass silently reads 0 for every reserved uniform.
   function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
+    var temporal: any = null;
+    var temporalEnabled = false;
     var sceneFBO: any = null;
     var auxFBO: any = null;
     var scratchFBO: any = null;
@@ -4891,6 +4893,14 @@
           };
 	      },
 
+      prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
+        if (!canJitter) { if (temporal) temporal.reset(); temporalEnabled = false; return false; }
+        if (!temporal) temporal = createSceneTemporalHistory(gl, quad);
+        temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter, lights);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+        return temporalEnabled;
+      },
+      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; },
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
@@ -4977,6 +4987,11 @@
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
               break;
+            case "taa":
+              currentTexture = temporalEnabled
+                ? temporal.resolve(currentTexture, sceneFBO, effect, { projection: projection, view: view })
+                : applyFXAA(currentTexture, effect, targetFBO, passW, passH);
+              break;
             case SCENE_POST_FXAA:
               currentTexture = applyFXAA(currentTexture, effect, targetFBO, passW, passH);
               break;
@@ -5058,6 +5073,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
+        if (temporal) temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = null;
@@ -8834,6 +8850,20 @@
         renderW = scaled.width;
         renderH = scaled.height;
         renderTarget = Object.assign({}, scaled, { linear: true });
+        var temporalRequested = false, spatialRequested = false;
+        for (var postIndex = 0; postIndex < postEffects.length; postIndex++) {
+          temporalRequested = temporalRequested || postEffects[postIndex].kind === "taa";
+          spatialRequested = spatialRequested || postEffects[postIndex].kind === "fxaa";
+        }
+        var temporalActive = false;
+        if (temporalRequested) {
+          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true), bundle.lights);
+          if (temporalActive) sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
+        } else postProcessor.resetTemporal();
+        var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";
+        if (canvas.parentNode && canvas.parentNode.getAttribute("data-gosx-scene3d-antialiasing") !== antialiasing) canvas.parentNode.setAttribute("data-gosx-scene3d-antialiasing", antialiasing);
+      } else if (postProcessor) {
+        postProcessor.resetTemporal();
       }
 
       // Resize viewport to the render target (scaled when postfx caps are active).
