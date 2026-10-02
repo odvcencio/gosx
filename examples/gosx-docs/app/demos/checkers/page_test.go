@@ -23,8 +23,9 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 	text := string(source)
 	for _, required := range []string{
 		"<Scene3D",
-		"/checkers-native-preview.png",
-		"Go rendered preview",
+		"/demos/posters/checkers.webp",
+		"Static poster",
+		"interactive Scene3D when available",
 		"Keyboard board · 121 holes",
 		"data-checkers-hole",
 		"checkers-status",

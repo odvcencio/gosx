@@ -13,7 +13,16 @@ func Page() Node {
 					Follow three planets around a levitating heart. Pause the clock to inspect any moment.
 				</p>
 			</header>
-			<div class="orrery__canvas">
+			<div class="orrery__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
+				<img
+					class="gosx-scene3d-poster"
+					src="/demos/posters/orrery.webp"
+					alt=""
+					width="1000"
+					height="625"
+					decoding="async"
+					fetchpriority="high"
+				 />
 				<Scene3D {...data.scene} stats={false} />
 			</div>
 			<div class="orrery__overlay">
