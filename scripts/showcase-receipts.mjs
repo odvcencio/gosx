@@ -142,7 +142,7 @@ const receipt = {
   machine: meta.machine,
   lighthouse: {
     browser: `${userAgent} · Lighthouse ${lighthouseVersion}`,
-    method: 'Lighthouse mobile emulation against the local production-shaped build; fresh browser profile for each run; median of three cold runs.',
+    method: 'Lighthouse mobile emulation against the local production-shaped build; shared Chrome process with cache and origin storage cleared before each run; median of three cold runs.',
     loadAverageStart: meta.lighthouseLoadAverageStart,
     loadAverageEnd: meta.lighthouseLoadAverageEnd,
     runCount: 3,
