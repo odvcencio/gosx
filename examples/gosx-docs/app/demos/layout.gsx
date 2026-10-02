@@ -54,7 +54,7 @@ func Layout() Node {
 			<div class="demo-viewport">
 				<Slot />
 				<If cond={currentDemoSlug != ""}>
-					<footer class="demo-meta" role="contentinfo" aria-label="Demo metadata">
+					<div class="demo-meta">
 						<button
 							type="button"
 							class="demo-meta__pill"
@@ -62,7 +62,7 @@ func Layout() Node {
 							aria-controls="demo-details"
 							aria-expanded="false"
 						>How this is GoSX</button>
-					</footer>
+					</div>
 				</If>
 			</div>
 		</div>

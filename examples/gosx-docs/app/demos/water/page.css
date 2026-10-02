@@ -41,6 +41,11 @@ section.water-demo {
   box-shadow: inset 0 0 7rem var(--color-water-vignette);
 }
 
+.water-demo__stage {
+  position: absolute;
+  inset: 0;
+}
+
 .water-demo__scene {
   position: absolute !important;
   inset: 0 !important;
