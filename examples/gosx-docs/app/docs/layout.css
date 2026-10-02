@@ -213,7 +213,7 @@
 }
 
 :global(.docs-content .code-sample__gutter) {
-  color: var(--code-comment);
+	color: var(--code-comment);
 }
 
 .docs-content .code-sample__copy {

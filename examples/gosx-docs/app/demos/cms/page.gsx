@@ -213,13 +213,13 @@ func Page() Node {
 				</div>
 			</aside>
 		</div>
-		<footer class="cms-statusbar">
+		<div class="cms-statusbar">
 			<span class="cms-statusbar__info">
 				<span id="cms-block-total">{len(data.blocks)}</span>
 				blocks in document
 			</span>
 			<span class="cms-statusbar__hint" id="cms-publish-feedback" role="status" aria-live="polite"></span>
-		</footer>
+		</div>
 		<div class="cms-sr-only" aria-live="polite" id="cms-announcer"></div>
 	</form>
 }

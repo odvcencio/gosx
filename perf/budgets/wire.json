@@ -10,17 +10,18 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 1001421,
-          "htmlWireBytes": 189293,
+          "frameworkJsWireBytes": 922746,
+          "htmlWireBytes": 47053,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 224864,
           "lazyJsWireBytes": 191612,
           "requests": 8,
-          "totalWireBytes": 1137376,
+          "totalWireBytes": 1000452,
           "wasmWireBytes": 665060
         },
         "require": [
+          "html-compressed",
           "assets-compressed",
           "no-cookie",
           "immutable-hashed",
@@ -38,17 +39,18 @@
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 111656,
-          "htmlWireBytes": 202622,
+          "frameworkJsWireBytes": 24993,
+          "htmlWireBytes": 48784,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 260870,
+          "totalWireBytes": 107581,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
           "assets-compressed",
           "no-cookie",
           "immutable-hashed",
@@ -63,17 +65,18 @@
       "/demos/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 243544,
-          "imageWireBytes": 40541,
+          "frameworkJsWireBytes": 22350,
+          "htmlWireBytes": 49829,
+          "imageWireBytes": 25909,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 3,
-          "totalWireBytes": 305465,
+          "totalWireBytes": 97151,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
           "assets-compressed",
           "no-cookie",
           "immutable-hashed",
@@ -84,17 +87,18 @@
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 1001421,
-          "htmlWireBytes": 224059,
-          "imageWireBytes": 256,
+          "frameworkJsWireBytes": 921028,
+          "htmlWireBytes": 52895,
+          "imageWireBytes": 7981,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 224864,
           "lazyJsWireBytes": 175379,
-          "requests": 6,
-          "totalWireBytes": 1135273,
+          "requests": 7,
+          "totalWireBytes": 977191,
           "wasmWireBytes": 665060
         },
         "require": [
+          "html-compressed",
           "assets-compressed",
           "no-cookie",
           "immutable-hashed",
@@ -102,6 +106,8 @@
           "html-shareable"
         ],
         "raise": {
+          "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
+          "requests": "The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
           "jsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3039 bytes measured.",
@@ -112,17 +118,19 @@
       "/demos/water": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 1001421,
-          "htmlWireBytes": 746339,
-          "imageWireBytes": 230728,
+          "frameworkJsWireBytes": 909557,
+          "htmlWireBytes": 97279,
+          "imageWireBytes": 25909,
           "inlineScriptBytes": 111586,
-          "jsWireBytes": 239713,
+          "jsWireBytes": 231393,
           "lazyJsWireBytes": 175379,
-          "requests": 13,
-          "totalWireBytes": 1903130,
+          "requests": 8,
+          "totalWireBytes": 1044773,
           "wasmWireBytes": 665060
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -139,17 +147,19 @@
       "/docs/getting-started/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 202953,
-          "imageWireBytes": 47935,
+          "frameworkJsWireBytes": 25415,
+          "htmlWireBytes": 46777,
+          "imageWireBytes": 43132,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 2791,
+          "jsWireBytes": 1258,
           "lazyJsWireBytes": 256,
           "requests": 6,
-          "totalWireBytes": 311698,
+          "totalWireBytes": 149239,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -159,17 +169,19 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 392469,
-          "htmlWireBytes": 216679,
+          "frameworkJsWireBytes": 307212,
+          "htmlWireBytes": 48963,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 62474,
+          "jsWireBytes": 61034,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 559677,
+          "totalWireBytes": 390593,
           "wasmWireBytes": 222126
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -185,17 +197,18 @@
       "/performance/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 178763,
+          "frameworkJsWireBytes": 27462,
+          "htmlWireBytes": 44728,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 237012,
+          "totalWireBytes": 103046,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
           "assets-compressed",
           "no-cookie",
           "immutable-hashed",

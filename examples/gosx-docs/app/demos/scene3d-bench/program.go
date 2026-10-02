@@ -292,26 +292,26 @@ func BenchMixedScene() scene.Props {
 	nodes := []scene.Node{
 		scene.DirectionalLight{
 			Color:      "#fff1d6",
-			Intensity:  1.1,
+			Intensity:  1.8,
 			Direction:  scene.Vec3(0.3, -1, -0.5),
 			CastShadow: true,
 		},
 		scene.PointLight{
 			Color:     "#5fa3ff",
-			Intensity: 0.6,
+			Intensity: 1.2,
 			Position:  scene.Vec3(-4, 4, 2),
 			Range:     12,
 		},
 		scene.Mesh{
 			Geometry: scene.PlaneGeometry{Width: 16, Height: 16},
-			Material: scene.StandardMaterial{Color: "#1a1a18", Roughness: 0.8, Metalness: 0.1},
+			Material: scene.StandardMaterial{Color: "#18313d", Roughness: 0.9, Metalness: 0},
 			Rotation: scene.Rotate(-1.5708, 0, 0),
 		},
 	}
 	// 15 assorted PBR meshes in a spiral.
 	for i := 0; i < 15; i++ {
 		angle := float64(i) / 15 * 2 * math.Pi
-		radius := 1.5 + float64(i)*0.15
+		radius := 1.2 + float64(i)*0.1
 		x := math.Cos(angle) * radius
 		z := math.Sin(angle) * radius
 		var geom scene.Geometry = scene.SphereGeometry{Segments: 20}
@@ -320,9 +320,11 @@ func BenchMixedScene() scene.Props {
 		} else if i%3 == 2 {
 			geom = scene.TorusGeometry{Radius: 0.3, Tube: 0.08, RadialSegments: 20, TubularSegments: 32}
 		}
+		palette := [...]string{"#efbd65", "#78c9bd", "#ee806d", "#82aef5", "#d39be5"}
 		nodes = append(nodes, scene.Mesh{
 			Geometry:      geom,
-			Material:      scene.StandardMaterial{Color: "#d4af37", Roughness: 0.3, Metalness: 0.85},
+			Material:      scene.StandardMaterial{Color: palette[i%len(palette)], Roughness: 0.48, Metalness: 0.12},
+			Scale:         scene.Vec3(1.2, 1.2, 1.2),
 			Position:      scene.Vec3(x, 0.4, z),
 			CastShadow:    true,
 			ReceiveShadow: true,
@@ -331,23 +333,24 @@ func BenchMixedScene() scene.Props {
 	}
 	// 6 thick lightning bolts mixing blend modes.
 	boltPoints := []scene.Vector3{
-		scene.Vec3(0, 3, 0),
-		scene.Vec3(0.3, 2, 0.1),
-		scene.Vec3(-0.1, 1, -0.2),
-		scene.Vec3(0.2, 0, 0.3),
-		scene.Vec3(-0.2, -1, 0.1),
+		scene.Vec3(0, 2.4, 0),
+		scene.Vec3(0.24, 1.44, 0.06),
+		scene.Vec3(-0.12, 0.48, -0.12),
+		scene.Vec3(0.22, -0.48, 0.16),
+		scene.Vec3(-0.18, -1.44, -0.08),
+		scene.Vec3(0, -2.4, 0),
 	}
-	boltSegs := [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}}
+	boltSegs := [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}}
 	for i := 0; i < 6; i++ {
 		angle := float64(i) / 6 * 2 * math.Pi
-		dx := math.Cos(angle) * 5
-		dz := math.Sin(angle) * 5
+		dx := math.Cos(angle) * 2.9
+		dz := math.Sin(angle) * 2.9
 		pts := make([]scene.Vector3, len(boltPoints))
 		for j, p := range boltPoints {
 			pts[j] = scene.Vec3(p.X+dx, p.Y, p.Z+dz)
 		}
 		nodes = append(nodes, scene.Mesh{
-			Geometry: scene.LinesGeometry{Points: pts, Segments: boltSegs, Width: 5},
+			Geometry: scene.LinesGeometry{Points: pts, Segments: boltSegs, Width: 3},
 			Material: scene.FlatMaterial{
 				Color:      "#8ecfff",
 				BlendMode:  scene.BlendAdditive,
@@ -358,16 +361,16 @@ func BenchMixedScene() scene.Props {
 	return scene.Props{
 		Width:      1024,
 		Height:     600,
-		Background: "#05080f",
+		Background: "#0c1a24",
 		Responsive: scene.Bool(true),
 		Controls:   "orbit",
 		Camera: scene.PerspectiveCamera{
-			Position: scene.Vec3(0, 3, 9),
-			FOV:      55,
+			Position: scene.Vec3(0, 2.5, 6.8),
+			FOV:      48,
 		},
 		Environment: scene.Environment{
 			AmbientColor:     "#ffffff",
-			AmbientIntensity: 0.2,
+			AmbientIntensity: 0.55,
 		},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
 		PostFX: scene.PostFX{

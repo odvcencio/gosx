@@ -221,6 +221,7 @@
 .blackglass-artifact--plaque p { font-size: 0.82em; }
 
 @media (max-width: 700px) {
+	.beacon { min-height: max(42rem, calc(100svh - 8.5rem)) !important; }
 	.beacon__intro { top: 10px; right: 10px; left: 10px; width: auto; padding: 11px 12px; }
 	.beacon h1 { margin: 5px 0; font-size: 25px; }
 	.beacon__copy { font-size: 11px; line-height: 1.35; }

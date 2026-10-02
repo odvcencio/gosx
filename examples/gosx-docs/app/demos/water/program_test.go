@@ -20,6 +20,9 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 	ctx := &route.RouteContext{}
 	addWaterDemoPreloadHead(ctx)
 	head := gosx.RenderHTML(ctx.Head())
+	if !strings.Contains(head, `rel="preload" as="image" type="image/webp" href="/demos/posters/water.webp" fetchpriority="high"`) {
+		t.Fatalf("preload head missing high-priority water poster in %s", head)
+	}
 	for _, href := range []string{
 		"/water/tiles.jpg",
 		"/water/xpos.jpg",
@@ -27,13 +30,6 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 		"/water/ypos.jpg",
 		"/water/zpos.jpg",
 		"/water/zneg.jpg",
-	} {
-		want := `rel="preload" as="image" href="` + href + `" crossorigin="anonymous"`
-		if !strings.Contains(head, want) {
-			t.Fatalf("preload head missing %s in %s", want, head)
-		}
-	}
-	for _, href := range []string{
 		"/water/models/duck/Duck.gltf",
 		"/water/models/duck/Duck0.bin",
 		"/water/models/duck/DuckCM.png",

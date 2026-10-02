@@ -91,6 +91,37 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	}
 }
 
+// RegisterDocsPageAt registers a documentation page module for an explicit
+// file route source. This is useful for dynamic routes whose directory name
+// cannot contain Go source files.
+func RegisterDocsPageAt(source, title, description string, opts route.FileModuleOptions) {
+	opts = withDocSceneFeature(opts)
+	metadata := opts.Metadata
+	bindings := opts.Bindings
+	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
+		meta := baseDocsMetadata(title, description, docsCanonicalPath(ctx, page))
+		if metadata == nil {
+			return meta, nil
+		}
+		extra, err := metadata(ctx, page, data)
+		if err != nil {
+			return server.Metadata{}, err
+		}
+		return mergeDocsMetadata(meta, extra), nil
+	}
+	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+		bound := defaultDocsBindings(ctx, page)
+		bound.Values["docsSectionClassName"] = docsSectionClassName(data)
+		if bindings == nil {
+			return bound
+		}
+		return mergeDocsBindings(bound, bindings(ctx, page, data))
+	}
+	if err := route.RegisterFileModule(route.FileModuleFor(source, opts)); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func RegisterStaticDocsPage(title, description string, opts route.FileModuleOptions) {
 	opts = withDocSceneFeature(opts)
 	metaMetadata := opts.Metadata
