@@ -83,3 +83,28 @@ test("WebGL restores the glass shader after the ocean and bounds mip generation"
   assert.ok(!gl.ops.slice(lowStart).some(op=>op[0]==="generateMipmap"));
   h.renderer.dispose();
 });
+
+test("WebGL shared water composites before glass capture and transparent overlays", () => {
+  const h = createWebGLRendererForPost({fresh:true});
+  const gl = h.canvas.getContext("webgl2");
+  const api = h.env.context.__gosx_scene3d_api;
+  const bundle = api.createSceneRenderBundle(320,180,"#000000",{x:0,y:2,z:5,fov:60,near:0.1,far:100},
+    [{id:"glass",kind:"box",width:2,height:2,depth:1,materialKind:"standard",transmission:1,thickness:1}],
+    [],[],[],[],{},0,[],[],[],[],[],0,false);
+  for (const tier of ["full", "constrained"]) {
+    const start = gl.ops.length;
+    let composites = 0;
+    h.renderer.render(bundle,{width:320,height:180},{qualityProfile:{tier},compositeBeforePost() {
+      composites++;
+      gl.ops.push(["water-composite"]);
+    }});
+    const ops = gl.ops.slice(start);
+    const water = ops.findIndex(op => op[0] === "water-composite");
+    const capture = ops.findIndex(op => op[0] === "blitFramebuffer");
+    const glass = ops.findIndex((op, i) => i > water && (op[0] === "drawArrays" || op[0] === "drawElements"));
+    assert.equal(composites, 1);
+    assert.ok(water >= 0 && glass > water);
+    if (tier === "full") assert.ok(capture > water && glass > capture);
+  }
+  h.renderer.dispose();
+});

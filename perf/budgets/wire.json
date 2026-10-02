@@ -106,7 +106,7 @@
           "html-shareable"
         ],
         "raise": {
-          "imageWireBytes": "The image uses its existing WebP encoding (8,148 wire bytes) under the negotiated compression defaults; the limit includes the standard 256-byte margin.",
+          "imageWireBytes": "The image uses its existing WebP encoding (8,148 wire bytes) under the negotiated compression defaults; the limit includes the standard 256-byte margin. The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
           "requests": "The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",

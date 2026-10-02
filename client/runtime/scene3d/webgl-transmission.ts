@@ -77,13 +77,12 @@ function sceneCreateTransmissionWebGL(gl) {
             gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, texture); gl.generateMipmap(gl.TEXTURE_2D);
             ready = true;
         },
-        /** @param {*} uniforms @param {*} mat @param {*} view @param {*} proj @param {*} placeholder */
-        upload: function(uniforms, mat, view, proj, placeholder) {
+        /** @param {*} uniforms @param {*} mat @param {*} placeholder */
+        upload: function(uniforms, mat, placeholder) {
             data.set(sceneTransmissionVolume(mat));
             gl.uniform4fv(uniforms.volume, data.subarray(0, 4));
             gl.uniform3fv(uniforms.attenuationColor, data.subarray(4, 7));
             gl.uniform2f(uniforms.transmissionCapture, maxLod, ready ? 1 : 0);
-            gl.uniformMatrix4fv(uniforms.viewMatrix, false, view); gl.uniformMatrix4fv(uniforms.projectionMatrix, false, proj);
             gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, ready ? texture : placeholder);
             gl.uniform1i(uniforms.transmissionScene, unit);
         },

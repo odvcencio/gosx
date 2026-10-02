@@ -8524,7 +8524,7 @@
     function uploadMaterial(gl, uniforms, material, textureCache) {
       const mat = material || {};
       const textureEpoch = textureCache ? Reflect.get(textureCache, "_sceneTextureEpoch") || 0 : 0;
-      if (uniforms.transmissionScene) transmissionResources.upload(uniforms, mat, scratchViewMatrix, scratchProjMatrix, selenaPlaceholderTexture);
+      if (uniforms.transmissionScene) transmissionResources.upload(uniforms, mat, selenaPlaceholderTexture);
       // Global material cache on the program's uniforms object. Skip the
       // 6 gl.uniform* calls + 5 texture binds when the same material is
       // re-applied consecutively. Unlike the per-draw-loop lastMaterialIndex
@@ -8977,8 +8977,9 @@
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: bundle.timeSeconds,
         linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
-      // The ocean owns a program and texture unit zero. Restore the PBR pass
-      // and invalidate material bindings before drawing glass against it.
+      scenePBRCompositePass(gl, frameMeta, renderTarget);
+      // Restore PBR after water and ocean, before glass and overlays.
+      // Water can change the texture bindings used by glass.
       gl.useProgram(program);
 
       if (transmissionSettings.screen) transmissionResources.capture(renderTarget);
@@ -9022,8 +9023,7 @@
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
-      // Complete the shared scene target before any post effect reads it.
-      scenePBRCompositePass(gl, frameMeta, renderTarget);
+      // Shared water was completed before glass capture.
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
