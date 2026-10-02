@@ -11,6 +11,16 @@
  * @property {number} drawWidth
  * @property {number} drawHeight
  */
+  function scenePhoneDevicePixelRatioCap(capability: any) {
+    const environment = sceneEnvironmentState() || {};
+    const coarse = Boolean(capability && capability.coarsePointer) || sceneMediaQueryMatches("(pointer: coarse)");
+    const display = typeof window !== "undefined" && window.screen;
+    const width = sceneNumber(display && display.width, sceneNumber(environment.viewportWidth, 0));
+    const height = sceneNumber(display && display.height, sceneNumber(environment.viewportHeight, 0));
+    const shortSide = width > 0 && height > 0 ? Math.min(width, height) : width;
+    return coarse && shortSide > 0 && shortSide <= 600 ? 1.5 : Infinity;
+  }
+
   function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio, minDevicePixelRatio) {
     const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
@@ -104,6 +114,11 @@
       const cssPixels = Math.max(1, cssWidth * cssHeight);
       const budgetRatio = Math.sqrt(maxPixels / cssPixels);
       maxDevicePixelRatio = Math.max(1, Math.min(maxDevicePixelRatio, budgetRatio));
+    }
+    // An authored maximum overrides the automatic phone cap. Quality and
+    // total-pixel budgets still apply, and the canvas keeps its CSS dimensions.
+    if (!(base.explicitMaxDevicePixelRatio > 0)) {
+      maxDevicePixelRatio = Math.min(maxDevicePixelRatio, scenePhoneDevicePixelRatioCap(capability));
     }
     let devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio, minDevicePixelRatio);
     let pixelWidth = Math.max(1, Math.round(cssWidth * devicePixelRatio));

@@ -24,6 +24,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 const nodeCrypto = require("node:crypto");
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+const { createRequire } = require("node:module");
+const runtimeTypescript = createRequire(path.join(__dirname, "..", "runtime", "package.json"))("typescript");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
@@ -3375,7 +3377,7 @@ function loadSceneFramePacingAPI() {
 
 function loadSceneViewportAPI(options = {}) {
   const mountSource = readSceneMountSrc();
-  const start = mountSource.indexOf("function sceneViewportDevicePixelRatio");
+  const start = mountSource.indexOf("function scenePhoneDevicePixelRatioCap");
   const end = mountSource.indexOf("function observeSceneViewport", start);
   assert.notEqual(start, -1, "viewport start anchor missing");
   assert.notEqual(end, -1, "viewport end anchor missing");
@@ -3400,6 +3402,7 @@ function loadSceneViewportAPI(options = {}) {
     function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
     function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
     function sceneEnvironmentState() { return __environment; }
+    function sceneMediaQueryMatches() { return false; }
     function setAttrValue(element, name, value) { if (element && typeof element.setAttribute === "function") element.setAttribute(name, String(value)); }
     function setStyleValue(style, name, value) { if (style) { if (typeof style.setProperty === "function") style.setProperty(name, value); else style[name] = value; } }
     function defaultSceneMaxDevicePixelRatio(capability) {
@@ -3416,7 +3419,7 @@ function loadSceneViewportAPI(options = {}) {
         default: return 2;
       }
     }
-  ` + mountSource.slice(baseStart, baseEnd) + mountSource.slice(start, end) + `
+  ` + runtimeTypescript.transpileModule(mountSource.slice(baseStart, baseEnd) + mountSource.slice(start, end), { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText + `
     globalThis.viewportAPI = {
       sceneViewportBase,
       sceneViewportDevicePixelRatio,
@@ -4437,6 +4440,7 @@ function readBootstrapTailSrc() {
 // exercise a bootstrap-src edit BEFORE the bundles are regenerated (for
 // example this file's pool-pass Selena-routing test) can opt into a bundle
 // built fresh from bootstrap-src via this helper.
+const freshFeatureTranspilationCache = new Map();
 function freshFeatureBundleSource(name, options) {
   const clientJS = __dirname;
   const opts = options || {};
@@ -4454,7 +4458,12 @@ function freshFeatureBundleSource(name, options) {
       + "window.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n"
       + source.slice(finalSourceStart);
   }
-  return source;
+  const cacheKey = name + ":" + Boolean(opts.exportWaterRendererForTest);
+  const cached = freshFeatureTranspilationCache.get(cacheKey);
+  if (cached && cached.source === source) return cached.output;
+  const output = runtimeTypescript.transpileModule(source, { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText;
+  freshFeatureTranspilationCache.set(cacheKey, { source, output });
+  return output;
 }
 
 // createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks

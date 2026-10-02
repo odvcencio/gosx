@@ -130,7 +130,7 @@ function gosxConfigureSceneScript(script, role, src) {
         unsupportedReason: "water-webgl2-unavailable",
       };
     }
-    const pbrFactory = sceneWebGLRendererFactory();
+    const pbrFactory = fallbackReason === "webgl-shader-failed" ? null : sceneWebGLRendererFactory();
     if (pbrFactory) {
       const initialAPI = sceneWebGLInitialProgramAPI();
       const gl = initialAPI.createContext
@@ -1897,6 +1897,24 @@ function gosxConfigureSceneScript(script, role, src) {
     return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
   }
 
+  function scenePropsHasKTX2Textures(props: any) {
+    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : props;
+    if (!scene) return false;
+    const isKTX2 = (src: any) => typeof src === "string" && /\.ktx2(?:[?#]|$)/i.test(src.trim());
+    if (isKTX2(scene.environment && scene.environment.envMap)) return true;
+    for (const list of [scene.objects, scene.models, scene.instancedMeshes, scene.points, scene.sprites]) {
+      for (const node of Array.isArray(list) ? list : []) {
+        if (!node) continue;
+        for (const key of ["texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "specularIntensityMap", "specularColorMap"]) {
+          if (isKTX2(node[key])) return true;
+        }
+        const descriptors: any[] = Object.values(node.textureDescriptors || {});
+        if (descriptors.some(descriptor => descriptor && isKTX2(descriptor.uri))) return true;
+      }
+    }
+    return false;
+  }
+
   function scenePropsHasIBLProducts(props) {
     var scene = props && props.scene && typeof props.scene === "object" ? props.scene : props;
     var environment = scene && scene.environment && typeof scene.environment === "object"
@@ -1913,12 +1931,12 @@ function gosxConfigureSceneScript(script, role, src) {
     );
   }
 
-  // IBL products use the small KTX2 reader that currently ships ahead of the
+  // IBL products and authored KTX2 textures use the reader that ships with the
   // glTF parser in the glTF sub-feature. Settle it before renderer creation so
   // WebGPU cannot silently construct a frame layout that ignores an authored
   // Environment.IBL descriptor. The parser chunk is cached page-wide.
   async function settleSceneIBLFeature(props) {
-    if (!scenePropsHasIBLProducts(props)) return true;
+    if (!scenePropsHasIBLProducts(props) && !scenePropsHasKTX2Textures(props)) return true;
     try {
       await ensureGLTFFeatureLoaded();
       var ready = Boolean(window.__gosx_scene3d_ktx2);

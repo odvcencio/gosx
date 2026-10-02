@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("node:module").createRequire(path.join(__dirname, "../runtime/package.json"))("typescript");
 
 const source = fs.readFileSync(
   path.join(__dirname, "../runtime/scene3d/mount-webgl.ts"), "utf8",
@@ -42,7 +43,7 @@ test("WebGL water blends over the depth-tested world in one context", () => {
     },
   };
   vm.createContext(context);
-  vm.runInContext(source, context, { filename: "mount-webgl.ts" });
+  vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "mount-webgl.ts" });
 
   const canvas = { getContext: (kind) => kind === "webgl2" ? gl : null };
   const props = { scene: { waterSystems: [{ id: "cove" }], models: [{ id: "cliff" }] } };
@@ -84,7 +85,7 @@ test("WebGL mounts a world composite for water and an ocean without models or sk
     } },
   };
   vm.createContext(context);
-  vm.runInContext(source, context, { filename: "mount-webgl.ts" });
+  vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "mount-webgl.ts" });
   const canvas = { getContext: () => gl };
   const scene = { waterSystems: [{ id: "cove" }], environment: { ocean: {} } };
   for (const props of [{ scene }, { scene: { waterSystems: scene.waterSystems }, environment: scene.environment }]) {

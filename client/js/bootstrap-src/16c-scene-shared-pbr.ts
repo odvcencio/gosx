@@ -1198,7 +1198,7 @@
 
   /** @param {*} frameMeta @param {*} mount */
   function sceneTransmissionSettings(frameMeta, mount) {
-    var tier = frameMeta && frameMeta.qualityProfile && frameMeta.qualityProfile.tier || frameMeta && frameMeta.qualityTier || "full";
+    var tier = frameMeta?.qualityProfile?.tier || frameMeta?.qualityTier || "full";
     if (mount && mount.getAttribute && mount.getAttribute("data-gosx-scene3d-quality-ladder") === "true") {
       var rung = Number(mount.getAttribute("data-gosx-scene3d-quality-rung"));
       tier = rung === 0 ? "constrained" : rung === 1 ? "balanced" : "full";

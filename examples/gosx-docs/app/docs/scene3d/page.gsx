@@ -15,6 +15,11 @@ func Page() Node {
 				for a measured feature-by-feature comparison, including where three.js wins.
 			</p>
 			<p>
+				Read
+				<a href="/docs/scene3d-performance" data-gosx-link="true">Scene3D performance</a>
+				for automatic preloads, parallel shader compilation, and the phone DPR override.
+			</p>
+			<p>
 				A scene starts with
 				<span class="inline-code">scene.Props</span>
 				. It carries more than 70 fields. They cover:

@@ -12,6 +12,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
+// CSS post-effect retention and shader-failure recovery measure 1798345 raw,
+// 498649 gzip and 400064 Brotli bytes for bootstrap.js; only exceeded targets
+// rise by the smallest sufficient 100-byte steps.
+// Scene3D startup readiness and main's normal-map sampling add measured bytes.
+// Affected bundle and route targets increase only by that byte delta; the
+// shared allowance policy and prior headroom remain in place.
 const budgets = [
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
@@ -694,7 +700,7 @@ const budgets = [
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Volume transmission adds 12891 raw / 4099 gzip / 2237 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   { // Merged ocean fixes and transmission normalization measure 1829403 raw, 509468 gzip, 406551 Brotli bytes. Only exceeded targets rise in 100-byte steps.
-  file: "bootstrap.js", raw: 1_763_893, gzip: 493_160, brotli: 390_654 },
+  file: "bootstrap.js", raw: 1_771_693, gzip: 495_660, brotli: 392_354 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1194,7 +1200,7 @@ const budgets = [
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Volume transmission adds 2173 raw / 661 gzip / 266 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   { // Merged ocean fixes and transmission normalization measure 626738 raw, 178343 gzip, 146785 Brotli bytes. Only exceeded targets rise in 100-byte steps.
-  file: "bootstrap-feature-scene3d.js", raw: 596_973, gzip: 170_011, brotli: 139_991 },
+  file: "bootstrap-feature-scene3d.js", raw: 596_973, gzip: 170_261, brotli: 140_066 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1845,9 +1851,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_328_352,
-    gzip: 365_963,
-    brotli: 305_389,
+    raw: 1_329_552,
+    gzip: 366_313,
+    brotli: 305_589,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
@@ -2033,9 +2039,9 @@ const routeBudgets = [
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_182_811,
-    gzip: 336_840,
-    brotli: 283_359, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_190_186,
+    gzip: 339_290,
+    brotli: 285_184, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
@@ -2214,9 +2220,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_597_865, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 442_392,
-    brotli: 368_482, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_605_565, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 444_842,
+    brotli: 370_507, // +95: persistent hub connections (approved exception, decision 0014)
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   {
@@ -2372,9 +2378,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1_182_252,
-    gzip: 322_763,
-    brotli: 268_689, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1_183_452,
+    gzip: 323_013,
+    brotli: 268_889, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];
