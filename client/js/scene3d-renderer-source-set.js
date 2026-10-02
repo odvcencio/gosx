@@ -251,7 +251,7 @@ function readSceneRendererBackendSrc(backend, options = {}) {
   const tree = ts.createSourceFile("renderer.ts", source, ts.ScriptTarget.Latest, true);
   const ranges = [];
   function visit(node) {
-    if (node.type && (ts.isParameter(node) || ts.isVariableDeclaration(node) || ts.isFunctionLike(node))) {
+    if (node.type && (ts.isParameter(node) || ts.isVariableDeclaration(node) || (ts.isFunctionLike(node) && !ts.isFunctionTypeNode(node) && !ts.isConstructorTypeNode(node)))) {
       const colon = source.lastIndexOf(":", node.type.getStart(tree));
       ranges.push([colon, node.type.end]);
     }

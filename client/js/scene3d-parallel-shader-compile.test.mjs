@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import { createRequire } from "node:module";
-
 const require = createRequire(import.meta.url);
 const requireRuntime = createRequire(new URL("../runtime/package.json", import.meta.url));
 const ts = requireRuntime("typescript");
@@ -130,6 +129,7 @@ function shaderHarness({ extension = true, linkOK = true, scheduler = false } = 
     },
     clearTimeout(id) { scheduled.delete(id); },
   });
+  runSource(sourceBetween(webglSource, "function scenePBRProgramLocations", "function scenePBRCompileShader"), context);
   runSource(initialProgramSource, context);
   runSource(baseFactorySource, context);
   runSource(instancedFactorySource, context);
