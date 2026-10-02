@@ -6133,7 +6133,7 @@
   function createScenePBRCustomProgram(gl, material) {
     const vertexSource = scenePBRBuildCustomVertexSource(material);
     const fragmentSource = scenePBRFragmentSourceForContext(gl, scenePBRBuildCustomFragmentSource(material));
-    return scenePBRCreateShaderProgram(gl, vertexSource, fragmentSource, "Custom PBR shader", function(program: any, vertexShader: any, fragmentShader: any) {
+    return scenePBRCreateProgramInfo(gl, vertexSource, fragmentSource, "Custom PBR shader", function(program: any) {
       const attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent");
       const uniforms = scenePBRCacheBaseUniforms(gl, program);
       uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
@@ -6148,7 +6148,7 @@
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
   function createScenePBRSkinnedProgram(gl, detail = false) {
-    return scenePBRCreateShaderProgram(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any, vertexShader: any, fragmentShader: any) {
+    return scenePBRCreateProgramInfo(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
 
       // Cache attribute locations.
       var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights");
@@ -6237,7 +6237,7 @@
   // Crowd-motion shaders join the shared parallel queue on first use.
   // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
   function createScenePBRCrowdMotionProgram(gl, detail = false) {
-    return scenePBRCreateShaderProgram(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader", function(program: any, vertexShader: any, fragmentShader: any) {
+    return scenePBRCreateProgramInfo(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader", function(program: any) {
 
       var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState");
       var uniforms = scenePBRCacheBaseUniforms(gl, program);

@@ -5283,17 +5283,13 @@ function gosxConfigureSceneScript(script, role, src) {
       // until the governor's first promote/demote transition, ignoring
       // QualityStartRung entirely.
       sceneApplyQualityLadderRung(sceneState, state);
-      applyScenePostFXState(mount, sceneState);
-      applySceneAdaptiveQualityState(mount, state, 0, true);
-      return;
-    }
-    if (!state || !state.enabled) {
+    } else {
       sceneApplyAdaptivePostFX(sceneState, state);
-      applySceneAdaptiveQualityState(mount, state, 0, true);
-      return;
+      if (state && state.enabled) {
+        state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, sceneNumber(state.activeProfile && state.activeProfile.dprCap, 1));
+      }
     }
-    sceneApplyAdaptivePostFX(sceneState, state);
-    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, sceneNumber(state.activeProfile && state.activeProfile.dprCap, 1));
+    applyScenePostFXState(mount, sceneState);
     applySceneAdaptiveQualityState(mount, state, 0, true);
   }
 

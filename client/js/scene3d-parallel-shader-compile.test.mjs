@@ -196,6 +196,84 @@ function gpuCreations(gl) {
   return gl.ops.filter(op => gpuCreationOps.has(op[0])).length;
 }
 
+function synchronousPBRBundle(kind, Float32Array) {
+  const bundle = makePointsBundle(null);
+  bundle.points = [];
+  const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const vertices = {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    uvs: new Float32Array(6),
+  };
+  const object = {
+    id: "synchronous-pbr", vertexOffset: 0, vertexCount: 3, materialIndex: 0,
+    directVertices: true, retainedGeometry: true, vertices, modelMatrix: identity,
+  };
+  const material = { kind: "standard", color: "#ffffff", opacity: 1 };
+  if (kind === "custom") {
+    material.kind = "custom";
+    material.customVertex = "float syncFactoryMarker = 0.125; position.x += syncFactoryMarker;";
+  } else if (kind === "skinned") {
+    vertices.joints = new Float32Array(12);
+    vertices.weights = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+    object.skin = { jointMatrices: identity };
+  } else {
+    vertices.joints = new Float32Array(12);
+    vertices.weights = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+    object._crowdMotion = {
+      atlas: { id: "synchronous-atlas", width: 4, height: 1, data: identity },
+      clipTable: { count: 1, data: new Float32Array([0, 1, 1, 1]) },
+      record: new Float32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1]), dirty: true,
+    };
+  }
+  bundle.worldMeshPositions = vertices.positions;
+  bundle.worldMeshNormals = vertices.normals;
+  bundle.worldMeshColors = new Float32Array(12).fill(1);
+  bundle.meshObjects = [object];
+  bundle.materials = [material];
+  return bundle;
+}
+
+for (const compiled of [false, true]) {
+  for (const [kind, marker] of [
+    ["custom", "syncFactoryMarker"],
+    ["skinned", "u_jointMatrices[64]"],
+    ["crowd-motion", "u_crowdClipTable"],
+  ]) {
+    test(`${compiled ? "release bundle" : "fresh source"} ${kind} PBR renders and disposes without parallel shader compilation`, t => {
+      const h = parallelRendererHarness(false, compiled);
+      t.after(() => h.renderer.dispose());
+      if (kind === "crowd-motion") {
+        Object.assign(h.gl, { MAX_TEXTURE_SIZE: 3379, MAX_COMBINED_TEXTURE_IMAGE_UNITS: 35661, MAX_VERTEX_TEXTURE_IMAGE_UNITS: 35660, MAX_TEXTURE_IMAGE_UNITS: 34930 });
+        const getParameter = h.gl.getParameter.bind(h.gl);
+        const limits = new Map([[h.gl.MAX_TEXTURE_SIZE, 4096], [h.gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS, 32], [h.gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS, 16], [h.gl.MAX_TEXTURE_IMAGE_UNITS, 16]]);
+        h.gl.getParameter = parameter => limits.has(parameter) ? limits.get(parameter) : getParameter(parameter);
+        h.gl.pixelStorei = (...args) => h.gl.ops.push(["pixelStorei", ...args]);
+        h.gl.NO_ERROR = 0;
+        h.gl.getError = () => h.gl.NO_ERROR;
+      }
+      const drawnPrograms = [], deletedPrograms = new Set(), deletedShaders = new Set();
+      for (const name of ["drawArrays", "drawElements", "drawArraysInstanced", "drawElementsInstanced"]) {
+        const draw = h.gl[name].bind(h.gl);
+        h.gl[name] = (...args) => { drawnPrograms.push(h.gl._activeProgram); return draw(...args); };
+      }
+      const deleteProgram = h.gl.deleteProgram.bind(h.gl), deleteShader = h.gl.deleteShader.bind(h.gl);
+      h.gl.deleteProgram = program => { deletedPrograms.add(program); deleteProgram(program); };
+      h.gl.deleteShader = shader => { deletedShaders.add(shader); deleteShader(shader); };
+      h.renderer.render(synchronousPBRBundle(kind, vm.runInContext("Float32Array", h.env.context)), { width: 320, height: 180 });
+      const program = h.gl.programMatching(marker);
+      assert.ok(program, "the mesh's PBR shader is compiled");
+      assert.ok(drawnPrograms.includes(program), "the mesh draws with its compiled program");
+      h.renderer.dispose();
+      assert.ok(deletedPrograms.has(program), "disposal releases the mesh's program");
+      assert.equal(program.attached.length, 2);
+      for (const shader of program.attached) {
+        assert.ok(deletedShaders.has(shader), "disposal releases each attached shader");
+      }
+    });
+  }
+}
+
 for (const extension of [false, true]) {
   test(`release bundle renders and reuses resources after shader completion (parallel=${extension})`, t => {
     const h = parallelRendererHarness(extension, true);
