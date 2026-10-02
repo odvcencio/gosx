@@ -4529,7 +4529,7 @@
 	      gl.useProgram(prog.program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, inputTex);
-      gl.uniform1i(gl.getUniformLocation(prog.program, "u_texture"), 0);
+      gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_texture"), 0);
     }
 
     // Run a complete fullscreen pass and return the resulting color texture
@@ -4592,13 +4592,13 @@
       // Bind sceneColor to unit 0.
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, inputTex);
-      gl.uniform1i(gl.getUniformLocation(p.program, "_sceneColor"), 0);
+      gl.uniform1i(sceneWaterUniformLocation(gl, p.program, "_sceneColor"), 0);
 
       // Bind sceneDepth to unit 1 (if available).
       if (depthTex) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, depthTex);
-        gl.uniform1i(gl.getUniformLocation(p.program, "_sceneDepth"), 1);
+        gl.uniform1i(sceneWaterUniformLocation(gl, p.program, "_sceneDepth"), 1);
       }
 
       // Upload uniforms by name from shaderLayout. Every declared field is
@@ -4617,7 +4617,7 @@
       for (var fi = 0; fi < fields.length; fi++) {
         var field = fields[fi];
         if (!field || typeof field.name !== "string") continue;
-        var loc = gl.getUniformLocation(p.program, field.name);
+        var loc = sceneWaterUniformLocation(gl, p.program, field.name);
         if (!loc) continue;
         var val = typeof resolveSelenaUniform === "function"
           ? resolveSelenaUniform(material, layout, field, null)
@@ -4647,8 +4647,8 @@
       var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
-      gl.uniform1i(gl.getUniformLocation(prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -4685,19 +4685,19 @@
 
       // 1. Bright pass: scene texture -> pingPong.a (bloom-res).
       beginPostPass(brightProg, inputTex, pingPong.a.fbo, halfW, halfH);
-      gl.uniform1f(gl.getUniformLocation(brightProg.program, "u_threshold"), threshold);
+      gl.uniform1f(sceneWaterUniformLocation(gl, brightProg.program, "u_threshold"), threshold);
       drawSceneFullscreenQuad(gl, quad.vao);
 
       // 2. Horizontal blur: pingPong.a -> pingPong.b.
       beginPostPass(blurProg, pingPong.a.colorTex, pingPong.b.fbo, halfW, halfH);
-      gl.uniform2f(gl.getUniformLocation(blurProg.program, "u_direction"), 1.0, 0.0);
-      gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
+      gl.uniform2f(sceneWaterUniformLocation(gl, blurProg.program, "u_direction"), 1.0, 0.0);
+      gl.uniform1f(sceneWaterUniformLocation(gl, blurProg.program, "u_radius"), radius);
       drawSceneFullscreenQuad(gl, quad.vao);
 
       // 3. Vertical blur: pingPong.b -> pingPong.a.
       beginPostPass(blurProg, pingPong.b.colorTex, pingPong.a.fbo, halfW, halfH);
-      gl.uniform2f(gl.getUniformLocation(blurProg.program, "u_direction"), 0.0, 1.0);
-      gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
+      gl.uniform2f(sceneWaterUniformLocation(gl, blurProg.program, "u_direction"), 0.0, 1.0);
+      gl.uniform1f(sceneWaterUniformLocation(gl, blurProg.program, "u_radius"), radius);
       drawSceneFullscreenQuad(gl, quad.vao);
 
       // 4. Composite: scene + bloom -> targetFBO (or screen on last pass).
@@ -4705,8 +4705,8 @@
       beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, passW, passH);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, pingPong.a.colorTex);
-      gl.uniform1i(gl.getUniformLocation(compositeProg.program, "u_bloomTexture"), 1);
-      gl.uniform1f(gl.getUniformLocation(compositeProg.program, "u_intensity"), intensity);
+      gl.uniform1i(sceneWaterUniformLocation(gl, compositeProg.program, "u_bloomTexture"), 1);
+      gl.uniform1f(sceneWaterUniformLocation(gl, compositeProg.program, "u_intensity"), intensity);
       drawSceneFullscreenQuad(gl, quad.vao);
 
       return targetFBO ? targetFBO.colorTex : null;
@@ -4717,7 +4717,7 @@
       var prog = getProgram("vignette", SCENE_POST_VIGNETTE_SOURCE);
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 1.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_intensity"), sceneNumber(effect.intensity, 1.0));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -4727,9 +4727,9 @@
       var prog = getProgram("colorGrade", SCENE_POST_COLORGRADE_SOURCE);
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_contrast"), sceneNumber(effect.contrast, 1.0));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_saturation"), sceneNumber(effect.saturation, 1.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_contrast"), sceneNumber(effect.contrast, 1.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_saturation"), sceneNumber(effect.saturation, 1.0));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -4751,11 +4751,11 @@
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
-      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
-      gl.uniformMatrix4fv(gl.getUniformLocation(prog.program, "u_projection"), false, projection);
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_bias"), Math.max(0, sceneNumber(effect.bias, 0.01)));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_radius"), sceneNumber(effect.radius, 4.0));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 0.55));
+      gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_depthTexture"), 1);
+      gl.uniformMatrix4fv(sceneWaterUniformLocation(gl, prog.program, "u_projection"), false, projection);
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_bias"), Math.max(0, sceneNumber(effect.bias, 0.01)));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_radius"), sceneNumber(effect.radius, 4.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_intensity"), sceneNumber(effect.intensity, 0.55));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -4766,11 +4766,11 @@
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
-      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
-      gl.uniformMatrix4fv(gl.getUniformLocation(prog.program, "u_projection"), false, frame.projection);
+      gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_depthTexture"), 1);
+      gl.uniformMatrix4fv(sceneWaterUniformLocation(gl, prog.program, "u_projection"), false, frame.projection);
       var light = sceneContactShadowLight(effect, frame.lights, frame.view);
-      gl.uniform3f(gl.getUniformLocation(prog.program, "u_lightDirection"), light[0], light[1], light[2]);
-      gl.uniform4fv(gl.getUniformLocation(prog.program, "u_contactParams"), sceneContactShadowParams(effect));
+      gl.uniform3f(sceneWaterUniformLocation(gl, prog.program, "u_lightDirection"), light[0], light[1], light[2]);
+      gl.uniform4fv(sceneWaterUniformLocation(gl, prog.program, "u_contactParams"), sceneContactShadowParams(effect));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -4782,12 +4782,12 @@
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
-      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_focusDistance"), sceneNumber(effect.focusDistance, 8.0));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_aperture"), sceneNumber(effect.aperture, 0.04));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_maxBlur"), sceneNumber(effect.maxBlur, 8.0));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_near"), Math.max(0.0001, sceneNumber(camera && camera.near, 0.05)));
-      gl.uniform1f(gl.getUniformLocation(prog.program, "u_far"), Math.max(0.1, sceneNumber(camera && camera.far, 128)));
+      gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_depthTexture"), 1);
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_focusDistance"), sceneNumber(effect.focusDistance, 8.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_aperture"), sceneNumber(effect.aperture, 0.04));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_maxBlur"), sceneNumber(effect.maxBlur, 8.0));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_near"), Math.max(0.0001, sceneNumber(camera && camera.near, 0.05)));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_far"), Math.max(0.1, sceneNumber(camera && camera.far, 128)));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }

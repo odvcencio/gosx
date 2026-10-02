@@ -1,3 +1,7 @@
+  function sceneFallbackString(source, base, key) {
+    return typeof source[key] === "string" ? source[key] : (typeof base[key] === "string" ? base[key] : "");
+  }
+
   function sceneFallbackNumber(source, base, key, fallback) {
     return sceneNumber(source[key], sceneNumber(base[key], fallback));
   }
@@ -493,10 +497,10 @@
     const hasOutState = Object.prototype.hasOwnProperty.call(source, "outState");
     const hasLive = Object.prototype.hasOwnProperty.call(source, "live");
     return {
-      transition: normalizeSceneTransition(source.transition, current._transition),
-      inState: sceneCloneData(hasInState ? source.inState : current._inState),
-      outState: sceneCloneData(hasOutState ? source.outState : current._outState),
-      live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
+      _transition: normalizeSceneTransition(source.transition, current._transition),
+      _inState: sceneCloneData(hasInState ? source.inState : current._inState),
+      _outState: sceneCloneData(hasOutState ? source.outState : current._outState),
+      _live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
     };
   }
 
@@ -782,6 +786,26 @@
   }
 
 
+  function sceneMaterialString(item, current, key, routed) {
+    const value = routed ? sceneObjectMaterialValue(item, key) : item[key];
+    return typeof value === "string" ? value.trim() : (typeof current[key] === "string" ? current[key] : "");
+  }
+
+  function sceneNormalizedShaderFields(item, current, routed) {
+    const value = key => routed ? sceneObjectMaterialValue(item, key) : item[key];
+    return {
+      customVertex: typeof value("customVertex") === "string" ? value("customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof value("customFragment") === "string" ? value("customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof value("customVertexWGSL") === "string" ? value("customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof value("customFragmentWGSL") === "string" ? value("customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(value("customUniforms")) ? Object.assign({}, value("customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof value("shaderBackend") === "string" ? value("shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(value("shaderLayout")) ? sceneCloneData(value("shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSource: typeof value("shaderSource") === "string" ? value("shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      shaderSourceFiles: sceneIsPlainObject(value("shaderSourceFiles")) ? sceneCloneData(value("shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+    };
+  }
+
   function normalizeSceneObject(object, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(object) ? object : {};
@@ -872,11 +896,11 @@
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
-      normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
-      roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
-      metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
-      occlusionMap: typeof sceneObjectMaterialValue(item, "occlusionMap") === "string" ? sceneObjectMaterialValue(item, "occlusionMap").trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
-      emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      normalMap: sceneMaterialString(item, current, "normalMap", true),
+      roughnessMap: sceneMaterialString(item, current, "roughnessMap", true),
+      metalnessMap: sceneMaterialString(item, current, "metalnessMap", true),
+      occlusionMap: sceneMaterialString(item, current, "occlusionMap", true),
+      emissiveMap: sceneMaterialString(item, current, "emissiveMap", true),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(
         sceneObjectMaterialValue(item, "textureDescriptors"),
         current.textureDescriptors,
@@ -884,15 +908,7 @@
       lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
       dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
       gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
-      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
-      shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
-      shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
-      shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      ...sceneNormalizedShaderFields(item, current, true),
       blendMode,
       _blendModeDerived: !blendExplicit,
       _renderPassDerived: !passExplicit,
@@ -974,10 +990,7 @@
       lodMinDistance: Math.max(0, sceneFallbackNumber(item, current, "lodMinDistance", 0)),
       lodMaxDistance: Math.max(0, sceneFallbackNumber(item, current, "lodMaxDistance", 0)),
       skin: item.skin && typeof item.skin === "object" ? item.skin : (current.skin && typeof current.skin === "object" ? current.skin : null),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     normalized.static = sceneBool(
       Object.prototype.hasOwnProperty.call(item, "static") ? item.static : current.static,
@@ -1075,10 +1088,7 @@
           ? Math.max(0, Math.min(1, Math.floor(sceneFallbackNumber(item, current, "shadowCascades", 0))))
           : 0),
       shadowSoftness: Math.max(0, sceneFallbackNumber(item, current, "shadowSoftness", 0)),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
       normalized.directionX = 0.35;
@@ -1115,7 +1125,7 @@
     const lifecycle = sceneNormalizeLifecycle(item, current);
     return {
       id: item.id || current.id || ("scene-label-" + index),
-      text: typeof item.text === "string" ? item.text : (typeof current.text === "string" ? current.text : ""),
+      text: sceneFallbackString(item, current, "text"),
       className: sceneLabelClassName(item) || sceneLabelClassName(current),
       x: sceneFallbackNumber(item, current, "x", 0),
       y: sceneFallbackNumber(item, current, "y", 0),
@@ -1142,10 +1152,7 @@
       occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
       whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace || current.whiteSpace),
       textAlign: normalizeSceneLabelAlign(item.textAlign || current.textAlign),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
   }
 
@@ -1192,10 +1199,7 @@
       anchorY: sceneClamp(sceneFallbackNumber(item, current, "anchorY", 0.5), 0, 1),
       occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
       fit: normalizeSceneSpriteFit(item.fit || current.fit),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
   }
 
@@ -1299,10 +1303,7 @@
       anchorY: sceneClamp(sceneFallbackNumber(item, current, "anchorY", 0.5), 0, 1),
       occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
       pointerEvents: normalizeSceneHTMLPointerEvents(item.pointerEvents, normalizeSceneHTMLPointerEvents(current.pointerEvents, "none")),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
   }
 
@@ -1554,10 +1555,7 @@
       lodMinDistance: Math.max(0, sceneNumber(current.lodMinDistance, 0)),
       lodMaxDistance: Math.max(0, sceneNumber(current.lodMaxDistance, 0)),
       materialOverride: Object.keys(override).length > 0 ? override : null,
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     if (hasAnimationSpeed) {
       model.animationSpeed = Math.max(0, sceneNumber(current.animationSpeed, 1));
@@ -1667,10 +1665,7 @@
       instances: rawInstances.map(function(instance, instanceIndex) {
         return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
       }),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
       if (sceneObjectMaterialHasValue(raw, key)) {
@@ -2050,12 +2045,12 @@
       // handed to the GPU to fail — and the render loop still ran, because
       // sceneHasTimeDrivenMaterials reads the RAW props scene. The result
       // was a field that redrew an identical frame forever.
-      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      customVertex: sceneFallbackString(item, current, "customVertex"),
+      customFragment: sceneFallbackString(item, current, "customFragment"),
+      customVertexWGSL: sceneFallbackString(item, current, "customVertexWGSL"),
+      customFragmentWGSL: sceneFallbackString(item, current, "customFragmentWGSL"),
+      shaderBackend: sceneFallbackString(item, current, "shaderBackend"),
+      shaderSource: sceneFallbackString(item, current, "shaderSource"),
       customUniforms: sceneIsPlainObject(item.customUniforms)
         ? Object.assign({}, item.customUniforms)
         : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
@@ -2065,10 +2060,7 @@
       shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles)
         ? sceneCloneData(item.shaderSourceFiles)
         : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     if (positions === current.positions && current._cachedPos) {
       normalized._cachedPos = current._cachedPos;
@@ -2191,11 +2183,11 @@
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
-      normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
-      roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
-      metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
-      occlusionMap: typeof sceneObjectMaterialValue(item, "occlusionMap") === "string" ? sceneObjectMaterialValue(item, "occlusionMap").trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
-      emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      normalMap: sceneMaterialString(item, current, "normalMap", true),
+      roughnessMap: sceneMaterialString(item, current, "roughnessMap", true),
+      metalnessMap: sceneMaterialString(item, current, "metalnessMap", true),
+      occlusionMap: sceneMaterialString(item, current, "occlusionMap", true),
+      emissiveMap: sceneMaterialString(item, current, "emissiveMap", true),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(
         sceneObjectMaterialValue(item, "textureDescriptors"),
         current.textureDescriptors,
@@ -2215,15 +2207,7 @@
       lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
       dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
       gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
-      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
-      shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
-      shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
-      shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      ...sceneNormalizedShaderFields(item, current, true),
       // Elio GPU cull kernel (WebGPU compute cull pass). Carried end-to-end
       // from scene/scene_ir.go InstancedMeshIR.Cull* fields through the
       // manifest; without these, updateInstancedCullSystems in
@@ -2241,10 +2225,7 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
     // underlying array reference is unchanged (i.e. item.transforms was
@@ -2338,10 +2319,7 @@
       }),
       material: normalizeSceneComputeMaterial(materialSource, current.material),
       bounds: Math.max(0, sceneFallbackNumber(item, current, "bounds", 0)),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     [
       "computeWGSL", "computeEntry", "computeBackend", "computeWGSLRef",
@@ -2371,12 +2349,10 @@
 
   const SCENE_WATER_SHADER_STRING_FIELDS = [
     "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
-    "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
-    "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
-    "seedWGSLRef", "dropWGSLRef", "displacementWGSLRef", "simulationWGSLRef", "normalWGSLRef", "causticsWGSLRef",
-    "poolVertexWGSLRef", "poolFragmentWGSLRef", "surfaceVertexWGSLRef", "surfaceFragmentWGSLRef", "surfaceBelowFragmentWGSLRef",
-    "objectShadowWGSLRef", "objectMeshShadowVertexWGSLRef", "objectMeshShadowFragmentWGSLRef",
+    "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL", "objectShadowWGSL",
+    "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
   ];
+  SCENE_WATER_SHADER_STRING_FIELDS.push(...SCENE_WATER_SHADER_STRING_FIELDS.map(name => name + "Ref"));
 
   function sceneWaterSystemID(entry, index) {
     return entry && typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + index);
@@ -2462,10 +2438,10 @@
       dropZ: Math.max(-1, Math.min(1, sceneFallbackNumber(item, current, "dropZ", 0))),
       dropEventRadius: Math.max(0, sceneNumber(item.dropEventRadius, sceneNumber(current.dropEventRadius, sceneFallbackNumber(item, current, "dropRadius", 0.03)))),
       dropEventStrength: sceneNumber(item.dropEventStrength, sceneNumber(current.dropEventStrength, sceneFallbackNumber(item, current, "dropStrength", 0.01))),
-      tileTexture: typeof item.tileTexture === "string" ? item.tileTexture : (typeof current.tileTexture === "string" ? current.tileTexture : ""),
-      cubeMap: typeof item.cubeMap === "string" ? item.cubeMap : (typeof current.cubeMap === "string" ? current.cubeMap : ""),
-      shallowColor: typeof item.shallowColor === "string" ? item.shallowColor : (typeof current.shallowColor === "string" ? current.shallowColor : ""),
-      deepColor: typeof item.deepColor === "string" ? item.deepColor : (typeof current.deepColor === "string" ? current.deepColor : ""),
+      tileTexture: sceneFallbackString(item, current, "tileTexture"),
+      cubeMap: sceneFallbackString(item, current, "cubeMap"),
+      shallowColor: sceneFallbackString(item, current, "shallowColor"),
+      deepColor: sceneFallbackString(item, current, "deepColor"),
       aboveWaterColorR: sceneFallbackNumber(item, current, "aboveWaterColorR", 0),
       aboveWaterColorG: sceneFallbackNumber(item, current, "aboveWaterColorG", 0),
       aboveWaterColorB: sceneFallbackNumber(item, current, "aboveWaterColorB", 0),
@@ -2482,8 +2458,8 @@
       lightDirectionX: sceneFallbackNumber(item, current, "lightDirectionX", 2),
       lightDirectionY: sceneFallbackNumber(item, current, "lightDirectionY", 3),
       lightDirectionZ: sceneFallbackNumber(item, current, "lightDirectionZ", -1),
-      activeObject: typeof item.activeObject === "string" ? item.activeObject : (typeof current.activeObject === "string" ? current.activeObject : ""),
-      objectKind: typeof item.objectKind === "string" ? item.objectKind : (typeof current.objectKind === "string" ? current.objectKind : ""),
+      activeObject: sceneFallbackString(item, current, "activeObject"),
+      objectKind: sceneFallbackString(item, current, "objectKind"),
       objectX: sceneFallbackNumber(item, current, "objectX", 0),
       objectY: sceneFallbackNumber(item, current, "objectY", 0),
       objectZ: sceneFallbackNumber(item, current, "objectZ", 0),
@@ -2514,8 +2490,8 @@
       dropEvents: normalizeSceneWaterOneShotEvents(item.dropEvents, current.dropEvents),
       computeBackend: typeof item.computeBackend === "string" && item.computeBackend ? item.computeBackend : (typeof current.computeBackend === "string" ? current.computeBackend : "elio"),
       materialBackend: typeof item.materialBackend === "string" && item.materialBackend ? item.materialBackend : (typeof current.materialBackend === "string" ? current.materialBackend : "selena"),
-      computeSource: typeof item.computeSource === "string" ? item.computeSource : (typeof current.computeSource === "string" ? current.computeSource : ""),
-      materialSource: typeof item.materialSource === "string" ? item.materialSource : (typeof current.materialSource === "string" ? current.materialSource : ""),
+      computeSource: sceneFallbackString(item, current, "computeSource"),
+      materialSource: sceneFallbackString(item, current, "materialSource"),
       computeSourceFiles: sceneIsPlainObject(item.computeSourceFiles) ? sceneCloneData(item.computeSourceFiles) : (sceneIsPlainObject(current.computeSourceFiles) ? sceneCloneData(current.computeSourceFiles) : null),
       materialSourceFiles: sceneIsPlainObject(item.materialSourceFiles) ? sceneCloneData(item.materialSourceFiles) : (sceneIsPlainObject(current.materialSourceFiles) ? sceneCloneData(current.materialSourceFiles) : null),
       // shaderDescriptors carries the per-shader Selena host binding descriptor
@@ -2670,11 +2646,11 @@
       transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
       iridescence: sceneClampNumberOrCSSVar(item.iridescence, sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(item.anisotropy, sceneNumber(current.anisotropy, 0), -1, 1),
-      normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
-      roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
-      metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
-      occlusionMap: typeof item.occlusionMap === "string" ? item.occlusionMap.trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
-      emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      normalMap: sceneMaterialString(item, current, "normalMap", false),
+      roughnessMap: sceneMaterialString(item, current, "roughnessMap", false),
+      metalnessMap: sceneMaterialString(item, current, "metalnessMap", false),
+      occlusionMap: sceneMaterialString(item, current, "occlusionMap", false),
+      emissiveMap: sceneMaterialString(item, current, "emissiveMap", false),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(item.textureDescriptors, current.textureDescriptors),
       blendMode,
       _blendModeDerived: !blendExplicit,
@@ -2690,15 +2666,7 @@
       lineDash: sceneBool(Object.prototype.hasOwnProperty.call(item, "lineDash") ? item.lineDash : current.lineDash, false),
       dashSize: sceneFallbackNumber(item, current, "dashSize", 0),
       gapSize: sceneFallbackNumber(item, current, "gapSize", 0),
-      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
-      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend.trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderLayout: sceneIsPlainObject(item.shaderLayout) ? sceneCloneData(item.shaderLayout) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
-      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource.trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
-      shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles) ? sceneCloneData(item.shaderSourceFiles) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      ...sceneNormalizedShaderFields(item, current, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       // Screen-space floor/cap a named material may declare for the point
       // layers bound to it. A GLB-derived layer carries no Points struct of
@@ -2812,7 +2780,7 @@
       Reflect.set(normalized, key, sceneNumberOrCSSVar(item[key], sceneNumber(current[key], 0)));
     }
     Object.assign(normalized, {
-      mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
+      mode: sceneFallbackString(item, current, "mode"),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     });
     return Object.assign({}, current, item, normalized);
@@ -3164,10 +3132,7 @@
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
       specified: false,
     };
     environment.specified = Boolean(raw || base.specified) && (
