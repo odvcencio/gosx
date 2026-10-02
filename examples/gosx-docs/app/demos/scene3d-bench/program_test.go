@@ -118,6 +118,23 @@ func TestBenchScene_Dispatch(t *testing.T) {
 	}
 }
 
+func TestBenchMixedSceneHasThirtyThickLineSegments(t *testing.T) {
+	segments := 0
+	for _, node := range BenchMixedScene().Graph.Nodes {
+		mesh, ok := node.(scene.Mesh)
+		if !ok {
+			continue
+		}
+		lines, ok := mesh.Geometry.(scene.LinesGeometry)
+		if ok {
+			segments += len(lines.Segments)
+		}
+	}
+	if segments != 30 {
+		t.Fatalf("mixed workload has %d thick-line segments, want 30", segments)
+	}
+}
+
 // TestBenchMeshSwarmScene_HeavierThanPBRHeavy is a guardrail that the swarm
 // workload actually stays meaningfully heavier (by node count) than the
 // existing pbr-heavy baseline, since that separation is the entire point

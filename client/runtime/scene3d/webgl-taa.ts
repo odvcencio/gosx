@@ -43,21 +43,24 @@ void main() {
     float oldZ = (u_previousProjection[3][2] - oldDepth * u_previousProjection[3][3]) /
                  (oldDepth * u_previousProjection[2][3] - u_previousProjection[2][2]);
     if (abs(oldZ - previousPosition.z) > u_temporalParams.z * max(1.0, abs(previousPosition.z))) { fragColor = current; return; }
-    vec3 low = vec3(1e20), high = vec3(-1e20), mean = vec3(0), square = vec3(0);
+    vec4 low = vec4(1e20), high = vec4(-1e20), mean = vec4(0), square = vec4(0);
     for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-        vec3 c = toYCoCg(texture(u_texture, v_uv + vec2(x, y) * texel).rgb);
+        vec4 sampleColor = texture(u_texture, v_uv + vec2(x, y) * texel);
+        vec4 c = vec4(toYCoCg(sampleColor.rgb), sampleColor.a);
         low = min(low, c); high = max(high, c); mean += c / 9.0; square += c * c / 9.0;
     }
-    vec3 sigma = sqrt(max(vec3(0), square - mean * mean));
+    vec4 sigma = sqrt(max(vec4(0), square - mean * mean));
     low = max(low, mean - sigma * u_temporalParams.y);
     high = min(high, mean + sigma * u_temporalParams.y);
     vec2 historyUV = coverageEdge ? uv + u_temporalJitter.xy - u_temporalJitter.zw : uv;
     if (any(lessThan(historyUV, vec2(0))) || any(greaterThan(historyUV, vec2(1)))) { fragColor = current; return; }
-    vec3 history = fromYCoCg(clamp(toYCoCg(texture(u_history, historyUV).rgb), low, high));
+    vec4 historySample = texture(u_history, historyUV);
+    vec4 bounded = clamp(vec4(toYCoCg(historySample.rgb), historySample.a), low, high);
+    vec3 history = fromYCoCg(bounded.rgb);
     float motion = length((historyUV - v_uv) / texel);
     float change = abs(toYCoCg(history).x - toYCoCg(current.rgb).x);
     float weight = u_temporalParams.x * exp(-motion * 0.05) / (coverageEdge ? 1.0 : 1.0 + change * 8.0);
-    fragColor = vec4(mix(current.rgb, history, weight), current.a);
+    fragColor = vec4(mix(current.rgb, history, weight), mix(current.a, bounded.a, weight));
 }`;
 function sceneTemporalHalton(index: number, base: number) {
     var value = 0, fraction = 1;
@@ -86,7 +89,9 @@ function createSceneTemporalHistory(gl: any, quad: any) {
     }
     function prepare(effects: any[], size: { width: number; height: number }, projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
         var effect = effects.find(e => e.kind === "taa");
-        if (!effect || !canJitter || failed) { release(); return false; }
+        var upstream = effect ? effects.slice(0, effects.indexOf(effect) + 1) : [];
+        // Live custom inputs cannot seed reusable history; spatial AA avoids jitter.
+        if (!effect || !canJitter || failed || upstream.some(e => e.kind === SCENE_POST_CUSTOM_POST)) { release(); return false; }
         if (!gl.getExtension("EXT_color_buffer_float") || !gl.blitFramebuffer || !gl.checkFramebufferStatus) return false;
         if (!program) program = createScenePostProgram(gl, SCENE_POST_TAA_SOURCE);
         if (!program) { failed = true; return false; }
@@ -99,18 +104,17 @@ function createSceneTemporalHistory(gl: any, quad: any) {
             }
         }
         // Snapshot complete upstream wire descriptors, including nested and future parameters.
-        var upstream = effects.slice(0, effects.indexOf(effect) + 1),
-            nextStamp = JSON.stringify([upstream, upstream.some(e => e.kind === "contactShadows") ? lights : null]);
-        // Custom passes can read live clock/DOM auto-uniforms outside their descriptor.
-        if (upstream.some(e => e.kind === SCENE_POST_CUSTOM_POST)) valid = false;
+        var nextStamp = JSON.stringify([upstream, upstream.some(e => e.kind === "contactShadows") ? lights : null]);
         var now = performance.now(); inverseView = sceneInvertOrthonormalView(view);
         var cut = Math.hypot(inverseView[12] - previousInverseView[12], inverseView[13] - previousInverseView[13], inverseView[14] - previousInverseView[14]) > 2;
         var turn = inverseView[8] * previousInverseView[8] + inverseView[9] * previousInverseView[9] + inverseView[10] * previousInverseView[10] < 0.5;
         var projectionChanged = Math.abs(projection[0] - previousProjection[0]) > 0.0001 || Math.abs(projection[5] - previousProjection[5]) > 0.0001 || projection[10] !== previousProjection[10] || projection[11] !== previousProjection[11];
         if (stamp !== nextStamp || now - lastTime > 250 || cut || turn || projectionChanged) valid = false;
         stamp = nextStamp; lastTime = now;
-        sceneTemporalJitter(projection, width, height, index, jitter);
-        return true;
+        // An invalid frame uses unjittered FXAA while resolve seeds fresh history.
+        jitter[0] = 0; jitter[1] = 0;
+        if (valid) sceneTemporalJitter(projection, width, height, index, jitter);
+        return valid;
     }
     function resolve(input: any, source: any, effect: any, frame: any) {
         if (!targets || !program || !frame) return input;
@@ -133,7 +137,7 @@ function createSceneTemporalHistory(gl: any, quad: any) {
         jitter[2] = jitter[0]; jitter[3] = jitter[1]; valid = true; index++;
         return output.colorTex;
     }
-    return { prepare: prepare, resolve: resolve, reset: release,
+    return { prepare: prepare, resolve: resolve, reset: release, ready: function() { return !!targets && !failed; },
         dispose: function() { release(); if (program) { gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader); } program = null; },
         valid: function() { return valid; } };
 }

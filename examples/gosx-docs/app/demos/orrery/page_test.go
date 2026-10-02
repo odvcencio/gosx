@@ -92,7 +92,7 @@ func TestOrreryPublishesAnHonestInteractionContract(t *testing.T) {
 // canvas input stay unobstructed at every viewport.
 func TestOrreryOverlayNeverObstructsCanvasInput(t *testing.T) {
 	page := readOrreryPageSource(t)
-	canvasAt := strings.Index(page, `class="orrery__canvas"`)
+	canvasAt := strings.Index(page, `class="orrery__canvas`)
 	mountAt := strings.Index(page, "<Scene3D")
 	canvasCloseAt := strings.Index(page[canvasAt:], "</div>") + canvasAt
 	overlayAt := strings.Index(page, `class="orrery__overlay"`)

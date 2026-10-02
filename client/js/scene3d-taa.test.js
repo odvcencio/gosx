@@ -24,18 +24,18 @@ function temporalHarness(options = {}) {
     const ext = gl.getExtension.bind(gl);
     gl.getExtension = name => name === "EXT_color_buffer_float" ? {} : ext(name);
   }
-  const params = [], projections = [], jitters = [];
+  const params = [], projections = [], jitters = [], sceneProjections = [];
   const uniform4f = gl.uniform4f.bind(gl), uniformMatrix = gl.uniformMatrix4fv.bind(gl);
   gl.uniform4f = (loc, ...v) => {
     if (loc.name === "u_temporalParams") params.push(v);
     if (loc.name === "u_temporalJitter") jitters.push(v);
     uniform4f(loc, ...v);
   };
-  gl.uniformMatrix4fv = (loc, transpose, v) => { if (loc.name === "u_projection") projections.push(Array.from(v)); uniformMatrix(loc, transpose, v); };
+  gl.uniformMatrix4fv = (loc, transpose, v) => { if (loc.name === "u_projectionMatrix") sceneProjections.push(Array.from(v)); if (loc.name === "u_projection") projections.push(Array.from(v)); uniformMatrix(loc, transpose, v); };
   const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);
   const bundle = makeWebGLBundleWithCustomPost();
   bundle.postEffects = [{ kind: "toneMapping" }, { kind: "taa", historyWeight: 0.9, clampGamma: 1.25, depthThreshold: 0.01 }];
-  return { ...h, gl, params, projections, jitters, mount, bundle, frame: () => h.renderer.render(bundle, { width: h.canvas.width, height: h.canvas.height }) };
+  return { ...h, gl, params, projections, jitters, sceneProjections, mount, bundle, frame: () => h.renderer.render(bundle, { width: h.canvas.width, height: h.canvas.height }) };
 }
 
 test("TAA uploads current and previous jitter in history UV units", () => {
@@ -122,6 +122,8 @@ for (const [kind, parameters] of Object.entries(parameterClasses)) {
       for (const [name, [, changed]] of Object.entries(parameters)) {
         effect[name] = changed; h.frame();
         assert.equal(h.params.at(-1)[3], 0, `${kind}.${name} change rejects history`);
+        assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+        assert.deepEqual(h.sceneProjections.at(-1).slice(8, 10), [0, 0]);
         h.frame(); assert.equal(h.params.at(-1)[3], 1, `${kind}.${name} settles on the next frame`);
       }
       h.bundle.postEffects = JSON.parse(JSON.stringify(h.bundle.postEffects)); h.frame();
@@ -152,13 +154,19 @@ test("TAA tracks nested future parameters, chain changes, and contact light inpu
   } finally { h.renderer.dispose(); }
 });
 
-test("TAA never reuses custom post history with untracked live auto-uniforms", () => {
+test("untracked upstream custom post uses FXAA without jitter and can resume TAA", () => {
   const h = temporalHarness();
   try {
     h.bundle.postEffects = [makeWebGLBundleWithCustomPost().postEffects[0], { kind: "taa" }];
     assert.equal(h.bundle.postEffects[0].kind, "customPost");
     h.frame(); h.frame(); h.frame();
-    assert.deepEqual(h.params.map(p => p[3]), [0, 0, 0]);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+    assert.deepEqual(h.params, [], "untrackable passes allocate no temporal history");
+    assert.ok(h.gl.programMatching("greenLuma"), "the fallback dispatches FXAA");
+    assert.ok(h.sceneProjections.every(p => p[8] === 0 && p[9] === 0), "rendered projection is unjittered");
+    h.bundle.postEffects = [{ kind: "taa" }]; h.frame(); h.frame();
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "taa");
+    assert.deepEqual(h.params.map(p => p[3]), [0, 1]);
   } finally { h.renderer.dispose(); }
 });
 
@@ -214,7 +222,7 @@ test("software TAA pixels stabilize jittered foreground/clear-depth silhouettes 
     const program = h.gl.programMatching("u_temporalParams");
     const fragment = program.attached.find(shader => shader.type === h.gl.FRAGMENT_SHADER).source;
     const run = spawnSync(python, [path.join(__dirname, "testdata/scene3d-taa-pixels.py")], {
-      input: fragment, encoding: "utf8", timeout: 30000,
+      input: JSON.stringify({ taa: fragment, fxaa: h.gl.programMatching("greenLuma").attached.find(shader => shader.type === h.gl.FRAGMENT_SHADER).source }), encoding: "utf8", timeout: 30000,
       env: { ...process.env, LIBGL_ALWAYS_SOFTWARE: "1", GALLIUM_DRIVER: "llvmpipe" },
     });
     if (run.error?.code === "ENOENT") return t.skip("Python is unavailable for the optional CPU raster test");
@@ -224,3 +232,35 @@ test("software TAA pixels stabilize jittered foreground/clear-depth silhouettes 
     t.diagnostic(JSON.stringify(pixels));
   } finally { h.renderer.dispose(); }
 });
+
+test("every-frame parameter invalidation renders FXAA with a stable projection", () => {
+  const h = temporalHarness();
+  try {
+    for (let i = 0; i < 8; i++) {
+      h.bundle.postEffects[0].exposure = 1 + i * 0.1; h.frame();
+      assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+      assert.deepEqual(h.sceneProjections.at(-1).slice(8, 10), [0, 0]);
+    }
+    assert.ok(h.gl.programMatching("greenLuma"));
+    h.frame(); assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "taa");
+  } finally { h.renderer.dispose(); }
+});
+
+for (const invalidation of ["camera cut", "projection", "resize", "frame gap"]) {
+  test(`repeated ${invalidation} invalidation falls back before jitter`, () => {
+    const h = temporalHarness();
+    try {
+      let time = 0; h.env.context.performance.now = () => time;
+      h.frame(); h.frame();
+      for (let i = 0; i < 4; i++) {
+        if (invalidation === "camera cut") h.bundle.camera.x += 3;
+        if (invalidation === "projection") h.bundle.camera.fov = 50 + i * 5;
+        if (invalidation === "resize") h.canvas.width += 10;
+        if (invalidation === "frame gap") time += 300;
+        h.frame();
+        assert.equal(h.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+        assert.deepEqual(h.sceneProjections.at(-1).slice(8, 10), [0, 0]);
+      }
+    } finally { h.renderer.dispose(); }
+  });
+}

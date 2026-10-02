@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed: tiling normal maps from glTF
+
+- A `KHR_texture_transform` scale on `normalTexture` alone (a detail map that
+  tiles while base colour spans the mesh) now reaches the WebGL2 and WebGPU
+  shaders as `normalUVScale`. Before, the loader baked only the base colour
+  transform, so such normal maps stretched across the whole mesh. A transform
+  shared with base colour is still baked into the UVs once.
+
 ### Added: opt-in Scene3D walking
 
 - Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
@@ -458,6 +466,13 @@
 - Spot shadow targets are retired when lights disappear or become invalid, and are released again during renderer disposal or GPU loss. Receiver shaders reject fragments behind the light or outside the full projected clip volume before sampling.
 - WebGPU keeps each shadow light's base and retained-caster matrices in separate aligned buffer regions through frame submission, including mixed directional/spot pairs.
 - Alpha cutoff remains a visible-surface feature: the shared depth-only shadow passes cast the mesh's closed silhouette rather than a texture-cutout silhouette. Point-light shadows remain unsupported.
+
+### Added: server-first Polar hosted checkout
+
+- `polarui.CheckoutForm` renders a zero-runtime native POST with only a bounded opaque offer ID and GoSX-compatible CSRF token. Root-relative action validation fails closed to a disabled non-form fallback.
+- `polaradapter` resolves the offer to typed server-owned product, customer, locale, billing, and callback inputs, then calls Polar's fixed production or sandbox Checkout API with a private OAT and returns an empty no-store 303.
+- Provider calls and responses are time/size bounded; redirects are disabled; callback URLs derive only from configured `PublicOrigin`; returned checkout URLs require an exact configured HTTPS origin; provider bodies, client secrets, and diagnostics are neither retained nor exposed.
+- This slice intentionally adds no browser runtime, embedded checkout, or webhook handler. Payment fulfillment remains authoritative only after a separately verified Polar webhook or server check.
 
 ### Added: consumer-backed image art direction
 

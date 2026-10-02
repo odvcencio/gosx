@@ -53,7 +53,8 @@ void main() {
 program = api("glCreateProgram", uint)()
 attach = api("glAttachShader", None, uint, uint)
 attach(program, shader(0x8B31, vertex))
-attach(program, shader(0x8B30, sys.stdin.read()))
+sources = json.loads(sys.stdin.read())
+attach(program, shader(0x8B30, sources["taa"]))
 api("glLinkProgram", None, uint)(program)
 status = integer()
 api("glGetProgramiv", None, uint, uint, c.POINTER(integer))(program, 0x8B82, c.byref(status))
@@ -85,11 +86,11 @@ temporal = api("glUniform4f", None, integer, floating, floating, floating, float
 read = api("glReadPixels", None, integer, integer, integer, integer, uint, uint, pointer)
 
 
-def resolve(current, history, depth=0.5, old_depth=0.5, valid=True):
+def resolve(current, history, depth=0.5, old_depth=0.5, valid=True, transparent=False, alpha=False):
     depth = [depth] * width if isinstance(depth, (float, int)) else depth
     old_depth = [old_depth] * width if isinstance(old_depth, (float, int)) else old_depth
     for unit, values in enumerate([current, depth, history, old_depth]):
-        data = (floating * (width * height * 4))(*[v for _ in range(height) for value in values for v in [value, value, value, 1]])
+        data = (floating * (width * height * 4))(*[v for _ in range(height) for value in values for v in [value, value, value, value if transparent and unit in (0, 2) else 1]])
         active(0x84C0 + unit)
         bind(0x0DE1, textures[unit])
         upload(0x0DE1, 0, 0x8814, width, height, 0, 0x1908, 0x1406, data)
@@ -98,7 +99,7 @@ def resolve(current, history, depth=0.5, old_depth=0.5, valid=True):
     result = (floating * (width * height * 4))()
     read(0, 0, width, height, 0x1908, 0x1406, result)
     assert api("glGetError", uint)() == 0, "software TAA draw failed"
-    return list(result)[0:width * 4:4]
+    return list(result)[3 if alpha else 0:width * 4:4]
 
 
 def edge(coverage):
@@ -224,15 +225,57 @@ silhouette_range = max(silhouette_resolved) - min(silhouette_resolved)
 assert min(silhouette_depths) < 0.999999 <= max(silhouette_depths), silhouette_depths
 assert max(silhouette_raw) - min(silhouette_raw) == 1, silhouette_raw
 assert silhouette_range < 0.25, (silhouette_raw, silhouette_resolved, silhouette_range)
+# Premultiplied white over a transparent page must resolve coverage with color.
+transparent_history, old_depths, previous = [0] * width, [1] * width, jittered_projection(0)
+transparent_alpha, transparent_rgb = [], []
+for index in range(16):
+    proj = jittered_projection(index)
+    current, depths = rasterize(proj)
+    matrix(location(program, b"u_projection"), 1, 0, proj)
+    matrix(location(program, b"u_previousProjection"), 1, 0, previous)
+    temporal(location(program, b"u_temporalJitter"),
+             (halton(index % 8 + 1, 2) - 0.5) / width, (halton(index % 8 + 1, 3) - 0.5) / height,
+             (halton((index - 1) % 8 + 1, 2) - 0.5) / width, (halton((index - 1) % 8 + 1, 3) - 0.5) / height)
+    alpha_values = resolve(current, transparent_history, depths, old_depths, valid=index > 0, transparent=True, alpha=True)
+    transparent_history = resolve(current, transparent_history, depths, old_depths, valid=index > 0, transparent=True)
+    if index >= 8:
+        transparent_alpha.append(alpha_values[15]); transparent_rgb.append(transparent_history[15])
+    assert max(abs(a - rgb) for a, rgb in zip(alpha_values, transparent_history)) < 0.006, "premultiplied coverage diverged"
+    old_depths, previous = depths, proj
+transparent_range = max(transparent_alpha) - min(transparent_alpha)
+assert transparent_range < 0.25, transparent_alpha
 # A genuinely uncovered region must lose its foreground history immediately.
 current, depths = rasterize(previous, edge_position=0.75)
 uncovered = resolve(current, history, depths, old_depths)
 uncovered_error = max(abs(uncovered[x] - current[x]) for x in range(15, 20))
 background_error = max(abs(value) for value in resolve([0] * width, history, 1, old_depths))
 assert uncovered_error < 0.006 and background_error < 0.006
+# Run the actual spatial fallback on the same foreground/clear-depth boundary.
+# With an unjittered projection, an identity live custom pass cannot move coverage.
+fxaa = api("glCreateProgram", uint)()
+attach(fxaa, shader(0x8B31, vertex)); attach(fxaa, shader(0x8B30, sources["fxaa"]))
+api("glLinkProgram", None, uint)(fxaa)
+api("glGetProgramiv", None, uint, uint, c.POINTER(integer))(fxaa, 0x8B82, c.byref(status))
+assert status.value, "FXAA fallback did not link"
+fallback_values = []
+for _ in range(8):
+    current, _ = rasterize(projection)
+    api("glUseProgram", None, uint)(fxaa)
+    api("glUniform1i", None, integer, integer)(location(fxaa, b"u_texture"), 0)
+    active(0x84C0); bind(0x0DE1, textures[0])
+    data = (floating * (width * height * 4))(*[v for _ in range(height) for value in current for v in [value] * 4])
+    upload(0x0DE1, 0, 0x8814, width, height, 0, 0x1908, 0x1406, data)
+    api("glDrawArrays", None, uint, integer, integer)(0x0004, 0, 3)
+    result = (floating * (width * height * 4))()
+    read(0, 0, width, height, 0x1908, 0x1406, result)
+    assert api("glGetError", uint)() == 0
+    assert max(abs(result[x * 4] - result[x * 4 + 3]) for x in range(width)) < 0.006, "FXAA lost transparent coverage"
+    fallback_values.append(result[15 * 4])
+fallback_range = max(fallback_values) - min(fallback_values)
+assert fallback_range == 0, fallback_values
 print(json.dumps({"renderer": renderer, "rawEdgeRange": raw_range, "resolvedEdgeRange": resolved_range,
                   "disocclusionError": disocclusion_error, "resetError": reset_error,
                   "silhouetteRaw": silhouette_raw, "silhouetteResolved": silhouette_resolved,
                   "silhouetteRange": silhouette_range, "uncoveredError": uncovered_error,
-                  "backgroundError": background_error}))
+                  "backgroundError": background_error, "transparentAlphaRange": transparent_range, "unjitteredFXAARange": fallback_range}))
 api("OSMesaDestroyContext", None, pointer)(context)

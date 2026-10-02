@@ -11,6 +11,7 @@ func init() {
 		"Live frame-time instrumentation for the Scene3D renderer — histogram, p50/p95/max, GPU info, and nine stress workloads.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				docsapp.AddScenePosterPreload(ctx, "/demos/posters/scene3d-bench.webp")
 				workload := ctx.Query("workload")
 				return map[string]any{
 					"scene":    BenchScene(workload),

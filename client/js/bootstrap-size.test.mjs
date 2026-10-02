@@ -696,6 +696,9 @@ const budgets = [
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
   // exception under decision 0014).
+  // Normal-map tiling merged with main measures 1_788_852 / 495_502 / 397_774 bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
   // Depth AO replaces the color filter with twelve depth taps and normal
   // reconstruction (+1,786 raw / +753 gzip / +519 Brotli bytes). Only
@@ -705,7 +708,7 @@ const budgets = [
   // ceiling overrun; raw and gzip targets retain their existing limits.
   // TAA coverage stabilization: raw 1761000 -> 1761931 (measured 1827467), gzip 492561 -> 492748 (measured 509132).
   // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
-  { file: "bootstrap.js", raw: 1763485, gzip: 493093, brotli: 390794 },
+  { file: "bootstrap.js", raw: 1766857, gzip: 494237, brotli: 391607 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1078,7 +1081,7 @@ const budgets = [
   // A four-byte target raise clears the exact five-byte governed-cap overrun.
   // TAA coverage stabilization: raw 260800 -> 261717 (measured 274803), gzip 74300 -> 74462 (measured 78186), brotli 62604 -> 62763 (measured 65902).
   // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 261717, gzip: 74462, brotli: 62763 },
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 262597, gzip: 74736, brotli: 62905 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1204,8 +1207,11 @@ const budgets = [
   // pacing also adds its governor and telemetry. The build with frame
   // caching measures 594_098 / 166_371 / 137_740.
   // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+  // Normal-map tiling merged with main measures 619_158 / 175_346 / 144_510 bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d.js", raw: 594_200, gzip: 169000, brotli: 139_350 },
+  { file: "bootstrap-feature-scene3d.js", raw: 594275, gzip: 169164, brotli: 139_350 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1410,7 +1416,7 @@ const budgets = [
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 399916, gzip: 99749, brotli: 82843 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 400830, gzip: 100121, brotli: 82993 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1697,7 +1703,11 @@ const routeBudgets = [
   // monolith fraction the video route holds — Scene3D IS most of the monolith —
   // so maxMonolithFraction stays unset for them.
   {
-    name: "Scene3D Chromium route (WebGPU, with labels)",
+    // Normal-map tiling merged with main measures 1_369_019 / 372_787 / 313_785 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,369,776 / 373,152 / 314,130 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D Chromium route (WebGPU, with labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-engines.js",
@@ -1846,10 +1856,14 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Normal-map tiling merged with main measures 1_218_997 / 344_893 / 291_220 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,219,453 / 345,033 / 291,295 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1323150,
-    gzip: 363938,
-    brotli: 304122,
+    raw: 1324805,
+    gzip: 364537,
+    brotli: 304447,
   },
   {
     // TAA coverage stabilization: raw 1183400 -> 1184359 (measured 1243577), gzip 337200 -> 337387 (measured 353771), brotli 283900 -> 284042 (measured 298245).
@@ -2030,11 +2044,12 @@ const routeBudgets = [
     // 21 raw bytes to bootstrap-runtime.js and 57 gzip bytes. That put this
     // route 3 bytes over its gzip limit; gzip target raised by 100 bytes.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO adds one bounded pass to the WebGL2 chunk.
-    raw: 1184359,
-    gzip: 337387,
-    brotli: 284042, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1185901,
+    gzip: 337883,
+    brotli: 284360, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2046,6 +2061,10 @@ const routeBudgets = [
     // (1_341_708 / 355_135 / 298_285), and it is the same seam cost the WebGL
     // route pays. Only a page whose GPU device actually fails reaches it, and
     // the alternative was a page that renders nothing.
+    // Normal-map tiling merged with main measures 1_623_378 / 444_163 / 374_250 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,624,495 / 444,629 / 374,619 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // TAA coverage stabilization: raw 1595600 -> 1596563 (measured 1662099), gzip 441600 -> 441756 (measured 458140), brotli 368412 -> 368424 (measured 384808).
     // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
     name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
@@ -2208,13 +2227,14 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO also ships when WebGPU falls back to WebGL2.
-    raw: 1597953, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 442124,
+    raw: 1600532, // +100: persistent hub connections (approved exception, decision 0014)
+    gzip: 443010,
     // Complete upstream TAA invalidation measures 384,796 Brotli bytes for
     // this dual-backend route; raise only the exact 12-byte ceiling overrun.
-    brotli: 368847, // +95: persistent hub connections (approved exception, decision 0014)
+    brotli: 369337, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2231,7 +2251,11 @@ const routeBudgets = [
     // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
-    name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
+    // Normal-map tiling merged with main measures 1_216_575 / 329_386 / 275_255 bytes.
+    // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+    // Sampler wrap preservation and signed/zero normal scales measure 1,217,332 / 329,751 / 275,600 raw/gzip/brotli bytes.
+  // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
+  name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
     files: [
       "bootstrap-runtime.js",
       "bootstrap-feature-scene3d.js",
@@ -2363,10 +2387,11 @@ const routeBudgets = [
     // Scene3D node focus proxies and perspective HTML add about 7.7 KB raw to Scene3D routes; targets raised to the measured size plus about 150 bytes of headroom.
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-    raw: 1177373,
-    gzip: 320877,
-    brotli: 267427, // +95: persistent hub connections (approved exception, decision 0014)
+    raw: 1178949,
+    gzip: 321447,
+    brotli: 267752, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];

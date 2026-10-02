@@ -21,7 +21,8 @@ vec3 postViewNormal(vec2 uv, vec3 p) {
     vec3 dy = abs(a.z - p.z) < abs(p.z - b.z) ? a - p : p - b;
     vec3 n = cross(dx, dy);
     n /= max(length(n), 0.000001);
-    return dot(n, p) > 0.0 ? -n : n;
+    vec3 viewRay = u_projection[2][3] == 0.0 ? vec3(0, 0, -1) : p;
+    return dot(n, viewRay) > 0.0 ? -n : n;
 }`;
 
 const SCENE_POST_SSAO_SOURCE = `#version 300 es

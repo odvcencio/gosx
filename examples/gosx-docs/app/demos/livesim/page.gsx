@@ -57,7 +57,7 @@ func Page() Node {
 				</div>
 			</aside>
 		</div>
-		<footer class="livesim__footer">
+		<div class="livesim__footer">
 			<p>
 				Use a pointer, touch, Enter, or Space to drop a circle. Open another tab to see the shared world and each viewer's cursor.
 			</p>
@@ -66,7 +66,7 @@ func Page() Node {
 				{data.maxCircles}
 				circles.
 			</p>
-		</footer>
+		</div>
 		<script src="/livesim-client.js" defer></script>
 	</section>
 }

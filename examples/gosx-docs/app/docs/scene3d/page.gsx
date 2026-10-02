@@ -143,7 +143,7 @@ func Page() Node {
 				<em>degrades</em>
 				it, and the reason ships with the verdict.
 			</p>
-			<div class="scene3d-table-wrap">
+			<div class="scene3d-table-wrap" tabindex="0">
 				<table class="scene3d-matrix">
 					<caption>
 						Every row of the
@@ -697,14 +697,14 @@ func Page() Node {
 			</ul>
 			<div class="scene3d-warning" role="note">
 				<p class="scene3d-warning__title">
-					Post-processing defeats hardware multisample anti-aliasing (MSAA).
+					Post-processing preserves WebGPU MSAA and supports spatial or temporal edge smoothing.
 				</p>
 				<p>
-					Once any effect is present, the scene renders into an offscreen buffer, and
-					<span class="inline-code">Props.MSAASamples</span>
-					no longer smooths the presented image. Add
+					WebGPU retains four-sample color rendering and resolves the nearest covered depth sample before depth-dependent effects. WebGL2 post targets use single-sample depth. Add
 					<span class="inline-code">FXAA</span>
-					at the end of the chain to get edge smoothing back.
+					last for spatial smoothing, or opt into
+					<span class="inline-code">TAA</span>
+					for WebGL2 temporal smoothing. TAA resolves color and alpha together. History resets use unjittered FXAA while seeding fresh history; upstream CustomPost passes stay on FXAA because their live inputs cannot be tracked. Unsupported WebGL2 targets and WebGPU also use FXAA. SSAO, contact shadows, and TAA remain off on balanced, low, and mobile tiers unless a quality ladder explicitly admits them.
 				</p>
 			</div>
 			{CodeBlock("go", data.sample020)}
@@ -1126,7 +1126,7 @@ func Page() Node {
 				</li>
 				<li>
 					<span class="inline-code">KHR_texture_transform</span>
-					— bakes into the texture-coordinate buffer at load time.
+					— bakes into the texture-coordinate buffer at load time. A scale on the normal texture alone (a tiling detail map) is applied in the shader instead.
 				</li>
 			</ul>
 			<p>
@@ -1212,7 +1212,7 @@ func Page() Node {
 				<span class="inline-code">RayHit.Method</span>
 				records the routine that produced the answer, so a trace never overstates its exactness.
 			</p>
-			<div class="scene3d-table-wrap">
+			<div class="scene3d-table-wrap" tabindex="0">
 				<table class="scene3d-matrix">
 					<caption>Intersection method per geometry.</caption>
 					<thead>

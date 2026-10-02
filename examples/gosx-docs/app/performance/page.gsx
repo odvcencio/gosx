@@ -25,7 +25,7 @@ func Page() Node {
 					</div>
 					<p>{data.lighthouseDescriptor}</p>
 				</div>
-				<div class="performance-table-wrap">
+				<div class="performance-table-wrap" tabindex="0">
 					<table class="performance-table">
 						<thead>
 							<tr>
@@ -122,7 +122,7 @@ func Page() Node {
 						<h3>
 							<a href={scene.Path}>{scene.Title}</a>
 						</h3>
-						<div class="performance-table-wrap">
+						<div class="performance-table-wrap" tabindex="0">
 							<table class="performance-table performance-table--compact">
 								<thead>
 									<tr>
@@ -165,7 +165,7 @@ func Page() Node {
 					</div>
 					<p>{data.bundleDescriptor}</p>
 				</div>
-				<div class="performance-table-wrap">
+				<div class="performance-table-wrap" tabindex="0">
 					<table class="performance-table">
 						<thead>
 							<tr>
