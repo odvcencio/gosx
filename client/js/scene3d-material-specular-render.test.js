@@ -1027,7 +1027,7 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
   const clean = pack("{}");
   assert.strictEqual(clean.data[42], -1, "stale cutoff must not survive a repack");
   assert.strictEqual(clean.data[41], 0);
-  assert.strictEqual(clean.data[43], 0);
+  assert.strictEqual(clean.data[43], 1);
   assert.strictEqual(clean.data.length, 72);
   for (let c = 0; c < 3; c++) assert.ok(close6(clean.data[44 + c], 0.04));
   assert.strictEqual(clean.data[47], 1);
@@ -1040,7 +1040,7 @@ test("WebGPU material scratch buffer resets and neighbor slots stay put", () => 
   assert.strictEqual(clean.data[59], 0, "rimStrength resets to off");
   const edge = pack("{ alphaCutoff: 1 }");
   assert.strictEqual(edge.data[41], 0);
-  assert.strictEqual(edge.data[43], 0);
+  assert.strictEqual(edge.data[43], 1);
   for (let c = 0; c < 3; c++) assert.ok(close6(edge.data[44 + c], 0.04));
   const expectedLog = Math.log2(0.04);
   for (let c = 0; c < 3; c++) {
@@ -1114,7 +1114,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
   assert.ok(close6(def.data[40], expectedDielectricF0(1.5)));
   assert.strictEqual(def.data[41], 0);
   assert.strictEqual(def.data[42], -1);
-  assert.strictEqual(def.data[43], 0);
+  assert.strictEqual(def.data[43], 1);
 
   // Explicit 0 intensity is valid and zeroes the lobe; black tints too.
   const zero = pack("{ specularIntensity: 0 }");
@@ -1256,6 +1256,7 @@ function setupWebGPUMaterialBinding() {
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
   runFragment(context, [
     bufferDecls,
+    sliceBetween(source, "function wgpuTextureDescriptor", "function wgpuLoadTexture"),
     sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
     sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
@@ -1269,10 +1270,10 @@ function setupWebGPUMaterialBinding() {
 // materialUniformData, createMaterialBindGroup and bind-group cache execute
 // for real against the real 256-byte shared buffer.
 function makeGPUHarness(context, textureStates) {
-  const calls = { loads: [], bindGroups: [], buffers: [] };
+  const calls = { loads: [], bindGroups: [], buffers: [], samplers: [] };
   context.GPUBufferUsage = { UNIFORM: 0x40, COPY_DST: 0x8 };
   context.placeholderView = { __view: "placeholder" };
-  context.linearSampler = { __sampler: "linear" };
+  context.linearSampler = { __sampler: "linear", descriptor: { addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" } };
   context.textureCache = {};
   context.defaultMaterialOwner = {};
   context.materialBindGroupLayout = { __layout: "material" };
@@ -1294,6 +1295,7 @@ function makeGPUHarness(context, textureStates) {
     return owner[slot];
   };
   context.device = {
+    createSampler: (descriptor) => { calls.samplers.push(descriptor); return { descriptor }; },
     createBindGroup: (desc) => {
       calls.bindGroups.push(desc);
       return { __bg: calls.bindGroups.length };
@@ -1561,4 +1563,124 @@ test("WebGPU specular-color late load and new view invalidate the cached bind gr
   callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
   assert.strictEqual(calls.bindGroups.length, 3);
   assert.strictEqual(lastBoundResource(calls, 15), state.view);
+});
+
+test("signed and zero normal scales survive glTF, object profiles and both renderer uploads", () => {
+  const glBackend = setupWebGLRenderer();
+  runFragment(glBackend.context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const gpuBackend = setupWebGPUMaterialBinding();
+  const calls = makeGPUHarness(gpuBackend.context, {});
+  for (const scale of [[60, 45], [-60, 45], [0, 45], [60, 0], [0, 0], [1, 1], null]) {
+    const doc = { asset: { version: "2.0" }, images: [{ uri: "normal.png" }], textures: [{ source: 0 }],
+      materials: [{ normalTexture: { index: 0, ...(scale ? { extensions: { KHR_texture_transform: { scale } } } : {}) } }] };
+    glBackend.context.doc = doc;
+    const result = callIn(glBackend.context, `(() => {
+      const material = gltfExtractMaterial(doc, 0, null);
+      const object = normalizeSceneObject({ kind: "mesh", material }, 0, null);
+      const profile = sceneObjectMaterialProfile(object);
+      const gl = recordingGL();
+      uploadMaterial(gl, uniformSlots(), profile, null);
+      return { profile, scale: gl.floats.get("normalUVScale") };
+    })()`);
+    const expected = scale || [1, 1];
+    assert.deepEqual(Array.from(result.scale), expected);
+    gpuBackend.context.material = JSON.parse(JSON.stringify(result.profile));
+    callIn(gpuBackend.context, "createMaterialBindGroup(material, false, material, null)");
+    const packed = gpuBackend.context.__lastUniform.data;
+    assert.deepEqual([packed[39], packed[43]], expected);
+    assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 4).descriptor)), {
+      addressModeU: "repeat", addressModeV: "repeat",
+      magFilter: "linear", minFilter: "linear", mipmapFilter: "linear",
+    });
+    // Numeric sampling oracle for the production shader expressions and uploaded
+    // scales: periodic coordinates select the same texel without an image capture.
+    assert.match(glBackend.source, /texture\(u_normalMap, v_uv \* u_normalUVScale\)/);
+    assert.match(gpuBackend.source, /textureSample\(normalTex, normalSamp, in.uv \* vec2f\(material.modelScaleSigns.w, material.normalUVScaleV\)\)/);
+    for (const actual of [Array.from(result.scale), [packed[39], packed[43]]]) {
+      const uv = [0.123, 0.234];
+      const repeat = x => x - Math.floor(x);
+      const sampled = uv.map((x, i) => repeat(x * actual[i]));
+      const want = expected.map((x, i) => repeat(uv[i] * x));
+      assert.deepEqual(sampled, want);
+      if (scale && Math.abs(scale[0]) === 60) assert.ok(Math.abs(sampled[0] - (scale[0] < 0 ? 0.62 : 0.38)) < 1e-6, "tiling selects the expected interior texel beyond UV 1");
+      if (scale && scale[0] === 0) assert.equal(sampled[0], 0, "zero collapses U");
+    }
+  }
+});
+
+test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidate caches", () => {
+  const { context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const source = readSceneRendererBackendSrc("webgl");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureDescriptor", "// Bind a texture record"), "texture-loader.js");
+  const images = [];
+  context.Image = class { constructor() { this.width = 63; this.height = 45; images.push(this); } };
+  context.scenePBRTextureLooksHDR = () => false;
+  context.scenePBRIsKTX2URL = () => false;
+  context.scenePBRNotifyTextureSettled = () => {};
+  const parameters = [];
+  let mipmaps = 0;
+  context.gl = { TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067, TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, CLAMP_TO_EDGE: 33071,
+    LINEAR: 9729, LINEAR_MIPMAP_LINEAR: 9987, RGBA: 6408, UNSIGNED_BYTE: 5121,
+    createTexture: () => ({}), bindTexture() {}, texImage2D() {},
+    texParameteri: (target, axis, value) => parameters.push([axis, value]),
+    generateMipmap: () => mipmaps++, };
+  context.cache = new Map();
+  const gpu = setupWebGPUMaterialBinding();
+  const calls = makeGPUHarness(gpu.context, { "shared.png": { loaded: true } });
+  const owner = {};
+  let previousGroup;
+  for (const [wrapS, wrapT, u, v] of [[10497, 10497, "repeat", "repeat"], [33071, 33071, "clamp-to-edge", "clamp-to-edge"], [33071, 33648, "clamp-to-edge", "mirror-repeat"], [33648, 33071, "mirror-repeat", "clamp-to-edge"]]) {
+    context.doc = { asset: { version: "2.0" }, images: [{ uri: "shared.png" }], textures: [{ source: 0, sampler: 0 }],
+      samplers: [{ wrapS, wrapT }], materials: [{ normalTexture: { index: 0 },
+        pbrMetallicRoughness: { baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 3] } } } } }] };
+    const profile = callIn(context, `sceneObjectMaterialProfile(normalizeSceneObject({ kind: "mesh", material: gltfExtractMaterial(doc, 0, null) }, 0, null))`);
+    assert.equal(profile.textureDescriptors.normal.wrapS, wrapS);
+    assert.equal(profile.textureDescriptors.baseColor.wrapT, wrapT, "baked transforms keep sampler modes");
+    context.descriptor = profile.textureDescriptors.normal;
+    parameters.length = 0;
+    const record = callIn(context, 'scenePBRLoadTexture(gl, "shared.png", cache, descriptor, "normal", "linear")');
+    images.at(-1).onload();
+    assert.equal(record.loaded, true);
+    assert.equal(record.width, 63);
+    assert.equal(record.height, 45);
+    assert.ok(parameters.some(([axis, value]) => axis === 10242 && value === wrapS));
+    assert.ok(parameters.some(([axis, value]) => axis === 10243 && value === wrapT));
+    assert.ok(parameters.some(([axis, value]) => axis === 10241 && value === 9987));
+    gpu.context.material = JSON.parse(JSON.stringify(profile));
+    gpu.context.owner = owner;
+    const group = callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)');
+    assert.notEqual(group, previousGroup, "sampler changes invalidate the bind group even with the same views");
+    previousGroup = group;
+    for (const binding of [2, 4]) {
+      const sampler = lastBoundResource(calls, binding);
+      assert.equal(sampler.descriptor.addressModeU, u);
+      assert.equal(sampler.descriptor.addressModeV, v);
+    }
+    assert.equal(callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)'), group, "unchanged samplers reuse the bind group");
+  }
+  assert.equal(context.cache.size, 4, "one URI with different wrap modes needs distinct WebGL textures");
+  assert.equal(mipmaps, 4, "NPOT mipmaps stay enabled in WebGL2");
+});
+
+
+test("KTX2 material uploads restore the declared wrap modes after decoder defaults", async () => {
+  const source = readSceneRendererBackendSrc("webgl");
+  const context = createSceneCoreContext();
+  runFragment(context, sliceBetween(source, "function scenePBRUploadKTX2Texture", "function scenePBRLinearHDRPixels"), "ktx2-upload.js");
+  const parameters = new Map();
+  const gl = { TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067, TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243,
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240, LINEAR: 9729,
+    texParameteri: (target, axis, value) => parameters.set(axis, value) };
+  context.scenePBRKTX2API = () => ({ load: async () => ({ faces: 1, levels: [{}], width: 63, height: 45 }),
+    uploadWebGL2: () => { parameters.set(10242, 33071); parameters.set(10243, 33071); } });
+  context.scenePBRNotifyTextureSettled = () => {};
+  for (const [wrapS, wrapT] of [[10497, 10497], [33071, 33648]]) {
+    const record = { descriptor: { wrapS, wrapT } };
+    await context.scenePBRUploadKTX2Texture(gl, "normal.ktx2", record);
+    assert.equal(record.loaded, true);
+    assert.equal(parameters.get(10242), wrapS);
+    assert.equal(parameters.get(10243), wrapT);
+  }
 });

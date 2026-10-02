@@ -9,6 +9,7 @@ import (
 func init() {
 	docsapp.RegisterDocsPage("Blackglass Beach", "A black sand beach at golden hour, generated in Go and rendered by GoSX Scene3D on WebGPU or WebGL2.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			docsapp.AddScenePosterPreload(ctx, "/demos/posters/beacon.webp")
 			// This full-window scene uses ordinary links. Skip the 109 KB inline
 			// docs navigation runtime; the scene bootstrap still owns its controls.
 			ctx.SetNavigationHead(nil)

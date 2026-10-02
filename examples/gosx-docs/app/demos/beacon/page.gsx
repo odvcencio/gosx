@@ -10,7 +10,16 @@ func Page() Node {
 		data-gosx-scene3d-control-scope
 		data-gosx-scene3d-status-scope
 	>
-		<div class="bgb__canvas">
+		<div class="bgb__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
+			<img
+				class="gosx-scene3d-poster"
+				src="/demos/posters/beacon.webp"
+				alt=""
+				width="1000"
+				height="625"
+				decoding="async"
+				fetchpriority="high"
+			 />
 			<Scene3D {...data.scene} stats={false} />
 		</div>
 		<a class="bgb__close" href="/demos" aria-label="Back to the demos">×</a>

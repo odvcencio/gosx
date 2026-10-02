@@ -551,7 +551,7 @@
     "        vec3 T = normalize(v_tangent);",
     "        vec3 B = normalize(v_bitangent);",
     "        mat3 TBN = mat3(T, B, N);",
-    "        vec3 mapNormal = texture(u_normalMap, v_uv * (u_normalUVScale.x > 0.0 ? u_normalUVScale : vec2(1.0))).rgb * 2.0 - 1.0;",
+    "        vec3 mapNormal = texture(u_normalMap, v_uv * u_normalUVScale).rgb * 2.0 - 1.0;",
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
@@ -5204,6 +5204,11 @@
       gl.texParameteri(target, gl.TEXTURE_MIN_FILTER,
         image.levels.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
       gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      // The KTX2 uploader initializes clamped sampling; restore the material sampler.
+      if (target === gl.TEXTURE_2D && record.descriptor) {
+        gl.texParameteri(target, gl.TEXTURE_WRAP_S, record.descriptor.wrapS);
+        gl.texParameteri(target, gl.TEXTURE_WRAP_T, record.descriptor.wrapT);
+      }
       record.width = image.width;
       record.height = image.height;
       record.faces = image.faces;
@@ -5305,6 +5310,8 @@
       width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
       height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
       faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
+      wrapS: [33071, 33648, 10497].indexOf(descriptor.wrapS) >= 0 ? descriptor.wrapS : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
+      wrapT: [33071, 33648, 10497].indexOf(descriptor.wrapT) >= 0 ? descriptor.wrapT : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
     };
   }
 
@@ -5319,6 +5326,8 @@
       descriptor.height,
       descriptor.faces,
       descriptor.mipLevels,
+      descriptor.wrapS,
+      descriptor.wrapT,
     ].join("\u0000");
   }
 
@@ -5362,8 +5371,8 @@
     }
     gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, target === gl.TEXTURE_CUBE_MAP ? gl.CLAMP_TO_EDGE : descriptor.wrapS);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, target === gl.TEXTURE_CUBE_MAP ? gl.CLAMP_TO_EDGE : descriptor.wrapT);
     if (target === gl.TEXTURE_CUBE_MAP && gl.TEXTURE_WRAP_R !== undefined) {
       gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
     }
@@ -5393,6 +5402,7 @@
         var srgb = descriptor.colorSpace === "srgb";
         var internalFormat = srgb ? (gl.SRGB8_ALPHA8 || 0x8C43) : (gl.RGBA8 || 0x8058);
         gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        // WebGL2 permits repeating and mipmapping NPOT images as well.
         if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
           gl.generateMipmap(gl.TEXTURE_2D);
           record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;

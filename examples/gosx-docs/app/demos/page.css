@@ -20,9 +20,9 @@
 }
 
 .demos-gallery__header h1 {
-  max-width: 13ch;
+  max-width: 30ch;
   margin: 0;
-  font: 700 clamp(2.6rem, 6vw, 5rem)/1.02 var(--font-display);
+  font: 700 clamp(2.6rem, 5.2vw, 4.2rem)/1.02 var(--font-display);
   letter-spacing: -0.045em;
   text-wrap: balance;
 }

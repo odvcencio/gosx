@@ -890,12 +890,12 @@ test("glTF texture slots carry explicit color roles and transfer functions", () 
   assert.equal(material.emissiveMap, "emissive.png");
 
   assert.deepEqual(material.textureDescriptors, {
-    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d" },
-    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d" },
-    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d" },
-    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d" },
-    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d" },
-    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d" },
+    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d", wrapS: 10497, wrapT: 10497 },
+    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497 },
+    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d", wrapS: 10497, wrapT: 10497 },
+    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d", wrapS: 10497, wrapT: 10497 },
+    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d", wrapS: 10497, wrapT: 10497 },
+    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497 },
   });
 });
 
@@ -910,10 +910,10 @@ test("KHR_materials_specular textures resolve through the shared descriptor path
 
   // Intensity is the linear alpha mask; the colour is the sRGB F0 tint.
   assert.deepEqual(material.textureDescriptors.specularIntensity, {
-    uri: "spec.png", role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d",
+    uri: "spec.png", role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d", wrapS: 10497, wrapT: 10497,
   });
   assert.deepEqual(material.textureDescriptors.specularColor, {
-    uri: "spec.png", role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d",
+    uri: "spec.png", role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497,
   });
 
   // The SAME source URI must produce two distinct roles, never a merged slot.

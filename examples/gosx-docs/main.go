@@ -106,6 +106,7 @@ func buildDocsApp(root, port string) (*server.App, error) {
 	}
 
 	app := server.New()
+	app.EnableGzip()
 	// Keep page-generated hashed runtime URLs and the runtime file server on the
 	// same application root. Without this, `go run ./examples/gosx-docs` from
 	// the repository root can read the repository's dist/build.json while
