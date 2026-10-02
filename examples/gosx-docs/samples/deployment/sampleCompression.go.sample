@@ -1,0 +1,4 @@
+app := server.New() // Response compression is on by default.
+
+// Opt out before starting the server.
+app.DisableCompression()

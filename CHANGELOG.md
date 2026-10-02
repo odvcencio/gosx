@@ -4,6 +4,13 @@
 
 ## v0.57.2
 
+### Added: default response compression
+
+- Enable negotiated Brotli and gzip delivery for eligible text responses, with
+  shared encoding policy for generated sidecars, servers and edge workers.
+- Document deployment behavior and opt-out; compressed wire budgets track the
+  new default.
+
 ### Added: controllable Scene3D animation clock
 
 - Mounted Scene3D handles expose `getAnimationClock` and `setAnimationClock`
