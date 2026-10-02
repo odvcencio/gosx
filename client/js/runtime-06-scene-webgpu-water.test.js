@@ -1677,7 +1677,7 @@ test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () =
   // Pre-pass B picks compoundShadowProgram over the analytic shadowProgram
   // when the active object is compound (isMeshObject) and it has live proxy
   // spheres; both write into the same shadowTarget RTT.
-  assert.match(webgl, /var compoundSphereCount = isMeshObject && compoundShadowProgram\s*\n\s*\? fillCompoundShadowSpheres\(liveEntry\.objectDisplacementSpheres\)\s*\n\s*: 0;/);
+  assert.match(webgl, /var compoundSphereCount = isMeshObject && scenePBRProgramReady\(gl, compoundShadowProgram\)\s*\n\s*\? fillCompoundShadowSpheres\(liveEntry\.objectDisplacementSpheres\)\s*\n\s*: 0;/);
   assert.match(webgl, /var useCompoundShadow = compoundSphereCount > 0;/);
   assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, compoundShadowProgram, compoundShadowDesc, \{\s*\n\s*spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,/);
 });
@@ -1856,7 +1856,7 @@ test("Scene3D WebGL2 water caches uniform locations and bounds retained-pass wor
   assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
   assert.match(webgl, /var shadowSignature = waterShadowSignature\(/);
   assert.match(webgl, /var refreshShadowPass = shadowSignature !== lastShadowSignature/);
-  assert.match(webgl, /shadowTarget && \(useCompoundShadow \? compoundShadowProgram : shadowProgram\) && refreshShadowPass/);
+  assert.match(webgl, /shadowTarget && scenePBRProgramReady\(gl, useCompoundShadow \? compoundShadowProgram : shadowProgram\) && refreshShadowPass/);
   assert.match(webgl, /lastShadowSignature = shadowSignature;\s*\n\s*shadowRefreshCount\+\+/);
 
   // Match WebGPU's retained object-texture strategy: one mesh target update per

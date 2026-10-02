@@ -2055,7 +2055,8 @@ test("WebGL post processor is constructed with the Selena uniform resolver injec
   // passes; without it applyCustomPost silently falls back to author values
   // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
   assert.match(webgl, /function createScenePostProcessor\(gl, resolveSelenaUniform\)/);
-  assert.match(webgl, /postProcessor = createScenePostProcessor\(gl, selenaUniformValue\);/);
+  assert.match(webgl, /hooks.postProcessor = createScenePostProcessor\(gl, hooks.resolveUniform\);/);
+  assert.match(webgl, /resolveUniform: selenaUniformValue, postProcessor: null/);
   assert.match(webgl, /resolveSelenaUniform\(material, layout, field, null\)/);
   // applyCustomPost must NOT go back to reading the author map directly.
   assert.doesNotMatch(webgl, /hasOwnProperty\.call\(uniforms, field\.name\) \? uniforms\[field\.name\] : null/);

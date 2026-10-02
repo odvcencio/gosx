@@ -1579,6 +1579,7 @@
   var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
   function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindDirectCaster, drawInstancedCaster) {
+    if (!scenePBRPassReady(gl, shadowProgram)) return;
     var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
     var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
       cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
@@ -1695,34 +1696,28 @@
       .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
     if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
       .replace("a_instanceMatrix *", "a_instanceMatrix * gosxCrowdSkin() *");
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Shadow shader");
-    if (!program) return null;
-
-    return {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-      attributes: {
-        position: gl.getAttribLocation(program, "a_position"),
-        instanceMatrix: instanced ? gl.getAttribLocation(program, "a_instanceMatrix") : -1,
-        joints: crowd ? gl.getAttribLocation(program, "a_joints") : -1,
-        weights: crowd ? gl.getAttribLocation(program, "a_weights") : -1,
-        pose: crowd ? gl.getAttribLocation(program, "a_pose") : -1,
-      },
-      uniforms: {
-        crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
-        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
-        modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
-      },
-    };
+    const compiled = scenePBRBuildProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Shadow shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      return {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        attributes: {
+          position: gl.getAttribLocation(program, "a_position"),
+          instanceMatrix: instanced ? gl.getAttribLocation(program, "a_instanceMatrix") : -1,
+          joints: crowd ? gl.getAttribLocation(program, "a_joints") : -1,
+          weights: crowd ? gl.getAttribLocation(program, "a_weights") : -1,
+          pose: crowd ? gl.getAttribLocation(program, "a_pose") : -1,
+        },
+        uniforms: {
+          crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
+          lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+          modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+        },
+      };
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   // Compile the GPU-motion crowd shadow depth shader: color-pass parity, so
@@ -1747,41 +1742,24 @@
       "    gl_Position = u_lightViewProjection * (crowdModel * vec4(a_position, 1.0));",
       "}",
     ].join("\n");
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Crowd motion shadow shader");
-    if (!program) return null;
-    return {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-      attributes: {
-        position: gl.getAttribLocation(program, "a_position"),
-        joints: gl.getAttribLocation(program, "a_joints"),
-        weights: gl.getAttribLocation(program, "a_weights"),
-        motionPrevPos: gl.getAttribLocation(program, "a_motionPrevPos"),
-        motionPrevRot: gl.getAttribLocation(program, "a_motionPrevRot"),
-        motionPrevScale: gl.getAttribLocation(program, "a_motionPrevScale"),
-        tPrev: gl.getAttribLocation(program, "a_tPrev"),
-        motionNextPos: gl.getAttribLocation(program, "a_motionNextPos"),
-        motionNextRot: gl.getAttribLocation(program, "a_motionNextRot"),
-        motionNextScale: gl.getAttribLocation(program, "a_motionNextScale"),
-        tNext: gl.getAttribLocation(program, "a_tNext"),
-        animState: gl.getAttribLocation(program, "a_animState"),
-      },
-      uniforms: {
-        crowdAtlas: gl.getUniformLocation(program, "u_crowdAtlas"),
-        crowdClipTable: gl.getUniformLocation(program, "u_crowdClipTable"),
-        now: gl.getUniformLocation(program, "u_now"),
-        motionExtrapolationSeconds: gl.getUniformLocation(program, "u_motionExtrapolationSeconds"),
-        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
-      },
-    };
+    const compiled = scenePBRBuildProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Crowd motion shadow shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      return {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        attributes: scenePBRProgramLocations(gl, program, "position joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState", true),
+        uniforms: {
+          crowdAtlas: gl.getUniformLocation(program, "u_crowdAtlas"),
+          crowdClipTable: gl.getUniformLocation(program, "u_crowdClipTable"),
+          now: gl.getUniformLocation(program, "u_now"),
+          motionExtrapolationSeconds: gl.getUniformLocation(program, "u_motionExtrapolationSeconds"),
+          lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+        },
+      };
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   // --- Post-Processing Infrastructure ---
@@ -2188,8 +2166,9 @@
 
     var prog = scenePBRLinkProgram(gl, vs, fs, "Post-process shader");
     if (!prog) return null;
-
-    return { program: prog, vertexShader: vs, fragmentShader: fs };
+    return scenePBRDeferredProgramInfo(gl, prog, function() {
+      return { program: prog, vertexShader: vs, fragmentShader: fs };
+    }, { vertexShader: vs, fragmentShader: fs });
   }
 
   function sceneWebGLNormalizeCustomShaderSource(source) {
@@ -2224,7 +2203,9 @@
     }
     var prog = scenePBRLinkProgram(gl, vs, fs, "Custom post shader");
     if (!prog) return null;
-    return { program: prog, vertexShader: vs, fragmentShader: fs };
+    return scenePBRDeferredProgramInfo(gl, prog, function() {
+      return { program: prog, vertexShader: vs, fragmentShader: fs };
+    }, { vertexShader: vs, fragmentShader: fs });
   }
 
   // Dispose an FBO and its attachments.
@@ -2559,7 +2540,7 @@
     // Run one fullscreen pass: read the current state, write the other FBO, swap.
     function runPass(name, values) {
       var pass = programs[name];
-      if (!pass) return false;
+      if (!scenePBRPassReady(gl, pass)) return false;
       var read = states[current];
       var write = states[current ^ 1];
       var unit = 0;
@@ -3297,9 +3278,11 @@
     // ONCE per linked surface program instead of per frame (uniform values
     // persist on the program object; sceneWaterRenderSetUniforms skips every
     // field the values map doesn't name, so only knot[0..64] is written here).
-    gl.useProgram(surfaceProgram);
-    sceneWaterRenderSetUniforms(gl, surfaceProgram, surfaceDesc, { knot: sceneWaterKnotUniformArray() });
-    gl.useProgram(null);
+    scenePBRWhenProgramReady(gl, surfaceProgram, function() {
+      gl.useProgram(surfaceProgram);
+      sceneWaterRenderSetUniforms(gl, surfaceProgram, surfaceDesc, { knot: sceneWaterKnotUniformArray() });
+      gl.useProgram(null);
+    });
 
     // Pool dims / optics from the entry.
     var poolWidth = sceneWaterNum(entry.poolWidth, 1);
@@ -3904,7 +3887,7 @@
     // reflection: discards submerged fragments). Mirrors the WebGPU
     // renderWaterObjectMeshTargetPass: clear transparent, depth-test on, no cull.
     function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameCausticTex, frameLightDir, framePoolWidth, framePoolLength, framePoolHeight, frameObjectCenter, frameObjectRadius, frameObjectKind) {
-      if (!prog || !target || !meshUpload || !meshUpload.count) return;
+      if (!scenePBRProgramReady(gl, prog) || !target || !meshUpload || !meshUpload.count) return;
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, target.size, target.size);
       gl.enable(gl.DEPTH_TEST);
@@ -3933,7 +3916,7 @@
     }
 
     function drawFrame(frameMeta) {
-      if (disposed) return;
+      if (scenePBRWaterDrawUnavailable(gl, disposed, poolProgram, surfaceProgram)) return;
       var target = sceneWebGLRenderTarget(canvas, frameMeta);
       var width = target.width, height = target.height;
       var aspect = canvas.width / Math.max(1, canvas.height);
@@ -4074,7 +4057,7 @@
         causticsRefreshCount === 0 ||
         causticsCadenceDue
       );
-      if (causticsProgram && causticsTarget && refreshExpensivePasses) {
+      if (scenePBRProgramReady(gl, causticsProgram) && causticsTarget && refreshExpensivePasses) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, causticsTarget.fbo);
         gl.viewport(0, 0, causticsTarget.size, causticsTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -4128,7 +4111,7 @@
       // the analytic pass cannot express — it falls back to a single
       // bounding-sphere blob (or nothing) for those. Both write the SAME
       // shadowTarget RTT; only one runs per frame.
-      var compoundSphereCount = isMeshObject && compoundShadowProgram
+      var compoundSphereCount = isMeshObject && scenePBRProgramReady(gl, compoundShadowProgram)
         ? fillCompoundShadowSpheres(liveEntry.objectDisplacementSpheres)
         : 0;
       var useCompoundShadow = compoundSphereCount > 0;
@@ -4137,7 +4120,7 @@
         livePoolWidth, livePoolLength, useCompoundShadow, compoundSphereCount
       );
       var refreshShadowPass = shadowSignature !== lastShadowSignature;
-      if (shadowTarget && (useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshShadowPass) {
+      if (shadowTarget && scenePBRProgramReady(gl, useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshShadowPass) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, shadowTarget.fbo);
         gl.viewport(0, 0, shadowTarget.size, shadowTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -4180,7 +4163,7 @@
       // sampling is disabled (meshTextureEnable = 0) and the transparent stub
       // backs the samplers. Mirrors the WebGPU object-texture pass (capped 512²).
       var meshTextureReady = false;
-      if (isMeshObject && meshData && meshProgram && ensureObjectTextureTargets()) {
+      if (isMeshObject && meshData && scenePBRProgramReady(gl, meshProgram) && ensureObjectTextureTargets()) {
         var meshDescActive = meshUsesModelTex ? duckDesc : objectDesc;
         var meshModel = meshUsesModelTex ? meshModelTex : null;
         if (!objectTextureSlotsReady[0] || !objectTextureSlotsReady[1] || !objectTextureSlotsReady[2]) {
@@ -4264,7 +4247,7 @@
       // + the duck's albedo. ANALYTIC objects (sphere / cube): the construction
       // -time UV-sphere / box, unchanged. A double-sided depth-tested draw so the
       // duck reads as a lit solid floating in the pool.
-      if (isMeshObject && meshData && meshProgram && meshUpload && meshUpload.count) {
+      if (isMeshObject && meshData && scenePBRProgramReady(gl, meshProgram) && meshUpload && meshUpload.count) {
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
         gl.depthMask(true);
@@ -4289,7 +4272,7 @@
           isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
-      } else if (objectProgram && objectMesh && liveKindNum > 0 && liveKindNum < 3) {
+      } else if (scenePBRProgramReady(gl, objectProgram) && objectMesh && liveKindNum > 0 && liveKindNum < 3) {
         gl.useProgram(objectProgram);
         gl.bindVertexArray(objectMesh.vao);
         sceneWaterRenderBindSamplers(gl, objectProgram, [
@@ -4377,6 +4360,7 @@
     }
 
     function dispose() {
+      scenePBRDisposeProgramQueue(gl);
       if (disposed) return;
       disposed = true;
       disposeWaterTimerQueries();
@@ -4472,7 +4456,6 @@
       supportsBundle: function() { return true; },
     };
   }
-
   // Post-processing manager — orchestrates an effect chain between the
   // scene render and the final screen blit.
   // resolveSelenaUniform: the renderer's Selena uniform resolver
@@ -4481,6 +4464,17 @@
   // (time, mvp, modelMatrix, normalMatrix, and the context-class names) that
   // never appear in an effect's author-supplied uniform map. Without it a
   // custom post pass silently reads 0 for every reserved uniform.
+  var SCENE_POST_BLIT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "out vec4 fragColor;",
+    "void main() {",
+    "    fragColor = texture(u_texture, v_uv);",
+    "}",
+  ].join("\n");
+
   function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
     var temporal: any = null;
@@ -4499,15 +4493,14 @@
     // Custom post program cache: name → program | null (null = failed, skip).
     var customPostPrograms = {};
     // Failed custom post names (to warn once only).
-    var customPostFailed = {};
+    var customPostFailed: Record<string, boolean> = {};
 
     // Get or compile a post-processing program.
     function getProgram(name, fragmentSource) {
-      if (programs[name]) return programs[name];
-      var prog = createScenePostProgram(gl, fragmentSource);
-      if (prog) programs[name] = prog;
-      return prog;
+      return scenePBRGetPostProgram(gl, programs, name, fragmentSource);
     }
+
+
 
     // --- Render truth -------------------------------------------------------
     // createScenePostProcessor lives at module scope, a SIBLING of the renderer
@@ -4575,6 +4568,7 @@
     // Run a complete fullscreen pass and return the resulting color texture
     // (or null when rendering to screen).
     function postPass(prog, inputTex, targetFBO, w, h) {
+      if (!scenePBRPassReady(gl, prog)) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
@@ -4599,6 +4593,10 @@
     //   vertex: attribute vec2 a_position (Selena-emitted vert); v_uv = a_position*0.5+0.5
     //   fragment: uniform sampler2D _sceneColor, sampler2D _sceneDepth + user params by name
     // On compile/link failure: skip once-warned, identity passthrough.
+    function customPostCompileFailed(name: string) {
+      scenePBRReportCustomPostFailure(name, customPostFailed, postProcessorRenderTruth());
+    }
+
     function applyCustomPost(inputTex, depthTex, effect, targetFBO, w, h, bounds) {
       var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
       if (customPostFailed[name]) return inputTex; // already failed → skip
@@ -4610,12 +4608,7 @@
       if (!customPostPrograms.hasOwnProperty(name)) {
         var prog = createSceneCustomPostProgram(gl, vertSrc, fragSrc);
         if (!prog) {
-          console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
-          // Journal it: a GLSL pass that Selena emitted and this driver
-          // rejected is the WebGL-side twin of a Tint/naga disagreement, and
-          // the console warning is lost by the time anyone reads a dump.
-          postProcessorRenderTruth().record("post-compile-failed", "webgl customPost " + name);
-          customPostFailed[name] = true;
+          customPostCompileFailed(name);
           customPostPrograms[name] = null;
           return inputTex;
         }
@@ -4623,7 +4616,7 @@
       }
 
       var p = customPostPrograms[name];
-      if (!p) return inputTex;
+      if (!scenePBRCustomPostPassReady(gl, p, name, customPostCompileFailed)) return inputTex;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO ? targetFBO.fbo : null);
       gl.viewport(0, 0, w, h);
@@ -4784,7 +4777,7 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
-    function applySSAO(inputTex, effect, targetFBO, w, h, projection: Float32Array) {
+    function applySSAO(inputTex: WebGLTexture | null, effect, targetFBO, w, h, projection: Float32Array) {
       if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
       var prog = getProgram("ssao", SCENE_POST_SSAO_SOURCE);
       if (!prog) return inputTex;
@@ -4834,26 +4827,20 @@
 
     // Simple blit — copy a texture to the screen without any processing.
     var blitProg = null;
-    var SCENE_POST_BLIT_SOURCE = [
-      "#version 300 es",
-      "precision highp float;",
-      "in vec2 v_uv;",
-      "uniform sampler2D u_texture;",
-      "out vec4 fragColor;",
-      "void main() {",
-      "    fragColor = texture(u_texture, v_uv);",
-      "}",
-    ].join("\n");
+
 
     function blitToScreen(inputTex, w, h) {
       if (!blitProg) {
         blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
       }
-      if (!blitProg) return;
+      if (!scenePBRPassReady(gl, blitProg)) return;
       postPass(blitProg, inputTex, null, w, h);
     }
 
     return {
+      preparePrograms: function(effects) {
+        blitProg = scenePBRPreparePostPrograms(gl, effects, programs, customPostPrograms, customPostCompileFailed, blitProg);
+      },
       // Prepare the offscreen FBO for the main scene render. Takes the canvas
       // backing-store dimensions and the postfx maxPixels cap from the bundle.
       // Returns { width, height, factor } — the scaled render target dims plus
@@ -5022,7 +5009,7 @@
                 if (!blitProg) {
                   blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
                 }
-                if (blitProg) {
+                if (scenePBRPassReady(gl, blitProg)) {
                   if (targetFBO) {
                     postPass(blitProg, currentTexture, targetFBO, passW, passH);
                   } else {
@@ -5412,6 +5399,7 @@
         record.failed = true;
         scenePBRNotifyTextureSettled(record);
       };
+      image.crossOrigin = "anonymous";
       image.src = key;
     }
 
@@ -5568,123 +5556,30 @@
 
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
-  function scenePBRCacheBaseUniforms(gl, program) {
-    var uniforms = {
-      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
-      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
-      modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
-      cameraPosition: gl.getUniformLocation(program, "u_cameraPosition"),
-
-      albedo: gl.getUniformLocation(program, "u_albedo"),
-      roughness: gl.getUniformLocation(program, "u_roughness"),
-      metalness: gl.getUniformLocation(program, "u_metalness"),
-      clearcoat: gl.getUniformLocation(program, "u_clearcoat"),
-      sheen: gl.getUniformLocation(program, "u_sheen"),
-      transmission: gl.getUniformLocation(program, "u_transmission"),
-      iridescence: gl.getUniformLocation(program, "u_iridescence"),
-      anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
-      specularF0: gl.getUniformLocation(program, "u_specularF0"),
-      specularF90: gl.getUniformLocation(program, "u_specularF90"),
-      specularColorLog: gl.getUniformLocation(program, "u_specularColorLog"),
-      emissive: gl.getUniformLocation(program, "u_emissive"),
-      emissiveColor: gl.getUniformLocation(program, "u_emissiveColor"),
-      hasEmissiveColor: gl.getUniformLocation(program, "u_hasEmissiveColor"),
-      normalScale: gl.getUniformLocation(program, "u_normalScale"), normalUVScale: gl.getUniformLocation(program, "u_normalUVScale"),
-      occlusionStrength: gl.getUniformLocation(program, "u_occlusionStrength"),
-      rimColor: gl.getUniformLocation(program, "u_rimColor"),
-      rimPower: gl.getUniformLocation(program, "u_rimPower"),
-      rimStrength: gl.getUniformLocation(program, "u_rimStrength"),
-      opacity: gl.getUniformLocation(program, "u_opacity"),
-      alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
-      unlit: gl.getUniformLocation(program, "u_unlit"),
-
-      albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
-      normalMap: gl.getUniformLocation(program, "u_normalMap"),
-      roughnessMap: gl.getUniformLocation(program, "u_roughnessMap"),
-      metalnessMap: gl.getUniformLocation(program, "u_metalnessMap"),
-      occlusionMap: gl.getUniformLocation(program, "u_occlusionMap"),
-      emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
-      specularIntensityMap: gl.getUniformLocation(program, "u_specularIntensityMap"),
-      specularColorMap: gl.getUniformLocation(program, "u_specularColorMap"),
-      hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
-      hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
-      hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
-      hasMetalnessMap: gl.getUniformLocation(program, "u_hasMetalnessMap"),
-      hasOcclusionMap: gl.getUniformLocation(program, "u_hasOcclusionMap"),
-      hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
-      hasSpecularIntensityMap: gl.getUniformLocation(program, "u_hasSpecularIntensityMap"),
-      hasSpecularColorMap: gl.getUniformLocation(program, "u_hasSpecularColorMap"),
-
-      lightCount: gl.getUniformLocation(program, "u_lightCount"),
-      lightTypes: [],
-      lightPositions: [],
-      lightDirections: [],
-      lightColors: [],
-      lightIntensities: [],
-      lightRanges: [],
-      lightDecays: [],
-      lightAngles: [],
-      lightPenumbras: [],
-      lightGroundColors: [],
-
-      ambientColor: gl.getUniformLocation(program, "u_ambientColor"),
-      ambientIntensity: gl.getUniformLocation(program, "u_ambientIntensity"),
-      skyColor: gl.getUniformLocation(program, "u_skyColor"),
-      skyIntensity: gl.getUniformLocation(program, "u_skyIntensity"),
-      groundColor: gl.getUniformLocation(program, "u_groundColor"),
-      groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
-      envMap: gl.getUniformLocation(program, "u_envMap"),
-      hasEnvMap: gl.getUniformLocation(program, "u_hasEnvMap"),
-      envMapMaxLod: gl.getUniformLocation(program, "u_envMapMaxLod"),
-      iblIrradiance: gl.getUniformLocation(program, "u_iblIrradiance"),
-      iblRadiance: gl.getUniformLocation(program, "u_iblRadiance"),
-      iblBRDFLUT: gl.getUniformLocation(program, "u_iblBRDFLUT"),
-      hasIBL: gl.getUniformLocation(program, "u_hasIBL"),
-      iblRadianceMaxLod: gl.getUniformLocation(program, "u_iblRadianceMaxLod"),
-      envIntensity: gl.getUniformLocation(program, "u_envIntensity"),
-      envRotation: gl.getUniformLocation(program, "u_envRotation"),
-
-      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
-      lightSpaceMatrices0: gl.getUniformLocation(program, "u_lightSpaceMatrices0"),
-      shadowCascadeSplits0: gl.getUniformLocation(program, "u_shadowCascadeSplits0"),
-      shadowCascades0: gl.getUniformLocation(program, "u_shadowCascades0"),
-      hasShadow0: gl.getUniformLocation(program, "u_hasShadow0"),
-      shadowBias0: gl.getUniformLocation(program, "u_shadowBias0"),
-      shadowSoftness0: gl.getUniformLocation(program, "u_shadowSoftness0"),
-      shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
-
-      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
-      lightSpaceMatrices1: gl.getUniformLocation(program, "u_lightSpaceMatrices1"),
-      shadowCascadeSplits1: gl.getUniformLocation(program, "u_shadowCascadeSplits1"),
-      shadowCascades1: gl.getUniformLocation(program, "u_shadowCascades1"),
-      hasShadow1: gl.getUniformLocation(program, "u_hasShadow1"),
-      shadowBias1: gl.getUniformLocation(program, "u_shadowBias1"),
-      shadowSoftness1: gl.getUniformLocation(program, "u_shadowSoftness1"),
-      shadowLightIndex1: gl.getUniformLocation(program, "u_shadowLightIndex1"),
-
-      receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
-
-      exposure: gl.getUniformLocation(program, "u_exposure"),
-      toneMapMode: gl.getUniformLocation(program, "u_toneMapMode"),
-      outputLinear: gl.getUniformLocation(program, "u_outputLinear"),
-
-      hasFog: gl.getUniformLocation(program, "u_hasFog"),
-      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
-      fogColor: gl.getUniformLocation(program, "u_fogColor"),
-    };
-
-    for (var i = 0; i < 8; i++) {
-      uniforms.lightTypes.push(gl.getUniformLocation(program, "u_lightTypes[" + i + "]"));
-      uniforms.lightPositions.push(gl.getUniformLocation(program, "u_lightPositions[" + i + "]"));
-      uniforms.lightDirections.push(gl.getUniformLocation(program, "u_lightDirections[" + i + "]"));
-      uniforms.lightColors.push(gl.getUniformLocation(program, "u_lightColors[" + i + "]"));
-      uniforms.lightIntensities.push(gl.getUniformLocation(program, "u_lightIntensities[" + i + "]"));
-      uniforms.lightRanges.push(gl.getUniformLocation(program, "u_lightRanges[" + i + "]"));
-      uniforms.lightDecays.push(gl.getUniformLocation(program, "u_lightDecays[" + i + "]"));
-      uniforms.lightAngles.push(gl.getUniformLocation(program, "u_lightAngles[" + i + "]"));
-      uniforms.lightPenumbras.push(gl.getUniformLocation(program, "u_lightPenumbras[" + i + "]"));
-      uniforms.lightGroundColors.push(gl.getUniformLocation(program, "u_lightGroundColors[" + i + "]"));
+  function scenePBRProgramLocations(gl: WebGL2RenderingContext, program: WebGLProgram, names: string, attributes = false): Record<string, any> {
+    const locations: Record<string, any> = {};
+    const arrays: string[] = [];
+    for (const name of names.split(" ")) {
+      if (name[0] === "*") { const key = name.slice(1); locations[key] = []; arrays.push(key); }
+      else locations[name] = attributes ? gl.getAttribLocation(program, "a_" + name) : gl.getUniformLocation(program, "u_" + name);
     }
+    for (let i = 0; i < 8 && arrays.length; i++) {
+      for (const name of arrays) locations[name].push(gl.getUniformLocation(program, "u_" + name + "[" + i + "]"));
+    }
+    return locations;
+  }
+
+  function scenePBRBuildProgram(gl: WebGL2RenderingContext, vertexSource: string, fragmentSource: string, label: string) {
+    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
+    if (!vertexShader) return null;
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!fragmentShader) { gl.deleteShader(vertexShader); return null; }
+    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, label);
+    return program ? { program, vertexShader, fragmentShader } : null;
+  }
+
+  function scenePBRCacheBaseUniforms(gl, program) {
+    var uniforms = scenePBRProgramLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness metalness clearcoat sheen transmission iridescence anisotropy specularF0 specularF90 specularColorLog emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity alphaCutoff unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap specularIntensityMap specularColorMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap hasSpecularIntensityMap hasSpecularColorMap lightCount *lightTypes *lightPositions *lightDirections *lightColors *lightIntensities *lightRanges *lightDecays *lightAngles *lightPenumbras *lightGroundColors ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor");
 
     return uniforms;
   }
@@ -5959,18 +5854,9 @@
     if (warmed) {
       return scenePBRFinalizeBaseProgram(gl, warmed);
     }
-    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
-    if (!vertexShader) {
-      return null;
-    }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-
-    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "PBR shader");
-    if (!program) return null;
+    const compiled = scenePBRBuildProgram(gl, SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
 
     return scenePBRFinalizeBaseProgram(gl, {
       program: program,
@@ -5980,28 +5866,30 @@
   }
 
   function scenePBRFinalizeBaseProgram(gl, linked) {
-    // Cache locations only after KHR_parallel_shader_compile reports the
-    // program complete. Location queries are allowed to synchronize an
-    // unfinished link just like LINK_STATUS, so moving only the status check
-    // would merely move the cold-frame stall.
-    const attributes = {
-      position: gl.getAttribLocation(linked.program, "a_position"),
-      normal: gl.getAttribLocation(linked.program, "a_normal"),
-      uv: gl.getAttribLocation(linked.program, "a_uv"),
-      tangent: gl.getAttribLocation(linked.program, "a_tangent"),
-    };
+    return scenePBRDeferredProgramInfo(gl, linked.program, function() {
+      // Cache locations only after KHR_parallel_shader_compile reports the
+      // program complete. Location queries are allowed to synchronize an
+      // unfinished link just like LINK_STATUS, so moving only the status check
+      // would merely move the cold-frame stall.
+      const attributes = {
+        position: gl.getAttribLocation(linked.program, "a_position"),
+        normal: gl.getAttribLocation(linked.program, "a_normal"),
+        uv: gl.getAttribLocation(linked.program, "a_uv"),
+        tangent: gl.getAttribLocation(linked.program, "a_tangent"),
+      };
 
-    // Cache uniform locations.
-    const uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+      // Cache uniform locations.
+      const uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
 
-    return {
-      program: linked.program,
-      vertexShader: linked.vertexShader,
-      fragmentShader: linked.fragmentShader,
-      attributes: attributes,
-      uniforms: uniforms,
-      initialProgramOwner: linked.initialProgramOwner || null,
-    };
+      return {
+        program: linked.program,
+        vertexShader: linked.vertexShader,
+        fragmentShader: linked.fragmentShader,
+        attributes: attributes,
+        uniforms: uniforms,
+        initialProgramOwner: linked.initialProgramOwner || null,
+      };
+    }, linked);
   }
 
   function sceneSelenaMaterialLayout(material) {
@@ -6238,187 +6126,145 @@
       if (!skinInfo) return null;
       vertexSource = skinInfo.source;
     }
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, skinned ? "Selena shader (skinned)" : "Selena shader");
-    if (!program) return null;
-    var attrs = {};
-    var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
-    var result = {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-      attributes: attrs,
-      uniforms: sceneSelenaUniformLocations(gl, program, layout),
-      layout: layout,
-      skinned: Boolean(skinned),
-      // Validated Selena custom descriptors as one compact ordered flat
-      // array: [name, compiledLocation, componentWidth, ...].
-      customAttributes: [],
-    };
-    var seenCustomLocations = {};
-    for (var i = 0; i < layoutAttrs.length; i++) {
-      var attr = layoutAttrs[i] || {};
-      var attrName = attr.name;
-      // Reserved built-in layout entries are part of the fixed Selena vertex
-      // layout; their binding is owned by the builtin path, so they are
-      // excluded from the custom-stream record.
-      var isReserved = SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(attrName) >= 0;
-      if (typeof attrName !== "string") {
-        if (!isReserved) {
+    const compiled = scenePBRBuildProgram(gl, vertexSource, fragmentSource, skinned ? "Selena shader (skinned)" : "Selena shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      var attrs = {};
+      var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
+      var result = {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        attributes: attrs,
+        uniforms: sceneSelenaUniformLocations(gl, program, layout),
+        layout: layout,
+        skinned: Boolean(skinned),
+        // Validated Selena custom descriptors as one compact ordered flat
+        // array: [name, compiledLocation, componentWidth, ...].
+        customAttributes: [],
+      };
+      var seenCustomLocations = {};
+      for (var i = 0; i < layoutAttrs.length; i++) {
+        var attr = layoutAttrs[i] || {};
+        var attrName = attr.name;
+        // Reserved built-in layout entries are part of the fixed Selena vertex
+        // layout; their binding is owned by the builtin path, so they are
+        // excluded from the custom-stream record.
+        var isReserved = SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(attrName) >= 0;
+        if (typeof attrName !== "string") {
+          if (!isReserved) {
+            sceneSelenaDiscardProgram(gl, result);
+            return null;
+          }
+          continue;
+        }
+        var glName = attrName;
+        if (skinned && attrName === "position") glName = "a_position";
+        else if (skinned && attrName === "normal" && skinInfo.hasNormal) glName = "a_normal";
+        var size = sceneSelenaAttributeComponents(attr.type);
+        var loc = gl.getAttribLocation(program, glName);
+        attrs[attrName] = { loc: loc, size: size };
+        if (!isReserved && (size < 1 || loc < 0 || seenCustomLocations[loc])) {
+          // Fail closed unless the descriptor has a known tuple width and the
+          // vertex shader exposes it at a unique compiled location; anything else
+          // discards the program so the object takes the journaled builtin-PBR
+          // fallback.
           sceneSelenaDiscardProgram(gl, result);
           return null;
         }
-        continue;
+        seenCustomLocations[loc] = true;
+        if (!isReserved) result.customAttributes.push(attrName, loc, size);
       }
-      var glName = attrName;
-      if (skinned && attrName === "position") glName = "a_position";
-      else if (skinned && attrName === "normal" && skinInfo.hasNormal) glName = "a_normal";
-      var size = sceneSelenaAttributeComponents(attr.type);
-      var loc = gl.getAttribLocation(program, glName);
-      attrs[attrName] = { loc: loc, size: size };
-      if (!isReserved && (size < 1 || loc < 0 || seenCustomLocations[loc])) {
-        // Fail closed unless the descriptor has a known tuple width and the
-        // vertex shader exposes it at a unique compiled location; anything else
-        // discards the program so the object takes the journaled builtin-PBR
-        // fallback.
-        sceneSelenaDiscardProgram(gl, result);
-        return null;
+      /* @ts-expect-error TS2551 -- skinUniforms is added to the program record only when skinned */ if (skinned) {
+        result.skinUniforms = {
+          modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+          jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
+          hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
+        /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
+        result.skinAttributes = {
+          joints: gl.getAttribLocation(program, "a_joints"),
+          weights: gl.getAttribLocation(program, "a_weights"),
+        };
       }
-      seenCustomLocations[loc] = true;
-      if (!isReserved) result.customAttributes.push(attrName, loc, size);
-    }
-    /* @ts-expect-error TS2551 -- skinUniforms is added to the program record only when skinned */ if (skinned) {
-      result.skinUniforms = {
-        modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
-        jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
-        hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
-      /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
-      result.skinAttributes = {
-        joints: gl.getAttribLocation(program, "a_joints"),
-        weights: gl.getAttribLocation(program, "a_weights"),
-      };
-    }
-    return result;
+      return result;
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   function createScenePBRCustomProgram(gl, material) {
     const vertexSource = scenePBRBuildCustomVertexSource(material);
     const fragmentSource = scenePBRFragmentSourceForContext(gl, scenePBRBuildCustomFragmentSource(material));
-    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
-    if (!vertexShader) {
-      return null;
-    }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Custom PBR shader");
-    if (!program) return null;
-    const attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      normal: gl.getAttribLocation(program, "a_normal"),
-      uv: gl.getAttribLocation(program, "a_uv"),
-      tangent: gl.getAttribLocation(program, "a_tangent"),
-    };
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const uniforms = scenePBRCacheBaseUniforms(gl, program);
-    uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
-    return {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-      attributes: attributes,
-      uniforms: uniforms,
-    };
+    const compiled = scenePBRBuildProgram(gl, vertexSource, fragmentSource, "Custom PBR shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      const attributes = {
+        position: gl.getAttribLocation(program, "a_position"),
+        normal: gl.getAttribLocation(program, "a_normal"),
+        uv: gl.getAttribLocation(program, "a_uv"),
+        tangent: gl.getAttribLocation(program, "a_tangent"),
+      };
+      const uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
+      return {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        attributes: attributes,
+        uniforms: uniforms,
+      };
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   // Compile the skinned PBR vertex shader with the same PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
   function createScenePBRSkinnedProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
+    const compiled = scenePBRBuildProgram(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      // Cache attribute locations.
+      var attributes = scenePBRProgramLocations(gl, program, "position normal uv tangent joints weights", true);
 
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Skinned PBR shader");
-    if (!program) return null;
+      // Cache uniform locations — base set plus skinning extras. The joint
+      // matrix array is uploaded from its first slot in one call per skinned
+      // draw; caching 64 individual locations made every fighter pay 64
+      // lookups at compile time and 64 uniform uploads per frame.
+      var uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
+      uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
+      uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
 
-    // Cache attribute locations.
-    var attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      normal: gl.getAttribLocation(program, "a_normal"),
-      uv: gl.getAttribLocation(program, "a_uv"),
-      tangent: gl.getAttribLocation(program, "a_tangent"),
-      joints: gl.getAttribLocation(program, "a_joints"),
-      weights: gl.getAttribLocation(program, "a_weights"),
-    };
-
-    // Cache uniform locations — base set plus skinning extras. The joint
-    // matrix array is uploaded from its first slot in one call per skinned
-    // draw; caching 64 individual locations made every fighter pay 64
-    // lookups at compile time and 64 uniform uploads per frame.
-    var uniforms = scenePBRCacheBaseUniforms(gl, program);
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
-    uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
-
-    return {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-      attributes: attributes,
-      uniforms: uniforms,
-    };
+      return {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        attributes: attributes,
+        uniforms: uniforms,
+      };
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   // Compile the points vertex + fragment shaders and return a program object
   // with cached attribute/uniform locations, or null on failure.
   function createScenePointsProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POINTS_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_POINTS_FRAGMENT_SOURCE);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
+    const compiled = scenePBRBuildProgram(gl, SCENE_POINTS_VERTEX_SOURCE, SCENE_POINTS_FRAGMENT_SOURCE, "Points shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      return scenePointsProgramInfo(gl, program, vertexShader, fragmentShader);
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
+  }
 
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Points shader");
-    if (!program) return null;
-
+  function scenePointsProgramInfo(gl: WebGL2RenderingContext, program: WebGLProgram, vertexShader: WebGLShader, fragmentShader: WebGLShader) {
     var attributes = {
       position: gl.getAttribLocation(program, "a_position"),
       size: gl.getAttribLocation(program, "a_size"),
       color: gl.getAttribLocation(program, "a_color"),
     };
 
-    var uniforms = {
-      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
-      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
-      modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
-      defaultSize: gl.getUniformLocation(program, "u_defaultSize"),
-      defaultColor: gl.getUniformLocation(program, "u_defaultColor"),
-      hasPerVertexColor: gl.getUniformLocation(program, "u_hasPerVertexColor"),
-      hasPerVertexSize: gl.getUniformLocation(program, "u_hasPerVertexSize"),
-      sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
-      pointStyle: gl.getUniformLocation(program, "u_pointStyle"),
-      viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
-      minPixelSize: gl.getUniformLocation(program, "u_minPixelSize"),
-      maxPixelSize: gl.getUniformLocation(program, "u_maxPixelSize"),
-      opacity: gl.getUniformLocation(program, "u_opacity"),
-      hasFog: gl.getUniformLocation(program, "u_hasFog"),
-      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
-      fogColor: gl.getUniformLocation(program, "u_fogColor"),
-    };
+    var uniforms = scenePBRProgramLocations(gl, program, "viewMatrix projectionMatrix modelMatrix defaultSize defaultColor hasPerVertexColor hasPerVertexSize sizeAttenuation pointStyle viewportHeight minPixelSize maxPixelSize opacity hasFog fogDensity fogColor");
 
     return {
       program: program,
@@ -6437,22 +6283,16 @@
     if (warmed) {
       return scenePBRFinalizeInstancedProgram(gl, warmed, true);
     }
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced PBR shader");
-    if (!program) return null;
-
-    return scenePBRFinalizeInstancedProgram(gl, {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-    }, crowd);
+    const compiled = scenePBRBuildProgram(gl, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "Instanced PBR shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      return scenePBRFinalizeInstancedProgram(gl, {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+      }, crowd);
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   function scenePBRFinalizeInstancedProgram(gl, linked, crowd) {
@@ -6468,8 +6308,8 @@
       instanceColor: gl.getAttribLocation(linked.program, "a_instanceColor"),
     };
 
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
+    var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
+    uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
     uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
 
     return {
@@ -6481,61 +6321,35 @@
     };
   }
 
-  // Compile the GPU-motion crowd color-pass shader (see
-  // SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE's doc comment). No
-  // KHR_parallel_shader_compile pre-warm slot: this path is newer than the
-  // pre-warm plumbing's fixed base/crowd slots, so it always compiles
-  // synchronously on first use, exactly like the legacy crowd program did
-  // before that optimization existed -- a one-time first-use cost, not a
-  // per-frame one.
+  // Crowd-motion shaders join the shared parallel queue on first use.
   // @ts-ignore TS7006 -- this file is also parsed as JavaScript by the raw-source Scene3D tests.
   function createScenePBRCrowdMotionProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Crowd motion PBR shader");
-    if (!program) return null;
-    var attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      normal: gl.getAttribLocation(program, "a_normal"),
-      uv: gl.getAttribLocation(program, "a_uv"),
-      tangent: gl.getAttribLocation(program, "a_tangent"),
-      joints: gl.getAttribLocation(program, "a_joints"),
-      weights: gl.getAttribLocation(program, "a_weights"),
-      motionPrevPos: gl.getAttribLocation(program, "a_motionPrevPos"),
-      motionPrevRot: gl.getAttribLocation(program, "a_motionPrevRot"),
-      motionPrevScale: gl.getAttribLocation(program, "a_motionPrevScale"),
-      tPrev: gl.getAttribLocation(program, "a_tPrev"),
-      motionNextPos: gl.getAttribLocation(program, "a_motionNextPos"),
-      motionNextRot: gl.getAttribLocation(program, "a_motionNextRot"),
-      motionNextScale: gl.getAttribLocation(program, "a_motionNextScale"),
-      tNext: gl.getAttribLocation(program, "a_tNext"),
-      animState: gl.getAttribLocation(program, "a_animState"),
-    };
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var uniforms = scenePBRCacheBaseUniforms(gl, program);
-    /* @ts-expect-error TS2339 -- see above */ uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
-    /* @ts-expect-error TS2339 -- see above */ uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
-    /* @ts-expect-error TS2339 -- see above */ uniforms.now = gl.getUniformLocation(program, "u_now");
-    uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
-    return {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-      attributes: attributes,
-      uniforms: uniforms,
-    };
+    const compiled = scenePBRBuildProgram(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader");
+    if (!compiled) return null;
+    const { program, vertexShader, fragmentShader } = compiled;
+    return scenePBRDeferredProgramInfo(gl, program, function() {
+      var attributes = scenePBRProgramLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState", true);
+      var uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
+      uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
+      uniforms.now = gl.getUniformLocation(program, "u_now");
+      uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
+      return {
+        program: program,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        attributes: attributes,
+        uniforms: uniforms,
+      };
+    }, { vertexShader: vertexShader, fragmentShader: fragmentShader });
   }
 
   // Initial WebGL2 programs are submitted together while model assets are
   // already hydrating. KHR_parallel_shader_compile lets the driver work
   // without a synchronous LINK_STATUS fence on the main thread. The existing
-  // synchronous factories consume these records after completion, preserving
-  // their renderer and disposal contracts. Other contexts and browsers keep
-  // the established synchronous path.
+  // factories consume these records after completion, preserving their
+  // renderer and disposal contracts. Browsers without the extension keep
+  // the synchronous path.
   const scenePBRInitialPrograms = new WeakMap();
 
   function scenePBRSubmitInitialProgram(gl, vertexSource, fragmentSource, label) {
@@ -6615,7 +6429,7 @@
     return state && state.status === "ready" ? state : null;
   }
 
-  function scenePBRRequestFrame(callback) {
+  function scenePBRRequestFrame(callback: FrameRequestCallback) {
     const motionScheduler = typeof window !== "undefined" && window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
     if (motionScheduler && typeof motionScheduler.request === "function" && typeof motionScheduler.cancel === "function") {
       const id = motionScheduler.request(callback);
@@ -6678,7 +6492,7 @@
     owner.records = [];
   }
 
-  function prepareScenePBRInitialPrograms(gl, options) {
+  function prepareScenePBRInitialPrograms(gl, options: any) {
     let extension = null;
     try {
       extension = gl && typeof gl.getExtension === "function"
@@ -6805,11 +6619,280 @@
     });
   }
 
-  function scenePBRCompileShader(gl, type, source) {
+  function scenePBREnsureCustomProgram(gl: WebGL2RenderingContext, customProgramCache: any, material: any) {
+    if (!scenePBRHasCustomHooks(material)) {
+      return null;
+    }
+    // Programs depend on authored code and uniform declarations, not values.
+    // Dynamic uniforms are uploaded for each draw without recompilation.
+    const key = JSON.stringify([material.customVertex || "", material.customFragment || "",
+      scenePBRCustomUniformDeclarations(material.customUniforms)]);
+    const cached = customProgramCache.get(key);
+    if (cached) {
+      return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
+    }
+    const customProgram = createScenePBRCustomProgram(gl, material);
+    customProgramCache.set(key, customProgram ? { program: customProgram } : { failed: true });
+    // The console warning and the render-truth counter both live at the DRAW
+    // site (drawPBRObjectList) rather than here. A cached failure returns
+    // early on every later frame, so counting here would report the
+    // substitution once and then read a healthy zero for the rest of the
+    // session while the wrong material kept reaching the framebuffer.
+    return customProgram;
+  }
+
+  function scenePBREnsureSelenaProgram(gl: WebGL2RenderingContext, selenaProgramCache: any, material: any, skinned: any) {
+    if (!sceneSelenaIsMaterial(material)) {
+      return null;
+    }
+    // Match the WebGPU path: uniform values belong to per-draw bindings.
+    // The material key includes values and would leak a program per frame.
+    const baseKey = JSON.stringify([material.customVertex || "", material.customFragment || "",
+      sceneSelenaMaterialLayout(material)]);
+    // Skinned draws compile a distinct program variant (augmented vertex
+    // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
+    // its own key: the same material can back both static and skinned
+    // objects across a scene.
+    const key = skinned ? baseKey + "::skinned" : baseKey;
+    const cached = selenaProgramCache.get(key);
+    if (cached) {
+      return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
+    }
+    const selenaProgram = createSceneSelenaProgram(gl, material, skinned);
+    selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
+    // Reported at the draw site — see ensureCustomProgram's note.
+    return selenaProgram;
+  }
+
+  type ScenePBRPreparationHooks = {
+    [key: string]: any;
+    textureCache: Map<any, any> | null;
+    placeholder: WebGLTexture | null;
+    postProcessor: any;
+  };
+
+  function scenePBRPrepareBundlePrograms(gl: WebGL2RenderingContext, bundle: any, hooks: any) {
+    const materialsToPrepare = bundle.materials || [];
+    for (const obj of bundle.meshObjects || []) {
+      if (!obj) continue;
+      const material = materialsToPrepare[obj.materialIndex] || null;
+      const skinned = objectIsSkinned(obj);
+      const selena = hooks.ensureSelenaProgram(material, skinned);
+      if (!selena && skinned) hooks.ensureSkinnedProgram();
+      if (!selena && !skinned) hooks.ensureCustomProgram(material);
+    }
+    if ((bundle.instancedMeshes || []).length) hooks.ensureInstancedProgram();
+    for (const [i, entry] of (bundle.points || []).entries()) {
+      const authored = hooks.ensurePointsAuthoredGLProgram(entry, entry.id || "points-" + i);
+      if (!authored) hooks.ensurePointsProgram();
+    }
+    for (const [i, entry] of (bundle.computeParticles || []).entries()) {
+      if (!entry || typeof entry !== "object") continue;
+      const authored = hooks.ensurePointsAuthoredGLProgram({
+        customVertex: entry.renderVertex,
+        customFragment: entry.renderFragment,
+      }, entry.id || "scene-compute-points-" + i);
+      if (!authored) hooks.ensurePointsProgram();
+    }
+    if (bundle.environment && bundle.environment.sky && !hooks.skyResources.renderer) {
+      hooks.skyResources.renderer = createSceneSkyWebGLRenderer(gl, hooks.textureCache, hooks.placeholder);
+    }
+    if ((bundle.postEffects || []).length) {
+      if (!hooks.postProcessor) hooks.postProcessor = createScenePostProcessor(gl, hooks.resolveUniform);
+      hooks.postProcessor.preparePrograms(bundle.postEffects);
+    }
+  }
+
+  function scenePBRPrepareBatchPrograms(gl: WebGL2RenderingContext, batches: any, programs: any) {
+    for (const batch of batches.values()) {
+      if (batch.motion) { programs.prepareCrowdMotionShaders(); continue; }
+      if (batch.atlas) {
+        if (!programs.crowdProgram) programs.crowdProgram = createScenePBRInstancedProgram(gl, true);
+        if (!programs.crowdShadowProgram) programs.crowdShadowProgram = createSceneShadowProgram(gl, true, true);
+        continue;
+      }
+      if (batch.count <= 1) continue;
+      programs.ensureInstancedProgram();
+      if (!programs.rigidShadowProgram && !programs.rigidShadowProgramFailed) programs.rigidShadowProgram = createSceneShadowProgram(gl, true, false);
+    }
+    return programs;
+  }
+
+  function scenePBRPreparePostPrograms(gl: WebGL2RenderingContext, effects: any, programs: any, customPostPrograms: any, reportFailure: any, blitProg: any) {
+    for (const effect of effects || []) {
+      switch (effect.kind) {
+        case SCENE_POST_TONE_MAPPING: scenePBRGetPostProgram(gl, programs, "toneMapping", SCENE_POST_TONEMAPPING_SOURCE); break;
+        case SCENE_POST_BLOOM:
+          scenePBRGetPostProgram(gl, programs, "bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
+          scenePBRGetPostProgram(gl, programs, "bloomBlur", SCENE_POST_BLUR_SOURCE);
+          scenePBRGetPostProgram(gl, programs, "bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE); break;
+        case SCENE_POST_VIGNETTE: scenePBRGetPostProgram(gl, programs, "vignette", SCENE_POST_VIGNETTE_SOURCE); break;
+        case SCENE_POST_COLOR_GRADE: scenePBRGetPostProgram(gl, programs, "colorGrade", SCENE_POST_COLORGRADE_SOURCE); break;
+        case SCENE_POST_SSAO: scenePBRGetPostProgram(gl, programs, "ssao", SCENE_POST_SSAO_SOURCE); break;
+        case SCENE_POST_DOF: scenePBRGetPostProgram(gl, programs, "dof", SCENE_POST_DOF_SOURCE); break;
+        case SCENE_POST_FXAA: scenePBRGetPostProgram(gl, programs, "fxaa", SCENE_POST_FXAA_SOURCE); break;
+        case SCENE_POST_CUSTOM_POST: {
+          const name = effect.name || "custom";
+          const vertex = typeof effect.vertexGLSL === "string" ? effect.vertexGLSL.trim() : "";
+          const fragment = typeof effect.fragmentGLSL === "string" ? effect.fragmentGLSL.trim() : "";
+          if (!Object.prototype.hasOwnProperty.call(customPostPrograms, name) && vertex && fragment) {
+            customPostPrograms[name] = createSceneCustomPostProgram(gl, vertex, fragment);
+            if (!customPostPrograms[name]) reportFailure(name);
+          }
+          break;
+        }
+      }
+    }
+    if (effects && effects.length && !blitProg) blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
+    return blitProg;
+  }
+
+  function scenePBRGetPostProgram(gl: WebGL2RenderingContext, programs: any, name: any, fragmentSource: any) {
+    if (programs[name]) return scenePBRUsableProgramInfo(programs[name]);
+    const program = createScenePostProgram(gl, fragmentSource);
+    if (program) programs[name] = program;
+    return program;
+  }
+
+  function scenePBRUsableProgramInfo(info: any) {
+    return info && !scenePBRProgramFailed(info.program) ? info : null;
+  }
+
+  function scenePBRFrameProgramsReady(gl: WebGL2RenderingContext, program: WebGLProgram) {
+    return !scenePBRProgramsPending(gl) && scenePBRProgramReady(gl, program);
+  }
+
+  function scenePBRWaterDrawUnavailable(gl: WebGL2RenderingContext, disposed: boolean, pool: any, surface: any) {
+    return disposed || scenePBRProgramsPending(gl) || !scenePBRProgramReady(gl, pool) || !scenePBRProgramReady(gl, surface);
+  }
+
+  function scenePBRPassReady(gl: WebGL2RenderingContext, pass: any) {
+    return Boolean(pass && scenePBRProgramReady(gl, pass.program));
+  }
+
+  function scenePBRReportCustomPostFailure(name: string, failures: Record<string, boolean>, truth: any) {
+    if (failures[name]) return;
+    console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
+    truth.record("post-compile-failed", "webgl customPost " + name);
+    failures[name] = true;
+  }
+
+  function scenePBRCustomPostPassReady(gl: WebGL2RenderingContext, pass: any, name: string, reportFailure: (name: string) => void) {
+    if (pass && scenePBRProgramFailed(pass.program)) reportFailure(name);
+    return scenePBRPassReady(gl, pass);
+  }
+
+  // All WebGL2 factories share this queue. Location queries run only after
+  // completion, because they can synchronize the driver just like LINK_STATUS.
+  const scenePBRCompileContexts = new WeakMap();
+  const scenePBRProgramStates = new WeakMap();
+
+  function scenePBRCompileContext(gl: WebGL2RenderingContext) {
+    let state = scenePBRCompileContexts.get(gl);
+    if (state) return state;
+    let extension = null;
+    try { extension = gl.getExtension("KHR_parallel_shader_compile"); } catch (_error) {}
+    state = { extension: extension && typeof extension.COMPLETION_STATUS_KHR === "number" ? extension : null,
+      pending: new Set(), frame: null, disposed: false };
+    scenePBRCompileContexts.set(gl, state);
+    return state;
+  }
+
+  function scenePBRProgramReady(gl: WebGL2RenderingContext, program: WebGLProgram) {
+    if (!program) return false;
+    const record = scenePBRProgramStates.get(program);
+    return !record || record.status === "ready";
+  }
+
+  function scenePBRProgramFailed(program: WebGLProgram) {
+    const record = program && scenePBRProgramStates.get(program);
+    return Boolean(record && record.status === "failed");
+  }
+
+  function scenePBRProgramsPending(gl: WebGL2RenderingContext) {
+    const state = scenePBRCompileContexts.get(gl);
+    return Boolean(state && state.pending.size);
+  }
+
+  function scenePBRWhenProgramReady(gl: WebGL2RenderingContext, program: WebGLProgram, initialize: any) {
+    const record = scenePBRProgramStates.get(program);
+    if (!record || record.status === "ready") { initialize(); return; }
+    if (record.status === "pending") record.initialize.push(initialize);
+  }
+
+  function scenePBRDeferredProgramInfo(gl: WebGL2RenderingContext, program: WebGLProgram, initialize: any, shaders: any) {
+    if (scenePBRProgramReady(gl, program)) return initialize();
+    const result = Object.assign({ program: program, attributes: {}, uniforms: {} }, shaders || {});
+    scenePBRWhenProgramReady(gl, program, function() {
+      const info = initialize();
+      if (!info) { scenePBRProgramStates.get(program).status = "failed"; return; }
+      // Preserve objects captured by the renderer before linking completed.
+      if (info.attributes) Object.assign(result.attributes, info.attributes);
+      if (info.uniforms) Object.assign(result.uniforms, info.uniforms);
+      Object.assign(result, info, { attributes: result.attributes, uniforms: result.uniforms });
+    });
+    return result;
+  }
+
+  function scenePBRPollPrograms(gl: WebGL2RenderingContext, state: any) {
+    state.frame = null;
+    if (state.disposed) return;
+    const lost = typeof gl.isContextLost === "function" && gl.isContextLost();
+    for (const record of state.pending) {
+      try {
+        if (!lost && !gl.getProgramParameter(record.program, state.extension.COMPLETION_STATUS_KHR)) continue;
+        record.status = !lost && gl.getProgramParameter(record.program, gl.LINK_STATUS) ? "ready" : "failed";
+        if (record.status === "ready") {
+          for (const initialize of record.initialize) initialize();
+        } else {
+          if (!lost) console.warn("[gosx] " + record.label + " program link failed:", gl.getProgramInfoLog(record.program));
+          gl.deleteProgram(record.program);
+          gl.deleteShader(record.vertexShader); gl.deleteShader(record.fragmentShader);
+        }
+      } catch (_error) {
+        record.status = "failed";
+        gl.deleteProgram(record.program);
+        gl.deleteShader(record.vertexShader); gl.deleteShader(record.fragmentShader);
+      }
+      record.initialize = [];
+      state.pending.delete(record);
+    }
+    if (state.pending.size) scenePBRScheduleProgramPoll(gl, state);
+    // Static scenes need a new render too; polling does not depend on animation.
+    if (!state.pending.size && gl.canvas && typeof gl.canvas.dispatchEvent === "function" && typeof Event === "function") {
+      gl.canvas.dispatchEvent(new Event("gosx:scene3d:program-ready", { bubbles: true }));
+    }
+  }
+
+  function scenePBRScheduleProgramPoll(gl: WebGL2RenderingContext, state: any) {
+    if (state.frame || state.disposed) return;
+    state.frame = scenePBRRequestFrame(function() { scenePBRPollPrograms(gl, state); });
+    if (!state.frame && typeof setTimeout === "function") {
+      const timer = setTimeout(function() { scenePBRPollPrograms(gl, state); }, 16);
+      state.frame = { cancel: function() { clearTimeout(timer); } };
+    }
+  }
+
+  function scenePBRDisposeProgramQueue(gl: WebGL2RenderingContext) {
+    const state = scenePBRCompileContexts.get(gl);
+    if (!state) return;
+    state.disposed = true;
+    if (state.frame) state.frame.cancel();
+    for (const record of state.pending) {
+      record.status = "failed";
+      record.initialize = [];
+      gl.deleteProgram(record.program);
+      gl.deleteShader(record.vertexShader); gl.deleteShader(record.fragmentShader);
+    }
+    state.pending.clear();
+    scenePBRCompileContexts.delete(gl);
+  }
+
+  function scenePBRCompileShader(gl: WebGL2RenderingContext, type: number, source: string) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    if (!scenePBRCompileContext(gl).extension && !gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
       const label = type === gl.VERTEX_SHADER ? "vertex" : "fragment";
       console.warn("[gosx] PBR " + label + " shader compile failed:", gl.getShaderInfoLog(shader));
       gl.deleteShader(shader);
@@ -6820,11 +6903,19 @@
 
   // Link a vertex and fragment shader into a program, with error logging.
   // Returns the linked program or null on failure (cleans up shaders on error).
-  function scenePBRLinkProgram(gl, vertexShader, fragmentShader, label) {
+  function scenePBRLinkProgram(gl: WebGL2RenderingContext, vertexShader: WebGLShader, fragmentShader: WebGLShader, label: string) {
     var program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
+    const queue = scenePBRCompileContext(gl);
+    if (queue.extension) {
+      const record = { program, vertexShader, fragmentShader, label, status: "pending", initialize: [] as Array<() => void> };
+      scenePBRProgramStates.set(program, record);
+      queue.pending.add(record);
+      scenePBRScheduleProgramPoll(gl, queue);
+      return program;
+    }
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
       console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
       gl.deleteProgram(program);
@@ -7433,9 +7524,12 @@
     var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl")));
     if (!program) return null;
     var quad = createSceneFullscreenQuad(gl), data = new Float32Array(44);
-    var uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
-    var imageUniform = gl.getUniformLocation(program.program, "u_skyImage");
-    var cubeUniform = gl.getUniformLocation(program.program, "u_skyCube");
+    var uniforms = null, imageUniform = null, cubeUniform = null;
+    scenePBRWhenProgramReady(gl, program.program, function() {
+      uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
+      imageUniform = gl.getUniformLocation(program.program, "u_skyImage");
+      cubeUniform = gl.getUniformLocation(program.program, "u_skyCube");
+    });
     var imageSampler = gl.createSampler();
     gl.samplerParameteri(imageSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.samplerParameteri(imageSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -7444,6 +7538,7 @@
     return {
       // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
       draw: function(opts) {
+        if (!scenePBRPassReady(gl, program)) return "none";
         var env = opts.environment, sky = env.sky;
         sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
         var image = { texture: imagePlaceholder }, cube = scenePBRPlaceholderCube(gl, textureCache);
@@ -7489,10 +7584,8 @@
     const program = pbrProgram.program;
     const attribs = pbrProgram.attributes;
     const uniforms = pbrProgram.uniforms;
-    const lineProgram = typeof createSceneWebGLProgram === "function" ? createSceneWebGLProgram(gl) : null;
-    const surfaceProgram = typeof createSceneWebGLSurfaceProgram === "function"
-      ? createSceneWebGLSurfaceProgram(gl)
-      : null;
+    const lineProgram = createSceneWebGLProgram(gl);
+    const surfaceProgram = createSceneWebGLSurfaceProgram(gl);
     const lineResources = lineProgram && typeof createSceneWebGLResources === "function"
       ? createSceneWebGLResources(gl, lineProgram, surfaceProgram)
       : null;
@@ -7514,6 +7607,10 @@
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
     var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
+    const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
+      ensureInstancedProgram, ensurePointsAuthoredGLProgram, ensurePointsProgram, skyResources,
+      textureCache: null, placeholder: null, resolveUniform: selenaUniformValue, postProcessor: null };
+
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
     // Light matrices now live on the per-cascade objects in shadowSlots[s];
@@ -7539,7 +7636,6 @@
     var pointsProgram = null;
     // Per-layer authored GLSL program cache: layerID → {program, attrs, uniforms} | {failed:true}
     var pointsAuthoredGLPrograms = new Map();
-    var pointsAuthoredGLFailed = new Map();
 
     // Per-typed-array VBO cache.
     //
@@ -8661,15 +8757,29 @@
         return;
       }
 
-      // Opt-in perf instrumentation for the browser bench overlay at
-      // /demos/scene3d-bench. The page sets window.__gosx_scene3d_perf
-      // before bootstrap runs; when it's truthy we bracket the render
-      // body with performance.mark / measure so a PerformanceObserver
-      // (installed by the page) can collect wall-clock per-frame durations.
-      //
-      // Gate is a single truthy check, ~1ns when disabled — production
-      // pages don't pay for it. Marks are cleared after each measure to
-      // prevent unbounded accumulation of performance entries.
+      const preparedScene = typeof prepareScene === "function"
+        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
+          mount: canvas && canvas.parentNode || null,
+          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
+        })
+        : null;
+      if (preparedScene) {
+        lastPreparedScene = preparedScene;
+        bundle = preparedScene.ir || bundle;
+        if (canvas && canvas.parentNode) {
+          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+        }
+      }
+      programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
+      scenePBRPrepareBundlePrograms(gl, bundle, programPreparation);
+      postProcessor = programPreparation.postProcessor;
+      if (!scenePBRFrameProgramsReady(gl, program)) return;
+
+      return renderFrame(bundle, viewport, frameMeta, preparedScene);
+    }
+
+    function renderFrame(bundle: any, viewport: any, frameMeta: any, preparedScene: any) {
+      // Optional browser-bench instrumentation brackets complete frame draws.
       resetWebGLRenderTruthStats();
       var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       if (perfEnabled) {
@@ -8691,19 +8801,6 @@
         (Array.isArray(bundle.surfaces) && bundle.surfaces.some(function(surface) {
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
-      const preparedScene = typeof prepareScene === "function"
-        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
-          mount: canvas && canvas.parentNode || null,
-          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
-        })
-        : null;
-      if (preparedScene) {
-        lastPreparedScene = preparedScene;
-        bundle = preparedScene.ir || bundle;
-        if (canvas && canvas.parentNode) {
-          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
-        }
-      }
       beginWebGLDirectMeshBufferFrame(bundle);
       if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
@@ -8722,6 +8819,12 @@
       sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
       prepareRigidMeshBatches(bundle);
       sceneSelenaFrameTime = performance.now() / 1000; sceneSelenaFrameProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before any Selena mesh draw
+      const batchPrograms = scenePBRPrepareBatchPrograms(gl, rigidObjectBatches, {
+        crowdProgram, crowdShadowProgram, rigidShadowProgram, rigidShadowProgramFailed,
+        prepareCrowdMotionShaders, ensureInstancedProgram });
+      crowdProgram = batchPrograms.crowdProgram; crowdShadowProgram = batchPrograms.crowdShadowProgram;
+      rigidShadowProgram = batchPrograms.rigidShadowProgram;
+      if (scenePBRProgramsPending(gl)) return;
       // GPU-motion crowd instances interpolate/animate from this SAME clock
       // (see SCENE_CROWD_MOTION_ATTRIBUTES_GLSL's doc comment): one uniform
       // write per render(), never per instance.
@@ -8733,7 +8836,7 @@
       // (closure-scoped for drawPBRObjectList access).
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
 
-      if (shadowProgram) {
+      if (scenePBRPassReady(gl, shadowProgram)) {
         var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
         var sceneBounds = null;
         var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
@@ -8848,12 +8951,6 @@
       var renderTarget = sceneWebGLRenderTarget(canvas, null);
 
       if (usePostProcessing) {
-        if (!postProcessor) {
-          // Inject the Selena uniform resolver so custom post passes receive
-          // reserved auto-uniforms (time and friends), matching the WebGPU
-          // path's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
-          postProcessor = createScenePostProcessor(gl, selenaUniformValue);
-        }
         var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
         renderW = scaled.width;
         renderH = scaled.height;
@@ -9023,7 +9120,7 @@
 
 	    // Ensure the skinned PBR program is compiled (lazy init).
 	    function ensureSkinnedProgram() {
-	      if (skinnedProgram) return skinnedProgram;
+	      if (skinnedProgram) return scenePBRUsableProgramInfo(skinnedProgram);
 	      if (skinnedProgramFailed) return null;
 	      skinnedProgram = createScenePBRSkinnedProgram(gl);
 	      if (!skinnedProgram) {
@@ -9034,48 +9131,11 @@
 	    }
 
     function ensureCustomProgram(material) {
-      if (!scenePBRHasCustomHooks(material)) {
-        return null;
-      }
-      // Programs depend on authored code and uniform declarations, not values.
-      // Dynamic uniforms are uploaded for each draw without recompilation.
-      const key = JSON.stringify([material.customVertex || "", material.customFragment || "",
-        scenePBRCustomUniformDeclarations(material.customUniforms)]);
-      const cached = customProgramCache.get(key);
-      if (cached) {
-        return cached.failed ? null : cached.program;
-      }
-      const customProgram = createScenePBRCustomProgram(gl, material);
-      customProgramCache.set(key, customProgram ? { program: customProgram } : { failed: true });
-      // The console warning and the render-truth counter both live at the DRAW
-      // site (drawPBRObjectList) rather than here. A cached failure returns
-      // early on every later frame, so counting here would report the
-      // substitution once and then read a healthy zero for the rest of the
-      // session while the wrong material kept reaching the framebuffer.
-      return customProgram;
+      return scenePBREnsureCustomProgram(gl, customProgramCache, material);
     }
 
     function ensureSelenaProgram(material, skinned) {
-      if (!sceneSelenaIsMaterial(material)) {
-        return null;
-      }
-      // Match the WebGPU path: uniform values belong to per-draw bindings.
-      // The material key includes values and would leak a program per frame.
-      const baseKey = JSON.stringify([material.customVertex || "", material.customFragment || "",
-        sceneSelenaMaterialLayout(material)]);
-      // Skinned draws compile a distinct program variant (augmented vertex
-      // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
-      // its own key: the same material can back both static and skinned
-      // objects across a scene.
-      const key = skinned ? baseKey + "::skinned" : baseKey;
-      const cached = selenaProgramCache.get(key);
-      if (cached) {
-        return cached.failed ? null : cached.program;
-      }
-      const selenaProgram = createSceneSelenaProgram(gl, material, skinned);
-      selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
-      // Reported at the draw site — see ensureCustomProgram's note.
-      return selenaProgram;
+      return scenePBREnsureSelenaProgram(gl, selenaProgramCache, material, skinned);
     }
 
     // reportWebGLMeshMaterialFallback classifies why an authored shader material
@@ -9704,6 +9764,7 @@
       if (obj !== batch.objects[0]) return true;
       if (batch.motion) prepareCrowdMotionShaders();
       const ip = batch.motion ? crowdMotionShadowProgram : batch.atlas ? crowdShadowProgram : rigidShadowProgram;
+      if (!scenePBRPassReady(gl, ip)) return false;
       gl.useProgram(ip.program);
       gl.uniformMatrix4fv(ip.uniforms.lightViewProjection, false, lightMatrix);
       const allowed = {};
@@ -9729,7 +9790,7 @@
     function drawRigidPBRBatch(batch, bundle, mat, uploadFrameUniforms) {
       if (batch.motion) prepareCrowdMotionShaders();
       const ip = batch.motion ? crowdMotionProgram : batch.atlas ? crowdProgram : ensureInstancedProgram();
-      if (!ip || !batch.motion && ip.attributes.instanceMatrix < 0) return false;
+      if (!scenePBRPassReady(gl, ip) || !batch.motion && ip.attributes.instanceMatrix < 0) return false;
       const obj = batch.objects[0];
       gl.useProgram(ip.program);
       uploadFrameUniforms(ip.uniforms);
@@ -9957,12 +10018,12 @@
 	            obj.directVertices && obj.modelMatrix ? obj.modelMatrix : identityModelMatrix
 	          );
 	        }
-	        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (isSkinned) {
+	        if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
           var jointMatrices = obj.skin.jointMatrices;
           if (jointMatrices) {
-            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
+            var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
             if (jointCount > 0 && currentUniforms.jointMatrices) {
               var jointUpload = jointMatrices;
               var requiredJointFloats = jointCount * 16;
@@ -9981,11 +10042,11 @@
                   jointViews[requiredJointFloats] = jointView;
                 }
                 jointUpload = jointView.view;
-              /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+              }
               gl.uniformMatrix4fv(currentUniforms.jointMatrices, false, jointUpload);
             }
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (currentUniforms.hasSkin) {
+          }
+        } else if (currentUniforms.hasSkin) {
           gl.uniform1i(currentUniforms.hasSkin, 0);
         }
 
@@ -10044,30 +10105,30 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Joints and weights (skinned meshes only).
+        // Joints and weights (skinned meshes only).
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
 
           const directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
+          const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
           if (!bindScenePBRDirectAttribute(obj, "joints", currentAttribs.joints, 4, directJoints)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
-            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
-            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.joints);
+            gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(currentAttribs.joints);
             gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
           }
-/* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
+
           if (!bindScenePBRDirectAttribute(obj, "weights", currentAttribs.weights, 4, directWeights)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
-            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
-            /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.enableVertexAttribArray(currentAttribs.weights);
+            gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(currentAttribs.weights);
             gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else if (currentAttribs.joints >= 0) {
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.disableVertexAttribArray(currentAttribs.joints);
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ gl.disableVertexAttribArray(currentAttribs.weights);
+          }
+        } else if (currentAttribs.joints >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.joints);
+          gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
+          gl.disableVertexAttribArray(currentAttribs.weights);
           gl.vertexAttrib4f(currentAttribs.weights, 0, 0, 0, 0);
         }
 
@@ -10131,7 +10192,7 @@
 
     // Ensure the points program is compiled (lazy init).
     function ensurePointsProgram() {
-      if (pointsProgram) return pointsProgram;
+      if (pointsProgram) return scenePBRUsableProgramInfo(pointsProgram);
       pointsProgram = createScenePointsProgram(gl);
       if (!pointsProgram) {
         console.warn("[gosx] Points shader compilation failed; points will not render.");
@@ -10140,70 +10201,35 @@
     }
 
     // ensurePointsAuthoredGLProgram: compile+link a per-layer GLSL program from
-    // entry.customVertex/customFragment (synchronous API — check compile/link status).
+    // entry.customVertex/customFragment. Locations are cached after link completion.
     // Returns the program record or null (fallback to builtin with one console.warn).
+    function failPointsAuthoredGLProgram(layerID: string, stage: string) {
+      console.warn("[gosx] Points authored " + stage + " failed for layer '" + layerID + "'; falling back to builtin.");
+      pointsAuthoredGLPrograms.set(layerID, { failed: true });
+      return null;
+    }
+
     function ensurePointsAuthoredGLProgram(entry, layerID) {
-      var cached = pointsAuthoredGLPrograms.get(layerID);
-      if (cached) return cached.failed ? null : cached;
-      var vertSrc = typeof entry.customVertex === "string" ? sceneWebGLNormalizeCustomShaderSource(entry.customVertex.trim()) : "";
-      var fragSrc = typeof entry.customFragment === "string" ? sceneWebGLNormalizeCustomShaderSource(entry.customFragment.trim()) : "";
+      var vertSrc = typeof entry.customVertex === "string" ? entry.customVertex.trim() : "";
+      var fragSrc = typeof entry.customFragment === "string" ? entry.customFragment.trim() : "";
       if (!vertSrc || !fragSrc) return null;
-      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertSrc);
-      if (!vs) {
-        if (!pointsAuthoredGLFailed.get(layerID)) {
-          pointsAuthoredGLFailed.set(layerID, true);
-          console.warn("[gosx] Points authored vertex shader failed for layer '" + layerID + "'; falling back to builtin.");
-        }
-        pointsAuthoredGLPrograms.set(layerID, { failed: true });
-        return null;
-      }
-      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+      var cached = pointsAuthoredGLPrograms.get(layerID);
+      if (cached) return cached.failed ? null : scenePBRUsableProgramInfo(cached);
+      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, sceneWebGLNormalizeCustomShaderSource(vertSrc));
+      if (!vs) return failPointsAuthoredGLProgram(layerID, "vertex shader");
+      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, sceneWebGLNormalizeCustomShaderSource(fragSrc));
       if (!fs) {
         gl.deleteShader(vs);
-        if (!pointsAuthoredGLFailed.get(layerID)) {
-          pointsAuthoredGLFailed.set(layerID, true);
-          console.warn("[gosx] Points authored fragment shader failed for layer '" + layerID + "'; falling back to builtin.");
-        }
-        pointsAuthoredGLPrograms.set(layerID, { failed: true });
-        return null;
+        return failPointsAuthoredGLProgram(layerID, "fragment shader");
       }
       var prog = scenePBRLinkProgram(gl, vs, fs, "Points authored '" + layerID + "'");
-      if (!prog) {
-        if (!pointsAuthoredGLFailed.get(layerID)) {
-          pointsAuthoredGLFailed.set(layerID, true);
-          console.warn("[gosx] Points authored program link failed for layer '" + layerID + "'; falling back to builtin.");
-        }
-        pointsAuthoredGLPrograms.set(layerID, { failed: true });
-        return null;
-      }
+      if (!prog) return failPointsAuthoredGLProgram(layerID, "program link");
       // Cache attribute and uniform locations — same contract as builtin.
-      var attrs = {
-        position: gl.getAttribLocation(prog, "a_position"),
-        size: gl.getAttribLocation(prog, "a_size"),
-        color: gl.getAttribLocation(prog, "a_color"),
-      };
-      var uniforms = {
-        viewMatrix: gl.getUniformLocation(prog, "u_viewMatrix"),
-        projectionMatrix: gl.getUniformLocation(prog, "u_projectionMatrix"),
-        modelMatrix: gl.getUniformLocation(prog, "u_modelMatrix"),
-        defaultSize: gl.getUniformLocation(prog, "u_defaultSize"),
-        defaultColor: gl.getUniformLocation(prog, "u_defaultColor"),
-        hasPerVertexColor: gl.getUniformLocation(prog, "u_hasPerVertexColor"),
-        hasPerVertexSize: gl.getUniformLocation(prog, "u_hasPerVertexSize"),
-        sizeAttenuation: gl.getUniformLocation(prog, "u_sizeAttenuation"),
-        pointStyle: gl.getUniformLocation(prog, "u_pointStyle"),
-        viewportHeight: gl.getUniformLocation(prog, "u_viewportHeight"),
-        minPixelSize: gl.getUniformLocation(prog, "u_minPixelSize"),
-        maxPixelSize: gl.getUniformLocation(prog, "u_maxPixelSize"),
-        opacity: gl.getUniformLocation(prog, "u_opacity"),
-        hasFog: gl.getUniformLocation(prog, "u_hasFog"),
-        fogDensity: gl.getUniformLocation(prog, "u_fogDensity"),
-        fogColor: gl.getUniformLocation(prog, "u_fogColor"),
-      };
-      // Upload author-defined uniforms (customUniforms).
-      var record = { program: prog, vertexShader: vs, fragmentShader: fs, attributes: attrs, uniforms: uniforms };
-      pointsAuthoredGLPrograms.set(layerID, record);
-      return record;
+      var deferred = scenePBRDeferredProgramInfo(gl, prog, function() {
+        return scenePointsProgramInfo(gl, prog, vs, fs);
+      }, { vertexShader: vs, fragmentShader: fs });
+      pointsAuthoredGLPrograms.set(layerID, deferred);
+      return deferred;
     }
 
     // applyPointsAuthoredCustomUniforms: uploads entry.customUniforms to the
@@ -10398,16 +10424,8 @@
         return;
       }
 
-      // NOTE: the builtin program is intentionally NOT compiled here. Every
-      // layer prefers its own authored (Selena-compiled) GLSL program — the
-      // builtin is only a per-layer fallback for entries that ship no
-      // authored shader. Eagerly compiling it up front made one optional,
-      // rarely-needed program a single point of failure for the ENTIRE
-      // points pass: if it failed to compile (or the compile triggered a
-      // WebGL context loss on a constrained/software backend), every layer
-      // — including ones with perfectly good authored programs — silently
-      // stopped rendering. See ensurePointsProgram(), called lazily below
-      // only for entries that actually need it.
+      // Compile the builtin only for layers needing a fallback, so its
+      // failure cannot prevent valid authored layers from rendering.
 
       // Upload fog uniforms once (shared by all entries in this call).
       var env = environment || {};
@@ -10426,16 +10444,14 @@
         webglRenderTruthStats.pointsSubmitted += 1;
         // Select program: authored (GLSL) when customVertex/Fragment present, else builtin.
         var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
-        var hasAuthoredGL = (typeof entry.customVertex === "string" && entry.customVertex.trim()) &&
-                            (typeof entry.customFragment === "string" && entry.customFragment.trim());
-        var pp = hasAuthoredGL ? ensurePointsAuthoredGLProgram(entry, layerID) : null;
-        var usedAuthored = Boolean(pp);
+        var pp = ensurePointsAuthoredGLProgram(entry, layerID);
+        var usedAuthored = !!pp;
         if (!pp) pp = ensurePointsProgram();
         // Neither an authored program nor the builtin fallback compiled for
         // this layer (e.g. the builtin failed to compile in this
         // environment) — skip only this entry rather than aborting the rest
         // of the points pass.
-        if (!pp) continue;
+        if (!scenePBRPassReady(gl, pp)) continue;
         if (currentProgram !== pp.program) {
           gl.useProgram(pp.program);
           currentProgram = pp.program;
@@ -10610,7 +10626,7 @@
 
 	    // Ensure the instanced PBR program is compiled (lazy init).
 	    function ensureInstancedProgram() {
-	      if (instancedProgram) return instancedProgram;
+	      if (instancedProgram) return scenePBRUsableProgramInfo(instancedProgram);
 	      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (instancedProgramFailed) return null;
 	      instancedProgram = createScenePBRInstancedProgram(gl);
 	      if (!instancedProgram) {
@@ -10904,6 +10920,7 @@
     }
 
     function dispose() {
+      scenePBRDisposeProgramQueue(gl);
       if (skyResources.renderer) skyResources.renderer.dispose();
       if (oceanResources.renderer) oceanResources.renderer.dispose();
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
@@ -11015,7 +11032,6 @@
         gl.deleteProgram(authoredRecord.program);
       }
       pointsAuthoredGLPrograms.clear();
-      pointsAuthoredGLFailed.clear();
 
       // Clean up instanced PBR program.
       if (instancedProgram) {
@@ -11093,7 +11109,7 @@
           active: false,
           state: "not-requested",
           reason: "",
-          /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ radianceMipLevels: 0,
+          radianceMipLevels: 0,
         }, uniforms._gosxIBLDiagnostics || {}),
         textureVariantContext: {
           backend: textureVariantContext.backend,
@@ -11118,15 +11134,16 @@
       renderScenePBRSurfaces(gl, bundle, canvas, lineResources, target);
     }
 
-    const rigidImportedBatchProgram = ensureInstancedProgram();
-    const supportsRigidImportedBatches = Boolean(rigidImportedBatchProgram &&
-      rigidImportedBatchProgram.attributes && rigidImportedBatchProgram.attributes.instanceMatrix >= 0);
+    ensureInstancedProgram();
 
     var frameTimer = createSceneWebGLFrameTimer(gl);
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
-      supportsRigidImportedBatches,
+      getFailureReason: function() { return scenePBRProgramFailed(program) ? "webgl-shader-failed" : ""; },
+      get supportsRigidImportedBatches() {
+        return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
+      },
       prepareCrowdAtlas,
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads

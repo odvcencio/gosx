@@ -4,14 +4,18 @@ import test from "node:test";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 const source = readSceneRendererBackendSrc("webgl");
 function extract(name) {
-  const start = source.indexOf("    function " + name + "(");
+  const marker = "function " + name + "(";
+  const start = source.indexOf(marker);
   assert.ok(start >= 0, name);
-  const end = source.indexOf("\n    }\n", start);
-  return source.slice(start, end + 7);
+  const indent = source.slice(source.lastIndexOf("\n", start) + 1, start);
+  const end = source.indexOf("\n" + indent + "}\n", start);
+  return source.slice(start, end + indent.length + 3);
 }
+
 function harness() {
   let compilations=0;
   const context={gl:{},
@@ -19,11 +23,11 @@ function harness() {
     sceneSelenaMaterialLayout:m=>m.shaderLayout,
     scenePBRCustomUniformDeclarations:values=>Object.keys(values||{}).sort().map(k=>k+":"+ (Array.isArray(values[k])?values[k].length:"float")).join("|"),
     sceneMaterialProfileKey:m=>JSON.stringify(m),
-    customProgramCache:new Map(),selenaProgramCache:new Map(),
+    customProgramCache:new Map(),selenaProgramCache:new Map(),scenePBRProgramFailed:()=>false,
     createScenePBRCustomProgram:()=>({program:++compilations}),
     createSceneSelenaProgram:()=>({program:++compilations}),
   };
-  vm.runInNewContext(extract("ensureCustomProgram")+extract("ensureSelenaProgram"), context);
+  vm.runInNewContext(ts.transpileModule(extract("scenePBREnsureCustomProgram")+extract("scenePBREnsureSelenaProgram")+extract("ensureCustomProgram")+extract("ensureSelenaProgram"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return {context,count:()=>compilations};
 }
 test("animated Selena uniform values share one GPU program and keep skin variants separate",()=>{

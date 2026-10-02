@@ -134,7 +134,11 @@
     let clockLastFrameMS = NaN;
     let animationPaused = false;
     let animationToggle = null;
-    let animationToggleBound = false;
+
+    function onSceneProgramsReady() { scheduleRender("shader-ready"); }
+    if (typeof mount.addEventListener === "function") {
+      mount.addEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
+    }
 
     function sceneAnimationState() {
       if (motion.reducedMotion) return { wants: false, reason: "reduced-motion" };
@@ -194,10 +198,6 @@
       return { wants: false, reason: "static" };
     }
 
-    function sceneShouldAnimate() {
-      return sceneAnimationState().wants;
-    }
-
     // A material that declares a `time` uniform is animated by the per-frame
     // clock the renderer feeds (WGSL user.time / GLSL uniform float time /
     // selena `param time`), even when nothing else in the scene moves. The
@@ -217,15 +217,7 @@
       const layout = entry.shaderLayout;
       const block = layout && layout.uniformBlock;
       const fields = block && (block.fields || block.Fields);
-      if (Array.isArray(fields)) {
-        for (let i = 0; i < fields.length; i++) {
-          const field = fields[i];
-          if (field && (field.name === "time" || field.Name === "time")) {
-            return true;
-          }
-        }
-      }
-      return false;
+      return Array.isArray(fields) && fields.some(field => field && (field.name === "time" || field.Name === "time"));
     }
 
     function sceneHasTimeDrivenMaterials(state) {
@@ -306,7 +298,7 @@
       handle.setAnimationClock({timeSeconds: clockSeconds, paused: !animationPaused});
     }
     function bindSceneAnimationToggle() {
-      if (animationToggleBound || typeof document === "undefined" || !mount.closest) return;
+      if (typeof document === "undefined" || !mount.closest) return;
       const scope = mount.closest("[" + sceneAttr("control-scope") + "]");
       if (!scope || typeof scope.querySelectorAll !== "function") return;
       const toggles = scope.querySelectorAll("[" + sceneAttr("animation-toggle") + "]");
@@ -320,7 +312,6 @@
       }
       if (animationToggle && typeof animationToggle.addEventListener === "function") {
         animationToggle.addEventListener("click", onSceneAnimationToggleClick);
-        animationToggleBound = true;
       }
       publishSceneAnimationState();
     }
@@ -359,13 +350,6 @@
         sceneState._modelTextureVariantScope,
         sceneModelTextureVariantContextForRenderer(null),
       );
-      if (animationToggle && animationToggleBound &&
-          typeof animationToggle.removeEventListener === "function") {
-        animationToggle.removeEventListener("click", onSceneAnimationToggleClick);
-      }
-      if (animationToggle && animationToggle.__gosxScene3DOwner === sceneMountOwner) {
-        delete animationToggle.__gosxScene3DOwner;
-      }
       if (mount.__gosxScene3DOwner === sceneMountOwner) delete mount.__gosxScene3DOwner;
       return {};
     }
@@ -487,13 +471,9 @@
       return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     }
 
-    function sceneWaterPausedForLifecycle() {
-      return sceneWaterSystemsPaused(sceneState);
-    }
-
     function notifySceneRendererLifecycle(reason, force, disposing) {
       const active = !disposing && sceneCanRender();
-      const paused = sceneWaterPausedForLifecycle();
+      const paused = sceneWaterSystemsPaused(sceneState);
       if (!force && rendererLifecycleActive === active && rendererLifecyclePaused === paused) return;
       if (adaptiveQuality && active && !paused && (rendererLifecycleActive !== true || rendererLifecyclePaused === true)) {
         adaptiveQuality.resumePending = true;
@@ -555,15 +535,9 @@
 
     function syncSceneNodeSentinels(bundle) {
       const next = new Set();
-      collectSceneNodeSentinelIDs(next, bundle && bundle.meshObjects);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.objects);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.points);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.instancedMeshes);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.computeParticles);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.lights);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.labels);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.sprites);
-      collectSceneNodeSentinelIDs(next, bundle && bundle.html);
+      for (const key of ["meshObjects", "objects", "points", "instancedMeshes", "computeParticles", "lights", "labels", "sprites", "html"]) {
+        collectSceneNodeSentinelIDs(next, bundle && bundle[key]);
+      }
       next.forEach(function(id) {
         if (sceneNodeSentinels.has(id)) {
           return;
@@ -605,6 +579,13 @@
       }
     }
 
+    function renderSceneLayers() {
+      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
+      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
+    }
+
     const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
       if (disposed || !latestBundle || !sceneCanRender()) {
         return;
@@ -617,10 +598,7 @@
         if (disposed || !latestBundle) {
           return;
         }
-        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
-        renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-        syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
-        renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
+        renderSceneLayers();
       });
     });
 
@@ -1606,8 +1584,9 @@
 	      // device itself is still alive. webgpu-persistent-frame-error's
 	      // canvas was claimed by the (still-alive-but-broken) WebGPU
 	      // renderer exactly like webgpu-device-lost's was, so it needs the
-	      // same fresh-canvas treatment.
-	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error";
+	      // same fresh-canvas treatment. Failed PBR shaders also need a fresh
+	      // context so their teardown cannot cancel the legacy shader queue.
+	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
 	    }
 
     // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
@@ -1763,6 +1742,11 @@
       if (!renderer || !bundle) {
         return true;
       }
+      const failureReason = typeof renderer.getFailureReason === "function" ? renderer.getFailureReason() : "";
+      if (failureReason) {
+        if (fallbackSceneRenderer(failureReason)) scheduleRenderWithViewport(failureReason);
+        return false;
+      }
       let feature = "";
       if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {
         feature = "backend-declared";
@@ -1801,10 +1785,7 @@
       recordSceneWaterFrame(mount, latestBundle);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
-      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
-      renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-      syncSceneNodeFocusProxies.call(null, sceneFocusProxies, latestBundle, sceneState);
-      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
+      renderSceneLayers();
       return true;
     }
 
@@ -2970,6 +2951,14 @@
       }
     }
 
+    function finishScenePerfMeasure(name: string) {
+      const start = name + "-start", end = name + "-end";
+      performance.mark(end);
+      performance.measure(name, start, end);
+      performance.clearMarks(start);
+      performance.clearMarks(end);
+    }
+
     function renderFrame(now, reason) {
       if (initPending) {
         initReason = reason || initReason || "refresh";
@@ -3010,19 +2999,14 @@
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
-      publishSceneFrameAttr("data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
+      publishSceneFrameAttr(sceneAttr("animation-clock"), timeSeconds.toFixed(3));
       const modelAnimationDelta = lastModelAnimationTimeSeconds == null
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
       if (perfEnabled) performance.mark("scene3d-model-animations-start");
       sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion);
-      if (perfEnabled) {
-        performance.mark("scene3d-model-animations-end");
-        performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
-        performance.clearMarks("scene3d-model-animations-start");
-        performance.clearMarks("scene3d-model-animations-end");
-      }
+      if (perfEnabled) finishScenePerfMeasure("scene3d-model-animations");
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
@@ -3134,22 +3118,18 @@
       // filtered bundle.points array both the WebGPU (16a-scene-webgpu.js
       // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
       // backends draw from, so this single attribute covers both.
-      publishSceneFrameAttr("data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
-      publishSceneFrameAttr("data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
-      publishSceneFrameAttr("data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
-      publishSceneFrameAttr("data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
-      publishSceneFrameAttr("data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
-      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
-      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
-      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
-      publishSceneFrameAttr("data-gosx-scene3d-compute-quality-reduced-instances",
+      const qualityPoints = Array.isArray(latestBundle.points) ? latestBundle.points : {};
+      publishSceneFrameAttr(sceneAttr("point-quality-skipped"), String(qualityPoints.qualitySkippedCount || 0));
+      publishSceneFrameAttr(sceneAttr("point-budget-scale"), String(qualityPoints.qualityPointBudgetScale || 1));
+      publishSceneFrameAttr(sceneAttr("point-budget-authored-instances"), String(Math.max(0, qualityPoints.qualityPointAuthoredInstances || 0)));
+      publishSceneFrameAttr(sceneAttr("point-budget-draw-instances"), String(Math.max(0, qualityPoints.qualityPointDrawInstances || 0)));
+      publishSceneFrameAttr(sceneAttr("point-budget-scaled-entries"), String(Math.max(0, qualityPoints.qualityPointBudgetScaledEntries || 0)));
+      publishSceneFrameAttr(sceneAttr("compute-quality-scale"), String(computeQualityScale));
+      publishSceneFrameAttr(sceneAttr("compute-quality-source-instances"), String(computeQualitySourceInstances));
+      publishSceneFrameAttr(sceneAttr("compute-quality-active-instances"), String(computeQualityActiveInstances));
+      publishSceneFrameAttr(sceneAttr("compute-quality-reduced-instances"),
         String(Math.max(0, computeQualitySourceInstances - computeQualityActiveInstances)));
-      if (perfEnabled) {
-        performance.mark("scene3d-bundle-end");
-        performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
-        performance.clearMarks("scene3d-bundle-start");
-        performance.clearMarks("scene3d-bundle-end");
-      }
+      if (perfEnabled) finishScenePerfMeasure("scene3d-bundle");
       if (!ensureRendererCanCoverBundle(latestBundle)) {
         scheduleNextAnimationFrame();
         return;
@@ -3306,7 +3286,7 @@
         if (!upgrade) return;
         upgrade(props);
         // Force a re-render with upgraded data
-        if ((sceneShouldAnimate() && sceneCanRender())) {
+        if ((sceneAnimationState().wants && sceneCanRender())) {
           // Animation loop will pick it up
         } else {
           scheduleRender("progressive-upgrade");
@@ -3323,7 +3303,7 @@
         if (domRegionTracker) {
           domRegionTracker.configure(sceneState.postEffects);
         }
-        if ((sceneShouldAnimate() && sceneCanRender())) {
+        if ((sceneAnimationState().wants && sceneCanRender())) {
           // Animation loop will render the upgraded chain.
         } else {
           scheduleRender("deferred-postfx");
@@ -3636,6 +3616,7 @@
       dragHandle.dispose();
       pickHandle.dispose();
       sceneControlHandle.dispose();
+      if (typeof mount.removeEventListener === "function") mount.removeEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
       renderer.dispose();
       disposeSceneHTMLTextureState(htmlTextureState);
       if (typeof releaseTextureLoadListener === "function") releaseTextureLoadListener();
