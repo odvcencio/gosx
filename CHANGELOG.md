@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.57.2
+
+### Added: default response compression
+
+- Enable negotiated Brotli and gzip delivery for eligible text responses, with
+  shared encoding policy for generated sidecars, servers and edge workers.
+- Document deployment behavior and opt-out; compressed wire budgets track the
+  new default.
+
+### Added: controllable Scene3D animation clock
+
+- Mounted Scene3D handles expose `getAnimationClock` and `setAnimationClock`
+  for absolute declarative animation and shader time, including backward seeks.
+- Resume starts from the new frame baseline without adding paused wall time.
+  Stateful simulations and event-driven glTF mixers require their own replay state.
+- Refresh the docs performance receipt with hardware WebGPU/WebGL measurements
+  and update the reviewed runtime size allocations for the clock controls.
+
 ### Fixed: tiling normal maps from glTF
 
 - A `KHR_texture_transform` scale on `normalTexture` alone (a detail map that

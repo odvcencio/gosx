@@ -10,14 +10,14 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 922746,
-          "htmlWireBytes": 47053,
+          "frameworkJsWireBytes": 911765,
+          "htmlWireBytes": 40689,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 224864,
           "lazyJsWireBytes": 193007,
           "requests": 8,
-          "totalWireBytes": 1000452,
+          "totalWireBytes": 986788,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -39,14 +39,14 @@
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 24572,
-          "htmlWireBytes": 45098,
+          "frameworkJsWireBytes": 21133,
+          "htmlWireBytes": 38861,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 103416,
+          "totalWireBytes": 97110,
           "wasmWireBytes": 256
         },
         "require": [
@@ -65,14 +65,14 @@
       "/demos/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 22350,
-          "htmlWireBytes": 49829,
+          "frameworkJsWireBytes": 19327,
+          "htmlWireBytes": 43027,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 3,
-          "totalWireBytes": 97151,
+          "totalWireBytes": 90292,
           "wasmWireBytes": 256
         },
         "require": [
@@ -87,14 +87,14 @@
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 921028,
-          "htmlWireBytes": 52895,
-          "imageWireBytes": 7981,
+          "frameworkJsWireBytes": 910205,
+          "htmlWireBytes": 45604,
+          "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 224864,
           "lazyJsWireBytes": 176935,
           "requests": 7,
-          "totalWireBytes": 977191,
+          "totalWireBytes": 963063,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -106,7 +106,7 @@
           "html-shareable"
         ],
         "raise": {
-          "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
+          "imageWireBytes": "The image uses its existing WebP encoding (8,148 wire bytes) under the negotiated compression defaults; the limit includes the standard 256-byte margin.",
           "requests": "The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
@@ -119,13 +119,13 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 909557,
-          "htmlWireBytes": 97279,
+          "htmlWireBytes": 86096,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 231393,
           "lazyJsWireBytes": 176935,
           "requests": 8,
-          "totalWireBytes": 1044773,
+          "totalWireBytes": 1025545,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -147,14 +147,14 @@
       "/docs/getting-started/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 25415,
-          "htmlWireBytes": 46777,
-          "imageWireBytes": 43132,
+          "frameworkJsWireBytes": 21951,
+          "htmlWireBytes": 40336,
+          "imageWireBytes": 47935,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 1258,
           "lazyJsWireBytes": 256,
           "requests": 6,
-          "totalWireBytes": 149239,
+          "totalWireBytes": 147319,
           "wasmWireBytes": 256
         },
         "require": [
@@ -164,19 +164,22 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "imageWireBytes": "The JPEG uses its existing image encoding (47,461 wire bytes) under the negotiated compression defaults; the limit includes the standard one-percent margin."
+        }
       },
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 308427,
-          "htmlWireBytes": 48963,
+          "frameworkJsWireBytes": 303680,
+          "htmlWireBytes": 42070,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 61034,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 391808,
+          "totalWireBytes": 383391,
           "wasmWireBytes": 222126
         },
         "require": [
@@ -197,14 +200,14 @@
       "/performance/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 27462,
-          "htmlWireBytes": 44728,
+          "frameworkJsWireBytes": 23688,
+          "htmlWireBytes": 38568,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 103046,
+          "totalWireBytes": 96816,
           "wasmWireBytes": 256
         },
         "require": [
@@ -222,40 +225,22 @@
       }
     },
     "scaffold": {
-      "/stack/": {
-        "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 112854,
-          "imageWireBytes": 256,
-          "inlineScriptBytes": 110278,
-          "jsWireBytes": 256,
-          "lazyJsWireBytes": 256,
-          "requests": 2,
-          "totalWireBytes": 116819,
-          "wasmWireBytes": 256
-        },
-        "require": [
-          "no-cookie",
-          "immutable-hashed",
-          "runtime-hashed",
-          "html-shareable"
-        ]
-      },
       "/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 114855,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 28000,
+          "htmlWireBytes": 29162,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 2,
-          "totalWireBytes": 118820,
+          "totalWireBytes": 30284,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -264,23 +249,47 @@
       },
       "/counter/": {
         "limits": {
-          "totalWireBytes": 400821,
-          "frameworkJsWireBytes": 392476,
-          "jsWireBytes": 59914,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 310366,
+          "htmlWireBytes": 29171,
+          "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "cssWireBytes": 4182,
+          "jsWireBytes": 59914,
           "lazyJsWireBytes": 256,
-          "wasmWireBytes": 222126,
           "requests": 8,
-          "htmlWireBytes": 114660,
-          "imageWireBytes": 256
+          "totalWireBytes": 312592,
+          "wasmWireBytes": 222126
         },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "html-shareable"
+        ],
         "raise": {
           "frameworkJsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
           "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
           "totalWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap."
+        }
+      },
+      "/stack/": {
+        "limits": {
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 27941,
+          "htmlWireBytes": 28595,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 110278,
+          "jsWireBytes": 256,
+          "lazyJsWireBytes": 256,
+          "requests": 2,
+          "totalWireBytes": 29717,
+          "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
