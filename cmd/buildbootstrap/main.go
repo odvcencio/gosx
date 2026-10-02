@@ -56,7 +56,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	esbuild "github.com/evanw/esbuild/pkg/api"
-	"github.com/klauspost/compress/gzip"
+	"github.com/foobaz/go-zopfli/zopfli"
 	"github.com/tdewolff/minify/v2"
 	"github.com/tdewolff/minify/v2/js"
 )
@@ -693,12 +693,20 @@ type compacted struct {
 }
 
 func compactSource(body string) compacted {
-	lines := strings.Split(normalizeNewlines(body), "\n")
+	body = normalizeNewlines(body)
+	literalLines := literalSourceLines(body)
+	lines := strings.Split(body, "\n")
 	var out []string
 	var lineMap []int
 	lastBlank := false
 
 	for index, line := range lines {
+		if literalLines[index] {
+			out = append(out, line)
+			lineMap = append(lineMap, index)
+			lastBlank = false
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "//") {
 			continue
@@ -790,16 +798,13 @@ type sidecar struct {
 	bytes []byte // nil when compression does not beat the raw payload
 }
 
+// Release sidecars use an iterative DEFLATE search to reduce wire bytes.
+// The five passes only affect build time; browsers use ordinary gzip decoding.
 func gzipCompress(raw []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	w, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := w.Write(raw); err != nil {
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
+	options := zopfli.DefaultOptions()
+	options.NumIterations = 5
+	if err := zopfli.GzipCompress(&options, raw, &buf); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -1153,7 +1158,13 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 // the comparison against b.
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
-	input := built.code + "\n//# sourceMappingURL=" + dataURL
+	code := built.code
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+		code = packBuiltinGLSL(code)
+	} else if entry.name == "bootstrap-feature-scene3d-webgpu.js" {
+		code = packBuiltinPostWGSL(code)
+	}
+	input := code + "\n//# sourceMappingURL=" + dataURL
 	options := esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,

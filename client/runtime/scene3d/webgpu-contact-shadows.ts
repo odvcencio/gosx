@@ -25,7 +25,8 @@ fn normalAt(uv: vec2f, p: vec3f) -> vec3f {
     let dx = select(p - l, r - p, abs(r.z - p.z) < abs(p.z - l.z));
     let dy = select(p - b, a - p, abs(a.z - p.z) < abs(p.z - b.z));
     var n = cross(dx, dy); n = n / max(length(n), 0.000001);
-    return select(n, -n, dot(n, p) > 0.0);
+    let viewRay = select(p, vec3f(0, 0, -1), params.projection[2].w == 0.0);
+    return select(n, -n, dot(n, viewRay) > 0.0);
 }
 @fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {
     let color = textureSample(inputTex, inputSamp, uv);
@@ -60,7 +61,7 @@ function sceneWebGPUContactUniforms(effect: any, camera: any, width: number, hei
     var projection = scenePBRProjectionMatrixForCamera(camera, width / Math.max(1, height));
     var sun = (lights || []).find(function(light) { return light.kind === "directional"; });
     var direction = effect.direction || (sun ? { x: sun.directionX, y: sun.directionY, z: sun.directionZ } : { x: 0.5, y: -1, z: 0.3 });
-    var x = -sceneNumber(direction.x, 0.5), y = -sceneNumber(direction.y, -1), z = -sceneNumber(direction.z, 0.3);
+    var x = -sceneNumber(direction.x, 0), y = -sceneNumber(direction.y, 0), z = -sceneNumber(direction.z, 0);
     var length = Math.max(0.000001, Math.hypot(x, y, z));
     var data = new Float32Array(24); data.set(projection);
     data.set([(view[0] * x + view[4] * y + view[8] * z) / length,

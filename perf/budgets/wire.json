@@ -15,7 +15,7 @@
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 248404,
-          "lazyJsWireBytes": 198799,
+          "lazyJsWireBytes": 196635,
           "requests": 9,
           "totalWireBytes": 1007299,
           "wasmWireBytes": 650787
@@ -100,7 +100,7 @@
           "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 230415,
-          "lazyJsWireBytes": 198798,
+          "lazyJsWireBytes": 196635,
           "requests": 7,
           "totalWireBytes": 959647,
           "wasmWireBytes": 650787
@@ -132,7 +132,7 @@
           "imageWireBytes": 191105,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 236944,
-          "lazyJsWireBytes": 198798,
+          "lazyJsWireBytes": 196635,
           "requests": 14,
           "totalWireBytes": 1195223,
           "wasmWireBytes": 650787
@@ -257,12 +257,12 @@
           "wasmWireBytes": 256
         },
         "require": [
-          "html-compressed",
-          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
-          "html-shareable"
+          "html-shareable",
+          "html-compressed",
+          "assets-compressed"
         ]
       },
       "/counter/": {
@@ -272,19 +272,19 @@
           "htmlWireBytes": 29171,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
-          "jsWireBytes": 59902,
+          "jsWireBytes": 59914,
           "lazyJsWireBytes": 256,
           "requests": 8,
           "totalWireBytes": 304319,
           "wasmWireBytes": 213874
         },
         "require": [
-          "html-compressed",
-          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
-          "html-shareable"
+          "html-shareable",
+          "html-compressed",
+          "assets-compressed"
         ],
         "raise": {
           "frameworkJsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
@@ -306,12 +306,12 @@
           "wasmWireBytes": 256
         },
         "require": [
-          "html-compressed",
-          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
-          "html-shareable"
+          "html-shareable",
+          "html-compressed",
+          "assets-compressed"
         ]
       }
     }

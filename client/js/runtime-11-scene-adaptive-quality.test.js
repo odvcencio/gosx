@@ -26,6 +26,25 @@ const {
   readSceneMountSrc,
 } = require("./runtime-test-harness.js");
 
+for (const enabled of [false, true]) {
+  test(`Scene3D ${enabled ? "adaptive" : "fixed"} balanced startup publishes the filtered post-FX state`, () => {
+    const { api, context } = loadSceneAdaptiveQualityAPI();
+    const source = readSceneMountSrc();
+    const start = source.indexOf("function applyScenePostFXState(");
+    assert.notEqual(start, -1);
+    // Use the real publisher rather than the controller harness's stub.
+    vm.runInNewContext(source.slice(start, source.indexOf("\n  }", start) + 4), context);
+    const state = api.createSceneAdaptiveQualityState({ adaptiveQuality: enabled, qualityTier: "balanced" }, {}, { tier: "full" });
+    const mount = new FakeElement("div", null);
+    mount.setAttribute("data-gosx-scene3d-postfx", "enabled");
+    const effects = [{ kind: "ssao" }];
+    const sceneState = { postEffects: effects, _adaptiveSourcePostEffects: effects };
+    api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+    assert.equal(sceneState.postEffects.length, 0, "balanced startup removes SSAO before rendering");
+    assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "none");
+  });
+}
+
 test("Scene3D declarative status bindings expose backend fallback and quality without CSS :has()", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const scope = new FakeElement("section", null);

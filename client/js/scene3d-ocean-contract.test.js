@@ -49,5 +49,13 @@ test("ocean normalization applies defaults, clamps values, wraps direction, and 
   assert.equal(updated.ocean.waveHeight, 2, "an unrelated environment update keeps the ocean");
   assert.equal(api.normalizeSceneEnvironment({ ocean: null }, updated).ocean, null,
     "an explicit null removes the ocean");
+  const clampedEnvironment = api.normalizeSceneEnvironment({ ocean: { foam: -1, speed: -1, choppiness: -1, surf: -1 } });
+  const preserved = api.normalizeSceneEnvironment({ exposure: 2 }, clampedEnvironment);
+  for (const key of ["foam", "speed", "choppiness", "surf"]) {
+    assert.equal(preserved.ocean[key], 0, `unrelated update preserves clamped ${key}`);
+  }
+  const state = api.createSceneState({ scene: { environment: { ocean: { foam: -1, speed: -1, choppiness: -1, surf: -1 } } } });
+  api.applySceneCommands(state, [{ kind: 13, data: { exposure: 2 } }]);
+  for (const key of ["foam", "speed", "choppiness", "surf"]) assert.equal(state.environment.ocean[key], 0);
   h.renderer.dispose();
 });

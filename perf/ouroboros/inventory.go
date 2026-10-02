@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andybalholm/brotli"
@@ -990,7 +991,7 @@ func collectRuntimeHostFile(root, path string, inv *Inventory) error {
 		GzipBytes:   compressedSize(body, "gzip"),
 		BrotliBytes: compressedSize(body, "brotli"),
 	}
-	if err := parseJavaScript(body); err != nil {
+	if err := parseBrowserSource(rel, body); err != nil {
 		src.ParseError = err.Error()
 	} else {
 		src.ParseOK = true
@@ -1059,7 +1060,7 @@ func collectRuntimeSceneFile(root, path string, inv *Inventory) error {
 		GzipBytes:   compressedSize(body, "gzip"),
 		BrotliBytes: compressedSize(body, "brotli"),
 	}
-	if err := parseJavaScript(body); err != nil {
+	if err := parseBrowserSource(rel, body); err != nil {
 		src.ParseError = err.Error()
 	} else {
 		src.ParseOK = true
@@ -1089,7 +1090,7 @@ func collectIncludedFile(root, path string, inv *Inventory) error {
 		GzipBytes:   compressedSize(body, "gzip"),
 		BrotliBytes: compressedSize(body, "brotli"),
 	}
-	if err := parseJavaScript(body); err != nil {
+	if err := parseBrowserSource(rel, body); err != nil {
 		src.ParseError = err.Error()
 		inv.Structural.Gotreesitter.Failed++
 		inv.Structural.Gotreesitter.Failures = append(inv.Structural.Gotreesitter.Failures, Location{Path: rel, Line: 0, Text: err.Error()})
@@ -2575,10 +2576,44 @@ func parseBrowserSource(rel string, body []byte) error {
 	}
 }
 
-func parseWithGrammar(grammar *gotreesitter.Language, name string, body []byte) error {
+// Syntax validation depends only on the grammar and content. Revision scans
+// reuse that result while changed content is parsed again.
+var sourceParseResults = struct {
+	sync.Mutex
+	values map[sourceParseKey]string
+}{values: make(map[sourceParseKey]string)}
+
+type sourceParseKey struct {
+	hash    [sha256.Size]byte
+	grammar *gotreesitter.Language
+}
+
+func parseWithGrammar(grammar *gotreesitter.Language, name string, body []byte) (err error) {
 	if grammar == nil {
 		return fmt.Errorf("gotreesitter %s grammar is unavailable", name)
 	}
+	key := sourceParseKey{hash: sha256.Sum256(body), grammar: grammar}
+	sourceParseResults.Lock()
+	message, found := sourceParseResults.values[key]
+	sourceParseResults.Unlock()
+	if found {
+		if message != "" {
+			return errors.New(message)
+		}
+		return nil
+	}
+	defer func() {
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
+		sourceParseResults.Lock()
+		if len(sourceParseResults.values) >= 4096 {
+			clear(sourceParseResults.values)
+		}
+		sourceParseResults.values[key] = message
+		sourceParseResults.Unlock()
+	}()
 	tree, err := gotreesitter.NewParser(grammar).Parse(body)
 	if err != nil {
 		return err
@@ -2594,25 +2629,30 @@ func parseWithGrammar(grammar *gotreesitter.Language, name string, body []byte) 
 }
 
 func parseJavaScript(body []byte) error {
-	grammar := grammars.JavascriptLanguage()
-	if grammar == nil {
-		return errors.New("gotreesitter JavaScript grammar is unavailable")
-	}
-	tree, err := gotreesitter.NewParser(grammar).Parse(body)
-	if err != nil {
-		return err
-	}
-	root := tree.RootNode()
-	if root == nil {
-		return errors.New("gotreesitter returned no syntax tree")
-	}
-	if root.IsError() || root.HasError() {
-		return fmt.Errorf("syntax tree has error node %s", root.Type(grammar))
-	}
-	return nil
+	return parseWithGrammar(grammars.JavascriptLanguage(), "JavaScript", body)
+}
+
+// Repeated inventory and revision scans measure identical source content. Cache
+// only the resulting byte count, keyed by content and encoding, so edits always
+// receive a fresh measurement without retaining source buffers.
+var compressionSizes = struct {
+	sync.Mutex
+	values map[compressionSizeKey]int
+}{values: make(map[compressionSizeKey]int)}
+
+type compressionSizeKey struct {
+	hash [sha256.Size]byte
+	kind string
 }
 
 func compressedSize(body []byte, kind string) int {
+	key := compressionSizeKey{hash: sha256.Sum256(body), kind: kind}
+	compressionSizes.Lock()
+	size, found := compressionSizes.values[key]
+	compressionSizes.Unlock()
+	if found {
+		return size
+	}
 	var buf bytes.Buffer
 	switch kind {
 	case "gzip":
@@ -2624,7 +2664,14 @@ func compressedSize(body []byte, kind string) int {
 		_, _ = w.Write(body)
 		_ = w.Close()
 	}
-	return buf.Len()
+	size = buf.Len()
+	compressionSizes.Lock()
+	if len(compressionSizes.values) >= 4096 {
+		clear(compressionSizes.values)
+	}
+	compressionSizes.values[key] = size
+	compressionSizes.Unlock()
+	return size
 }
 
 func countLines(body []byte) int {

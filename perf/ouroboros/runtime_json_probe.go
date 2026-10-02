@@ -13,9 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
@@ -658,7 +660,65 @@ func runtimeJSONSourceFiles(inv *Inventory) []SourceFile {
 	return out
 }
 
+// Static sites depend on content and source metadata, not the collection root.
+// Keep detached results so repeated revision scans retain every site without
+// sharing mutable slices with callers or retaining parser trees.
+var runtimeJSONSiteResults = struct {
+	sync.Mutex
+	values map[runtimeJSONSiteKey][]RuntimeJSONStaticSite
+	sites  int
+}{values: make(map[runtimeJSONSiteKey][]RuntimeJSONStaticSite)}
+
+type runtimeJSONSiteKey struct {
+	hash [sha256.Size]byte
+	path string
+	kind string
+}
+
+func cloneRuntimeJSONSites(sites []RuntimeJSONStaticSite) []RuntimeJSONStaticSite {
+	out := slices.Clone(sites)
+	for i := range out {
+		out[i].PossiblePhases = slices.Clone(out[i].PossiblePhases)
+		out[i].PhaseEvidence = slices.Clone(out[i].PhaseEvidence)
+	}
+	return out
+}
+
 func runtimeJSONSitesForFile(src SourceFile, body []byte, gosxGlobals map[string]bool) ([]RuntimeJSONStaticSite, error) {
+	key := runtimeJSONSiteKey{hash: sha256.Sum256(body), path: src.Path, kind: src.SourceKind}
+	runtimeJSONSiteResults.Lock()
+	cached, found := runtimeJSONSiteResults.values[key]
+	runtimeJSONSiteResults.Unlock()
+	if found {
+		for _, site := range cached {
+			if site.GlobalName != "" {
+				gosxGlobals[site.GlobalName] = true
+			}
+		}
+		return cloneRuntimeJSONSites(cached), nil
+	}
+	sites, err := runtimeJSONSitesForFileUncached(src, body, gosxGlobals)
+	if err != nil {
+		return nil, err
+	}
+	if len(sites) <= 32768 {
+		detached := cloneRuntimeJSONSites(sites)
+		runtimeJSONSiteResults.Lock()
+		if len(runtimeJSONSiteResults.values) >= 4096 || runtimeJSONSiteResults.sites+len(sites) > 32768 {
+			clear(runtimeJSONSiteResults.values)
+			runtimeJSONSiteResults.sites = 0
+		}
+		if previous, exists := runtimeJSONSiteResults.values[key]; exists {
+			runtimeJSONSiteResults.sites -= len(previous)
+		}
+		runtimeJSONSiteResults.values[key] = detached
+		runtimeJSONSiteResults.sites += len(detached)
+		runtimeJSONSiteResults.Unlock()
+	}
+	return sites, nil
+}
+
+func runtimeJSONSitesForFileUncached(src SourceFile, body []byte, gosxGlobals map[string]bool) ([]RuntimeJSONStaticSite, error) {
 	switch {
 	case strings.HasSuffix(src.Path, ".go"):
 		return runtimeJSONGoSitesForFile(src, body, gosxGlobals)
@@ -671,6 +731,12 @@ func runtimeJSONSitesForFile(src SourceFile, body []byte, gosxGlobals map[string
 
 func runtimeJSONJSSitesForFile(src SourceFile, body []byte, gosxGlobals map[string]bool) ([]RuntimeJSONStaticSite, error) {
 	grammar := grammars.JavascriptLanguage()
+	switch languageForPath(src.Path) {
+	case "typescript":
+		grammar = grammars.TypescriptLanguage()
+	case "tsx":
+		grammar = grammars.TsxLanguage()
+	}
 	if grammar == nil {
 		return nil, fmt.Errorf("gotreesitter JavaScript grammar is unavailable")
 	}

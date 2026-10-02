@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -729,5 +730,76 @@ func TestRuntimeJSONProbeCoverageReportsMissingKindsAndPhases(t *testing.T) {
 	got := strings.Join(missing, ",")
 	if !strings.Contains(got, "kind:runtime-call") || !strings.Contains(got, "phase:dispatch") {
 		t.Fatalf("missing coverage = %v", missing)
+	}
+}
+
+func TestRuntimeJSONStaticSitesCoverTypedSources(t *testing.T) {
+	body := []byte(`function encode(value: string): unknown {
+		const target = window;
+		target.__gosx_payload(JSON.stringify(value));
+		return JSON.parse(value);
+	}`)
+	for _, extension := range []string{"ts", "tsx"} {
+		t.Run(extension, func(t *testing.T) {
+			globals := make(map[string]bool)
+			sites, err := runtimeJSONSitesForFile(SourceFile{Path: "client/runtime/fixture." + extension}, body, globals)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operations := make(map[string]int)
+			for _, site := range sites {
+				operations[site.Operation]++
+				if site.Symbol != "encode" {
+					t.Fatalf("owner = %q, want encode", site.Symbol)
+				}
+			}
+			if len(sites) != 3 || operations["gosx-call"] != 1 || operations["json-parse"] != 1 || operations["json-stringify"] != 1 {
+				t.Fatalf("typed source operations = %v, want one export call, parse, and stringify", operations)
+			}
+			if !globals["__gosx_payload"] {
+				t.Fatal("typed export missing from global set")
+			}
+		})
+	}
+}
+
+func TestRuntimeJSONSiteCachePreservesFreshResults(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		kind string
+		body string
+	}{
+		{"client/runtime/fixture.ts", "runtime-host", "window.__gosx_first = JSON.parse(valueJSON);"},
+		{"client/runtime/fixture.ts", "runtime-host", "window.__gosx_edited = JSON.stringify(valueJSON);"},
+		{"client/runtime/other.ts", "runtime-scene3d", "window.__gosx_first = JSON.parse(valueJSON);"},
+		{"client/runtime/fixture.ts", "embedded", "window.__gosx_first = JSON.parse(valueJSON);"},
+	} {
+		src := SourceFile{Path: tc.path, SourceKind: tc.kind}
+		freshGlobals := make(map[string]bool)
+		fresh, err := runtimeJSONSitesForFileUncached(src, []byte(tc.body), freshGlobals)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for repeat := 0; repeat < 3; repeat++ {
+			globals := make(map[string]bool)
+			globals["__gosx_existing"] = true
+			got, err := runtimeJSONSitesForFile(src, []byte(tc.body), globals)
+			if err != nil {
+				t.Fatal(err)
+			}
+			delete(globals, "__gosx_existing")
+			if !reflect.DeepEqual(got, fresh) || !reflect.DeepEqual(globals, freshGlobals) {
+				t.Fatalf("cached sites or exports differ from fresh scan for %s (%s)", tc.path, tc.kind)
+			}
+			for i := range got {
+				got[i].GlobalName = "mutated"
+				if len(got[i].PossiblePhases) > 0 {
+					got[i].PossiblePhases[0] = "mutated"
+				}
+				if len(got[i].PhaseEvidence) > 0 {
+					got[i].PhaseEvidence[0] = "mutated"
+				}
+			}
+		}
 	}
 }

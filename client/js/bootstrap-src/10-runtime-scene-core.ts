@@ -1,3 +1,11 @@
+  function sceneFallbackString(source, base, key) {
+    return typeof source[key] === "string" ? source[key] : (typeof base[key] === "string" ? base[key] : "");
+  }
+
+  function sceneFallbackNumber(source, base, key, fallback) {
+    return sceneNumber(source[key], sceneNumber(base[key], fallback));
+  }
+
   function sceneCSSVarReference(value) {
     return typeof value === "string" && /^var\(\s*--[-_a-zA-Z0-9]+\s*(?:,|\))/.test(value.trim());
   }
@@ -449,7 +457,7 @@
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
     return {
-      duration: Math.max(0, Math.round(sceneNumber(source.duration, sceneNumber(base.duration, 0)))),
+      duration: Math.max(0, Math.round(sceneFallbackNumber(source, base, "duration", 0))),
       easing: normalizeSceneEasing(source.easing || base.easing),
     };
   }
@@ -489,10 +497,10 @@
     const hasOutState = Object.prototype.hasOwnProperty.call(source, "outState");
     const hasLive = Object.prototype.hasOwnProperty.call(source, "live");
     return {
-      transition: normalizeSceneTransition(source.transition, current._transition),
-      inState: sceneCloneData(hasInState ? source.inState : current._inState),
-      outState: sceneCloneData(hasOutState ? source.outState : current._outState),
-      live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
+      _transition: normalizeSceneTransition(source.transition, current._transition),
+      _inState: sceneCloneData(hasInState ? source.inState : current._inState),
+      _outState: sceneCloneData(hasOutState ? source.outState : current._outState),
+      _live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
     };
   }
 
@@ -790,6 +798,26 @@
   }
 
 
+  function sceneMaterialString(item, current, key, routed) {
+    const value = routed ? sceneObjectMaterialValue(item, key) : item[key];
+    return typeof value === "string" ? value.trim() : (typeof current[key] === "string" ? current[key] : "");
+  }
+
+  function sceneNormalizedShaderFields(item, current, routed) {
+    const value = key => routed ? sceneObjectMaterialValue(item, key) : item[key];
+    return {
+      customVertex: typeof value("customVertex") === "string" ? value("customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof value("customFragment") === "string" ? value("customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof value("customVertexWGSL") === "string" ? value("customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof value("customFragmentWGSL") === "string" ? value("customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(value("customUniforms")) ? Object.assign({}, value("customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof value("shaderBackend") === "string" ? value("shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(value("shaderLayout")) ? sceneCloneData(value("shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSource: typeof value("shaderSource") === "string" ? value("shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      shaderSourceFiles: sceneIsPlainObject(value("shaderSourceFiles")) ? sceneCloneData(value("shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+    };
+  }
+
   function sceneNormalizeMaterialLobes(item, current) {
     const out = {};
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
@@ -808,7 +836,7 @@
     const scaleSource = sceneIsPlainObject(item.scale) ? item.scale : (sceneIsPlainObject(current.scale) ? current.scale : null);
     const vertices = sceneNormalizeMeshVertexDataCached(item.vertices);
     const kind = normalizeSceneKind(item.kind || current.kind);
-    const size = sceneNumber(item.size, sceneNumber(current.size, 1.2));
+    const size = sceneFallbackNumber(item, current, "size", 1.2);
     const points = kind === "lines"
       ? sceneLinePoints(Object.prototype.hasOwnProperty.call(item, "points") ? item.points : current.points)
       : [];
@@ -845,29 +873,29 @@
     const radialSegmentSource = Object.prototype.hasOwnProperty.call(item, "radialSegments") ? item.radialSegments : current.radialSegments;
     const tubularSegmentSource = Object.prototype.hasOwnProperty.call(item, "tubularSegments") ? item.tubularSegments : current.tubularSegments;
     const radius = sceneNumber(item.radius, sceneNumber(current.radius, lineMetrics ? lineMetrics.radius : (kind === "torus" ? 0.7 : (size / 2))));
-    const radiusTop = Math.max(0, sceneNumber(item.radiusTop, sceneNumber(current.radiusTop, radius)));
-    const radiusBottom = Math.max(0, sceneNumber(item.radiusBottom, sceneNumber(current.radiusBottom, radius)));
+    const radiusTop = Math.max(0, sceneFallbackNumber(item, current, "radiusTop", radius));
+    const radiusBottom = Math.max(0, sceneFallbackNumber(item, current, "radiusBottom", radius));
     const normalized = {
       id: item.id || current.id || ("scene-object-" + index),
       kind,
       material: typeof item.material === "string" && item.material.trim() ? item.material.trim() : (typeof current.material === "string" ? current.material : ""),
       size,
-      width: sceneNumber(item.width, sceneNumber(current.width, lineMetrics ? lineMetrics.width : size)),
-      height: sceneNumber(item.height, sceneNumber(current.height, lineMetrics ? lineMetrics.height : size)),
+      width: sceneFallbackNumber(item, current, "width", lineMetrics ? lineMetrics.width : size),
+      height: sceneFallbackNumber(item, current, "height", lineMetrics ? lineMetrics.height : size),
       depth: sceneNumber(item.depth, sceneNumber(current.depth, kind === "plane" ? sceneNumber(item.height, size) : (lineMetrics ? lineMetrics.depth : size))),
       radius,
       radiusTop,
       radiusBottom,
-      tube: Math.max(0.0001, sceneNumber(item.tube, sceneNumber(current.tube, 0.3))),
+      tube: Math.max(0.0001, sceneFallbackNumber(item, current, "tube", 0.3)),
       segments: scenePrimitiveSegmentResolution(segmentSource, kind === "sphere" || kind === "cylinder" || kind === "cone" ? 32 : 12, 3, 256),
       radialSegments: scenePrimitiveSegmentResolution(radialSegmentSource, 32, 3, 256),
       tubularSegments: scenePrimitiveSegmentResolution(tubularSegmentSource, 16, 3, 128),
       points,
       lineSegments: kind === "lines" ? sceneLineSegments(Array.isArray(item.lineSegments) ? item.lineSegments : (Array.isArray(current.lineSegments) ? current.lineSegments : item.segments), points.length) : [],
       vertices: vertices || current.vertices || null,
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
       materialKind,
       color: typeof materialColor === "string" && materialColor ? materialColor : (typeof current.color === "string" && current.color ? current.color : "#8de1ff"),
       texture,
@@ -889,11 +917,11 @@
       ...sceneNormalizeMaterialLobes(item, current),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
-      normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
-      roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
-      metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
-      occlusionMap: typeof sceneObjectMaterialValue(item, "occlusionMap") === "string" ? sceneObjectMaterialValue(item, "occlusionMap").trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
-      emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      normalMap: sceneMaterialString(item, current, "normalMap", true),
+      roughnessMap: sceneMaterialString(item, current, "roughnessMap", true),
+      metalnessMap: sceneMaterialString(item, current, "metalnessMap", true),
+      occlusionMap: sceneMaterialString(item, current, "occlusionMap", true),
+      emissiveMap: sceneMaterialString(item, current, "emissiveMap", true),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(
         sceneObjectMaterialValue(item, "textureDescriptors"),
         current.textureDescriptors,
@@ -901,15 +929,7 @@
       lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
       dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
       gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
-      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
-      shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
-      shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
-      shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      ...sceneNormalizedShaderFields(item, current, true),
       blendMode,
       _blendModeDerived: !blendExplicit,
       _renderPassDerived: !passExplicit,
@@ -926,32 +946,32 @@
       ),
       interactive: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false),
       label: typeof item.label === "string" ? item.label.trim() : (typeof current.label === "string" ? current.label.trim() : ""),
-      interactiveOrder: Math.max(0, Math.floor(sceneNumber(item.interactiveOrder, sceneNumber(current.interactiveOrder, 0)))),
+      interactiveOrder: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "interactiveOrder", 0))),
       pickable: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false)
         ? true
         : (Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable),
       visible: Object.prototype.hasOwnProperty.call(item, "visible")
         ? sceneBool(item.visible, true)
         : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
-      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
-      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
-      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      rotationX: sceneFallbackNumber(item, current, "rotationX", 0),
+      rotationY: sceneFallbackNumber(item, current, "rotationY", 0),
+      rotationZ: sceneFallbackNumber(item, current, "rotationZ", 0),
       scaleX: sceneNumber(item.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scaleX, 1))),
       scaleY: sceneNumber(item.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scaleY, 1))),
       scaleZ: sceneNumber(item.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scaleZ, 1))),
       parentMatrix: sceneNormalizeParentMatrix(item.parentMatrix, current.parentMatrix),
-      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
-      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
-      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
-      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
-      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
-      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
-      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
-      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      spinX: sceneFallbackNumber(item, current, "spinX", 0),
+      spinY: sceneFallbackNumber(item, current, "spinY", 0),
+      spinZ: sceneFallbackNumber(item, current, "spinZ", 0),
+      shiftX: sceneFallbackNumber(item, current, "shiftX", 0),
+      shiftY: sceneFallbackNumber(item, current, "shiftY", 0),
+      shiftZ: sceneFallbackNumber(item, current, "shiftZ", 0),
+      driftSpeed: sceneFallbackNumber(item, current, "driftSpeed", 0),
+      driftPhase: sceneFallbackNumber(item, current, "driftPhase", 0),
       // lineWidth: 0 means "use renderer default" (1.8px on the canvas world
       // fallback). Non-zero values come from scene.LinesGeometry.Width on the
       // Go side and flow into per-segment width buffers at bundle build time.
-      lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
+      lineWidth: sceneFallbackNumber(item, current, "lineWidth", 0),
       selected: sceneBool(Object.prototype.hasOwnProperty.call(item, "selected") ? item.selected : current.selected, false),
       // gizmoRing marks a TransformControls rotate-mode ring helper; the mount
       // layer flips its `visible` off Props.GizmoInputSignal at runtime (see
@@ -980,21 +1000,18 @@
         ? item.qualityGroup.trim()
         : (typeof current.qualityGroup === "string" ? current.qualityGroup : ""),
       outlineColor: typeof item.outlineColor === "string" && item.outlineColor ? item.outlineColor : (typeof current.outlineColor === "string" ? current.outlineColor : ""),
-      outlineWidth: sceneNumber(item.outlineWidth, sceneNumber(current.outlineWidth, 0)),
+      outlineWidth: sceneFallbackNumber(item, current, "outlineWidth", 0),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       doubleSided: sceneBool(Object.prototype.hasOwnProperty.call(item, "doubleSided") ? item.doubleSided : current.doubleSided, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       lodGroup: typeof item.lodGroup === "string" && item.lodGroup ? item.lodGroup : (typeof current.lodGroup === "string" ? current.lodGroup : ""),
-      lodLevel: Math.max(0, Math.floor(sceneNumber(item.lodLevel, sceneNumber(current.lodLevel, 0)))),
-      lodMinDistance: Math.max(0, sceneNumber(item.lodMinDistance, sceneNumber(current.lodMinDistance, 0))),
-      lodMaxDistance: Math.max(0, sceneNumber(item.lodMaxDistance, sceneNumber(current.lodMaxDistance, 0))),
+      lodLevel: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "lodLevel", 0))),
+      lodMinDistance: Math.max(0, sceneFallbackNumber(item, current, "lodMinDistance", 0)),
+      lodMaxDistance: Math.max(0, sceneFallbackNumber(item, current, "lodMaxDistance", 0)),
       skin: item.skin && typeof item.skin === "object" ? item.skin : (current.skin && typeof current.skin === "object" ? current.skin : null),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     normalized.static = sceneBool(
       Object.prototype.hasOwnProperty.call(item, "static") ? item.static : current.static,
@@ -1070,32 +1087,29 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#f3fbff"),
       groundColor: typeof item.groundColor === "string" && item.groundColor ? item.groundColor : (typeof current.groundColor === "string" ? current.groundColor : ""),
       intensity: sceneClampNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind)), 0, 6),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      directionX: sceneNumber(item.directionX, sceneNumber(current.directionX, 0)),
-      directionY: sceneNumber(item.directionY, sceneNumber(current.directionY, 0)),
-      directionZ: sceneNumber(item.directionZ, sceneNumber(current.directionZ, 0)),
-      angle: Math.max(0, Math.min(Math.PI, sceneNumber(item.angle, sceneNumber(current.angle, 0)))),
-      penumbra: sceneClamp(sceneNumber(item.penumbra, sceneNumber(current.penumbra, 0)), 0, 1),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      directionX: sceneFallbackNumber(item, current, "directionX", 0),
+      directionY: sceneFallbackNumber(item, current, "directionY", 0),
+      directionZ: sceneFallbackNumber(item, current, "directionZ", 0),
+      angle: Math.max(0, Math.min(Math.PI, sceneFallbackNumber(item, current, "angle", 0))),
+      penumbra: sceneClamp(sceneFallbackNumber(item, current, "penumbra", 0), 0, 1),
       range: Math.max(0, Math.min(256, sceneNumber(item.range, sceneNumber(current.range, (kind === "point" || kind === "spot" || kind === "rect-area") ? 6.5 : 0)))),
       decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, (kind === "point" || kind === "spot" || kind === "rect-area") ? 1.35 : 1)))),
-      width: Math.max(0, sceneNumber(item.width, sceneNumber(current.width, kind === "rect-area" ? 1 : 0))),
-      height: Math.max(0, sceneNumber(item.height, sceneNumber(current.height, kind === "rect-area" ? 1 : 0))),
+      width: Math.max(0, sceneFallbackNumber(item, current, "width", kind === "rect-area" ? 1 : 0)),
+      height: Math.max(0, sceneFallbackNumber(item, current, "height", kind === "rect-area" ? 1 : 0)),
       coefficients: Array.isArray(item.coefficients) ? item.coefficients.slice() : (Array.isArray(current.coefficients) ? current.coefficients.slice() : []),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
-      shadowBias: sceneNumber(item.shadowBias, sceneNumber(current.shadowBias, 0)),
-      shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
+      shadowBias: sceneFallbackNumber(item, current, "shadowBias", 0),
+      shadowSize: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "shadowSize", 0))),
       shadowCascades: kind === "directional"
-        ? Math.max(0, Math.min(4, Math.floor(sceneNumber(item.shadowCascades, sceneNumber(current.shadowCascades, 0)))))
+        ? Math.max(0, Math.min(4, Math.floor(sceneFallbackNumber(item, current, "shadowCascades", 0))))
         : (kind === "spot"
-          ? Math.max(0, Math.min(1, Math.floor(sceneNumber(item.shadowCascades, sceneNumber(current.shadowCascades, 0)))))
+          ? Math.max(0, Math.min(1, Math.floor(sceneFallbackNumber(item, current, "shadowCascades", 0))))
           : 0),
-      shadowSoftness: Math.max(0, sceneNumber(item.shadowSoftness, sceneNumber(current.shadowSoftness, 0))),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      shadowSoftness: Math.max(0, sceneFallbackNumber(item, current, "shadowSoftness", 0)),
+      ...lifecycle,
     };
     if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
       normalized.directionX = 0.35;
@@ -1132,37 +1146,34 @@
     const lifecycle = sceneNormalizeLifecycle(item, current);
     return {
       id: item.id || current.id || ("scene-label-" + index),
-      text: typeof item.text === "string" ? item.text : (typeof current.text === "string" ? current.text : ""),
+      text: sceneFallbackString(item, current, "text"),
       className: sceneLabelClassName(item) || sceneLabelClassName(current),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
-      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
-      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
-      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
-      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
-      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
-      maxWidth: Math.max(48, sceneNumber(item.maxWidth, sceneNumber(current.maxWidth, 180))),
-      maxLines: Math.max(0, Math.floor(sceneNumber(item.maxLines, sceneNumber(current.maxLines, 0)))),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      priority: sceneFallbackNumber(item, current, "priority", 0),
+      shiftX: sceneFallbackNumber(item, current, "shiftX", 0),
+      shiftY: sceneFallbackNumber(item, current, "shiftY", 0),
+      shiftZ: sceneFallbackNumber(item, current, "shiftZ", 0),
+      driftSpeed: sceneFallbackNumber(item, current, "driftSpeed", 0),
+      driftPhase: sceneFallbackNumber(item, current, "driftPhase", 0),
+      maxWidth: Math.max(48, sceneFallbackNumber(item, current, "maxWidth", 180)),
+      maxLines: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "maxLines", 0))),
       overflow: normalizeTextLayoutOverflow(item.overflow || current.overflow),
       font: typeof item.font === "string" && item.font ? item.font : (typeof current.font === "string" && current.font ? current.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif'),
-      lineHeight: Math.max(12, sceneNumber(item.lineHeight, sceneNumber(current.lineHeight, 18))),
+      lineHeight: Math.max(12, sceneFallbackNumber(item, current, "lineHeight", 18)),
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#ecf7ff"),
       background: typeof item.background === "string" && item.background ? item.background : (typeof current.background === "string" && current.background ? current.background : "rgba(8, 21, 31, 0.82)"),
       borderColor: typeof item.borderColor === "string" && item.borderColor ? item.borderColor : (typeof current.borderColor === "string" && current.borderColor ? current.borderColor : "rgba(141, 225, 255, 0.24)"),
-      offsetX: sceneNumber(item.offsetX, sceneNumber(current.offsetX, 0)),
-      offsetY: sceneNumber(item.offsetY, sceneNumber(current.offsetY, -14)),
-      anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, sceneNumber(current.anchorX, 0.5)))),
-      anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, sceneNumber(current.anchorY, 1)))),
+      offsetX: sceneFallbackNumber(item, current, "offsetX", 0),
+      offsetY: sceneFallbackNumber(item, current, "offsetY", -14),
+      anchorX: Math.max(0, Math.min(1, sceneFallbackNumber(item, current, "anchorX", 0.5))),
+      anchorY: Math.max(0, Math.min(1, sceneFallbackNumber(item, current, "anchorY", 1))),
       collision: normalizeSceneLabelCollision(item.collision || current.collision),
       occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
       whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace || current.whiteSpace),
       textAlign: normalizeSceneLabelAlign(item.textAlign || current.textAlign),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
   }
 
@@ -1182,37 +1193,34 @@
   function normalizeSceneSprite(sprite, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(sprite) ? sprite : {};
-    const width = Math.max(0.05, sceneNumber(item.width, sceneNumber(current.width, 1.25)));
-    const height = Math.max(0.05, sceneNumber(item.height, sceneNumber(current.height, width)));
-    const scale = Math.max(0.05, sceneNumber(item.scale, sceneNumber(current.scale, 1)));
+    const width = Math.max(0.05, sceneFallbackNumber(item, current, "width", 1.25));
+    const height = Math.max(0.05, sceneFallbackNumber(item, current, "height", width));
+    const scale = Math.max(0.05, sceneFallbackNumber(item, current, "scale", 1));
     const lifecycle = sceneNormalizeLifecycle(item, current);
     return {
       id: item.id || current.id || ("scene-sprite-" + index),
       src: typeof item.src === "string" ? item.src.trim() : (typeof current.src === "string" ? current.src : ""),
       className: sceneLabelClassName(item) || sceneLabelClassName(current),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
-      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
-      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
-      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
-      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
-      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      priority: sceneFallbackNumber(item, current, "priority", 0),
+      shiftX: sceneFallbackNumber(item, current, "shiftX", 0),
+      shiftY: sceneFallbackNumber(item, current, "shiftY", 0),
+      shiftZ: sceneFallbackNumber(item, current, "shiftZ", 0),
+      driftSpeed: sceneFallbackNumber(item, current, "driftSpeed", 0),
+      driftPhase: sceneFallbackNumber(item, current, "driftPhase", 0),
       width: width,
       height: height,
       scale: scale,
-      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
-      offsetX: sceneNumber(item.offsetX, sceneNumber(current.offsetX, 0)),
-      offsetY: sceneNumber(item.offsetY, sceneNumber(current.offsetY, 0)),
-      anchorX: sceneClamp(sceneNumber(item.anchorX, sceneNumber(current.anchorX, 0.5)), 0, 1),
-      anchorY: sceneClamp(sceneNumber(item.anchorY, sceneNumber(current.anchorY, 0.5)), 0, 1),
+      opacity: clamp01(sceneFallbackNumber(item, current, "opacity", 1)),
+      offsetX: sceneFallbackNumber(item, current, "offsetX", 0),
+      offsetY: sceneFallbackNumber(item, current, "offsetY", 0),
+      anchorX: sceneClamp(sceneFallbackNumber(item, current, "anchorX", 0.5), 0, 1),
+      anchorY: sceneClamp(sceneFallbackNumber(item, current, "anchorY", 0.5), 0, 1),
       occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
       fit: normalizeSceneSpriteFit(item.fit || current.fit),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
   }
 
@@ -1263,9 +1271,9 @@
   function normalizeSceneHTML(entry, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(entry) ? entry : {};
-    const width = Math.max(0.05, sceneNumber(item.width, sceneNumber(current.width, 1.8)));
-    const height = Math.max(0.05, sceneNumber(item.height, sceneNumber(current.height, 0.72)));
-    const scale = Math.max(0.05, sceneNumber(item.scale, sceneNumber(current.scale, 1)));
+    const width = Math.max(0.05, sceneFallbackNumber(item, current, "width", 1.8));
+    const height = Math.max(0.05, sceneFallbackNumber(item, current, "height", 0.72));
+    const scale = Math.max(0.05, sceneFallbackNumber(item, current, "scale", 1));
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const id = item.id || current.id || ("scene-html-" + index);
     const mode = normalizeSceneHTMLMode(item.mode, normalizeSceneHTMLMode(current.mode, "dom"));
@@ -1274,7 +1282,7 @@
     const fallbackReason = sceneHTMLStringField(item, current, ["fallbackReason", "degradeReason", "degradationReason"]);
     const textureWidth = sceneHTMLTextureDimension(item.textureWidth, current.textureWidth, mode === "texture" ? 512 : 0);
     const textureHeight = sceneHTMLTextureDimension(item.textureHeight, current.textureHeight, mode === "texture" ? 320 : 0);
-    const maxTexturePixels = Math.max(0, Math.floor(sceneNumber(item.maxTexturePixels, sceneNumber(current.maxTexturePixels, mode === "texture" ? 1024 * 1024 : 0))));
+    const maxTexturePixels = Math.max(0, Math.floor(sceneFallbackNumber(item, current, "maxTexturePixels", mode === "texture" ? 1024 * 1024 : 0)));
     return {
       id,
       target: sceneHTMLStringField(item, current, ["target", "targetID"]),
@@ -1289,37 +1297,34 @@
       textureHeight,
       maxTexturePixels,
       textureReady: sceneBool(Object.prototype.hasOwnProperty.call(item, "textureReady") ? item.textureReady : current.textureReady, false),
-      surfaceWidth: perspective ? sceneNumber(item.surfaceWidth, sceneNumber(current.surfaceWidth, 0)) : Math.max(0.05, sceneNumber(item.surfaceWidth, sceneNumber(current.surfaceWidth, width))),
-      surfaceHeight: perspective ? sceneNumber(item.surfaceHeight, sceneNumber(current.surfaceHeight, 0)) : Math.max(0.05, sceneNumber(item.surfaceHeight, sceneNumber(current.surfaceHeight, height))),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
-      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
-      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
-      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
-      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
-      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
-      priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
-      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
-      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
-      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
-      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
-      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      surfaceWidth: perspective ? sceneFallbackNumber(item, current, "surfaceWidth", 0) : Math.max(0.05, sceneFallbackNumber(item, current, "surfaceWidth", width)),
+      surfaceHeight: perspective ? sceneFallbackNumber(item, current, "surfaceHeight", 0) : Math.max(0.05, sceneFallbackNumber(item, current, "surfaceHeight", height)),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      rotationX: sceneFallbackNumber(item, current, "rotationX", 0),
+      rotationY: sceneFallbackNumber(item, current, "rotationY", 0),
+      rotationZ: sceneFallbackNumber(item, current, "rotationZ", 0),
+      spinX: sceneFallbackNumber(item, current, "spinX", 0),
+      spinY: sceneFallbackNumber(item, current, "spinY", 0),
+      spinZ: sceneFallbackNumber(item, current, "spinZ", 0),
+      priority: sceneFallbackNumber(item, current, "priority", 0),
+      shiftX: sceneFallbackNumber(item, current, "shiftX", 0),
+      shiftY: sceneFallbackNumber(item, current, "shiftY", 0),
+      shiftZ: sceneFallbackNumber(item, current, "shiftZ", 0),
+      driftSpeed: sceneFallbackNumber(item, current, "driftSpeed", 0),
+      driftPhase: sceneFallbackNumber(item, current, "driftPhase", 0),
       width,
       height,
       scale,
-      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
-      offsetX: sceneNumber(item.offsetX, sceneNumber(current.offsetX, 0)),
-      offsetY: sceneNumber(item.offsetY, sceneNumber(current.offsetY, 0)),
-      anchorX: sceneClamp(sceneNumber(item.anchorX, sceneNumber(current.anchorX, 0.5)), 0, 1),
-      anchorY: sceneClamp(sceneNumber(item.anchorY, sceneNumber(current.anchorY, 0.5)), 0, 1),
+      opacity: clamp01(sceneFallbackNumber(item, current, "opacity", 1)),
+      offsetX: sceneFallbackNumber(item, current, "offsetX", 0),
+      offsetY: sceneFallbackNumber(item, current, "offsetY", 0),
+      anchorX: sceneClamp(sceneFallbackNumber(item, current, "anchorX", 0.5), 0, 1),
+      anchorY: sceneClamp(sceneFallbackNumber(item, current, "anchorY", 0.5), 0, 1),
       occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
       pointerEvents: normalizeSceneHTMLPointerEvents(item.pointerEvents, normalizeSceneHTMLPointerEvents(current.pointerEvents, "none")),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
   }
 
@@ -1572,10 +1577,7 @@
       lodMinDistance: Math.max(0, sceneNumber(current.lodMinDistance, 0)),
       lodMaxDistance: Math.max(0, sceneNumber(current.lodMaxDistance, 0)),
       materialOverride: Object.keys(override).length > 0 ? override : null,
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     if (hasAnimationSpeed) {
       model.animationSpeed = Math.max(0, sceneNumber(current.animationSpeed, 1));
@@ -1685,10 +1687,7 @@
       instances: rawInstances.map(function(instance, instanceIndex) {
         return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
       }),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
       if (sceneObjectMaterialHasValue(raw, key)) {
@@ -2033,20 +2032,20 @@
       size: sceneClampNumberOrCSSVar(item.size, sceneNumber(current.size, 1), 0, Number.POSITIVE_INFINITY),
       minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
-      blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneFallbackNumber(item, current, "opacity", 1)),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
       maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
-      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
-      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      rotationX: sceneFallbackNumber(item, current, "rotationX", 0),
+      rotationY: sceneFallbackNumber(item, current, "rotationY", 0),
+      rotationZ: sceneFallbackNumber(item, current, "rotationZ", 0),
       parentMatrix: sceneNormalizeParentMatrix(item.parentMatrix, current.parentMatrix),
-      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
-      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
-      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
+      spinX: sceneFallbackNumber(item, current, "spinX", 0),
+      spinY: sceneFallbackNumber(item, current, "spinY", 0),
+      spinZ: sceneFallbackNumber(item, current, "spinZ", 0),
       // qualityGroup: G2 QualityLadder layer tagging (see scene.Points.QualityGroup
       // / QualityRung.LayerGroups). Empty means unconditionally visible at
       // every rung — a ladder only gates points layers that opted in. Read by
@@ -2068,12 +2067,12 @@
       // handed to the GPU to fail — and the render loop still ran, because
       // sceneHasTimeDrivenMaterials reads the RAW props scene. The result
       // was a field that redrew an identical frame forever.
-      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      customVertex: sceneFallbackString(item, current, "customVertex"),
+      customFragment: sceneFallbackString(item, current, "customFragment"),
+      customVertexWGSL: sceneFallbackString(item, current, "customVertexWGSL"),
+      customFragmentWGSL: sceneFallbackString(item, current, "customFragmentWGSL"),
+      shaderBackend: sceneFallbackString(item, current, "shaderBackend"),
+      shaderSource: sceneFallbackString(item, current, "shaderSource"),
       customUniforms: sceneIsPlainObject(item.customUniforms)
         ? Object.assign({}, item.customUniforms)
         : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
@@ -2083,10 +2082,7 @@
       shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles)
         ? sceneCloneData(item.shaderSourceFiles)
         : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     if (positions === current.positions && current._cachedPos) {
       normalized._cachedPos = current._cachedPos;
@@ -2137,7 +2133,7 @@
       ? sceneCloneData(item.attributes)
       : (Object.prototype.hasOwnProperty.call(current, "attributes") ? current.attributes : undefined);
     const kind = normalizeSceneKind(item.kind || current.kind);
-    const size = Math.max(0.0001, sceneNumber(item.size, sceneNumber(current.size, 1.2)));
+    const size = Math.max(0.0001, sceneFallbackNumber(item, current, "size", 1.2));
     const radius = Math.max(0.0001, sceneNumber(item.radius, sceneNumber(current.radius, kind === "torus" ? 0.7 : (size * 0.5))));
     const segmentSource = Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments;
     const radialSegmentSource = Object.prototype.hasOwnProperty.call(item, "radialSegments") ? item.radialSegments : current.radialSegments;
@@ -2169,19 +2165,19 @@
         sceneObjectMaterialHasValue(item, "renderPass"));
     const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
-      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
+      count: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "count", 0))),
       kind,
       material: Object.prototype.hasOwnProperty.call(item, "material")
         ? sceneCloneData(item.material)
         : (Object.prototype.hasOwnProperty.call(current, "material") ? current.material : undefined),
       size,
-      width: Math.max(0.0001, sceneNumber(item.width, sceneNumber(current.width, size))),
-      height: Math.max(0.0001, sceneNumber(item.height, sceneNumber(current.height, size))),
-      depth: Math.max(0.0001, sceneNumber(item.depth, sceneNumber(current.depth, size))),
+      width: Math.max(0.0001, sceneFallbackNumber(item, current, "width", size)),
+      height: Math.max(0.0001, sceneFallbackNumber(item, current, "height", size)),
+      depth: Math.max(0.0001, sceneFallbackNumber(item, current, "depth", size)),
       radius,
-      radiusTop: Math.max(0, sceneNumber(item.radiusTop, sceneNumber(current.radiusTop, radius))),
-      radiusBottom: Math.max(0, sceneNumber(item.radiusBottom, sceneNumber(current.radiusBottom, radius))),
-      tube: Math.max(0.0001, sceneNumber(item.tube, sceneNumber(current.tube, 0.3))),
+      radiusTop: Math.max(0, sceneFallbackNumber(item, current, "radiusTop", radius)),
+      radiusBottom: Math.max(0, sceneFallbackNumber(item, current, "radiusBottom", radius)),
+      tube: Math.max(0.0001, sceneFallbackNumber(item, current, "tube", 0.3)),
       segments: scenePrimitiveSegmentResolution(segmentSource, 32, 3, 256),
       radialSegments: scenePrimitiveSegmentResolution(radialSegmentSource, 32, 3, 256),
       tubularSegments: scenePrimitiveSegmentResolution(tubularSegmentSource, 16, 3, 128),
@@ -2206,11 +2202,11 @@
       ...sceneNormalizeMaterialLobes(item, current),
       alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       detail: sceneNormalizeDetail(sceneObjectMaterialValue(item, "detail") === undefined ? current.detail : sceneObjectMaterialValue(item, "detail")),
-      normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
-      roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
-      metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
-      occlusionMap: typeof sceneObjectMaterialValue(item, "occlusionMap") === "string" ? sceneObjectMaterialValue(item, "occlusionMap").trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
-      emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      normalMap: sceneMaterialString(item, current, "normalMap", true),
+      roughnessMap: sceneMaterialString(item, current, "roughnessMap", true),
+      metalnessMap: sceneMaterialString(item, current, "metalnessMap", true),
+      occlusionMap: sceneMaterialString(item, current, "occlusionMap", true),
+      emissiveMap: sceneMaterialString(item, current, "emissiveMap", true),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(
         sceneObjectMaterialValue(item, "textureDescriptors"),
         current.textureDescriptors,
@@ -2230,15 +2226,7 @@
       lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
       dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
       gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
-      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
-      shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
-      shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
-      shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      ...sceneNormalizedShaderFields(item, current, true),
       // Elio GPU cull kernel (WebGPU compute cull pass). Carried end-to-end
       // from scene/scene_ir.go InstancedMeshIR.Cull* fields through the
       // manifest; without these, updateInstancedCullSystems in
@@ -2256,10 +2244,7 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
     // underlying array reference is unchanged (i.e. item.transforms was
@@ -2287,21 +2272,21 @@
     const item = sceneIsPlainObject(raw) ? raw : {};
     return {
       kind: typeof item.kind === "string" && item.kind ? item.kind : (typeof current.kind === "string" ? current.kind : "point"),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
-      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
-      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
-      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
-      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
-      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
-      radius: Math.max(0, sceneNumber(item.radius, sceneNumber(current.radius, 0))),
-      rate: Math.max(0, sceneNumber(item.rate, sceneNumber(current.rate, 0))),
-      lifetime: Math.max(0.01, sceneNumber(item.lifetime, sceneNumber(current.lifetime, 1))),
-      arms: Math.max(0, Math.floor(sceneNumber(item.arms, sceneNumber(current.arms, 0)))),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      rotationX: sceneFallbackNumber(item, current, "rotationX", 0),
+      rotationY: sceneFallbackNumber(item, current, "rotationY", 0),
+      rotationZ: sceneFallbackNumber(item, current, "rotationZ", 0),
+      spinX: sceneFallbackNumber(item, current, "spinX", 0),
+      spinY: sceneFallbackNumber(item, current, "spinY", 0),
+      spinZ: sceneFallbackNumber(item, current, "spinZ", 0),
+      radius: Math.max(0, sceneFallbackNumber(item, current, "radius", 0)),
+      rate: Math.max(0, sceneFallbackNumber(item, current, "rate", 0)),
+      lifetime: Math.max(0.01, sceneFallbackNumber(item, current, "lifetime", 1)),
+      arms: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "arms", 0))),
       wind: sceneNumberOrCSSVar(item.wind, sceneNumber(current.wind, 0)),
-      scatter: Math.max(0, sceneNumber(item.scatter, sceneNumber(current.scatter, 0))),
+      scatter: Math.max(0, sceneFallbackNumber(item, current, "scatter", 0)),
     };
   }
 
@@ -2310,11 +2295,11 @@
     const item = sceneIsPlainObject(raw) ? raw : {};
     return {
       kind: typeof item.kind === "string" && item.kind ? item.kind : (typeof current.kind === "string" ? current.kind : ""),
-      strength: sceneNumber(item.strength, sceneNumber(current.strength, 0)),
-      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
-      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
-      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
-      frequency: sceneNumber(item.frequency, sceneNumber(current.frequency, 0)),
+      strength: sceneFallbackNumber(item, current, "strength", 0),
+      x: sceneFallbackNumber(item, current, "x", 0),
+      y: sceneFallbackNumber(item, current, "y", 0),
+      z: sceneFallbackNumber(item, current, "z", 0),
+      frequency: sceneFallbackNumber(item, current, "frequency", 0),
       id: current.id || ("scene-force-" + index),
     };
   }
@@ -2330,7 +2315,7 @@
       sizeEnd: sceneClampNumberOrCSSVar(item.sizeEnd, sceneNumber(current.sizeEnd, sceneNumber(current.size, 1)), 0, Number.POSITIVE_INFINITY),
       opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
       opacityEnd: sceneClampNumberOrCSSVar(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)), 0, 1),
-      blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneFallbackNumber(item, current, "opacity", 1)),
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
       minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
@@ -2346,17 +2331,14 @@
     const forcesSource = Array.isArray(item.forces) ? item.forces : (Array.isArray(current.forces) ? current.forces : []);
     const normalized = {
       id: item.id || current.id || ("scene-particles-" + index),
-      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
+      count: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "count", 0))),
       emitter: normalizeSceneComputeEmitter(emitterSource, current.emitter),
       forces: forcesSource.map(function(force, forceIndex) {
         return normalizeSceneComputeForce(force, forceIndex, Array.isArray(current.forces) ? current.forces[forceIndex] : null);
       }),
       material: normalizeSceneComputeMaterial(materialSource, current.material),
-      bounds: Math.max(0, sceneNumber(item.bounds, sceneNumber(current.bounds, 0))),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      bounds: Math.max(0, sceneFallbackNumber(item, current, "bounds", 0)),
+      ...lifecycle,
     };
     [
       "computeWGSL", "computeEntry", "computeBackend", "computeWGSLRef",
@@ -2386,12 +2368,10 @@
 
   const SCENE_WATER_SHADER_STRING_FIELDS = [
     "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
-    "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
-    "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
-    "seedWGSLRef", "dropWGSLRef", "displacementWGSLRef", "simulationWGSLRef", "normalWGSLRef", "causticsWGSLRef",
-    "poolVertexWGSLRef", "poolFragmentWGSLRef", "surfaceVertexWGSLRef", "surfaceFragmentWGSLRef", "surfaceBelowFragmentWGSLRef",
-    "objectShadowWGSLRef", "objectMeshShadowVertexWGSLRef", "objectMeshShadowFragmentWGSLRef",
+    "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL", "objectShadowWGSL",
+    "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
   ];
+  SCENE_WATER_SHADER_STRING_FIELDS.push(...SCENE_WATER_SHADER_STRING_FIELDS.map(name => name + "Ref"));
 
   function sceneWaterSystemID(entry, index) {
     return entry && typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + index);
@@ -2458,32 +2438,32 @@
       interactionProfile: typeof item.interactionProfile === "string" ? item.interactionProfile : (typeof current.interactionProfile === "string" ? current.interactionProfile : ""),
       interactionTarget: typeof item.interactionTarget === "string" ? item.interactionTarget : (typeof current.interactionTarget === "string" ? current.interactionTarget : ""),
       interactionObject: typeof item.interactionObject === "string" ? item.interactionObject : (typeof current.interactionObject === "string" ? current.interactionObject : ""),
-      resolution: Math.max(1, Math.floor(sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))),
-      surfaceResolution: Math.max(2, Math.floor(sceneNumber(item.surfaceResolution, sceneNumber(current.surfaceResolution, sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))))),
+      resolution: Math.max(1, Math.floor(sceneFallbackNumber(item, current, "resolution", 256))),
+      surfaceResolution: Math.max(2, Math.floor(sceneNumber(item.surfaceResolution, sceneNumber(current.surfaceResolution, sceneFallbackNumber(item, current, "resolution", 256))))),
       poolShape: typeof item.poolShape === "string" && item.poolShape ? item.poolShape : (typeof current.poolShape === "string" ? current.poolShape : "Box"),
-      poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
-      poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),
-      poolLength: Math.max(0.001, sceneNumber(item.poolLength, sceneNumber(current.poolLength, 1))),
+      poolWidth: Math.max(0.001, sceneFallbackNumber(item, current, "poolWidth", 1)),
+      poolHeight: Math.max(0.001, sceneFallbackNumber(item, current, "poolHeight", 1)),
+      poolLength: Math.max(0.001, sceneFallbackNumber(item, current, "poolLength", 1)),
       renderPool: sceneBool(Object.prototype.hasOwnProperty.call(item, "renderPool") ? item.renderPool : current.renderPool, true),
-      cornerRadius: Math.max(0, sceneNumber(item.cornerRadius, sceneNumber(current.cornerRadius, 0))),
-      waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 1)),
-      damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.995)),
-      normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
-      seedDrops: Math.max(0, Math.floor(sceneNumber(item.seedDrops, sceneNumber(current.seedDrops, 0)))),
-      dropRadius: Math.max(0, sceneNumber(item.dropRadius, sceneNumber(current.dropRadius, 0.03))),
-      dropStrength: sceneNumber(item.dropStrength, sceneNumber(current.dropStrength, 0.01)),
-      dropEventID: Math.max(0, Math.floor(sceneNumber(item.dropEventID, sceneNumber(current.dropEventID, 0)))),
-      dropX: Math.max(-1, Math.min(1, sceneNumber(item.dropX, sceneNumber(current.dropX, 0)))),
-      dropZ: Math.max(-1, Math.min(1, sceneNumber(item.dropZ, sceneNumber(current.dropZ, 0)))),
-      dropEventRadius: Math.max(0, sceneNumber(item.dropEventRadius, sceneNumber(current.dropEventRadius, sceneNumber(item.dropRadius, sceneNumber(current.dropRadius, 0.03))))),
-      dropEventStrength: sceneNumber(item.dropEventStrength, sceneNumber(current.dropEventStrength, sceneNumber(item.dropStrength, sceneNumber(current.dropStrength, 0.01)))),
-      tileTexture: typeof item.tileTexture === "string" ? item.tileTexture : (typeof current.tileTexture === "string" ? current.tileTexture : ""),
-      cubeMap: typeof item.cubeMap === "string" ? item.cubeMap : (typeof current.cubeMap === "string" ? current.cubeMap : ""),
-      shallowColor: typeof item.shallowColor === "string" ? item.shallowColor : (typeof current.shallowColor === "string" ? current.shallowColor : ""),
-      deepColor: typeof item.deepColor === "string" ? item.deepColor : (typeof current.deepColor === "string" ? current.deepColor : ""),
-      aboveWaterColorR: sceneNumber(item.aboveWaterColorR, sceneNumber(current.aboveWaterColorR, 0)),
-      aboveWaterColorG: sceneNumber(item.aboveWaterColorG, sceneNumber(current.aboveWaterColorG, 0)),
-      aboveWaterColorB: sceneNumber(item.aboveWaterColorB, sceneNumber(current.aboveWaterColorB, 0)),
+      cornerRadius: Math.max(0, sceneFallbackNumber(item, current, "cornerRadius", 0)),
+      waveSpeed: sceneFallbackNumber(item, current, "waveSpeed", 1),
+      damping: sceneFallbackNumber(item, current, "damping", 0.995),
+      normalScale: sceneFallbackNumber(item, current, "normalScale", 1),
+      seedDrops: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "seedDrops", 0))),
+      dropRadius: Math.max(0, sceneFallbackNumber(item, current, "dropRadius", 0.03)),
+      dropStrength: sceneFallbackNumber(item, current, "dropStrength", 0.01),
+      dropEventID: Math.max(0, Math.floor(sceneFallbackNumber(item, current, "dropEventID", 0))),
+      dropX: Math.max(-1, Math.min(1, sceneFallbackNumber(item, current, "dropX", 0))),
+      dropZ: Math.max(-1, Math.min(1, sceneFallbackNumber(item, current, "dropZ", 0))),
+      dropEventRadius: Math.max(0, sceneNumber(item.dropEventRadius, sceneNumber(current.dropEventRadius, sceneFallbackNumber(item, current, "dropRadius", 0.03)))),
+      dropEventStrength: sceneNumber(item.dropEventStrength, sceneNumber(current.dropEventStrength, sceneFallbackNumber(item, current, "dropStrength", 0.01))),
+      tileTexture: sceneFallbackString(item, current, "tileTexture"),
+      cubeMap: sceneFallbackString(item, current, "cubeMap"),
+      shallowColor: sceneFallbackString(item, current, "shallowColor"),
+      deepColor: sceneFallbackString(item, current, "deepColor"),
+      aboveWaterColorR: sceneFallbackNumber(item, current, "aboveWaterColorR", 0),
+      aboveWaterColorG: sceneFallbackNumber(item, current, "aboveWaterColorG", 0),
+      aboveWaterColorB: sceneFallbackNumber(item, current, "aboveWaterColorB", 0),
       causticsResolution: Math.max(0, Math.floor(sceneNumber(item.causticsResolution, sceneNumber(current.causticsResolution, 0)))),
       objectTextureResolution: Math.max(0, Math.floor(sceneNumber(item.objectTextureResolution, sceneNumber(current.objectTextureResolution, 0)))),
       objectTextureResolutionMode: typeof item.objectTextureResolutionMode === "string" ? item.objectTextureResolutionMode : (typeof current.objectTextureResolutionMode === "string" ? current.objectTextureResolutionMode : ""),
@@ -2494,28 +2474,28 @@
       refraction: sceneBool(Object.prototype.hasOwnProperty.call(item, "refraction") ? item.refraction : current.refraction, true),
       paused: sceneBool(Object.prototype.hasOwnProperty.call(item, "paused") ? item.paused : current.paused, false),
       followCamera: sceneBool(Object.prototype.hasOwnProperty.call(item, "followCamera") ? item.followCamera : current.followCamera, false),
-      lightDirectionX: sceneNumber(item.lightDirectionX, sceneNumber(current.lightDirectionX, 2)),
-      lightDirectionY: sceneNumber(item.lightDirectionY, sceneNumber(current.lightDirectionY, 3)),
-      lightDirectionZ: sceneNumber(item.lightDirectionZ, sceneNumber(current.lightDirectionZ, -1)),
-      activeObject: typeof item.activeObject === "string" ? item.activeObject : (typeof current.activeObject === "string" ? current.activeObject : ""),
-      objectKind: typeof item.objectKind === "string" ? item.objectKind : (typeof current.objectKind === "string" ? current.objectKind : ""),
-      objectX: sceneNumber(item.objectX, sceneNumber(current.objectX, 0)),
-      objectY: sceneNumber(item.objectY, sceneNumber(current.objectY, 0)),
-      objectZ: sceneNumber(item.objectZ, sceneNumber(current.objectZ, 0)),
+      lightDirectionX: sceneFallbackNumber(item, current, "lightDirectionX", 2),
+      lightDirectionY: sceneFallbackNumber(item, current, "lightDirectionY", 3),
+      lightDirectionZ: sceneFallbackNumber(item, current, "lightDirectionZ", -1),
+      activeObject: sceneFallbackString(item, current, "activeObject"),
+      objectKind: sceneFallbackString(item, current, "objectKind"),
+      objectX: sceneFallbackNumber(item, current, "objectX", 0),
+      objectY: sceneFallbackNumber(item, current, "objectY", 0),
+      objectZ: sceneFallbackNumber(item, current, "objectZ", 0),
       objectPreviousSet: sceneBool(Object.prototype.hasOwnProperty.call(item, "objectPreviousSet") ? item.objectPreviousSet : current.objectPreviousSet, false),
       objectPreviousX: sceneNumber(item.objectPreviousX, sceneNumber(current.objectPreviousX, 0)),
-      objectPreviousY: sceneNumber(item.objectPreviousY, sceneNumber(current.objectPreviousY, 0)),
-      objectPreviousZ: sceneNumber(item.objectPreviousZ, sceneNumber(current.objectPreviousZ, 0)),
-      objectRadius: Math.max(0, sceneNumber(item.objectRadius, sceneNumber(current.objectRadius, 0))),
-      objectHalfSizeX: Math.max(0, sceneNumber(item.objectHalfSizeX, sceneNumber(current.objectHalfSizeX, 0))),
-      objectHalfSizeY: Math.max(0, sceneNumber(item.objectHalfSizeY, sceneNumber(current.objectHalfSizeY, 0))),
-      objectHalfSizeZ: Math.max(0, sceneNumber(item.objectHalfSizeZ, sceneNumber(current.objectHalfSizeZ, 0))),
-      objectDriftX: sceneNumber(item.objectDriftX, sceneNumber(current.objectDriftX, 0)),
-      objectDriftY: sceneNumber(item.objectDriftY, sceneNumber(current.objectDriftY, 0)),
-      objectDriftZ: sceneNumber(item.objectDriftZ, sceneNumber(current.objectDriftZ, 0)),
-      objectBobAmplitude: Math.max(0, sceneNumber(item.objectBobAmplitude, sceneNumber(current.objectBobAmplitude, 0))),
-      objectBobSpeed: Math.max(0, sceneNumber(item.objectBobSpeed, sceneNumber(current.objectBobSpeed, 0))),
-      objectDisplacementScale: Math.max(0, sceneNumber(item.objectDisplacementScale, sceneNumber(current.objectDisplacementScale, 1))),
+      objectPreviousY: sceneFallbackNumber(item, current, "objectPreviousY", 0),
+      objectPreviousZ: sceneFallbackNumber(item, current, "objectPreviousZ", 0),
+      objectRadius: Math.max(0, sceneFallbackNumber(item, current, "objectRadius", 0)),
+      objectHalfSizeX: Math.max(0, sceneFallbackNumber(item, current, "objectHalfSizeX", 0)),
+      objectHalfSizeY: Math.max(0, sceneFallbackNumber(item, current, "objectHalfSizeY", 0)),
+      objectHalfSizeZ: Math.max(0, sceneFallbackNumber(item, current, "objectHalfSizeZ", 0)),
+      objectDriftX: sceneFallbackNumber(item, current, "objectDriftX", 0),
+      objectDriftY: sceneFallbackNumber(item, current, "objectDriftY", 0),
+      objectDriftZ: sceneFallbackNumber(item, current, "objectDriftZ", 0),
+      objectBobAmplitude: Math.max(0, sceneFallbackNumber(item, current, "objectBobAmplitude", 0)),
+      objectBobSpeed: Math.max(0, sceneFallbackNumber(item, current, "objectBobSpeed", 0)),
+      objectDisplacementScale: Math.max(0, sceneFallbackNumber(item, current, "objectDisplacementScale", 1)),
       objectDisplacementSpheres: normalizeSceneWaterDisplacementSpheres(item.objectDisplacementSpheres, current.objectDisplacementSpheres),
       // objectDisplacementEvents/dropEvents: bounded one-shot event queues
       // (id-tagged) consumed by the WebGL/WebGPU water renderers to replay
@@ -2675,18 +2655,18 @@
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(item.ior, current.ior),
-      normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
+      normalScale: sceneFallbackNumber(item, current, "normalScale", 1),
       normalUVScale: sceneNormalUVScale(item.normalUVScale, current.normalUVScale),
-      occlusionStrength: clamp01(sceneNumber(item.occlusionStrength, sceneNumber(current.occlusionStrength, 1))),
+      occlusionStrength: clamp01(sceneFallbackNumber(item, current, "occlusionStrength", 1)),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
       detail: sceneNormalizeDetail(item.detail === undefined ? current.detail : item.detail),
-      normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
-      roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
-      metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
-      occlusionMap: typeof item.occlusionMap === "string" ? item.occlusionMap.trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
-      emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      normalMap: sceneMaterialString(item, current, "normalMap", false),
+      roughnessMap: sceneMaterialString(item, current, "roughnessMap", false),
+      metalnessMap: sceneMaterialString(item, current, "metalnessMap", false),
+      occlusionMap: sceneMaterialString(item, current, "occlusionMap", false),
+      emissiveMap: sceneMaterialString(item, current, "emissiveMap", false),
       textureDescriptors: normalizeSceneMaterialTextureDescriptors(item.textureDescriptors, current.textureDescriptors),
       blendMode,
       _blendModeDerived: !blendExplicit,
@@ -2700,24 +2680,16 @@
       ),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
       lineDash: sceneBool(Object.prototype.hasOwnProperty.call(item, "lineDash") ? item.lineDash : current.lineDash, false),
-      dashSize: sceneNumber(item.dashSize, sceneNumber(current.dashSize, 0)),
-      gapSize: sceneNumber(item.gapSize, sceneNumber(current.gapSize, 0)),
-      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
-      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
-      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
-      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
-      customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
-      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend.trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
-      shaderLayout: sceneIsPlainObject(item.shaderLayout) ? sceneCloneData(item.shaderLayout) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
-      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource.trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
-      shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles) ? sceneCloneData(item.shaderSourceFiles) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      dashSize: sceneFallbackNumber(item, current, "dashSize", 0),
+      gapSize: sceneFallbackNumber(item, current, "gapSize", 0),
+      ...sceneNormalizedShaderFields(item, current, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       // Screen-space floor/cap a named material may declare for the point
       // layers bound to it. A GLB-derived layer carries no Points struct of
       // its own, so the material is its only route to a pixel floor — and
       // without one an attenuated layer scintillates as it moves.
-      minPixelSize: sceneNumber(item.minPixelSize, sceneNumber(current.minPixelSize, 0)),
-      maxPixelSize: sceneNumber(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0)),
+      minPixelSize: sceneFallbackNumber(item, current, "minPixelSize", 0),
+      maxPixelSize: sceneFallbackNumber(item, current, "maxPixelSize", 0),
       variantKey: typeof item._variantKey === "string" ? item._variantKey : (typeof current.variantKey === "string" ? current.variantKey : ""),
       _colorSpecified: colorSpecified || current._colorSpecified === true,
       _opacitySpecified: opacitySpecified || current._opacitySpecified === true,
@@ -2821,22 +2793,14 @@
     // applyCommands (a progressive post-FX upgrade, say) arrived at the renderer
     // with no shader and rendered nothing. Preserve everything the caller
     // supplied, then overlay the normalized built-in knobs.
-    const normalized = {
-      kind,
-      threshold: sceneNumberOrCSSVar(item.threshold, sceneNumber(current.threshold, 0)),
-      intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
-      radius: sceneNumberOrCSSVar(item.radius, sceneNumber(current.radius, 0)),
-      scale: sceneNumberOrCSSVar(item.scale, sceneNumber(current.scale, 0)),
-      bias: sceneNumberOrCSSVar(item.bias, sceneNumber(current.bias, 0)),
-      saturation: sceneNumberOrCSSVar(item.saturation, sceneNumber(current.saturation, 0)),
-      contrast: sceneNumberOrCSSVar(item.contrast, sceneNumber(current.contrast, 0)),
-      exposure: sceneNumberOrCSSVar(item.exposure, sceneNumber(current.exposure, 0)),
-      focusDistance: sceneNumberOrCSSVar(item.focusDistance, sceneNumber(current.focusDistance, 0)),
-      aperture: sceneNumberOrCSSVar(item.aperture, sceneNumber(current.aperture, 0)),
-      maxBlur: sceneNumberOrCSSVar(item.maxBlur, sceneNumber(current.maxBlur, 0)),
-      mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
+    const normalized = { kind };
+    for (const key of "threshold intensity radius scale bias saturation contrast exposure focusDistance aperture maxBlur".split(" ")) {
+      Reflect.set(normalized, key, sceneNumberOrCSSVar(item[key], sceneNumber(current[key], 0)));
+    }
+    Object.assign(normalized, {
+      mode: sceneFallbackString(item, current, "mode"),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
-    };
+    });
     if (kind === SCENE_POST_BLOOM) normalized.mode = normalized.mode.trim().toLowerCase() === "mip" ? "mip" : "";
     if (kind === "godRays" || kind === "grain") return sceneAtmospherePostEffect(Object.assign({}, current, item, {kind}));
     return Object.assign({}, current, item, normalized);
@@ -2881,12 +2845,10 @@
 
   function normalizeSceneQualityRung(raw, index) {
     const item = sceneIsPlainObject(raw) ? raw : {};
-    const postEffects = Array.isArray(item.postEffects)
-      ? item.postEffects.filter(function(v) { return typeof v === "string" && v.trim() !== ""; }).map(function(v) { return v.trim(); })
+    const strings = key => Array.isArray(item[key])
+      ? item[key].filter(v => typeof v === "string" && v.trim() !== "").map(v => v.trim())
       : [];
-    const layerGroups = Array.isArray(item.layerGroups)
-      ? item.layerGroups.filter(function(v) { return typeof v === "string" && v.trim() !== ""; }).map(function(v) { return v.trim(); })
-      : [];
+    const postEffects = strings("postEffects"), layerGroups = strings("layerGroups");
     return {
       name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : ("rung-" + index),
       postEffects: postEffects,
@@ -3015,21 +2977,21 @@
     const kind = normalizeSceneCameraKind(raw.kind, base.kind);
     return {
       kind,
-      x: sceneNumber(raw.x, sceneNumber(base.x, 0)),
-      y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
-      z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
-      rotationX: sceneNumber(raw.rotationX, sceneNumber(base.rotationX, 0)),
-      rotationY: sceneNumber(raw.rotationY, sceneNumber(base.rotationY, 0)),
-      rotationZ: sceneNumber(raw.rotationZ, sceneNumber(base.rotationZ, 0)),
-      fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
-      portraitFOV: sceneNumber(raw.portraitFOV, sceneNumber(base.portraitFOV, 0)),
-      left: sceneNumber(raw.left, sceneNumber(base.left, 0)),
-      right: sceneNumber(raw.right, sceneNumber(base.right, 0)),
-      top: sceneNumber(raw.top, sceneNumber(base.top, 0)),
-      bottom: sceneNumber(raw.bottom, sceneNumber(base.bottom, 0)),
-      zoom: sceneNumber(raw.zoom, sceneNumber(base.zoom, 1)),
-      near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
-      far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
+      x: sceneFallbackNumber(raw, base, "x", 0),
+      y: sceneFallbackNumber(raw, base, "y", 0),
+      z: sceneFallbackNumber(raw, base, "z", 6),
+      rotationX: sceneFallbackNumber(raw, base, "rotationX", 0),
+      rotationY: sceneFallbackNumber(raw, base, "rotationY", 0),
+      rotationZ: sceneFallbackNumber(raw, base, "rotationZ", 0),
+      fov: sceneFallbackNumber(raw, base, "fov", 75),
+      portraitFOV: sceneFallbackNumber(raw, base, "portraitFOV", 0),
+      left: sceneFallbackNumber(raw, base, "left", 0),
+      right: sceneFallbackNumber(raw, base, "right", 0),
+      top: sceneFallbackNumber(raw, base, "top", 0),
+      bottom: sceneFallbackNumber(raw, base, "bottom", 0),
+      zoom: sceneFallbackNumber(raw, base, "zoom", 1),
+      near: sceneFallbackNumber(raw, base, "near", 0.05),
+      far: sceneFallbackNumber(raw, base, "far", 128),
     };
   }
 
@@ -3128,18 +3090,12 @@
   function normalizeSceneOcean(raw) {
     if (!sceneIsPlainObject(raw)) return null;
     const number = key => sceneNumber(raw[key], 0);
-    const parameter = (key, fallback, minimum, maximum) => {
-      const value = number(key);
-      return value === 0 ? fallback : Math.max(minimum, Math.min(maximum, value));
-    };
-    const color = (key, fallback) => {
-      const value = typeof raw[key] === "string" ? raw[key].trim() : "";
-      return value || fallback;
-    };
-    let windDirection = number("windDirection") % 360;
+    const parameter = (key, fallback, minimum, maximum) => Math.max(minimum, Math.min(maximum, number(key) || fallback));
+    const color = (key, fallback) => sceneEnvironmentText(raw, key).trim() || fallback;
+    let windDirection = number("windDirection") % 360 || 0;
     if (windDirection < 0) windDirection += 360;
     const source = sceneIsPlainObject(raw.bathymetry) ? raw.bathymetry : null;
-    if (windDirection === 0) windDirection = 0;
+    // The fallback above canonicalizes negative zero before wrapping.
     let bathymetry = null;
     if (source) {
       const src = typeof source.src === "string" ? source.src.trim() : "";
@@ -3172,33 +3128,37 @@
     return out;
   }
 
+  function sceneEnvironmentText(source, key) {
+    return typeof source[key] === "string" ? source[key] : "";
+  }
+
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
     const lifecycle = sceneNormalizeLifecycle(source, base);
+    const has = key => Object.prototype.hasOwnProperty.call(source, key);
+    const text = key => sceneEnvironmentText(source, key) || sceneEnvironmentText(base, key);
+    const scalar = (key, minimum, maximum) => sceneClampNumberOrCSSVar(source[key], sceneNumber(base[key], 0), minimum, maximum);
     const haze = Object.prototype.hasOwnProperty.call(source, "haze") ? source.haze : base.haze;
     const environment = {
-      ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
-      ambientIntensity: sceneClampNumberOrCSSVar(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0), 0, 4),
-      skyColor: typeof source.skyColor === "string" && source.skyColor ? source.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
-      skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
-      groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
-      groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
-      envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
+      ambientColor: text("ambientColor"),
+      ambientIntensity: scalar("ambientIntensity", 0, 4),
+      skyColor: text("skyColor"),
+      skyIntensity: scalar("skyIntensity", 0, 4),
+      groundColor: text("groundColor"),
+      groundIntensity: scalar("groundIntensity", 0, 4),
+      envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
-      sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
-      ocean: normalizeSceneOcean(Object.prototype.hasOwnProperty.call(source, "ocean") ? source.ocean : base.ocean),
+      sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
       haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
-      envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
-      envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
-      exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
-      toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
-      fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
-      fogDensity: sceneClampNumberOrCSSVar(source.fogDensity, sceneNumber(base.fogDensity, 0), 0, Number.POSITIVE_INFINITY),
-      _transition: lifecycle.transition,
-      _inState: lifecycle.inState,
-      _outState: lifecycle.outState,
-      _live: lifecycle.live,
+      envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
+      envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
+      exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
+      toneMapping: text("toneMapping"),
+      fogColor: text("fogColor"),
+      fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
+      ...lifecycle,
       specified: false,
     };
     environment.specified = Boolean(raw || base.specified) && (
@@ -3215,7 +3175,7 @@
       environment.fogColor ||
       environment.fogDensity !== 0 ||
       environment.toneMapping ||
-      Object.prototype.hasOwnProperty.call(source, "exposure")
+      has("exposure")
     );
     // Cache env content hash for scenePBRLightsHash dirty-tracking.
     // Same rationale as _lightHash above — avoids re-walking fields on
@@ -3230,13 +3190,13 @@
   function sceneResolveLightingEnvironment(environment, hasLights) {
     const base = environment && typeof environment === "object" && Object.prototype.hasOwnProperty.call(environment, "specified")
       ? {
-        ambientColor: typeof environment.ambientColor === "string" ? environment.ambientColor : "",
+        ambientColor: sceneEnvironmentText(environment, "ambientColor"),
         ambientIntensity: sceneClampNumberOrCSSVar(environment.ambientIntensity, 0, 0, 4),
-        skyColor: typeof environment.skyColor === "string" ? environment.skyColor : "",
+        skyColor: sceneEnvironmentText(environment, "skyColor"),
         skyIntensity: sceneClampNumberOrCSSVar(environment.skyIntensity, 0, 0, 4),
-        groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
+        groundColor: sceneEnvironmentText(environment, "groundColor"),
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
-        envMap: typeof environment.envMap === "string" ? environment.envMap : "",
+        envMap: sceneEnvironmentText(environment, "envMap"),
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
@@ -3245,8 +3205,8 @@
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
-        toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
-        fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",
+        toneMapping: sceneEnvironmentText(environment, "toneMapping"),
+        fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
         specified: Boolean(environment.specified),
       }

@@ -47,7 +47,7 @@ function sceneContactShadowLight(effect: any, lights: any[], view: Float32Array)
         var sun = (lights || []).find(function(light) { return light.kind === "directional"; });
         direction = sun ? { x: sun.directionX, y: sun.directionY, z: sun.directionZ } : { x: 0.5, y: -1, z: 0.3 };
     }
-    var x = -sceneNumber(direction.x, 0.5), y = -sceneNumber(direction.y, -1), z = -sceneNumber(direction.z, 0.3);
+    var x = -sceneNumber(direction.x, 0), y = -sceneNumber(direction.y, 0), z = -sceneNumber(direction.z, 0);
     var length = Math.hypot(x, y, z);
     if (length < 0.000001) return [0, 1, 0];
     return [(view[0] * x + view[4] * y + view[8] * z) / length,

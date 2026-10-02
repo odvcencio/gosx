@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/andybalholm/brotli v1.2.2
 	github.com/evanw/esbuild v0.28.1
+	github.com/foobaz/go-zopfli v0.0.0-20260611111302-2b73a4c8c2e9
 	github.com/klauspost/compress v1.19.0
 	github.com/odvcencio/gotreesitter v0.50.1
 	github.com/tdewolff/minify/v2 v2.24.13

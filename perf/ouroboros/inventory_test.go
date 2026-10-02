@@ -2,6 +2,7 @@ package ouroboros
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/andybalholm/brotli"
 )
 
 func TestCollectRecordsScopeRatchetsAndOverlayEvidence(t *testing.T) {
@@ -1142,5 +1145,95 @@ func copyTree(t *testing.T, from, to string) {
 	})
 	if err != nil {
 		t.Fatalf("copy tree %s -> %s: %v", from, to, err)
+	}
+}
+
+func TestRuntimeSourceCollectorsUseTypeScriptGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		collect func(string, string, *Inventory) error
+	}{
+		{"host", collectRuntimeHostFile},
+		{"scene3d", collectRuntimeSceneFile},
+		{"bootstrap", collectIncludedFile},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, source := range []struct {
+				name  string
+				body  string
+				valid bool
+			}{
+				{"typed", "export function identity<T>(value: T): T { return value; }\n", true},
+				{"broken", "export function broken(value: ) {\n", false},
+			} {
+				t.Run(source.name, func(t *testing.T) {
+					root := t.TempDir()
+					rel := "client/runtime/" + tc.name + "/fixture.ts"
+					writeFile(t, root, rel, source.body)
+					inv := &Inventory{}
+					inv.Totals.ByExtension = make(map[string]int)
+					if err := tc.collect(root, filepath.Join(root, rel), inv); err != nil {
+						t.Fatal(err)
+					}
+					files := append(inv.Files.Sidecars, inv.Files.Included...)
+					if len(files) != 1 {
+						t.Fatalf("collected files = %d, want 1", len(files))
+					}
+					file := files[0]
+					if file.ParseOK != source.valid || (file.ParseError == "") != source.valid {
+						t.Fatalf("parse result = (%v, %q), want valid=%v", file.ParseOK, file.ParseError, source.valid)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestCompressedSizeTracksContentAndEncoding(t *testing.T) {
+	for _, body := range [][]byte{
+		[]byte(strings.Repeat("first source body\n", 100)),
+		[]byte(strings.Repeat("edited source with different content\n", 100)),
+		nil,
+	} {
+		for _, kind := range []string{"gzip", "brotli"} {
+			var fresh bytes.Buffer
+			if kind == "gzip" {
+				writer := gzip.NewWriter(&fresh)
+				if _, err := writer.Write(body); err != nil {
+					t.Fatal(err)
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writer := brotli.NewWriterLevel(&fresh, brotli.BestCompression)
+				if _, err := writer.Write(body); err != nil {
+					t.Fatal(err)
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for repeat := 0; repeat < 2; repeat++ {
+				if got := compressedSize(body, kind); got != fresh.Len() {
+					t.Fatalf("%s size = %d, want fresh measurement %d", kind, got, fresh.Len())
+				}
+			}
+		}
+	}
+}
+
+func TestParseSourceResultsTrackGrammarAndContent(t *testing.T) {
+	typed := []byte("const value: string = 'ready';\n")
+	for repeat := 0; repeat < 2; repeat++ {
+		if err := parseBrowserSource("fixture.ts", typed); err != nil {
+			t.Fatal(err)
+		}
+		if err := parseJavaScript(typed); err == nil {
+			t.Fatal("JavaScript grammar accepted typed declaration")
+		}
+		if err := parseBrowserSource("fixture.ts", []byte("const value: = 'broken';\n")); err == nil {
+			t.Fatal("edited invalid declaration accepted")
+		}
 	}
 }

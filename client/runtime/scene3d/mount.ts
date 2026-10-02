@@ -2940,7 +2940,7 @@
     // points path draws from state, not the bundle lists).
     function sceneFrameHasContent(bundle) {
       if (bundle) {
-        if ((bundle.environment && bundle.environment.sky) || Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
+        if ((bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) || Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
           return true;
         }
         if ((Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0)
@@ -3426,7 +3426,9 @@
       if (setModelsCommands) {
         cancelSceneProgressiveModelLifecycle(sceneState);
       }
+      const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
+      if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
         domRegionTracker.configure(sceneState.postEffects);

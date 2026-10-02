@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   createBoardWebGPUHarness, createWebGLRendererForPost, makePointsBundle,
+  createContext, FakeElement, runScript, freshFeatureBundleSource, flushAsyncWork, bootstrapRuntimeSource, installManualRAF, flushSceneInitialFrameBoundary,
 } = require("./runtime-test-harness.js");
 
 // A normalized ocean record (normalizeSceneOcean applies these defaults).
@@ -57,7 +58,6 @@ test("the ocean survives scene state and per-frame lighting resolution into the 
 test("WebGPU draws the ocean in the direct path with premultiplied alpha and restores the frame group", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
   const bundle = makePointsBundle(null); bundle.points = [];
-  bundle.environment.sky = { mode: "physical" };
   bundle.environment.ocean = oceanRecord();
   h.canvas.width = h.canvas.height = 64;
   h.renderer.render(bundle, { width: 64, height: 64 });
@@ -73,9 +73,11 @@ test("WebGPU draws the ocean in the direct path with premultiplied alpha and res
   bundle.environment.ocean = oceanRecord({ bathymetry: { src: "/missing.png", minX: 0, minZ: 0, maxX: 1, maxZ: 1, minHeight: 0, maxHeight: 1 } });
   h.renderer.render(bundle, { width: 64, height: 64 });
   assert.match(h.mount.getAttribute("data-gosx-scene3d-ocean"), /^bathymetry-/);
+  const passesBeforeRemoval = h.fake.state.renderPasses.length;
   bundle.environment.ocean = null;
   h.renderer.render(bundle, { width: 64, height: 64 });
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-ocean"), "none");
+  assert.ok(h.fake.state.renderPasses.length > passesBeforeRemoval, "ocean removal presents a cleared frame");
   h.renderer.dispose();
 });
 
@@ -94,10 +96,62 @@ test("WebGL draws the ocean after opaque geometry from the gl_VertexID grid", ()
   gl.drawArrays = (mode, first, count) => { draws.push(count); return drawArrays(mode, first, count); };
   const bundle = makePointsBundle(null); bundle.points = [];
   bundle.environment.ocean = oceanRecord();
+  bundle.worldMeshPositions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  bundle.worldMeshNormals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  bundle.worldMeshColors = new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  bundle.materials = [{ kind: "standard", color: "#ffffff", opacity: 0.5, transparent: true, blendMode: "alpha" }];
+  bundle.meshObjects = [{ id: "translucent", vertexOffset: 0, vertexCount: 3, materialIndex: 0 }];
   h.renderer.render(bundle, { width: 320, height: 180 });
   assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface");
   assert.ok(draws.includes(192 * 256 * 6) || draws.includes(96 * 128 * 6), `grid draw, got ${draws}`);
   assert.equal(enabled.has(gl.CULL_FACE), true, "culling is restored");
+  const oceanProgram = gl.programMatching("u_ocean[35]");
+  const meshDraw = gl.ops.find(op => op[0] === "drawArrays" && op[3] === 3);
+  assert.ok(meshDraw, "translucent triangle draws after the ocean");
+  assert.notEqual(meshDraw[4], oceanProgram.id, "translucent mesh uses its own shader");
+  bundle.meshObjects = [];
+  const clearsBeforeRemoval = gl.ops.filter(op => op[0] === "clear").length;
+  bundle.environment.ocean = null;
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "none");
+  assert.ok(gl.ops.filter(op => op[0] === "clear").length > clearsBeforeRemoval, "ocean removal clears the frame");
   assert.deepEqual(h.warnLog, []);
   h.renderer.dispose();
+});
+
+
+
+test("ocean-only mounts reveal their first rendered content", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "ocean-reveal";
+  mount.setAttribute("data-gosx-scene3d-reveal-class", "ocean-ready");
+  const env = createContext({ elements: [mount], enableWebGPU: true,
+    navigatorGPU: { requestAdapter: async () => ({ requestDevice: async () => ({
+      lost: new Promise(() => {}), features: new Set(), limits: {},
+    }) }), getPreferredCanvasFormat: () => "rgba8unorm" },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: freshFeatureBundleSource("engines") },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": { text: `
+        window.__gosx_scene3d_webgpu_api = { createRenderer: function() {
+          return { kind: "webgpu", diagnostics: function() { return {}; }, render: function() {}, dispose: function() {} };
+        } };` },
+    },
+    manifest: { runtime: { path: "/gosx/runtime.wasm" }, engines: [{
+      id: "ocean-reveal-engine", component: "GoSXScene3D", kind: "surface", mountId: mount.id, jsExport: "GoSXScene3D",
+      props: { width: 320, height: 180, preferWebGPU: true, preferWebGL: false, scene: { environment: { ocean: {} } } },
+    }] },
+  });
+  const revealedClasses = new Set();
+  env.document.documentElement.classList = { add: value => revealedClasses.add(value), remove: value => revealedClasses.delete(value), contains: value => revealedClasses.has(value) };
+  const timers = require("./runtime-test-harness.js").installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-revealed"), "true", JSON.stringify(env.consoleLogs));
+  assert.ok(env.document.documentElement.classList.contains("ocean-ready"));
 });
