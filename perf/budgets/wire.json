@@ -69,7 +69,7 @@
       "/demos/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 19378,
+          "frameworkJsWireBytes": 19327,
           "htmlWireBytes": 43027,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 110278,
@@ -215,7 +215,7 @@
       "/performance/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 23715,
+          "frameworkJsWireBytes": 23688,
           "htmlWireBytes": 38405,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
