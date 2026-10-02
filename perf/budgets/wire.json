@@ -10,14 +10,14 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 919436,
-          "htmlWireBytes": 46947,
+          "frameworkJsWireBytes": 908455,
+          "htmlWireBytes": 40583,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 221825,
           "lazyJsWireBytes": 186021,
           "requests": 8,
-          "totalWireBytes": 997036,
+          "totalWireBytes": 983372,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -32,14 +32,14 @@
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 24993,
-          "htmlWireBytes": 44862,
+          "frameworkJsWireBytes": 21554,
+          "htmlWireBytes": 38625,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 103180,
+          "totalWireBytes": 96874,
           "wasmWireBytes": 256
         },
         "require": [
@@ -57,14 +57,14 @@
       "/demos/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 22350,
-          "htmlWireBytes": 49829,
+          "frameworkJsWireBytes": 19327,
+          "htmlWireBytes": 43027,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 3,
-          "totalWireBytes": 97151,
+          "totalWireBytes": 90292,
           "wasmWireBytes": 256
         },
         "require": [
@@ -79,14 +79,14 @@
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 917718,
-          "htmlWireBytes": 52789,
-          "imageWireBytes": 7981,
+          "frameworkJsWireBytes": 906895,
+          "htmlWireBytes": 45498,
+          "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 221825,
           "lazyJsWireBytes": 169789,
           "requests": 7,
-          "totalWireBytes": 973775,
+          "totalWireBytes": 959647,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -98,7 +98,7 @@
           "html-shareable"
         ],
         "raise": {
-          "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
+          "imageWireBytes": "The image uses its existing WebP encoding (8,148 wire bytes) under the negotiated compression defaults; the limit includes the standard 256-byte margin.",
           "requests": "The accessible Scene3D poster adds one image request to the initial page load (6 to 7)."
         }
       },
@@ -106,13 +106,13 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 906247,
-          "htmlWireBytes": 97174,
+          "htmlWireBytes": 85991,
           "imageWireBytes": 25909,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 228354,
           "lazyJsWireBytes": 169789,
           "requests": 8,
-          "totalWireBytes": 1041358,
+          "totalWireBytes": 1022130,
           "wasmWireBytes": 665060
         },
         "require": [
@@ -127,14 +127,14 @@
       "/docs/getting-started/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 25415,
-          "htmlWireBytes": 46777,
-          "imageWireBytes": 43132,
+          "frameworkJsWireBytes": 21951,
+          "htmlWireBytes": 40336,
+          "imageWireBytes": 47935,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 1258,
           "lazyJsWireBytes": 256,
           "requests": 6,
-          "totalWireBytes": 149239,
+          "totalWireBytes": 147319,
           "wasmWireBytes": 256
         },
         "require": [
@@ -144,19 +144,22 @@
           "immutable-hashed",
           "runtime-hashed",
           "html-shareable"
-        ]
+        ],
+        "raise": {
+          "imageWireBytes": "The JPEG uses its existing image encoding (47,461 wire bytes) under the negotiated compression defaults; the limit includes the standard one-percent margin."
+        }
       },
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 307212,
-          "htmlWireBytes": 48963,
+          "frameworkJsWireBytes": 302465,
+          "htmlWireBytes": 42070,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 61022,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 390593,
+          "totalWireBytes": 382176,
           "wasmWireBytes": 222126
         },
         "require": [
@@ -171,14 +174,14 @@
       "/performance/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 27462,
-          "htmlWireBytes": 44565,
+          "frameworkJsWireBytes": 23688,
+          "htmlWireBytes": 38405,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 102883,
+          "totalWireBytes": 96653,
           "wasmWireBytes": 256
         },
         "require": [
@@ -194,18 +197,20 @@
     "scaffold": {
       "/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 114855,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 28000,
+          "htmlWireBytes": 29162,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 2,
-          "totalWireBytes": 118820,
+          "totalWireBytes": 30284,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -214,18 +219,20 @@
       },
       "/counter/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 392464,
-          "htmlWireBytes": 114660,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 310354,
+          "htmlWireBytes": 29171,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 59902,
           "lazyJsWireBytes": 256,
           "requests": 8,
-          "totalWireBytes": 400809,
+          "totalWireBytes": 312580,
           "wasmWireBytes": 222126
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",
@@ -234,18 +241,20 @@
       },
       "/stack/": {
         "limits": {
-          "cssWireBytes": 4182,
-          "frameworkJsWireBytes": 110278,
-          "htmlWireBytes": 112854,
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 27941,
+          "htmlWireBytes": 28595,
           "imageWireBytes": 256,
           "inlineScriptBytes": 110278,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 2,
-          "totalWireBytes": 116819,
+          "totalWireBytes": 29717,
           "wasmWireBytes": 256
         },
         "require": [
+          "html-compressed",
+          "assets-compressed",
           "no-cookie",
           "immutable-hashed",
           "runtime-hashed",

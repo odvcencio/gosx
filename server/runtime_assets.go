@@ -5,12 +5,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/island"
 )
 
@@ -135,7 +135,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFile(w, r, fsPath)
+		serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
@@ -143,7 +143,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
-			serveRuntimeFile(w, r, fsPath)
+			serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
 			return
 		}
 	}
@@ -151,14 +151,14 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	if fsPath, ok := runtimeCompatSourcePath(root, name); ok {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFile(w, r, fsPath)
+		serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
 	if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFile(w, r, fsPath)
+		serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
@@ -174,24 +174,29 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
+	serveRuntimeFileWithCompression(w, r, fsPath, true)
+}
+
+func serveRuntimeFileWithCompression(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
 	// Preserve the media type of a compiled program when serving its compressed
 	// sidecar; otherwise ServeFile infers a type from the .gz or .br filename.
 	if strings.EqualFold(filepath.Ext(fsPath), ".gxi") {
 		setRuntimeContentType(w.Header(), fsPath)
 	}
-	if requestAcceptsBrotli(r) {
+	if compression {
+		addAcceptEncodingVary(w.Header())
+	}
+	if compression && canServeCompressedFile(r) && requestAcceptsBrotli(r) {
 		if brPath := fsPath + ".br"; isFile(brPath) {
 			w.Header().Set("Content-Encoding", "br")
-			w.Header().Add("Vary", "Accept-Encoding")
 			setRuntimeContentType(w.Header(), fsPath)
 			http.ServeFile(w, r, brPath)
 			return
 		}
 	}
-	if requestAcceptsGzip(r) {
+	if compression && canServeCompressedFile(r) && requestAcceptsGzip(r) {
 		if gzPath := fsPath + ".gz"; isFile(gzPath) {
 			w.Header().Set("Content-Encoding", "gzip")
-			w.Header().Add("Vary", "Accept-Encoding")
 			setRuntimeContentType(w.Header(), fsPath)
 			http.ServeFile(w, r, gzPath)
 			return
@@ -212,29 +217,7 @@ func requestAcceptsEncoding(r *http.Request, encoding string) bool {
 	if r == nil {
 		return false
 	}
-	encoding = strings.ToLower(strings.TrimSpace(encoding))
-	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		fields := strings.Split(part, ";")
-		token := strings.ToLower(strings.TrimSpace(fields[0]))
-		if token == "" {
-			continue
-		}
-		if token != encoding {
-			continue
-		}
-		for _, param := range fields[1:] {
-			key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
-			if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
-				continue
-			}
-			q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-			if err == nil && q <= 0 {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return httpcompress.Accepts(strings.Join(r.Header.Values("Accept-Encoding"), ","), encoding)
 }
 
 func setRuntimeContentType(h http.Header, fsPath string) {
