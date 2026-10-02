@@ -698,6 +698,7 @@ const budgets = [
   // Persistent hub connections then add 2,002 / 661 / 517 bytes (approved
   // exception under decision 0014).
   // Combined startup readiness and normal-map sampling: 1798114 raw, 498565 gzip, 399741 Brotli bytes.
+  // Mixed-mesh sizing adds 17 raw bytes; main's existing targets and governed allowances stay fixed.
   { file: "bootstrap.js", raw: 1_732_900, gzip: 482_300, brotli: 383_700 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -2360,7 +2361,9 @@ const routeBudgets = [
     // The focus layer is created lazily and its helpers avoid implicit-any parameters (arguments[n]); targets re-raised to the measured size plus about 150 bytes of headroom.
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     raw: 1_160_600,
-    gzip: 314_500,
+    // Mixed-mesh sizing measures 330,235 gzip bytes, 10 over the previous hard limit.
+    // Allocate only 100 bytes to this target; governed allowance remains fixed.
+    gzip: 314_600,
     brotli: 262_900, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
