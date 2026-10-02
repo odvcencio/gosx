@@ -646,12 +646,20 @@ type compacted struct {
 }
 
 func compactSource(body string) compacted {
-	lines := strings.Split(normalizeNewlines(body), "\n")
+	body = normalizeNewlines(body)
+	literalLines := literalSourceLines(body)
+	lines := strings.Split(body, "\n")
 	var out []string
 	var lineMap []int
 	lastBlank := false
 
 	for index, line := range lines {
+		if literalLines[index] {
+			out = append(out, line)
+			lineMap = append(lineMap, index)
+			lastBlank = false
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "//") {
 			continue
@@ -1093,7 +1101,11 @@ func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error
 // the comparison against b.
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
-	input := built.code + "\n//# sourceMappingURL=" + dataURL
+	code := built.code
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" || entry.name == "bootstrap.js" {
+		code = packBuiltinGLSL(code)
+	}
+	input := code + "\n//# sourceMappingURL=" + dataURL
 	result := esbuild.Transform(input, esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,

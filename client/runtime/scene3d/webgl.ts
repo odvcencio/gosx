@@ -1707,8 +1707,7 @@
         },
         uniforms: {
           crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
-          lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
-          modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+          ...scenePBRProgramLocations(gl, program, "lightViewProjection modelMatrix"),
         },
       };
     });
@@ -1740,11 +1739,7 @@
       return {
         attributes: scenePBRProgramLocations(gl, program, "position joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState", true),
         uniforms: {
-          crowdAtlas: gl.getUniformLocation(program, "u_crowdAtlas"),
-          crowdClipTable: gl.getUniformLocation(program, "u_crowdClipTable"),
-          now: gl.getUniformLocation(program, "u_now"),
-          motionExtrapolationSeconds: gl.getUniformLocation(program, "u_motionExtrapolationSeconds"),
-          lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+          ...scenePBRProgramLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds lightViewProjection"),
         },
       };
     });
@@ -2138,19 +2133,7 @@
   // Compile and link a post-processing shader program from the shared
   // vertex shader and a specific fragment shader source.
   function createScenePostProgram(gl, fragmentSource) {
-    var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POST_VERTEX_SOURCE);
-    if (!vs) return null;
-    var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fs) {
-      gl.deleteShader(vs);
-      return null;
-    }
-
-    var prog = scenePBRLinkProgram(gl, vs, fs, "Post-process shader");
-    if (!prog) return null;
-    return scenePBRDeferredProgramInfo(gl, prog, function() {
-      return { program: prog, vertexShader: vs, fragmentShader: fs };
-    }, { vertexShader: vs, fragmentShader: fs });
+    return scenePBRCreateProgramInfo(gl, SCENE_POST_VERTEX_SOURCE, fragmentSource, "Post-process shader", function() { return {}; });
   }
 
   function sceneWebGLNormalizeCustomShaderSource(source) {
@@ -2176,18 +2159,7 @@
   function createSceneCustomPostProgram(gl, vertexSource, fragmentSource) {
     vertexSource = sceneWebGLNormalizeCustomShaderSource(vertexSource);
     fragmentSource = sceneWebGLNormalizeCustomShaderSource(fragmentSource);
-    var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
-    if (!vs) return null;
-    var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fs) {
-      gl.deleteShader(vs);
-      return null;
-    }
-    var prog = scenePBRLinkProgram(gl, vs, fs, "Custom post shader");
-    if (!prog) return null;
-    return scenePBRDeferredProgramInfo(gl, prog, function() {
-      return { program: prog, vertexShader: vs, fragmentShader: fs };
-    }, { vertexShader: vs, fragmentShader: fs });
+    return scenePBRCreateProgramInfo(gl, vertexSource, fragmentSource, "Custom post shader", function() { return {}; });
   }
 
   // Dispose an FBO and its attachments.
@@ -2460,14 +2432,10 @@
       if (!spec || !spec.fragment) return null;
       var vsSrc = spec.vertex || sharedVertex;
       if (!vsSrc) return null;
-      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vsSrc);
-      if (!vs) return null;
-      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, spec.fragment);
-      if (!fs) { gl.deleteShader(vs); return null; }
-      var prog = scenePBRLinkProgram(gl, vs, fs, "Water sim (" + name + ")");
-      gl.deleteShader(vs);
-      gl.deleteShader(fs);
-      if (!prog) return null;
+      var compiled = scenePBRBuildProgram(gl, vsSrc, spec.fragment, "Water sim (" + name + ")");
+      if (!compiled) return null;
+      gl.deleteShader(compiled.vertexShader); gl.deleteShader(compiled.fragmentShader);
+      var prog = compiled.program;
       compiledShaders.push(prog);
       return {
         program: prog,
@@ -2945,15 +2913,10 @@
       }
       var loc = sceneWaterUniformLocation(gl, program, field.name);
       if (!loc) continue;
-      switch (field.type) {
-        case "mat4": gl.uniformMatrix4fv(loc, false, v); break;
-        case "mat3": gl.uniformMatrix3fv(loc, false, v); break;
-        case "float": gl.uniform1f(loc, +v); break;
-        case "vec2": gl.uniform2f(loc, v[0], v[1]); break;
-        case "vec3": gl.uniform3f(loc, v[0], v[1], v[2]); break;
-        case "vec4": gl.uniform4f(loc, v[0], v[1], v[2], v[3]); break;
-        default: break;
-      }
+      if (field.type === "mat4") gl.uniformMatrix4fv(loc, false, v);
+      else if (field.type === "mat3") gl.uniformMatrix3fv(loc, false, v);
+      else if (field.type === "float") gl.uniform1f(loc, +v);
+      else sceneWaterSetScalarUniform(gl, loc, field.type, v, 0);
     }
   }
 
@@ -3190,13 +3153,10 @@
       // stages, matching the ES 3.00 vertex default (highp), so the shared
       // uniforms (mvp, poolWidth, ...) agree in precision across stages and the
       // program links without the earlier mediump->highp fragment rewrite.
-      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vsSrc);
-      if (!vs) return null;
-      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
-      if (!fs) { gl.deleteShader(vs); return null; }
-      var prog = scenePBRLinkProgram(gl, vs, fs, label);
-      gl.deleteShader(vs); gl.deleteShader(fs);
-      return prog;
+      var compiled = scenePBRBuildProgram(gl, vsSrc, fsSrc, label);
+      if (!compiled) return null;
+      gl.deleteShader(compiled.vertexShader); gl.deleteShader(compiled.fragmentShader);
+      return compiled.program;
     }
 
     var poolProgram = compile(entry.poolVertexGLES, entry.poolFragmentGLES, "Water pool");
@@ -4442,6 +4402,16 @@
     "}",
   ].join("\n");
 
+  const SCENE_WEBGL_RENDER_TRUTH_NOOP = {
+    enabled: function() { return false; }, chain: function() { return []; },
+    mark: function() {}, publish: function() {}, record: function() {},
+    PIPELINE_MISSING: "missing", PIPELINE_PENDING: "pending",
+    PIPELINE_FAILED: "failed", PIPELINE_OK: "ok",
+  };
+  function scenePBRRenderTruth() {
+    return typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api || SCENE_WEBGL_RENDER_TRUTH_NOOP;
+  }
+
   function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
     var temporal: any = null;
@@ -4473,22 +4443,7 @@
     // createScenePostProcessor lives at module scope, a SIBLING of the renderer
     // closure, so it cannot see webglRenderTruth(). Resolve the shared helpers
     // from the global the same way.
-    var POST_RENDER_TRUTH_NOOP = {
-      enabled: function() { return false; },
-      chain: function() { return []; },
-      mark: function() {},
-      PIPELINE_MISSING: "missing",
-      PIPELINE_PENDING: "pending",
-      PIPELINE_FAILED: "failed",
-      PIPELINE_OK: "ok",
-    };
-
-    function postProcessorRenderTruth() {
-      if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
-        return window.__gosx_scene3d_render_truth_api;
-      }
-      return POST_RENDER_TRUTH_NOOP;
-    }
+    function postProcessorRenderTruth() { return scenePBRRenderTruth(); }
 
     // postEffectPipelineState explains WHY an effect that did not draw did not
     // draw. WebGL compiles synchronously, so there is no "pending" state here:
@@ -5845,10 +5800,7 @@
       // unfinished link just like LINK_STATUS, so moving only the status check
       // would merely move the cold-frame stall.
       const attributes = {
-        position: gl.getAttribLocation(linked.program, "a_position"),
-        normal: gl.getAttribLocation(linked.program, "a_normal"),
-        uv: gl.getAttribLocation(linked.program, "a_uv"),
-        tangent: gl.getAttribLocation(linked.program, "a_tangent"),
+        ...scenePBRProgramLocations(gl, linked.program, "position normal uv tangent", true),
       };
 
       // Cache uniform locations.
@@ -6153,8 +6105,7 @@
           hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
         /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
         result.skinAttributes = {
-          joints: gl.getAttribLocation(program, "a_joints"),
-          weights: gl.getAttribLocation(program, "a_weights"),
+          ...scenePBRProgramLocations(gl, program, "joints weights", true),
         };
       }
       return result;
@@ -6166,10 +6117,7 @@
     const fragmentSource = scenePBRFragmentSourceForContext(gl, scenePBRBuildCustomFragmentSource(material));
     return scenePBRCreateProgramInfo(gl, vertexSource, fragmentSource, "Custom PBR shader", function(program) {
       const attributes = {
-        position: gl.getAttribLocation(program, "a_position"),
-        normal: gl.getAttribLocation(program, "a_normal"),
-        uv: gl.getAttribLocation(program, "a_uv"),
-        tangent: gl.getAttribLocation(program, "a_tangent"),
+        ...scenePBRProgramLocations(gl, program, "position normal uv tangent", true),
       };
       const uniforms = scenePBRCacheBaseUniforms(gl, program);
       uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
@@ -6214,9 +6162,7 @@
 
   function scenePointsProgramInfo(gl: WebGL2RenderingContext, program: WebGLProgram, vertexShader: WebGLShader, fragmentShader: WebGLShader) {
     var attributes = {
-      position: gl.getAttribLocation(program, "a_position"),
-      size: gl.getAttribLocation(program, "a_size"),
-      color: gl.getAttribLocation(program, "a_color"),
+      ...scenePBRProgramLocations(gl, program, "position size color", true),
     };
 
     var uniforms = scenePBRProgramLocations(gl, program, "viewMatrix projectionMatrix modelMatrix defaultSize defaultColor hasPerVertexColor hasPerVertexSize sizeAttenuation pointStyle viewportHeight minPixelSize maxPixelSize opacity hasFog fogDensity fogColor");
@@ -6249,11 +6195,7 @@
 
   function scenePBRFinalizeInstancedProgram(gl, linked, crowd) {
     var attributes = {
-      position: gl.getAttribLocation(linked.program, "a_position"),
-      normal: gl.getAttribLocation(linked.program, "a_normal"),
-      uv: gl.getAttribLocation(linked.program, "a_uv"),
-      tangent: gl.getAttribLocation(linked.program, "a_tangent"),
-      instanceMatrix: gl.getAttribLocation(linked.program, "a_instanceMatrix"),
+      ...scenePBRProgramLocations(gl, linked.program, "position normal uv tangent instanceMatrix", true),
       joints: crowd ? gl.getAttribLocation(linked.program, "a_joints") : -1,
       weights: crowd ? gl.getAttribLocation(linked.program, "a_weights") : -1,
       pose: crowd ? gl.getAttribLocation(linked.program, "a_pose") : -1,
@@ -6349,18 +6291,15 @@
     return false;
   }
 
+  function scenePBRInitialOwnerCurrent(gl, state) {
+    try { return state.isCurrent() && !(typeof gl.isContextLost === "function" && gl.isContextLost()); }
+    catch (_error) { return false; }
+  }
+
   function scenePBRTakeInitialProgram(gl, key) {
     const state = scenePBRInitialPrograms.get(gl);
     if (!state || state.status !== "ready" || !state[key]) return null;
-    let current = false;
-    let contextLost = false;
-    try {
-      current = state.isCurrent();
-      contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
-    } catch (_error) {
-      current = false;
-    }
-    if (!current || contextLost) {
+    if (!scenePBRInitialOwnerCurrent(gl, state)) {
       discardScenePBRInitialPrograms(gl, state);
       return false;
     }
@@ -6516,16 +6455,7 @@
       }
       function poll() {
         if (state.settled || scenePBRInitialPrograms.get(gl) !== state) return;
-        let current = false;
-        let contextLost = false;
-        try {
-          current = isCurrent();
-          contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
-        } catch (_error) {
-          cancel();
-          return;
-        }
-        if (!current || contextLost) {
+        if (!scenePBRInitialOwnerCurrent(gl, state)) {
           cancel();
           return;
         }
@@ -6547,13 +6477,7 @@
         }
         const validBase = scenePBRValidateInitialProgram(gl, base);
         const validCrowd = crowd ? scenePBRValidateInitialProgram(gl, crowd) : false;
-        try {
-          current = isCurrent();
-          contextLost = typeof gl.isContextLost === "function" && gl.isContextLost();
-        } catch (_error) {
-          current = false;
-        }
-        if (!current || contextLost || !validBase || scenePBRInitialPrograms.get(gl) !== state) {
+        if (!scenePBRInitialOwnerCurrent(gl, state) || !validBase || scenePBRInitialPrograms.get(gl) !== state) {
           cancel();
           return;
         }
@@ -7944,21 +7868,13 @@
       postDOMRegionBoundedPixels: 0,
     };
 
+    function resetNumericStats(stats) {
+      for (const key of Object.keys(stats)) if (typeof stats[key] === "number") stats[key] = 0;
+    }
     function resetWebGLRenderTruthStats() {
-      webglRenderTruthStats.meshDrawn = 0;
-      webglRenderTruthStats.meshViewCulled = 0;
-      webglRenderTruthStats.meshUndrawable = 0;
-      webglRenderTruthStats.meshMaterialFallback = 0;
+      resetNumericStats(webglRenderTruthStats);
       webglRenderTruthStats.materialFallbacks.length = 0;
-      webglRenderTruthStats.selenaCustomAttributeSkips = 0;
-      webglRenderTruthStats.pointsSubmitted = 0;
-      webglRenderTruthStats.pointsDrawn = 0;
-      webglRenderTruthStats.pointInstancesSubmitted = 0;
-      webglRenderTruthStats.pointInstancesDrawn = 0;
       webglRenderTruthStats.postChain = null;
-      webglRenderTruthStats.postDOMRegionBoundedPasses = 0;
-      webglRenderTruthStats.postDOMRegionBoundedSkips = 0;
-      webglRenderTruthStats.postDOMRegionBoundedPixels = 0;
     }
 
     // Material keys already reported this renderer's lifetime. A substitution is
@@ -8010,24 +7926,7 @@
     // webglRenderTruth resolves the shared helpers from 15a-scene-postfx-shared.ts
     // through the global, matching how the WebGPU chunk reaches them, so both
     // renderers publish the SAME attribute names from the same code.
-    var WEBGL_RENDER_TRUTH_NOOP = {
-      enabled: function() { return false; },
-      chain: function() { return []; },
-      mark: function() {},
-      publish: function() {},
-      record: function() {},
-      PIPELINE_MISSING: "missing",
-      PIPELINE_PENDING: "pending",
-      PIPELINE_FAILED: "failed",
-      PIPELINE_OK: "ok",
-    };
-
-    function webglRenderTruth() {
-      if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
-        return window.__gosx_scene3d_render_truth_api;
-      }
-      return WEBGL_RENDER_TRUTH_NOOP;
-    }
+    function webglRenderTruth() { return scenePBRRenderTruth(); }
 
     function publishWebGLRenderTruth(bundle) {
       var mount = canvas && canvas.parentNode ? canvas.parentNode : null;
@@ -8085,12 +7984,7 @@
     }
 
     function resetWebGLComputeParticleDrawStats() {
-      webglComputeParticleDrawStats.drawEntries = 0;
-      webglComputeParticleDrawStats.drawInstances = 0;
-      webglComputeParticleDrawStats.drawCalls = 0;
-      webglComputeParticleDrawStats.authoredDrawEntries = 0;
-      webglComputeParticleDrawStats.authoredDrawInstances = 0;
-      webglComputeParticleDrawStats.authoredDrawCalls = 0;
+      resetNumericStats(webglComputeParticleDrawStats);
     }
 
     // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
@@ -9211,6 +9105,13 @@
       }
     }
 
+    function bindMeshStream(buffer, location, size, data) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
+    }
+
     function bindSelenaMeshAttribute(gl, info, name, obj, bundle, offset, count, directVertices) {
       var attr = info && info.attributes && info.attributes[name];
       if (!attr || attr.loc < 0) return;
@@ -9221,26 +9122,17 @@
       }
       if (name === "position") {
         var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(attr.loc);
-        gl.vertexAttribPointer(attr.loc, 3, gl.FLOAT, false, 0, 0);
+        bindMeshStream(positionBuffer, attr.loc, 3, positions);
         return;
       }
       if (name === "normal") {
         var normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
-        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(attr.loc);
-        gl.vertexAttribPointer(attr.loc, 3, gl.FLOAT, false, 0, 0);
+        bindMeshStream(normalBuffer, attr.loc, 3, normals);
         return;
       }
       if (name === "uv" && bundle.worldMeshUVs && !directVertices) {
         var uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
-        gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(attr.loc);
-        gl.vertexAttribPointer(attr.loc, 2, gl.FLOAT, false, 0, 0);
+        bindMeshStream(uvBuffer, attr.loc, 2, uvs);
         return;
       }
       gl.disableVertexAttribArray(attr.loc);
@@ -9253,6 +9145,20 @@
     // built-in skinned-PBR upload a few lines below (isSkinned branch of
     // drawPBRObjectList), reused verbatim here since both paths share the
     // exact same joint-matrix contract (SCENE_PBR_SKINNED_VERTEX_SOURCE).
+    function uploadSkinJoints(location, skin) {
+      var matrices = skin && skin.jointMatrices;
+      var length = matrices && Math.min(Math.floor(matrices.length / 16), 64) * 16;
+      if (!location || !length) return;
+      var upload = matrices;
+      if (matrices.length !== length) {
+        var views = skin._jointMatrixUploadViews || (skin._jointMatrixUploadViews = Object.create(null));
+        var cached = views[length];
+        if (!cached || cached.source !== matrices) cached = views[length] = { source: matrices, view: matrices.subarray(0, length) };
+        upload = cached.view;
+      }
+      gl.uniformMatrix4fv(location, false, upload);
+    }
+
     function uploadSelenaSkinUniforms(gl, info, obj) {
       var skinUniforms = info && info.skinUniforms;
       if (!skinUniforms) return;
@@ -9260,18 +9166,7 @@
       if (skinUniforms.modelMatrix) {
         gl.uniformMatrix4fv(skinUniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
       }
-      var jointMatrices = obj.skin && obj.skin.jointMatrices;
-      if (jointMatrices && skinUniforms.jointMatrices) {
-        var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
-        if (jointCount > 0) {
-          var jointUpload = jointMatrices;
-          var requiredFloats = jointCount * 16;
-          if (jointMatrices.length !== requiredFloats) {
-            jointUpload = jointMatrices.subarray(0, requiredFloats);
-          }
-          gl.uniformMatrix4fv(skinUniforms.jointMatrices, false, jointUpload);
-        }
-      }
+      uploadSkinJoints(skinUniforms.jointMatrices, obj.skin);
     }
 
     // Bind the a_joints/a_weights attributes for a skinned Selena draw.
@@ -9282,16 +9177,10 @@
       var joints = vertices && vertices.joints;
       var weights = vertices && vertices.weights;
       if (skinAttrs.joints >= 0 && joints) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(skinAttrs.joints);
-        gl.vertexAttribPointer(skinAttrs.joints, 4, gl.FLOAT, false, 0, 0);
+        bindMeshStream(jointsBuffer, skinAttrs.joints, 4, joints instanceof Float32Array ? joints : new Float32Array(joints));
       }
       if (skinAttrs.weights >= 0 && weights) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(skinAttrs.weights);
-        gl.vertexAttribPointer(skinAttrs.weights, 4, gl.FLOAT, false, 0, 0);
+        bindMeshStream(weightsBuffer, skinAttrs.weights, 4, weights instanceof Float32Array ? weights : new Float32Array(weights));
       }
     }
 
@@ -9972,31 +9861,7 @@
 	        if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
-          var jointMatrices = obj.skin.jointMatrices;
-          if (jointMatrices) {
-            var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
-            if (jointCount > 0 && currentUniforms.jointMatrices) {
-              var jointUpload = jointMatrices;
-              var requiredJointFloats = jointCount * 16;
-              if (jointMatrices.length !== requiredJointFloats) {
-                var jointViews = obj.skin._jointMatrixUploadViews;
-                if (!jointViews) {
-                  jointViews = Object.create(null);
-                  obj.skin._jointMatrixUploadViews = jointViews;
-                }
-                var jointView = jointViews[requiredJointFloats];
-                if (!jointView || jointView.source !== jointMatrices) {
-                  jointView = {
-                    source: jointMatrices,
-                    view: jointMatrices.subarray(0, requiredJointFloats),
-                  };
-                  jointViews[requiredJointFloats] = jointView;
-                }
-                jointUpload = jointView.view;
-              }
-              gl.uniformMatrix4fv(currentUniforms.jointMatrices, false, jointUpload);
-            }
-          }
+          uploadSkinJoints(currentUniforms.jointMatrices, obj.skin);
         } else if (currentUniforms.hasSkin) {
           gl.uniform1i(currentUniforms.hasSkin, 0);
         }
@@ -10013,19 +9878,13 @@
         // Positions (vec3).
         if (!bindScenePBRDirectAttribute(obj, "positions", currentAttribs.position, 3, directPositions)) {
           const positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
-          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
-          gl.enableVertexAttribArray(currentAttribs.position);
-          gl.vertexAttribPointer(currentAttribs.position, 3, gl.FLOAT, false, 0, 0);
+          bindMeshStream(positionBuffer, currentAttribs.position, 3, positions);
         }
 
         // Normals (vec3).
         if (!bindScenePBRDirectAttribute(obj, "normals", currentAttribs.normal, 3, directNormals)) {
           const normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
-          gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
-          gl.enableVertexAttribArray(currentAttribs.normal);
-          gl.vertexAttribPointer(currentAttribs.normal, 3, gl.FLOAT, false, 0, 0);
+          bindMeshStream(normalBuffer, currentAttribs.normal, 3, normals);
         }
 
         // UVs (vec2).
@@ -10033,10 +9892,7 @@
           // Cached direct attribute bound.
         } else if (bundle.worldMeshUVs && !directVertices) {
           const uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
-          gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
-          gl.enableVertexAttribArray(currentAttribs.uv);
-          gl.vertexAttribPointer(currentAttribs.uv, 2, gl.FLOAT, false, 0, 0);
+          bindMeshStream(uvBuffer, currentAttribs.uv, 2, uvs);
         } else if (currentAttribs.uv >= 0) {
           gl.disableVertexAttribArray(currentAttribs.uv);
           gl.vertexAttrib2f(currentAttribs.uv, 0, 0);
@@ -10047,10 +9903,7 @@
           // Cached direct attribute bound.
         } else if (bundle.worldMeshTangents && !directVertices) {
           const tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
-          gl.bindBuffer(gl.ARRAY_BUFFER, tangentBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, tangents, gl.DYNAMIC_DRAW);
-          gl.enableVertexAttribArray(currentAttribs.tangent);
-          gl.vertexAttribPointer(currentAttribs.tangent, 4, gl.FLOAT, false, 0, 0);
+          bindMeshStream(tangentBuffer, currentAttribs.tangent, 4, tangents);
         } else if (currentAttribs.tangent >= 0) {
           gl.disableVertexAttribArray(currentAttribs.tangent);
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
@@ -10064,17 +9917,11 @@
           const directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
           const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
           if (!bindScenePBRDirectAttribute(obj, "joints", currentAttribs.joints, 4, directJoints)) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
-            gl.enableVertexAttribArray(currentAttribs.joints);
-            gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
+            bindMeshStream(jointsBuffer, currentAttribs.joints, 4, joints instanceof Float32Array ? joints : new Float32Array(joints));
           }
 
           if (!bindScenePBRDirectAttribute(obj, "weights", currentAttribs.weights, 4, directWeights)) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
-            gl.enableVertexAttribArray(currentAttribs.weights);
-            gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
+            bindMeshStream(weightsBuffer, currentAttribs.weights, 4, weights instanceof Float32Array ? weights : new Float32Array(weights));
           }
         } else if (currentAttribs.joints >= 0) {
           gl.disableVertexAttribArray(currentAttribs.joints);
