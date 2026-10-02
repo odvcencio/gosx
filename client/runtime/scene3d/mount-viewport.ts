@@ -42,9 +42,11 @@
       const canvasRect = canvas && typeof canvas.getBoundingClientRect === "function"
         ? canvas.getBoundingClientRect()
         : null;
-      const measuredCanvasWidth = sceneNumber(canvasRect && canvasRect.width, 0);
-      const measuredMountWidth = sceneNumber(mountRect && mountRect.width, 0);
-      const measuredCanvasHeight = sceneNumber(canvasRect && canvasRect.height, 0);
+      // Canvas backing size and projected overlays share local CSS coordinates.
+      // Bounding rectangles include ancestor transforms (e.g. a fitted slide).
+      const measuredCanvasWidth = canvas && canvas.clientWidth || sceneNumber(canvasRect && canvasRect.width, 0);
+      const measuredMountWidth = mount && mount.clientWidth || sceneNumber(mountRect && mountRect.width, 0);
+      const measuredCanvasHeight = canvas && canvas.clientHeight || sceneNumber(canvasRect && canvasRect.height, 0);
       let measuredMountHeight = sceneNumber(mountRect && mountRect.height, 0);
       const mountClientHeight = sceneNumber(mount && mount.clientHeight, 0);
       if (mountClientHeight > 0 && typeof window !== "undefined" && window && typeof window.getComputedStyle === "function") {
@@ -169,10 +171,10 @@
     canvas.setAttribute("width", String(viewport.pixelWidth));
     canvas.setAttribute("height", String(viewport.pixelHeight));
     if (labelLayer) {
-      const mountRect = typeof mount.getBoundingClientRect === "function" ? mount.getBoundingClientRect() : null;
-      const canvasRect = typeof canvas.getBoundingClientRect === "function" ? canvas.getBoundingClientRect() : null;
-      const left = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.left, 0) - sceneNumber(mountRect.left, 0)) : 0;
-      const top = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.top, 0) - sceneNumber(mountRect.top, 0)) : 0;
+      // The canvas is a direct child of the positioned mount. Its offsets
+      // share the absolute label layer's local CSS coordinate system.
+      const left = sceneNumber(canvas.offsetLeft, 0);
+      const top = sceneNumber(canvas.offsetTop, 0);
       labelLayer.style.position = "absolute";
       labelLayer.style.left = left + "px";
       labelLayer.style.top = top + "px";

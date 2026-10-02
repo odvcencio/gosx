@@ -142,7 +142,7 @@ const receipt = {
   machine: meta.machine,
   lighthouse: {
     browser: `${userAgent} · Lighthouse ${lighthouseVersion}`,
-    method: 'Lighthouse mobile emulation against the local production-shaped build; fresh browser profile for each run; median of three cold runs.',
+    method: 'Lighthouse mobile emulation against the local production-shaped build; shared Chrome process with cache and origin storage cleared before each run; median of three cold runs.',
     loadAverageStart: meta.lighthouseLoadAverageStart,
     loadAverageEnd: meta.lighthouseLoadAverageEnd,
     runCount: 3,
@@ -151,7 +151,7 @@ const receipt = {
   gpu: {
     label: 'RTX 5070 Ti desktop, not a mid-range laptop',
     browser: browserVersion,
-    method: 'Windows Chrome with ANGLE D3D11 at 1440x900; forced WebGL2 runs; each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled.',
+    method: 'Windows Chrome with ANGLE D3D11 at 1440x900; separate WebGPU and forced WebGL2 runs; each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled.',
     scenes,
   },
   bundles,
