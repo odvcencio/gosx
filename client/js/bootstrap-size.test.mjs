@@ -698,7 +698,9 @@ const budgets = [
   // Public clock API: raw 1,790,605 -> 1,790,620; gzip 496,111 -> 496,092;
   // brotli 397,943 -> 398,332. Allocate 400 bytes only to brotli;
   // keep the existing raw/gzip targets and governed regression allowances.
-  file: "bootstrap.js", raw: 1_725_100, gzip: 479_800, brotli: 382_000 },
+  // Mixed-mesh sizing adds 17 raw bytes (measured 1,790,637); compression
+  // targets and governed allowances remain unchanged.
+  file: "bootstrap.js", raw: 1_725_200, gzip: 479_800, brotli: 382_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
