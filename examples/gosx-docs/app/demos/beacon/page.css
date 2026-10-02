@@ -1,297 +1,59 @@
-.beacon {
-	position: relative;
-	min-width: 0;
-	min-height: 100%;
-	overflow: hidden;
-	background: #17242a;
-	color: #f7efe1;
+:global(html:has(.bgb)), :global(body:has(.bgb)) { overflow: hidden; margin: 0; }
+:global(body:has(.bgb) :is(.pill-nav, .nav-overlay, .skip-link, .demo-dock, .demo-meta, .demo-details, .site-footer)) { display: none; }
+:global(.bgb) {
+  position: fixed; inset: 0; z-index: 1000; background: #0b0d10;
+  color: #f4f1ec; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-
-.beacon__canvas {
-	position: absolute;
-	inset: 0;
+:global(.bgb__canvas), :global(.bgb__canvas > *) { position: absolute; inset: 0; width: 100%; height: 100%; }
+:global(.bgb::after) {
+  content: ""; position: absolute; inset: auto 0 0; height: 200px; z-index: 1;
+  background: linear-gradient(transparent, rgba(10, 12, 14, 0.65)); pointer-events: none;
 }
-
-.beacon__canvas [data-gosx-scene3d-renderer] {
-	width: 100%;
-	height: 100%;
+:global(.bgb__close) {
+  position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px; z-index: 2;
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 50%; color: rgba(255,255,255,.78); text-decoration: none; font-size: 22px; line-height: 1;
+  background: rgba(10,12,14,.22);
 }
-
-.beacon__canvas canvas {
-	display: block;
-	width: 100%;
-	height: 100%;
+:global(.bgb__controls), :global(.bgb__reveal) {
+  position: absolute; left: max(20px, env(safe-area-inset-left)); right: 20px; z-index: 2;
+  opacity: 0; visibility: hidden; transform: translateY(8px);
+  transition: opacity .7s ease, transform .7s ease, visibility .7s;
 }
-
-.beacon__ripple-control { display: none; }
-
-.beacon__canvas .gosx-scene3d-unsupported {
-	display: grid;
-	min-height: 100%;
-	padding: var(--space-lg);
-	place-items: center;
-	background: linear-gradient(145deg, #14242b, #26383c);
-	color: #efe6d7;
-	font-family: var(--font-body);
-	font-size: var(--type-xs);
-	text-align: center;
+:global(.bgb[data-revealed="true"] :is(.bgb__controls, .bgb__reveal)), :global(.bgb:focus-within :is(.bgb__controls, .bgb__reveal)) {
+  opacity: 1; visibility: visible; transform: translateY(0);
 }
-
-.beacon__canvas .gosx-scene3d-unsupported p {
-	max-width: 34rem;
-	padding: var(--space-sm);
-	border: 1px solid #937954;
-	background: #18272b;
+:global(.bgb__controls) { bottom: max(62px, calc(env(safe-area-inset-bottom) + 62px)); display: flex; flex-wrap: wrap; gap: 8px; }
+:global(.bgb__group) { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(10,12,14,.36); backdrop-filter: blur(10px); }
+:global(.bgb__link) {
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; letter-spacing: .01em;
+  color: rgba(255,255,255,.78); text-decoration: none; white-space: nowrap;
 }
-
-.beacon__intro {
-	position: absolute;
-	z-index: 2;
-	top: 22px;
-	left: 22px;
-	width: min(370px, calc(100% - 44px));
-	padding: 17px 19px 15px;
-	border: 1px solid rgba(238, 214, 175, 0.35);
-	border-left: 3px solid #e5bb7c;
-	background: linear-gradient(125deg, rgba(17, 30, 34, 0.93), rgba(19, 32, 34, 0.77));
-	box-shadow: 0 18px 45px rgba(9, 18, 21, 0.22);
-	backdrop-filter: blur(6px);
-	pointer-events: none;
+:global(.bgb__link:hover), :global(.bgb__link:focus-visible) { color: #fff; background: rgba(255,255,255,.12); }
+:global(.bgb__link:focus-visible), :global(.bgb__close:focus-visible), :global(.bgb__reveal a:focus-visible), :global(.bgb canvas:focus-visible) { outline: 2px solid #f2c38c; outline-offset: 3px; }
+:global(.bgb__reset) { border: 0; background: transparent; font-family: inherit; cursor: pointer; }
+:global(.bgb__instructions) { flex-basis: 100%; margin: 0; font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px #101318; }
+:global(.bgb__discoveries) { max-width: 660px; font-size: 11px; color: rgba(255,255,255,.68); }
+:global(.bgb__reveal) { bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; font-size: 12px; line-height: 1.6; color: rgba(255,255,255,.8); text-shadow: 0 1px 4px #101318; }
+:global(.bgb .bgb__reveal output[data-gosx-scene3d-status]) { display: inline !important; font-variant-numeric: tabular-nums; }
+:global(.bgb__reveal a) { margin-left: 12px; color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+:global(.bgb[data-view="shore"] .bgb__view-shore),
+:global(.bgb[data-view="glass"] .bgb__view-glass),
+:global(.bgb[data-view="cliff"] .bgb__view-cliff),
+:global(.bgb[data-view="ship"] .bgb__view-ship),
+:global(.bgb[data-period="golden-hour"] .bgb__period-golden-hour),
+:global(.bgb[data-period="blue-hour"] .bgb__period-blue-hour),
+:global(.bgb[data-period="noon"] .bgb__period-noon) { color: #16130f; background: rgba(255,244,230,.92); }
+@media (max-width: 640px) {
+  :global(.bgb__controls), :global(.bgb__reveal) { left: 12px; right: 12px; }
+  :global(.bgb__controls) { bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px)); gap: 6px; }
+  :global(.bgb [data-gosx-scene3d-vessel="sailing"] > :is(span, .gosx-scene3d-vessel-controls)) { bottom: calc(180px + env(safe-area-inset-bottom)) !important; }
+  :global(.bgb__link) { padding: 6px 9px; font-size: 11px; }
+  :global(.bgb__instructions) { font-size: 11px; }
+  :global(.bgb__discoveries) { display: none; }
+  :global(.bgb__reveal) { font-size: 11px; max-width: 350px; }
+  :global(.bgb__reveal a) { display: block; margin-left: 0; }
 }
-
-.beacon__eyebrow,
-.beacon__dock,
-.beacon__facts {
-	font-family: var(--font-body);
-}
-
-.beacon__eyebrow {
-	margin: 0;
-	color: #e9c993;
-	font-size: 10px;
-	letter-spacing: normal;
-}
-
-.beacon h1 {
-	margin: 8px 0 9px;
-	color: #fff5e6;
-	font-family: var(--font-display);
-	font-size: clamp(26px, 3vw, 36px);
-	line-height: 1;
-	letter-spacing: -0.035em;
-}
-
-.beacon__copy {
-	margin: 0;
-	color: #d5d6cf;
-	font-family: var(--font-body);
-	font-size: 13px;
-	line-height: 1.48;
-}
-
-.beacon__dock {
-	position: absolute;
-	z-index: 3;
-	right: 18px;
-	bottom: 18px;
-	width: min(630px, calc(100% - 36px));
-	padding: 12px 14px 10px;
-	border: 1px solid rgba(234, 203, 157, 0.42);
-	background: rgba(16, 29, 34, 0.91);
-	box-shadow: 0 12px 38px rgba(8, 18, 21, 0.28);
-	backdrop-filter: blur(8px);
-}
-
-.beacon__dock-row { display: flex; flex-wrap: wrap; gap: 10px 16px; }
-.beacon__dock-group { flex: 1 1 230px; }
-.beacon__dock-group p {
-	margin: 0 0 6px;
-	color: #e8c593;
-	font-size: 10px;
-	letter-spacing: 0.12em;
-	text-transform: uppercase;
-}
-.beacon__dock nav { display: flex; flex-wrap: wrap; gap: 5px; }
-.beacon__dock a {
-	display: inline-block;
-	padding: 5px 8px;
-	border: 1px solid rgba(235, 220, 190, 0.35);
-	color: #e5e3d8;
-	font-size: 11px;
-	line-height: 1.3;
-	text-decoration: none;
-}
-.beacon__dock a:hover,
-.beacon__dock a:focus-visible {
-	border-color: #f2d29d;
-	background: rgba(243, 206, 147, 0.2);
-	color: #fff;
-}
-.beacon__dock a:focus-visible { outline: 2px solid #fff2ca; outline-offset: 2px; }
-.beacon[data-view="overlook"] .beacon__view-overlook,
-.beacon[data-view="arrival"] .beacon__view-arrival,
-.beacon[data-view="beacon"] .beacon__view-beacon,
-.beacon[data-period="daybreak"] .beacon__period-daybreak,
-.beacon[data-period="high-sun"] .beacon__period-high-sun,
-.beacon[data-period="ember-hour"] .beacon__period-ember-hour {
-	border-color: #ebc58b;
-	background: #d5b27a;
-	color: #1d292a;
-}
-.beacon__controls {
-	margin: 10px 0 0;
-	color: #b9c8c5;
-	font-size: 10px;
-	line-height: 1.4;
-}
-.beacon__facts { margin-top: 5px; color: #b9c8c5; font-size: 10px; line-height: 1.5; }
-.beacon__facts summary { cursor: pointer; color: #e6c793; }
-.beacon__facts p { margin: 5px 0 0; }
-
-/* Keep the accessibility source offscreen while its world texture uploads.
-   The rasterizer copies it into an isolated SVG at its authored size. */
-.beacon__canvas [data-gosx-scene-html-mode="texture"] {
-	left: -10000px !important;
-	top: -10000px !important;
-}
-
-.blackglass-world-surface .blackglass-artifact {
-	box-sizing: border-box;
-	width: 100%;
-	height: 100%;
-	padding: 7% 8%;
-	border: 8px ridge rgba(54, 47, 39, 0.82);
-	overflow: hidden;
-	font-family: Georgia, serif;
-	line-height: 1.28;
-}
-.blackglass-artifact__kicker {
-	margin: 0 0 0.5em;
-	font-size: 0.84em;
-	font-weight: bold;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-}
-.blackglass-artifact h2 { margin: 0 0 0.4em; font-size: 1.65em; line-height: 1.05; }
-.blackglass-artifact p { margin: 0.45em 0; }
-.blackglass-artifact--stele {
-	display: flex;
-	flex-direction: column;
-	background: radial-gradient(circle at 30% 20%, #4a4d49, #202a2d 72%);
-	color: #ead5aa;
-	text-shadow: 0 1px 1px #10191b;
-	font-size: 20px;
-}
-.blackglass-artifact__small { font-size: 0.88em; }
-.blackglass-artifact__mark {
-	margin: auto 0;
-	padding: 0.8em 0;
-	border-top: 2px solid rgba(234, 213, 170, 0.45);
-	border-bottom: 2px solid rgba(234, 213, 170, 0.45);
-	font-size: 1.35em;
-	letter-spacing: 0.55em;
-	text-align: center;
-}
-.blackglass-artifact__fingerprint {
-	display: block;
-	margin-top: auto;
-	font-family: var(--font-mono);
-	font-size: 0.64em;
-	line-height: 1.4;
-	overflow-wrap: anywhere;
-}
-.blackglass-artifact--ledger {
-	border-color: #765c40;
-	background: linear-gradient(120deg, #e9d6ad, #c7aa7e);
-	color: #49392c;
-	font-size: 20px;
-}
-.blackglass-artifact--ledger dl { margin: 0; font-size: 0.92em; }
-.blackglass-artifact--ledger dl div { display: flex; justify-content: space-between; gap: 0.5em; border-bottom: 1px solid rgba(73, 57, 44, 0.28); }
-.blackglass-artifact--ledger dt { font-weight: bold; }
-.blackglass-artifact--ledger dd { margin: 0; text-align: right; }
-.blackglass-artifact--ledger dl > div:nth-last-child(-n + 2) { display: none; }
-.blackglass-artifact--plaque {
-	border: 9px ridge #9e7440;
-	background: radial-gradient(circle at 30% 12%, #9d7949, #60432d 83%);
-	color: #fff1ca;
-	text-shadow: 0 1px 1px #38291e;
-}
-.blackglass-artifact--plaque h2 { font-size: 1.4em; }
-.blackglass-artifact--plaque p { font-size: 0.82em; }
-
-@media (max-width: 700px) {
-	.beacon { min-height: max(42rem, calc(100svh - 8.5rem)) !important; }
-	.beacon__intro { top: 10px; right: 10px; left: 10px; width: auto; padding: 11px 12px; }
-	.beacon h1 { margin: 5px 0; font-size: 25px; }
-	.beacon__copy { font-size: 11px; line-height: 1.35; }
-	.beacon__dock { right: 10px; bottom: 10px; left: 10px; width: auto; max-height: 41%; overflow-y: auto; padding: 9px 10px; }
-	.beacon__dock-row { gap: 8px; }
-	.beacon__dock-group { flex-basis: 100%; }
-	.beacon__dock-group p { margin-bottom: 3px; }
-	.beacon__dock a { font-size: 10px; padding: 4px 6px; }
-	.beacon__controls { margin-top: 7px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.beacon *, .beacon *::before, .beacon *::after {
-		scroll-behavior: auto;
-		transition-duration: 0s;
-		animation-duration: 0s;
-	}
-}
-
-/* The coast is the hero; the controls read as one compact field instrument. */
-.beacon { background: #10232b; }
-.beacon__intro {
-	top: var(--space-lg);
-	left: var(--space-lg);
-	width: min(27rem, calc(100% - 2 * var(--space-lg)));
-	box-sizing: border-box;
-	padding: var(--space-lg);
-	border: 1px solid rgba(245, 238, 227, 0.22);
-	border-radius: var(--radius-md);
-	background: rgba(11, 27, 34, 0.88);
-	box-shadow: var(--elevation-panel);
-	backdrop-filter: none;
-}
-.beacon__eyebrow { color: #efc486; font-size: var(--type-xs); letter-spacing: 0.09em; }
-.beacon h1 { margin: var(--space-xs) 0; font-size: clamp(2.25rem, 3.4vw, 3.6rem); line-height: 1.02; }
-.beacon__copy { max-width: 34ch; color: #d6dfdc; font-size: var(--type-sm); line-height: 1.6; }
-.beacon__dock {
-	right: var(--space-lg);
-	bottom: var(--space-lg);
-	width: min(42rem, calc(100% - 2 * var(--space-lg)));
-	box-sizing: border-box;
-	padding: var(--space-md);
-	border: 1px solid rgba(245, 238, 227, 0.25);
-	border-radius: var(--radius-md);
-	background: rgba(11, 27, 34, 0.94);
-	box-shadow: var(--elevation-panel);
-	backdrop-filter: none;
-}
-.beacon__dock-row { gap: var(--space-md); }
-.beacon__dock-group { flex: 1 1 15rem; }
-.beacon__dock-group p { margin-bottom: var(--space-xs); color: #efc486; font-size: var(--type-xs); }
-.beacon__dock nav { gap: 0.35rem; }
-.beacon__dock a {
-	min-height: 2.2rem;
-	box-sizing: border-box;
-	padding: 0.55rem 0.7rem;
-	border-radius: var(--radius-sm);
-	font: 700 var(--type-xs)/1.25 var(--font-body);
-	transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
-}
-.beacon__controls, .beacon__facts { font-size: var(--type-xs); line-height: 1.5; }
-.beacon__controls { margin-top: var(--space-sm); }
-.beacon__facts summary { min-height: 2rem; align-content: center; }
-@media (max-width: 700px) {
-	.beacon__intro { top: var(--space-sm); left: var(--space-sm); width: calc(100% - 2 * var(--space-sm)); padding: var(--space-md); }
-	.beacon h1 { font-size: var(--type-xl); }
-	.beacon__copy { font-size: var(--type-sm); }
-	.beacon__dock { right: var(--space-sm); bottom: var(--space-sm); left: var(--space-sm); width: auto; max-height: 42%; padding: var(--space-sm); }
-	.beacon__dock-row { gap: var(--space-sm); }
-	.beacon__dock-group { flex: 1 1 100%; }
-	.beacon__dock a { min-height: 2rem; padding: 0.4rem 0.55rem; }
-	.beacon__controls, .beacon__facts { display: none; }
-}
+@media (pointer: coarse) { :global(.bgb__instructions) { display: none; } }
+@media (prefers-reduced-motion: reduce) { :global(.bgb__controls), :global(.bgb__reveal) { transition: none; transform: none; } }
+@media (scripting: none) { :global(.bgb__controls) { opacity: 1; visibility: visible; transform: none; } }

@@ -468,6 +468,9 @@
         colorGrade: true,
         "color-grade": true,
         ssao: true,
+        contactShadows: true,
+        taa: true,
+        fxaa: true,
         dof: true,
         customPost: true
       };
@@ -479,7 +482,7 @@
       if (kind && type && kind !== type) {
         pushSceneStrictDiagnostic(diagnostics, "warn", "scene.postfx.type_mismatch", "Post effect kind and type disagree", path + ".type", "", { kind: kind, type: type });
       }
-      validateSceneStrictFiniteScalars(diagnostics, effect, path, ["intensity", "threshold", "radius", "scale", "exposure", "contrast", "saturation", "bias", "focusDistance", "aperture", "maxBlur"], "scene.postfx.non_finite", "Post effect scalar must be finite", "");
+      validateSceneStrictFiniteScalars(diagnostics, effect, path, ["intensity", "threshold", "radius", "scale", "exposure", "contrast", "saturation", "bias", "focusDistance", "aperture", "maxBlur", "distance", "thickness", "historyWeight", "clampGamma", "depthThreshold"], "scene.postfx.non_finite", "Post effect scalar must be finite", "");
       if (effect.params != null && typeof effect.params === "object") {
         Object.keys(effect.params).forEach(function(key) {
           if (!sceneStrictIsFiniteNumber(effect.params[key])) {

@@ -39,6 +39,7 @@ type cssNodeEntry struct {
 	modTimeNano int64
 	size        int64
 	node        gosx.Node
+	text        string
 }
 
 type scene3DStyleEntry struct {
@@ -52,19 +53,19 @@ func addRouteFileCSSHead(ctx *RouteContext, page FilePage) {
 		return
 	}
 	order := 0
-	if node, ok := fileCSSNode(page.Root, globalCSSFile(page.Root), server.CSSLayerGlobal, order); ok && !node.IsZero() {
+	if node, ok := fileCSSNode(page.Root, globalCSSFile(page.Root), server.CSSLayerGlobal, order, page.cssAssets); ok && !node.IsZero() {
 		ctx.AddHead(node)
 		order++
 	}
 	for _, file := range page.Layouts {
-		node, ok := fileCSSNode(page.Root, sidecarCSSFile(file), server.CSSLayerLayout, order)
+		node, ok := fileCSSNode(page.Root, sidecarCSSFile(file), server.CSSLayerLayout, order, page.cssAssets)
 		if !ok || node.IsZero() {
 			continue
 		}
 		ctx.AddHead(node)
 		order++
 	}
-	if node, ok := fileCSSNode(page.Root, sidecarCSSFile(page.FilePath), server.CSSLayerPage, order); ok && !node.IsZero() {
+	if node, ok := fileCSSNode(page.Root, sidecarCSSFile(page.FilePath), server.CSSLayerPage, order, page.cssAssets); ok && !node.IsZero() {
 		ctx.AddHead(node)
 	}
 }
@@ -114,7 +115,7 @@ func fileCSSCacheKey(cssPath string, layer server.CSSLayer, order int) string {
 	return strings.Join([]string{cssPath, string(layer), strconv.Itoa(order)}, "\x00")
 }
 
-func fileCSSNode(root string, css cssFile, layer server.CSSLayer, order int) (gosx.Node, bool) {
+func fileCSSNode(root string, css cssFile, layer server.CSSLayer, order int, assets ...*fileCSSAssets) (gosx.Node, bool) {
 	if css.empty() {
 		return gosx.Node{}, false
 	}
@@ -122,6 +123,9 @@ func fileCSSNode(root string, css cssFile, layer server.CSSLayer, order int) (go
 	if cached, ok := fileCSSNodeCache.Load(cacheKey); ok {
 		entry, _ := cached.(cssNodeEntry)
 		if entry.modTimeNano == css.modTimeNano && entry.size == css.size {
+			if len(assets) > 0 && assets[0] != nil && !entry.node.IsZero() {
+				return externalFileCSSNode(root, css, layer, order, entry.text, assets[0]), true
+			}
 			return entry.node, !entry.node.IsZero()
 		}
 	}
@@ -157,7 +161,11 @@ func fileCSSNode(root string, css cssFile, layer server.CSSLayer, order int) (go
 		modTimeNano: css.modTimeNano,
 		size:        css.size,
 		node:        node,
+		text:        cssText,
 	})
+	if len(assets) > 0 && assets[0] != nil {
+		return externalFileCSSNode(root, css, layer, order, cssText, assets[0]), true
+	}
 	return node, true
 }
 

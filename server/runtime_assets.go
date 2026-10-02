@@ -400,6 +400,12 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCompute.File)
 	case "bootstrap-feature-scene3d-walk.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWalk.File)
+	case "bootstrap-feature-scene3d-zoom.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DZoom.File)
+	case "bootstrap-feature-scene3d-vessel.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DVessel.File)
+	case "bootstrap-feature-scene3d-ocean-query.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DOceanQuery.File)
 	case "bootstrap-feature-scene3d-decompress.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
 	case "bootstrap-feature-scene3d-instance-stream.js":

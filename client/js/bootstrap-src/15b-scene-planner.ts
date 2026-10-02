@@ -1718,6 +1718,7 @@
   }
 
   function scenePlannerHashMaterial(hash, material) {
+    if (material && material.detail) hash = scenePlannerHashString(hash, JSON.stringify(material.detail));
     // Historical shortcut: if a material has a stable `key`, hash only the key
     // to avoid churn on unrelated fields. But that also excluded `color`/
     // `opacity`/`emissive`/`roughness`/`metalness`/`texture` from the hash —

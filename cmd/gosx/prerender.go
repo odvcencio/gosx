@@ -122,6 +122,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	assetRefs := map[string]struct{}{}
+	fileCSSAssets := map[string]bool{}
 	exportedRoutes := make([]exportRoute, 0, len(routes))
 	for _, entry := range routes {
 		pageHTML, err := fetchExportPage(client, baseURL+entry.Path)
@@ -135,6 +136,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 			return exportManifest{}, fmt.Errorf("export %s: %w", entry.Path, err)
 		}
 		entry.Capabilities = routeCapabilitiesFromHTML(pageHTML)
+		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets); err != nil {
+			return exportManifest{}, fmt.Errorf("export %s stylesheets: %w", entry.Path, err)
+		}
 		addExportRuntimeAssetRefs(assetRefs, pageHTML)
 		pageHTML, err = rewriteStaticExportHTML(entry.Path, pageHTML)
 		if err != nil {
@@ -148,8 +152,11 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+"/__gosx_export_missing__"); err == nil && status == http.StatusNotFound {
+		if err := stageExportFileCSS(client, baseURL, outputDir, missingHTML, fileCSSAssets); err != nil {
+			return exportManifest{}, fmt.Errorf("export 404 stylesheets: %w", err)
+		}
 		addExportRuntimeAssetRefs(assetRefs, missingHTML)
-		missingHTML, err = rewriteStaticExportHTML("/__gosx_export_missing__", missingHTML)
+		missingHTML, err = rewriteStaticExportHTML("/", missingHTML)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite 404 page: %w", err)
 		}

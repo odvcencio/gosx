@@ -21,6 +21,43 @@ by typed test evidence with an exact CI job, step, and command owner.
 
 ## v1 boundary
 
+### Material detail layers
+
+`StandardMaterial.Detail` and `Model.Detail` add world-space albedo, normal, and
+roughness maps on WebGL2/WebGPU. Model detail preserves each glTF primitive's
+base material. Nil detail emits nothing and retains the existing shader.
+PNG/JPEG/KTX2 use the existing loaders; missing, pending, or failed channels are
+neutral. Canvas and preview renderers show the base material.
+
+Browser defaults: 2 metres per tile, normal scale 1, albedo mix 0.6, roughness mix
+0.5, slope blend 30–45 degrees, fade 8–14 metres, stochastic tiling enabled.
+Go omits zero numeric settings; prop-bag scenes can express explicit zero mixes.
+Ground uses world XZ; Steep uses triplanar `abs(baseNormal)^4` weights and signed
+axis bases. Nil Steep uses Ground everywhere. `Triplanar` overrides both layers.
+Three hashed patches receive random offsets/quarter turns and normalized cubic
+barycentric blending. Explicit unrotated gradients prevent mip seams. Use
+tileable natural detail maps; the sampler does not synthesize missing edges.
+Albedo applies clamped `base * mix(1, 2*detail, AlbedoMix)`; roughness blends from
+base to the detail map's red channel; UDN normal blending preserves the base map.
+
+`1 - smoothstep(FadeStart, FadeEnd, cameraDistance)` controls all channels.
+Gradients precede the fade branch: zero detail samples beyond FadeEnd or when
+quality disables detail. Programs/pipelines append `-detail` to the existing
+PBR variant; camera/quality changes update uniforms without recompilation.
+
+Packed 512×512 mipmapped arrays cost one sampler and about 5.33 MiB per atlas,
+plus cached source textures. All maps present: at most 6 samples for Ground,
+18 for Steep, 24 during their blend (36 if Ground is also triplanar). Axis-aligned
+surfaces cost 6; missing channels reduce samples; disabling stochastic divides
+bounds by three. Oblique surfaces exceed the 12-sample target to preserve all
+projections and patches. Packing resamples larger maps and runs when textures
+change. Detail instances use the existing per-mesh GPU culling fallback.
+
+Adaptive survival disables detail by default; `qualityProfiles.*.detail` can
+override it. `QualityRung.Detail` overrides off at rung zero/on above it.
+`node scripts/validate-scene-detail-shaders.mjs` validates GLSL/WGSL without a
+browser. These tests cover contracts and shader validity, not visual acceptance.
+
 Scene3D v1 targets common browser product viewers, configurators, simulation
 dashboards, and interactive scenes. Its supported boundary is:
 
@@ -49,6 +86,17 @@ dashboards, and interactive scenes. Its supported boundary is:
   atomically. Generic hydration must not discard Scene3D command output.
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
   the existing JavaScript, network, WASM, and performance budgets.
+
+Set `scene.Props.RenderBeforeModels` to `scene.Bool(true)` to draw the first
+frame without waiting for glTF or other model assets. Sky, water, lights, and
+non-model nodes render while models load; hydration keeps its existing commit
+behavior and schedules a render with reason `models` when it settles, including
+failure. Transition priming and progressive-model setup still follow hydration.
+Disposal or mount replacement prevents late hydration from rendering the old
+scene. A nil prop emits no `renderBeforeModels` key and preserves existing wire
+bytes; nil or false keeps the wait for models. The mount reports the selected
+startup path as `before-models` or `after-models` in
+`data-gosx-scene3d-first-frame`.
 
 ## Opt-in walking
 
@@ -169,6 +217,8 @@ When a WebGPU scene has post effects, the scene, auxiliary, bloom, and MSAA colo
 
 The tone-map effect applies the same display transfer as WebGL. Linear, ACES, and Reinhard modes apply gamma 2.2 after the curve. Filmic already includes its output response and gets no second transfer. Put bloom before tone mapping to select radiance above one. An explicit tone-map effect remains required; an identity or custom-only chain does not gain an implicit curve. Custom shader color conventions remain the author’s responsibility.
 
+Set `scene.Bloom{Mode: "mip"}` to opt into mip-chain bloom on WebGL2 and WebGPU. The prefilter clamps linear RGB to 64, uses the maximum color channel for brightness, and applies a soft knee of half the threshold. `Scale` remains the prefilter resolution factor, defaulting to 0.5. Up to six levels halve each dimension, stopping before the short side would fall below eight pixels; a smaller initial target still works as one level. Each reduction uses 13 bilinear taps (outer offsets of two source texels and inner diagonals of one), with normalized weights. Upsampling adds a 3×3 tent with weights `[1, 2, 1] × [1, 2, 1] / 16` into separate scratch targets. The tent radius is `Radius / 5`, clamped to 0.25–2 source texels, with a default of one. The scene receives the resulting bloom multiplied by `Strength` in linear HDR before the following tone map. Resize and disposal release all levels and scratch targets. Empty and unknown modes retain the existing algorithm and emit no mode key from Go.
+
 ### Browser sky
 
 WebGPU and WebGL2 draw `Environment.Sky` behind the scene. Gradient stops are sRGB colors, blended in linear light by the world-space view direction. Camera translation does not move the sky. A sky by itself does not replace default environment lighting. Nil sky keeps the existing clear color.
@@ -177,7 +227,33 @@ Environment mode uses the IBL radiance cube when it is ready, then the legacy en
 
 Physical mode (`Sky{Mode: "physical"}`) draws an analytic daylight sky: Rayleigh and Mie single scattering after Preetham, Shirley and Smits (1999) in the real-time form of Hoffman and Preetham (2002), with a sun disk. `SunDirection` points toward the sun; `scene.SunDirectionFromAngles(elevation, azimuth)` builds it in degrees, with azimuth 0 facing -Z. Give the key `DirectionalLight` the opposite direction so shadows agree with the drawn sun. `Turbidity` (1-20, default 10), `Rayleigh` (0-8, default 2), `MieCoefficient` (0-0.1, default 0.005), `MieDirectionalG` (0-0.999, default 0.8) and `SunDiskRadius` (degrees, default 0.53; negative hides the disk) shape it; zero means the default. The output suits the ACES tone mapper at an exposure near 0.5. The server fills any unset gradient stop from the same model, so Canvas2D shows matching colors. `Sky.PhysicalRadiance` evaluates the model in Go; with `ibl.CubeFromRadiance` it bakes IBL that matches the drawn sky. The mount reports `data-gosx-scene3d-sky="physical"`.
 
+### Open ocean
+
+`Environment.Ocean` draws an open sea that reaches the horizon on WebGPU and WebGL2. One draw of a camera-centred polar grid (no vertex buffers) carries six Gerstner waves sized from `WaveHeight` (significant height, meters), `WaveLength`, `WindDirection` (degrees; 0 travels toward +Z) and `Choppiness`. Per-pixel capillary waves fade out before they alias. The surface reflects the scene sky (the physical model when `Sky.Mode` is `physical`) with Fresnel weighting, adds a GGX sun glint, subsurface tint on crests (`ScatterColor`), whitecaps where the swell compresses, and fades into the sky at the horizon. With `Bathymetry` (a grayscale heightmap and its world extent) the water knows its depth: shallows turn `ShallowColor` and transparent over the terrain, waves shoal, foam lace rings the shore and every rock, a breaker line and a 9 s run-up surge (`Surf`) move up the beach. `Encoding: "signed-sqrt"` stores heights with fine steps near sea level; linear is the default. Low-end hardware gets four waves and a quarter of the grid. The ocean draws after opaque geometry with premultiplied alpha and writes depth; its horizon ignores the camera far plane. The mount reports `data-gosx-scene3d-ocean`: `none`, `surface`, `shore`, `bathymetry-pending`, `bathymetry-failed` or `unavailable`. Canvas2D draws no ocean. Opt-in geometry reflections are described below.
+
 Sky draws share the scene target and post chain. They do not write depth. A water scene with a sky uses the world composite even when it has no imported models.
+
+### Ocean geometry reflections
+
+`Ocean.Reflections: &scene.OceanReflections{Mode: "ssr+planar", Resolution: 0.5, Strength: 1}` enables reflections on WebGL2 and WebGPU. Modes are `ssr`, `planar`, and `ssr+planar`; nil or an empty mode keeps the previous pipeline. Resolution defaults to 0.5 (range 0.125–1); strength defaults to 1. The ocean samples an opaque colour/depth capture with its filtered wave normal, marches at most 20 steps, refines a crossing with five binary steps, and rejects hits outside a depth thickness tolerance. Edge and roughness fades blend misses into a mirrored, sea-plane-clipped PBR render, then the physical sky. Visible custom shaders reflect through SSR; the planar fallback currently draws built-in PBR mesh objects. The sun path combines the existing GGX glint with an anisotropic unresolved wave-slope distribution.
+
+Balanced quality drops planar first and uses ten SSR steps. Survival quality releases reflection targets and uses the original sky reflection. QualityLadder selects survival at its first rung, balanced at intermediate rungs and full at its last rung. Camera changes update matrices and uniforms without compiling shader variants. Estimated desktop cost at 1440p: 0.8–1.8 ms for half-resolution captures, ocean SSR and a modest opaque fallback; geometry complexity affects planar cost. These are planning estimates, not hardware measurements. Canvas2D omits geometry reflections.
+
+### Living physical sky
+
+`Sky.Clouds: &scene.SkyClouds{Coverage: 0.45, Altitude: 1500, Scale: 3000, Speed: 8, Direction: 90, Opacity: 0.85}` adds a curved procedural deck to physical sky mode on both GPU backends. Coverage is 0–1 (zero clears the deck); altitude and scale are metres; speed is metres/second; direction uses the ocean's degree convention. Browser defaults are 0.45 / 1500 / 3000 / 8 / 0 / 0.85. Go preserves zero markers for altitude, scale, speed and opacity. Noise stays in world coordinates and drifts smoothly, with derivative filtering. Beer attenuation, a powder term and a sun-facing silver lining use the physical sky's ambient and attenuated sun colour. Blue hour keeps ambient sky light. The ocean evaluates the same deck for its sky reflection.
+
+Full quality uses five noise octaves; balanced uses three; survival removes the deck and disables its ocean contribution without changing the authored shader variant. Nil Clouds adds no uniforms, buffers or cloud shader code. Estimated 1440p cost including ocean reflection: 0.3–0.7 ms on a desktop GPU, unmeasured. Birds are omitted to keep attention and budget on the coastal light.
+
+### Atmospheric light and grade
+
+`Environment.Haze: &scene.Haze{Density: 0.0015, HeightFalloff: 0.04, SunScatter: 0.25}` replaces flat fog with a depth-reconstructed, height-dependent extinction integral and physical horizon in-scattering. Density is inverse metres; height falloff is inverse metres above sea level; sun scatter controls the forward lobe. The browser supplies these defaults. Nil leaves existing fog unchanged. Balanced retains height haze; survival uses existing fog density, or haze density as a cheap flat fallback.
+
+`scene.GodRays{Intensity: 0.18, Decay: 0.96, Density: 0.9, Samples: 32}` adds physical-sun-coloured radial scattering on WebGL2 and WebGPU, with opaque depth occlusion and stronger scattering at low sun. The half-resolution pass uses 8–64 samples (default 32); balanced caps it at 12 samples and quarter resolution. Survival removes shafts and releases their target. Below-horizon or behind-eye sunlight contributes zero. Haze and shafts share a composite before bloom.
+
+Use `scene.Tonemap{Mode: scene.TonemapAgX, Exposure: 0.7}` for a fitted AgX log-exposure sigmoid with a toe, shoulder and highlight desaturation, followed by one sRGB transfer. Put `scene.Grain{Intensity: 0.015}` after tonemap and before FXAA. Grain uses a fixed pixel pattern; grading and haze dither without frame seeds. Survival removes grain and retains tonemap. New Go zero fields are omitted so browser defaults apply; nil haze and absent effects preserve existing wire data and shader variants. JS can explicitly set zero intensity to disable an effect.
+
+A restrained coastal chain is GodRays, mip Bloom (`Threshold: 1.2, Strength: 0.12, Radius: 3, Scale: 0.5`), AgX, Grain and FXAA. Keeping bloom above diffuse daylight and its strength low avoids broad halos. Estimated additional 1440p desktop cost for shafts, haze and grade: 0.4–0.9 ms, unmeasured. Combined atmosphere estimates are 1.5–3.4 ms; planar geometry can dominate. Hardware frame-time and Chrome/Edge/Firefox visual acceptance remain required.
 
 ### Controlling the Scene3D animation clock
 

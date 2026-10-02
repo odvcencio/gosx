@@ -127,6 +127,7 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
+	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Src                string      `json:"src"`
 	MaterialKind       string      `json:"materialKind,omitempty"`
@@ -187,6 +188,7 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
+	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Kind               string      `json:"kind"`
 	Size               float64     `json:"size,omitempty"`
@@ -245,28 +247,31 @@ type ObjectIR struct {
 	GizmoFormMode string `json:"gizmoFormMode,omitempty"`
 	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
 	// (scene/quality_ladder.go). Empty means unconditionally visible.
-	QualityGroup      string      `json:"qualityGroup,omitempty"`
-	OutlineColor      string      `json:"outlineColor,omitempty"`
-	OutlineWidth      float64     `json:"outlineWidth,omitempty"`
-	CastShadow        bool        `json:"castShadow,omitempty"`
-	ReceiveShadow     bool        `json:"receiveShadow,omitempty"`
-	DepthWrite        *bool       `json:"depthWrite,omitempty"`
-	Roughness         float64     `json:"roughness,omitempty"`
-	Metalness         float64     `json:"metalness,omitempty"`
-	Clearcoat         float64     `json:"clearcoat,omitempty"`
-	Sheen             float64     `json:"sheen,omitempty"`
-	Transmission      float64     `json:"transmission,omitempty"`
-	Iridescence       float64     `json:"iridescence,omitempty"`
-	Anisotropy        float64     `json:"anisotropy,omitempty"`
-	SpecularIntensity *float64    `json:"specularIntensity,omitempty"`
-	SpecularColor     *[3]float64 `json:"specularColor,omitempty"`
-	IOR               *float64    `json:"ior,omitempty"`
-	NormalMap         string      `json:"normalMap,omitempty"`
-	RoughnessMap      string      `json:"roughnessMap,omitempty"`
-	MetalnessMap      string      `json:"metalnessMap,omitempty"`
-	OcclusionMap      string      `json:"occlusionMap,omitempty"`
-	EmissiveMap       string      `json:"emissiveMap,omitempty"`
-	AlphaCutoff       AlphaCutoff `json:"alphaCutoff,omitzero"`
+	QualityGroup        string      `json:"qualityGroup,omitempty"`
+	OutlineColor        string      `json:"outlineColor,omitempty"`
+	OutlineWidth        float64     `json:"outlineWidth,omitempty"`
+	CastShadow          bool        `json:"castShadow,omitempty"`
+	ReceiveShadow       bool        `json:"receiveShadow,omitempty"`
+	DepthWrite          *bool       `json:"depthWrite,omitempty"`
+	Roughness           float64     `json:"roughness,omitempty"`
+	Metalness           float64     `json:"metalness,omitempty"`
+	Clearcoat           float64     `json:"clearcoat,omitempty"`
+	Sheen               float64     `json:"sheen,omitempty"`
+	Transmission        float64     `json:"transmission,omitempty"`
+	Thickness           float64     `json:"thickness,omitempty"`
+	AttenuationDistance float64     `json:"attenuationDistance,omitempty"`
+	AttenuationColor    *[3]float64 `json:"attenuationColor,omitempty"`
+	Iridescence         float64     `json:"iridescence,omitempty"`
+	Anisotropy          float64     `json:"anisotropy,omitempty"`
+	SpecularIntensity   *float64    `json:"specularIntensity,omitempty"`
+	SpecularColor       *[3]float64 `json:"specularColor,omitempty"`
+	IOR                 *float64    `json:"ior,omitempty"`
+	NormalMap           string      `json:"normalMap,omitempty"`
+	RoughnessMap        string      `json:"roughnessMap,omitempty"`
+	MetalnessMap        string      `json:"metalnessMap,omitempty"`
+	OcclusionMap        string      `json:"occlusionMap,omitempty"`
+	EmissiveMap         string      `json:"emissiveMap,omitempty"`
+	AlphaCutoff         AlphaCutoff `json:"alphaCutoff,omitzero"`
 	// RimColor/RimPower/RimStrength: see StandardMaterial. Off by default.
 	RimColor           *[3]float64                `json:"rimColor,omitempty"`
 	RimPower           float64                    `json:"rimPower,omitempty"`
@@ -626,6 +631,7 @@ type PointsIR struct {
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
+	Detail               *Detail                    `json:"detail,omitempty"`
 	ID                   string                     `json:"id"`
 	Count                int                        `json:"count"`
 	Kind                 string                     `json:"kind"`
@@ -657,6 +663,9 @@ type InstancedMeshIR struct {
 	Clearcoat            float64                    `json:"clearcoat,omitempty"`
 	Sheen                float64                    `json:"sheen,omitempty"`
 	Transmission         float64                    `json:"transmission,omitempty"`
+	Thickness            float64                    `json:"thickness,omitempty"`
+	AttenuationDistance  float64                    `json:"attenuationDistance,omitempty"`
+	AttenuationColor     *[3]float64                `json:"attenuationColor,omitempty"`
 	Iridescence          float64                    `json:"iridescence,omitempty"`
 	Anisotropy           float64                    `json:"anisotropy,omitempty"`
 	SpecularIntensity    *float64                   `json:"specularIntensity,omitempty"`
@@ -1097,6 +1106,8 @@ type EnvironmentIR struct {
 	EnvMap           string         `json:"envMap,omitempty"`
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
 	Sky              *Sky           `json:"sky,omitempty"`
+	Ocean            *Ocean         `json:"ocean,omitempty"`
+	Haze             *Haze          `json:"haze,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -1991,6 +2002,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 		"id":   item.ID,
 		"kind": item.Kind,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
@@ -2098,6 +2112,11 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "clearcoat", item.Clearcoat)
 	setNumeric(record, "sheen", item.Sheen)
 	setNumeric(record, "transmission", item.Transmission)
+	setNumeric(record, "thickness", item.Thickness)
+	setNumeric(record, "attenuationDistance", item.AttenuationDistance)
+	if item.AttenuationColor != nil {
+		record["attenuationColor"] = *item.AttenuationColor
+	}
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
 	setNumericPtr(record, "ior", item.IOR)
@@ -2162,6 +2181,9 @@ func (item ModelIR) legacyProps() map[string]any {
 		"id":  item.ID,
 		"src": src,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setString(record, "previewSrc", item.PreviewSrc)
 	setString(record, "fullSrc", item.FullSrc)
 	if item.Progressive {
@@ -2205,6 +2227,11 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumeric(record, "clearcoat", item.Clearcoat)
 	setNumeric(record, "sheen", item.Sheen)
 	setNumeric(record, "transmission", item.Transmission)
+	setNumeric(record, "thickness", item.Thickness)
+	setNumeric(record, "attenuationDistance", item.AttenuationDistance)
+	if item.AttenuationColor != nil {
+		record["attenuationColor"] = *item.AttenuationColor
+	}
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
 	setNumericPtr(record, "ior", item.IOR)
@@ -2383,6 +2410,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		"count": item.Count,
 		"kind":  item.Kind,
 	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
+	}
 	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
@@ -2411,6 +2441,11 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setNumeric(record, "clearcoat", item.Clearcoat)
 	setNumeric(record, "sheen", item.Sheen)
 	setNumeric(record, "transmission", item.Transmission)
+	setNumeric(record, "thickness", item.Thickness)
+	setNumeric(record, "attenuationDistance", item.AttenuationDistance)
+	if item.AttenuationColor != nil {
+		record["attenuationColor"] = *item.AttenuationColor
+	}
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
 	setNumericPtr(record, "ior", item.IOR)
@@ -2480,6 +2515,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	record := map[string]any{
 		"id":  item.ID,
 		"src": src,
+	}
+	if item.Detail != nil {
+		record["detail"] = cloneDetail(item.Detail)
 	}
 	setString(record, "materialKind", item.MaterialKind)
 	setString(record, "color", item.Color)
@@ -3203,7 +3241,8 @@ func (item EnvironmentIR) IsZero() bool {
 		item.GroundIntensity == 0 &&
 		item.EnvMap == "" &&
 		item.IBL.IsZero() &&
-		item.Sky == nil &&
+		item.Sky == nil && item.Haze == nil &&
+		item.Ocean == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -3234,6 +3273,12 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	if item.Sky != nil {
 		record["sky"] = item.Sky
 	}
+	if item.Haze != nil {
+		record["haze"] = item.Haze
+	}
+	if item.Ocean != nil {
+		record["ocean"] = item.Ocean
+	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
@@ -3255,6 +3300,8 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		Sky:              normalizeSky(environment.Sky),
+		Ocean:            normalizeOcean(environment.Ocean),
+		Haze:             normalizeHaze(environment.Haze),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
@@ -3295,6 +3342,8 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureSkyEnvironment,
 	capability.FeatureSkyGradient,
 	capability.FeatureSkyPhysical,
+	capability.FeatureOcean,
+	capability.FeatureTransmission,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3366,6 +3415,16 @@ func waterObjectKindUsesMeshProjectedPass(value string) bool {
 // shader) are handled by later tasks.
 func collectFeatures(ir SceneIR) []capability.Feature {
 	seen := map[capability.Feature]bool{}
+	for _, o := range ir.Objects {
+		if o.Transmission > 0 {
+			seen[capability.FeatureTransmission] = true
+		}
+	}
+	for _, model := range ir.Models {
+		if model.Transmission > 0 {
+			seen[capability.FeatureTransmission] = true
+		}
+	}
 
 	// ibl and environment-map: the environment carries a non-empty env-map.
 	//
@@ -3397,6 +3456,15 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	}
 	if skyRaisesPhysicalFeature(ir.Environment.Sky) {
 		seen[capability.FeatureSkyPhysical] = true
+	}
+	if ir.Environment.Ocean != nil {
+		seen[capability.FeatureOcean] = true
+	}
+
+	for _, o := range ir.InstancedMeshes {
+		if o.Transmission > 0 {
+			seen[capability.FeatureTransmission] = true
+		}
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

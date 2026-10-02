@@ -60,6 +60,11 @@ function gosxConfigureSceneScript(script, role, src) {
       : null;
   }
 
+  function sceneWebGLChunkFunction(name: string) {
+    const api = sceneWebGLChunkAPI();
+    return api && typeof api[name] === "function" ? api[name] : null;
+  }
+
   // sceneLegacyWebGLRendererFactory resolves the legacy vertex-colour
   // renderer. It lived in 10-runtime-scene-core.js, so this file used to call
   // it lexically. It now ships in 16e-scene-webgl-legacy.ts inside the WebGL
@@ -80,34 +85,27 @@ function gosxConfigureSceneScript(script, role, src) {
     if (typeof createScenePBRRendererOrFallback === "function") {
       return createScenePBRRendererOrFallback;
     }
-    const api = sceneWebGLChunkAPI();
-    return api && typeof api.createScenePBRRendererOrFallback === "function"
-      ? api.createScenePBRRendererOrFallback
-      : null;
+    return sceneWebGLChunkFunction("createScenePBRRendererOrFallback");
   }
 
   function sceneWaterWebGLRendererFactory() {
     if (typeof createSceneWaterRendererWebGL === "function") {
       return createSceneWaterRendererWebGL;
     }
-    const api = sceneWebGLChunkAPI();
-    return api && typeof api.createSceneWaterRendererWebGL === "function"
-      ? api.createSceneWaterRendererWebGL
-      : null;
+    return sceneWebGLChunkFunction("createSceneWaterRendererWebGL");
   }
 
   function sceneWebGLInitialProgramAPI() {
-    const api = sceneWebGLChunkAPI();
     return {
       createContext: typeof createScenePBRContext === "function"
         ? createScenePBRContext
-        : (api && typeof api.createScenePBRContext === "function" ? api.createScenePBRContext : null),
+        : sceneWebGLChunkFunction("createScenePBRContext"),
       prepare: typeof prepareScenePBRInitialRenderer === "function"
         ? prepareScenePBRInitialRenderer
-        : (api && typeof api.prepareScenePBRInitialRenderer === "function" ? api.prepareScenePBRInitialRenderer : null),
+        : sceneWebGLChunkFunction("prepareScenePBRInitialRenderer"),
       discard: typeof discardScenePBRInitialPrograms === "function"
         ? discardScenePBRInitialPrograms
-        : (api && typeof api.discardScenePBRInitialPrograms === "function" ? api.discardScenePBRInitialPrograms : null),
+        : sceneWebGLChunkFunction("discardScenePBRInitialPrograms"),
     };
   }
 
@@ -819,7 +817,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "detail", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "thickness", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -881,6 +879,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (namedMaterialOverride) {
       next.material = override.material.trim();
     }
+    sceneAssignMaterialOverride(next, material, "detail", "detail", override);
     sceneAssignMaterialOverride(next, material, "color", "color", override);
     sceneAssignMaterialOverride(next, material, "texture", "texture", override);
     sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
@@ -912,6 +911,9 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
     sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
+    sceneAssignMaterialOverride(next, material, "thickness", "thickness", override);
+    sceneAssignMaterialOverride(next, material, "attenuationDistance", "attenuationDistance", override);
+    sceneAssignMaterialOverride(next, material, "attenuationColor", "attenuationColor", override);
     sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
     sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
     sceneAssignMaterialOverride(next, material, "rimColor", "rimColor", override);
@@ -1698,7 +1700,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // so the first mount awaits this before choosing its renderer. Failed or
   // unsupported probes still fall through to WebGL/canvas.
 
-
   function sceneHasNavigatorWebGPU() {
     return typeof navigator !== "undefined"
       && navigator.gpu
@@ -1766,7 +1767,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // never fetches it, which is the whole point of the split: it used to ride
   // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
-
 
   function ensureWebGLFeatureLoaded() {
     // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
@@ -1889,7 +1889,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // fetch; subsequent calls await the same promise. See 26f-feature-
   // scene3d-gltf-prefix.js for the split rationale.
 
-
   function ensureGLTFFeatureLoaded() {
     return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
   }
@@ -1957,7 +1956,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // want to drive keyframe or skeletal animations can await this helper
   // and then use window.__gosx_scene3d_animation_api.
 
-
   function ensureAnimationFeatureLoaded() {
     return ensureSceneGatedFeatureLoaded("animation", "gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
   }
@@ -1971,7 +1969,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // registry and the GPU instanced-cull system. A scene with one cube and one
   // directional light runs none of them, and used to pay 8_772 gzip bytes for
   // all of them. See 26k-feature-scene3d-compute-prefix.js.
-
 
   function ensureComputeFeatureLoaded() {
     if (window.__gosx_scene3d_compute_api) {
@@ -2042,7 +2039,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // the procedural point generators. See
   // 26l-feature-scene3d-decompress-prefix.js.
 
-
   // sceneDecompressAPIFunction resolves one decompress entry point. The
   // monolith keeps 11a and 11b inline, so the lookup finds the function on the
   // API object either way: 10-runtime-scene-core.js publishes the inline copy
@@ -2063,7 +2059,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
   function sceneGatedFeatureAPI(kind) {
-    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : window["__gosx_scene3d_" + kind + "_api"];
+    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + "_api"];
   }
   // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
   function ensureSceneGatedFeatureLoaded(kind, datasetKey, fallback) {
@@ -5121,6 +5117,7 @@ function gosxConfigureSceneScript(script, role, src) {
       const fallback = defaults[tier];
       profiles[tier] = {
         tier,
+        detail: sceneBool(source.detail, tier !== "survival"),
         dprCap: Math.max(1, Math.min(3, sceneNumber(source.dprCap, fallback.dprCap))),
         surfaceResolution: Math.max(32, Math.floor(sceneNumber(source.surfaceResolution, fallback.surfaceResolution))),
         causticsResolution: Math.max(64, Math.floor(sceneNumber(source.causticsResolution, fallback.causticsResolution))),
@@ -5332,7 +5329,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return scratch[Math.max(0, Math.ceil(count * 0.95) - 1)];
   }
 
-  function sceneAdaptiveRendererSample(renderer, nowMS) {
+  function sceneAdaptiveRendererSample(renderer, nowMS, cpuDurationMS = 0) {
     if (!renderer || typeof renderer.pollPerformanceSample !== "function") return null;
     let sample = null;
     try { sample = renderer.pollPerformanceSample(); } catch (e) { return null; }
@@ -5341,12 +5338,17 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!sample || typeof sample !== "object") return null;
     const durationMS = sceneNumber(sample.durationMS != null ? sample.durationMS : (sample.frameMS != null ? sample.frameMS : sample.gpuMS), 0);
     if (!(durationMS > 0) || !Number.isFinite(durationMS)) return null;
+    const cpuMS = Math.max(0, sceneNumber(cpuDurationMS, 0));
+    const source = String(sample.source || sample.measurement || "renderer");
     return {
-      durationMS,
-      source: String(sample.source || sample.measurement || "renderer"),
+      // CPU and GPU work overlap. Govern by the slower stage, preserving the
+      // renderer duration separately so a CPU-bound frame is never called GPU time.
+      durationMS: Math.max(durationMS, cpuMS),
+      rendererDurationMS: durationMS,
+      source: cpuMS > durationMS ? "cpu-work+" + source : source,
       atMS: sceneNumber(sample.atMS, nowMS),
       rafIntervalMS: 0,
-      cpuDurationMS: 0,
+      cpuDurationMS: cpuMS,
     };
   }
 
@@ -5390,7 +5392,7 @@ function gosxConfigureSceneScript(script, role, src) {
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
-    let sample = sceneAdaptiveRendererSample(renderer, now);
+    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS);
     if (sample) state.missingRendererSamples = 0;
     else if (rendererTimingLocked) state.missingRendererSamples += 1;
     else state.missingRendererSamples = 0;
@@ -5398,6 +5400,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
       sample = {
         durationMS: Math.max(rafIntervalMS, cpuDurationMS),
+        rendererDurationMS: 0,
         source: rendererTimingStale ? "cpu-raf-stale-renderer-timing" : "cpu-raf",
         atMS: now,
         rafIntervalMS,
@@ -5424,7 +5427,8 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(sample.source.indexOf("cpu-raf") === 0 ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const cpuMeasured = sample.source.indexOf("cpu-raf") === 0 || sample.source.indexOf("cpu-work+") === 0;
+    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {

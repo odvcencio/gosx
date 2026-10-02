@@ -649,9 +649,9 @@
   const sceneObjectMaterialProfiles = new WeakMap();
   const sceneSharedMaterialProfiles = new Map();
   const sceneObjectMaterialInputKeys = [
-    "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
+    "detail", "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
     "emissive", "emissiveColor", "normalScale", "normalUVScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
-    "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineDash",
+    "clearcoat", "sheen", "thickness", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "lineDash",
     "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
     "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout",
     "shaderSource", "shaderSourceFiles", "normalMap", "roughnessMap", "metalnessMap",
@@ -750,6 +750,9 @@
       clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
       sheen: sceneNumberOrCSSVar(object && object.sheen, 0),
       transmission: sceneNumberOrCSSVar(object && object.transmission, 0),
+      thickness: Math.max(0, sceneNumber(object && object.thickness, 0)),
+      attenuationDistance: Math.max(0, sceneNumber(object && object.attenuationDistance, 0)),
+      attenuationColor: sceneCopyFiniteRGB(object && object.attenuationColor, [1, 1, 1]),
       iridescence: sceneNumberOrCSSVar(object && object.iridescence, 0),
       anisotropy: sceneNumberOrCSSVar(object && object.anisotropy, 0),
       lineDash: sceneBool(object && object.lineDash, false),
@@ -764,6 +767,7 @@
       shaderLayout: object && object.shaderLayout && typeof object.shaderLayout === "object" ? sceneCloneData(object.shaderLayout) : null,
       shaderSource: typeof (object && object.shaderSource) === "string" ? object.shaderSource.trim() : "",
       shaderSourceFiles: object && object.shaderSourceFiles && typeof object.shaderSourceFiles === "object" ? sceneCloneData(object.shaderSourceFiles) : null,
+      detail: sceneNormalizeDetail(object && object.detail),
       normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
       roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
       metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
@@ -858,6 +862,9 @@
       sceneCSSVarReference(profile && profile.specularColor) ? String(profile.specularColor).trim() : JSON.stringify(sceneNormalizeMaterialSpecularColor(profile && profile.specularColor, null)),
       sceneCSSVarReference(profile && profile.clearcoat) ? String(profile.clearcoat).trim() : sceneNumber(profile && profile.clearcoat, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.sheen) ? String(profile.sheen).trim() : sceneNumber(profile && profile.sheen, 0).toFixed(3),
+      String(sceneNumber(profile && profile.thickness, 0)),
+      String(sceneNumber(profile && profile.attenuationDistance, 0)),
+      JSON.stringify(profile && profile.attenuationColor || [1, 1, 1]),
       sceneCSSVarReference(profile && profile.transmission) ? String(profile.transmission).trim() : sceneNumber(profile && profile.transmission, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.iridescence) ? String(profile.iridescence).trim() : sceneNumber(profile && profile.iridescence, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.anisotropy) ? String(profile.anisotropy).trim() : sceneNumber(profile && profile.anisotropy, 0).toFixed(3),
@@ -880,6 +887,7 @@
       String(profile && profile.emissiveMap || ""),
       JSON.stringify(profile && profile.textureDescriptors || null),
     ];
+    if (profile && profile.detail) parts.push("detail:" + JSON.stringify(profile.detail));
     if (registryProfile) {
       parts.push("profile:" + registryProfile.version + ":" + String(registryProfile.key || ""));
     }
@@ -1100,4 +1108,39 @@
     }
     hash = Math.imul(hash ^ text.length, 16777619) >>> 0;
     return Math.imul(hash ^ digest, 16777619) >>> 0;
+  }
+
+  // Detail defaults live here so typed and prop-bag scenes share the contract.
+  function sceneNormalizeDetailLayer(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return {
+      albedo: typeof raw.albedo === "string" ? raw.albedo.trim() : "",
+      normal: typeof raw.normal === "string" ? raw.normal.trim() : "",
+      roughness: typeof raw.roughness === "string" ? raw.roughness.trim() : "",
+      scale: Math.max(0.001, sceneNumber(raw.scale, 2)),
+      normalScale: Math.max(0, sceneNumber(raw.normalScale, 1)),
+      albedoMix: clamp01(sceneNumber(raw.albedoMix, 0.6)),
+      roughnessMix: clamp01(sceneNumber(raw.roughnessMix, 0.5)),
+    };
+  }
+
+  function sceneNormalizeDetail(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const slopeStart = Math.max(0, Math.min(90, sceneNumber(raw.slopeStart, 30)));
+    const fadeStart = Math.max(0, sceneNumber(raw.fadeStart, 8));
+    return {
+      ground: sceneNormalizeDetailLayer(raw.ground), steep: sceneNormalizeDetailLayer(raw.steep),
+      slopeStart: slopeStart, slopeEnd: Math.max(slopeStart + 0.001, Math.min(90, sceneNumber(raw.slopeEnd, 45))),
+      fadeStart: fadeStart, fadeEnd: Math.max(fadeStart + 0.001, sceneNumber(raw.fadeEnd, 14)),
+      triplanar: raw.triplanar == null ? null : sceneBool(raw.triplanar, true),
+      stochastic: sceneBool(raw.stochastic, true),
+    };
+  }
+
+  /** @param {*} mat */
+  function sceneTransmissionVolume(mat) {
+    var m = mat || {}, color = sceneCopyFiniteRGB(m.attenuationColor, [1, 1, 1]);
+    var distance = Math.max(0, sceneNumber(m.attenuationDistance, 0));
+    return [Math.max(0, sceneNumber(m.thickness, 0)), sceneNormalizeMaterialIor(m.ior, 1.5),
+      distance > 0 ? 1 / distance : 0, 0, Math.min(1, color[0]), Math.min(1, color[1]), Math.min(1, color[2]), 0];
   }

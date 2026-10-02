@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "allowJs": false,
-    "lib": ["DOM", "ES2022"],
+    "lib": [
+      "DOM",
+      "ES2022"
+    ],
     "module": "none",
     "noEmit": true,
     "skipLibCheck": true,
@@ -10,7 +13,9 @@
   },
   "files": [
     "scene3d/bootstrap-bridge.d.ts",
+    "scene3d/webgl-detail.ts",
     "scene3d/webgl.ts",
+    "scene3d/webgpu-detail.ts",
     "scene3d/webgpu.ts",
     "scene3d/mount-webgl.ts",
     "scene3d/gltf.ts",
@@ -18,7 +23,10 @@
     "scene3d/compute.ts",
     "scene3d/overlay-dom.ts",
     "scene3d/mount-controls.ts",
+    "scene3d/mount-zoom.ts",
     "scene3d/mount-walk.ts",
+    "scene3d/ocean-waves.ts",
+    "scene3d/ocean-query.ts",
     "scene3d/animation.ts",
     "scene3d/mount-backend.ts",
     "scene3d/dom-regions.ts",
@@ -28,6 +36,16 @@
     "scene3d/command-bridge.ts",
     "scene3d/mount-telemetry.ts",
     "scene3d/hydrate-input.ts",
-    "scene3d/command-runtime.ts"
+    "scene3d/command-runtime.ts",
+    "scene3d/walk-surfaces.ts",
+    "scene3d/vessel-physics.ts",
+    "scene3d/vessel-input.ts",
+    "scene3d/vessel-model.ts",
+    "scene3d/mount-vessel.ts",
+    "scene3d/vessel-wake.ts",
+    "scene3d/webgl-depth-post.ts",
+    "scene3d/webgl-contact-shadows.ts",
+    "scene3d/webgl-taa.ts",
+    "scene3d/webgpu-contact-shadows.ts"
   ]
 }

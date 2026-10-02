@@ -244,7 +244,33 @@ function isRendererOwnedChunkSource(backend, source) {
 function readSceneRendererBackendSrc(backend, options = {}) {
   const root = options.root || clientJS;
   const readSource = options.readSource || ((source) => fs.readFileSync(path.join(root, source), "utf8"));
-  return rendererBackendSources(backend, options).map(readSource).join("\n");
+  const source = rendererBackendSources(backend, options).map(readSource).join("\n");
+  // Source-inspection tests also execute this joined text in a JavaScript VM.
+  // Erase TypeScript annotations while retaining offsets, comments, and lines.
+  const ts = require("../runtime/node_modules/typescript");
+  const tree = ts.createSourceFile("renderer.ts", source, ts.ScriptTarget.Latest, true);
+  const ranges = [];
+  function visit(node) {
+    if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
+      ranges.push([node.getStart(tree), node.end]);
+      return;
+    }
+    if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+      ranges.push([node.expression.end, node.end]);
+    }
+    if (node.type && (ts.isParameter(node) || ts.isVariableDeclaration(node) || (ts.isFunctionLike(node) && node.body))) {
+      const colon = source.lastIndexOf(":", node.type.getStart(tree));
+      ranges.push([colon, node.type.end]);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  let result = source;
+  for (const [start, end] of ranges.sort((a, b) => b[0] - a[0])) {
+    const erased = result.slice(start, end).replace(/[^\r\n]/g, " ");
+    result = result.slice(0, start) + erased + result.slice(end);
+  }
+  return result;
 }
 
 function directRendererReadFindings(source, filename) {

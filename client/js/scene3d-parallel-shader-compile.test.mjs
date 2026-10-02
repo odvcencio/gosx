@@ -165,14 +165,17 @@ function callsNamed(harness, name) {
   return harness.calls.filter(call => call[0] === name);
 }
 
-function parallelRendererHarness(extension = true) {
+function parallelRendererHarness(extension = true, compiled = false) {
   let complete = false;
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
   const raf = installManualRAF(env.context);
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   for (const name of ["scene3d", "scene3d-compute", "scene3d-webgl"]) {
-    runScript(freshFeatureBundleSource(name), env.context, name + ".js");
+    const source = compiled
+      ? fs.readFileSync(new URL(`./bootstrap-feature-${name}.js`, import.meta.url), "utf8")
+      : freshFeatureBundleSource(name);
+    runScript(source, env.context, name + ".js");
   }
   const canvas = env.document.createElement("canvas");
   canvas.width = 320; canvas.height = 180;
@@ -192,6 +195,63 @@ const gpuCreationOps = new Set(["createProgram", "createShader", "createTexture"
 function gpuCreations(gl) {
   return gl.ops.filter(op => gpuCreationOps.has(op[0])).length;
 }
+
+for (const extension of [false, true]) {
+  test(`release bundle renders and reuses resources after shader completion (parallel=${extension})`, t => {
+    const h = parallelRendererHarness(extension, true);
+    t.after(() => h.renderer.dispose());
+    const bundle = makePointsBundle({ id: "release-point", count: 1, positions: [0, 0, 0] });
+    const viewport = { width: 320, height: 180 };
+    h.renderer.render(bundle, viewport);
+    if (extension) {
+      assert.equal(h.gl.ops.filter(op => /^(drawArrays|drawElements)$/.test(op[0])).length, 0);
+    }
+    h.setComplete(true);
+    h.raf.flush(16);
+    h.renderer.render(bundle, viewport);
+    h.raf.flush(32);
+    h.renderer.render(bundle, viewport);
+    assert.ok(h.gl.ops.some(op => /^(drawArrays|drawElements)$/.test(op[0])), "the compiled shader queue reaches drawing");
+    const initial = gpuCreations(h.gl);
+    for (let frame = 0; frame < 3; frame++) {
+      h.renderer.render(bundle, viewport);
+      h.raf.flush(48 + frame * 16);
+    }
+    assert.equal(gpuCreations(h.gl), initial, "compiled caches and dynamic VBO slots retain their resources");
+    h.renderer.dispose();
+    assert.ok(h.gl.ops.some(op => op[0] === "deleteProgram"), "compiled program records release their shaders");
+  });
+}
+test("ocean locations and draws wait for parallel shader completion", t => {
+  const h = parallelRendererHarness();
+  t.after(() => h.renderer.dispose());
+  h.setComplete(true);
+  h.raf.flush(16);
+  const bundle = makePointsBundle(null);
+  bundle.points = [];
+  h.renderer.render(bundle, {width:320,height:180});
+  h.setComplete(false);
+  const locations = [], draws = [];
+  const getUniformLocation = h.gl.getUniformLocation.bind(h.gl), drawArrays = h.gl.drawArrays.bind(h.gl);
+  h.gl.getUniformLocation = (program, name) => {
+    if (program.attached.some(shader => shader.source.includes("u_ocean[35]"))) locations.push(name);
+    return getUniformLocation(program, name);
+  };
+  h.gl.drawArrays = (mode, first, count) => {
+    if (h.gl._activeProgram.attached.some(shader => shader.source.includes("u_ocean[35]"))) draws.push(count);
+    drawArrays(mode, first, count);
+  };
+  bundle.environment.ocean = {level:0,waveHeight:0.8,extent:4000};
+  h.renderer.render(bundle, {width:320,height:180});
+  assert.deepEqual(locations, [], "pending ocean programs cannot query locations");
+  assert.deepEqual(draws, [], "pending ocean programs cannot draw");
+  h.setComplete(true);
+  h.raf.flush(32);
+  h.renderer.render(bundle, {width:320,height:180});
+  assert.deepEqual(locations, ["u_viewProj", "u_ocean[0]", "u_bathymetry"]);
+  assert.equal(draws.length, 1, "the completed ocean shader draws its grid");
+  assert.ok(draws[0] > 3);
+});
 
 function cssPostRendererHarness(extension) {
   const h = parallelRendererHarness(extension);

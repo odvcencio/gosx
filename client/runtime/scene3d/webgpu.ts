@@ -220,6 +220,8 @@
     "    rimStrength: f32,",
     "    rimColor: vec3f,",
     "    _pad4: f32,",
+    "    volume: vec4f,",
+    "    attenuationColor: vec3f,",
     "};",
   ].join("\n");
 
@@ -1837,6 +1839,7 @@
     "    return out;",
     "}",
     "",
+    WGSL_TRANSMISSION,
     "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
     // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
@@ -1958,6 +1961,7 @@
       "    }",
     "",
     // Accumulate direct lighting.
+    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    var Lo = vec3f(0.0);",
     "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
@@ -2046,7 +2050,7 @@
     "        }",
     "",
     "        let radiance = lightColor * intensity * attenuation;",
-    "        Lo = Lo + (kD * albedo / PI + specular) * radiance * NdotL * shadowAtten;",
+    "        Lo = Lo + (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadowAtten;",
     "    }",
     "",
     "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
@@ -2060,7 +2064,7 @@
     "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
     "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
     "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
-    "        let diffuseIBL = irradiance * albedo * kDenv;",
+    "        let diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
     "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
@@ -2079,13 +2083,16 @@
     "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
+    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo;",
+    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "    }",
+    "    if (env.hasIBL == 0u && env.hasEnvMap == 0u) {",
+    "        ambient = ambient + transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "    }",
     "    ambient = ambient * ambientOcclusion;",
     "",
@@ -2120,9 +2127,9 @@
     "        color = mix(color, color * (vec3f(0.65) + iri * 0.7), iridescence * pow(1.0 - NoV, 2.0));",
     "    }",
     "",
-    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    if (transmission > 0.0001) {",
-    "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+    "        let Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
     "    }",
     "",
     // Exponential fog.
@@ -2768,7 +2775,8 @@
     "}",
     "",
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
-    "    var color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let inputColor = textureSample(inputTex, inputSamp, uv);",
+    "    var color = inputColor.rgb;",
     "    color = color * params.exposure;",
     "    let mode = i32(params.toneMapMode);",
     "    if (mode == 0) {",
@@ -2783,10 +2791,9 @@
     "    if (mode != 3) {",
     "        color = pow(max(color, vec3f(0.0)), vec3f(1.0 / 2.2));",
     "    }",
-    "    return vec4f(color, 1.0);",
+    "    return vec4f(color, inputColor.a);",
     "}",
   ].join("\n");
-
   function sceneWebGPUToneMapMode(mode) {
     if (typeof mode === "string") {
       var normalized = mode.trim().toLowerCase();
@@ -3603,6 +3610,9 @@
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
         { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
         { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 17, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
       ],
     });
   }
@@ -4225,9 +4235,9 @@
     var depthTexView = null;
     var currentWidth = 0;
     var currentHeight = 0;
-
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
-
+    var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
+    var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
     // Same memoization pattern as the renderer's wgpuCachedBindGroup: a bind
     // group stays valid while the layout and every bound resource identity
     // are unchanged, and per-frame recreation churns GPU wrapper objects.
@@ -4262,7 +4272,6 @@
       }
       return owner;
     }
-
     // Render-truth chain state, owned by apply() but hoisted here so
     // fullscreenPass -- the ONE function every post pass funnels through --
     // can attribute its dispatch to the effect currently being processed.
@@ -4271,7 +4280,6 @@
     // to add a new effect case that forgets to report itself.
     var activePostChain = null;
     var activePostIndex = -1;
-
     // Lazily compiled pipelines and layouts.
     var pipelines = {};
     var postParamsLayout = null;
@@ -4466,6 +4474,7 @@
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
+      mipBloom.dispose(); atmospherePost.dispose();
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
@@ -4568,13 +4577,25 @@
       fullscreenPass(encoder, pipeline, blitBG, outputView, { markTruth: false });
     }
 
+    function applyContactShadows(encoder: any, input: any, output: any, effect: any, camera: any, size: { width: number; height: number }) {
+      var pipeline = getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout());
+      var buffer = getParamBuffer("contactShadows", 96);
+      device.queue.writeBuffer(buffer, 0, sceneWebGPUContactUniforms(effect, camera, size.width, size.height, camera && camera.postLights));
+      var group = device.createBindGroup({ layout: getSSAOLayout(), entries: [
+        { binding: 0, resource: input }, { binding: 1, resource: linearSampler },
+        { binding: 2, resource: depthTexView }, { binding: 3, resource: { buffer: buffer } },
+      ] });
+      fullscreenPass(encoder, pipeline, group, output, {});
+    }
+
     return {
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
         return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
       },
 
-      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera, atmosphereContext = {}) {
+        atmospherePost.begin(effects);
         ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
@@ -4614,6 +4635,7 @@
           activePostIndex = i;
 
           switch (effect.kind) {
+            case "atmosphere": currentTexView = atmospherePost.apply({encoder, input: currentTexView, effect, output: outputView, width: scaledW, height: scaledH, context: atmosphereContext}); break;
             case SCENE_POST_TONE_MAPPING: {
               var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout());
               var buf = getParamBuffer("toneMapping", 16);
@@ -4631,6 +4653,7 @@
               break;
             }
             case SCENE_POST_BLOOM: {
+              if (effect.mode === "mip") { currentTexView = mipBloom.apply({ encoder: encoder, input: currentTexView, effect: effect, output: outputView, width: scaledW, height: scaledH, index: i }); break; }
               // Bloom ping-pong resolution is scaledW/H * Bloom.Scale.
               // Zero / out-of-range scale falls back to 0.5 (v0.14.0 default),
               // matching the WebGL helper in applyBloom.
@@ -4731,6 +4754,10 @@
               currentTexView = outputView;
               break;
             }
+            case "contactShadows":
+              applyContactShadows(encoder, currentTexView, outputView, effect, camera, { width: canvasW, height: canvasH });
+              currentTexView = outputView;
+              break;
             case SCENE_POST_DOF: {
               var dofPipeline = getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout());
               var dofBuf = getParamBuffer("dof", 32);
@@ -4758,6 +4785,7 @@
               currentTexView = outputView;
               break;
             }
+            case "taa": // Temporal resolve is unsupported here: retain FXAA edges.
             case SCENE_POST_FXAA: {
               // Chain-end edge AA. Reuses the blit bind group layout
               // (texture + sampler, no uniforms) since FXAA has no params.
@@ -4889,6 +4917,7 @@
       },
 
       dispose: function() {
+        mipBloom.dispose(); atmospherePost.dispose();
         disposed = true;
         if (sceneTex) sceneTex.destroy();
         if (auxTex) auxTex.destroy();
@@ -6610,6 +6639,7 @@
       var config = {
         device: device,
         format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         alphaMode: activePresentation.alphaMode,
         colorSpace: activePresentation.colorSpace,
       };
@@ -6660,8 +6690,8 @@
     }
 
     // GPU resources (initialized after device is ready).
-    var frameBindGroupLayout = null;
-    var materialBindGroupLayout = null;
+    var frameBindGroupLayout = new Map().get("handle");
+    var materialBindGroupLayout = new Map().get("handle");
     var elioSkinBindGroupLayout = null;
     var computedMorphBindGroupLayout = null;
     var pointsBindGroupLayout = null;
@@ -6751,6 +6781,8 @@
     var pointsFragmentModule = null;
 
     // Pipeline cache.
+    var detailResources = new Map().get("active");
+    var detailEnabled = true;
     var pipelineCache = {};
     var activeSampleCount = 1;
 
@@ -7410,14 +7442,14 @@
 
     // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
-    var placeholderView = null;
+    var placeholderView = new Map().get("handle");
     var placeholderCubeTex = null;
     var placeholderCubeView = null;
 
     // Post-processor.
-    var postProcessor = null;
+    var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null };
+    var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -7469,7 +7501,7 @@
     // rimStrength term — see WGSL_MATERIAL_STRUCT above for the exact field
     // order and alignment. Only the material buffer grows; frame and shadow
     // buffers are untouched.
-    var _materialUniformBuf = new ArrayBuffer(256);
+    var _materialUniformBuf = new ArrayBuffer(288);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -8141,11 +8173,11 @@
     }
 
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite, frontFace) {
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
       var reflected = frontFace === "cw";
-      var key = wgpuPipelineKey(sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
+      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8163,18 +8195,18 @@
       return pipeline;
     }
 
-    function getPBRInstancedPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    function getPBRInstancedPipeline(blendMode, depthWrite, detail = false) {
+      var key = wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedPipeline(device, pbrPipelineLayout, pbrInstancedVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
 
-    function getPBRInstancedCullPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    function getPBRInstancedCullPipeline(blendMode, depthWrite, detail = false) {
+      var key = wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, pbrPipelineLayout, pbrInstancedCullVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -14607,6 +14639,7 @@
       f[61] = rimColor[1];
       f[62] = rimColor[2];
       f[63] = 0;
+      f.set(sceneTransmissionVolume(mat), 64);
       return { data: f, u: u };
     }
 
@@ -14731,7 +14764,9 @@
     //
     // The cache compares identities, so a grown light buffer, a resized shadow
     // map or a device-loss recovery rebuilds it.
-    var _frameBindGroupCache = null;
+    // These opaque backend handles stay JavaScript-readable in raw-source tests.
+    var _frameBindGroupCache = JSON.parse("null");
+    var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
 
     function createFrameBindGroup(shadowView0, shadowView1) {
       var view0 = shadowView0 || dummyShadowView;
@@ -14758,7 +14793,7 @@
         cache.iblBRDF === iblBRDFView &&
         cache.iblSampler === linearSampler &&
         cache.envMap === envMapView &&
-        cache.envMapSampler === envMapSampler
+        cache.envMapSampler === envMapSampler && cache.transmission === transmissionView
       ) {
         return cache.bindGroup;
       }
@@ -14780,16 +14815,17 @@
         iblSampler: linearSampler,
         envMap: envMapView,
         envMapSampler: envMapSampler,
+        transmission: transmissionView,
         bindGroup: bindGroup,
       };
       return bindGroup;
     }
 
-    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView) {
+    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView, reflectionFrame = false) {
       return device.createBindGroup({
         layout: frameBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: frameUniformBuffer } },
+          { binding: 0, resource: { buffer: reflectionFrame || frameUniformBuffer } },
           { binding: 1, resource: { buffer: lightStorageBuffer } },
           { binding: 2, resource: { buffer: fogUniformBuffer } },
           { binding: 3, resource: { buffer: envUniformBuffer } },
@@ -14804,6 +14840,9 @@
           { binding: 12, resource: linearSampler },
           { binding: 13, resource: envMapView || placeholderView },
           { binding: 14, resource: envMapSampler },
+          { binding: 15, resource: transmissionView || placeholderView },
+          { binding: 16, resource: transmissionResources.sampler },
+          { binding: 17, resource: { buffer: transmissionResources.uniform } },
         ],
       });
     }
@@ -15926,6 +15965,7 @@
       var lastReceiveShadow = null;
       var lastMaterialOwner = null;
       var currentPipelineKind = "";
+      var objectDepthWrite = depthWrite;
 
       function bindMeshAttribute(attr, obj, offset, count) {
         var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
@@ -15953,10 +15993,12 @@
         return false;
       }
 
-      function bindPBRPipeline(reflected) {
-        var kind = sceneWebGPUPipelineKind(reflected, "pbr");
+      function bindPBRPipeline(reflected, material = Object.create(null)) {
+        var hasDetail = Boolean(material && material.detail);
+        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
+        kind += ":" + objectDepthWrite;
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(getPBRPipeline(blendMode, depthWrite, reflected ? "cw" : "ccw"));
+        pass.setPipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -15968,6 +16010,7 @@
         var obj = objectList[i];
         var matIndex = sceneNumber(obj.materialIndex, 0);
         var mat = materials[matIndex] || null;
+        objectDepthWrite = sceneTransmissionDepthWrite(obj, mat, depthWrite);
         var receiveShadow = !!obj.receiveShadow;
         var offset = obj.vertexOffset;
         var count = obj.vertexCount;
@@ -16053,8 +16096,10 @@
           }
         }
 
+        if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
+
         if (isSkinned) {
-          bindPBRPipeline(reflectedDirect);
+          bindPBRPipeline(reflectedDirect, mat);
           var skinnedOwner = mat || obj;
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
             var skinnedMatBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
@@ -16072,7 +16117,7 @@
           continue;
         }
 
-        bindPBRPipeline(reflectedDirect);
+        bindPBRPipeline(reflectedDirect, mat);
 
         // Recreate material bind group when material or receiveShadow changes.
         var materialOwner = obj.retainedGeometry ? webGPURetainedMaterialOwner(obj) : (mat || obj);
@@ -16349,9 +16394,11 @@
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
 
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var mat = instancedMeshMaterial(mesh, materials);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh));
-        if (webGPUGPUDrivenHost().drawMesh(pass, mesh, depthWrite)) continue;
+        var mat = instancedMeshMaterial(mesh, materials);
+        var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh, null));
+        if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
+        if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
@@ -16364,7 +16411,7 @@
           // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
           // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
           // standard pipeline (loc 8 = instanceColor vec4f).
-          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, depthWrite));
+          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -16373,7 +16420,7 @@
           pass.drawIndirect(cullSys.drawArgsBuf, 0);
         } else {
           // Draw-all path (not-ready, no kernel, or capability absent).
-          pass.setPipeline(getPBRInstancedPipeline(blendMode, depthWrite));
+          pass.setPipeline(getPBRInstancedPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -18269,7 +18316,7 @@
       webGPUBeginRetainedMeshFrame(bundle);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && bundle.environment.sky) && !skyResources.renderer) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return;
       }
@@ -18298,12 +18345,18 @@
       // instance — a scene that persistently fails post-FX allocation/
       // validation retries RAW rendering instead of drawing dead frames
       // forever with a poisoned post-FX target.
+      bundle = sceneAtmosphereBundle(bundle, frameMeta);
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var authoredPostEffects = postEffects.length > 0;
+      var hasTransmission = sceneTransmissionPresent(bundle);
+      var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
+      transmissionSettings.screen = transmissionSettings.screen && hasTransmission && !postFXForceDisabled;
+      if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
-      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var postFXMaxPixels = authoredPostEffects && typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var postfxFactor = usePostProcessing
         ? resolvePostFXFactor(postFXMaxPixels, width * height)
         : 1;
@@ -18338,6 +18391,15 @@
       pollGPUPassTimingReadback();
       beginGPUPassTimingFrame();
       var scopedFrameErrors = beginWebGPUErrorScope();
+      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      // Prepare the full detail draw set before retiring resources from earlier frames.
+      detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
+        frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout,
+        source: WGSL_PBR_FRAGMENT, placeholderView: placeholderView, enabled: detailEnabled,
+      });
+      // Reuse uniforms when color or detail controls change; retire buffers and
+      // atlases that no longer belong to the active draw set.
+
       var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
         ? frameMeta.nowMS
         : performance.now();
@@ -18378,7 +18440,10 @@
         ? buildInstancedDrawList(bundle, materials)
         : { opaque: [], alpha: [], additive: [] };
       var gpuDriven = webGPUGPUDrivenHost();
-      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: instancedDrawList.opaque });
+      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: detailResources ? instancedDrawList.opaque.filter(function(mesh = Object.create(null)) {
+        var material = instancedMeshMaterial(mesh, bundle.materials);
+        return !material || !material.detail;
+      }) : instancedDrawList.opaque });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -18434,6 +18499,10 @@
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
       var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
+      if (!transmissionResources) transmissionResources = wgpuCreateTransmissionResources(device);
+      transmissionView = transmissionResources.prepare(scaledW, scaledH, targetFormat, transmissionSettings);
+      if (!transmissionView) transmissionResources.fallback();
+      sceneTransmissionPublish(canvas.parentNode, hasTransmission ? transmissionView ? "screen" : "environment" : "none");
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
       var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
         ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing)
@@ -18465,8 +18534,11 @@
       waterUpdateStats.waterObjectTextureCandidateProfile = waterObjectSceneTextureStats.waterObjectTextureCandidateProfile || waterUpdateStats.waterObjectTextureCandidateProfile;
 
       // --- Main Render Target ---
+      // @ts-ignore TS7034 -- target handles are nullable before the post/direct branch selects them.
       var mainColorView;
+      // @ts-ignore TS7034 -- the optional MSAA resolve handle is assigned by the target branch.
       var mainResolveView = null;
+      // @ts-ignore TS7034 -- depth handle follows the selected main target.
       var mainDepthTargetView;
       var postTarget = null;
 
@@ -18529,9 +18601,9 @@
       var skyState = "none";
       if (bundle.environment && bundle.environment.sky) {
         if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
-        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix,
-          camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
+        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
       }
+      sceneCloudWebGPUDraw(skyResources, device, mainPass, { environment: bundle.environment, meta: frameMeta, view: scratchViewMatrix, camera: cam, aspect: scaledW/scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount, timeSeconds: frameTimeSeconds });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
 
@@ -18715,11 +18787,11 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: !webGPURenderBundlesEnabled() ||
+        disabled: hasTransmission || !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
-        hasWater: hasWaterData,
+        hasWater: hasWaterData || Boolean(bundle.environment && bundle.environment.ocean),
         hasPoints: hasPointsData,
         hasLabels: hasLabels,
         hasScreenLines: hasScreenLines,
@@ -18779,7 +18851,9 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false;
+      var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
+      const prepareOceanReflection = () => { const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(getPBRPipeline("opaque", true, "cw")); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
@@ -18806,6 +18880,7 @@
         // draw the newly visible instances in a late pass that loads it.
         mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
 
+        prepareOceanReflection();
         // The water surface writes depth before translucent world surfaces.
         // A stele in front of the tide must remain visible after its HTML
         // texture is composited, while rocks behind the tide stay occluded.
@@ -18814,6 +18889,16 @@
           Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
           waterDrawnBeforeAlpha = true;
         }
+        oceanOpts.drawn = wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
+        if (transmissionView && postTarget) {
+          mainPass.end();
+          transmissionResources.capture(encoder, postTarget.colorView);
+          mainColorAttachment.loadOp = "load";
+          mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
+          delete mainPassDescriptor["timestampWrites"];
+          mainPass = encoder.beginRenderPass(mainPassDescriptor);
+        }
+
 
         // Alpha pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.alpha.length > 0) {
@@ -18857,9 +18942,9 @@
       }
 
       if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
-        Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
-        Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
+        Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup), drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam));
       }
+      if (!oceanOpts.drawn) { prepareOceanReflection(); wgpuOceanDraw(oceanResources, mainPass, oceanOpts); }
 
       // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
       // board fills so the alpha-blended glyphs composite over the rects. Lives
@@ -18903,7 +18988,7 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera));
+        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, Object.assign({}, bundle.camera, { postLights: bundle.lights }), { environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);
@@ -18939,7 +19024,8 @@
     function dispose() {
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
-      if (skyResources.renderer) skyResources.renderer.dispose();
+      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
+      if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null;
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;
@@ -19056,6 +19142,7 @@
           destroyRendererGPUResource(record.texture);
         }
       }
+      sceneWebGPUDisposeDetail(detailResources); detailResources = null;
       textureCache.clear();
       selenaPipelineCache.clear();
       selenaComputePipelineCache.clear();

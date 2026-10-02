@@ -258,6 +258,7 @@ class FakeWebGLContext {
     this._boundArrayBuffer = null;
     this._boundTexture = null;
     this._activeProgram = null;
+    this._enabledCapabilities = new Set();
     this._rejectShaderSources = Array.isArray(options.rejectShaderSources) ? options.rejectShaderSources : [];
     this._vendor = typeof options.vendor === "string" ? options.vendor : "FakeGPU Inc.";
     this._renderer = typeof options.renderer === "string" ? options.renderer : "FakeGPU Renderer";
@@ -291,12 +292,15 @@ class FakeWebGLContext {
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
+    this.VIEWPORT = 0x0BA2;
+    this._viewport = [0,0,0,0];
     this.TEXTURE_2D = 0x0DE1;
     this.TEXTURE_2D_ARRAY = 0x8C1A;
     this.NONE = 0;
     this.TEXTURE0 = 0x84C0;
     this.TEXTURE_MIN_FILTER = 0x2801;
     this.TEXTURE_MAG_FILTER = 0x2800;
+    this.TEXTURE_MAX_LEVEL = 0x813D;
     this.TEXTURE_WRAP_S = 0x2802;
     this.TEXTURE_WRAP_T = 0x2803;
     this.CLAMP_TO_EDGE = 0x812F;
@@ -305,6 +309,7 @@ class FakeWebGLContext {
     this.UNSIGNED_BYTE = 0x1401;
     this.UNSIGNED_INT = 0x1405;
     this.FRAMEBUFFER = 0x8D40;
+    this.FRAMEBUFFER_COMPLETE = 0x8CD5;
     this.DEPTH_ATTACHMENT = 0x8D00;
     this.DEPTH_COMPONENT = 0x1902;
     this.DEPTH_COMPONENT24 = 0x81A6;
@@ -454,6 +459,7 @@ class FakeWebGLContext {
   }
 
   viewport(x, y, width, height) {
+    this._viewport = [x,y,width,height];
     this.ops.push(["viewport", x, y, width, height]);
   }
 
@@ -536,6 +542,10 @@ class FakeWebGLContext {
     this.ops.push(["texParameteri", target, pname, param]);
   }
 
+  generateMipmap(target) {
+    this.ops.push(["generateMipmap", target]);
+  }
+
   texImage2D(...args) {
     const textureID = this._boundTexture && this._boundTexture.id;
     this.textureUploads.set(textureID, args.length);
@@ -598,6 +608,9 @@ class FakeWebGLContext {
     this.ops.push(["uniform1i", location && location.name, value]);
   }
 
+  uniform3fv(location, values) { this.ops.push(["uniform3fv", location && location.name, Array.from(values)]); }
+  uniform4fv(location, values) { this.ops.push(["uniform4fv", location && location.name, Array.from(values)]); }
+
   uniform2f(location, x, y) {
     this.ops.push(["uniform2f", location && location.name, x, y]);
   }
@@ -615,15 +628,24 @@ class FakeWebGLContext {
   }
 
   enable(capability) {
+    this._enabledCapabilities.add(capability);
     this.ops.push(["enable", capability]);
   }
 
   disable(capability) {
+    this._enabledCapabilities.delete(capability);
     this.ops.push(["disable", capability]);
+  }
+
+  isEnabled(capability) {
+    return this._enabledCapabilities.has(capability);
   }
 
   blendFunc(src, dst) {
     this.ops.push(["blendFunc", src, dst]);
+  }
+  blendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha) {
+    this.ops.push(["blendFuncSeparate", srcRGB, dstRGB, srcAlpha, dstAlpha]);
   }
 
   depthFunc(mode) {
@@ -692,6 +714,7 @@ class FakeWebGLContext {
   }
 
   getParameter(param) {
+    if (param === this.VIEWPORT) return this._viewport.slice();
     if (param === 0x9245) {
       return this._unmaskedVendor;
     }
@@ -759,9 +782,17 @@ class FakeWebGLContext {
   blitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter) {
     this.ops.push(["blitFramebuffer", mask]);
   }
+  checkFramebufferStatus(target) {
+    this.ops.push(["checkFramebufferStatus", target]);
+    return this.FRAMEBUFFER_COMPLETE;
+  }
   vertexAttribIPointer(location, size, type, stride, offset) {
     this.ops.push(["vertexAttribIPointer", location, size, type, stride, offset]);
   }
+  texStorage3D(target, levels, internalFormat, width, height, depth) {
+    this.ops.push(["texStorage3D", target, levels, internalFormat, width, height, depth]);
+  }
+
   texStorage2D(target, levels, internalFormat, width, height) {
     this.ops.push(["texStorage2D", target, levels, internalFormat, width, height]);
   }
@@ -4422,7 +4453,14 @@ function freshFeatureBundleSource(name, options) {
   const clientJS = __dirname;
   const opts = options || {};
   function read(rel) {
-    return fs.readFileSync(path.join(clientJS, rel), "utf8");
+    const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
+    if (!rel.startsWith("../runtime/") || !rel.endsWith(".ts")) return source;
+    // The live source path now includes typed post-effect modules. Use the
+    // same TypeScript syntax contract as the bundle builder before VM execution.
+    const ts = require("../runtime/node_modules/typescript");
+    return ts.transpileModule(source, { compilerOptions: {
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None,
+    } }).outputText;
   }
   const sourceParts = bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read);
   let source = sourceParts.join("\n");

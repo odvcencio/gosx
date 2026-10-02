@@ -3,6 +3,7 @@ package docs
 import (
 	"context"
 	"html"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -47,14 +48,17 @@ func TestWaterDiagAvoidsHTMLParsingSinks(t *testing.T) {
 func TestWaterDiagRendersQueryAndAttributeValuesAsText(t *testing.T) {
 	const assertionTimeout = 15 * time.Second
 
+	remoteCDP := strings.TrimSpace(os.Getenv("GOSX_TEST_CDP_URL"))
 	chromePath := ""
-	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
-		if path, err := exec.LookPath(name); err == nil {
-			chromePath = path
-			break
+	if remoteCDP == "" {
+		for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
+			if path, err := exec.LookPath(name); err == nil {
+				chromePath = path
+				break
+			}
 		}
 	}
-	if chromePath == "" {
+	if remoteCDP == "" && chromePath == "" {
 		t.Skip("Chrome/Chromium is unavailable; text-sink source contract still ran")
 	}
 
@@ -78,21 +82,53 @@ func TestWaterDiagRendersQueryAndAttributeValuesAsText(t *testing.T) {
 <script src="/water-diag.js"></script>
 </body></html>`))
 	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	browser, err := chrometest.Start(t.Context(), chromePath,
-		"--no-sandbox",
-		"--disable-gpu",
-	)
-	if err != nil {
-		t.Fatalf("start Chrome for water diagnostics: %v", err)
+	server := httptest.NewUnstartedServer(mux)
+	if remoteCDP != "" {
+		// A browser across a CDP relay needs a reachable test-server listener.
+		_ = server.Listener.Close()
+		listener, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			t.Fatalf("listen for remote water diagnostics: %v", err)
+		}
+		server.Listener = listener
 	}
-	defer browser.Close()
+	server.Start()
+	defer server.Close()
+	serverURL := server.URL
+	if remoteCDP != "" {
+		host := strings.TrimSpace(os.Getenv("GOSX_TEST_SERVER_HOST"))
+		if host == "" {
+			host = "localhost"
+		}
+		_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		serverURL = "http://" + net.JoinHostPort(host, port)
+	}
+
+	browserContext := t.Context()
+	if remoteCDP != "" {
+		allocator, cancelAllocator := chromedp.NewRemoteAllocator(browserContext, remoteCDP)
+		defer cancelAllocator()
+		var cancelBrowser context.CancelFunc
+		browserContext, cancelBrowser = chromedp.NewContext(allocator)
+		defer cancelBrowser()
+	} else {
+		browser, err := chrometest.Start(browserContext, chromePath,
+			"--no-sandbox",
+			"--disable-gpu",
+		)
+		if err != nil {
+			t.Fatalf("start Chrome for water diagnostics: %v", err)
+		}
+		defer browser.Close()
+		browserContext = browser.Context
+	}
 
 	// Startup and the payload-rendering/XSS assertion have independent hard
 	// bounds, so a recovered transient launch cannot consume assertion time.
-	ctx, cancelAssertion := context.WithTimeout(browser.Context, assertionTimeout)
+	ctx, cancelAssertion := context.WithTimeout(browserContext, assertionTimeout)
 	defer cancelAssertion()
 
 	var got struct {
@@ -103,8 +139,8 @@ func TestWaterDiagRendersQueryAndAttributeValuesAsText(t *testing.T) {
 		AttributeRan    bool   `json:"attributeRan"`
 		UnexpectedNodes int    `json:"unexpectedNodes"`
 	}
-	target := server.URL + "/?diag=1&meshRes=" + url.QueryEscape(queryAttack)
-	err = chromedp.Run(ctx,
+	target := serverURL + "/?diag=1&meshRes=" + url.QueryEscape(queryAttack)
+	err := chromedp.Run(ctx,
 		chromedp.Navigate(target),
 		chromedp.WaitReady(`[data-water-diag]`, chromedp.ByQuery),
 		chromedp.Evaluate(`(() => {

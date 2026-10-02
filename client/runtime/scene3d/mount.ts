@@ -16,8 +16,19 @@
     }
 
     const props = ctx.props || {};
+    const renderBeforeModels = props.renderBeforeModels === true;
+    let handle = null;
+    if (props.controlZoom === true) {
+      await ensureSceneGatedFeatureLoaded("zoom", "gosxScene3dZoomUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
     if (sceneWalkEnabled(props)) {
       await ensureSceneGatedFeatureLoaded("walk", "gosxScene3dWalkUrl", "");
+      if (!scene3DFactoryCurrent()) return {};
+    }
+    if (sceneVesselEnabled(props)) {
+      await ensureSceneGatedFeatureLoaded("ocean-query", "gosxScene3dOceanQueryUrl", "");
+      await ensureSceneGatedFeatureLoaded("vessel", "gosxScene3dVesselUrl", "");
       if (!scene3DFactoryCurrent()) return {};
     }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
@@ -62,7 +73,9 @@
     const sceneMountOwner = { m: mount };
     mount.__gosxScene3DOwner = sceneMountOwner;
     function scene3DFactoryOwned() {
-      return scene3DFactoryCurrent() && mount.__gosxScene3DOwner === sceneMountOwner;
+      // The pending factory token retires when the handle is published.
+      const mounted = renderBeforeModels && handle && mount.__gosxScene3DHandle === handle;
+      return (mounted || scene3DFactoryCurrent()) && mount.__gosxScene3DOwner === sceneMountOwner;
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
@@ -81,17 +94,19 @@
     // guard also covers an unexpected producer/listener exception without
     // leaving a long gap in which the browser can report unhandledrejection.
     const sceneModelHydration = Promise.resolve(hydrateSceneStateModels(sceneState, props)).catch(function(error) {
+      const message = error && error.message ? error.message : error;
       console.warn("[gosx] Scene3D model hydration failed; mounting without the affected model(s):",
-        error && error.message ? error.message : error);
+        message);
+      const generation = Math.max(0, Math.floor(sceneNumber(sceneState._modelHydrationGeneration, 0)));
       gosxSceneEmit("warn", "model-hydration-failed", {
-        generation: Math.max(0, Math.floor(sceneNumber(sceneState && sceneState._modelHydrationGeneration, 0))),
+        generation,
         committed: false,
         stale: false,
         stage: "unexpected",
-        error: error && error.message ? String(error.message) : String(error),
+        error: String(message),
       });
       return {
-        generation: Math.max(0, Math.floor(sceneNumber(sceneState && sceneState._modelHydrationGeneration, 0))),
+        generation,
         outcome: "failed",
         committed: false,
         stale: false,
@@ -141,9 +156,8 @@
     }
 
     function sceneAnimationState() {
-      if (motion.reducedMotion) {
-        return { wants: false, reason: "reduced-motion" };
-      }
+      // Sailing is user-controlled motion; the vessel separately suppresses camera bob.
+      if (motion.reducedMotion) return { wants: !animationPaused && sceneVesselEnabled(props) && Boolean(sceneState._gosxMotionController?.active), reason: "reduced-motion" };
       // A user-paused declarative scene stops the loop outright: wants
       // flips false with reason "paused", so the settle render scheduled by
       // the toggle is the last frame until resume and the mount reports
@@ -173,6 +187,7 @@
         }
         return { wants: true, reason: "water-simulation" };
       }
+      if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
       if (sceneHasActiveModelAnimations(sceneState)) {
         return { wants: true, reason: "model-animation" };
       }
@@ -513,6 +528,8 @@
         qualityTier: adaptiveQuality && adaptiveQuality.tier ? adaptiveQuality.tier : "fixed",
         qualityRevision: Math.max(0, Math.floor(sceneNumber(adaptiveQuality && adaptiveQuality.qualityRevision, 0))),
         qualityProfile: qualityProfile,
+        detailEnabled: sceneDetailQualityEnabled(adaptiveQuality),
+        atmosphereTier: sceneAtmosphereTier(adaptiveQuality, capability && capability.tier),
         qualityRequestedTier: adaptiveQuality.requestedTier,
         qualityActiveTier: adaptiveQuality.activeTier,
         performanceMeasurement: adaptiveQuality.lastMeasurement,
@@ -2997,6 +3014,12 @@
         clockSeconds += frameDeltaSeconds;
       }
       const timeSeconds = clockSeconds;
+      // @ts-ignore TS7005 -- the optional authority is installed after renderer creation
+      const advanceVessel = sceneControlHandle && sceneControlHandle.advance;
+      if (advanceVessel) {
+        advanceVessel(frameDeltaSeconds, frameStart / 1000,
+          sceneQualityLadderPointBudgetScale(adaptiveQuality), animationPaused);
+      }
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
@@ -3256,13 +3279,15 @@
     // safe even when loading, instantiation, skin setup, or status listeners
     // fail. The mount continues with the prior committed generation (or no
     // model-derived records on initial hydration).
-    let handle = null;
-    await sceneModelHydration;
-    if (!scene3DFactoryOwned()) {
-      disposeMountedScene();
-      return {};
+    if (!renderBeforeModels) {
+      await sceneModelHydration;
+      if (!scene3DFactoryOwned()) {
+        disposeMountedScene();
+        return {};
+      }
+      scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
     }
-    scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
+    setAttrValue(mount, sceneAttr("first-frame"), renderBeforeModels ? "before-models" : "after-models");
 
     // Defer the first Scene3D render until after a first-paint boundary.
     function scheduleInitialRender() {
@@ -3682,8 +3707,20 @@
     if (typeof mount.setAttribute === "function") {
       mount.setAttribute(sceneAttr("command-ready"), "true");
     }
-    scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
-    sceneState._modelOwner = null;
+    if (renderBeforeModels) {
+      // Hydration commits transactionally; retain ownership until it settles.
+      sceneModelHydration.then(function() {
+        if (disposed) return;
+        if (!scene3DFactoryOwned()) { disposeMountedScene(); return; }
+        scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
+        scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
+        sceneState._modelOwner = null;
+        scheduleRender("models");
+      });
+    } else {
+      scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
+      sceneState._modelOwner = null;
+    }
     bindSceneAnimationToggle();
     return handle;
   });

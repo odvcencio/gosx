@@ -44,12 +44,31 @@
         "../runtime/scene3d/dom-regions.ts",
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
+        "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16c1-scene-detail.ts",
+        "bootstrap-src/16d-scene-atmosphere.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl-transmission.ts",
+        "../runtime/scene3d/webgl-detail.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-ocean.ts",
+        "../runtime/scene3d/webgl-reflect.ts",
+        "../runtime/scene3d/webgl-atmosphere.ts",
+        "../runtime/scene3d/webgl-bloom.ts",
+        "../runtime/scene3d/webgl-depth-post.ts",
+        "../runtime/scene3d/webgl-contact-shadows.ts",
+        "../runtime/scene3d/webgl-taa.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
+        "../runtime/scene3d/webgpu-transmission.ts",
+        "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-ocean.ts",
+        "../runtime/scene3d/webgpu-reflect.ts",
+        "../runtime/scene3d/webgpu-atmosphere.ts",
+        "../runtime/scene3d/webgpu-bloom.ts",
+        "../runtime/scene3d/webgpu-contact-shadows.ts",
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -202,7 +221,10 @@
         "bootstrap-src/15c-scene-backend-registry.ts",
         "bootstrap-src/15a-scene-postfx-shared.ts",
         "../runtime/scene3d/dom-regions.ts",
+        "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16c1-scene-detail.ts",
+        "bootstrap-src/16d-scene-atmosphere.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "bootstrap-src/17-scene-input.ts",
         "bootstrap-src/18-scene-canvas.ts",
@@ -228,7 +250,16 @@
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl-transmission.ts",
+        "../runtime/scene3d/webgl-detail.ts",
         "../runtime/scene3d/webgl.ts",
+        "../runtime/scene3d/webgl-ocean.ts",
+        "../runtime/scene3d/webgl-reflect.ts",
+        "../runtime/scene3d/webgl-atmosphere.ts",
+        "../runtime/scene3d/webgl-bloom.ts",
+        "../runtime/scene3d/webgl-depth-post.ts",
+        "../runtime/scene3d/webgl-contact-shadows.ts",
+        "../runtime/scene3d/webgl-taa.ts",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },
@@ -255,8 +286,15 @@
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "../runtime/scene3d/webgpu-transmission.ts",
+        "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/webgpu-ocean.ts",
+        "../runtime/scene3d/webgpu-reflect.ts",
+        "../runtime/scene3d/webgpu-atmosphere.ts",
+        "../runtime/scene3d/webgpu-bloom.ts",
+        "../runtime/scene3d/webgpu-contact-shadows.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },
@@ -270,8 +308,31 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-ocean-query.js",
+      "sources": [
+        "../runtime/scene3d/ocean-query.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-vessel.js",
+      "sources": [
+        "../runtime/scene3d/vessel-physics.ts",
+        "../runtime/scene3d/vessel-input.ts",
+        "../runtime/scene3d/vessel-model.ts",
+        "../runtime/scene3d/vessel-wake.ts",
+        "../runtime/scene3d/mount-vessel.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-zoom.js",
+      "sources": [
+        "../runtime/scene3d/mount-zoom.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-walk.js",
       "sources": [
+        "../runtime/scene3d/walk-surfaces.ts",
         "../runtime/scene3d/mount-walk.ts"
       ]
     },

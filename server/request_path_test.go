@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -246,6 +247,31 @@ func TestISRColdStartRunsOneRegeneration(t *testing.T) {
 	mu.Unlock()
 	if got != 1 {
 		t.Fatalf("expected one cold render under %d concurrent requests, got %d", concurrency, got)
+	}
+}
+
+func TestISRColdStartReusesArtifactWrittenBeforeLeaseAcquisition(t *testing.T) {
+	root := t.TempDir()
+	store := NewInMemoryISRStore()
+	artifact := isrArtifact{bundleRoot: root, staticDir: root, store: store,
+		page: isrRoute{Path: "/", File: "index.html"}}
+	const cached = "already generated"
+	if _, err := store.WriteArtifact(root, "/", "index.html", []byte(cached)); err != nil {
+		t.Fatal(err)
+	}
+	app := New()
+	app.EnableISR()
+	renders := 0
+	_, mode, ok := app.regenerateISRArtifact(context.Background(), artifact, func(w http.ResponseWriter, _ *http.Request, _ bool) {
+		renders++
+		_, _ = w.Write([]byte("duplicate render"))
+	})
+	if !ok || mode != "HIT" || renders != 0 {
+		t.Fatalf("expected the completed artifact without rendering, got ok=%t mode=%q renders=%d", ok, mode, renders)
+	}
+	stored, err := store.ReadArtifact(root, "/", "index.html")
+	if err != nil || string(stored.Body) != cached {
+		t.Fatalf("completed artifact changed: body=%q err=%v", stored.Body, err)
 	}
 }
 

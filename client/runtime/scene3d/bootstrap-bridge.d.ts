@@ -246,3 +246,58 @@ declare var sceneSkyUniformData: any;
 declare var sceneSkyPhysicalParams: any;
 declare var sceneSkyPhysicalShaderSource: any;
 declare var sceneSkyPhysicalSource: any;
+declare var sceneOceanUniformData: any;
+// The ocean passes ship in the same chunk as the renderer that calls them.
+declare function sceneOceanWebGLDraw(resources: any, gl: any, opts: any): void;
+declare function wgpuOceanDraw(resources: any, pass: any, opts: any): boolean;
+
+declare function createSceneWebGLMipBloom(host: any): any;
+declare function createSceneWebGPUMipBloom(host: any): any;
+
+declare function sceneDetailVariantKey(kind: any, detail: any): any;
+declare function sceneDetailUniformData(detail: any, masks: any, enabled: any): any;
+declare function sceneDetailTextureRecords(detail: any, load: any): any;
+declare function sceneDetailShaderSource(language: any): any;
+declare function sceneDetailQualityEnabled(state: any): any;
+declare function sceneAtmosphereQuality(meta: any): any;
+declare function sceneReflectionMatrices(view: any, proj: any, level: number, webgpu: boolean): any;
+declare function sceneReflectWebGL(resources: any, gl: any, opts: any): any;
+declare function sceneReflectWebGPU(resources: any, device: any, opts: any): any;
+declare function sceneReflectDispose(resources: any): void;
+declare function sceneOceanReflectGLSL(): string;
+declare function sceneOceanReflectWGSL(): string;
+
+declare function sceneReflectWebGLBegin(resources: any, gl: any, opts: any): any;
+declare function sceneReflectWebGLEnd(resources: any, width: number, height: number): void;
+declare function sceneReflectWebGLDrawOpaque(gl: any, ctx: any, view: any, proj: any): void;
+declare function sceneReflectOpaqueList(list: any, materials: any): any;
+
+declare function sceneReflectWebGLBind(gl: any, program: any, record: any): void;
+
+declare function sceneAtmosphereTier(state: any, deviceTier?: any): any;
+
+declare function sceneCloudWebGLDraw(resources: any, gl: any, opts: any): void;
+declare function sceneCloudWebGPUDraw(resources: any, device: any, pass: any, opts: any): void;
+declare function sceneCloudDispose(resources: any): void;
+
+declare function sceneAtmosphereBundle(bundle: any, meta: any): any;
+declare function sceneAtmosphereEffects(effects: any, env: any, meta: any): any;
+declare function createSceneAtmospherePostWebGL(host: any): any;
+declare function createSceneAtmospherePostWebGPU(host: any): any;
+interface Window {
+  __gosx_scene3d_ocean_waves: any;
+  __gosx_scene3d_ocean_query: any;
+  __gosx_scene3d_vessel_api: any;
+}
+// Transmission shader/resource fragments precede their backend in each chunk.
+declare const GLSL_TRANSMISSION: string;
+declare const WGSL_TRANSMISSION: string;
+declare function sceneCreateTransmissionWebGL(gl: any): any;
+declare function wgpuCreateTransmissionResources(device: any): any;
+declare function sceneTransmissionPresent(bundle: any): boolean;
+declare function sceneTransmissionMaterial(material: any): boolean;
+declare function sceneTransmissionDepthWrite(object: any, material: any, defaultWrite: boolean): boolean;
+declare function sceneTransmissionSettings(frameMeta: any, mount: any): { screen: boolean; levels: number };
+declare function sceneTransmissionEffects(effects: any[], environment: any): any[];
+declare function sceneTransmissionVolume(material: any): number[];
+declare function sceneTransmissionPublish(mount: any, state: string): void;

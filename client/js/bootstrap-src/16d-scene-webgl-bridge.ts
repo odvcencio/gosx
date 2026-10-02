@@ -16,6 +16,11 @@
   // undefined here.
   if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
     Object.assign(window.__gosx_scene3d_api, {
+      sceneDetailVariantKey: typeof sceneDetailVariantKey === "function" ? sceneDetailVariantKey : undefined,
+      sceneDetailUniformData: typeof sceneDetailUniformData === "function" ? sceneDetailUniformData : undefined,
+      sceneDetailTextureRecords: typeof sceneDetailTextureRecords === "function" ? sceneDetailTextureRecords : undefined,
+      sceneDetailShaderSource: typeof sceneDetailShaderSource === "function" ? sceneDetailShaderSource : undefined,
+
       // 10-runtime-scene-core.js — legacy vertex-color WebGL renderer parts.
       createSceneWebGLProgram: typeof createSceneWebGLProgram === "function" ? createSceneWebGLProgram : undefined,
       createSceneWebGLResources: typeof createSceneWebGLResources === "function" ? createSceneWebGLResources : undefined,

@@ -41,6 +41,8 @@ var capabilityFeatureLabels = map[capability.Feature]string{
 	capability.FeatureSkyEnvironment:            "Environment sky",
 	capability.FeatureSkyGradient:               "Gradient sky",
 	capability.FeatureSkyPhysical:               "Physical sky",
+	capability.FeatureOcean:                     "Ocean surface",
+	capability.FeatureTransmission:              "Volume transmission",
 }
 
 // These reasons summarize the implementation recorded in capability.Matrix
@@ -125,6 +127,16 @@ var capabilityCellReasons = map[capability.Feature]map[capability.Backend]string
 		capability.BackendWebGPU:   "The renderer draws analytic Rayleigh and Mie scattering with a sun disk.",
 		capability.BackendWebGL:    "The renderer draws analytic Rayleigh and Mie scattering with a sun disk.",
 		capability.BackendCanvas2D: "Canvas2D keeps a flat clear color; the server fills matching gradient stops.",
+	},
+	capability.FeatureOcean: {
+		capability.BackendWebGPU:   "The renderer draws Gerstner swell, sky reflection, sun glint, foam and depth-aware shallows.",
+		capability.BackendWebGL:    "The renderer draws Gerstner swell, sky reflection, sun glint, foam and depth-aware shallows.",
+		capability.BackendCanvas2D: "Canvas2D does not draw an ocean.",
+	},
+	capability.FeatureTransmission: {
+		capability.BackendWebGPU:   "The shader refracts a mipmapped opaque scene with volume absorption and Fresnel reflection; low tiers sample the environment.",
+		capability.BackendWebGL:    "WebGL2 refracts a mipmapped opaque scene with volume absorption and Fresnel reflection; low tiers sample the environment.",
+		capability.BackendCanvas2D: "Canvas2D does not shade transmissive meshes.",
 	},
 }
 

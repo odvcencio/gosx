@@ -1,0 +1,36 @@
+{
+  "schema": "gosx.beach-moments-budget/v1",
+  "reason": "Static pool rims, grotto, footprints and the wreck keel/prow use 16692 bytes of Go-generated quantized GLBs, with a combined 32 KB asset cap. Footprints omit buried faces; keel and prow share one draw. The 28 ribs keep their existing efficient instanced draw and avoid a WebGL shader-switch warning. Rib transforms retain 0.1 mm and 0.006 degree precision; walk data is unchanged; the graph has 28 nodes. Unique bgb class selectors omit redundant generated CSS scope prefixes. Complete golden-hour props measure 44137 JSON bytes and 22704 gzip bytes; caps ratchet from 63000/26000 to 44400/23000. The integrated shore page measures 149885 raw bytes at golden hour and 149918 at blue hour, including the caption contrast gradient, and meets the 150 KB program target; Caps are 149999/42000; the mobile helm and steering hint sit above the view controls and respect the safe area. The complete page remains below 150 KB. Runtime bundle growth is zero. The lighthouse uses narrower cones and lower emission to keep the blue-hour overlook visible without geometry or runtime growth. The integrated CSS asset cache removes repeated inherited styles: golden-hour HTML is 78574 bytes and blue-hour HTML is 78607 bytes. The raw HTML cap ratchets from 149999 to 80000; the existing gzip cap stays fixed.",
+  "measurement": "Moment JSON is isolated scene.Props; program JSON is complete BlackglassBeachProgram; HTML is the served page including inherited docs CSS. Gzip uses Go\u2019s default compressor. Runtime bundle growth is zero.",
+  "moments": {
+    "beacon": {
+      "nodes": 7,
+      "jsonBytes": 5200
+    },
+    "pools": {
+      "nodes": 4,
+      "jsonBytes": 7400
+    },
+    "wreck": {
+      "nodes": 3,
+      "jsonBytes": 4700
+    },
+    "trail": {
+      "nodes": 2,
+      "jsonBytes": 6600
+    },
+    "grotto": {
+      "nodes": 3,
+      "jsonBytes": 5800
+    }
+  },
+  "program": {
+    "nodes": 28,
+    "jsonBytes": 44400,
+    "gzipBytes": 23000
+  },
+  "page": {
+    "htmlBytes": 80000,
+    "gzipBytes": 42000
+  }
+}
