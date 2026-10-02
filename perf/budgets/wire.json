@@ -40,13 +40,13 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 24993,
-          "htmlWireBytes": 48784,
+          "htmlWireBytes": 44970,
           "imageWireBytes": 256,
           "inlineScriptBytes": 111656,
           "jsWireBytes": 256,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 107581,
+          "totalWireBytes": 103288,
           "wasmWireBytes": 256
         },
         "require": [
