@@ -102,3 +102,29 @@ test("SSAO tone mapping FXAA allocates only color targets that receive draws", (
     assert.ok([...targets].every(t => drawn.has(t)), "no unused full-size scratch allocation");
   } finally { h.renderer.dispose(); }
 });
+
+
+test("WebGPU 4x MSAA resolves covered depth before AO samples it", async () => {
+  const { createBoardWebGPUHarness, makePointsBundle } = require("./runtime-test-harness.js");
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  h.renderer.dispose();
+  const renderer = h.env.context.__gosx_scene3d_webgpu_api.createRenderer(h.canvas, { msaaSamples: 4 });
+  try {
+    const bundle = makePointsBundle({ id: "p", count: 1, positions: [0, 0, 0] });
+    bundle.postEffects = [{ kind: "ssao" }, { kind: "toneMapping" }, { kind: "fxaa" }];
+    renderer.render(bundle, { width: 64, height: 64 });
+    const passes = h.fake.state.renderPasses;
+    const resolve = passes.find(p => p.descriptor.label === "gosx-post-depth-resolve");
+    assert.ok(resolve, "multisampled depth is resolved each frame");
+    const source = resolve.bindGroups[0].group.desc.entries[0].resource;
+    const target = resolve.descriptor.depthStencilAttachment.view;
+    assert.notEqual(source, target);
+    const main = passes.find(p => p.descriptor.depthStencilAttachment?.view === source);
+    assert.equal(main.descriptor.depthStencilAttachment.depthStoreOp, "store");
+    const ao = passes.find(p => p.pipelines.some(pipeline => pipeline.desc.fragment?.module?.label === "post-ssao"));
+    assert.ok(ao);
+    assert.ok(passes.indexOf(main) < passes.indexOf(resolve) && passes.indexOf(resolve) < passes.indexOf(ao));
+    assert.equal(ao.bindGroups[0].group.desc.entries.find(e => e.binding === 2).resource, target);
+    assert.match(resolve.pipelines[0].desc.fragment.module.code, /sample < 4/);
+  } finally { renderer.dispose(); }
+});

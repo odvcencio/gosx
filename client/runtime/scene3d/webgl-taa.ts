@@ -122,12 +122,12 @@ function createSceneTemporalHistory(gl: any, quad: any) {
         for (var unit = 0; unit < 4; unit++) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, null); }
         gl.bindFramebuffer(gl.FRAMEBUFFER, output.fbo); gl.viewport(0, 0, width, height); gl.useProgram(program.program);
         var textures = [input, source.depthTex, history.colorTex, history.depthTex], names = ["u_texture", "u_depthTexture", "u_history", "u_historyDepth"];
-        for (var t = 0; t < 4; t++) { gl.activeTexture(gl.TEXTURE0 + t); gl.bindTexture(gl.TEXTURE_2D, textures[t]); gl.uniform1i(gl.getUniformLocation(program.program, names[t]), t); }
+        for (var t = 0; t < 4; t++) { gl.activeTexture(gl.TEXTURE0 + t); gl.bindTexture(gl.TEXTURE_2D, textures[t]); gl.uniform1i(sceneWaterUniformLocation(gl, program.program, names[t]), t); }
         var matrices = [frame.projection, inverseView, previousView, previousProjection];
         var uniforms = ["u_projection", "u_inverseView", "u_previousView", "u_previousProjection"];
-        for (var m = 0; m < 4; m++) gl.uniformMatrix4fv(gl.getUniformLocation(program.program, uniforms[m]), false, matrices[m]);
-        gl.uniform4f(gl.getUniformLocation(program.program, "u_temporalParams"), Math.max(0, Math.min(0.95, sceneNumber(effect.historyWeight, 0.9))), Math.max(0.5, Math.min(3, sceneNumber(effect.clampGamma, 1))), Math.max(0.0001, Math.min(0.1, sceneNumber(effect.depthThreshold, 0.01))), valid ? 1 : 0);
-        gl.uniform4f(gl.getUniformLocation(program.program, "u_temporalJitter"), jitter[0], jitter[1], jitter[2], jitter[3]);
+        for (var m = 0; m < 4; m++) gl.uniformMatrix4fv(sceneWaterUniformLocation(gl, program.program, uniforms[m]), false, matrices[m]);
+        gl.uniform4f(sceneWaterUniformLocation(gl, program.program, "u_temporalParams"), Math.max(0, Math.min(0.95, sceneNumber(effect.historyWeight, 0.9))), Math.max(0.5, Math.min(3, sceneNumber(effect.clampGamma, 1))), Math.max(0.0001, Math.min(0.1, sceneNumber(effect.depthThreshold, 0.01))), valid ? 1 : 0);
+        gl.uniform4f(sceneWaterUniformLocation(gl, program.program, "u_temporalJitter"), jitter[0], jitter[1], jitter[2], jitter[3]);
         drawSceneFullscreenQuad(gl, quad.vao);
         // Save exactly this frame's depth alongside its resolved color.
         for (var u = 0; u < 4; u++) { gl.activeTexture(gl.TEXTURE0 + u); gl.bindTexture(gl.TEXTURE_2D, null); }

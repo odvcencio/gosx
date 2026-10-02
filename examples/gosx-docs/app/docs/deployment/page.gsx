@@ -98,6 +98,24 @@ func Page() Node {
 			maps hashed browser assets.
 		</p>
 		<CodeBlock lang="bash" source={data.sampleServerRun} />
+		<h2 id="compression">Response compression</h2>
+		<CodeBlock lang="go" source={data.sampleCompression} />
+		<p>
+			GoSX compresses HTML and other text responses by default. Existing apps need no code change. It prefers Brotli when the request allows it, falls back to gzip, and sends uncompressed bytes when neither is accepted. Call
+			<span class="inline-code">app.DisableCompression()</span>
+			before starting the server to opt out. Existing calls to
+			<span class="inline-code">app.EnableGzip()</span>
+			still work and add no extra compression while the default is enabled.
+		</p>
+		<p>
+			A production build writes
+			<span class="inline-code">.br</span>
+			and
+			<span class="inline-code">.gz</span>
+			files beside compressible public files and exported HTML when they save bytes. The server and generated edge worker select these variants; missing server variants use dynamic compression. Responses smaller than 1 KiB and binary files stay uncompressed. Streams flush immediately; a flush before 1 KiB keeps that stream uncompressed. Encoding variants use
+			<span class="inline-code">Vary: Accept-Encoding</span>
+			so caches can keep them separate.
+		</p>
 		<h2 id="isr">Incremental static regeneration</h2>
 		<p>
 			ISR serves pages represented in the production export manifest and refreshes stale entries in the background. Enable it on the server and give an exported route a public cache lifetime. Cache tags travel into the export metadata for explicit invalidation.

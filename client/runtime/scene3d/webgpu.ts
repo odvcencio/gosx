@@ -1897,7 +1897,7 @@
     // Unlit path: output albedo directly.
     "    if (material.unlit != 0u) {",
     "        let color = albedo + emissiveColor * emissiveStrength;",
-    "        // Alpha-cut discard after sampling to keep derivative uniformity.",
+    // Alpha-cut discard after sampling to keep derivative uniformity.
     "        if (alphaEnabled && coverage < cutoff) { discard; }",
     "        return vec4f(color, select(finalOpacity, 1.0, alphaEnabled));",
     "    }",
@@ -2049,7 +2049,7 @@
     "        Lo = Lo + (kD * albedo / PI + specular) * radiance * NdotL * shadowAtten;",
     "    }",
     "",
-    "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
+    // Assetpipe split-sum IBL, with hemisphere fallback while products load.
     "    var ambient: vec3f;",
     "    if (env.hasIBL != 0u) {",
     "        let Nr = rotateEnvY(N, env.envRotation);",
@@ -2203,7 +2203,7 @@
       "    let cutoff = material.alphaCutoff;",
       "    let alphaEnabled = cutoff >= 0.0;",
       "    let coverage = unmaskedOpacity * texAlpha;",
-      "    // Alpha-cut discard after sampling; equality survives the cut.",
+      // Alpha-cut discard after sampling; equality survives the cut.
       "    if (alphaEnabled && coverage < cutoff) { discard; }",
       "    return vec4f(color, select(unmaskedOpacity, 1.0, alphaEnabled));",
       "}",
@@ -18324,7 +18324,7 @@
       webGPUBeginRetainedMeshFrame(bundle);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !wgpuOceanHasFrameContent(bundle.environment, skyResources, oceanResources)) {
         webGPUSweepRetainedMeshBuffers();
         return;
       }

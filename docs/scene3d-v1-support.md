@@ -182,3 +182,30 @@ Physical mode (`Sky{Mode: "physical"}`) draws an analytic daylight sky: Rayleigh
 `Environment.Ocean` draws an open sea that reaches the horizon on WebGPU and WebGL2. One draw of a camera-centred polar grid (no vertex buffers) carries six Gerstner waves sized from `WaveHeight` (significant height, meters), `WaveLength`, `WindDirection` (degrees; 0 travels toward +Z) and `Choppiness`. Per-pixel capillary waves fade out before they alias. The surface reflects the scene sky (the physical model when `Sky.Mode` is `physical`) with Fresnel weighting, adds a GGX sun glint, subsurface tint on crests (`ScatterColor`), whitecaps where the swell compresses, and fades into the sky at the horizon. With `Bathymetry` (a grayscale heightmap and its world extent) the water knows its depth: shallows turn `ShallowColor` and transparent over the terrain, waves shoal, foam lace rings the shore and every rock, a breaker line and a 9 s run-up surge (`Surf`) move up the beach. `Encoding: "signed-sqrt"` stores heights with fine steps near sea level; linear is the default. Low-end hardware gets four waves and a quarter of the grid. The ocean draws after opaque geometry with premultiplied alpha and writes depth; its horizon ignores the camera far plane. The mount reports `data-gosx-scene3d-ocean`: `none`, `surface`, `shore`, `bathymetry-pending`, `bathymetry-failed` or `unavailable`. Canvas2D draws no ocean. The ocean does not yet reflect scene objects (no planar or screen-space reflection).
 
 Sky draws share the scene target and post chain. They do not write depth. A water scene with a sky uses the world composite even when it has no imported models.
+
+### Controlling the Scene3D animation clock
+
+Mounted Scene3D handles expose `getAnimationClock()` and
+`setAnimationClock({ timeSeconds, paused })`. Use the handle registered on the
+mount as `mount.__gosxScene3DHandle`, after command readiness.
+
+```js
+handle.setAnimationClock({ timeSeconds: 1.25 }); // seek and pause
+handle.setAnimationClock({ timeSeconds: 0.5 });  // seek backward
+handle.setAnimationClock({ timeSeconds: 0.5, paused: false }); // resume
+```
+
+Time must be a finite number from zero to 86,400 seconds. `paused` defaults to
+true. Invalid arguments leave state unchanged; disposed surfaces reject writes.
+The setter schedules a render and resets the wall-clock baseline, so resuming
+does not include time spent paused. `getAnimationClock()` returns `timeSeconds`,
+`paused`. Existing animation controls reflect this state.
+
+This is an absolute clock for declarative motion, animation clips, spin/drift,
+material programs and shader time. Reduced-motion preferences still govern
+declarative movement. Stateful water/particle simulations and event-driven glTF
+mixers retain their own state; exact reproduction of those requires explicit
+pose/state replay. The API does not claim to rewind their simulation history.
+
+A host can keep the native clock paused and drive it from one presentation
+playhead. Wait for the scheduled render to settle before capturing its pixels.

@@ -3106,14 +3106,8 @@
   function normalizeSceneOcean(raw) {
     if (!sceneIsPlainObject(raw)) return null;
     const number = key => sceneNumber(raw[key], 0);
-    const parameter = (key, fallback, minimum, maximum) => {
-      const value = number(key);
-      return value === 0 ? fallback : Math.max(minimum, Math.min(maximum, value));
-    };
-    const color = (key, fallback) => {
-      const value = typeof raw[key] === "string" ? raw[key].trim() : "";
-      return value || fallback;
-    };
+    const parameter = (key, fallback, minimum, maximum) => Math.max(minimum, Math.min(maximum, number(key) || fallback));
+    const color = (key, fallback) => sceneEnvironmentText(raw, key).trim() || fallback;
     let windDirection = number("windDirection") % 360;
     if (windDirection < 0) windDirection += 360;
     const source = sceneIsPlainObject(raw.bathymetry) ? raw.bathymetry : null;
@@ -3148,27 +3142,34 @@
     };
   }
 
+  function sceneEnvironmentText(source, key) {
+    return typeof source[key] === "string" ? source[key] : "";
+  }
+
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
     const lifecycle = sceneNormalizeLifecycle(source, base);
+    const has = key => Object.prototype.hasOwnProperty.call(source, key);
+    const text = key => sceneEnvironmentText(source, key) || sceneEnvironmentText(base, key);
+    const scalar = (key, minimum, maximum) => sceneClampNumberOrCSSVar(source[key], sceneNumber(base[key], 0), minimum, maximum);
     const environment = {
-      ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
-      ambientIntensity: sceneClampNumberOrCSSVar(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0), 0, 4),
-      skyColor: typeof source.skyColor === "string" && source.skyColor ? source.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
-      skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
-      groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
-      groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
-      envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
+      ambientColor: text("ambientColor"),
+      ambientIntensity: scalar("ambientIntensity", 0, 4),
+      skyColor: text("skyColor"),
+      skyIntensity: scalar("skyIntensity", 0, 4),
+      groundColor: text("groundColor"),
+      groundIntensity: scalar("groundIntensity", 0, 4),
+      envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
-      sky: normalizeSceneSky(Object.prototype.hasOwnProperty.call(source, "sky") ? source.sky : base.sky),
-      ocean: normalizeSceneOcean(Object.prototype.hasOwnProperty.call(source, "ocean") ? source.ocean : base.ocean),
-      envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
-      envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
-      exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
-      toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
-      fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
-      fogDensity: sceneClampNumberOrCSSVar(source.fogDensity, sceneNumber(base.fogDensity, 0), 0, Number.POSITIVE_INFINITY),
+      sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
+      envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
+      envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
+      exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
+      toneMapping: text("toneMapping"),
+      fogColor: text("fogColor"),
+      fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
@@ -3189,7 +3190,7 @@
       environment.fogColor ||
       environment.fogDensity !== 0 ||
       environment.toneMapping ||
-      Object.prototype.hasOwnProperty.call(source, "exposure")
+      has("exposure")
     );
     // Cache env content hash for scenePBRLightsHash dirty-tracking.
     // Same rationale as _lightHash above — avoids re-walking fields on
@@ -3204,13 +3205,13 @@
   function sceneResolveLightingEnvironment(environment, hasLights) {
     const base = environment && typeof environment === "object" && Object.prototype.hasOwnProperty.call(environment, "specified")
       ? {
-        ambientColor: typeof environment.ambientColor === "string" ? environment.ambientColor : "",
+        ambientColor: sceneEnvironmentText(environment, "ambientColor"),
         ambientIntensity: sceneClampNumberOrCSSVar(environment.ambientIntensity, 0, 0, 4),
-        skyColor: typeof environment.skyColor === "string" ? environment.skyColor : "",
+        skyColor: sceneEnvironmentText(environment, "skyColor"),
         skyIntensity: sceneClampNumberOrCSSVar(environment.skyIntensity, 0, 0, 4),
-        groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
+        groundColor: sceneEnvironmentText(environment, "groundColor"),
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
-        envMap: typeof environment.envMap === "string" ? environment.envMap : "",
+        envMap: sceneEnvironmentText(environment, "envMap"),
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
@@ -3218,8 +3219,8 @@
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
-        toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
-        fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",
+        toneMapping: sceneEnvironmentText(environment, "toneMapping"),
+        fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
         specified: Boolean(environment.specified),
       }

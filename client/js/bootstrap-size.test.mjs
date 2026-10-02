@@ -708,7 +708,8 @@ const budgets = [
   // ceiling overrun; raw and gzip targets retain their existing limits.
   // TAA coverage stabilization: raw 1761000 -> 1761931 (measured 1827467), gzip 492561 -> 492748 (measured 509132).
   // Closest-depth neighborhoods and jitter UV correction; only breached limits move.
-  { file: "bootstrap.js", raw: 1766857, gzip: 494237, brotli: 391607 },
+  // Preserve main's existing 400-byte public-clock Brotli allocation.
+  { file: "bootstrap.js", raw: 1766857, gzip: 494237, brotli: 392007 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1211,7 +1212,8 @@ const budgets = [
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
   // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
-  { file: "bootstrap-feature-scene3d.js", raw: 594275, gzip: 169164, brotli: 139_350 },
+  // Preserve main's existing public-clock allocations: 150 gzip / 175 Brotli.
+  { file: "bootstrap-feature-scene3d.js", raw: 594275, gzip: 169314, brotli: 139_525 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1861,9 +1863,10 @@ const routeBudgets = [
     // Sampler wrap preservation and signed/zero normal scales measure 1,219,453 / 345,033 / 291,295 raw/gzip/brotli bytes.
   // Raise only exceeded targets in 100-byte steps; governed allowances stay fixed.
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Preserve main's existing public-clock allocations: 150 gzip / 200 Brotli.
     raw: 1324805,
-    gzip: 364537,
-    brotli: 304447,
+    gzip: 364687,
+    brotli: 304647,
   },
   {
     // TAA coverage stabilization: raw 1183400 -> 1184359 (measured 1243577), gzip 337200 -> 337387 (measured 353771), brotli 283900 -> 284042 (measured 298245).
@@ -2047,9 +2050,10 @@ const routeBudgets = [
 
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO adds one bounded pass to the WebGL2 chunk.
-    raw: 1185901,
-    gzip: 337883,
-    brotli: 284360, // +95: persistent hub connections (approved exception, decision 0014)
+    // Preserve main's existing public-clock allocations: 25 raw / 150 gzip / 175 Brotli.
+    raw: 1185926,
+    gzip: 338033,
+    brotli: 284535, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -2231,10 +2235,12 @@ const routeBudgets = [
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
     // Depth AO also ships when WebGPU falls back to WebGL2.
     raw: 1600532, // +100: persistent hub connections (approved exception, decision 0014)
-    gzip: 443010,
+    // Preserve main's existing 150-byte public-clock gzip allocation.
+    gzip: 443160,
     // Complete upstream TAA invalidation measures 384,796 Brotli bytes for
     // this dual-backend route; raise only the exact 12-byte ceiling overrun.
-    brotli: 369337, // +95: persistent hub connections (approved exception, decision 0014)
+    // Preserve main's existing 175-byte public-clock Brotli allocation.
+    brotli: 369512, // +95: persistent hub connections (approved exception, decision 0014)
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2389,9 +2395,10 @@ const routeBudgets = [
     // The physical daylight sky (shared GLSL/WGSL scattering and its params) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
 
     // Environment.Ocean (the WebGL and WebGPU ocean passes and the shared wave packing) adds measured bytes; targets rise by the smallest 100-byte steps that clear them.
+    // Preserve main's existing public-clock allocations: 150 gzip / 205 Brotli.
     raw: 1178949,
-    gzip: 321447,
-    brotli: 267752, // +95: persistent hub connections (approved exception, decision 0014)
+    gzip: 321597,
+    brotli: 267957, // +95: persistent hub connections (approved exception, decision 0014)
   },
 
 ];

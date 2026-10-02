@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/chromedp/cdproto"
 	"github.com/chromedp/chromedp"
 )
 
@@ -102,8 +103,9 @@ func (browser *Browser) Diagnostics() string {
 
 // Start launches Chrome with a fresh profile and an ephemeral loopback CDP
 // port. If Chrome remains alive but does not finish binding its empty tab within
-// the attempt deadline, the helper stops and drains it before one retry with a
-// new process/profile/port. Process exits and invalid endpoints fail without a
+// the attempt deadline, or CDP reports that no browser is open while binding
+// that tab, the helper stops and drains it before one retry with a new
+// process/profile/port. Process exits and invalid endpoints fail without a
 // retry. Each attempt has a 30-second startup limit; the overall startup budget
 // is 65 seconds, including a process/pipe/CDP cleanup allowance. Caller
 // cancellation interrupts the attempt and synchronously joins cleanup.
@@ -289,11 +291,13 @@ func launchAttempt(ctx context.Context, executable string, deadline time.Time, e
 			if err == nil {
 				err = context.DeadlineExceeded
 			}
-			// A typed dial timeout can race the outer attempt timer. Both
-			// paths permit a fresh attempt only while Chrome remains alive.
-			transient := retryableStartupTimeout(ctx, err, process.done)
+			// A typed dial timeout can race the outer attempt timer. Chrome can
+			// also publish CDP before it can create the first tab. Both failures
+			// permit a fresh attempt only while the process and caller are live.
+			timedOut := retryableStartupTimeout(ctx, err, process.done)
+			transient := timedOut || retryableStartupTab(ctx, err, process.done)
 			cleanup(false)
-			return nil, &attemptFailure{err: err, transient: transient, timedOut: transient,
+			return nil, &attemptFailure{err: err, transient: transient, timedOut: timedOut,
 				diagnostics: redactDiagnostics(diagnostics.String())}
 		case <-process.done:
 			cleanup(true)
@@ -346,6 +350,20 @@ func retryableStartupTimeout(ctx context.Context, err error, processExited <-cha
 	}
 	var timeout net.Error
 	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout()
+}
+
+func retryableStartupTab(ctx context.Context, err error, processExited <-chan struct{}) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case <-processExited:
+		return false
+	default:
+	}
+	var protocolError *cdproto.Error
+	return errors.As(err, &protocolError) && protocolError.Code == -32000 &&
+		protocolError.Message == "Failed to open new tab - no browser is open"
 }
 
 const (

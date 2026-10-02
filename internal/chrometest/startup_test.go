@@ -175,6 +175,115 @@ exec tail -f /dev/null
 	}
 }
 
+func TestRetryableStartupTabRequiresTypedErrorLiveProcessAndCaller(t *testing.T) {
+	live := make(chan struct{})
+	exited := make(chan struct{})
+	close(exited)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"tab startup race", &cdproto.Error{Code: -32000, Message: "Failed to open new tab - no browser is open"}, true},
+		{"wrapped race", fmt.Errorf("bind: %w", &cdproto.Error{Code: -32000, Message: "Failed to open new tab - no browser is open"}), true},
+		{"plain error text", errors.New("Failed to open new tab - no browser is open (-32000)"), false},
+		{"other protocol error", &cdproto.Error{Code: -32000, Message: "Invalid target parameters"}, false},
+		{"other code", &cdproto.Error{Code: -32602, Message: "Failed to open new tab - no browser is open"}, false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := retryableStartupTab(t.Context(), tc.err, live); got != tc.want {
+				t.Fatalf("retry = %v, want %v", got, tc.want)
+			}
+			if retryableStartupTab(canceled, tc.err, live) {
+				t.Fatal("caller cancellation became retryable")
+			}
+			if retryableStartupTab(t.Context(), tc.err, exited) {
+				t.Fatal("process exit became retryable")
+			}
+		})
+	}
+}
+
+func TestStartRetriesTabStartupRaceWithFreshProfile(t *testing.T) {
+	requirePOSIXShell(t)
+	for _, tc := range []struct {
+		name, message string
+		recover       bool
+	}{
+		{"browser-not-open", "Failed to open new tab - no browser is open", true},
+		{"invalid-target", "Invalid target parameters", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			firstEndpoint, _, firstClosed := fakeCDPBeforeUpgrade(t, false, nil, &cdproto.Error{Code: -32000, Message: tc.message})
+			secondEndpoint, _, _ := fakeCDP(t, false)
+			logPath := filepath.Join(t.TempDir(), "attempts.log")
+			t.Setenv("GOSX_FAKE_LOG", logPath)
+			t.Setenv("GOSX_FAKE_FIRST_ENDPOINT", firstEndpoint)
+			t.Setenv("GOSX_FAKE_ENDPOINT", secondEndpoint)
+			executable := writeFakeChrome(t, `
+if [ ! -e "$GOSX_FAKE_LOG" ]; then
+  endpoint="$GOSX_FAKE_FIRST_ENDPOINT"
+else
+  endpoint="$GOSX_FAKE_ENDPOINT"
+fi
+printf '%s\n' "$*" >> "$GOSX_FAKE_LOG"
+printf 'DevTools listening on %s\n' "$endpoint" >&2
+exec tail -f /dev/null
+`)
+			policy := fastPolicy(2)
+			policy.attemptTimeout = time.Second
+			browser, err := startWithPolicy(t.Context(), executable, policy)
+			if !tc.recover {
+				if err == nil {
+					browser.Close()
+					t.Fatal("permanent protocol error was retried")
+				}
+				if countLogLines(t, logPath) != 1 || !strings.Contains(err.Error(), tc.message) {
+					t.Fatalf("unexpected fatal startup result: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("transient tab startup did not recover: %v", err)
+			}
+			defer browser.Close()
+			if countLogLines(t, logPath) != 2 {
+				t.Fatal("startup must use exactly two bounded attempts")
+			}
+			select {
+			case <-firstClosed:
+			case <-time.After(time.Second):
+				t.Fatal("failed CDP connection was not closed")
+			}
+			var profiles []string
+			for _, line := range strings.Split(strings.TrimSpace(readFile(t, logPath)), "\n") {
+				for _, arg := range strings.Fields(line) {
+					if strings.HasPrefix(arg, "--user-data-dir=") {
+						profiles = append(profiles, strings.TrimPrefix(arg, "--user-data-dir="))
+					}
+				}
+			}
+			if len(profiles) != 2 || profiles[0] == profiles[1] {
+				t.Fatalf("retry did not use fresh profiles: %v", profiles)
+			}
+			if _, err := os.Stat(profiles[0]); !os.IsNotExist(err) {
+				t.Fatalf("failed attempt profile remains: %v", err)
+			}
+			var value int
+			if err := chromedp.Run(browser.Context, chromedp.Evaluate(`1 + 1`, &value)); err != nil || value != 2 {
+				t.Fatalf("recovered CDP connection is unusable: value=%d err=%v", value, err)
+			}
+			browser.Close()
+			if _, err := os.Stat(profiles[1]); !os.IsNotExist(err) {
+				t.Fatalf("successful attempt profile remains: %v", err)
+			}
+		})
+	}
+}
+
 func TestStartCancellationDuringCDPBindJoinsConnection(t *testing.T) {
 	requirePOSIXShell(t)
 	endpoint, calls, closed := fakeCDP(t, true)
@@ -278,11 +387,11 @@ func fakeCDP(t *testing.T, stall bool) (string, <-chan struct{}, <-chan struct{}
 	return fakeCDPBeforeUpgrade(t, stall, nil)
 }
 
-func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool) (string, <-chan struct{}, <-chan struct{}) {
-	return fakeCDPWithCommandError(t, stall, beforeUpgrade, nil)
+func fakeCDPBeforeUpgrade(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool, targetErrors ...*cdproto.Error) (string, <-chan struct{}, <-chan struct{}) {
+	return fakeCDPWithCommandError(t, stall, beforeUpgrade, nil, targetErrors...)
 }
 
-func fakeCDPWithCommandError(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool, commandError func(string) *cdproto.Error) (string, <-chan struct{}, <-chan struct{}) {
+func fakeCDPWithCommandError(t *testing.T, stall bool, beforeUpgrade func(http.ResponseWriter, *http.Request) bool, commandError func(string) *cdproto.Error, targetErrors ...*cdproto.Error) (string, <-chan struct{}, <-chan struct{}) {
 	t.Helper()
 	calls := make(chan struct{}, 1)
 	closed := make(chan struct{})
@@ -324,6 +433,12 @@ func fakeCDPWithCommandError(t *testing.T, stall bool, beforeUpgrade func(http.R
 			result := any(map[string]any{})
 			switch request.Method {
 			case "Target.createTarget":
+				if len(targetErrors) > 0 {
+					if err := conn.WriteJSON(map[string]any{"id": request.ID, "error": targetErrors[0]}); err != nil {
+						return
+					}
+					continue
+				}
 				result = map[string]any{"targetId": "page"}
 			case "Target.attachToTarget":
 				result = map[string]any{"sessionId": "session"}

@@ -2050,8 +2050,8 @@
   }
 
   // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
-  function scenePBRHasFrameData(mesh, points, instances, lines, frameMeta) {
-    return mesh || points || instances || lines || scenePBRHasComposite(frameMeta);
+  function scenePBRHasFrameData(mesh, points, instances, lines, frameMeta, oceanResources) {
+    return mesh || points || instances || lines || scenePBRHasComposite(frameMeta) || Boolean(oceanResources && oceanResources.renderer);
   }
 
   // @ts-ignore TS7006 -- raw-source renderer tests parse this signature as JavaScript.
@@ -8705,7 +8705,7 @@
         }
       }
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         return;
       }
@@ -8944,7 +8944,7 @@
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       sceneOceanWebGLDraw(oceanResources, gl, { environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
-        linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+        linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode }); gl.useProgram(program);
 
       // Draw alpha pass.
       if (drawList && drawList.alpha.length > 0) {
