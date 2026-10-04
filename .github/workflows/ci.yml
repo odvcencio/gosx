@@ -135,10 +135,10 @@ jobs:
         run: GOWORK=off GOFLAGS=-p=1 go test -count=1 ./cmd/gosx -run '^TestDesktopPackageAzureFakeTool$'
 
   # go-race-tests: the race detector gates split out of go-tests so they run
-  # in parallel instead of serializing after the unit lane. This lane needs
-  # neither TinyGo nor Node. The pull-request path runs the focused
-  # test-race-pr suite within the shared job ceiling. The push path instead
-  # race-builds every package and runs the full package set except nine named,
+  # in parallel instead of serializing after the unit lane. Pushes need TinyGo
+  # for cmd/gosx production-build tests; neither path needs Node. Pull requests
+  # run the focused test-race-pr suite within the shared job ceiling. Pushes
+  # race-build every package and run the full package set except nine named,
   # validated perf/ouroboros tests whose real-repository evidence scans spend
   # tens of minutes in deterministic parsing/Brotli work under instrumentation.
   # Ordinary tests still gate all nine. A second scoped perf/ouroboros race run
@@ -159,6 +159,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install TinyGo
+        if: github.event_name == 'push'
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
 
       - name: Focused shared-state race tests
         if: github.event_name == 'pull_request'
