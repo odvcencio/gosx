@@ -6,7 +6,7 @@
 // screenshots, so parity/efficiency claims are measured, not asserted.
 //
 //	# Terminal 1: docs server
-//	PORT=8890 go run ./examples/gosx-docs
+//	GOSX_ENV=development PORT=127.0.0.1:8890 go run ./examples/gosx-docs
 //	# Terminal 2:
 //	WATER_SMOKE_SAVE_DIR=/tmp/water-smoke go run -tags water_smoke scripts/water-visual-smoke.go
 //

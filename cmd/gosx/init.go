@@ -307,7 +307,11 @@ func main() {
 	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
 	// Local development serves plain HTTP. A Secure cookie never reaches the
 	// server there. Point PUBLIC_URL at an https origin to restore Secure.
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{
+	secret, err := sessionSecret()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sessions, err := session.New(secret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {
@@ -629,7 +633,46 @@ GOSX_ENV=development
 func gitignoreTemplate() string {
 	return `/build
 /dist
+.env
+.env.*
 .DS_Store
+`
+}
+
+func sessionSecretTemplate() string {
+	return `package main
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+)
+
+func sessionSecret() (string, error) {
+	secret := strings.TrimSpace(os.Getenv("SESSION_SECRET"))
+	switch secret {
+	case "", "change-me-in-production", "gosx-app-session-secret", "gosx-docs-session-secret":
+		mode := strings.TrimSpace(os.Getenv("GOSX_ENV"))
+		dev := strings.EqualFold(mode, "development") || (mode == "" && os.Getenv("GOSX_DEV") == "1")
+		if !dev {
+			return "", fmt.Errorf("set SESSION_SECRET to a random secret of at least 16 bytes; missing or placeholder secrets are only allowed in development")
+		}
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", fmt.Errorf("generate development session secret: %w", err)
+		}
+		log.Print("Using a random per-process development session secret; sessions reset on restart. Set SESSION_SECRET for persistent sessions.")
+		return base64.RawURLEncoding.EncodeToString(random[:]), nil
+	default:
+		if len(secret) < 16 {
+			return "", fmt.Errorf("SESSION_SECRET must be at least 16 bytes")
+		}
+		return secret, nil
+	}
+}
 `
 }
 

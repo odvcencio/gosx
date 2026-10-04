@@ -122,12 +122,13 @@ if [ -z "$base_url" ]; then
 		port="$("$python_cmd" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 	fi
 	base_url="http://127.0.0.1:${port}"
+	local_secret="$("$python_cmd" -c 'import secrets; print(secrets.token_hex(32))')"
 	GOSX_APP_ROOT="$dist_root" \
 		PORT="127.0.0.1:${port}" \
 		PUBLIC_URL="$public_url" \
 		GOSX_DOCS_REVISION="$revision" \
 		GOSX_DOCS_BUILT_AT="$built_at" \
-		SESSION_SECRET="${SESSION_SECRET:-gosx-docs-local-identity-secret}" \
+		SESSION_SECRET="$local_secret" \
 		"$app_path" >"${tmp_dir}/server.log" 2>&1 &
 	pid="$!"
 	started_server=1
