@@ -75,19 +75,14 @@ function sceneOceanReflectWGSL() { return [
 // Capture is a reduced MRT colour+depth pass. Multisampled depth resolves by
 // the closest covered sample so silhouettes occlude reflections consistently.
 function sceneReflectCaptureWGSL(samples) {
-  return `@group(0) @binding(0) var color: texture_2d<f32>;
+  return WGSL_POST_VERTEX + `\n@group(0) @binding(0) var color: texture_2d<f32>;
 @group(0) @binding(1) var depth: ${samples > 1 ? "texture_depth_multisampled_2d" : "texture_depth_2d"};
-struct Out { @builtin(position) position: vec4f, @location(0) uv: vec2f };
-@vertex fn vertexMain(@builtin(vertex_index) i: u32) -> Out {
- let uv = vec2f(f32((i<<1u)&2u),f32(i&2u)); var o: Out;
- o.position = vec4f(uv*2.0-1.0,0.0,1.0); o.uv = uv*vec2f(1.0,-1.0)+vec2f(0.0,1.0); return o;
-}
 struct Capture { @location(0) color: vec4f, @location(1) depth: f32 };
-@fragment fn fragmentMain(in: Out) -> Capture {
- let dims = textureDimensions(color); let p = clamp(vec2i(in.uv*vec2f(dims)),vec2i(0),vec2i(dims)-1);
+@fragment fn fragmentMain(@location(0) uv: vec2f) -> Capture {
+ let dims = textureDimensions(color); let p = clamp(vec2i(uv*vec2f(dims)),vec2i(0),vec2i(dims)-1);
  var d = 1.0;
  ${samples > 1 ? `for (var s = 0; s < ${samples}; s++) { d = min(d,textureLoad(depth,p,s)); }` : "d = textureLoad(depth,p,0);"}
- var o: Capture; o.color = textureLoad(color,p,0); o.depth = d; return o;
+ return Capture(textureLoad(color,p,0),d);
 }`;
 }
 function createSceneReflectWebGPU(device) {
@@ -117,13 +112,13 @@ function createSceneReflectWebGPU(device) {
     if (!pipeline) {
       const module = device.createShaderModule({ label: "gosx-reflection-capture",code: sceneReflectCaptureWGSL(opts.samples) });
       pipeline = device.createRenderPipeline({ label: "gosx-reflection-capture",layout: "auto",
-        vertex: { module,entryPoint: "vertexMain" },fragment: { module,entryPoint: "fragmentMain",targets: [{format: opts.format},{format: "r32float"}] } });
+        vertex: { module,entryPoint: "vertexMain" },fragment: { module,entryPoint: "fragmentMain",targets: [{format: opts.format},{format: "r32float"}] },primitive: {topology:"triangle-strip"} });
       pipelines.set(k,pipeline);
     }
     const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0),entries: [
       {binding: 0,resource: opts.colorView},{binding: 1,resource: opts.depthView} ] });
     const pass = encoder.beginRenderPass({ label: "gosx-reflection-capture",colorAttachments: [targets.color,targets.depth].map(view => ({view,loadOp: "clear",storeOp: "store",clearValue: {r:1,g:1,b:1,a:1}})) });
-    pass.setPipeline(pipeline); pass.setBindGroup(0,group); pass.draw(3); pass.end();
+    pass.setPipeline(pipeline); pass.setBindGroup(0,group); pass.draw(4); pass.end();
   }
   return {
     prepare: function(opts,config,quality) {

@@ -5,6 +5,7 @@ const fs = require("node:fs"), path = require("node:path"), vm = require("node:v
 const { createContext } = require("./runtime-test-harness.js");
 const crypto = require("node:crypto");
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+const ts = require("node:module").createRequire(path.join(__dirname, "../runtime/package.json"))("typescript");
 
 function detailContext(backend) {
   const env = createContext({});
@@ -13,7 +14,7 @@ function detailContext(backend) {
   }
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   vm.runInContext(core.slice(0, core.indexOf("// Scene3D shared API")), env.context);
-  if (backend) vm.runInContext(readSceneRendererBackendSrc(backend), env.context);
+  if (backend) vm.runInContext(ts.transpileModule(readSceneRendererBackendSrc(backend), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, env.context);
   return env.context;
 }
 
