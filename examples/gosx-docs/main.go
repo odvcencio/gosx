@@ -75,6 +75,12 @@ func buildDocsApp(root, port string) (*server.App, error) {
 			Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
 				return docsDemoUser(email), nil
 			}),
+			// Local demo delivery: print the link to this process's log, like a
+			// development mail catcher. The link never appears in the HTTP response.
+			Sender: auth.MagicLinkSenderFunc(func(_ context.Context, delivery auth.MagicLinkDelivery) error {
+				log.Printf("docs magic-link demo: sign-in link for %s: %s", delivery.Email, delivery.URL)
+				return nil
+			}),
 		})
 		webauthn = authn.WebAuthn(auth.WebAuthnOptions{
 			RPName:      "GoSX",
