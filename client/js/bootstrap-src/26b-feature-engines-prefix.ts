@@ -446,7 +446,16 @@
       const ro = canvas.__gosxResizeObserver;
       if (ro && box.source !== canvas && canvas.__gosxSizeFallbackAncestor !== box.source) {
         canvas.__gosxSizeFallbackAncestor = box.source;
-        try { ro.observe(box.source); } catch (e) { /* tolerate */ }
+        // This recovery can run in the canvas's ResizeObserver delivery.
+        // Observing a shallower ancestor there leaves undelivered notifications
+        // in WebKit. Register it in a later task outside that delivery cycle.
+        clearTimeout(canvas.__gosxROTimer);
+        const ancestor = box.source;
+        canvas.__gosxROTimer = setTimeout(function() {
+          canvas.__gosxROTimer = null;
+          if (canvas.__gosxResizeObserver !== ro) return;
+          try { ro.observe(ancestor); } catch (e) { /* tolerate */ }
+        }, 0);
       }
     }
 
@@ -487,6 +496,9 @@
         }
         inst.extraCleanup.length = 0;
       }
+      clearTimeout(inst.canvas.__gosxROTimer);
+      inst.canvas.__gosxROTimer = null;
+      inst.canvas.__gosxResizeObserver = null;
       if (inst.resizeObserver && typeof inst.resizeObserver.disconnect === "function") {
         inst.resizeObserver.disconnect();
       }
