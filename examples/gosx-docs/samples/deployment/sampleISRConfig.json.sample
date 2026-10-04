@@ -1,4 +1,5 @@
 {
+  "prerender": true,
   "cache": {
     "public": true,
     "maxAge": "60s",

@@ -477,7 +477,8 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	routeMiddleware := append([]Middleware(nil), r.opts.Middleware...)
+	routeMiddleware := []Middleware{filePrerenderMiddleware(resolved.page, resolved.module)}
+	routeMiddleware = append(routeMiddleware, r.opts.Middleware...)
 	routeMiddleware = append(routeMiddleware, collectDirMiddleware(resolved.dirModules)...)
 	errorHandler := r.opts.ErrorHandler
 	if resolved.page.ErrorPage != nil {

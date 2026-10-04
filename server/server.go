@@ -567,7 +567,7 @@ func (a *App) Build() http.Handler {
 		if a.maybeServeISR(w, r, regenerate) {
 			return
 		}
-		dispatch(w, r, true)
+		dispatch(w, a.isrOriginRequest(r), true)
 	}))
 }
 

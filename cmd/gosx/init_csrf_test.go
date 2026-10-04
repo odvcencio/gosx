@@ -26,6 +26,7 @@ func TestRunInitStarterFormPrerenderAndCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
 	mustWriteFile(t, filepath.Join(dir, "app", "dynamic", "route.config.json"), `{"prerender":false}`)
 	mustWriteFile(t, filepath.Join(dir, "app", "dynamic", "page.gsx"), `package dynamic
 
