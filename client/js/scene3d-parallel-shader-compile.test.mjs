@@ -130,6 +130,7 @@ function shaderHarness({ extension = true, linkOK = true, scheduler = false } = 
     clearTimeout(id) { scheduled.delete(id); },
   });
   runSource(sourceBetween(webglSource, "function scenePBRProgramLocations", "function scenePBRCompileShader"), context);
+  runSource(sourceBetween(webglSource, "function sceneWebGLNow", "// One elapsed query covers"), context);
   runSource(initialProgramSource, context);
   runSource(baseFactorySource, context);
   runSource(instancedFactorySource, context);
