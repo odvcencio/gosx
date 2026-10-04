@@ -40,6 +40,7 @@ function runIntegratedActionsModule(options = {}) {
   const listeners = {};
   const ctx = {
     console,
+    URL,
     URLSearchParams,
     // 00-textlayout.js reads this bare name at module scope — it normally
     // comes from 05-document-env.ts, concatenated into the same bundle
@@ -123,6 +124,7 @@ function runModule(options = {}) {
   const metaToken = options.csrfToken;
   const ctx = {
     console,
+    URL,
     URLSearchParams,
     FormData: class {
       constructor(form) {
@@ -168,6 +170,7 @@ function runModule(options = {}) {
       execCommand: options.execCommand,
     },
     window: {
+      location: { href: "https://app.example/", origin: "https://app.example" },
       __gosx: Object.assign(
         {},
         options.coreRequest ? { request: options.coreRequest } : {},
@@ -758,4 +761,14 @@ test("data-gosx-action-signal prefers an installed WASM engine writer and does n
   // fallback store must stay untouched, or a subscriber on the engine's own
   // channel would see the write twice.
   assert.deepEqual(received, [], "the JS-only store does not also receive the write when the engine succeeds");
+});
+
+
+test("isolated action requests attach CSRF headers only to the same origin", () => {
+  for (const [url, sameOrigin] of [["/save", true], ["https://app.example/save", true], ["//other.example/save", false], ["https://other.example/save", false], ["http://app.example/save", false]]) {
+    const { listeners, fetches } = runModule({ csrfToken: "response-token" });
+    fire(listeners.click, makeEl({ "data-gosx-action": "POST " + url }, { tag: "button" }));
+    assert.equal(fetches.length, 1);
+    assert.equal(fetches[0].opts.headers["X-CSRF-Token"], sameOrigin ? "response-token" : undefined);
+  }
 });

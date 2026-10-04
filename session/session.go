@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -150,7 +152,8 @@ type Store struct {
 	// response can depend on the visitor's session. Only such responses get
 	// Vary: Cookie and private caching; a handler that never touches the
 	// session (static and runtime assets) keeps its own cache headers.
-	accessed bool
+	accessed          bool
+	responseCSRFToken string
 }
 
 // New creates a new cookie-backed session manager.
@@ -290,16 +293,31 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 		}
 		expected := store.String(defaultCSRFKey)
 		actual := r.Header.Get("X-CSRF-Token")
-		if actual == "" && !requestWantsJSON(r) {
-			// FormValue parses multipart/form-data (via ParseMultipartForm)
-			// as well as urlencoded bodies and query params, so it reads the
-			// csrf_token whether the form was submitted as multipart (e.g. the
-			// studio workbench's FormData fetch) or urlencoded. The parsed form
-			// is cached on the request, so downstream handlers reusing it are
-			// unaffected.
-			actual = r.FormValue(defaultCSRFField)
+		if expected == "" {
+			writeCSRFFailure(w, r)
+			return
 		}
-		if expected == "" || !constantTimeSessionStringEqual(expected, actual) {
+		if actual == "" && !requestWantsJSON(r) {
+			contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			// Multipart bodies belong to the action's upload parser and limit.
+			// Never consume or cache them here; multipart clients use the header.
+			if contentType == "application/x-www-form-urlencoded" {
+				body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+				if err != nil {
+					http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				form, err := url.ParseQuery(string(body))
+				if err == nil {
+					actual = form.Get(defaultCSRFField)
+				}
+			}
+			if actual == "" && contentType != "multipart/form-data" {
+				actual = r.URL.Query().Get(defaultCSRFField)
+			}
+		}
+		if !constantTimeSessionStringEqual(expected, unmaskCSRFToken(actual)) {
 			writeCSRFFailure(w, r)
 			return
 		}
@@ -326,7 +344,7 @@ func (m *Manager) Token(r *http.Request) string {
 	if store == nil {
 		return ""
 	}
-	return store.ensureCSRFToken()
+	return store.responseToken()
 }
 
 // Current returns the request-scoped session store loaded by Middleware.
@@ -374,7 +392,7 @@ func Token(r *http.Request) string {
 	if store == nil {
 		return ""
 	}
-	return store.ensureCSRFToken()
+	return store.responseToken()
 }
 
 // Values returns a shallow copy of the current session values.
@@ -537,6 +555,18 @@ func (s *Store) AllFlashes() map[string][]any {
 	return out
 }
 
+// Renew clears prior session state and rotates the CSRF token at an
+// authentication boundary. Cookie sessions require an application-managed
+// server-side session version when previously issued cookies must be revoked.
+func (s *Store) Renew() {
+	if s == nil {
+		return
+	}
+	s.Destroy()
+	s.destroyed = false
+	s.ensureCSRFToken()
+}
+
 // Destroy deletes the current session cookie.
 func (s *Store) Destroy() {
 	if s == nil {
@@ -547,6 +577,52 @@ func (s *Store) Destroy() {
 	s.outgoingFlashes = map[string][]any{}
 	s.dirty = true
 	s.destroyed = true
+	s.responseCSRFToken = ""
+}
+
+// Mask the stored token with a fresh random pad for each response. The prefix
+// distinguishes masked tokens from legacy raw tokens during rolling upgrades.
+func (s *Store) responseToken() string {
+	token := s.ensureCSRFToken()
+	if token == "" {
+		return ""
+	}
+	if s.responseCSRFToken == "" {
+		s.responseCSRFToken = maskCSRFToken(token)
+	}
+	return s.responseCSRFToken
+}
+
+func maskCSRFToken(token string) string {
+	pad := make([]byte, len(token))
+	if _, err := rand.Read(pad); err != nil {
+		panic("session: crypto/rand failed")
+	}
+	masked := make([]byte, len(token)*2)
+	copy(masked, pad)
+	for i := range token {
+		masked[len(token)+i] = pad[i] ^ token[i]
+	}
+	return "masked:" + base64.RawURLEncoding.EncodeToString(masked)
+}
+
+func unmaskCSRFToken(token string) string {
+	if !strings.HasPrefix(token, "masked:") {
+		return token
+	}
+	rawSize := base64.RawURLEncoding.EncodedLen(32)
+	if len(token) != len("masked:")+base64.RawURLEncoding.EncodedLen(rawSize*2) {
+		return ""
+	}
+	masked, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, "masked:"))
+	if err != nil || len(masked) != rawSize*2 {
+		return ""
+	}
+	n := len(masked) / 2
+	for i := 0; i < n; i++ {
+		masked[i] ^= masked[n+i]
+	}
+	return string(masked[:n])
 }
 
 func (s *Store) ensureCSRFToken() string {

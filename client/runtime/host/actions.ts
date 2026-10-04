@@ -119,7 +119,7 @@
     // is intentionally absent. The standard path above owns this policy.
     var fallback = Object.assign({}, opts || {});
     var headers = Object.assign({}, fallback.headers || {});
-    if (isMutatingMethod(fallback.method) && !Object.keys(headers).some(function (key) {
+    if (gosxSameOrigin(url) && isMutatingMethod(fallback.method) && !Object.keys(headers).some(function (key) {
       return String(key).toLowerCase() === "x-csrf-token";
     })) {
       var meta = document.querySelector('meta[name="csrf-token"]');

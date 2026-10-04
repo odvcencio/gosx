@@ -60,7 +60,7 @@
     delete options.csrf;
     const headers = gosxHeadersObject(options.headers);
     const method = options.method || (input && input.method) || "GET";
-    if (csrf && gosxMutatingMethod(method) && !gosxHasHeader(headers, "X-CSRF-Token")) {
+    if (csrf && gosxSameOrigin(input) && gosxMutatingMethod(method) && !gosxHasHeader(headers, "X-CSRF-Token")) {
       const token = gosxRequestToken();
       if (token) headers["X-CSRF-Token"] = token;
     }

@@ -67,6 +67,7 @@ function runModule(body, options = {}) {
     __gosx_emit(level, category, message, fields) {
       telemetry.push({ level, category, message, fields });
     },
+    location: { href: "https://app.example/", origin: "https://app.example" },
     fetch: options.fetch || (() => Promise.resolve({})),
   };
   class CustomEvent {
@@ -75,7 +76,7 @@ function runModule(body, options = {}) {
       this.detail = init.detail;
     }
   }
-  const context = { window, document, CustomEvent, AbortController, console, setTimeout, clearTimeout };
+  const context = { window, document, URL, CustomEvent, AbortController, console, setTimeout, clearTimeout };
   vm.createContext(context);
   vm.runInContext(moduleSrc, context);
   if (options.withDOM) vm.runInContext(domModuleSrc, context);
@@ -391,4 +392,21 @@ test("surface scheduler coalesces keyed work and cancels it on unmount", async (
   context.window.__gosx_dispose_runtime_surfaces(body);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(calls, ["current"]);
+});
+
+
+test("core requests attach automatic CSRF headers only to the same origin", async () => {
+  const calls = [];
+  const { context } = runModule(makeElement(), {
+    querySelector: () => ({ getAttribute: () => "response-token" }),
+    fetch: (input, init) => { calls.push(init); return Promise.resolve({}); },
+  });
+  for (const input of ["/save", "https://app.example/save", { url: "https://app.example/save", method: "POST" }]) {
+    await context.window.__gosx.request(input, { method: "POST" });
+    assert.equal(calls.at(-1).headers["X-CSRF-Token"], "response-token");
+  }
+  for (const input of ["https://other.example/save", "//other.example/save", "http://app.example/save", { url: "https://other.example/save", method: "POST" }]) {
+    await context.window.__gosx.request(input, { method: "POST" });
+    assert.equal(calls.at(-1).headers?.["X-CSRF-Token"], undefined);
+  }
 });
