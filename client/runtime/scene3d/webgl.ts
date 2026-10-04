@@ -9713,7 +9713,7 @@
       for (const [name, size, fallback] of [
         ["position", 3, [0, 0, 0]], ["normal", 3, [0, 1, 0]],
         ["uv", 2, [0, 0]], ["tangent", 4, [1, 0, 0, 1]],
-      ]) {
+      /* @ts-expect-error TS2538 -- plain JS tuple rows infer a union for the attribute name; runtime checks the location before binding */ ]) {
         const location = ip.attributes[name];
         if (!(location >= 0)) continue;
         /* @ts-expect-error TS2538 -- the [name, size, fallback] row list loses its per-row literal types without `as const`, which is TypeScript-only syntax this plain-JS-executed file cannot use */ allowed[location] = true;

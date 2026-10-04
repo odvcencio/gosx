@@ -9,7 +9,7 @@ function sceneWebGLDetailFragment(source = "", detail = false) {
 function sceneWebGLDetailProgram(gl = Object.create(null), resources = Object.create(null), kind = "base") {
   const key = sceneDetailVariantKey(kind, true);
   if (resources.programs.has(key)) return resources.programs.get(key);
-  const factories = {
+  const factories: Record<string, () => any> = {
     base: function() { return createScenePBRProgram(gl, true); },
     skinned: function() { return createScenePBRSkinnedProgram(gl, true); },
     instanced: function() { return createScenePBRInstancedProgram(gl, false, true); },
