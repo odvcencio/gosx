@@ -41,6 +41,11 @@ The docs app's local magic-link demo now prints its link to the server log.
 - Scene3D glass keeps transparent canvases, explicit pixel caps, background
   colors across quality tiers, additive blending and volume settings on
   instanced and imported meshes ([#449](https://github.com/odvcencio/gosx/pull/449)).
+- Scene3D ocean and water: removing an ocean through Go diffs or typed
+  commands, adding one after mount, paused water systems, horizon fog over dry
+  bathymetry, failed water shaders blanking the renderer, a leaked readiness
+  listener on abandoned mounts, and drifting clouds keeping the render loop
+  active ([#450](https://github.com/odvcencio/gosx/pull/450)).
 - Push CI installs TinyGo for the race tests that need it, so push and PR runs
   cover the same tests ([#446](https://github.com/odvcencio/gosx/pull/446)).
 
