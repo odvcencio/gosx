@@ -6,6 +6,10 @@ passkeys := authn.WebAuthn(auth.WebAuthnOptions{
 		return lookupUser(ctx, login)
 	}),
 })
+// Apply session middleware, authn.Middleware, and sessions.Protect before
+// mounting these POST handlers. Registration uses the signed-in user only;
+// sign-up needs an explicit server-authorized RegistrationUser callback.
+// Anonymous login uses discoverable passkeys and ignores login hints.
 app.Mount("/auth/webauthn/register/options", passkeys.RegisterOptionsHandler())
 app.Mount("/auth/webauthn/register", passkeys.RegisterHandler())
 app.Mount("/auth/webauthn/login/options", passkeys.LoginOptionsHandler())

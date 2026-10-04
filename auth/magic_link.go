@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	ErrMagicLinkInvalid = errors.New("magic link is invalid")
-	ErrMagicLinkExpired = errors.New("magic link expired")
+	ErrMagicLinkInvalid        = errors.New("magic link is invalid")
+	ErrMagicLinkExpired        = errors.New("magic link expired")
+	ErrMagicLinkSenderRequired = errors.New("magic link sender is required")
 
 	// ErrMagicLinkBaseURLRequired reports a magic-link flow with no absolute
 	// base URL. The link carries a sign-in token, so GoSX refuses to build the
@@ -62,7 +63,7 @@ type MagicLinkSenderFunc func(context.Context, MagicLinkDelivery) error
 
 func (fn MagicLinkSenderFunc) SendMagicLink(ctx context.Context, delivery MagicLinkDelivery) error {
 	if fn == nil {
-		return nil
+		return ErrMagicLinkSenderRequired
 	}
 	return fn(ctx, delivery)
 }
@@ -150,10 +151,15 @@ type MagicLinkOptions struct {
 	SuccessPath string
 	FailurePath string
 	FlashKey    string
-	Sender      MagicLinkSender
-	Store       MagicLinkStore
-	Resolver    MagicLinkResolver
-	Now         func() time.Time
+
+	// Sender is required by Send and RequestHandler. RequestHandler fails with
+	// a generic 500 when it is absent and never exposes links or tokens in JSON
+	// or flash state. Use Issue only in trusted code that supplies its own
+	// delivery channel. There is no development-mode response exposure.
+	Sender   MagicLinkSender
+	Store    MagicLinkStore
+	Resolver MagicLinkResolver
+	Now      func() time.Time
 }
 
 // MagicLinks issues and consumes session-backed magic-link sign-ins.
@@ -217,7 +223,9 @@ func (m *Manager) MagicLinks(opts MagicLinkOptions) *MagicLinks {
 	return NewMagicLinks(m, opts)
 }
 
-// Issue creates and stores a magic link without sending it.
+// Issue creates and stores a magic link without sending it. This is a trusted
+// application API: callers must deliver the link through a verified channel and
+// must not return the delivery payload to an unauthenticated requester.
 func (m *MagicLinks) Issue(r *http.Request, email string, next string) (MagicLinkDelivery, error) {
 	if m == nil {
 		return MagicLinkDelivery{}, fmt.Errorf("magic links manager is nil")
@@ -271,14 +279,18 @@ func (m *MagicLinks) Issue(r *http.Request, email string, next string) (MagicLin
 	return delivery, nil
 }
 
-// Send issues and delivers a magic link.
+// Send issues and delivers a magic link. It requires a Sender and fails before
+// issuing a token when none is configured.
 func (m *MagicLinks) Send(r *http.Request, email string, next string) (MagicLinkDelivery, error) {
+	if m == nil || m.sender == nil {
+		return MagicLinkDelivery{}, ErrMagicLinkSenderRequired
+	}
+	if sender, ok := m.sender.(MagicLinkSenderFunc); ok && sender == nil {
+		return MagicLinkDelivery{}, ErrMagicLinkSenderRequired
+	}
 	delivery, err := m.Issue(r, email, next)
 	if err != nil {
 		return MagicLinkDelivery{}, err
-	}
-	if m.sender == nil {
-		return delivery, nil
 	}
 	if err := m.sender.SendMagicLink(r.Context(), delivery); err != nil {
 		return MagicLinkDelivery{}, err
@@ -319,13 +331,14 @@ func (m *MagicLinks) RequestHandler() http.Handler {
 		}
 		delivery, err := m.Send(r, email, next)
 		if err != nil {
-			// A missing origin is a server configuration fault, not a bad
-			// request from the client.
+			// A missing sender or origin is a server configuration fault.
 			status := http.StatusBadRequest
-			if errors.Is(err, ErrOriginNotConfigured) || errors.Is(err, ErrOriginNotAllowed) {
+			if errors.Is(err, ErrMagicLinkSenderRequired) || errors.Is(err, ErrOriginNotConfigured) || errors.Is(err, ErrOriginNotAllowed) {
 				status = http.StatusInternalServerError
 			}
-			writeMagicLinkError(w, r, status, err)
+			// Sender and resolver errors can contain the delivery URL or token.
+			// Keep those details out of both response bodies and flash state.
+			writeMagicLinkError(w, r, status, errors.New("magic link request failed"))
 			return
 		}
 
@@ -335,9 +348,6 @@ func (m *MagicLinks) RequestHandler() http.Handler {
 				"email":     delivery.Email,
 				"expiresAt": delivery.ExpiresAt,
 			}
-			if m.sender == nil {
-				payload["url"] = delivery.URL
-			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			_ = json.NewEncoder(w).Encode(payload)
 			return
@@ -346,9 +356,6 @@ func (m *MagicLinks) RequestHandler() http.Handler {
 		flash := map[string]any{
 			"status": "sent",
 			"email":  delivery.Email,
-		}
-		if m.sender == nil {
-			flash["url"] = delivery.URL
 		}
 		addMagicLinkFlash(r, m.flashKey, flash)
 		http.Redirect(w, r, redirectBackTarget(r, m.failurePath), http.StatusSeeOther)

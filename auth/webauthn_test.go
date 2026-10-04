@@ -28,9 +28,9 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 		Store:  store,
 	})
 
-	registerOptions := sessions.Middleware(webauthn.RegisterOptionsHandler())
+	registerOptions := sessions.Middleware(authn.Middleware(webauthn.RegisterOptionsHandler()))
 	registerFinish := sessions.Middleware(authn.Middleware(webauthn.RegisterHandler()))
-	loginOptions := sessions.Middleware(webauthn.LoginOptionsHandler())
+	loginOptions := sessions.Middleware(authn.Middleware(webauthn.LoginOptionsHandler()))
 	loginFinish := sessions.Middleware(authn.Middleware(webauthn.LoginHandler()))
 	protected := sessions.Middleware(authn.Middleware(authn.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := Current(r)
@@ -40,7 +40,8 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))))
 
-	registerReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/register/options", bytes.NewBufferString(`{"user":{"id":"user_ada","email":"ada@example.com","name":"Ada"}}`))
+	registerReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/register/options", bytes.NewBufferString(`{"next":"/settings"}`))
+	registerReq.AddCookie(webAuthnSignInCookie(t, sessions, authn, User{ID: "user_ada", Email: "ada@example.com", Name: "Ada"}))
 	registerReq.Header.Set("Content-Type", "application/json")
 	registerReq.Header.Set("Accept", "application/json")
 	registerRes := httptest.NewRecorder()
@@ -102,7 +103,7 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected credential user %#v", credential.User)
 	}
 
-	loginReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/login/options", bytes.NewBufferString(`{"next":"/admin"}`))
+	loginReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/login/options", bytes.NewBufferString(`{"login":"ada@example.com","next":"/admin"}`))
 	loginReq.Header.Set("Content-Type", "application/json")
 	loginReq.Header.Set("Accept", "application/json")
 	loginRes := httptest.NewRecorder()
@@ -115,6 +116,9 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 	}
 	if err := json.Unmarshal(loginRes.Body.Bytes(), &loginOptionsPayload); err != nil {
 		t.Fatalf("decode login options: %v", err)
+	}
+	if len(loginOptionsPayload.Options.AllowCredentials) != 0 {
+		t.Fatal("anonymous login must use discoverable credentials")
 	}
 	loginCookie := firstCookie(loginRes)
 	if loginCookie == nil {
@@ -245,16 +249,18 @@ func TestWebAuthnRejectsExpiredChallenge(t *testing.T) {
 	})
 
 	var options WebAuthnCreationOptions
-	begin := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	begin := sessions.Middleware(authn.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		options, err = webauthn.BeginRegistration(r, User{ID: "ada@example.com", Email: "ada@example.com"}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}))
+	})))
 	beginRes := httptest.NewRecorder()
-	begin.ServeHTTP(beginRes, httptest.NewRequest(http.MethodPost, "/begin", nil))
+	beginReq := httptest.NewRequest(http.MethodPost, "/begin", nil)
+	beginReq.AddCookie(webAuthnSignInCookie(t, sessions, authn, User{ID: "ada@example.com", Email: "ada@example.com"}))
+	begin.ServeHTTP(beginRes, beginReq)
 	registerCookie := firstCookie(beginRes)
 	if registerCookie == nil {
 		t.Fatal("expected registration cookie")
@@ -289,7 +295,7 @@ func TestWebAuthnRejectsExpiredChallenge(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	res := httptest.NewRecorder()
-	sessions.Middleware(webauthn.RegisterHandler()).ServeHTTP(res, req)
+	sessions.Middleware(authn.Middleware(webauthn.RegisterHandler())).ServeHTTP(res, req)
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", res.Code)
 	}
@@ -344,6 +350,22 @@ func firstCookie(recorder *httptest.ResponseRecorder) *http.Cookie {
 		return nil
 	}
 	return cookies[0]
+}
+
+func webAuthnSignInCookie(t *testing.T, sessions *session.Manager, authn *Manager, user User) *http.Cookie {
+	t.Helper()
+	res := httptest.NewRecorder()
+	sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authn.SignIn(r, user) {
+			t.Fatal("could not sign in test user")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/sign-in", nil))
+	cookie := firstCookie(res)
+	if cookie == nil {
+		t.Fatal("missing signed-in session cookie")
+	}
+	return cookie
 }
 
 func TestWebAuthnVerifyHelperUsesExpectedCurve(t *testing.T) {

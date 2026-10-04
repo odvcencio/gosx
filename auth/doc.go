@@ -40,6 +40,50 @@
 // Begin/Callback, BeginRegistration/FinishRegistration) for an application that
 // wants to own the routes and the responses.
 //
+// # Safe passkey enrollment and login
+//
+// RegisterOptionsHandler requires an authenticated Current(r) and ignores any
+// identity, Roles, or Meta in the request body. Mount both registration handlers
+// behind session and auth middleware, and protect their POST requests with CSRF:
+//
+//	passkeys := authn.WebAuthn(WebAuthnOptions{Origin: "https://app.example"})
+//	mux := http.NewServeMux()
+//	mux.Handle("POST /auth/webauthn/register/options", passkeys.RegisterOptionsHandler())
+//	mux.Handle("POST /auth/webauthn/register", passkeys.RegisterHandler())
+//	mux.Handle("POST /auth/webauthn/login/options", passkeys.LoginOptionsHandler())
+//	mux.Handle("POST /auth/webauthn/login", passkeys.LoginHandler())
+//	handler := sessions.Middleware(authn.Middleware(sessions.Protect(mux)))
+//
+// Applications that support sign-up must explicitly set
+// WebAuthnOptions.RegistrationUser. That callback must create or resolve a user
+// from verified server-side enrollment state and authorize enrollment for that
+// account. Looking up an existing account from a client-supplied ID or email is
+// insufficient. It runs before the options body is decoded and must leave the
+// body readable. Direct BeginRegistration callers have the same responsibility
+// to supply a trusted, authorized User.
+//
+// FinishRegistration stores the credential without signing in or changing
+// session privileges. An authenticated user must remain signed in as the same
+// user through completion. Sign-up applications must authenticate separately
+// after enrollment. Custom WebAuthnStore implementations must atomically reject
+// duplicate credential IDs with ErrWebAuthnCredentialExists.
+//
+// Anonymous login uses discoverable credentials: login hints are ignored and
+// allowCredentials is empty. New registrations require a resident key so they
+// support this flow. Older non-discoverable credentials need an existing
+// authenticated session for account-specific allowCredentials, or migration to
+// a discoverable passkey. Authenticated callers receive credential IDs only for
+// their own account. Authenticators without resident-key support cannot enroll.
+//
+// # Magic-link delivery
+//
+// Configure MagicLinkOptions.Sender before mounting RequestHandler. Without a
+// sender, Send fails before issuing a token and RequestHandler returns a generic
+// 500. Responses and flash state never contain the link or token, including in
+// development. Issue remains a trusted application API for custom delivery;
+// deliver its output through a verified channel and never echo it to the
+// unauthenticated requester.
+//
 // # The memory stores are for development
 //
 // NewMemoryMagicLinkStore and NewMemoryWebAuthnStore hold their state in the

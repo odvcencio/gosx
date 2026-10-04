@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -172,5 +174,99 @@ func TestMagicLinkRequestHandlerRejectsInvalidJSON(t *testing.T) {
 	}
 	if payload["error"] == nil {
 		t.Fatalf("expected error payload, got %#v", payload)
+	}
+}
+
+func TestMagicLinkRequestWithoutSenderFailsClosed(t *testing.T) {
+	for _, contentType := range []string{"application/json", "application/x-www-form-urlencoded"} {
+		t.Run(contentType, func(t *testing.T) {
+			sessions := session.MustNew("magic-link-no-sender-secret", session.Options{})
+			authn := New(sessions, Options{})
+			store := NewMemoryMagicLinkStore()
+			magic := authn.MagicLinks(MagicLinkOptions{BaseURL: "https://app.example", Store: store})
+			body := `{"email":"ada@app.example"}`
+			if contentType != "application/json" {
+				body = "email=ada%40app.example"
+			}
+			req := httptest.NewRequest(http.MethodPost, "/request", strings.NewReader(body))
+			req.Header.Set("Content-Type", contentType)
+			res := httptest.NewRecorder()
+			sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				magic.RequestHandler().ServeHTTP(w, r)
+				if flashes := session.Current(r).Flashes(magic.flashKey); len(flashes) != 0 {
+					t.Fatalf("failed request stored delivery flash: %+v", flashes)
+				}
+			})).ServeHTTP(res, req)
+			if res.Code != http.StatusInternalServerError {
+				t.Fatalf("request status = %d, want 500", res.Code)
+			}
+			if strings.Contains(res.Body.String(), "url") || strings.Contains(res.Body.String(), "token") || strings.Contains(res.Body.String(), "https://") {
+				t.Fatalf("request exposed delivery details: %s", res.Body.String())
+			}
+			if len(store.tokens) != 0 {
+				t.Fatal("unconfigured sender issued a usable token")
+			}
+			delivery, err := magic.Send(httptest.NewRequest(http.MethodPost, "/send", nil), "ada@app.example", "")
+			if !errors.Is(err, ErrMagicLinkSenderRequired) || delivery.URL != "" || delivery.Token != "" {
+				t.Fatalf("Send = %+v, %v; want no delivery and ErrMagicLinkSenderRequired", delivery, err)
+			}
+		})
+	}
+}
+
+func TestMagicLinkRequestNeverExposesDelivery(t *testing.T) {
+	for _, contentType := range []string{"application/json", "application/x-www-form-urlencoded"} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail=%v", contentType, fail), func(t *testing.T) {
+				sessions := session.MustNew("magic-link-delivery-secret", session.Options{})
+				authn := New(sessions, Options{})
+				var delivered MagicLinkDelivery
+				magic := authn.MagicLinks(MagicLinkOptions{
+					BaseURL: "https://app.example",
+					Sender: MagicLinkSenderFunc(func(_ context.Context, delivery MagicLinkDelivery) error {
+						delivered = delivery
+						if fail {
+							return fmt.Errorf("delivery failed: %s (token %s)", delivery.URL, delivery.Token)
+						}
+						return nil
+					}),
+				})
+				body := `{"email":"ada@app.example"}`
+				if contentType != "application/json" {
+					body = "email=ada%40app.example"
+				}
+				req := httptest.NewRequest(http.MethodPost, "/request", strings.NewReader(body))
+				req.Header.Set("Content-Type", contentType)
+				res := httptest.NewRecorder()
+				var flashJSON []byte
+				sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					magic.RequestHandler().ServeHTTP(w, r)
+					flashJSON = mustJSONBytes(t, session.Current(r).Flashes(magic.flashKey))
+				})).ServeHTTP(res, req)
+				if delivered.URL == "" || delivered.Token == "" {
+					t.Fatal("sender did not receive delivery")
+				}
+				if fail && res.Code < 400 {
+					t.Fatalf("delivery failure returned %d", res.Code)
+				}
+				if !fail && res.Code != http.StatusOK && res.Code != http.StatusSeeOther {
+					t.Fatalf("delivery returned %d", res.Code)
+				}
+				for _, output := range []string{res.Body.String(), string(flashJSON), res.Header().Get("Location")} {
+					if strings.Contains(output, delivered.URL) || strings.Contains(output, delivered.Token) || strings.Contains(output, `"url"`) || strings.Contains(output, `"token"`) {
+						t.Fatalf("HTTP response or flash exposed delivery: %s", output)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMagicLinkNilSenderFuncFailsBeforeIssuingToken(t *testing.T) {
+	store := NewMemoryMagicLinkStore()
+	magic := NewMagicLinks(nil, MagicLinkOptions{BaseURL: "https://app.example", Store: store, Sender: MagicLinkSenderFunc(nil)})
+	delivery, err := magic.Send(httptest.NewRequest(http.MethodPost, "/send", nil), "ada@app.example", "")
+	if !errors.Is(err, ErrMagicLinkSenderRequired) || delivery.URL != "" || len(store.tokens) != 0 {
+		t.Fatalf("nil sender function issued a token: delivery = %+v, err = %v, tokens = %d", delivery, err, len(store.tokens))
 	}
 }
