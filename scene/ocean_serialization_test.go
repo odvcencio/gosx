@@ -53,3 +53,30 @@ func TestOceanSurvivesPropsSerialization(t *testing.T) {
 		})
 	}
 }
+
+func TestOceanRemovalCommandsEmitNull(t *testing.T) {
+	for name, commands := range map[string][]Command{
+		"typed-scene":     {SetSceneEnvironmentCommand(EnvironmentIR{})},
+		"typed-canonical": {SetIREnvironmentCommand(IREnvironment{})},
+		"diff-scene":      DiffCommands(SceneIR{Environment: EnvironmentIR{Ocean: &Ocean{}}}, SceneIR{}),
+		"diff-canonical":  DiffIRCommands(IR{Environment: IREnvironment{Ocean: &Ocean{}}}, IR{}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			wire, err := json.Marshal(commands)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []struct {
+				Data struct {
+					Environment map[string]json.RawMessage `json:"environment"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(wire, &got); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || string(got[0].Data.Environment["ocean"]) != "null" {
+				t.Fatalf("removal missing: %s", wire)
+			}
+		})
+	}
+}

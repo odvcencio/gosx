@@ -145,11 +145,11 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   "  float alpha = 1. - T * (1. - F);",
   "  color = mix(color, foamLit, foam); alpha = mix(alpha, 1., foam);",
   "  float shoreFade = u_ocean[6].z > 0.5 ? smoothstep(0., 0.04, depth) : 1.;",
-  "  color *= shoreFade; alpha *= shoreFade;",
   // Aerial perspective: the far sea fades into the sky at the horizon.
   "  vec3 hz = normalize(vec3(-V.x, 0.001, -V.z));",
   "  float fog = max(1. - exp(-dist / (u_ocean[0].y * 0.25)), smoothstep(0.7, 0.98, dist / u_ocean[0].y));",
   "  color = mix(color, oceanSky(hz), fog); alpha = mix(alpha, 1., fog);",
+  "  if (shoreFade <= 0.) discard; color *= shoreFade; alpha *= shoreFade;",
   "  if (u_ocean[7].w == 0.) {",
   "    vec3 c = color / max(alpha, 1e-4);",
   "    color = mix(1.055 * pow(c, vec3(1. / 2.4)) - 0.055, c * 12.92, lessThanEqual(c, vec3(0.0031308))) * alpha;",

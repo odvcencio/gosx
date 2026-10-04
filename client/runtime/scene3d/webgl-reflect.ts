@@ -1,7 +1,7 @@
 // Geometry reflection capture; independent of the material shading path.
 function sceneOceanReflectGLSL() { return [
   "uniform mat4 u_reflectVP, u_reflectInverse, u_planarVP;",
-  "uniform vec4 u_reflect; // strength, SSR samples, planar enabled, linear capture",
+  "uniform vec4 u_reflect;", // strength, SSR samples, planar enabled, linear capture
   "uniform sampler2D u_opaqueColor, u_opaqueDepth, u_planarColor;",
   "vec3 reflectionLinear(vec3 c) {",
   "  return u_reflect.w > 0.5 ? c : mix(pow((c+0.055)/1.055,vec3(2.4)),c/12.92,lessThanEqual(c,vec3(0.04045)));",
@@ -58,8 +58,8 @@ function sceneOceanReflectGLSL() { return [
   "  }",
   "  return mix(sky,result,u_reflect.x*(1.-smoothstep(0.18,0.5,rough)));",
   "}",
-  "// Cox-Munk style anisotropic unresolved slope distribution. Broadens the",
-  "// glitter path along the wind while preserving the Fresnel energy factor.",
+  // Cox-Munk style anisotropic unresolved slope distribution. Broadens the
+  // glitter path along the wind while preserving the Fresnel energy factor.
   "vec3 oceanSunPath(vec3 N, vec3 H, vec3 L, vec3 V, float rough, vec3 sun) {",
   "  vec2 wind = normalize(u_ocean[9].xy), crossWind = vec2(-wind.y,wind.x);",
   "  vec2 slope = H.xz/max(H.y,0.08)-N.xz/max(N.y,0.15);",

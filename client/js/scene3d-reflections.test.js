@@ -28,6 +28,8 @@ test("WebGPU captures before ocean, allocates reduced targets, caches variants a
  const b=scene(); h.canvas.width=h.canvas.height=64;
  h.renderer.render(b,{width:64,height:64});
  const p=h.fake.state.renderPasses; assert.ok(p.some(x=>x.descriptor?.label==="gosx-reflection-capture")); assert.ok(p.some(x=>x.descriptor?.label==="gosx-planar-reflection"));
+ const capture=p.find(x=>x.descriptor?.label==="gosx-reflection-capture");
+ assert.equal(capture.draws[0].vertexCount,4); assert.equal(capture.draws[0].pipeline.desc.primitive.topology,"triangle-strip");
  const ocean=h.fake.state.shaderModules.find(x=>x.label==="gosx-ocean"); assert.match(ocean.code,/oceanGeometryReflection/); assert.match(ocean.code,/j < 5/);
  const count=h.fake.state.shaderModules.length; b.camera.x+=1; h.renderer.render(b,{width:64,height:64}); assert.equal(h.fake.state.shaderModules.length,count);
  const owned=h.fake.state.textures.filter(t=>t.desc.label==="gosx-reflection"); assert.ok(owned.length>0); assert.ok(owned.every(t=>t.desc.size[0]===32));

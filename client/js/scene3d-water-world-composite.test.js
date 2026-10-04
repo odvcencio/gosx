@@ -71,6 +71,29 @@ const {
   FakeWebGLContext, createContext, runScript, bootstrapRuntimeSource, freshFeatureBundleSource,
 } = require('./runtime-test-harness.js');
 
+test("water wrapper follows live world state and timing methods", () => {
+  const waterSample = () => "water", worldSample = () => "world";
+  const context = {
+    sceneNumber: (value, fallback) => Number(value) || fallback,
+    sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+    window: { __gosx_scene3d_webgl_api: {
+      createSceneWaterRendererWebGL: () => ({kind:"webgl", isWaterForced:true, pollPerformanceSample:waterSample, render() {}, dispose() {}}),
+      createScenePBRRendererOrFallback: () => ({pollPerformanceSample:worldSample, render() {}, renderSurfaces() {}, dispose() {}}),
+    } },
+  };
+  vm.createContext(context);
+  vm.runInContext(ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
+  const result = context.createSceneWaterWebGLResult({getContext:()=>({})}, {scene:{waterSystems:[{id:"cove"}]}}, {tier:"full"}, "");
+  assert.equal(result.renderer.kind, "webgl");
+  assert.equal(result.renderer.isWaterForced, true);
+  assert.equal(result.renderer.isWaterWorldComposite, false);
+  assert.equal(result.renderer.pollPerformanceSample, waterSample);
+  result.renderer.render({environment:{ocean:{}}}, {}, {});
+  assert.equal(result.renderer.isWaterWorldComposite, true);
+  assert.equal(result.renderer.pollPerformanceSample, worldSample);
+  result.renderer.dispose();
+});
+
 function rendererHarness() {
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;

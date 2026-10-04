@@ -2,7 +2,7 @@
   function sceneWebGLTimerSampleIsNew(ns, frameSeq, latest) {
     return Number.isFinite(ns) && ns > 0 && (!latest || frameSeq > latest.frameSeq);
   }
-
+  function sceneWebGLNow() { return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now(); }
   // One elapsed query covers the complete frame, including composite callbacks.
   // Results are read only after availability; this path never waits on the GPU.
   // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
@@ -3488,7 +3488,7 @@
     var objectMesh = null;
 
     // Frame clock for the caustic shimmer term (time uniform), in seconds.
-    var causticsStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var causticsStart = sceneWebGLNow();
 
     // Seed the authored initial surface once. Keep WebGL in lockstep with the
     // WebGPU path: screenshots and verification must not override scene physics
@@ -3614,22 +3614,22 @@
       object: { desired: 0, failures: 0, nextFrame: 0, pending: false },
     };
     var frameTimer = createSceneWebGLFrameTimer(gl);
-    var lastPerformanceSample = null;
-    function disposeWaterTimerQueries() { frameTimer.dispose(); }
-    function pollWaterTimerQueries() {
-      var sample = frameTimer.snapshot();
-      lastPerformanceSample = sample.status === "measured" ? sample : null;
-    }
-  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
-    function beginWaterTimerQuery(_nowMS) { return frameTimer.begin(); }
-  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
-    function endWaterTimerQuery(record) { frameTimer.end(record); }
-    function pollPerformanceSample() {
-      var sample = frameTimer.sample();
-      if (sample) lastPerformanceSample = sample;
-      return sample;
-    }
-    function getPerformanceTimingStatus() { return frameTimer.timingStatus(); }
+    // The shared timer supplies snapshots and public samples directly.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     function selectWaterSurfaceGrid(requested) {
       return cachedWaterSurfaceGrid(requested);
@@ -3863,7 +3863,7 @@
       applyWaterQualityProfile(frameMeta);
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
         ? Number(frameMeta.nowMS)
-        : ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
+        : (sceneWebGLNow());
       var active = lifecycleActive && (!frameMeta || frameMeta.active !== false);
       var paused = lifecyclePaused || sceneBool(liveEntry.paused, false);
       var clockFrame = sceneWaterAdvanceRendererClock(waterClock, nowMS, active, paused, waterClockOptions);
@@ -3886,7 +3886,7 @@
       var proj = scenePBRProjectionMatrixForCamera(camera, aspect);
       var mvp = sceneMat4Multiply(proj, view);
       var cameraPos = [cam.x, cam.y, cam.z];
-      var timeSec = ((typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - causticsStart) / 1000;
+      var timeSec = ((sceneWebGLNow()) - causticsStart) / 1000;
 
       // ---- live object selection (A2-refine-2) ----
       // Read the live water entry from the bundle so object switches (e.g. the
@@ -4277,14 +4277,14 @@
     function render(bundle, viewport, frameMeta) {
       if (disposed) return;
       if (bundle) lastBundle = bundle;
-      var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
-        ? Number(frameMeta.nowMS)
-        : ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
-      var timerRecord = beginWaterTimerQuery(nowMS);
+      // drawFrame advances the water clock using frameMeta.
+      // Timing measures submitted GPU work independently of that clock.
+
+      var timerRecord = frameTimer.begin();
       try {
         drawFrame(frameMeta);
       } finally {
-        endWaterTimerQuery(timerRecord);
+        frameTimer.end(timerRecord);
       }
     }
 
@@ -4302,7 +4302,7 @@
       scenePBRDisposeProgramQueue(gl);
       if (disposed) return;
       disposed = true;
-      disposeWaterTimerQueries();
+      frameTimer.dispose();
       try { sim.dispose(); } catch (e) {}
       [poolProgram, surfaceProgram, objectProgram, duckProgram, causticsProgram, shadowProgram, compoundShadowProgram].forEach(function(program) {
         if (!program) return;
@@ -4331,10 +4331,10 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: false,
-      isWaterForced: true,
+      isWaterForced: true, getFailureReason: function() { return scenePBRShaderFailureReason(poolProgram, surfaceProgram); },
       render: render,
       getStats: function() {
-        pollWaterTimerQueries();
+        var lastPerformanceSample = frameTimer.snapshot(), timingStatus = frameTimer.timingStatus();
         var simulationStats = sim.getStats();
         return {
           waterFrames: frameCount,
@@ -4380,14 +4380,14 @@
           waterQualityCausticsRetryFrame: qualityRetryState.caustics.nextFrame,
           waterQualityShadowRetryFrame: qualityRetryState.shadow.nextFrame,
           waterQualityObjectRetryFrame: qualityRetryState.object.nextFrame,
-          waterPerformanceTimingAvailable: getPerformanceTimingStatus().available,
-          waterPerformanceTimingPending: getPerformanceTimingStatus().pending,
-          waterLastGPUMS: lastPerformanceSample ? lastPerformanceSample.gpuMS : 0,
-          waterLastGPUTimingAtMS: lastPerformanceSample ? lastPerformanceSample.atMS : 0,
+          waterPerformanceTimingAvailable: timingStatus.available,
+          waterPerformanceTimingPending: timingStatus.pending,
+          waterLastGPUMS: lastPerformanceSample.gpuMS || 0,
+          waterLastGPUTimingAtMS: lastPerformanceSample.atMS || 0,
         };
       },
-      pollPerformanceSample: pollPerformanceSample,
-      getPerformanceTimingStatus: getPerformanceTimingStatus,
+      pollPerformanceSample: frameTimer.sample,
+      getPerformanceTimingStatus: frameTimer.timingStatus,
       getFrameTiming: frameTimer.snapshot,
       setLifecycle: setLifecycle,
       dispose: dispose,
@@ -6465,7 +6465,7 @@
       for (const record of records) scenePBRDisposeInitialProgram(gl, record);
       return Promise.resolve(false);
     }
-    const startedAt = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    const startedAt = sceneWebGLNow();
     return new Promise(function(resolve) {
       const state = {
         status: "pending",
@@ -6505,7 +6505,7 @@
           cancel();
           return;
         }
-        const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        const now = sceneWebGLNow();
         if (now - startedAt > 8000) {
           cancel();
           return;
@@ -6703,8 +6703,8 @@
     return scenePBRPassReady(gl, pass);
   }
 
-  // All WebGL2 factories share this queue. Location queries run only after
-  // completion, because they can synchronize the driver just like LINK_STATUS.
+  function scenePBRShaderFailureReason(program: any, other?: any) { return scenePBRProgramFailed(program) || scenePBRProgramFailed(other) ? "webgl-shader-failed" : ""; }
+  // Location queries wait for completion to avoid synchronizing the driver.
   const scenePBRCompileContexts = new WeakMap();
   const scenePBRProgramStates = new WeakMap();
 
@@ -11030,7 +11030,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
-      getFailureReason: function() { return scenePBRProgramFailed(program) ? "webgl-shader-failed" : ""; },
+      getFailureReason: function() { return scenePBRShaderFailureReason(program); },
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },

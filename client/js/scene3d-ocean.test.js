@@ -155,3 +155,43 @@ test("ocean-only mounts reveal their first rendered content", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-revealed"), "true", JSON.stringify(env.consoleLogs));
   assert.ok(env.document.documentElement.classList.contains("ocean-ready"));
 });
+
+for (const path of ["typed-scene", "typed-canonical", "diff-scene", "diff-canonical"]) test(`Go ${path} commands remove an ocean in browser state`, t => {
+ const {spawnSync} = require("node:child_process"), nodePath = require("node:path");
+ const run = spawnSync("go", ["run","./scene/testdata/ocean-command"], {cwd:nodePath.join(__dirname,"../.."),encoding:"utf8",timeout:60000});
+ assert.equal(run.status,0,run.stderr);
+ const h = createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api;
+ const state = api.createSceneState({scene:{environment:{ocean:{waveHeight:1.4}}}});
+ api.applySceneCommands(state,JSON.parse(run.stdout)[path]);
+ assert.equal(state.environment.ocean,null);
+ // Omitting ocean from an ordinary partial update still preserves it.
+ const partial = api.createSceneState({scene:{environment:{ocean:{}}}});
+ api.applySceneCommands(partial,[{kind:13,data:{environment:{exposure:1.2}}}]);
+ assert.ok(partial.environment.ocean);
+});
+
+test("ocean horizon fog leaves dry bathymetry uncovered in actual raster output", t => {
+ const {spawnSync} = require("node:child_process"), path = require("node:path");
+ const h = createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api, gl = h.canvas.getContext("webgl2");
+ const bundle = makePointsBundle(null);bundle.points=[];bundle.environment.ocean=oceanRecord();
+ h.renderer.render(bundle,{width:64,height:64});
+ const fragment = gl.programMatching("u_ocean[35]").attached.find(shader=>shader.type===gl.FRAGMENT_SHADER).source;
+ const uniforms={};
+ for(const [name,height] of [["dry",4],["wet",-4]]) uniforms[name]=Array.from(api.sceneOceanUniformData(oceanRecord({surf:0,extent:1000,bathymetry:{src:"/height.png",minX:-2,minZ:-2,maxX:2,maxZ:2,minHeight:height,maxHeight:height}}),{}, {x:0,y:4,z:900},0,false,"high"));
+ const result = spawnSync("/usr/bin/python3",[path.join(__dirname,"testdata/scene3d-ocean-pixels.py")],{input:JSON.stringify({fragment,uniforms}),encoding:"utf8",timeout:30000,env:{...process.env,LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe"}});
+ assert.equal(result.status,0,result.stderr || String(result.error));
+ const pixels=JSON.parse(result.stdout);
+ if(pixels.skip) return t.skip(pixels.skip);
+ assert.deepEqual(pixels,{dry:0,wet:4096});
+});
+
+test("WebGPU applies shoreline coverage after horizon fog", async t => {
+ const h=await createBoardWebGPUHarness({fresh:true});t.after(()=>h.renderer.dispose());
+ const bundle=makePointsBundle(null);bundle.points=[];bundle.environment.ocean=oceanRecord();
+ h.renderer.render(bundle,{width:64,height:64});
+ const shader=h.fake.state.shaderModules.find(module=>module.label==="gosx-ocean").code;
+ assert.ok(shader.indexOf("color *= shoreFade; alpha *= shoreFade;") > shader.indexOf("alpha = mix(alpha, 1.0, fog)"));
+ assert.match(shader,/if \(shoreFade <= 0.0\) \{ discard; \}/);
+});
