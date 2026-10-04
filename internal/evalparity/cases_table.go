@@ -159,6 +159,33 @@ var cases = []Case{
 		},
 	},
 
+	{
+		ID: "equality_large_integers", Category: "numeric",
+		Note: "route compares integer identifiers without float64 rounding",
+		Expr: "props.A == props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 9007199254740992",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(9007199254740992)}, Want: "false",
+		Diverges:       map[Backend]string{VM: "true"},
+		DivergesReason: map[Backend]string{VM: "the VM stores both identifiers in float64 and rounds them to the same value"},
+	},
+	{
+		ID: "equality_number_nonnumeric_string", Category: "numeric",
+		Note: "failed numeric string conversion cannot match a numeric identifier",
+		Expr: "props.A == props.S", PropsFields: "A int\nS string",
+		PropsLiteral: `A: 0, S: "abc"`, PropsValue: map[string]any{"A": 0, "S": "abc"}, Want: "false",
+		Unsupported: map[Backend]string{Transpile: "Go rejects equality between int and string"},
+	},
+	{
+		ID: "equality_number_exact_string", Category: "numeric",
+		Note: "route accepts a fully parsed numeric string without losing integer precision",
+		Expr: "props.A == props.S", PropsFields: "A int64\nS string",
+		PropsLiteral: `A: 9007199254740993, S: "9007199254740993"`,
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "S": "9007199254740993"}, Want: "true",
+		Unsupported:    map[Backend]string{Transpile: "Go rejects equality between int64 and string"},
+		Diverges:       map[Backend]string{VM: "false"},
+		DivergesReason: map[Backend]string{VM: "the VM does not coerce strings in equality comparisons"},
+	},
+
 	// --- string --------------------------------------------------------
 
 	{

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"html"
+	"m31labs.dev/gosx/internal/htmlattr"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -607,6 +608,9 @@ func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML str
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if !htmlattr.SafeSpreadName(name) {
+			continue
+		}
 		value := attrs[name]
 		safeName := html.EscapeString(name)
 		switch v := value.(type) {
@@ -615,9 +619,9 @@ func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML str
 				fmt.Fprintf(&b, " %s", safeName)
 			}
 		case string:
-			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(v))
+			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(htmlattr.FilterURL(name, v)))
 		default:
-			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(fmt.Sprint(v)))
+			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(htmlattr.FilterURL(name, fmt.Sprint(v))))
 		}
 	}
 	b.WriteByte('>')

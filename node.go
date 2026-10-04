@@ -43,6 +43,9 @@ type nodeAttr struct {
 // each entry — AttrList instances are built per-call by Attrs() so there's
 // no sharing concern.
 func El(tag string, args ...any) Node {
+	if !htmlattr.ValidTag(tag) {
+		return Text("")
+	}
 	n := Node{kind: kindElement, tag: tag}
 	if len(args) > 0 {
 		n.children = make([]Node, 0, len(args))
@@ -129,7 +132,9 @@ func BoolAttr(name string) nodeAttr {
 func Spread(attrs map[string]any) AttrList {
 	var list AttrList
 	for k, v := range attrs {
-		list = append(list, nodeAttr{name: k, value: v})
+		if htmlattr.SafeSpreadName(k) {
+			list = append(list, nodeAttr{name: k, value: v})
+		}
 	}
 	return list
 }
@@ -222,6 +227,9 @@ func PlainText(n Node) string {
 func renderNodeHTML(b *strings.Builder, n Node) {
 	switch n.kind {
 	case kindElement:
+		if !htmlattr.ValidTag(n.tag) {
+			return
+		}
 		safeTag := html.EscapeString(n.tag)
 		b.WriteByte('<')
 		b.WriteString(safeTag)
@@ -314,6 +322,9 @@ func managedFormShorthandTruthy(attr nodeAttr) bool {
 }
 
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
+	if !htmlattr.ValidName(attr.name) {
+		return
+	}
 	switch v := attr.value.(type) {
 	case bool:
 		if attr.presence || htmlattr.IsBoolean(attr.name) {
@@ -343,7 +354,7 @@ func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 		b.WriteByte(' ')
 		b.WriteString(html.EscapeString(attr.name))
 		b.WriteString(`="`)
-		b.WriteString(html.EscapeString(v))
+		b.WriteString(html.EscapeString(htmlattr.FilterURL(attr.name, v)))
 		b.WriteByte('"')
 	default:
 		// Non-string / non-bool values still go through fmt.Sprint for
@@ -353,7 +364,7 @@ func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 		b.WriteByte(' ')
 		b.WriteString(html.EscapeString(attr.name))
 		b.WriteString(`="`)
-		b.WriteString(html.EscapeString(fmt.Sprint(v)))
+		b.WriteString(html.EscapeString(htmlattr.FilterURL(attr.name, fmt.Sprint(v))))
 		b.WriteByte('"')
 	}
 }

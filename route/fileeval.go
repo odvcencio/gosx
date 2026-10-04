@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"math/big"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -1017,9 +1018,76 @@ func equalValues(left, right any) bool {
 		return false
 	}
 	if isNumeric(left) || isNumeric(right) {
-		return numericValue(left) == numericValue(right)
+		if lnegative, lmagnitude, lok := equalityInteger(left); lok {
+			if rnegative, rmagnitude, rok := equalityInteger(right); rok {
+				return lnegative == rnegative && lmagnitude == rmagnitude
+			}
+		}
+		// Reject failed string conversions and preserve mixed numeric precision.
+		ln, lok := equalityNumber(left)
+		rn, rok := equalityNumber(right)
+		return lok && rok && ln.Cmp(rn) == 0
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+// equalityInteger uses the sign and magnitude so signed and unsigned IDs
+// can compare without overflow, rounding, or allocating a big number.
+func equalityInteger(value any) (negative bool, magnitude uint64, ok bool) {
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return false, 0, false
+	}
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n := rv.Int()
+		if n < 0 {
+			return true, uint64(-(n + 1)) + 1, true
+		}
+		return false, uint64(n), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return false, rv.Uint(), true
+	default:
+		return false, 0, false
+	}
+}
+
+// equalityNumber preserves the exact value rather than rounding identifiers
+// through float64. Numeric strings must parse completely; invalid strings,
+// booleans and non-finite floats never compare equal to a number.
+func equalityNumber(value any) (*big.Rat, bool) {
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return nil, false
+	}
+	n := new(big.Rat)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return n.SetInt64(rv.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return n.SetInt(new(big.Int).SetUint64(rv.Uint())), true
+	case reflect.Float32, reflect.Float64:
+		n = n.SetFloat64(rv.Float())
+		return n, n != nil
+	case reflect.String:
+		text := strings.TrimSpace(rv.String())
+		// Bound parsing work, including exponent expansion, on request data.
+		if len(text) == 0 || len(text) > 128 {
+			return nil, false
+		}
+		if _, err := strconv.ParseFloat(text, 64); err != nil {
+			return nil, false
+		}
+		if i := strings.IndexAny(text, "eE"); i >= 0 {
+			exponent, err := strconv.ParseInt(text[i+1:], 10, 32)
+			if err != nil || exponent < -4096 || exponent > 4096 {
+				return nil, false
+			}
+		}
+		return n.SetString(text)
+	default:
+		return nil, false
+	}
 }
 
 func compareValues(left, right any) int {

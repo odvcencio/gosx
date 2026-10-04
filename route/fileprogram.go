@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
@@ -246,6 +245,9 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 }
 
 func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
+	if !htmlattr.ValidTag(node.Tag) {
+		return
+	}
 	tag := html.EscapeString(node.Tag)
 	isForm := strings.EqualFold(node.Tag, "form")
 	formContract := fileAutoManagedFormContract(node.Attrs, env, isForm)
@@ -481,12 +483,12 @@ func (r *fileProgramRenderer) writeLink(b *strings.Builder, node *ir.Node, env f
 
 func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
 	for _, attr := range attrs {
-		if linkReservedAttr(attr.Name) {
+		if linkReservedAttr(attr.Name) || (attr.Kind != ir.AttrSpread && !htmlattr.ValidName(normalizeFileAttrName(attr.Name))) {
 			continue
 		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
+			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 		case ir.AttrExpr:
 			renderFileEvaluatedAttr(b, normalizeFileAttrName(attr.Name), evalFileExpr(attr.Expr, env))
 		case ir.AttrBool:
@@ -498,7 +500,7 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 				normalized := normalizeFileAttrName(key)
 				// gosx#189: drop an invalid spread key inertly, same rule
 				// and same shared helper as renderFileSpreadAttrs.
-				if normalized == "" || linkReservedAttr(normalized) || !validRenderAttrName(normalized) {
+				if normalized == "" || linkReservedAttr(normalized) || !htmlattr.SafeSpreadName(normalized) {
 					continue
 				}
 				renderFileEvaluatedAttr(b, normalized, value)
@@ -1588,7 +1590,7 @@ func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey strin
 				// cannot trigger renderResolvedAttrs's fail-closed
 				// *RenderProfileError — that path is reserved for a name
 				// the profile itself introduces or mangles.
-				if normalized == "" || normalized == excludeSpreadKey || !validRenderAttrName(normalized) {
+				if normalized == "" || normalized == excludeSpreadKey || !htmlattr.SafeSpreadName(normalized) {
 					continue
 				}
 				out = appendResolvedAttr(out, normalized, entry.Value)
@@ -1661,31 +1663,13 @@ func (r *fileProgramRenderer) renderResolvedAttrs(b *strings.Builder, tag string
 			writeFileAttrName(b, name)
 			continue
 		}
-		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
+		writeFileAttrPair(b, name, html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 	}
 }
 
-// validRenderAttrName reports whether name is safe to use as an HTML
-// attribute name on its own: non-empty once whitespace is accounted for,
-// and free of every character that ends an HTML5 attribute-name token
-// early — Unicode whitespace, the control-character range, and the
-// syntax characters `"`, `'`, `>`, `/`, and `=` (gosx#185 M1). An
-// all-whitespace name is caught by the same loop, folding in gosx#185 n4.
+// validRenderAttrName applies the shared HTML name validator to profile output.
 func validRenderAttrName(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case unicode.IsSpace(r):
-			return false
-		case r < 0x20 || r == 0x7f:
-			return false
-		case r == '"', r == '\'', r == '>', r == '/', r == '=':
-			return false
-		}
-	}
-	return true
+	return htmlattr.ValidName(name)
 }
 
 // profileError records the first error a render profile hook causes,
@@ -1730,6 +1714,9 @@ func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEn
 // change, renderFileAttr held 48.5% of the remaining allocated objects on a
 // depth-100 page. Direct writes cost none.
 func writeFileAttrPair(b *strings.Builder, name, value string) {
+	if !htmlattr.ValidName(name) {
+		return
+	}
 	b.WriteByte(' ')
 	b.WriteString(name)
 	b.WriteString(`="`)
@@ -1738,15 +1725,21 @@ func writeFileAttrPair(b *strings.Builder, name, value string) {
 }
 
 func writeFileAttrName(b *strings.Builder, name string) {
+	if !htmlattr.ValidName(name) {
+		return
+	}
 	b.WriteByte(' ')
 	b.WriteString(name)
 }
 
 func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
+	if attr.Kind != ir.AttrSpread && !htmlattr.ValidName(attr.Name) {
+		return
+	}
 	name := html.EscapeString(attr.Name)
 	switch attr.Kind {
 	case ir.AttrStatic:
-		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
+		writeFileAttrPair(b, name, html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 	case ir.AttrExpr:
 		renderFileEvaluatedAttr(b, attr.Name, evalFileExpr(attr.Expr, env))
 	case ir.AttrBool:
@@ -1773,7 +1766,7 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, exclude
 func renderFileSpreadAttrs(b *strings.Builder, value any, excludeKey string) {
 	for _, entry := range sortedSpreadProps(value) {
 		normalized := normalizeFileAttrName(entry.Key)
-		if normalized == "" || normalized == excludeKey || !validRenderAttrName(normalized) {
+		if normalized == "" || normalized == excludeKey || !htmlattr.SafeSpreadName(normalized) {
 			continue
 		}
 		renderFileEvaluatedAttr(b, normalized, entry.Value)
@@ -1860,6 +1853,9 @@ func plainTextFileEvaluatedExpr(value any) string {
 }
 
 func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
+	if !htmlattr.ValidName(name) {
+		return
+	}
 	safeName := html.EscapeString(name)
 	switch v := value.(type) {
 	case nil:
@@ -1873,13 +1869,13 @@ func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
 		}
 		writeFileAttrPair(b, safeName, strconv.FormatBool(v))
 	case fmt.Stringer:
-		writeFileAttrPair(b, safeName, html.EscapeString(v.String()))
+		writeFileAttrPair(b, safeName, html.EscapeString(htmlattr.FilterURL(name, v.String())))
 	default:
 		if text, ok := fileScalarText(value); ok {
-			writeFileAttrPair(b, safeName, html.EscapeString(text))
+			writeFileAttrPair(b, safeName, html.EscapeString(htmlattr.FilterURL(name, text)))
 			return
 		}
-		writeFileAttrPair(b, safeName, html.EscapeString(fmt.Sprint(v)))
+		writeFileAttrPair(b, safeName, html.EscapeString(htmlattr.FilterURL(name, fmt.Sprint(v))))
 	}
 }
 
@@ -3286,7 +3282,11 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 				if _, ok := consumed[entry.Key]; ok {
 					continue
 				}
-				if rendered, ok := fileNodeAttr(normalizeFileAttrName(entry.Key), entry.Value); ok {
+				normalized := normalizeFileAttrName(entry.Key)
+				if !htmlattr.SafeSpreadName(normalized) {
+					continue
+				}
+				if rendered, ok := fileNodeAttr(normalized, entry.Value); ok {
 					out = append(out, rendered)
 				}
 			}
@@ -3382,7 +3382,7 @@ func appendFileExtraNodeAttr(out []any, attr ir.Attr, env fileRenderEnv, consume
 	if attr.Kind == ir.AttrSpread {
 		for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
 			normalized := normalizeFileAttrName(entry.Key)
-			if normalized == "" || fileAttrConsumed(consumed, normalized) {
+			if normalized == "" || fileAttrConsumed(consumed, normalized) || !htmlattr.SafeSpreadName(normalized) {
 				continue
 			}
 			if rendered, ok := fileNodeAttr(normalized, entry.Value); ok {
@@ -3471,12 +3471,12 @@ func isEngineReservedAttr(name string) bool {
 
 func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
 	for _, attr := range attrs {
-		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread {
+		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread || !htmlattr.ValidName(attr.Name) {
 			continue
 		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(attr.Value))
+			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 		case ir.AttrExpr:
 			value := evalFileExpr(attr.Expr, env)
 			renderFileEvaluatedAttr(b, attr.Name, value)
@@ -3792,7 +3792,7 @@ func imagePictureAttrsValue(value any) gosx.AttrList {
 	attrs := make([]any, 0, len(values))
 	for _, entry := range sortedStringAnyMap(values) {
 		name := normalizeFileAttrName(entry.Key)
-		if name == "" || !validRenderAttrName(name) {
+		if name == "" || !htmlattr.SafeSpreadName(name) {
 			continue
 		}
 		if attr, ok := fileNodeAttr(name, entry.Value); ok {
