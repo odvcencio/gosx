@@ -62,14 +62,14 @@ pid_file="${tmp_dir}/identity.pid"
 secret_log="${tmp_dir}/identity-secret.log"
 GOSX_FAKE_IDENTITY_APP_PID_FILE="$pid_file" \
 	GOSX_FAKE_IDENTITY_APP_SECRET_LOG="$secret_log" \
-	SESSION_SECRET="disposable-test-secret" \
+	SESSION_SECRET="real-deployment-secret-must-not-be-inherited" \
 	run_real_identity ok >/dev/null
 identity_pid="$(cat "$pid_file")"
 if kill -0 "$identity_pid" >/dev/null 2>&1; then
 	echo "gosx docs built identity test: successful local identity server was not cleaned up" >&2
 	exit 1
 fi
-if ! grep -Fx "disposable-test-secret" "$secret_log" >/dev/null; then
+if ! grep -E '^[0-9a-f]{64}$' "$secret_log" >/dev/null || grep -F 'real-deployment-secret' "$secret_log" >/dev/null; then
 	echo "gosx docs built identity test: local identity server did not receive the disposable secret" >&2
 	exit 1
 fi

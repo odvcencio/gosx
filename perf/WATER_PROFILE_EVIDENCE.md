@@ -35,7 +35,7 @@ never exceed the selected profile. Hardware cadence thresholds are opt-in.
 Run the real docs server in one terminal:
 
 ```sh
-PORT=3100 SESSION_SECRET=gosx-water-evidence \
+PORT=127.0.0.1:3100 SESSION_SECRET="$(openssl rand -hex 32)" \
   go run ./cmd/gosx dev ./examples/gosx-docs
 ```
 

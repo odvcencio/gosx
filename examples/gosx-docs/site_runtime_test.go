@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/localapp"
 	"m31labs.dev/gosx/server"
 )
 
@@ -204,15 +206,56 @@ func TestDocsIndexSetsISRBypassOnlyAfterPublicHeaderIsStripped(t *testing.T) {
 	}
 }
 
-func TestDocsSessionSecretFailsClosedForPublicHTTPS(t *testing.T) {
-	if _, err := docsSessionSecret("https://docs.example.test", ""); err == nil {
-		t.Fatal("public HTTPS deployment accepted an empty SESSION_SECRET")
+func TestDocsSessionSecretFailsClosedOutsideDevelopment(t *testing.T) {
+	for _, mode := range []string{"", "production", "staging"} {
+		t.Setenv("GOSX_ENV", mode)
+		t.Setenv("GOSX_DEV", "")
+		for _, secret := range []string{"", "short", "change-me-in-production", "gosx-app-session-secret", "gosx-docs-session-secret", "   "} {
+			t.Setenv("SESSION_SECRET", secret)
+			if _, err := sessionSecret(); err == nil {
+				t.Fatal("non-development docs app accepted a missing, short or placeholder secret")
+			}
+		}
 	}
-	if got, err := docsSessionSecret("http://localhost:8080", ""); err != nil || got == "" {
-		t.Fatalf("local HTTP fallback = %q, %v", got, err)
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("GOSX_DEV", "1")
+	t.Setenv("SESSION_SECRET", "")
+	if _, err := sessionSecret(); err == nil {
+		t.Fatal("dev flag overrode production")
 	}
-	if got, err := docsSessionSecret("https://docs.example.test", "strong-secret-value"); err != nil || got != "strong-secret-value" {
-		t.Fatalf("explicit secret = %q, %v", got, err)
+	t.Setenv("SESSION_SECRET", "configured-strong-secret-value")
+	if got, err := sessionSecret(); err != nil || got != "configured-strong-secret-value" {
+		t.Fatal("configured secret changed")
+	}
+}
+
+func TestDocsDevelopmentSessionSecretsAreDisposable(t *testing.T) {
+	t.Setenv("GOSX_ENV", "development")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
+	one, err := sessionSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := sessionSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(one)
+	if err != nil || len(raw) != 32 || one == two {
+		t.Fatal("docs development secret must contain fresh random bytes")
+	}
+}
+
+func configureDocsTestSecret(t *testing.T) {
+	t.Helper()
+	env, err := localapp.Environment(nil, "8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "SESSION_SECRET="); ok {
+			t.Setenv("SESSION_SECRET", value)
+		}
 	}
 }
 
