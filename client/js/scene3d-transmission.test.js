@@ -30,6 +30,7 @@ test("opaque glass routes after opaque objects; mip capture excludes glass and r
   const passes=h.fake.state.renderPasses.slice(start);
   const mips=passes.filter(p=>String(p.descriptor.label||"").startsWith("gosx-transmission-mip-"));
   assert.equal(mips.length,7,"64 px needs seven mip levels");
+  assert.ok(mips.every(p => p.draws.length === 1 && p.draws[0].vertexCount === 4 && p.draws[0].pipeline.desc.primitive.topology === "triangle-strip"), "capture uses the shared fullscreen quad");
   const first=passes.indexOf(mips[0]),last=passes.indexOf(mips.at(-1));
   assert.ok(first>0 && last<passes.length-1,"opaque and glass draws must bracket the capture");
   const opaque = passes.slice(0, first).flatMap(p => p.draws).filter(d => d.vertexCount === 3);

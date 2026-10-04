@@ -151,11 +151,10 @@
     let animationToggle = null;
 
     function onSceneProgramsReady() { scheduleRender("shader-ready"); }
-    if (typeof mount.addEventListener === "function") {
-      mount.addEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
-    }
+    let sceneRequiredShaderFailure = "";
 
     function sceneAnimationState() {
+      if (sceneRequiredShaderFailure) return { wants: false, reason: sceneRequiredShaderFailure };
       // Sailing is user-controlled motion; the vessel separately suppresses camera bob.
       if (motion.reducedMotion) return { wants: !animationPaused && sceneVesselEnabled(props) && Boolean(sceneState._gosxMotionController?.active), reason: "reduced-motion" };
       // A user-paused declarative scene stops the loop outright: wants
@@ -181,13 +180,16 @@
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
         return { wants: true, reason: "compute-particles" };
       }
+      if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
+      const sky = sceneState.environment && sceneState.environment.sky;
+      const clouds = sky && sky.mode === "physical" && sky.clouds;
+      if (clouds && clouds.coverage > 0 && clouds.opacity > 0 && clouds.speed > 0) return { wants: true, reason: "clouds" };
       if (Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length > 0) {
         if (sceneWaterSystemsPaused(sceneState)) {
           return { wants: false, reason: "water-paused" };
         }
         return { wants: true, reason: "water-simulation" };
       }
-      if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
       if (sceneHasActiveModelAnimations(sceneState)) {
         return { wants: true, reason: "model-animation" };
       }
@@ -630,6 +632,10 @@
     let readySent = false;
     let revealSent = false;
     let disposed = false;
+    if (typeof mount.addEventListener === "function") {
+      mount.addEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
+    }
+
     let lastRenderReason = "";
     let lastRenderLoopReason = "initializing";
     const SCENE_RENDER_WATCHDOG_INTERVAL_MS = 2000;
@@ -1762,6 +1768,14 @@
       }
       const failureReason = typeof renderer.getFailureReason === "function" ? renderer.getFailureReason() : "";
       if (failureReason) {
+        if (renderer.isWaterForced) {
+          sceneRequiredShaderFailure = failureReason;
+          cancelFrame(); cancelScheduledRender();
+          publishSceneWaterRendererState(mount, sceneState, null, failureReason);
+          applySceneRendererState(mount, { kind: "unsupported" }, failureReason, []);
+          terminalSceneWebGPURecovery(failureReason);
+          return false;
+        }
         if (fallbackSceneRenderer(failureReason)) scheduleRenderWithViewport(failureReason);
         return false;
       }

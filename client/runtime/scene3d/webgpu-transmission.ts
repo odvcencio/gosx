@@ -42,13 +42,8 @@ fn volumeTransmission(P: vec3f, N: vec3f, V: vec3f, roughness: f32) -> vec3f {
 const WGSL_TRANSMISSION_COPY = `
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var sourceSampler: sampler;
-struct Out { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
-@vertex fn vs(@builtin(vertex_index) i: u32) -> Out {
-    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
-    var o: Out; o.pos = vec4f(p * 2.0 - 1.0, 0.0, 1.0); o.uv = vec2f(p.x, 1.0 - p.y); return o;
-}
-@fragment fn fs(o: Out) -> @location(0) vec4f {
-    return textureSampleLevel(source, sourceSampler, o.uv, 0.0);
+@fragment fn fs(@location(0) uv: vec2f) -> @location(0) vec4f {
+    return textureSampleLevel(source, sourceSampler, uv, 0.0);
 }
 `;
 
@@ -58,7 +53,7 @@ function wgpuCreateTransmissionResources(device) {
     var uniform = device.createBuffer({ label: "gosx-transmission-capture", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     var texture = null, view = null, views = [], bindings = [], copyBinding = null, sourceView = null;
     var width = 0, height = 0, levels = 0, format = "", pipeline = null;
-    var module = device.createShaderModule({ label: "gosx-transmission-copy", code: WGSL_TRANSMISSION_COPY });
+    var module = device.createShaderModule({ label: "gosx-transmission-copy", code: WGSL_POST_VERTEX + WGSL_TRANSMISSION_COPY });
     var layout = device.createBindGroupLayout({ entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
@@ -81,7 +76,7 @@ function wgpuCreateTransmissionResources(device) {
                 release(); width = w; height = h; levels = count;
                 if (!pipeline || fmt !== format) {
                     pipeline = device.createRenderPipeline({ label: "gosx-transmission-mips", layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-                        vertex: { module: module, entryPoint: "vs" }, fragment: { module: module, entryPoint: "fs", targets: [{ format: fmt }] }, primitive: { topology: "triangle-list" } });
+                        vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fs", targets: [{ format: fmt }] }, primitive: { topology: "triangle-strip" } });
                 }
                 format = fmt;
                 texture = device.createTexture({ label: "gosx-transmission-opaque", size: [w, h], format: fmt, mipLevelCount: levels,
@@ -102,7 +97,7 @@ function wgpuCreateTransmissionResources(device) {
             for (var i = 0; i < levels; i++) {
                 var pass = encoder.beginRenderPass({ label: "gosx-transmission-mip-" + i,
                     colorAttachments: [{ view: views[i], loadOp: "clear", storeOp: "store" }] });
-                pass.setPipeline(pipeline); pass.setBindGroup(0, i === 0 ? copyBinding : bindings[i - 1]); pass.draw(3); pass.end();
+                pass.setPipeline(pipeline); pass.setBindGroup(0, i === 0 ? copyBinding : bindings[i - 1]); pass.draw(4); pass.end();
             }
         },
         fallback: function() { device.queue.writeBuffer(uniform, 0, new Float32Array(4)); },

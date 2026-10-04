@@ -212,62 +212,62 @@ function gosxConfigureSceneScript(script, role, src) {
       return null;
     }
     if (!renderer) return null;
-    // Water and authored models share color and depth before post processing.
-    var sceneDoc = props && props.scene && typeof props.scene === "object" ? props.scene : null;
-    var environment = sceneDoc && sceneDoc.environment || props && props.environment;
-    if (sceneDoc && ((Array.isArray(sceneDoc.models) && sceneDoc.models.length > 0) || (environment && environment.sky))) {
-      var pbrFactory = sceneWebGLRendererFactory();
-      var worldRenderer = pbrFactory ? pbrFactory(gl, canvas, {}) : null;
+    // Create the shared world target when either initial or live scene state
+    // needs it. Keeping the water renderer alone is sufficient until then.
+    var waterRenderer = renderer, worldRenderer: any = null, worldFailed = false;
+    var sceneDoc = props?.scene;
+    function ensureWorld() {
+      if (worldRenderer || worldFailed) return;
+      worldRenderer = sceneWebGLRendererFactory()?.(gl, canvas, {});
       if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
-        renderer.dispose();
         if (worldRenderer) worldRenderer.dispose();
-        return null;
+        worldRenderer = null; worldFailed = true;
+        return;
       }
-      var waterRenderer = renderer;
-      var compositeMS = 0;
-      var compositeAtMS = 0;
-      renderer = Object.assign({}, waterRenderer, {
-        isWaterWorldComposite: true,
-        // @ts-ignore TS7006 -- the bundle builder ships this JavaScript signature as written.
-        render: function(bundle, viewport, frameMeta) {
-          var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-          // The world owns the color/depth target and runs post effects once,
-          // after water and world surfaces have used that same target.
-          worldRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
-            compositeOverWater: false,
-            // @ts-ignore TS7006 -- raw-source mount tests parse this signature as JavaScript.
-            compositeBeforePost: function(target) {
-              waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
-                compositeWorld: true, clearComposite: false, background: bundle.background,
-                renderTarget: target,
-              }));
-              worldRenderer.renderSurfaces(bundle, target);
-            },
-          }));
-          compositeAtMS = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-          compositeMS = Math.max(0.01, compositeAtMS - started);
-        },
-        // The world timer encloses water, surfaces, and the post chain.
+      Object.assign(waterRenderer, {
         pollPerformanceSample: worldRenderer.pollPerformanceSample,
         getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
         getFrameTiming: worldRenderer.getFrameTiming,
-        diagnostics: function() {
-          var world = typeof worldRenderer.diagnostics === "function" ? worldRenderer.diagnostics() : {};
-          return Object.assign({}, typeof waterRenderer.diagnostics === "function" ? waterRenderer.diagnostics() : {}, {
-            world: world, ibl: world.ibl || null,
-            compositeCPUFrameMS: compositeMS,
-          });
-        },
-        resize: function(viewport) {
-          if (typeof worldRenderer.resize === "function") worldRenderer.resize(viewport);
-          if (typeof waterRenderer.resize === "function") waterRenderer.resize(viewport);
-        },
-        dispose: function() {
-          waterRenderer.dispose();
-          worldRenderer.dispose();
-        },
       });
     }
+    var environment = sceneDoc?.environment || props?.environment;
+    if (Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean)) ensureWorld();
+    var compositeMS = 0;
+    renderer = {
+      __proto__: waterRenderer,
+      get isWaterWorldComposite() { return Boolean(worldRenderer); },
+      getFailureReason: function() {
+        return worldFailed ? "webgl-unavailable" : waterRenderer.getFailureReason?.() || worldRenderer?.getFailureReason?.() || "";
+      },
+      // @ts-ignore TS7006 -- bundles and frame metadata follow the runtime ABI.
+      render: function(bundle, viewport, frameMeta) {
+        if (bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) ensureWorld();
+        if (!worldRenderer) { if (!worldFailed) waterRenderer.render(bundle, viewport, frameMeta); return; }
+        var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        worldRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+          compositeOverWater: false,
+          // @ts-ignore TS7006 -- the shared target follows the renderer ABI.
+          compositeBeforePost: function(target) {
+            waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+              compositeWorld: true, clearComposite: false, background: bundle.background, renderTarget: target,
+            }));
+            worldRenderer.renderSurfaces(bundle, target);
+          },
+        }));
+        compositeMS = Math.max(0.01, (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - started);
+      },
+      diagnostics: function() {
+        var world = worldRenderer?.diagnostics?.() || {};
+        return Object.assign({}, waterRenderer.diagnostics?.() || {}, {
+          world: world, ibl: world.ibl || null, compositeCPUFrameMS: compositeMS,
+        });
+      },
+      resize: function(viewport: any) {
+        worldRenderer?.resize?.(viewport);
+        waterRenderer.resize?.(viewport);
+      },
+      dispose: function() { waterRenderer.dispose(); worldRenderer?.dispose(); },
+    };
     try {
       if (typeof window !== "undefined") {
         window.__gosx_scene3d_webgl_water = true;

@@ -558,13 +558,19 @@ const (
 // SetSceneEnvironmentCommand replaces scene-wide lighting, atmosphere, and
 // exposure from the SceneIR compatibility payload.
 func SetSceneEnvironmentCommand(environment EnvironmentIR) Command {
-	return environmentCommand(environment, EnvironmentShapeSceneIR)
+	return environmentCommand(struct {
+		EnvironmentIR
+		Ocean *Ocean `json:"ocean"`
+	}{environment, environment.Ocean}, EnvironmentShapeSceneIR)
 }
 
 // SetIREnvironmentCommand replaces scene-wide lighting, atmosphere, and exposure
 // from the canonical IR.
 func SetIREnvironmentCommand(environment IREnvironment) Command {
-	return environmentCommand(environment, EnvironmentShapeCanonicalIR)
+	return environmentCommand(struct {
+		IREnvironment
+		Ocean *Ocean `json:"ocean"`
+	}{environment, environment.Ocean}, EnvironmentShapeCanonicalIR)
 }
 
 // SetEnvironmentCommand replaces scene-wide lighting, atmosphere, and exposure.

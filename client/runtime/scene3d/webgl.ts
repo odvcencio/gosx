@@ -3615,15 +3615,15 @@
     };
     var frameTimer = createSceneWebGLFrameTimer(gl);
     var lastPerformanceSample = null;
-    function disposeWaterTimerQueries() { frameTimer.dispose(); }
+    // The frame timer owns query lifecycle for water and shared-world draws.
     function pollWaterTimerQueries() {
       var sample = frameTimer.snapshot();
       lastPerformanceSample = sample.status === "measured" ? sample : null;
     }
-  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
-    function beginWaterTimerQuery(_nowMS) { return frameTimer.begin(); }
-  // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
-    function endWaterTimerQuery(record) { frameTimer.end(record); }
+
+
+
+
     function pollPerformanceSample() {
       var sample = frameTimer.sample();
       if (sample) lastPerformanceSample = sample;
@@ -4280,11 +4280,11 @@
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
         ? Number(frameMeta.nowMS)
         : ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
-      var timerRecord = beginWaterTimerQuery(nowMS);
+      var timerRecord = frameTimer.begin();
       try {
         drawFrame(frameMeta);
       } finally {
-        endWaterTimerQuery(timerRecord);
+        frameTimer.end(timerRecord);
       }
     }
 
@@ -4302,7 +4302,7 @@
       scenePBRDisposeProgramQueue(gl);
       if (disposed) return;
       disposed = true;
-      disposeWaterTimerQueries();
+      frameTimer.dispose();
       try { sim.dispose(); } catch (e) {}
       [poolProgram, surfaceProgram, objectProgram, duckProgram, causticsProgram, shadowProgram, compoundShadowProgram].forEach(function(program) {
         if (!program) return;
@@ -4331,7 +4331,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: false,
-      isWaterForced: true,
+      isWaterForced: true, getFailureReason: function() { return scenePBRShaderFailureReason(poolProgram, surfaceProgram); },
       render: render,
       getStats: function() {
         pollWaterTimerQueries();
@@ -6703,8 +6703,8 @@
     return scenePBRPassReady(gl, pass);
   }
 
-  // All WebGL2 factories share this queue. Location queries run only after
-  // completion, because they can synchronize the driver just like LINK_STATUS.
+  function scenePBRShaderFailureReason(program: any, other?: any) { return scenePBRProgramFailed(program) || scenePBRProgramFailed(other) ? "webgl-shader-failed" : ""; }
+  // Location queries wait for completion to avoid synchronizing the driver.
   const scenePBRCompileContexts = new WeakMap();
   const scenePBRProgramStates = new WeakMap();
 
@@ -11030,7 +11030,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
-      getFailureReason: function() { return scenePBRProgramFailed(program) ? "webgl-shader-failed" : ""; },
+      getFailureReason: function() { return scenePBRShaderFailureReason(program); },
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },
