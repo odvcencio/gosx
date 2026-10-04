@@ -86,6 +86,9 @@ func Page() Node {
 				<span class="inline-code">env.LoadDir</span>
 				.
 			</p>
+			<p>
+				The scaffold ignores these files in Git. Development uses a random per-process session secret when SESSION_SECRET is missing or a placeholder; sessions reset on restart. Before deploying, set GOSX_ENV=production and supply a random SESSION_SECRET of at least 16 bytes through your deployment environment. Other modes reject missing or placeholder secrets.
+			</p>
 		</section>
 		<section class="callout">
 			<strong>Default shape</strong>

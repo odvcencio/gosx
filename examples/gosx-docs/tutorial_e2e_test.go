@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/buildmanifest"
 	docsamples "m31labs.dev/gosx/examples/gosx-docs/samples"
+	"m31labs.dev/gosx/internal/localapp"
 )
 
 type tutorialFile struct {
@@ -54,7 +55,11 @@ func TestFirstAppTutorialBuildsAndServesEveryStep(t *testing.T) {
 	quickstartURL := "http://127.0.0.1:" + quickstartPort
 	quickstartProcess := exec.Command(quickstartBinary)
 	quickstartProcess.Dir = appDir
-	quickstartProcess.Env = appendTutorialEnv(os.Environ(), "PORT="+quickstartPort, "PUBLIC_URL="+quickstartURL, "SESSION_SECRET=docs-tutorial-test-session-secret")
+	quickstartEnv, err := localapp.Environment(os.Environ(), quickstartPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quickstartProcess.Env = appendTutorialEnv(quickstartEnv, "PUBLIC_URL="+quickstartURL)
 	var quickstartLogs bytes.Buffer
 	quickstartProcess.Stdout = &quickstartLogs
 	quickstartProcess.Stderr = &quickstartLogs
@@ -141,7 +146,11 @@ func TestFirstAppTutorialBuildsAndServesEveryStep(t *testing.T) {
 			baseURL := "http://127.0.0.1:" + port
 			process := exec.Command(binary)
 			process.Dir = appDir
-			process.Env = appendTutorialEnv(os.Environ(), "PORT="+port, "PUBLIC_URL="+baseURL, "SESSION_SECRET=docs-tutorial-test-session-secret")
+			localEnv, err := localapp.Environment(os.Environ(), port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			process.Env = appendTutorialEnv(localEnv, "PUBLIC_URL="+baseURL)
 			var logs bytes.Buffer
 			process.Stdout = &logs
 			process.Stderr = &logs

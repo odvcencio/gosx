@@ -67,6 +67,7 @@ func docsRoutePaths(t *testing.T, root string) []string {
 func TestEveryDocsRouteServesConcurrently(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := server.ResolveAppRoot(thisFile)
+	configureDocsTestSecret(t)
 	app, err := buildDocsApp(root, "8080")
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +146,7 @@ var requestIDPattern = regexp.MustCompile(`"requestID":"[^"]*"`)
 func TestWaterPageKeepsDiagnosticKnobsPerRequest(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := server.ResolveAppRoot(thisFile)
+	configureDocsTestSecret(t)
 	app, err := buildDocsApp(root, "8080")
 	if err != nil {
 		t.Fatal(err)

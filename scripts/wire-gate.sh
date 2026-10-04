@@ -71,9 +71,10 @@ start() {
 	dir="$2"
 	port="$3"
 	ready="$4"
-	PORT="$port" \
+	local_secret="$(openssl rand -hex 32)"
+	PORT="127.0.0.1:$port" \
 	PUBLIC_URL="http://127.0.0.1:${port}" \
-	SESSION_SECRET="wire-gate-session-secret-0123456789" \
+	SESSION_SECRET="$local_secret" \
 		"$dir/dist/run.sh" >"$out/${name}-server.log" 2>&1 &
 	pid=$!
 	pids="$pids $pid"

@@ -48,11 +48,11 @@ func buildDocsApp(root, port string) (*server.App, error) {
 	// Keep the Secure cookie flag, unless PUBLIC_URL serves plain HTTP. A
 	// local HTTP run needs the opt-out, because a browser drops a Secure
 	// cookie on a plain HTTP origin.
-	sessionSecret, err := docsSessionSecret(publicBase, os.Getenv("SESSION_SECRET"))
+	secret, err := sessionSecret()
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := session.New(sessionSecret, session.Options{
+	sessions, err := session.New(secret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {
@@ -186,17 +186,6 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func docsSessionSecret(publicBase, value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value != "" {
-		return value, nil
-	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(publicBase)), "https://") {
-		return "", fmt.Errorf("SESSION_SECRET is required for the public HTTPS docs deployment")
-	}
-	return "gosx-docs-session-secret", nil
 }
 
 func docsDemoUser(value string) auth.User {

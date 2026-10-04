@@ -439,6 +439,7 @@ func (r *devRunner) start(port string) error {
 		"GOSX_DEV=1",
 		"GOSX_APP_ROOT="+r.dir,
 		"PORT="+port,
+		"GOSX_LISTEN_ADDR="+net.JoinHostPort("127.0.0.1", port),
 	)
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
@@ -544,6 +545,9 @@ func waitForAppReady(baseURL string, timeout time.Duration) error {
 }
 
 func publicListenAddr() string {
+	if addr := strings.TrimSpace(os.Getenv("GOSX_LISTEN_ADDR")); addr != "" {
+		return addr
+	}
 	raw := strings.TrimSpace(os.Getenv("PORT"))
 	if raw == "" {
 		return defaultDevListenAddr
