@@ -89,6 +89,7 @@
   var sceneTransmissionSettings = sceneApi.sceneTransmissionSettings;
   var sceneTransmissionVolume = sceneApi.sceneTransmissionVolume;
   var sceneTransmissionEffects = sceneApi.sceneTransmissionEffects;
+  var sceneRenderBackground = sceneApi.sceneRenderBackground;
   var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
   var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
   var sceneCachedBuffer = sceneApi.sceneCachedBuffer;

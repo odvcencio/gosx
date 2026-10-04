@@ -18356,7 +18356,7 @@
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
-      var postFXMaxPixels = authoredPostEffects && typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
+      var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var postfxFactor = usePostProcessing
         ? resolvePostFXFactor(postFXMaxPixels, width * height)
         : 1;
@@ -18572,8 +18572,8 @@
       }
 
       // Clear color.
-      var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
-      var bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
+      var bg = sceneRenderBackground(bundle.background, usePostProcessing && !authoredPostEffects ? postEffects[0] : null);
+
 
       var mainColorAttachment = {
         view: mainColorView,

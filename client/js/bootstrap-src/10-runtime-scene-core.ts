@@ -1520,7 +1520,7 @@
       override.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(current, "alphaCutoff"), null);
     }
     if (sceneObjectMaterialHasValue(current, "detail")) override.detail = sceneNormalizeDetail(sceneObjectMaterialValue(current, "detail"));
-    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
+    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "thickness", "attenuationDistance", "attenuationColor"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
       }
@@ -7296,6 +7296,7 @@
     sceneTransmissionDepthWrite: typeof sceneTransmissionDepthWrite === "function" ? sceneTransmissionDepthWrite : undefined,
     sceneTransmissionSettings: typeof sceneTransmissionSettings === "function" ? sceneTransmissionSettings : undefined,
     sceneTransmissionVolume: typeof sceneTransmissionVolume === "function" ? sceneTransmissionVolume : undefined,
+    sceneRenderBackground: typeof sceneRenderBackground === "function" ? sceneRenderBackground : undefined,
     sceneTransmissionEffects: typeof sceneTransmissionEffects === "function" ? sceneTransmissionEffects : undefined,
     scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
