@@ -113,9 +113,11 @@ func Page() Node {
 						:
 						{flash.magicLink.email}
 					</p>
-					<p>
-						Open the sign-in link printed in the server log.
-					</p>
+					<If cond={flash.magicLink.status == "sent"}>
+						<p>
+							Open the sign-in link printed in the server log.
+						</p>
+					</If>
 				</div>
 			</If>
 		</If>
