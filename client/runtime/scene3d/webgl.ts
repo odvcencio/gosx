@@ -9888,7 +9888,7 @@
           }
         } else if (mat && mat.detail) {
           var dp = sceneWebGLDetailProgram(gl, detailResources, isSkinned ? "skinned" : "base");
-          if (!dp) continue;
+          if (!dp || !scenePBRProgramReady(gl, dp.program)) continue;
           if (currentProgram !== dp.program) {
             gl.useProgram(dp.program); currentProgram = dp.program;
             currentAttribs = dp.attributes; currentUniforms = dp.uniforms;

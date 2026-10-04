@@ -9,14 +9,14 @@ function sceneWebGLDetailFragment(source = "", detail = false) {
 function sceneWebGLDetailProgram(gl = Object.create(null), resources = Object.create(null), kind = "base") {
   const key = sceneDetailVariantKey(kind, true);
   if (resources.programs.has(key)) return resources.programs.get(key);
-  const factories = new Map(Object.entries({
+  const factories = {
     base: function() { return createScenePBRProgram(gl, true); },
     skinned: function() { return createScenePBRSkinnedProgram(gl, true); },
     instanced: function() { return createScenePBRInstancedProgram(gl, false, true); },
     crowd: function() { return createScenePBRInstancedProgram(gl, true, true); },
     motion: function() { return createScenePBRCrowdMotionProgram(gl, true); },
-  }));
-  const program = factories.get(kind)();
+  };
+  const program = factories[kind]();
   if (program) Object.assign(program.uniforms, { detail: gl.getUniformLocation(program.program, "u_detail[0]"), detailAtlas: gl.getUniformLocation(program.program, "u_detailAtlas") });
   resources.programs.set(key, program);
   return program;
