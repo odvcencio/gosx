@@ -30,6 +30,7 @@ test("opaque glass routes after opaque objects; mip capture excludes glass and r
   const passes=h.fake.state.renderPasses.slice(start);
   const mips=passes.filter(p=>String(p.descriptor.label||"").startsWith("gosx-transmission-mip-"));
   assert.equal(mips.length,7,"64 px needs seven mip levels");
+  assert.ok(mips.every(p => p.draws.length === 1 && p.draws[0].vertexCount === 4 && p.draws[0].pipeline.desc.primitive.topology === "triangle-strip"), "capture uses the shared fullscreen quad");
   const first=passes.indexOf(mips[0]),last=passes.indexOf(mips.at(-1));
   assert.ok(first>0 && last<passes.length-1,"opaque and glass draws must bracket the capture");
   const opaque = passes.slice(0, first).flatMap(p => p.draws).filter(d => d.vertexCount === 3);
@@ -242,4 +243,84 @@ test("createSceneState round-trips volume fields for objects, instances and name
   }
   const zero = api.createSceneState({scene:{objects:[triangle({id:"zero", ...volume, thickness:0, attenuationDistance:0, attenuationColor:[0,0.5,1]})]}});
   assert.deepEqual(fields(api.sceneStateObjectsWithMaterials(zero)[0]), [0,0,[0,0.5,1]]);
+});
+
+for (const backend of ["WebGL", "WebGPU"]) for (const purpose of ["pixel cap", "flat background"]) {
+ test(`${backend} implicit transmission preserves ${purpose} across tiers`, async t => {
+  const h = backend === "WebGPU" ? await createBoardWebGPUHarness({fresh:true}) : createWebGLRendererForPost({fresh:true});
+  t.after(() => h.renderer.dispose());
+  h.canvas.width = h.canvas.height = 1024;
+  const api = h.env.context.__gosx_scene3d_api;
+  const bundle = api.createSceneRenderBundle(1024,1024,"#808080",{x:0,y:0,z:5,fov:60,near:0.1,far:100},
+    [triangle({id:"glass",materialKind:"standard",transmission:1})],[],[],[],[],{},0,[],[],[],[],[],0,false);
+  bundle.postFXMaxPixels = 65536;
+  for (const tier of ["full", "constrained", "balanced", "full"]) {
+   const passStart = backend === "WebGPU" ? h.fake.state.renderPasses.length : 0;
+   h.renderer.render(bundle,{width:1024,height:1024},{qualityProfile:{tier}});
+   let rgb;
+   if (backend === "WebGL") {
+    const ops = h.canvas.getContext("webgl2").ops;
+    rgb = ops.findLast(op => op[0] === "clearColor").slice(1,4);
+    if (purpose === "pixel cap" && tier !== "constrained") assert.ok(ops.some(op => op[0] === "viewport" && op[3] === 256 && op[4] === 256), "implicit target obeys the cap");
+   } else {
+    const pass = h.fake.state.renderPasses.slice(passStart).find(p => p.descriptor.colorAttachments?.[0]?.clearValue);
+    const clear = pass.descriptor.colorAttachments[0].clearValue;
+    rgb = [clear.r,clear.g,clear.b];
+    if (purpose === "pixel cap" && tier !== "constrained") {
+     assert.ok(h.fake.state.textures.some(tex => tex.descriptor?.size?.width === 256 || tex.desc?.size?.[0] === 256 && tex.desc?.size?.[1] === 256), "implicit target obeys the cap");
+    }
+   }
+   if (purpose === "flat background") for (const channel of rgb) {
+    const output = tier === "constrained" ? channel : Math.min(1, (channel*(2.51*channel+0.03))/(channel*(2.43*channel+0.59)+0.14)) ** (1/2.2);
+    assert.ok(Math.abs(output - 128/255) < 1e-4, `${tier} retains authored background: ${output}`);
+   }
+  }
+ });
+}
+
+
+for (const backend of ["WebGL", "WebGPU"]) test(`${backend} white implicit backgrounds remain finite in half-float targets`, async t => {
+ const h = backend === "WebGPU" ? await createBoardWebGPUHarness({fresh:true}) : createWebGLRendererForPost({fresh:true});
+ t.after(() => h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api;
+ const bundle = api.createSceneRenderBundle(64,64,"#ffffff",{x:0,y:0,z:5,fov:60,near:0.1,far:100},
+  [triangle({id:"glass",materialKind:"standard",transmission:1})],[],[],[],[],{},0,[],[],[],[],[],0,false);
+ for (const mode of ["reinhard", "filmic"]) {
+  bundle.environment.toneMapping = mode; bundle.environment.exposure = 0.05;
+  for (const tier of ["full", "constrained", "full"]) {
+   const start = backend === "WebGPU" ? h.fake.state.renderPasses.length : 0;
+   h.renderer.render(bundle,{width:64,height:64},{qualityProfile:{tier}});
+   let rgb;
+   if (backend === "WebGL") rgb = h.canvas.getContext("webgl2").ops.findLast(op => op[0] === "clearColor").slice(1,4);
+   else {
+    const clear = h.fake.state.renderPasses.slice(start).find(p => p.descriptor.colorAttachments?.[0]?.clearValue).descriptor.colorAttachments[0].clearValue;
+    rgb = [clear.r,clear.g,clear.b];
+   }
+   for (const channel of rgb) {
+    const stored = channel > 65504 ? Infinity : channel;
+    let output = stored;
+    if (tier === "full") {
+     const x = Math.max(0, stored * 0.05 - (mode === "filmic" ? 0.004 : 0));
+     output = mode === "filmic" ? x*(6.2*x+0.5)/(x*(6.2*x+1.7)+0.06) : (x/(x+1)) ** (1/2.2);
+    }
+    assert.ok(Number.isFinite(output), "HDR storage and output remain finite");
+    assert.equal(Math.round(output*255),255,"the authored white background survives output conversion");
+   }
+  }
+ }
+});
+
+test("Go instanced replacement resets omitted volume fields in the browser", t => {
+ const {spawnSync} = require("node:child_process"), path = require("node:path");
+ const run = spawnSync("go",["run","./scene/testdata/volume-command"],{cwd:path.join(__dirname,"../.."),encoding:"utf8",timeout:60000});
+ assert.equal(run.status,0,run.stderr);
+ const payload = JSON.parse(run.stdout);
+ const h = createWebGLRendererForPost({fresh:true}); t.after(() => h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api;
+ const state = api.createSceneState({scene:{instancedMeshes:payload.initial}});
+ api.applySceneCommands(state,payload.commands);
+ const material = api.sceneStateInstancedMeshesWithMaterials(state)[0];
+ assert.equal(material.thickness,0);
+ assert.equal(material.attenuationDistance,0);
+ assert.deepEqual(Array.from(material.attenuationColor),[1,1,1]);
 });

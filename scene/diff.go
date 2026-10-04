@@ -489,7 +489,7 @@ func SetInstancedMeshesCommand(meshes []InstancedMeshIR) Command {
 	return Command{
 		Kind: CommandSetInstancedMeshes,
 		Data: map[string]any{
-			"instancedMeshes": meshes,
+			"instancedMeshes": instancedMeshReplacements(meshes),
 		},
 	}
 }
