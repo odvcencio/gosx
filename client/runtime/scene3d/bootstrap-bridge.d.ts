@@ -298,6 +298,7 @@ declare function sceneTransmissionPresent(bundle: any): boolean;
 declare function sceneTransmissionMaterial(material: any): boolean;
 declare function sceneTransmissionDepthWrite(object: any, material: any, defaultWrite: boolean): boolean;
 declare function sceneTransmissionSettings(frameMeta: any, mount: any): { screen: boolean; levels: number };
+declare function sceneRenderBackground(background: any, effect: any): number[];
 declare function sceneTransmissionEffects(effects: any[], environment: any): any[];
 declare function sceneTransmissionVolume(material: any): number[];
 declare function sceneTransmissionPublish(mount: any, state: string): void;

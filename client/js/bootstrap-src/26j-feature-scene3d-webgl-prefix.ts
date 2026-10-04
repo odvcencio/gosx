@@ -199,6 +199,7 @@
   var sceneTransmissionSettings = sceneApi.sceneTransmissionSettings;
   var sceneTransmissionVolume = sceneApi.sceneTransmissionVolume;
   var sceneTransmissionEffects = sceneApi.sceneTransmissionEffects;
+  var sceneRenderBackground = sceneApi.sceneRenderBackground;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
