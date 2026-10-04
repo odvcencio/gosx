@@ -249,11 +249,14 @@ Keep it stable across restarts and replicas to preserve sessions. The known
 placeholders are `change-me-in-production`, `gosx-app-session-secret`, and
 `gosx-docs-session-secret`.
 
-Export and production-build prerendering start a disposable app on loopback
-with a fresh random session secret. They replace inherited deployment secrets
-and keep canonical `PUBLIC_URL` metadata. Local wire, perf, E2E, tutorial, and
-docs deployment identity checks also use disposable secrets. These secrets
-are supplied only to local processes and are never saved in deployment bundles.
+Export and production-build prerendering supply a fresh random session secret.
+`PORT` remains numeric for existing Go listeners; GoSX servers bind to loopback
+through a separate `GOSX_LISTEN_ADDR`. Custom HTTP servers retain their own
+listener behavior. `PUBLIC_URL` is inherited unchanged, including its absence,
+so application defaults remain in canonical metadata. Local wire, perf, E2E,
+tutorial, and docs deployment identity checks also use disposable secrets.
+These secrets are supplied only to local processes and are never saved in
+deployment bundles.
 
 Minimal server without the CLI:
 

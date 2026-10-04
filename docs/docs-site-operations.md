@@ -22,7 +22,11 @@ repository, namespace, image digest, and build identity; applying it directly
 is expected to fail image resolution.
 
 Local build prerendering and built-identity probes use fresh disposable session
-secrets and loopback listeners. They never inherit a deployed session secret.
+secrets and loopback listeners. Prerendering keeps `PORT` numeric and supplies
+the GoSX listener separately through `GOSX_LISTEN_ADDR`. It leaves `PUBLIC_URL`
+unchanged, so configured origins and application defaults survive in exported
+canonical and OpenGraph metadata. Local processes never inherit a deployed
+session secret.
 The running deployment still uses its stable secret from the cluster; disposable
 keys are not included in the image or deployment manifest.
 

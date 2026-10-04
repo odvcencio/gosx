@@ -10,28 +10,21 @@ import (
 )
 
 // Environment replaces inherited session secrets with a fresh random secret
-// and binds the app to loopback. Other configuration, including PUBLIC_URL
-// for canonical build metadata, is preserved when configured.
+// and supplies a separate loopback listen address for GoSX servers. PORT stays
+// numeric for ordinary Go listeners. Other configuration, including PUBLIC_URL
+// and its absence (application defaults), is preserved.
 func Environment(base []string, port string) ([]string, error) {
 	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {
 		return nil, fmt.Errorf("generate local app session secret: %w", err)
 	}
 	env := make([]string, 0, len(base)+3)
-	publicURL := ""
 	for _, entry := range base {
-		key, value, _ := strings.Cut(entry, "=")
-		if key == "PUBLIC_URL" {
-			publicURL = value
-			continue
-		}
-		if key != "SESSION_SECRET" && key != "PORT" {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != "SESSION_SECRET" && key != "PORT" && key != "GOSX_LISTEN_ADDR" {
 			env = append(env, entry)
 		}
 	}
-	if publicURL == "" {
-		publicURL = "http://127.0.0.1:" + port
-	}
 	return append(env, "SESSION_SECRET="+base64.RawURLEncoding.EncodeToString(secret[:]),
-		"PORT=127.0.0.1:"+port, "PUBLIC_URL="+publicURL), nil
+		"PORT="+port, "GOSX_LISTEN_ADDR=127.0.0.1:"+port), nil
 }
