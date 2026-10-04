@@ -57,7 +57,11 @@ func main() {
 	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
 	// Local development serves plain HTTP. A Secure cookie never reaches the
 	// server there. Point PUBLIC_URL at an https origin to restore Secure.
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{
+	secret, err := sessionSecret()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sessions, err := session.New(secret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {

@@ -233,6 +233,22 @@ cd my-docs
 go run .
 ```
 
+Both templates ignore `.env` and its variants in Git. Their generated `.env`
+sets `GOSX_ENV=development`: when `SESSION_SECRET` is missing or still a known
+placeholder, the app generates a random per-process secret and logs that
+sessions reset on restart. `gosx dev` also enables this fallback when
+`GOSX_ENV` is unset. Other modes, including an unset mode outside `gosx dev`,
+refuse to start without a non-placeholder secret of at least 16 bytes.
+Short secrets are rejected in every mode. This validation lives in the
+scaffold; `session.New` keeps its existing API and validation.
+
+Before building for production or deploying, set `GOSX_ENV=production` and
+supply a random secret through your deployment environment, for example one
+generated with `openssl rand -hex 32`.
+Keep it stable across restarts and replicas to preserve sessions. The known
+placeholders are `change-me-in-production`, `gosx-app-session-secret`, and
+`gosx-docs-session-secret`.
+
 Minimal server without the CLI:
 
 ```go

@@ -628,6 +628,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 }
 
 func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "production-build-test-secret-0123456789")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -964,6 +966,8 @@ component Layout(props: LayoutProps) {
 }
 
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "production-build-test-secret-0123456789")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -1004,6 +1008,8 @@ func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 }
 
 func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "production-build-test-secret-0123456789")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
