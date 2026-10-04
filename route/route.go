@@ -197,18 +197,19 @@ func (ctx *RouteContext) Document(defaultTitle string, body gosx.Node) *server.D
 
 // Router builds an http.Handler from a route tree.
 type Router struct {
-	routes         []Route
-	handlers       []handlerRoute
-	defaultLayout  LayoutFunc
-	notFound       PageHandler
-	notFoundLayout LayoutFunc
-	notFoundScopes []scopedNotFound
-	errorHandler   ErrorHandler
-	errorLayout    LayoutFunc
-	revalidator    *server.Revalidator
-	observers      []server.RequestObserver
-	fileRouteDirs  []fileRouteDirSource
-	navigationHead func(nonce string) gosx.Node
+	routes          []Route
+	handlers        []handlerRoute
+	defaultLayout   LayoutFunc
+	notFound        PageHandler
+	notFoundLayout  LayoutFunc
+	notFoundScopes  []scopedNotFound
+	errorHandler    ErrorHandler
+	errorLayout     LayoutFunc
+	revalidator     *server.Revalidator
+	observers       []server.RequestObserver
+	filePageAliases map[string]string
+	fileRouteDirs   []fileRouteDirSource
+	navigationHead  func(nonce string) gosx.Node
 }
 
 type handlerRoute struct {
@@ -429,6 +430,13 @@ func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, p
 
 		if err := safeHandle(mux, matchPattern, h); err != nil {
 			return err
+		}
+		if alias := r.filePageAliases[pattern]; alias != "" {
+			// Reuse the canonical handler so route identity, layouts and params
+			// stay the same. The end marker prevents matching extra subpaths.
+			if err := safeHandle(mux, alias, h); err != nil {
+				return err
+			}
 		}
 	}
 

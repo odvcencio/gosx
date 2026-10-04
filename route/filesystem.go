@@ -304,6 +304,15 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	if err != nil {
 		return err
 	}
+	if r.filePageAliases == nil {
+		r.filePageAliases = make(map[string]string)
+	}
+	for _, pageRoute := range routes {
+		pagePath := patternPath(pageRoute.Pattern)
+		if pagePath != "/" && !strings.HasSuffix(pagePath, "...}") {
+			r.filePageAliases[pageRoute.Pattern] = "GET " + pagePath + "/{$}"
+		}
+	}
 	r.Add(routes...)
 	// Remembered for Build/BuildChecked, which re-checks the registry at build
 	// time rather than here: registration in the shared registry usually runs

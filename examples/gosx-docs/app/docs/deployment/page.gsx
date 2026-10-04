@@ -136,7 +136,7 @@ func Page() Node {
 			<span class="inline-code">RevalidateSeconds=0</span>
 			keeps its build-time data until a rebuild or explicit invalidation. The build warns when a prerendered page has a
 			<span class="inline-code">Load</span>
-			hook and no revalidation window. For changing public data, opt in to prerendering and set a public cache lifetime. Keep request-specific data dynamic. Requests with cookies or authorization bypass the snapshot and render the origin, including at the exported trailing-slash URL.
+			hook and no revalidation window. For changing public data, opt in to prerendering and set a public cache lifetime. Keep request-specific data dynamic. Requests with cookies or authorization bypass the snapshot and render the origin, including at the exported trailing-slash URL. Dynamic file pages also accept the same trailing-slash URL after they leave the export manifest.
 		</p>
 		<CodeBlock lang="json" source={data.sampleISRConfig} />
 		<CodeBlock lang="go" source={data.sampleISRApp} />
