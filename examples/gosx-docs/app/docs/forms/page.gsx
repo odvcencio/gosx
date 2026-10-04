@@ -1,19 +1,30 @@
 package docs
 
+import "m31labs.dev/gosx/route"
+
+type SubscribeProps struct {
+	Form route.FormState
+}
+
+component SubscribeForm(props: SubscribeProps) {
+	return <form method="post" action={props.Form.ActionURL} data-gosx-managed>
+		<input type="hidden" name="csrf_token" value={props.Form.CSRFToken} />
+		<label>
+			<span>Email address</span>
+			<input name="email" type="email" value={props.Form.Values["email"]} placeholder="you@example.com" />
+		</label>
+		<p role="alert">{props.Form.FieldErrors["email"]}</p>
+		<p role="status">{props.Form.Message}</p>
+		<p>{props.Form.Flash["notice"]}</p>
+		<button type="submit">Subscribe</button>
+	</form>
+}
+
 func Page() Node {
 	return <div>
 		<section class="docs-live-example" aria-label="Validated server form">
 			<p class="eyebrow">Try server validation</p>
-			<form method="post" action={actionPath("subscribe")} data-gosx-managed>
-				<input type="hidden" name="csrf_token" value={csrf.token} />
-				<label>
-					<span>Email address</span>
-					<input name="email" type="email" value={actions.subscribe.values.email} placeholder="you@example.com" />
-				</label>
-				<p role="alert">{actions.subscribe.fieldErrors.email}</p>
-				<p role="status">{action.message}</p>
-				<button type="submit">Subscribe</button>
-			</form>
+			<SubscribeForm {...data.subscribe} />
 			<a
 				href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/docs/forms/page.server.go"
 				rel="noopener"
@@ -45,9 +56,11 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", data.sample002)}
 			<p>
-				The action URL is constructed at render time by
-				<span class="inline-code">actionPath("name")</span>
-				. It resolves to the page-relative
+				In Load, call
+				<span class="inline-code">ctx.FormState("subscribe")</span>
+				and return it in a typed Go value matching the page's props fields. The
+				<span class="inline-code">route.FormState</span>
+				value includes ActionURL, CSRFToken, Values, FieldErrors, Flash, Message, OK, and Status. ActionURL points to the page-relative
 				<span class="inline-code">/__actions/name</span>
 				endpoint that the router registers automatically when the page module declares that action.
 			</p>
@@ -61,11 +74,11 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", data.sample003)}
 			<p>
-				In the template, read field errors through
-				<span class="inline-code">actions.subscribe.fieldErrors.email</span>
+				In a strict component, read field errors through
+				<span class="inline-code">props.Form.FieldErrors["email"]</span>
 				and repopulate inputs from
-				<span class="inline-code">actions.subscribe.values.email</span>
-				.
+				<span class="inline-code">props.Form.Values["email"]</span>
+				. String map lookups use literal keys; absent keys return the empty string, including on the first GET. The helper reads ctx.ActionState("subscribe") and its Result.Values and Result.FieldErrors for you.
 			</p>
 			{CodeBlock("gsx", data.sample004)}
 		</section>
@@ -80,14 +93,14 @@ func Page() Node {
 				For a mutating file action,
 				<span class="inline-code">gosx check</span>
 				also catches a statically provable missing token inside
-				<span class="inline-code">actionPath(...)</span>
+				<span class="inline-code">props.Form.ActionURL</span>
 				forms. Static wrappers are fine; GET or native/external forms and fields supplied through dynamic component boundaries remain application-owned.
 			</p>
 			{CodeBlock("gsx", data.sample005)}
 			<p>
-				The token is automatically available as
-				<span class="inline-code">csrf.token</span>
-				in every file-routed page template. No extra wiring is required as long as the session middleware is mounted in
+				The helper exposes the session token as
+				<span class="inline-code">props.Form.CSRFToken</span>
+				without creating a session on an anonymous GET. Mount the session middleware in
 				<span class="inline-code">main.go</span>
 				.
 			</p>
@@ -101,11 +114,7 @@ func Page() Node {
 			{CodeBlock("go", data.sample007)}
 			{CodeBlock("gsx", data.sample008)}
 			<p>
-				The
-				<span class="inline-code">flash</span>
-				binding in templates holds the first value for each flash key. Use
-				<span class="inline-code">flashes</span>
-				to access all values when a key may carry multiple messages.
+				FormState.Flash holds the first value for each public flash key as a string. Session middleware consumes the flashes once per request; reading FormState repeatedly in that request preserves them. Legacy pages may still use actionPath(...), csrf.token, actions.subscribe.values, actions.subscribe.fieldErrors, flash, and flashes. Strict components receive these through props.
 			</p>
 		</section>
 		<section id="redirects" class="docs-section-block">
@@ -159,25 +168,7 @@ func Page() Node {
 		</section>
 		<div class="demo-well" role="region" aria-label="Form demo">
 			<p class="demo-well__label">Live demo</p>
-			<If cond={actions.subscribe.ok}>
-				<p class="form-status form-status--ok">{actions.subscribe.message}</p>
-			</If>
-			<If cond={!actions.subscribe.ok && actions.subscribe.status != 0}>
-				<p class="form-status form-status--error">{actions.subscribe.message}</p>
-			</If>
-			<form method="post" action={actionPath("subscribe")}>
-				<input type="hidden" name="csrf_token" value={csrf.token} />
-				<label for="demo-email">Email</label>
-				<input
-					id="demo-email"
-					name="email"
-					type="email"
-					placeholder="you@example.com"
-					value={actions.subscribe.values.email}
-				 />
-				<p class="form-error">{actions.subscribe.fieldErrors.email}</p>
-				<button type="submit">Subscribe</button>
-			</form>
+			<SubscribeForm {...data.subscribe} />
 		</div>
 	</div>
 }

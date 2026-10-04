@@ -9,11 +9,18 @@ import (
 	"m31labs.dev/gosx/session"
 )
 
+type PageData struct {
+	Subscribe route.FormState
+}
+
 func init() {
 	docsapp.RegisterDocsPage(
 		"Forms",
 		"Relative page actions, CSRF protection, validation state, and session-backed flashes now fit the file-routed app model.",
 		route.FileModuleOptions{
+			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				return PageData{Subscribe: ctx.FormState("subscribe")}, nil
+			},
 			Actions: route.FileActions{
 				"subscribe": func(ctx *action.Context) error {
 					if strings.TrimSpace(ctx.FormData["email"]) == "" {

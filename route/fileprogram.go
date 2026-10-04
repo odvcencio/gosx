@@ -2179,6 +2179,9 @@ func setStrictComponentChildren(comp *ir.Component, props map[string]any, childr
 }
 
 func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if fieldType == "map[string]string" && attr.Kind == ir.AttrExpr {
+		return requireStrictStringMap(evalFileExpr(attr.Expr, env))
+	}
 	if !strictScalarFieldType(fieldType) {
 		if strings.HasPrefix(strings.TrimSpace(fieldType), "[]") {
 			// A rendered field whose declared type is "[]T" is an <Each of>
@@ -2337,10 +2340,18 @@ func requireStrictStructValue(value any, typeName string, paths map[string]strin
 	}
 	rv := reflect.ValueOf(value)
 	rt := rv.Type()
-	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName {
+	frameworkForm := rt == reflect.TypeFor[FormState]() && (typeName == "FormState" || strings.HasSuffix(typeName, ".FormState"))
+	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName && !frameworkForm {
 		return nil, fmt.Errorf("runtime value has type %s, want exact struct %s", rt, typeName)
 	}
 	return proveStrictStructPaths(rv, typeName, paths)
+}
+
+func requireStrictStringMap(value any) (any, error) {
+	if _, ok := value.(map[string]string); !ok {
+		return nil, fmt.Errorf("runtime value has type %T, want exact map[string]string", value)
+	}
+	return value, nil
 }
 
 // requireStrictSpreadStructField is requireStrictStructValue's structural
@@ -2398,6 +2409,16 @@ func proveStrictStructPaths(rv reflect.Value, typeName string, paths map[string]
 	for subPath, leafType := range paths {
 		fv := rv
 		for _, segment := range strings.Split(subPath, ".") {
+			if key, isKey := strictcomponent.MapKey(segment); isKey {
+				if fv.Type() != reflect.TypeFor[map[string]string]() {
+					return nil, fmt.Errorf("path %s.%s: value has type %s, want map[string]string", typeName, subPath, fv.Type())
+				}
+				fv = fv.MapIndex(reflect.ValueOf(key))
+				if !fv.IsValid() {
+					fv = reflect.ValueOf("")
+				}
+				continue
+			}
 			if fv.Kind() != reflect.Struct {
 				return nil, fmt.Errorf("path %s.%s: value has type %s, want struct", typeName, subPath, fv.Type())
 			}
@@ -2510,6 +2531,13 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 		var field reflect.StructField
 		found := false
 		for _, segment := range strings.Split(path, ".") {
+			if _, isKey := strictcomponent.MapKey(segment); isKey {
+				if ft != reflect.TypeFor[map[string]string]() {
+					return nil, fmt.Errorf("slice element %s: field %s has type %s, want map[string]string", schema.Elem, path, ft)
+				}
+				ft = reflect.TypeFor[string]()
+				continue
+			}
 			if ft.Kind() != reflect.Struct {
 				return nil, fmt.Errorf("slice element %s: field %s is not a struct", schema.Elem, path)
 			}
@@ -2598,6 +2626,8 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 		switch {
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
+		case fieldType == "map[string]string":
+			proved, err = requireStrictStringMap(raw)
 		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
 			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
 				proved, err = requireStrictSliceValue(raw, schema)
@@ -2670,6 +2700,8 @@ func strictSpreadPropsFromTypedFrame(comp *ir.Component, frame map[string]any) (
 		switch {
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
+		case fieldType == "map[string]string":
+			proved, err = requireStrictStringMap(raw)
 		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
 			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
 				proved, err = requireStrictSliceValue(raw, schema)
