@@ -95,7 +95,7 @@ const env = { ASSETS: { async fetch(request) {
 for (const [accept, want] of [
   ["br, gzip", "br"], ["gzip", "gzip"], ["br;q=0, gzip", "gzip"],
   ["br;q=0, gzip;q=0", null], ["identity", null], ["", null],
-  ["*", "br"], ["*;q=1, br;q=0", "gzip"], ["*;q=0", null],
+  ["*", "br"], ["*;q=1, br;q=0", "gzip"],
   ["br;q=invalid, gzip", "gzip"],
 ]) {
   const response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": accept } }), env);
@@ -107,6 +107,23 @@ for (const [accept, want] of [
   assert.equal(response.headers.get("ETag"), want ? 'W/"identity-body"' : '"identity-body"');
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), want === "br" ? br : want === "gzip" ? gzip : raw);
 }
+
+for (const [path, accept, status, encoding] of [
+ ["/small.txt", "br, identity;q=0", 200, "br"],
+ ["/small.txt", "*;q=0", 406, null],
+ ["/small.txt", "*;q=0, identity;q=1", 200, null],
+ ["/index.html", "*;q=0", 406, null],
+]) {
+ const r = await worker.fetch(new Request("https://example.test" + path, { headers: {"Accept-Encoding":accept} }), env);
+ assert.equal(r.status, status, path + " " + accept);
+ assert.equal(r.headers.get("Content-Encoding"), encoding);
+ await r.arrayBuffer();
+}
+const denied = await worker.fetch(new Request("https://example.test/absent.css", {headers:{"Accept-Encoding":"br, identity;q=0"}}), {
+ ASSETS:{fetch: async () => new Response("unencoded", {headers:{"Content-Type":"text/css"}})}
+});
+assert.equal(denied.status, 406, "missing accepted sidecars cannot fall back to rejected identity");
+await denied.arrayBuffer();
 
 files.delete("/index.html.br");
 let response = await worker.fetch(new Request("https://example.test/", { headers: { "Accept-Encoding": "br, gzip" } }), env);

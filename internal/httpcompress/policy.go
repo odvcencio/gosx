@@ -12,7 +12,7 @@ const MinimumSize = 1024
 // Accepts reports whether an encoding is allowed, including wildcard support.
 // An explicit entry takes precedence over a wildcard, even when its q is zero.
 func Accepts(header, encoding string) bool {
-	wildcard := false
+	wildcard := strings.EqualFold(encoding, "identity")
 	for _, part := range strings.Split(header, ",") {
 		fields := strings.Split(part, ";")
 		token := strings.TrimSpace(fields[0])

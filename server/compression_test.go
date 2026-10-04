@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -44,7 +46,7 @@ func TestCompressionNegotiation(t *testing.T) {
 		{"br;q=0, gzip", "gzip"}, {"br;q=0, gzip;q=0", ""},
 		{"identity", ""}, {"", ""}, {"xgzip, zebra", ""},
 		{"BR; Q=0.5, gzip;q=1", "br"}, {"*", "br"},
-		{"*;q=1, br;q=0", "gzip"}, {"*;q=0", ""},
+		{"*;q=1, br;q=0", "gzip"},
 		{"br;q=invalid, gzip;q=0.8", "gzip"}, {"br;q=NaN, gzip;q=2", ""},
 	} {
 		t.Run(tc.accept, func(t *testing.T) {
@@ -394,5 +396,145 @@ func TestCompressionPreservesTrailersSetAfterWrite(t *testing.T) {
 				t.Fatalf("prefixed trailer = %q, want late (trailers %v)", got, resp.Trailer)
 			}
 		})
+	}
+}
+
+func TestCompressionRejectsUnacceptableIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		accept, contentType, encoding string
+		size, status                  int
+		flush                         bool
+	}{
+		{"br, identity;q=0", "text/plain", "br", 100, 200, false},
+		{"gzip, identity;q=0", "text/plain", "gzip", 100, 200, true},
+		{"*;q=0", "text/plain", "", 2048, 406, false},
+		{"br;q=0, gzip;q=0, identity;q=0", "text/plain", "", 100, 406, true},
+		{"br, identity;q=0", "application/octet-stream", "", 100, 406, false},
+		{"*;q=0, identity;q=1", "text/plain", "", 100, 200, false},
+	} {
+		t.Run(tc.accept+tc.contentType, func(t *testing.T) {
+			raw := bytes.Repeat([]byte("x"), tc.size)
+			h := CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+				_, _ = w.Write(raw)
+				if tc.flush {
+					w.(http.Flusher).Flush()
+				}
+			}))
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("Accept-Encoding", tc.accept)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != tc.status || w.Header().Get("Content-Encoding") != tc.encoding {
+				t.Fatalf("status=%d encoding=%q", w.Code, w.Header().Get("Content-Encoding"))
+			}
+			if tc.status == 200 && !bytes.Equal(decodeCompressedResponse(t, tc.encoding, w.Body.Bytes()), raw) {
+				t.Fatal("body changed")
+			}
+			if tc.status == 406 && w.Body.Len() != 0 {
+				t.Fatal("unacceptable representation was sent")
+			}
+		})
+	}
+}
+
+func TestCompressionHijackCommitsHeaders(t *testing.T) {
+	for _, accept := range []string{"", "br"} {
+		t.Run(accept, func(t *testing.T) {
+			errs := make(chan error, 1)
+			h := CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Tunnel", "ready")
+				w.WriteHeader(http.StatusOK)
+				conn, rw, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					errs <- err
+					return
+				}
+				defer conn.Close()
+				_, err = rw.WriteString("tunnel-data")
+				if err == nil {
+					err = rw.Flush()
+				}
+				errs <- err
+			}))
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+			conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			_, err = fmt.Fprintf(conn, "CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\nAccept-Encoding: %s\r\n\r\n", accept)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := bufio.NewReader(conn)
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			if line != "HTTP/1.1 200 OK\r\n" {
+				t.Fatalf("status line=%q", line)
+			}
+			var headers strings.Builder
+			for {
+				line, err = reader.ReadString('\n')
+				if err != nil {
+					t.Fatal(err)
+				}
+				if line == "\r\n" {
+					break
+				}
+				headers.WriteString(line)
+			}
+			if !strings.Contains(headers.String(), "X-Tunnel: ready") {
+				t.Fatal("committed header missing")
+			}
+			body, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != "tunnel-data" {
+				t.Fatalf("tunnel bytes=%q", body)
+			}
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type hijackRecordingWriter struct {
+	*httptest.ResponseRecorder
+	hijacked          bool
+	writesAfterHijack int
+}
+
+func (w *hijackRecordingWriter) WriteHeader(status int) {
+	if w.hijacked {
+		w.writesAfterHijack++
+		return
+	}
+	w.ResponseRecorder.WriteHeader(status)
+}
+func (w *hijackRecordingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.hijacked = true
+	return nil, nil, nil
+}
+func TestCompressionRawHijackSkipsFinalization(t *testing.T) {
+	w := &hijackRecordingWriter{ResponseRecorder: httptest.NewRecorder()}
+	handler := CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, err := w.(http.Hijacker).Hijack(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("late")); err != http.ErrHijacked {
+			t.Fatalf("late write: %v", err)
+		}
+	}))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodConnect, "/", nil))
+	if w.writesAfterHijack != 0 {
+		t.Fatal("middleware finalized HTTP output after raw takeover")
 	}
 }
