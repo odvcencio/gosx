@@ -46,7 +46,7 @@ func CompressionMiddleware() Middleware {
 			} else if requestAcceptsGzip(r) {
 				encoding = "gzip"
 			}
-			cw := &compressionWriter{ResponseWriter: w, encoding: encoding}
+			cw := &compressionWriter{ResponseWriter: w, encoding: encoding, identityRejected: !httpcompress.Accepts(r.Header.Get("Accept-Encoding"), "identity")}
 			var writer http.ResponseWriter = cw
 			_, flush := w.(http.Flusher)
 			_, flushError := w.(interface{ FlushError() error })
@@ -61,16 +61,19 @@ func CompressionMiddleware() Middleware {
 
 type compressionWriter struct {
 	http.ResponseWriter
-	encoding   string
-	status     int
-	headers    http.Header
-	buffer     []byte
-	started    bool
-	compressor responseCompressor
+	encoding         string
+	status           int
+	headers          http.Header
+	buffer           []byte
+	started          bool
+	compressor       responseCompressor
+	identityRejected bool
+	rejected         bool
+	hijacked         bool
 }
 
 func (w *compressionWriter) WriteHeader(status int) {
-	if w.status != 0 || w.started {
+	if w.status != 0 || w.started || w.hijacked {
 		return
 	}
 	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
@@ -94,6 +97,12 @@ func (w *compressionWriter) WriteHeader(status int) {
 }
 
 func (w *compressionWriter) Write(data []byte) (int, error) {
+	if w.hijacked {
+		return 0, http.ErrHijacked
+	}
+	if w.rejected {
+		return len(data), nil
+	}
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -107,6 +116,9 @@ func (w *compressionWriter) Write(data []byte) (int, error) {
 	}
 	if err := w.start(true); err != nil {
 		return 0, err
+	}
+	if w.rejected {
+		return len(data), nil
 	}
 	written, err := w.bodyWriter().Write(data[n:])
 	return n + written, err
@@ -131,7 +143,20 @@ func (w *compressionWriter) start(compress bool) error {
 	if eligible {
 		addAcceptEncodingVary(h)
 	}
-	if compress && eligible && w.encoding != "" {
+	if w.identityRejected && h.Get("Content-Encoding") == "" &&
+		w.status != http.StatusSwitchingProtocols && w.status != http.StatusNoContent && w.status != http.StatusNotModified &&
+		(len(w.buffer) > 0 || h.Get("Content-Type") != "") {
+		if eligible && w.encoding != "" {
+			compress = true
+		} else {
+			w.status = http.StatusNotAcceptable
+			w.buffer = nil
+			w.rejected = true
+			h.Del("Content-Length")
+			addAcceptEncodingVary(h)
+		}
+	}
+	if compress && eligible && w.encoding != "" && !w.rejected {
 		h.Del("Content-Length")
 		h.Set("Content-Encoding", w.encoding)
 		weakenETag(h)
@@ -175,6 +200,9 @@ func (w *compressionWriter) start(compress bool) error {
 }
 
 func (w *compressionWriter) bodyWriter() io.Writer {
+	if w.rejected {
+		return io.Discard
+	}
 	if w.compressor != nil {
 		return w.compressor
 	}
@@ -182,6 +210,9 @@ func (w *compressionWriter) bodyWriter() io.Writer {
 }
 
 func (w *compressionWriter) finish() {
+	if w.hijacked {
+		return
+	}
 	_ = w.start(len(w.buffer) >= httpcompress.MinimumSize)
 	if w.compressor == nil {
 		return
@@ -195,12 +226,28 @@ func (w *compressionWriter) finish() {
 		compressor.Reset(io.Discard)
 		gzipWriterPool.Put(compressor)
 	}
+	w.compressor = nil
 }
 
 func (w *compressionWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *compressionWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return http.NewResponseController(w.ResponseWriter).Hijack()
+	// A raw takeover without prior HTTP output must remain raw. Once the
+	// handler has committed a response, send that output before handing over.
+	if w.status != 0 || w.started {
+		if err := w.start(false); err != nil {
+			return nil, nil, err
+		}
+		w.finish()
+		if err := http.NewResponseController(w.ResponseWriter).Flush(); err != nil && err != http.ErrNotSupported {
+			return nil, nil, err
+		}
+	}
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.hijacked = true
+	}
+	return conn, rw, err
 }
 
 type compressionFlushWriter struct{ *compressionWriter }
