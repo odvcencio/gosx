@@ -301,6 +301,33 @@ for (const extension of [false, true]) {
     assert.ok(h.gl.ops.some(op => op[0] === "deleteProgram"), "compiled program records release their shaders");
   });
 }
+test("detail meshes wait for parallel linking before uploading lights and drawing", t => {
+  const h = parallelRendererHarness();
+  t.after(() => h.renderer.dispose());
+  h.setComplete(true);
+  h.raf.flush(16);
+  h.setComplete(false);
+  const api = h.env.context.__gosx_scene3d_api;
+  const objects = [{ id: "detail", kind: "mesh", color: "red", detail: { ground: { albedo: "/sand.png", scale: 3 } }, vertices: {
+    count: 3, positions: [-1,-1,0,1,-1,0,0,1,0], normals: [0,0,1,0,0,1,0,0,1], uvs: [0,0,1,0,0.5,1],
+  } }];
+  const bundle = api.createSceneRenderBundle(64,64,"#000000",{x:0,y:0,z:5,fov:60,near:0.1,far:100},objects,[],[],[],[],{},0,[],[],[],[],[],0,false);
+  const draws = [], draw = h.gl.drawArrays.bind(h.gl);
+  h.gl.drawArrays = (...args) => { draws.push(h.gl._activeProgram); return draw(...args); };
+  assert.doesNotThrow(() => h.renderer.render(bundle, { width: 64, height: 64 }));
+  h.setComplete(true);
+  h.raf.flush(32);
+  h.setComplete(false);
+  assert.doesNotThrow(() => h.renderer.render(bundle, { width: 64, height: 64 }));
+  const program = h.gl.programs.find(program => program.attached.some(shader => shader.source.includes("DetailResult detailResult = detailApply")));
+  assert.ok(program, "the detailed mesh submits its shader");
+  assert.ok(!draws.includes(program), "an unfinished detail shader never draws");
+  h.setComplete(true);
+  h.raf.flush(48);
+  assert.doesNotThrow(() => h.renderer.render(bundle, { width: 64, height: 64 }));
+  assert.ok(draws.includes(program), "the mesh draws after the uniforms are initialized");
+});
+
 test("ocean locations and draws wait for parallel shader completion", t => {
   const h = parallelRendererHarness();
   t.after(() => h.renderer.dispose());
