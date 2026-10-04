@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+	"m31labs.dev/gosx/internal/localapp"
 )
 
 func TestRunInitStarterFormPrerenderAndCSRF(t *testing.T) {
@@ -80,7 +81,11 @@ func init() {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "PORT="+port, "GOSX_APP_ROOT="+cmd.Dir, "GOWORK=off", "GOSX_STATIC_EXPORT=")
+	localEnv, err := localapp.Environment(os.Environ(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(localEnv, "PUBLIC_URL="+base, "GOSX_APP_ROOT="+cmd.Dir, "GOWORK=off", "GOSX_STATIC_EXPORT=")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

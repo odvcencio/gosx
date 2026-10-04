@@ -378,6 +378,35 @@ func TestResolveListenAddrUsesPortEnv(t *testing.T) {
 	}
 }
 
+func TestResolveListenAddrSeparatesLocalBindingFromPort(t *testing.T) {
+	for _, tc := range []struct {
+		name, port, want string
+	}{
+		{"unset", "", "localhost:3000"},
+		{"numeric", "38177", "localhost:38177"},
+		{"host-port", "127.0.0.1:38177", "127.0.0.1:38177"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PORT", tc.port)
+			t.Setenv("PUBLIC_URL", "https://example.test")
+			t.Setenv("GOSX_LISTEN_ADDR", "")
+			if got := resolveListenAddr("localhost:3000"); got != tc.want {
+				t.Fatalf("without override = %q, want %q", got, tc.want)
+			}
+			t.Setenv("GOSX_LISTEN_ADDR", "127.0.0.1:9000")
+			if got := resolveListenAddr("localhost:3000"); got != "127.0.0.1:9000" {
+				t.Fatalf("local binding = %q", got)
+			}
+			if got := os.Getenv("PORT"); got != tc.port {
+				t.Fatalf("PORT changed to %q", got)
+			}
+			if got := os.Getenv("PUBLIC_URL"); got != "https://example.test" {
+				t.Fatalf("PUBLIC_URL changed to %q", got)
+			}
+		})
+	}
+}
+
 func TestResolveListenAddrPrefersExplicitPortAddrEnv(t *testing.T) {
 	prev := os.Getenv("PORT")
 	t.Cleanup(func() {

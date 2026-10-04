@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
+	"m31labs.dev/gosx/internal/localapp"
 	"m31labs.dev/gosx/perf"
 	"m31labs.dev/gosx/visual"
 )
@@ -4010,7 +4012,12 @@ func startGoRunFixtureServer(ctx context.Context, app string, port int, readyPat
 	serverCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(serverCtx, "go", "run", ".")
 	cmd.Dir = app
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	localEnv, err := localapp.Environment(os.Environ(), strconv.Itoa(port))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	cmd.Env = append(localEnv, fmt.Sprintf("PUBLIC_URL=http://127.0.0.1:%d", port))
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err := cmd.Start(); err != nil {

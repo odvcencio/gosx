@@ -762,7 +762,8 @@ func (a *App) registerRewriteRoutes(mux *http.ServeMux, dispatch func(http.Respo
 	}
 }
 
-// ListenAndServe starts the HTTP server.
+// ListenAndServe starts the HTTP server. GOSX_LISTEN_ADDR overrides the listen
+// address separately from PORT and PUBLIC_URL, for example for local prerendering.
 func (a *App) ListenAndServe(addr string) error {
 	handler := a.Build()
 	srv := &http.Server{
@@ -779,6 +780,9 @@ func (a *App) ListenAndServe(addr string) error {
 }
 
 func resolveListenAddr(addr string) string {
+	if listenAddr := strings.TrimSpace(os.Getenv("GOSX_LISTEN_ADDR")); listenAddr != "" {
+		return listenAddr
+	}
 	port := strings.TrimSpace(os.Getenv("PORT"))
 	if port == "" {
 		return addr

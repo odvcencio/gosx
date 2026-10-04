@@ -628,6 +628,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 }
 
 func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -738,7 +740,10 @@ func main() {
 	}
 	listenAddr := "127.0.0.1:0"
 	if port := os.Getenv("PORT"); port != "" {
-		listenAddr = "127.0.0.1:" + strings.TrimPrefix(port, ":")
+		listenAddr = port
+		if _, _, err := net.SplitHostPort(port); err != nil {
+			listenAddr = net.JoinHostPort("127.0.0.1", strings.TrimPrefix(port, ":"))
+		}
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -964,6 +969,8 @@ component Layout(props: LayoutProps) {
 }
 
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -1004,6 +1011,8 @@ func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 }
 
 func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}

@@ -29,6 +29,7 @@ func TestBlackglassBeachDiscoveriesServeWithinWireBudget(t *testing.T) {
 	if err := json.Unmarshal(data, &limits); err != nil {
 		t.Fatal(err)
 	}
+	configureDocsTestSecret(t)
 	app, err := buildDocsApp(root, "8080")
 	if err != nil {
 		t.Fatal(err)

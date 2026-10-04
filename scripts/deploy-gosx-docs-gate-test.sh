@@ -274,7 +274,7 @@ if grep -F "real-cluster-secret" "$identity_secret_log" >/dev/null; then
 	cat "$identity_secret_log" >&2
 	exit 1
 fi
-if ! grep -F "gosx-docs-local-identity-" "$identity_secret_log" >/dev/null; then
+if ! grep -E '^[0-9a-f]{64}$' "$identity_secret_log" >/dev/null; then
 	echo "gosx docs deploy gate test: local identity process did not receive a disposable secret" >&2
 	cat "$identity_secret_log" >&2
 	exit 1

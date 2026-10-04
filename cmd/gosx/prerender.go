@@ -19,6 +19,7 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/internal/localapp"
 	"m31labs.dev/gosx/route"
 )
 
@@ -92,8 +93,11 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	cmd.Dir = appRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
-		"PORT="+internalPort,
+	localEnv, err := localapp.Environment(os.Environ(), internalPort)
+	if err != nil {
+		return exportManifest{}, err
+	}
+	cmd.Env = append(localEnv,
 		"GOSX_APP_ROOT="+appRoot,
 		"GOSX_STATIC_EXPORT=1",
 	)
