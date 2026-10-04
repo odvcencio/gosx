@@ -201,9 +201,11 @@
     if (!mount || typeof refresh !== "function") {
       return function() {};
     }
-    let resizeObserver = null;
+    let resizeObserver: ResizeObserver | null = null;
     let windowResizeListener = null;
     let stopEnvironment = null;
+    let observeTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
 
     // Coalesce ResizeObserver / window.resize fires via a microtask flag so
     // rapid-fire events (e.g., Firefox subpixel canvas dim fluctuations during
@@ -215,14 +217,14 @@
     // transitions (see runtime.test.js offscreen-rerender deferral test).
     var resizeRefreshPending = false;
     function scheduleResizeRefresh() {
-      if (resizeRefreshPending) {
+      if (disposed || resizeRefreshPending) {
         return;
       }
       resizeRefreshPending = true;
       if (typeof Promise === "function") {
         Promise.resolve().then(function() {
           resizeRefreshPending = false;
-          refresh("resize");
+          if (!disposed) refresh("resize");
         });
       } else {
         resizeRefreshPending = false;
@@ -232,9 +234,17 @@
 
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(scheduleResizeRefresh);
-      if (typeof resizeObserver.observe === "function") {
-        resizeObserver.observe(mount);
-      }
+      // The mount is an ancestor of the canvas. Engine mounting can run in
+      // a descendant ResizeObserver delivery; observing the ancestor there
+      // creates a shallower notification that WebKit cannot deliver in that
+      // cycle. Start observation in a later task outside that delivery cycle.
+      const observeMount = function() {
+        observeTimer = null;
+        if (!disposed && typeof resizeObserver.observe === "function") {
+          resizeObserver.observe(mount);
+        }
+      };
+      observeTimer = setTimeout(observeMount, 0);
     } else if (typeof window.addEventListener === "function") {
       windowResizeListener = scheduleResizeRefresh;
       window.addEventListener("resize", windowResizeListener);
@@ -253,6 +263,11 @@
     }
 
     return function() {
+      disposed = true;
+      if (observeTimer != null) {
+        clearTimeout(observeTimer);
+        observeTimer = null;
+      }
       if (resizeObserver && typeof resizeObserver.disconnect === "function") {
         resizeObserver.disconnect();
       }
