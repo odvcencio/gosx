@@ -116,10 +116,13 @@ test-race:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test ouroboros-race
 
 # Pull requests exercise the reviewed shared-state surfaces without rerunning
-# CPU-heavy codec and vector kernels under the race detector. Protected-branch
-# pushes race-build every package and run every test except nine explicitly
-# validated real-repository evidence recomputations in perf/ouroboros. The unit
-# lane runs those deterministic tests; the scoped race lane retains a direct
+# CPU-heavy codec and vector kernels under the race detector. This is a subset
+# of test-race: it excludes cmd/gosx, whose production-build tests require
+# TinyGo and run without race instrumentation in test-cli on both events.
+# Protected-branch pushes race-build every package and run every test except
+# nine explicitly validated real-repository evidence recomputations in
+# perf/ouroboros. The unit lane runs those deterministic tests; the scoped
+# race lane retains a direct
 # concurrent network-capture mutation/snapshot test.
 test-race-pr:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test race
