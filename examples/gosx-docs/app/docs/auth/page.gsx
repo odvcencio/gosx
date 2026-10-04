@@ -93,7 +93,7 @@ func Page() Node {
 		<p>
 			The default memory store is process-local. Use the Redis adapter or another
 			<span class="inline-code">MagicLinkStore</span>
-			for multiple instances and durable flow continuity. When no sender is configured, the request handler exposes the URL in JSON or flash output; configure a sender before production.
+			for multiple instances and durable flow continuity. A sender is required: the request handler fails closed without one and never returns the sign-in link to the requester. This local demo's sender prints the link to the server log.
 		</p>
 		<If cond={data.authFlows.magicLinkEnabled}>
 			<form class="docs-form" method="post" action={data.authFlows.magicLinkRequestPath}>
@@ -113,9 +113,9 @@ func Page() Node {
 						:
 						{flash.magicLink.email}
 					</p>
-					<If cond={flash.magicLink.url != nil}>
-						<a class="cta-link" href={flash.magicLink.url}>Open this local demo link</a>
-					</If>
+					<p>
+						Open the sign-in link printed in the server log.
+					</p>
 				</div>
 			</If>
 		</If>

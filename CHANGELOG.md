@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+## v0.57.5
+
+### Security: passkey enrollment and magic-link delivery (auth)
+
+This release fixes two account-takeover flaws in the optional `auth` package
+(advisory GHSA-847f-9jr3-mfqp). Upgrade if your application mounts the WebAuthn
+or magic-link handlers.
+
+- Passkey enrollment resolves the user from trusted server state (the signed-in
+  session, or `WebAuthnOptions.RegistrationUser` for authorized sign-up) and
+  never from the request body. Registration no longer signs users in and keeps
+  existing session privileges ([#451](https://github.com/odvcencio/gosx/pull/451)).
+- Memory and Redis credential stores reject duplicate credential IDs atomically.
+  Anonymous login no longer discloses a user's credential IDs and uses
+  discoverable credentials.
+- Magic links fail closed without a configured `Sender`; responses never include
+  the sign-in link.
+
+**Breaking:** configure `MagicLinkOptions.Sender`, mount session, auth and CSRF
+middleware before the auth handlers, use `WebAuthnOptions.RegistrationUser` for
+sign-up flows, and make custom credential stores reject duplicate IDs atomically.
+The docs app's local magic-link demo now prints its link to the server log.
+
+### Security: safe session secrets in new apps
+
+- The scaffold refuses to start outside development with a missing or
+  placeholder `SESSION_SECRET`, generates a random development secret, and
+  ignores `.env`. Export and prerender give local child processes a fresh random
+  secret and bind them to loopback, keeping numeric `PORT` values working
+  ([#447](https://github.com/odvcencio/gosx/pull/447)).
+
+### Fixed
+
+- Compression honors explicit encoding exclusions and preserves output that was
+  already committed before a connection is hijacked
+  ([#448](https://github.com/odvcencio/gosx/pull/448)).
+- Scene3D glass keeps transparent canvases, explicit pixel caps, background
+  colors across quality tiers, additive blending and volume settings on
+  instanced and imported meshes ([#449](https://github.com/odvcencio/gosx/pull/449)).
+- Scene3D ocean and water: removing an ocean through Go diffs or typed
+  commands, adding one after mount, paused water systems, horizon fog over dry
+  bathymetry, failed water shaders blanking the renderer, a leaked readiness
+  listener on abandoned mounts, and drifting clouds keeping the render loop
+  active ([#450](https://github.com/odvcencio/gosx/pull/450)).
+- Push CI installs TinyGo for the race tests that need it, so push and PR runs
+  cover the same tests ([#446](https://github.com/odvcencio/gosx/pull/446)).
+
+### Added
+
+- Scene3D ambient occlusion, contact shadows and TAA with safe fallbacks
+  ([#438](https://github.com/odvcencio/gosx/pull/438)).
+- The Blackglass Beach walkable demo in the docs app, with open ocean,
+  bathymetry and glass refraction ([#440](https://github.com/odvcencio/gosx/pull/440)).
+
 ## v0.57.4
 
 ### Fixed: responsive scenes inside scaled containers
