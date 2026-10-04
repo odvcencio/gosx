@@ -183,7 +183,7 @@
       if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
       const sky = sceneState.environment && sceneState.environment.sky;
       const clouds = sky && sky.mode === "physical" && sky.clouds;
-      if (clouds && clouds.coverage > 0 && clouds.opacity > 0 && clouds.speed > 0) return { wants: true, reason: "clouds" };
+      if (clouds && clouds.coverage > 0 && clouds.opacity > 0 && clouds.speed > 0 && sceneAtmosphereQuality({ atmosphereTier: sceneAtmosphereTier(adaptiveQuality, capability.tier), qualityEnabled: adaptiveQuality.enabled, qualityProfile: adaptiveQuality.activeProfile }).clouds) return { wants: true, reason: "clouds" };
       if (Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length > 0) {
         if (sceneWaterSystemsPaused(sceneState)) {
           return { wants: false, reason: "water-paused" };

@@ -261,6 +261,10 @@ for (const backend of ["WebGL", "WebGPU"]) for (const purpose of ["pixel cap", "
    if (backend === "WebGL") {
     const ops = h.canvas.getContext("webgl2").ops;
     rgb = ops.findLast(op => op[0] === "clearColor").slice(1,4);
+    if (tier !== "constrained") {
+     const background = ops.findLast(op => op[0] === "uniform4fv" && op[1] === "u_background");
+     if (background && background[2][3] >= 0) rgb = background[2].slice(0,3);
+    }
     if (purpose === "pixel cap" && tier !== "constrained") assert.ok(ops.some(op => op[0] === "viewport" && op[3] === 256 && op[4] === 256), "implicit target obeys the cap");
    } else {
     const pass = h.fake.state.renderPasses.slice(passStart).find(p => p.descriptor.colorAttachments?.[0]?.clearValue);
@@ -271,7 +275,7 @@ for (const backend of ["WebGL", "WebGPU"]) for (const purpose of ["pixel cap", "
     }
    }
    if (purpose === "flat background") for (const channel of rgb) {
-    const output = tier === "constrained" ? channel : Math.min(1, (channel*(2.51*channel+0.03))/(channel*(2.43*channel+0.59)+0.14)) ** (1/2.2);
+    const output = tier === "constrained" || backend === "WebGL" ? channel : Math.min(1, (channel*(2.51*channel+0.03))/(channel*(2.43*channel+0.59)+0.14)) ** (1/2.2);
     assert.ok(Math.abs(output - 128/255) < 1e-4, `${tier} retains authored background: ${output}`);
    }
   }
@@ -279,33 +283,57 @@ for (const backend of ["WebGL", "WebGPU"]) for (const purpose of ["pixel cap", "
 }
 
 
-for (const backend of ["WebGL", "WebGPU"]) test(`${backend} white implicit backgrounds remain finite in half-float targets`, async t => {
+for (const [backend, hdr] of [["WebGL",false],["WebGL",true],["WebGPU",true]]) test(`${backend} implicit backgrounds survive ${hdr ? "HDR" : "RGBA8"} output`, async t => {
  const h = backend === "WebGPU" ? await createBoardWebGPUHarness({fresh:true}) : createWebGLRendererForPost({fresh:true});
  t.after(() => h.renderer.dispose());
+ const gl = backend === "WebGL" ? h.canvas.getContext("webgl2") : null;
+ const allocations=[];
+ if(gl) {
+  gl.RGBA8=0x8058;gl.RGBA16F=0x881a;
+  const upload=gl.texImage2D.bind(gl);gl.texImage2D=(...args)=>{allocations.push(args[2]);upload(...args);};
+ }
+ if(gl && hdr) {
+  const extension=gl.getExtension.bind(gl);
+  gl.getExtension=name=>name==="EXT_color_buffer_float" ? {} : extension(name);
+  gl.HALF_FLOAT=0x140b;
+ }
  const api = h.env.context.__gosx_scene3d_api;
- const bundle = api.createSceneRenderBundle(64,64,"#ffffff",{x:0,y:0,z:5,fov:60,near:0.1,far:100},
-  [triangle({id:"glass",materialKind:"standard",transmission:1})],[],[],[],[],{},0,[],[],[],[],[],0,false);
- for (const mode of ["reinhard", "filmic"]) {
-  bundle.environment.toneMapping = mode; bundle.environment.exposure = 0.05;
+ for (const [background, mode, exposure, expected] of [
+  ["#ffffff","reinhard",0.05,255],["#ffffff","filmic",0.05,255],
+  ["#808080","REINHARD",1,128],["#808080","Reinhard",1,128],["#808080"," FILMIC ",1,128],
+  ["transparent","reinhard",0.05,0],
+ ]) {
+  const bundle = api.createSceneRenderBundle(64,64,background,{x:0,y:0,z:5,fov:60,near:0.1,far:100},
+   [triangle({id:"glass",materialKind:"standard",transmission:1})],[],[],[],[],{},0,[],[],[],[],[],0,false);
+  bundle.environment.toneMapping=mode;bundle.environment.exposure=exposure;
   for (const tier of ["full", "constrained", "full"]) {
-   const start = backend === "WebGPU" ? h.fake.state.renderPasses.length : 0;
+   const start = backend === "WebGPU" ? h.fake.state.renderPasses.length : gl.ops.length;
    h.renderer.render(bundle,{width:64,height:64},{qualityProfile:{tier}});
-   let rgb;
-   if (backend === "WebGL") rgb = h.canvas.getContext("webgl2").ops.findLast(op => op[0] === "clearColor").slice(1,4);
-   else {
-    const clear = h.fake.state.renderPasses.slice(start).find(p => p.descriptor.colorAttachments?.[0]?.clearValue).descriptor.colorAttachments[0].clearValue;
-    rgb = [clear.r,clear.g,clear.b];
-   }
-   for (const channel of rgb) {
-    const stored = channel > 65504 ? Infinity : channel;
-    let output = stored;
-    if (tier === "full") {
-     const x = Math.max(0, stored * 0.05 - (mode === "filmic" ? 0.004 : 0));
-     output = mode === "filmic" ? x*(6.2*x+0.5)/(x*(6.2*x+1.7)+0.06) : (x/(x+1)) ** (1/2.2);
+   let rgba;
+   if(gl) rgba=gl.ops.findLast(op=>op[0]==="clearColor").slice(1);
+   else {const clear=h.fake.state.renderPasses.slice(start).find(p=>p.descriptor.colorAttachments?.[0]?.clearValue).descriptor.colorAttachments[0].clearValue;rgba=[clear.r,clear.g,clear.b,clear.a];}
+   let pixels=rgba;
+   if(tier==="full") {
+    const stored=rgba.map((value,i)=>i===3?value:hdr?value:Math.round(Math.min(1,Math.max(0,value))*255)/255);
+    // Model the actual allocated storage and the shipped output shader's
+    // clear-pixel branch; foreground still follows the selected tone curve.
+    const normalized=mode.trim().toLowerCase();
+    pixels=stored.map((value,i)=>{
+     if(i===3)return value;
+     const x=Math.max(0,value*exposure-(normalized==="filmic"?0.004:0));
+     return normalized==="filmic"?x*(6.2*x+0.5)/(x*(6.2*x+1.7)+0.06):Math.pow(x/(x+1),1/2.2);
+    });
+    if(gl && !hdr) {
+     const ops=gl.ops.slice(start);
+     assert.ok(allocations.includes(gl.RGBA8),"LDR allocates RGBA8");
+     assert.ok(!allocations.includes(gl.RGBA16F),"LDR never allocates half-float targets");
+     assert.match(gl.programMatching("u_background").attached.find(shader=>shader.type===gl.FRAGMENT_SHADER).source,/u_background.a >= 0.0 && texColor.a == 0.0/);
+     assert.equal(stored[3],0,"untouched LDR pixels carry the background mask");
+     pixels=ops.findLast(op=>op[0]==="uniform4fv"&&op[1]==="u_background")[2];
     }
-    assert.ok(Number.isFinite(output), "HDR storage and output remain finite");
-    assert.equal(Math.round(output*255),255,"the authored white background survives output conversion");
    }
+   for(const channel of pixels.slice(0,3)) {assert.ok(Number.isFinite(channel));assert.equal(Math.round(channel*255),expected);}
+   assert.equal(pixels[3],background==="transparent"?0:1,"background alpha survives output conversion");
   }
  }
 });
@@ -323,4 +351,42 @@ test("Go instanced replacement resets omitted volume fields in the browser", t =
  assert.equal(material.thickness,0);
  assert.equal(material.attenuationDistance,0);
  assert.deepEqual(Array.from(material.attenuationColor),[1,1,1]);
+});
+
+test("implicit backgrounds survive actual RGBA8 and half-float raster storage", t => {
+ const {spawnSync}=require("node:child_process"),path=require("node:path");
+ const h=createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
+ const api=h.env.context.__gosx_scene3d_api;
+ const bundle=api.createSceneRenderBundle(64,64,"#fff",{x:0,y:0,z:5,fov:60},[triangle({id:"glass",materialKind:"standard",transmission:1})],[],[],[],[],{},0,[],[],[],[],[],0,false);
+ h.renderer.render(bundle,{width:64,height:64});
+ const gl=h.canvas.getContext("webgl2"),fragment=gl.programMatching("u_background").attached.find(shader=>shader.type===gl.FRAGMENT_SHADER).source;
+ const cases=[];
+ for(const ldr of [true,false])for(const [color,mode,exposure] of [["#fff","reinhard",0.05],["#fff","filmic",0.05],["#808080","REINHARD",1],["#808080"," FILMIC ",1],["transparent","reinhard",0.05]]) {
+  const clear=Array.from(api.sceneRenderBackground(color,{mode,exposure}));if(ldr)clear[3]=0;
+  cases.push({ldr,clear,background:Array.from(api.sceneRenderBackground(color,null)),mode:mode.trim().toLowerCase()==="filmic"?3:2,exposure});
+ }
+ const python=require("node:fs").existsSync("/usr/bin/python3")?"/usr/bin/python3":"python3";
+ const run=spawnSync(python,[path.join(__dirname,"testdata/scene3d-background-pixels.py")],{input:JSON.stringify({fragment,cases}),encoding:"utf8",timeout:30000,env:{...process.env,LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe"}});
+ if(run.error?.code==="ENOENT")return t.skip("Python unavailable for optional CPU raster test");
+ assert.equal(run.status,0,run.stderr||String(run.error));const pixels=JSON.parse(run.stdout);if(pixels.skip)return t.skip(pixels.skip);
+ pixels.forEach((pixel,i)=>{
+  assert.deepEqual(pixel.slice(0,4),cases[i].background.map(v=>Math.round(v*255)),"allocated target retains authored background");
+  assert.equal(pixel[7],255,"foreground coverage survives");
+  assert.ok(pixel[4]>0&&pixel[4]<255,"covered foreground still receives output conversion");
+ });
+});
+
+test("background colors retain CSS forms and fallback during output conversion", t => {
+ const h=createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
+ const api=h.env.context.__gosx_scene3d_api;
+ const fallback=[0.03,0.08,0.12,1];
+ for(const [color,expected] of [
+  [" #aBc ",[170/255,187/255,204/255,1]],
+  ["#AABBCC",[170/255,187/255,204/255,1]],
+  ["rgb(12, 34, 56)",[12/255,34/255,56/255,1]],
+  ["rgba(-12, 300, 128, 0.4)",[0,1,128/255,0.4]],
+  ["rgba(1,2,3,5)",[1/255,2/255,3/255,1]],
+  ["rgba(1,2,3,4,5)",fallback],["#abcd",fallback],
+  ["rgb(1,2,invalid)",fallback],[null,fallback],
+ ]) assert.deepEqual(Array.from(api.sceneRenderBackground(color,null)),expected,String(color));
 });

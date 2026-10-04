@@ -223,24 +223,12 @@
     }
 
     const trimmed = value.trim();
-    const shortHex = trimmed.match(/^#([0-9a-f]{3})$/i);
-    if (shortHex) {
-      return [
-        parseInt(shortHex[1][0] + shortHex[1][0], 16) / 255,
-        parseInt(shortHex[1][1] + shortHex[1][1], 16) / 255,
-        parseInt(shortHex[1][2] + shortHex[1][2], 16) / 255,
-        1,
-      ];
-    }
-
-    const fullHex = trimmed.match(/^#([0-9a-f]{6})$/i);
-    if (fullHex) {
-      return [
-        parseInt(fullHex[1].slice(0, 2), 16) / 255,
-        parseInt(fullHex[1].slice(2, 4), 16) / 255,
-        parseInt(fullHex[1].slice(4, 6), 16) / 255,
-        1,
-      ];
+    const hex = trimmed.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const digits = hex[1].length === 3 ? hex[1].replace(/./g, "$&$&") : hex[1];
+      return [0, 2, 4].map(function(offset) {
+        return parseInt(digits.slice(offset, offset + 2), 16) / 255;
+      }).concat(1);
     }
 
     const rgba = trimmed.match(/^rgba?\(([^)]+)\)$/i);
@@ -248,15 +236,9 @@
       const parts = rgba[1].split(",").map(function(part) {
         return Number(part.trim());
       });
-      if (parts.length >= 3 && parts.every(function(part, index) {
-        return Number.isFinite(part) && (index < 3 || index === 3);
-      })) {
-        return [
-          Math.max(0, Math.min(255, parts[0])) / 255,
-          Math.max(0, Math.min(255, parts[1])) / 255,
-          Math.max(0, Math.min(255, parts[2])) / 255,
-          parts.length > 3 ? Math.max(0, Math.min(1, parts[3])) : 1,
-        ];
+      if (parts.length >= 3 && parts.length <= 4 && parts.every(Number.isFinite)) {
+        return parts.slice(0, 3).map(function(part) { return clamp01(part / 255); })
+          .concat(parts.length > 3 ? clamp01(parts[3]) : 1);
       }
     }
 
@@ -264,12 +246,9 @@
   }
 
   function sceneMixRGBA(left, right) {
-    return [
-      (sceneNumber(left && left[0], 0.55) + sceneNumber(right && right[0], 0.55)) / 2,
-      (sceneNumber(left && left[1], 0.88) + sceneNumber(right && right[1], 0.88)) / 2,
-      (sceneNumber(left && left[2], 1) + sceneNumber(right && right[2], 1)) / 2,
-      (sceneNumber(left && left[3], 1) + sceneNumber(right && right[3], 1)) / 2,
-    ];
+    return [0.55, 0.88, 1, 1].map(function(fallback, index) {
+      return (sceneNumber(left && left[index], fallback) + sceneNumber(right && right[index], fallback)) / 2;
+    });
   }
 
   // ---------------------------------------------------------------------------
