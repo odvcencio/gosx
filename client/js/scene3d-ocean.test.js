@@ -180,7 +180,9 @@ test("ocean horizon fog leaves dry bathymetry uncovered in actual raster output"
  const fragment = gl.programMatching("u_ocean[35]").attached.find(shader=>shader.type===gl.FRAGMENT_SHADER).source;
  const uniforms={};
  for(const [name,height] of [["dry",4],["wet",-4]]) uniforms[name]=Array.from(api.sceneOceanUniformData(oceanRecord({surf:0,extent:1000,bathymetry:{src:"/height.png",minX:-2,minZ:-2,maxX:2,maxZ:2,minHeight:height,maxHeight:height}}),{}, {x:0,y:4,z:900},0,false,"high"));
- const result = spawnSync("/usr/bin/python3",[path.join(__dirname,"testdata/scene3d-ocean-pixels.py")],{input:JSON.stringify({fragment,uniforms}),encoding:"utf8",timeout:30000,env:{...process.env,LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe"}});
+ const python = require("node:fs").existsSync("/usr/bin/python3") ? "/usr/bin/python3" : "python3";
+ const result = spawnSync(python,[path.join(__dirname,"testdata/scene3d-ocean-pixels.py")],{input:JSON.stringify({fragment,uniforms}),encoding:"utf8",timeout:30000,env:{...process.env,LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe"}});
+ if(result.error?.code === "ENOENT") return t.skip("Python is unavailable for the optional CPU raster test");
  assert.equal(result.status,0,result.stderr || String(result.error));
  const pixels=JSON.parse(result.stdout);
  if(pixels.skip) return t.skip(pixels.skip);
