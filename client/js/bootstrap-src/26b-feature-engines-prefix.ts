@@ -1110,7 +1110,7 @@
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
       }
 
-      // ensureMarqueeOverlay lazily creates the absolutely-positioned selection
+      // ensureMarqueeOverlay creates the absolutely-positioned selection
       // rectangle inside the canvas's offset parent (mirrors the DOM board's
       // [data-studio-site-map-marquee] overlay). pointer-events:none so it never
       // intercepts the drag. Hidden until the first move.
@@ -1126,17 +1126,20 @@
       }
 
       function clearMarqueeOverlay() {
+        if (marqueeOverlay) marqueeOverlay.style.display = "none";
+      }
+      // Mount once so structural mutations cannot move the viewport mid-drag.
+      ensureMarqueeOverlay();
+      // A board torn down mid-drag must remove its mounted overlay.
+      if (!Array.isArray(instance.extraCleanup)) instance.extraCleanup = [];
+      instance.extraCleanup.push(function() {
         if (marqueeOverlay) {
           if (marqueeOverlay.parentNode) {
             try { marqueeOverlay.parentNode.removeChild(marqueeOverlay); } catch (e) { /* tolerate */ }
           }
           marqueeOverlay = null;
         }
-      }
-      // The overlay is created inside the board, but a board torn down mid-drag
-      // must not leave it behind — register a cleanup on the surface instance.
-      if (!Array.isArray(instance.extraCleanup)) instance.extraCleanup = [];
-      instance.extraCleanup.push(clearMarqueeOverlay);
+      });
 
       // Draw the overlay from the press origin to the current local point,
       // positioned relative to the canvas's offset within its positioned parent.
