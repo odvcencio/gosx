@@ -8831,7 +8831,7 @@
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var authoredPostEffects = postEffects.length > 0;
-      var postFXMaxPixels = authoredPostEffects && typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
+      var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var hasTransmission = sceneTransmissionPresent(bundle);
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
@@ -8876,8 +8876,8 @@
       gl.viewport(0, 0, renderW, renderH);
 
       // Clear — "transparent" clears to fully transparent for alpha compositing.
-      var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
-      const bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
+      var bg = sceneRenderBackground(bundle.background, usePostProcessing && !authoredPostEffects ? postEffects[0] : null);
+
       if (!frameMeta || frameMeta.compositeOverWater !== true) {
         gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
         gl.clearDepth(1);

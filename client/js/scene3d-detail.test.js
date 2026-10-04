@@ -121,13 +121,18 @@ test("WebGPU updates a stable detail group when quality changes", () => {
   assert.equal(writes[0].data[19], 1); assert.equal(writes[1].data[19], 0);
 });
 
-test("Model.Detail reaches every imported primitive without replacing glTF maps", () => {
+function modelOverrideContext() {
   const c = detailContext();
   const mount = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");
   const start = mount.indexOf("  function sceneModelMaterialOverrideSource(");
   const end = mount.indexOf("  function sceneApplyModelLOD(", start);
   assert.ok(start >= 0 && end > start);
   vm.runInContext(mount.slice(start, end), c);
+  return c;
+}
+
+test("Model.Detail reaches every imported primitive without replacing glTF maps", () => {
+  const c = modelOverrideContext();
   const detail = { ground: { albedo: "/detail.png" } };
   const model = c.normalizeSceneModel({ src: "/asset.glb", detail: detail }, 0);
   assert.equal(model.materialOverride.detail.ground.albedo, "/detail.png");
@@ -141,4 +146,17 @@ test("Model.Detail reaches every imported primitive without replacing glTF maps"
     assert.equal(primitive.material.detail, model.materialOverride.detail);
     assert.equal(raw.material.detail, undefined);
   }
+});
+
+test("model overrides retain volume controls and replace embedded glTF volume", () => {
+ const c=modelOverrideContext();
+ for(const volume of [{thickness:2.4,attenuationDistance:3,attenuationColor:[0,0.5,1]}, {thickness:0,attenuationDistance:0,attenuationColor:[1,1,1]}]) {
+  const model=c.normalizeSceneModel({src:"/glass.glb",material:{transmission:1,...volume}},0);
+  assert.equal(model.materialOverride.thickness,volume.thickness);
+  assert.equal(model.materialOverride.attenuationDistance,volume.attenuationDistance);
+  assert.deepEqual(Array.from(model.materialOverride.attenuationColor),volume.attenuationColor);
+  const primitive=c.sceneApplyMaterialOverride({material:{kind:"standard",thickness:5,attenuationDistance:8,attenuationColor:[0.3,0.3,0.3]}},model);
+  assert.equal(primitive.material.thickness,volume.thickness);
+  assert.deepEqual(Array.from(primitive.material.attenuationColor),volume.attenuationColor);
+ }
 });
