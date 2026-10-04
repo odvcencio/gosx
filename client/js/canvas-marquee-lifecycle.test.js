@@ -14,19 +14,27 @@ function harness() {
   const canvas = new FakeElement("canvas", null);
   canvas.clientWidth = 400;
   canvas.clientHeight = 300;
-  canvas.getBoundingClientRect = () => ({ left: 10, top: 20, width: 400, height: 300 });
+  const frames = [];
+  const view = {
+    devicePixelRatio: 1, scrollX: 0, scrollY: 100,
+    requestAnimationFrame(callback) { frames.push(callback); },
+    scrollTo(x, y) { this.scrollX = x; this.scrollY = y; },
+  };
+  canvas.getBoundingClientRect = () => ({ left: 10, top: 120 - view.scrollY, width: 400, height: 300 });
   parent.appendChild(canvas);
   const packets = [];
   const instance = { disposed: false, listeners: [], extraCleanup: [] };
   const context = {
-    window: { devicePixelRatio: 1, __gosx_canvas_event(id, kind, values) { packets.push({ id, kind, values: Array.from(values) }); } },
+    window: Object.assign(view, { __gosx_canvas_event(id, kind, values) { packets.push({ id, kind, values: Array.from(values) }); } }),
     document: { createElement(tag) { return new FakeElement(tag, null); } },
     console,
   };
   vm.createContext(context);
   vm.runInContext(source.slice(start, end), context);
   context._bridgeCanvasBoardEvents("board", canvas, instance);
-  return { parent, canvas, instance, packets };
+  return { parent, canvas, instance, packets, view,
+    flush() { frames.splice(0).forEach((callback) => callback()); } };
+
 }
 
 test("marquee reuses its mounted overlay without structural changes during drag", () => {
@@ -62,4 +70,35 @@ test("pointer cancellation hides the mounted marquee without selecting", () => {
   const overlay = h.parent.children.find((node) => node.hasAttribute("data-gosx-canvas-marquee"));
   assert.equal(overlay.style.display, "none");
   assert.equal(h.packets.length, 0);
+  h.view.scrollY = 40;
+  h.flush();
+  assert.equal(h.view.scrollY, 40, "cancelled gestures do not restore the viewport later");
+});
+
+test("marquee restores the viewport before computing release coordinates", () => {
+  const h = harness();
+  const event = { pointerId: 1, button: 0, shiftKey: true, clientX: 40, clientY: 60, preventDefault() {} };
+  h.canvas.dispatchEvent({ ...event, type: "pointerdown" });
+  h.canvas.dispatchEvent({ ...event, type: "pointermove", clientX: 140, clientY: 160 });
+  h.view.scrollY = 0;
+  h.flush();
+  assert.equal(h.view.scrollY, 100, "a frame restores scrolling caused by overlay layout");
+  h.view.scrollY = 0;
+  h.canvas.dispatchEvent({ ...event, type: "pointerup", clientX: 140, clientY: 160 });
+  assert.deepEqual(h.packets[0].values, [30, 40, 130, 140, 400, 300]);
+  h.view.scrollY = 40;
+  h.flush();
+  assert.equal(h.view.scrollY, 40, "finished gestures leave subsequent scrolling alone");
+});
+
+test("disposed surfaces reject queued viewport restoration", () => {
+  const h = harness();
+  const event = { pointerId: 1, button: 0, shiftKey: true, clientX: 40, clientY: 60, preventDefault() {} };
+  h.canvas.dispatchEvent({ ...event, type: "pointerdown" });
+  h.canvas.dispatchEvent({ ...event, type: "pointermove", clientX: 140, clientY: 160 });
+  h.instance.disposed = true;
+  h.instance.extraCleanup.forEach((cleanup) => cleanup());
+  h.view.scrollY = 40;
+  h.flush();
+  assert.equal(h.view.scrollY, 40);
 });
