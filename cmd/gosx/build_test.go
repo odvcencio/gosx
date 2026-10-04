@@ -740,7 +740,10 @@ func main() {
 	}
 	listenAddr := "127.0.0.1:0"
 	if port := os.Getenv("PORT"); port != "" {
-		listenAddr = "127.0.0.1:" + strings.TrimPrefix(port, ":")
+		listenAddr = port
+		if _, _, err := net.SplitHostPort(port); err != nil {
+			listenAddr = net.JoinHostPort("127.0.0.1", strings.TrimPrefix(port, ":"))
+		}
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
