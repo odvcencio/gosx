@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Serve page navigation as a content-hashed, immutable runtime asset with
+  precompressed gzip and Brotli representations, reducing HTML bytes and
+  request-time compression. Static exports include the asset.
+
 ## v0.57.5
 
 ### Security: passkey enrollment and magic-link delivery (auth)

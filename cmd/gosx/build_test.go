@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"net/http"
 	"os"
 	"os/exec"
@@ -660,13 +661,16 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 	for _, rel := range []string{
 		"dist/static/assets/runtime",
-		"dist/static/gosx",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
 			t.Fatalf("did not expect zero-runtime static build artifact %s: %v", rel, err)
 		}
 	}
 
+	asset := filepath.Join(dir, "dist", "static", filepath.FromSlash(strings.TrimPrefix(runtimehost.NavigationRuntimePath, "/")))
+	if readFile(t, asset) != runtimehost.NavigationRuntime {
+		t.Fatal("production export lost the standalone navigation asset")
+	}
 	stackHTML := readFile(t, filepath.Join(dir, "dist", "static", "stack", "index.html"))
 	if !strings.Contains(stackHTML, `href="../styles.css"`) {
 		t.Fatalf("expected export-safe nested asset url in %q", stackHTML)

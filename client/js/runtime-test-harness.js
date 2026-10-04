@@ -64,7 +64,7 @@ const navigationSource = [
 ].join("\n");
 // navigationRuntimeMinifiedSource is the generated, committed artifact
 // client/runtime/host/navigation_asset.go go:embeds for app.EnableNavigation
-// writes inline into every page (gosx#221). Every behavioral test in this
+// serves as a standalone asset. Every behavioral test in this
 // suite exercises navigationSource above (the readable .ts source) — this
 // minified copy exists only so navigation-runtime-minified.test.js can prove
 // it parses and boots (its IIFE installs its globals) the same way

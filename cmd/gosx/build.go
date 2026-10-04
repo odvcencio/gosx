@@ -17,6 +17,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/ir"
@@ -1276,6 +1277,11 @@ func copyCompressedSidecars(dst, src string) error {
 
 func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref string) (string, bool) {
 	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	// Prerender fetches the embedded navigation asset from the app binary;
+	// it has no source file in the manifest runtime directory.
+	if ref == runtimehost.NavigationRuntimePath {
+		return "", false
+	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/assets/"); ok && rel != "" {
 		return filepath.Join(distDir, "assets", filepath.FromSlash(rel)), true
 	}
