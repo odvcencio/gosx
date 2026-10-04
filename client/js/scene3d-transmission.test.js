@@ -279,6 +279,37 @@ for (const backend of ["WebGL", "WebGPU"]) for (const purpose of ["pixel cap", "
 }
 
 
+for (const backend of ["WebGL", "WebGPU"]) test(`${backend} white implicit backgrounds remain finite in half-float targets`, async t => {
+ const h = backend === "WebGPU" ? await createBoardWebGPUHarness({fresh:true}) : createWebGLRendererForPost({fresh:true});
+ t.after(() => h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api;
+ const bundle = api.createSceneRenderBundle(64,64,"#ffffff",{x:0,y:0,z:5,fov:60,near:0.1,far:100},
+  [triangle({id:"glass",materialKind:"standard",transmission:1})],[],[],[],[],{},0,[],[],[],[],[],0,false);
+ for (const mode of ["reinhard", "filmic"]) {
+  bundle.environment.toneMapping = mode; bundle.environment.exposure = 0.05;
+  for (const tier of ["full", "constrained", "full"]) {
+   const start = backend === "WebGPU" ? h.fake.state.renderPasses.length : 0;
+   h.renderer.render(bundle,{width:64,height:64},{qualityProfile:{tier}});
+   let rgb;
+   if (backend === "WebGL") rgb = h.canvas.getContext("webgl2").ops.findLast(op => op[0] === "clearColor").slice(1,4);
+   else {
+    const clear = h.fake.state.renderPasses.slice(start).find(p => p.descriptor.colorAttachments?.[0]?.clearValue).descriptor.colorAttachments[0].clearValue;
+    rgb = [clear.r,clear.g,clear.b];
+   }
+   for (const channel of rgb) {
+    const stored = channel > 65504 ? Infinity : channel;
+    let output = stored;
+    if (tier === "full") {
+     const x = Math.max(0, stored * 0.05 - (mode === "filmic" ? 0.004 : 0));
+     output = mode === "filmic" ? x*(6.2*x+0.5)/(x*(6.2*x+1.7)+0.06) : (x/(x+1)) ** (1/2.2);
+    }
+    assert.ok(Number.isFinite(output), "HDR storage and output remain finite");
+    assert.equal(Math.round(output*255),255,"the authored white background survives output conversion");
+   }
+  }
+ }
+});
+
 test("Go instanced replacement resets omitted volume fields in the browser", t => {
  const {spawnSync} = require("node:child_process"), path = require("node:path");
  const run = spawnSync("go",["run","./scene/testdata/volume-command"],{cwd:path.join(__dirname,"../.."),encoding:"utf8",timeout:60000});

@@ -39,21 +39,13 @@ fn volumeTransmission(P: vec3f, N: vec3f, V: vec3f, roughness: f32) -> vec3f {
 }
 `;
 
-const WGSL_TRANSMISSION_COPY = `
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var sourceSampler: sampler;
-@fragment fn fs(@location(0) uv: vec2f) -> @location(0) vec4f {
-    return textureSampleLevel(source, sourceSampler, uv, 0.0);
-}
-`;
-
 /** @param {*} device @returns {*} */
 function wgpuCreateTransmissionResources(device) {
     var sampler = device.createSampler({ minFilter: "linear", magFilter: "linear", mipmapFilter: "linear" });
     var uniform = device.createBuffer({ label: "gosx-transmission-capture", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     var texture = null, view = null, views = [], bindings = [], copyBinding = null, sourceView = null;
     var width = 0, height = 0, levels = 0, format = "", pipeline = null;
-    var module = device.createShaderModule({ label: "gosx-transmission-copy", code: WGSL_POST_VERTEX + WGSL_TRANSMISSION_COPY });
+    var module = device.createShaderModule({ label: "gosx-transmission-copy", code: WGSL_POST_VERTEX + "\n" + WGSL_POST_BLIT_FRAGMENT });
     var layout = device.createBindGroupLayout({ entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
@@ -76,7 +68,7 @@ function wgpuCreateTransmissionResources(device) {
                 release(); width = w; height = h; levels = count;
                 if (!pipeline || fmt !== format) {
                     pipeline = device.createRenderPipeline({ label: "gosx-transmission-mips", layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-                        vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fs", targets: [{ format: fmt }] }, primitive: { topology: "triangle-strip" } });
+                        vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: fmt }] }, primitive: { topology: "triangle-strip" } });
                 }
                 format = fmt;
                 texture = device.createTexture({ label: "gosx-transmission-opaque", size: [w, h], format: fmt, mipLevelCount: levels,

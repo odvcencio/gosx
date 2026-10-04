@@ -1210,7 +1210,7 @@
       if (index === 3) return value;
       var y = filmic ? value : Math.pow(value, 2.2), a = c[0] - c[2] * y, b = c[1] - c[3] * y;
       var x = 2 * c[4] * y / Math.max(1e-6, Math.sqrt(b * b + 4 * a * c[4] * y) + b);
-      return (x + (filmic ? 0.004 : 0)) / Math.max(1e-6, sceneNumber(effect.exposure, 1));
+      return sceneClamp((x + (filmic ? 0.004 : 0)) / Math.max(1e-6, sceneNumber(effect.exposure, 1)), 0, 65504);
     });
   }
 
