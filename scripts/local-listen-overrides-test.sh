@@ -53,7 +53,20 @@ esac
 GO
 cat > "$FAKE_TOOLS/wiregate" <<'WIRE'
 #!/usr/bin/env sh
-exit 0
+set -eu
+if [ "$1" != check ]; then exit 0; fi
+shift
+report="" markdown=""
+while [ "$#" -gt 0 ]; do
+ case "$1" in
+  -report) report="$2"; shift 2 ;;
+  -markdown) markdown="$2"; shift 2 ;;
+  *) shift ;;
+ esac
+done
+test -n "$report" && test -n "$markdown"
+printf '{"routes":[]}\n' > "$report"
+printf 'fixture wire report\n' > "$markdown"
 WIRE
 cat > "$FAKE_TOOLS/curl" <<'CURL'
 #!/usr/bin/env sh
@@ -62,6 +75,10 @@ for arg; do
  if [ "${output_next:-}" = 1 ]; then printf 'asset\n' > "$arg"; exit 0; fi
  if [ "$arg" = -o ]; then output_next=1; fi
  case "$arg" in
+  http://127.0.0.1:*/readyz|http://127.0.0.1:*/api/health)
+   addr="${arg#http://}"; addr="${addr%%/*}"
+   grep -Fx "$addr" "$FAKE_LISTEN_LOG" >/dev/null 2>&1 || exit 1
+   ;;
   */demos/water) printf '<div data-gosx-scene3d></div><script src="/bootstrap-feature-scene3d.abc.js"></script><script src="/bootstrap-feature-scene3d-webgpu.abc.js"></script>\n' ;;
  esac
 done
@@ -71,13 +88,14 @@ export PATH="$FAKE_TOOLS:$PATH" GO="$FAKE_TOOLS/go"
 export GOSX_LISTEN_ADDR="127.0.0.1:invalid"
 cd "$tmp_dir"
 sh "$script_dir/prod-water-smoke.sh" >/dev/null
-WIRE_GATE_REUSE_DOCS=1 sh "$script_dir/wire-gate.sh" >/dev/null
-# Readiness is stubbed, so allow the three child launch shims to record binds.
-attempt=0
-while [ "$(wc -l < "$FAKE_LISTEN_LOG")" -lt 3 ] && [ "$attempt" -lt 20 ]; do
- sleep 0.1
- attempt=$((attempt+1))
-done
+# Exercise Actions summary publishing with fixture-local reports and output.
+summary="$tmp_dir/step-summary.md"
+printf 'existing step summary\n' > "$summary"
+GITHUB_STEP_SUMMARY="$summary" WIRE_GATE_REUSE_DOCS=1 sh "$script_dir/wire-gate.sh" >/dev/null
+test -s build/wire-gate/wire-report.json
+grep -Fx 'existing step summary' "$summary" >/dev/null
+grep -Fx '## Wire gate' "$summary" >/dev/null
+grep -Fx 'fixture wire report' "$summary" >/dev/null
 for addr in 127.0.0.1:8128 127.0.0.1:8742 127.0.0.1:8743; do
  if ! grep -Fx "$addr" "$FAKE_LISTEN_LOG" >/dev/null; then
   echo "local listen overrides test: missing launch at $addr" >&2
