@@ -1,6 +1,7 @@
 package scene3d
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"m31labs.dev/gosx/crdt"
@@ -46,6 +47,15 @@ type Guard func(client *hub.Client, target Target) bool
 // authority, and note that a client may then move any object.
 func AllowAll(*hub.Client, Target) bool { return true }
 
+// GateOptions grants additional authority for client-supplied HTML overlays.
+// HTML is executable page content: leave ClientHTMLGuard nil for ordinary
+// object editing. Server-authored overlays are unaffected by this inbound gate.
+type GateOptions struct {
+	// ClientHTMLGuard must explicitly authorize each HTML create or update,
+	// in addition to the normal Guard. Restrict it to trusted authors.
+	ClientHTMLGuard Guard
+}
+
 // ChangeGate returns a hub.BinaryChangeAuthorizer that enforces guard over the
 // document registered under docName.
 //
@@ -58,7 +68,7 @@ func AllowAll(*hub.Client, Target) bool { return true }
 // A client that pushes only sync metadata, with no change, is always accepted.
 // The hub already documents that behavior; the gate does not tighten it,
 // because refusing a metadata frame would stall the sync round.
-func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthorizer) hub.BinaryChangeAuthorizer {
+func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthorizer, options ...GateOptions) hub.BinaryChangeAuthorizer {
 	if guard == nil {
 		guard = AllowAll
 	}
@@ -69,8 +79,33 @@ func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthor
 			}
 			return next(client, name, changes)
 		}
+		var htmlGuard Guard
+		if len(options) > 0 {
+			htmlGuard = options[0].ClientHTMLGuard
+		}
 		var foreign []crdt.Change
 		for _, change := range changes {
+			for _, op := range change.Ops {
+				if op.Obj != crdt.Root || op.Value.Kind != crdt.ValueKindString {
+					continue
+				}
+				key, ok := d.parseKey(op.Prop)
+				if !ok || key.field != fieldCreate {
+					continue
+				}
+				var envelope struct {
+					Kind string `json:"kind"`
+				}
+				if err := json.Unmarshal([]byte(op.Value.Str), &envelope); err != nil {
+					return fmt.Errorf("scene3d: invalid client create payload")
+				}
+				if envelope.Kind == "html" {
+					target := Target{Namespace: d.ns, ObjectID: key.objectID, Field: key.field}
+					if htmlGuard == nil || !htmlGuard(client, target) {
+						return fmt.Errorf("scene3d: client HTML overlays are not authorized")
+					}
+				}
+			}
 			mine, outside := d.splitOps(change)
 			if len(outside) > 0 {
 				copied := change
@@ -166,7 +201,7 @@ func isNamespaced(key, namespace string) bool {
 // Serve gates INBOUND writes only. The hub never gates server-to-client sync,
 // so a client that may not write still receives live state. Install a
 // hub.BinaryReadAuthorizer when a client must not even read the scene.
-func Serve(h *hub.Hub, docName string, d *Doc, guard Guard) error {
+func Serve(h *hub.Hub, docName string, d *Doc, guard Guard, options ...GateOptions) error {
 	if h == nil {
 		return fmt.Errorf("scene3d: nil hub")
 	}
@@ -176,7 +211,7 @@ func Serve(h *hub.Hub, docName string, d *Doc, guard Guard) error {
 	if docName == "" {
 		return fmt.Errorf("scene3d: empty document name")
 	}
-	h.SetBinaryChangeAuthorizer(ChangeGate(docName, d, guard, nil))
+	h.SetBinaryChangeAuthorizer(ChangeGate(docName, d, guard, nil, options...))
 	h.SyncDoc(docName, d.Doc())
 	return nil
 }

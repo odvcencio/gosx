@@ -17,11 +17,13 @@ const userContextKey contextKey = "gosx.auth.user"
 
 // User is the default session-backed identity payload.
 type User struct {
-	ID    string         `json:"id"`
-	Email string         `json:"email,omitempty"`
-	Name  string         `json:"name,omitempty"`
-	Roles []string       `json:"roles,omitempty"`
-	Meta  map[string]any `json:"meta,omitempty"`
+	ID    string `json:"id"`
+	Email string `json:"email,omitempty"`
+	// EmailVerified reports whether the identity provider verified Email.
+	EmailVerified bool           `json:"emailVerified,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	Roles         []string       `json:"roles,omitempty"`
+	Meta          map[string]any `json:"meta,omitempty"`
 }
 
 // Provider resolves the current user for a request.

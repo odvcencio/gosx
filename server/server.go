@@ -666,13 +666,13 @@ func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
 		MarkObservedRequest(r, "api", pattern)
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				writeJSONError(w, http.StatusInternalServerError, panicError(recovered), nil)
+				writeJSONError(w, r, http.StatusInternalServerError, panicError(recovered), nil)
 			}
 		}()
 		ctx := newContext(r)
 		payload, err := handler(ctx)
 		if err != nil {
-			writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
+			writeJSONError(w, r, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
 			return
 		}
 		status := statusWithDefault(ctx.status, payload)
@@ -1087,7 +1087,7 @@ func pageTitle(ctx *Context, pattern string, defaultTitle string) string {
 func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 	MarkObservedRequest(r, "not_found", "")
 	if wantsJSON(r) {
-		writeJSONError(w, http.StatusNotFound, fmt.Errorf("not found"), nil)
+		writeJSONError(w, r, http.StatusNotFound, fmt.Errorf("not found"), nil)
 		return
 	}
 
@@ -1107,7 +1107,7 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	MarkObservedRequest(r, "error", "")
 	if wantsJSON(r) {
-		writeJSONError(w, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
+		writeJSONError(w, r, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
 		return
 	}
 
@@ -1206,7 +1206,9 @@ func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 		if err := entry.check.CheckReady(r.Context()); err != nil {
 			report.OK = false
 			result.OK = false
-			result.Error = err.Error()
+			result.Error = http.StatusText(http.StatusServiceUnavailable)
+			report.RequestID = RequestID(r)
+			log.Printf("[gosx] readiness check %s failed (request %s): %v", result.Name, report.RequestID, err)
 		}
 		report.Checks = append(report.Checks, result)
 	}
@@ -1331,14 +1333,18 @@ func writeJSONBody(w http.ResponseWriter, status int, payload any, body []byte, 
 	_, _ = w.Write([]byte{'\n'})
 }
 
-func writeJSONError(w http.ResponseWriter, status int, err error, headers http.Header) {
+func writeJSONError(w http.ResponseWriter, r *http.Request, status int, err error, headers http.Header) {
 	message := http.StatusText(status)
-	if err != nil && err.Error() != "" {
-		message = err.Error()
+	payload := map[string]any{"error": message}
+	if status >= 500 {
+		log.Printf("[gosx] request %s failed (%d): %v", RequestID(r), status, err)
+		if id := RequestID(r); id != "" {
+			payload["requestID"] = id
+		}
+	} else if err != nil && err.Error() != "" {
+		payload["error"] = err.Error()
 	}
-	writeJSON(w, status, map[string]any{
-		"error": message,
-	}, headers)
+	writeJSON(w, status, payload, headers)
 }
 
 func writePanic(w http.ResponseWriter, r *http.Request, recovered any) {

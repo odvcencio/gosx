@@ -504,9 +504,8 @@ func TestEnableCSPSetsHeadersAndNonce(t *testing.T) {
 	}
 }
 
-// TestSecurityPolicyStaysOptIn proves that the default app emits no CSP. A
-// default policy would break apps that already ship inline scripts.
-func TestSecurityPolicyStaysOptIn(t *testing.T) {
+// TestDefaultFramingPolicy preserves inline scripts while restricting framing.
+func TestDefaultFramingPolicy(t *testing.T) {
 	app := New()
 	app.Page("GET /plain", func(ctx *Context) gosx.Node {
 		return gosx.Text("plain")
@@ -514,8 +513,8 @@ func TestSecurityPolicyStaysOptIn(t *testing.T) {
 	handler := app.Build()
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/plain", nil))
-	if got := res.Header().Get("Content-Security-Policy"); got != "" {
-		t.Fatalf("expected no default policy, got %q", got)
+	if got := res.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+		t.Fatalf("unexpected default policy %q", got)
 	}
 }
 

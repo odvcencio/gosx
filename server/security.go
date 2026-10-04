@@ -15,9 +15,9 @@ const NoncePlaceholder = "{nonce}"
 
 // SecurityPolicy configures the optional security response headers.
 //
-// The policy is opt-in. A default Content-Security-Policy would block the
-// inline scripts that existing apps already ship, so New leaves it off and
-// EnableSecurityPolicy turns it on.
+// The default policy restricts framing to the same origin. Script and other
+// content restrictions are opt-in through EnableSecurityPolicy. Apps that
+// permit embedding can supply an explicit frame-ancestors directive.
 //
 // A shared-cacheable response carries no nonce, because a shared cache would
 // replay one client's nonce to the next client. GoSX drops the nonce from the
@@ -75,7 +75,7 @@ func withSecurityPolicyState(ctx context.Context, state securityPolicyState) con
 // EnableSecurityPolicy turns on the optional security response headers,
 // including a Content-Security-Policy with a generated per-request nonce.
 //
-// Call it before Build. Passing a zero SecurityPolicy turns the feature off
+// Call it before Build. Passing a zero SecurityPolicy restores the default framing policy
 // again and restores the default headers alone.
 func (a *App) EnableSecurityPolicy(policy SecurityPolicy) {
 	if a == nil {
@@ -159,6 +159,9 @@ func (a *App) securityHeaders() Middleware {
 }
 
 func securityHeadersMiddleware(policy SecurityPolicy) Middleware {
+	if policy.ContentSecurityPolicy == "" {
+		policy.ContentSecurityPolicy = "frame-ancestors 'self'"
+	}
 	referrer := policy.ReferrerPolicy
 	if referrer == "" {
 		referrer = "strict-origin-when-cross-origin"
