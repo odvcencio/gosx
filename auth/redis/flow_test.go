@@ -86,12 +86,24 @@ func TestRedisWebAuthnStoreSupportsRegistrationAndLoginFlow(t *testing.T) {
 		Store:  store,
 	})
 
-	registerOptions := sessions.Middleware(webauthn.RegisterOptionsHandler())
+	registerOptions := sessions.Middleware(authn.Middleware(webauthn.RegisterOptionsHandler()))
 	registerFinish := sessions.Middleware(authn.Middleware(webauthn.RegisterHandler()))
-	loginOptions := sessions.Middleware(webauthn.LoginOptionsHandler())
+	loginOptions := sessions.Middleware(authn.Middleware(webauthn.LoginOptionsHandler()))
 	loginFinish := sessions.Middleware(authn.Middleware(webauthn.LoginHandler()))
 
-	registerReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/register/options", bytes.NewBufferString(`{"user":{"id":"user_ada","email":"ada@example.com","name":"Ada"}}`))
+	signInRes := httptest.NewRecorder()
+	sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authn.SignIn(r, auth.User{ID: "user_ada", Email: "ada@example.com", Name: "Ada"}) {
+			t.Fatal("could not sign in test user")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(signInRes, httptest.NewRequest(http.MethodPost, "/sign-in", nil))
+	signInCookie := firstCookie(signInRes)
+	if signInCookie == nil {
+		t.Fatal("expected signed-in session cookie")
+	}
+	registerReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/register/options", bytes.NewBufferString(`{"next":"/settings"}`))
+	registerReq.AddCookie(signInCookie)
 	registerReq.Header.Set("Content-Type", "application/json")
 	registerReq.Header.Set("Accept", "application/json")
 	registerRes := httptest.NewRecorder()
