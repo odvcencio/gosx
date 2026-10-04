@@ -17,9 +17,10 @@ test -x "${dist_dir}/run.sh"
 test -x "${dist_dir}/server/app"
 test -f "${dist_dir}/build.json"
 
-PORT="$port" \
+local_secret="$(openssl rand -hex 32)"
+PORT="127.0.0.1:$port" \
 PUBLIC_URL="$base_url" \
-SESSION_SECRET="${SESSION_SECRET:-gosx-water-prod-smoke-secret}" \
+SESSION_SECRET="$local_secret" \
 	"${dist_dir}/run.sh" >"$log" 2>&1 &
 server_pid=$!
 

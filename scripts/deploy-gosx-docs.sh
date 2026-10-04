@@ -146,7 +146,6 @@ if [ "${#transaction_id}" -ne 32 ]; then
 	echo "gosx docs deploy: could not create a unique deployment transaction ID" >&2
 	exit 1
 fi
-local_identity_secret="gosx-docs-local-identity-${transaction_id}"
 tag="${GOSX_DOCS_TAG:-git-${revision}}"
 image="${registry}:${tag}"
 
@@ -248,7 +247,6 @@ PATH="${tinygo_dir}:${PATH}" \
 	PUBLIC_URL="$public_url" \
 	GOSX_DOCS_REVISION="$revision" \
 	GOSX_DOCS_BUILT_AT="$built_at" \
-	SESSION_SECRET="$local_identity_secret" \
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
 	"$gosx_cli" build --prod ./examples/gosx-docs
 for required_output in build.json run.sh server/app; do
@@ -261,7 +259,7 @@ if [ -n "$(worktree_changes)" ]; then
 	echo "gosx docs deploy: production build changed the worktree" >&2
 	exit 1
 fi
-SESSION_SECRET="$local_identity_secret" sh scripts/check-gosx-docs-built-identity.sh \
+sh scripts/check-gosx-docs-built-identity.sh \
 	--root "$dist_dir" \
 	--app "${dist_dir}/server/app" \
 	--framework-version "$framework_version" \

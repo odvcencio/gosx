@@ -29,6 +29,7 @@ import (
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/internal/localapp"
 )
 
 // e2eChromePath resolves the browser binary: GOSX_E2E_CHROME first,
@@ -86,10 +87,11 @@ func startDocsApp(t *testing.T, baseURL string) *docsApp {
 	logs := &logBuffer{}
 	cmd := exec.Command("go", "run", "./cmd/gosx", "dev", "./examples/gosx-docs")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(),
-		"PORT="+port,
-		"SESSION_SECRET=gosx-e2e-session-secret",
-	)
+	localEnv, err := localapp.Environment(os.Environ(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(localEnv, "PUBLIC_URL="+baseURL)
 	cmd.Stdout = logs
 	cmd.Stderr = logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

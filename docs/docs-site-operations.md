@@ -15,11 +15,16 @@ the guides describe.
 - `GET /sitemap.xml` is generated from the documentation and demo catalogs.
 - `GET /robots.txt` points crawlers at that sitemap.
 
-Production must set `PUBLIC_URL`, `GOSX_DOCS_REVISION`,
+Production must set `GOSX_ENV=production`, `PUBLIC_URL`, `GOSX_DOCS_REVISION`,
 `GOSX_DOCS_BUILT_AT`, and the out-of-band `SESSION_SECRET`. The checked-in
 Kubernetes manifest intentionally contains placeholders for the image
 repository, namespace, image digest, and build identity; applying it directly
 is expected to fail image resolution.
+
+Local build prerendering and built-identity probes use fresh disposable session
+secrets and loopback listeners. They never inherit a deployed session secret.
+The running deployment still uses its stable secret from the cluster; disposable
+keys are not included in the image or deployment manifest.
 
 ## Deploy
 
@@ -43,8 +48,8 @@ both values.
 
 `GOSX_TINYGO_GOROOT` must point at the Go 1.25.5 compatibility toolchain used
 by TinyGo. The target Deployment and `gosx-docs` Secret must already exist; the
-script reads the Secret's `session-secret` without printing it so prerendering
-uses the same session configuration as the runtime. The deploy script refuses
+script verifies that the Secret's `session-secret` is present without passing it
+to local build or identity probes. Those use independently random keys. The deploy script refuses
 a dirty tree, clears and regenerates the entire production `dist/` bundle with
 an explicit public origin and build identity, checks the built image platform,
 pushes a Git-tagged OCI image, resolves its registry digest, and renders that

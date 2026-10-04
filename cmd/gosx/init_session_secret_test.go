@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"m31labs.dev/gosx/internal/localapp"
 )
 
 func TestRunInitSessionSecrets(t *testing.T) {
@@ -31,6 +33,16 @@ func TestRunInitSessionSecrets(t *testing.T) {
 			binary := filepath.Join(t.TempDir(), "app")
 			if built, err := buildServerBinaryIfPresent(dir, binary); err != nil || !built {
 				t.Fatalf("build scaffold: built=%t err=%v", built, err)
+			}
+			localEnv, err := localapp.Environment(nil, "0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var productionSecret string
+			for _, entry := range localEnv {
+				if value, ok := strings.CutPrefix(entry, "SESSION_SECRET="); ok {
+					productionSecret = value
+				}
 			}
 			for _, tc := range []struct{ name, mode, secret, dev string }{
 				{"missing", "production", "", ""},
@@ -56,7 +68,7 @@ func TestRunInitSessionSecrets(t *testing.T) {
 				})
 			}
 			for _, tc := range []struct{ name, mode, secret, dev string }{
-				{"production", "production", "scaffold-test-random-secret-0123456789", ""},
+				{"production", "production", productionSecret, ""},
 				{"development", "development", "change-me-in-production", ""},
 				{"dev flag", "", "", "1"},
 			} {
@@ -92,6 +104,33 @@ func TestRunInitSessionSecrets(t *testing.T) {
 	}
 }
 
+func TestRunInitProductionExportUsesDisposableSecret(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("builds scaffold servers in subprocesses; covered by test-cli")
+	}
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
+	for _, template := range []string{initTemplateApp, initTemplateDocs} {
+		t.Run(template, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "scaffold")
+			if err := RunInit(dir, "example.com/scaffold", template); err != nil {
+				t.Fatal(err)
+			}
+			addLocalGoSXReplace(t, dir)
+			tidyModule(t, dir)
+			if err := RunExport(dir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "dist", "static", "index.html")); err != nil {
+				t.Fatal(err)
+			}
+			if os.Getenv("SESSION_SECRET") != "change-me-in-production" {
+				t.Fatal("export replaced the parent session secret")
+			}
+		})
+	}
+}
+
 func scaffoldSecretEnv(dir, mode, secret, dev, port string) []string {
 	var filtered []string
 	for _, entry := range os.Environ() {
@@ -103,7 +142,7 @@ func scaffoldSecretEnv(dir, mode, secret, dev, port string) []string {
 		}
 	}
 	return append(filtered, "SESSION_SECRET="+secret, "GOSX_ENV="+mode, "GOSX_DEV="+dev,
-		"GOSX_APP_ROOT="+dir, "PORT="+port, "PUBLIC_URL=http://127.0.0.1:"+port, "GOWORK=off")
+		"GOSX_APP_ROOT="+dir, "PORT=127.0.0.1:"+port, "PUBLIC_URL=http://127.0.0.1:"+port, "GOWORK=off")
 }
 
 const scaffoldSessionSecretTests = `package main

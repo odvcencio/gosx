@@ -15,6 +15,10 @@ cat >"$fake_go" <<'EOF'
 set -eu
 
 if [ "$#" -ge 4 ] && [ "$1" = "run" ] && [ "$2" = "./cmd/gosx" ] && [ "$3" = "dev" ]; then
+	if [ "${#SESSION_SECRET}" -ne 64 ] || [ "${PORT}" != "127.0.0.1:3971" ]; then
+		echo "local perf server did not receive a disposable secret and loopback binding" >&2
+		exit 96
+	fi
 	if [ "$*" != "run ./cmd/gosx dev ./examples/gosx-docs" ]; then
 		echo "unexpected dev invocation: $*" >&2
 		exit 98
@@ -62,6 +66,7 @@ run_case() {
 		cd "$repo_root"
 		PATH="$tmp_dir:$PATH" \
 		GO="$fake_go" \
+		SESSION_SECRET="real-deployment-secret-must-not-be-inherited" \
 		FAKE_PERF_STATUS="$status" \
 		FAKE_SERVER_STOP_FILE="$stopped" \
 		PERF_PORT=3971 \

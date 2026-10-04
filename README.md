@@ -239,15 +239,21 @@ placeholder, the app generates a random per-process secret and logs that
 sessions reset on restart. `gosx dev` also enables this fallback when
 `GOSX_ENV` is unset. Other modes, including an unset mode outside `gosx dev`,
 refuse to start without a non-placeholder secret of at least 16 bytes.
-Short secrets are rejected in every mode. This validation lives in the
-scaffold; `session.New` keeps its existing API and validation.
+Short secrets are rejected in every mode. The docs example uses the same
+policy. `session.New` keeps its existing API and validation.
 
-Before building for production or deploying, set `GOSX_ENV=production` and
-supply a random secret through your deployment environment, for example one
+Before deploying, set `GOSX_ENV=production` and supply a random secret through
+your deployment environment, for example one
 generated with `openssl rand -hex 32`.
 Keep it stable across restarts and replicas to preserve sessions. The known
 placeholders are `change-me-in-production`, `gosx-app-session-secret`, and
 `gosx-docs-session-secret`.
+
+Export and production-build prerendering start a disposable app on loopback
+with a fresh random session secret. They replace inherited deployment secrets
+and keep canonical `PUBLIC_URL` metadata. Local wire, perf, E2E, tutorial, and
+docs deployment identity checks also use disposable secrets. These secrets
+are supplied only to local processes and are never saved in deployment bundles.
 
 Minimal server without the CLI:
 
