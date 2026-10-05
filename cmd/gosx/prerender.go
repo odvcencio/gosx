@@ -59,6 +59,7 @@ type staticExportOptions struct {
 }
 
 var errPrivateExportPage = errors.New("response is not shared-cacheable")
+var errDynamicExportPage = errors.New("route requires request-time rendering")
 
 func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	appRoot, err := filepath.Abs(opts.AppRoot)
@@ -129,7 +130,13 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	fileCSSAssets := map[string]bool{}
 	exportedRoutes := make([]exportRoute, 0, len(routes))
 	for _, entry := range routes {
-		pageHTML, err := fetchExportPage(client, baseURL+entry.Path)
+		pageHTML, status, headers, err := fetchExportPageResponse(client, baseURL+entry.Path)
+		if errors.Is(err, errDynamicExportPage) {
+			continue
+		}
+		if err == nil && status != http.StatusOK {
+			err = fmt.Errorf("unexpected status %d", status)
+		}
 		if errors.Is(err, errPrivateExportPage) {
 			// Keep session-creating and private pages dynamic. A build visitor's
 			// token or personalized state must never reach a shared artifact.
@@ -138,6 +145,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		}
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("export %s: %w", entry.Path, err)
+		}
+		if headers.Get("X-GoSX-Prerender") == "load" && entry.RevalidateSeconds == 0 {
+			fmt.Fprintln(os.Stderr, prerenderLoadWarning(entry.Path))
 		}
 		entry.Capabilities = routeCapabilitiesFromHTML(pageHTML)
 		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets); err != nil {
@@ -474,27 +484,39 @@ func fetchExportPage(client *http.Client, url string) (string, error) {
 }
 
 func fetchExportPageWithStatus(client *http.Client, url string) (string, int, error) {
+	body, status, _, err := fetchExportPageResponse(client, url)
+	return body, status, err
+}
+
+func prerenderLoadWarning(routePath string) string {
+	return fmt.Sprintf("gosx prerender: warning: %s has Load and RevalidateSeconds=0; build-time data stays unchanged until rebuild or explicit invalidation (set a public cache lifetime in route.config.json, or disable prerender)", routePath)
+}
+
+func fetchExportPageResponse(client *http.Client, url string) (string, int, http.Header, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	req.Header.Set("Accept", "text/html")
 	// Export the identity representation, then compress the rewritten files.
 	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent && resp.Header.Get("X-GoSX-Prerender") == "skip" {
+		return "", resp.StatusCode, resp.Header, errDynamicExportPage
+	}
 	if len(resp.Header.Values("Set-Cookie")) > 0 || exportResponseIsPrivate(resp.Header) {
-		return "", resp.StatusCode, errPrivateExportPage
+		return "", resp.StatusCode, resp.Header, errPrivateExportPage
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", resp.StatusCode, err
+		return "", resp.StatusCode, resp.Header, err
 	}
-	return string(data), resp.StatusCode, nil
+	return string(data), resp.StatusCode, resp.Header, nil
 }
 
 func exportResponseIsPrivate(headers http.Header) bool {

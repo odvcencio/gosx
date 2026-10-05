@@ -87,14 +87,21 @@ func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthor
 			htmlGuard = options[0].ClientHTMLGuard
 		}
 		var foreign []crdt.Change
+		var create createDecoder
 		for _, change := range changes {
 			for _, op := range change.Ops {
-				if op.Obj != crdt.Root || op.Value.Kind != crdt.ValueKindString {
+				if op.Obj != crdt.Root || op.Action == "del" {
 					continue
 				}
 				key, ok := d.parseKey(op.Prop)
 				if !ok {
 					continue
+				}
+				_, patch := clientPatchSchemas[key.field]
+				if key.field == fieldCreate || patch || key.slot != "" {
+					if op.Value.Kind != crdt.ValueKindString {
+						return fmt.Errorf("scene3d: create and patch payloads must be strings")
+					}
 				}
 				if schema, ok := clientPatchSchemas[key.field]; ok {
 					if err := validateClientPatch(op.Value.Str, schema); err != nil {
@@ -105,23 +112,10 @@ func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthor
 				if key.field != fieldCreate {
 					continue
 				}
-				// Match JSON.parse's case-sensitive property lookup in the browser.
-				var envelope map[string]json.RawMessage
-				if err := json.Unmarshal([]byte(op.Value.Str), &envelope); err != nil || envelope == nil {
+				if err := create.decodeEnvelope(op.Value.Str); err != nil {
 					return fmt.Errorf("scene3d: invalid client create payload")
 				}
-				for name := range envelope {
-					if name != "kind" && strings.EqualFold(name, "kind") {
-						return fmt.Errorf("scene3d: ambiguous client create kind")
-					}
-				}
-				var kind string
-				if raw, exists := envelope["kind"]; exists {
-					if err := json.Unmarshal(raw, &kind); err != nil {
-						return fmt.Errorf("scene3d: invalid client create kind")
-					}
-				}
-				if kind == "html" {
+				if create.envelope.Kind == "html" {
 					target := Target{Namespace: d.ns, ObjectID: key.objectID, Field: key.field}
 					if htmlGuard == nil || !htmlGuard(client, target) {
 						return fmt.Errorf("scene3d: client HTML overlays are not authorized")
@@ -152,7 +146,7 @@ func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthor
 // create payload and pass ClientHTMLGuard, including for server-owned overlays.
 var clientPatchSchemas = map[string]reflect.Type{
 	fieldTransform: reflect.TypeFor[scene.TransformPatch](),
-	fieldMaterial:  reflect.TypeFor[scene.IRMaterial](),
+	fieldMaterial:  reflect.TypeFor[clientMaterialPatch](),
 	fieldLight:     reflect.TypeFor[scene.LightIR](),
 }
 
