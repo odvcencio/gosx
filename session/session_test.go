@@ -150,7 +150,7 @@ func TestProtectRejectsMissingOrInvalidToken(t *testing.T) {
 	}
 }
 
-func TestProtectRequiresMultipartHeader(t *testing.T) {
+func TestProtectAcceptsMultipartHeaderOrNativeField(t *testing.T) {
 	manager := MustNew("csrf-test-secret-value", Options{})
 	handler := manager.Middleware(manager.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -204,15 +204,15 @@ func TestProtectRequiresMultipartHeader(t *testing.T) {
 		t.Fatalf("expected 204 for multipart csrf token, got %d", validRes.Code)
 	}
 
-	// A multipart body token without the header must still be rejected.
+	// A native multipart form carries its token in a hidden field.
 	missingBody, missingContentType := multipartBody(true)
 	missingReq := httptest.NewRequest(http.MethodPost, "/form", missingBody)
 	missingReq.Header.Set("Content-Type", missingContentType)
 	missingReq.AddCookie(cookie)
 	missingRes := httptest.NewRecorder()
 	handler.ServeHTTP(missingRes, missingReq)
-	if missingRes.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for multipart without csrf token, got %d", missingRes.Code)
+	if missingRes.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for native multipart csrf token, got %d", missingRes.Code)
 	}
 }
 

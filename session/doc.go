@@ -45,9 +45,12 @@
 // the proxy addresses and the public AllowedHosts are configured.
 //
 // Protect reads tokens from X-CSRF-Token. For a request that does not want JSON
-// it also reads the csrf_token field in URL-encoded submissions up to 1 MiB.
-// Multipart submissions require the header so the action can enforce its own
-// upload limit. Tokens are masked per response; legacy raw tokens remain valid.
+// it also reads the csrf_token field in URL-encoded and multipart submissions
+// under Options.MaxCSRFBodyBytes (1 MiB by default). Match this to the action
+// upload limit for larger native forms. Protect restores the unparsed body so
+// downstream limits still apply. Tokens are masked per response; legacy raw
+// tokens remain valid. Authentication changes also send X-CSRF-Token on the
+// response so enhanced forms can refresh their meta token and hidden fields.
 //
 // # Secrets and rotation
 //

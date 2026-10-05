@@ -17,6 +17,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -102,6 +103,12 @@ type Options struct {
 	// The manager logs the failure when OnError is nil.
 	OnError func(error)
 
+	// MaxCSRFBodyBytes bounds form bodies read to find a CSRF field. The
+	// default is 1 MiB. Set this to the action upload limit for larger native
+	// multipart forms. A header token avoids this read; downstream action
+	// limits still apply because Protect restores the unparsed body.
+	MaxCSRFBodyBytes int64
+
 	// TrustedOrigins permits explicitly trusted browser origins in Protect.
 	// Values must be absolute HTTP(S) origins without a path.
 	TrustedOrigins []string
@@ -154,6 +161,7 @@ type Store struct {
 	// session (static and runtime assets) keeps its own cache headers.
 	accessed          bool
 	responseCSRFToken string
+	csrfRotated       bool
 }
 
 // New creates a new cookie-backed session manager.
@@ -166,6 +174,9 @@ func New(secret string, opts Options) (*Manager, error) {
 	}
 	if opts.Path == "" {
 		opts.Path = "/"
+	}
+	if opts.MaxCSRFBodyBytes <= 0 {
+		opts.MaxCSRFBodyBytes = 1 << 20
 	}
 	if opts.MaxAge == 0 {
 		opts.MaxAge = DefaultMaxAge
@@ -298,23 +309,22 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 			return
 		}
 		if actual == "" && !requestWantsJSON(r) {
-			contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			// Multipart bodies belong to the action's upload parser and limit.
-			// Never consume or cache them here; multipart clients use the header.
-			if contentType == "application/x-www-form-urlencoded" {
-				if r.PostForm != nil {
+			contentType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if contentType == "application/x-www-form-urlencoded" || contentType == "multipart/form-data" {
+				if r.PostForm != nil && (contentType != "multipart/form-data" || r.MultipartForm != nil) {
 					// An upstream form handler has already consumed the body.
 					// Use its parsed fields instead of rereading an empty stream.
 					actual = r.PostForm.Get(defaultCSRFField)
 				} else {
-					body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+					body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, m.opts.MaxCSRFBodyBytes))
 					if err != nil {
 						http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
 						return
 					}
 					r.Body = io.NopCloser(bytes.NewReader(body))
-					form, err := url.ParseQuery(string(body))
-					if err == nil {
+					if contentType == "multipart/form-data" {
+						actual = multipartCSRFToken(body, params["boundary"])
+					} else if form, err := url.ParseQuery(string(body)); err == nil {
 						actual = form.Get(defaultCSRFField)
 					}
 				}
@@ -329,6 +339,26 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Read only the CSRF field, without populating Request.MultipartForm or
+// bypassing the action's own parser and body limit.
+func multipartCSRFToken(body []byte, boundary string) string {
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() == defaultCSRFField && part.FileName() == "" {
+			token, err := io.ReadAll(io.LimitReader(part, 256))
+			if err == nil {
+				return string(token)
+			}
+			return ""
+		}
+		part.Close()
+	}
 }
 
 // Get returns the request-scoped store for the manager.
@@ -490,6 +520,7 @@ func (s *Store) Set(key string, value any) {
 	if s == nil {
 		return
 	}
+	s.destroyed = false
 	if s.values == nil {
 		s.values = make(map[string]any)
 	}
@@ -523,6 +554,7 @@ func (s *Store) AddFlash(key string, value any) {
 	if s == nil {
 		return
 	}
+	s.destroyed = false
 	if key == "" {
 		key = defaultFlashKey
 	}
@@ -584,6 +616,7 @@ func (s *Store) Destroy() {
 	s.dirty = true
 	s.destroyed = true
 	s.responseCSRFToken = ""
+	s.csrfRotated = true
 }
 
 // Mask the stored token with a fresh random pad for each response. The prefix
@@ -1065,6 +1098,10 @@ func (w *responseWriter) commitCookie() {
 	if err := w.store.manager.writeCookie(w.ResponseWriter, w.store); err != nil {
 		w.store.writeErr = err
 		w.store.manager.reportError(err)
+	} else if w.store.csrfRotated {
+		// Enhanced actions can continue after authentication changes without
+		// retaining a token from the previous cookie session.
+		w.Header().Set("X-CSRF-Token", w.store.responseToken())
 	}
 	w.store.dirty = false
 }

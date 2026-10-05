@@ -142,13 +142,3 @@ gosxHost.lifecycle = gosxHost.lifecycle || {
   bootstrapPage: function() { return gosxHostCompatibility.forward("__gosx_bootstrap_page", arguments); },
   disposePage: function() { return gosxHostCompatibility.forward("__gosx_dispose_page", arguments); },
 };
-
-
-// Keep automatic session credentials on requests to the current origin.
-function gosxSameOrigin(input) {
-  try {
-    return new URL(input.url || input, window.location.href).origin === window.location.origin;
-  } catch (_) {
-    // An invalid URL cannot receive automatic credentials.
-  }
-}

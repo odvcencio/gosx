@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = [
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "request.ts"), "utf8"),
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "facade.ts"), "utf8"),
 ].join("\n");
 const domModuleSrc = fs.readFileSync(
@@ -55,6 +56,8 @@ function runModule(body, options = {}) {
   const telemetry = [];
   const document = {
     body,
+    baseURI: options.baseURI || "https://app.example/",
+    querySelectorAll: options.querySelectorAll || (() => []),
     documentElement: body,
     dispatchEvent(event) { events.push(event); },
     querySelector: options.querySelector || (() => null),
@@ -313,7 +316,7 @@ test("surface latest requests cancel stale work and expose shared response JSON"
           return;
         }
         if (init.signal) init.signal.addEventListener("abort", abort, { once: true });
-        if (input === "/second") resolve({ ok: true });
+        if (input === "https://app.example/second") resolve({ ok: true });
       });
     },
   });
@@ -354,7 +357,7 @@ test("transport scopes isolate latest-request cancellation and inherit lifecycle
         };
         if (init.signal && init.signal.aborted) return abort();
         if (init.signal) init.signal.addEventListener("abort", abort, { once: true });
-        if (input === "/second") resolve({ ok: true });
+        if (input === "https://app.example/second") resolve({ ok: true });
       });
     },
   });
@@ -409,4 +412,68 @@ test("core requests attach automatic CSRF headers only to the same origin", asyn
     await context.window.__gosx.request(input, { method: "POST" });
     assert.equal(calls.at(-1).headers?.["X-CSRF-Token"], undefined);
   }
+});
+
+test("core transport resolves document base and preserves Request inputs", async () => {
+ const calls = [];
+ const meta = {getAttribute: () => "token"};
+ const { context } = runModule(makeElement(), {
+  baseURI: "https://other.example/forms/",
+  querySelector: () => meta,
+  fetch(input, init) { calls.push({input,init}); return Promise.resolve({}); },
+ });
+ for (const [input, expected, token] of [["/save", "https://other.example/save", undefined], ["save", "https://other.example/forms/save", undefined], ["https://app.example/save", "https://app.example/save", "token"]]) {
+  await context.window.__gosx.request(input, {method:"POST"});
+  const call = calls.at(-1);
+  assert.equal(call.input, expected);
+  assert.equal(call.init.headers?.["X-CSRF-Token"], token);
+ }
+ const request = {url:"https://app.example/save",method:"POST",body:"preserved"};
+ await context.window.__gosx.request(request);
+ assert.equal(calls.at(-1).input, request);
+ assert.equal(calls.at(-1).init.headers["X-CSRF-Token"], "token");
+});
+
+test("JSON sign-in refreshes meta and native hidden tokens before the next mutation", async () => {
+ const calls = [];
+ const meta = makeElement({content:"before-login"}); meta.tagName = "META";
+ const hidden = makeElement({value:"before-login"}); hidden.tagName = "INPUT"; hidden.value = "before-login";
+ const { context } = runModule(makeElement(), {
+  querySelector: () => meta, querySelectorAll: () => [meta, hidden],
+  fetch(input,init) { calls.push({input,init}); return Promise.resolve({ headers: { get: () => "after-login" } }); },
+ });
+ await context.window.__gosx.request("/login", {method:"POST"});
+ assert.equal(meta.getAttribute("content"), "after-login");
+ assert.equal(hidden.value, "after-login");
+ assert.equal(hidden.getAttribute("value"), "after-login");
+ await context.window.__gosx.request("/save", {method:"POST"});
+ assert.equal(calls[0].init.headers["X-CSRF-Token"], "before-login");
+ assert.equal(calls[1].init.headers["X-CSRF-Token"], "after-login");
+});
+
+test("cross-origin responses cannot replace document CSRF tokens", async () => {
+ for (const [input, responseURL] of [["https://other.example/login","https://other.example/login"], ["/login", "https://other.example/redirect"]]) {
+  const meta = makeElement({content:"local"}); meta.tagName = "META";
+  const {context} = runModule(makeElement(), { querySelector: () => meta, querySelectorAll: () => [meta], fetch() {return Promise.resolve({url:responseURL,headers:{get:()=>"foreign"}});} });
+  await context.window.__gosx.request(input,{method:"POST"});
+  assert.equal(meta.getAttribute("content"), "local");
+ }
+});
+
+test("anonymous JSON sign-in creates the browser token meta before the next mutation", async () => {
+ const calls = [];
+ let meta;
+ const {context} = runModule(makeElement(), {
+  querySelector: () => meta,
+  querySelectorAll: () => meta ? [meta] : [],
+  fetch(input,init) { calls.push({input,init}); return Promise.resolve({headers:{get:()=>"first-session"}}); },
+ });
+ context.document.createElement = () => { const el = makeElement(); el.tagName = "META"; return el; };
+ context.document.head = {appendChild(el) { meta = el; }};
+ await context.window.__gosx.request("/login", {method:"POST"});
+ assert.equal(meta.getAttribute("name"), "csrf-token");
+ assert.equal(meta.getAttribute("content"), "first-session");
+ await context.window.__gosx.request("/save", {method:"POST"});
+ assert.equal(calls[0].init.headers, undefined);
+ assert.equal(calls[1].init.headers["X-CSRF-Token"], "first-session");
 });

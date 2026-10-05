@@ -38,7 +38,7 @@ func TestProtectBoundsTokenReadsAndLeavesMultipartToHandler(t *testing.T) {
 		status, maxRead           int
 		cookie                    bool
 	}{
-		{"multipart field", "multipart/form-data; boundary=test", "", 403, 0, true},
+		{"multipart field", "multipart/form-data; boundary=test", "", 413, (1 << 20) + 1, true},
 		{"anonymous", "application/x-www-form-urlencoded", "", 403, 0, false},
 		{"bounded form", "application/x-www-form-urlencoded", "", 413, (1 << 20) + 1, true},
 		{"multipart header", "multipart/form-data; boundary=test", token, 413, 129, true},

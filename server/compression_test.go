@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -536,5 +537,170 @@ func TestCompressionRawHijackSkipsFinalization(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodConnect, "/", nil))
 	if w.writesAfterHijack != 0 {
 		t.Fatal("middleware finalized HTTP output after raw takeover")
+	}
+}
+
+// This writer supports takeover but intentionally has no flushing interface.
+type compressionTakeoverWriter struct {
+	recorder *httptest.ResponseRecorder
+	failure  error
+	called   bool
+}
+
+func (w *compressionTakeoverWriter) Header() http.Header            { return w.recorder.Header() }
+func (w *compressionTakeoverWriter) WriteHeader(status int)         { w.recorder.WriteHeader(status) }
+func (w *compressionTakeoverWriter) Write(data []byte) (int, error) { return w.recorder.Write(data) }
+func (w *compressionTakeoverWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.called = true
+	return nil, nil, w.failure
+}
+func TestCompressionFailedHijackContinuesStream(t *testing.T) {
+	for _, encoding := range []string{"gzip", "br"} {
+		for _, supported := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/supported=%t", encoding, supported), func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				var sink http.ResponseWriter = recorder
+				if supported {
+					sink = &compressionTakeoverWriter{recorder: recorder, failure: errors.New("takeover failed")}
+				}
+				prefix := bytes.Repeat([]byte("compressed prefix\n"), 200)
+				tail := []byte("fallback tail")
+				handler := CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "text/plain")
+					if _, err := w.Write(prefix); err != nil {
+						t.Fatal(err)
+					}
+					if _, _, err := http.NewResponseController(w).Hijack(); err == nil {
+						t.Fatal("expected takeover error")
+					}
+					if _, err := w.Write(tail); err != nil {
+						t.Fatal(err)
+					}
+				}))
+				req := httptest.NewRequest("GET", "/", nil)
+				req.Header.Set("Accept-Encoding", encoding)
+				handler.ServeHTTP(sink, req)
+				if got := decodeCompressedResponse(t, encoding, recorder.Body.Bytes()); !bytes.Equal(got, append(prefix, tail...)) {
+					t.Fatal("fallback changed the compressed body")
+				}
+			})
+		}
+	}
+}
+func TestCompressionHijackWithoutFlushing(t *testing.T) {
+	sink := &compressionTakeoverWriter{recorder: httptest.NewRecorder()}
+	CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if _, _, err := http.NewResponseController(w).Hijack(); err != nil {
+			t.Error(err)
+		}
+	})).ServeHTTP(sink, httptest.NewRequest("GET", "/", nil))
+	if !sink.called {
+		t.Fatal("supported hijacker was never called")
+	}
+}
+func TestCompressionIdentityAcrossHeaderLines(t *testing.T) {
+	for _, tc := range []struct {
+		values []string
+		status int
+	}{
+		{[]string{"*;q=0", "identity;q=1"}, http.StatusOK},
+		{[]string{"br;q=0, gzip;q=0", "identity;q=0"}, http.StatusNotAcceptable},
+	} {
+		t.Run(tc.values[1], func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header["Accept-Encoding"] = tc.values
+			CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				_, _ = w.Write([]byte("hello"))
+			})).ServeHTTP(recorder, req)
+			if recorder.Code != tc.status {
+				t.Fatalf("status=%d, want %d", recorder.Code, tc.status)
+			}
+			if tc.status == http.StatusOK && recorder.Body.String() != "hello" {
+				t.Fatal("accepted identity body changed")
+			}
+			if tc.status == http.StatusNotAcceptable && recorder.Body.Len() != 0 {
+				t.Fatal("excluded identity body was sent")
+			}
+		})
+	}
+}
+func TestCompressionHijackFinishesCompressedResponse(t *testing.T) {
+	for _, encoding := range []string{"br", "gzip"} {
+		for _, version := range []string{"HTTP/1.1", "HTTP/1.0"} {
+			t.Run(encoding+version, func(t *testing.T) {
+				body := strings.Repeat("compressed prefix\n", 200)
+				errs := make(chan error, 1)
+				srv := httptest.NewServer(CompressionMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "text/plain")
+					w.Header().Set("Trailer", "X-Complete")
+					_, err := io.WriteString(w, body)
+					w.Header().Set("X-Complete", "yes")
+					if err != nil {
+						errs <- err
+						return
+					}
+					conn, rw, err := http.NewResponseController(w).Hijack()
+					if err != nil {
+						errs <- err
+						return
+					}
+					defer conn.Close()
+					_, err = rw.WriteString("tunnel-data")
+					if err == nil {
+						err = rw.Flush()
+					}
+					errs <- err
+				})))
+				defer srv.Close()
+				conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+				_, err = fmt.Fprintf(conn, "GET / %s\r\nHost: example.test\r\nAccept-Encoding: %s\r\n\r\n", version, encoding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reader := bufio.NewReader(conn)
+				response, err := http.ReadResponse(reader, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if version == "HTTP/1.1" {
+					compressed, err := io.ReadAll(response.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := string(decodeCompressedResponse(t, encoding, compressed)); got != body {
+						t.Fatal("compressed prefix changed")
+					}
+					if response.Trailer.Get("X-Complete") != "yes" {
+						t.Fatal("compressed response trailer missing")
+					}
+					tunnel, err := io.ReadAll(reader)
+					if err != nil || string(tunnel) != "tunnel-data" {
+						t.Fatalf("tunnel=%q error=%v", tunnel, err)
+					}
+				} else {
+					all, err := io.ReadAll(response.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !bytes.HasSuffix(all, []byte("tunnel-data")) {
+						t.Fatal("raw tunnel suffix missing")
+					}
+					if got := string(decodeCompressedResponse(t, encoding, all[:len(all)-len("tunnel-data")])); got != body {
+						t.Fatal("compressed prefix changed")
+					}
+				}
+				if err := <-errs; err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
 	}
 }

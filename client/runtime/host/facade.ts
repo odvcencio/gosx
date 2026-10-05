@@ -12,62 +12,6 @@
 
   if (typeof window === "undefined" || typeof document === "undefined") return;
 
-  function gosxRequestToken() {
-    const meta = document.querySelector && document.querySelector('meta[name="csrf-token"]');
-    return meta ? String(meta.getAttribute("content") || "") : "";
-  }
-
-  function gosxMutatingMethod(method) {
-    switch (String(method || "").toUpperCase()) {
-      case "POST":
-      case "PUT":
-      case "PATCH":
-      case "DELETE":
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  function gosxHeadersObject(headers) {
-    const result = {};
-    if (!headers) return result;
-    if (typeof headers.forEach === "function") {
-      headers.forEach((value, key) => { result[key] = value; });
-      return result;
-    }
-    if (Array.isArray(headers)) {
-      for (const entry of headers) {
-        if (Array.isArray(entry) && entry.length >= 2) result[entry[0]] = entry[1];
-      }
-      return result;
-    }
-    for (const key of Object.keys(headers)) result[key] = headers[key];
-    return result;
-  }
-
-  function gosxHasHeader(headers, name) {
-    const wanted = String(name || "").toLowerCase();
-    return Object.keys(headers).some((key) => String(key).toLowerCase() === wanted);
-  }
-
-  function gosxRequest(input, init) {
-    if (typeof window.fetch !== "function") {
-      return Promise.reject(new Error("fetch is not available"));
-    }
-    const options = Object.assign({}, init || {});
-    const csrf = options.csrf !== false;
-    delete options.csrf;
-    const headers = gosxHeadersObject(options.headers);
-    const method = options.method || (input && input.method) || "GET";
-    if (csrf && gosxSameOrigin(input) && gosxMutatingMethod(method) && !gosxHasHeader(headers, "X-CSRF-Token")) {
-      const token = gosxRequestToken();
-      if (token) headers["X-CSRF-Token"] = token;
-    }
-    if (Object.keys(headers).length > 0) options.headers = headers;
-    return window.fetch(input, options);
-  }
-
   function gosxResponseJSON(response) {
     if (!response) return Promise.resolve(null);
     const candidate = typeof response.clone === "function" ? response.clone() : response;

@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = [
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "request.ts"), "utf8"),
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "actions.ts"), "utf8"),
 ].join("\n");
 
@@ -33,6 +34,7 @@ const textLayoutSourceStandalone = fs.readFileSync(
 const integratedModuleSrc = [
   textLayoutSourceStandalone,
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "request.ts"), "utf8"),
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "actions.ts"), "utf8"),
 ].join("\n");
 
@@ -54,15 +56,17 @@ function runIntegratedActionsModule(options = {}) {
       clone() { return this; },
     }),
     document: {
+      baseURI: options.baseURI || "https://app.example/",
       addEventListener: (type, fn) => { listeners[type] = fn; },
       dispatchEvent: () => {},
       querySelector: () => null,
       querySelectorAll: () => [],
       readyState: "complete",
     },
-    window: {},
+    window: {location:{href:"https://app.example/",origin:"https://app.example"}},
   };
   ctx.window.document = ctx.document;
+  ctx.window.fetch = ctx.fetch;
   class CustomEvent {
     constructor(type, init = {}) { this.type = type; this.detail = init.detail; }
   }
@@ -121,7 +125,9 @@ function runModule(options = {}) {
   const notifications = [];
   const dispatched = [];
   const telemetry = [];
-  const metaToken = options.csrfToken;
+  let metaToken = options.csrfToken;
+  const meta = { tagName: "META", getAttribute: (n) => n === "content" ? metaToken : null, setAttribute: (n, v) => { if (n === "content") metaToken = v; } };
+  const hidden = { tagName: "INPUT", value: metaToken, setAttribute(n, v) { this[n] = v; } };
   const ctx = {
     console,
     URL,
@@ -143,6 +149,7 @@ function runModule(options = {}) {
     fetch: (url, opts) => {
       fetches.push({ url, opts });
       const response = {
+        headers: { get: () => options.responseToken ?? null },
         ok: options.responseOK !== false,
         status: options.responseStatus || (options.responseOK === false ? 500 : 200),
       };
@@ -152,17 +159,18 @@ function runModule(options = {}) {
       return Promise.resolve(response);
     },
     document: {
+      baseURI: options.baseURI || "https://app.example/",
       addEventListener: (type, fn) => { listeners[type] = fn; },
       dispatchEvent: (event) => { dispatched.push(event); },
       querySelector: (sel) => {
         if (sel === 'meta[name="csrf-token"]' && metaToken !== undefined) {
-          return { getAttribute: (n) => (n === "content" ? metaToken : null) };
+          return meta;
         }
         if (sel === options.targetSelector) return options.target || null;
         if (options.queryMap && sel in options.queryMap) return options.queryMap[sel];
         return null;
       },
-      querySelectorAll: (sel) => options.queryAll && sel in options.queryAll ? options.queryAll[sel] : [],
+      querySelectorAll: (sel) => sel === 'meta[name="csrf-token"],input[name="csrf_token"]' ? [meta, hidden] : options.queryAll && sel in options.queryAll ? options.queryAll[sel] : [],
       activeElement: options.activeElement || null,
       body: options.body || null,
       documentElement: options.documentElement || null,
@@ -194,6 +202,7 @@ function runModule(options = {}) {
     constructor(type, init = {}) { this.type = type; this.detail = init.detail; }
   }
   ctx.window.document = ctx.document;
+  ctx.window.fetch = ctx.fetch;
   ctx.CustomEvent = CustomEvent;
   vm.createContext(ctx);
   vm.runInContext(moduleSrc, ctx);
@@ -406,7 +415,7 @@ test("data-gosx-action button POSTs, disables during flight, re-enables on settl
   const btn = makeEl({ "data-gosx-action": "POST /api/x/accept" }, { tag: "button" });
   fire(listeners.click, btn);
   assert.equal(fetches.length, 1);
-  assert.equal(fetches[0].url, "/api/x/accept");
+  assert.equal(fetches[0].url, "https://app.example/api/x/accept");
   assert.equal(fetches[0].opts.method, "POST");
   assert.equal(btn.disabled, true, "disabled during flight");
   // After the fetch settles (2xx), the button must be usable again so a
@@ -422,7 +431,7 @@ test("data-gosx-action form submits via fetch and does not navigate", () => {
   const prevented = fire(listeners.submit, form);
   assert.equal(prevented, true);
   assert.equal(fetches.length, 1);
-  assert.equal(fetches[0].url, "/api/x/agent");
+  assert.equal(fetches[0].url, "https://app.example/api/x/agent");
   assert.equal(fetches[0].opts.method, "POST");
 });
 
@@ -460,7 +469,7 @@ test("data-gosx-action form honors submitter formaction and formmethod", () => {
   form._formEntries = [["publish_at", "2026-07-29T16:30"]];
   listeners.submit({ target: form, submitter: submit, preventDefault() {} });
   assert.equal(fetches.length, 1);
-  assert.equal(fetches[0].url, "/api/x/schedule");
+  assert.equal(fetches[0].url, "https://app.example/api/x/schedule");
   assert.equal(fetches[0].opts.method, "PATCH");
   assert.equal(String(fetches[0].opts.body), "publish_at=2026-07-29T16%3A30&post_action=schedule");
 });
@@ -771,4 +780,22 @@ test("isolated action requests attach CSRF headers only to the same origin", () 
     assert.equal(fetches.length, 1);
     assert.equal(fetches[0].opts.headers["X-CSRF-Token"], sameOrigin ? "response-token" : undefined);
   }
+});
+
+test("isolated actions resolve the document base before attaching CSRF", () => {
+ for (const [url, expected, token] of [["/save", "https://other.example/save", undefined], ["save", "https://other.example/forms/save", undefined], ["https://app.example/save", "https://app.example/save", "token"]]) {
+  const { listeners, fetches } = runModule({ csrfToken: "token", baseURI: "https://other.example/forms/" });
+  fire(listeners.click, makeEl({"data-gosx-action":"POST " + url}, {tag:"button"}));
+  assert.equal(fetches[0].url, expected);
+  assert.equal(fetches[0].opts.headers["X-CSRF-Token"], token);
+ }
+});
+
+test("isolated sign-in actions refresh the token before the next mutation", async () => {
+ const { listeners, fetches } = runModule({ csrfToken: "before-login", responseToken: "after-login" });
+ fire(listeners.click, makeEl({"data-gosx-action":"POST /login"}, {tag:"button"}));
+ await new Promise(resolve => setTimeout(resolve, 0));
+ fire(listeners.click, makeEl({"data-gosx-action":"POST /save"}, {tag:"button"}));
+ assert.equal(fetches[0].opts.headers["X-CSRF-Token"], "before-login");
+ assert.equal(fetches[1].opts.headers["X-CSRF-Token"], "after-login");
 });

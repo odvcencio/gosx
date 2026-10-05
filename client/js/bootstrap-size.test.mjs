@@ -804,7 +804,7 @@ const budgets = [
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
   // The complete motion fix measures 190,789 / 53,839 / 46,948. Reviewed
   // hard-limit headroom is 1,991 / 1,076 / 1,037 bytes.
-  { file: "bootstrap-runtime.js", raw: 184000, gzip: 52300, brotli: 45700 },
+  { file: "bootstrap-runtime.js", raw: 183989, gzip: 52300, brotli: 45695 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1588,19 +1588,19 @@ const budgets = [
   // Bumped raw 96_000 -> 105_000, gzip 29_500 -> 32_000, and brotli 26_000 ->
   // 28_500 for the video parity additions carried by the engines feature
   // chunk. Measured: 103_662 / 31_450 / 27_897.
-  { file: "bootstrap-feature-engines.js", raw: 109873, gzip: 32527, brotli: 28827 },
+  { file: "bootstrap-feature-engines.js", raw: 109773, gzip: 32481, brotli: 28771 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
-  { file: "bootstrap-feature-controllers.js", raw: 15324, gzip: 4022, brotli: 3591 },
+  { file: "bootstrap-feature-controllers.js", raw: 15220, gzip: 3989, brotli: 3572 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
   // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
   // hard limit had only 10 bytes left; targets grow by the measured change.
-  { file: "bootstrap-feature-hubs.js", raw: 47903, gzip: 14843, brotli: 13361 },
+  { file: "bootstrap-feature-hubs.js", raw: 47803, gzip: 14804, brotli: 13314 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
   // measurement: 12_963 / 3_560 / 3_184.
-  { file: "bootstrap-feature-islands.js", raw: 18835, gzip: 4475, brotli: 4005 },
+  { file: "bootstrap-feature-islands.js", raw: 18730, gzip: 4428, brotli: 3969 },
 ];
 
 const routeBudgets = [
@@ -1731,9 +1731,9 @@ const routeBudgets = [
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
-    raw: 288800,
+    raw: 288689,
     gzip: 83400,
-    brotli: 73200,
+    brotli: 73139,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface

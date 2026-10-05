@@ -99,35 +99,11 @@
     notifySharedSignalFallback(name, valueJSON);
   }
 
-  function isMutatingMethod(method) {
-    switch (String(method || "").toUpperCase()) {
-      case "POST":
-      case "PUT":
-      case "PATCH":
-      case "DELETE":
-        return true;
-      default:
-        return false;
-    }
-  }
-
   function gosxActionRequest(url, opts) {
     if (window.__gosx && typeof window.__gosx.request === "function") {
       return window.__gosx.request(url, opts);
     }
-    // Keep isolated action fragments compatible when the full core bootstrap
-    // is intentionally absent. The standard path above owns this policy.
-    var fallback = Object.assign({}, opts || {});
-    var headers = Object.assign({}, fallback.headers || {});
-    if (gosxSameOrigin(url) && isMutatingMethod(fallback.method) && !Object.keys(headers).some(function (key) {
-      return String(key).toLowerCase() === "x-csrf-token";
-    })) {
-      var meta = document.querySelector('meta[name="csrf-token"]');
-      var token = meta ? meta.getAttribute("content") || "" : "";
-      if (token) headers["X-CSRF-Token"] = token;
-    }
-    fallback.headers = headers;
-    return fetch(url, fallback);
+    return gosxRequest(url, opts);
   }
 
   var SUBMITTER_ATTRS = {
