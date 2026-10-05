@@ -59,6 +59,32 @@ func Page() Node {
 		</section>
 		<section id="troubleshooting" class="docs-section-block">
 			<h2>Troubleshooting</h2>
+			<h3>Markup does not parse</h3>
+			<p>
+				Run
+				<code>gosx check app/page.gsx</code>
+				. Unclosed and mismatched tags fail with a file, line, column, source excerpt, and fix hint. For example,
+				<code>{"<h2>Next steps</h3>"}</code>
+				reports
+				<code>
+					{"mismatched closing tag </h3>; expected </h2>"}
+				</code>
+				. Change the closing tag to
+				<code>{"</h2>"}</code>
+				. A missing closing tag reports
+				<code>{"unclosed tag <h2>; expected </h2>"}</code>
+				. Markup that produces zero components also fails the check.
+			</p>
+			<h3>A page fails while rendering</h3>
+			<p>
+				Use
+				<code>gosx dev</code>
+				to see the render error in the browser, including its source position and offending expression. Fix the source and save to reload. The development error page also appears when the app defines an error component. Production uses the app's error page or a generic server error page. It does not show these development details.
+				<code>GOSX_ENV=production</code>
+				disables the development error page even if
+				<code>GOSX_DEV=1</code>
+				is set.
+			</p>
 			<h3>Go is too old</h3>
 			<p>
 				Check

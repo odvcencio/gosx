@@ -180,6 +180,9 @@ func Parse(source []byte) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
+	if err := validateMarkup(tree.RootNode(), source, lang); err != nil {
+		return tree, lang, err
+	}
 
 	return tree, lang, nil
 }

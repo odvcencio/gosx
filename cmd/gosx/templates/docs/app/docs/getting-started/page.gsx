@@ -100,6 +100,29 @@ func Page() Node {
 				mostly responsible for APIs, middleware, and server concerns.
 			</p>
 		</section>
+		<section id="troubleshooting" class="callout">
+			<h2>Troubleshooting</h2>
+			<p>
+				Run
+				<code>gosx check app/page.gsx</code>
+				for a markup error. Unclosed or mismatched tags report the file, line, column, source excerpt, and fix hint. For example,
+				<code>{"<h2>Next steps</h3>"}</code>
+				reports
+				<code>
+					{"mismatched closing tag </h3>; expected </h2>"}
+				</code>
+				. Add a missing closing tag or change it to match the opening tag. Markup that produces zero components fails the check.
+			</p>
+			<p>
+				Use
+				<code>gosx dev</code>
+				for render failures: the browser shows the error message, source position, and offending expression, even when the app defines an error component. Fix the source and save to reload. Production uses the app's error page or a generic server error page.
+				<code>GOSX_ENV=production</code>
+				disables development details even if
+				<code>GOSX_DEV=1</code>
+				is set.
+			</p>
+		</section>
 		<div class="hero-actions">
 			<a href="/docs/routing" data-gosx-link class="cta-link primary">Continue to routing</a>
 			<a href="/docs/forms" data-gosx-link class="cta-link">See form handling</a>

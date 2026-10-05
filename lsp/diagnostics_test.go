@@ -13,6 +13,24 @@ func TestAnalyzeParseDiagnostic(t *testing.T) {
 func Broken() Node {
 	return <div>{</div>
 }
+
+func TestAnalyzeMarkupDiagnostic(t *testing.T) {
+	for _, tc := range []struct {
+		markup, message, hint string
+		column                int
+	}{
+		{"<h2>Next steps</h3>", "mismatched closing tag </h3>", "replace </h3> with </h2>", 22},
+		{"<h2>Next steps", "unclosed tag <h2>", "add </h2>", 8},
+	} {
+		diags := Analyze("page.gsx", []byte("package app\n\nfunc Page() Node {\n\treturn "+tc.markup+"\n}\n"))
+		if len(diags) != 1 || diags[0].Severity != SeverityError || diags[0].Range.Start != (Position{Line: 3, Character: tc.column}) {
+			t.Fatalf("diagnostics=%+v", diags)
+		}
+		if !strings.Contains(diags[0].Message, tc.message) || !strings.Contains(diags[0].Message, tc.hint) {
+			t.Fatalf("message=%q", diags[0].Message)
+		}
+	}
+}
 `))
 	if len(diags) == 0 {
 		t.Fatal("expected diagnostics")
