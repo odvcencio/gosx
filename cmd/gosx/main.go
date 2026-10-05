@@ -404,7 +404,7 @@ func cmdCompile() {
 
 	output, err := transpile.Transpile(source, transpile.Options{SourceFile: file})
 	if err != nil {
-		fatal("compile: %v", err)
+		fatal("compile: %s:%v", file, err)
 	}
 	fmt.Print(output)
 }
@@ -448,7 +448,16 @@ func runCheck(file string, stderr io.Writer) error {
 
 	prog, err := gosx.Compile(source)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s:%w", file, err)
+	}
+	if len(prog.Components) == 0 {
+		tree, lang, err := gosx.Parse(source)
+		if err == nil {
+			err = gosx.DescribeMissingComponents(tree.RootNode(), source, lang)
+		}
+		if err != nil {
+			return fmt.Errorf("%s:%w", file, err)
+		}
 	}
 	// Warnings (gosx#249) are collected and printed regardless of whether
 	// the check itself passes or fails below -- a warning never changes
