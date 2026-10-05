@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -69,6 +70,54 @@ func TestProtectBoundsTokenReadsAndLeavesMultipartToHandler(t *testing.T) {
 			}
 			if called != (tc.header != "") {
 				t.Fatalf("handler called=%v", called)
+			}
+		})
+	}
+}
+
+func TestProtectUsesAlreadyParsedURLEncodedForm(t *testing.T) {
+	m := MustNew("csrf-regression-secret", Options{})
+	var raw, masked string
+	w := httptest.NewRecorder()
+	m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Current(r).Set("active", true)
+		masked = Token(r)
+		raw = Current(r).String(defaultCSRFKey)
+	})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	cookie := w.Result().Cookies()[0]
+	for _, tc := range []struct {
+		name, token string
+		want        int
+	}{
+		{"masked", masked, http.StatusNoContent},
+		{"legacy", raw, http.StatusNoContent},
+		{"invalid", "masked:invalid", http.StatusForbidden},
+		{"missing", "", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := url.Values{"offer_id": {"starter"}}
+			if tc.token != "" {
+				values.Set(defaultCSRFField, tc.token)
+			}
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(values.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.AddCookie(cookie)
+			// Match handlers that validate a bounded form before invoking Protect.
+			r.Body = http.MaxBytesReader(httptest.NewRecorder(), r.Body, 4096)
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			body := &csrfCountingBody{remaining: 2 << 20}
+			r.Body = body
+			w := httptest.NewRecorder()
+			m.Middleware(m.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.PostForm.Get("offer_id") != "starter" {
+					t.Fatal("parsed form changed")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))).ServeHTTP(w, r)
+			if w.Code != tc.want || body.read != 0 {
+				t.Fatalf("status=%d want=%d bytes reread=%d", w.Code, tc.want, body.read)
 			}
 		})
 	}

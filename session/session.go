@@ -302,15 +302,21 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 			// Multipart bodies belong to the action's upload parser and limit.
 			// Never consume or cache them here; multipart clients use the header.
 			if contentType == "application/x-www-form-urlencoded" {
-				body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-				if err != nil {
-					http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
-					return
-				}
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				form, err := url.ParseQuery(string(body))
-				if err == nil {
-					actual = form.Get(defaultCSRFField)
+				if r.PostForm != nil {
+					// An upstream form handler has already consumed the body.
+					// Use its parsed fields instead of rereading an empty stream.
+					actual = r.PostForm.Get(defaultCSRFField)
+				} else {
+					body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+					if err != nil {
+						http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					form, err := url.ParseQuery(string(body))
+					if err == nil {
+						actual = form.Get(defaultCSRFField)
+					}
 				}
 			}
 			if actual == "" && contentType != "multipart/form-data" {
