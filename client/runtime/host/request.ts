@@ -67,4 +67,3 @@ function gosxHasHeader(headers, name) {
       return sameOrigin && (!response.url || gosxRequestURL(response.url).origin === window.location.origin) ? gosxRefreshToken(response) : response;
     });
   }
-
