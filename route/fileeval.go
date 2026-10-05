@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -1017,9 +1019,114 @@ func equalValues(left, right any) bool {
 		return false
 	}
 	if isNumeric(left) || isNumeric(right) {
-		return numericValue(left) == numericValue(right)
+		if lnegative, lmagnitude, lok := equalityInteger(left); lok {
+			if rnegative, rmagnitude, rok := equalityInteger(right); rok {
+				return lnegative == rnegative && lmagnitude == rmagnitude
+			}
+		}
+		if equal, handled := equalityFloatString(left, right); handled {
+			return equal
+		}
+		if equal, handled := equalityFloatString(right, left); handled {
+			return equal
+		}
+		// Reject failed string conversions and preserve mixed numeric precision.
+		ln, lok := equalityNumber(left)
+		rn, rok := equalityNumber(right)
+		return lok && rok && ln.Cmp(rn) == 0
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+// Float/string comparisons use the float's precision, so fractional request
+// values compare like a complete conversion to the corresponding Go float.
+// Integer/string comparisons continue through equalityNumber without rounding.
+func equalityFloatString(number, text any) (equal, handled bool) {
+	n, ok := indirectValueOf(number)
+	if !ok || (n.Kind() != reflect.Float32 && n.Kind() != reflect.Float64) {
+		return false, false
+	}
+	s, ok := indirectValueOf(text)
+	if !ok || s.Kind() != reflect.String {
+		return false, false
+	}
+	_, parsed, ok := parseEqualityNumericString(s.String(), n.Type().Bits())
+	return ok && n.Float() == parsed, true
+}
+
+// equalityInteger uses the sign and magnitude so signed and unsigned IDs
+// can compare without overflow, rounding, or allocating a big number.
+func equalityInteger(value any) (negative bool, magnitude uint64, ok bool) {
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return false, 0, false
+	}
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n := rv.Int()
+		if n < 0 {
+			return true, uint64(-(n + 1)) + 1, true
+		}
+		return false, uint64(n), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return false, rv.Uint(), true
+	default:
+		return false, 0, false
+	}
+}
+
+// equalityNumber preserves the exact value rather than rounding identifiers
+// through float64. Numeric strings must parse completely; invalid strings,
+// booleans and non-finite floats never compare equal to a number.
+func equalityNumber(value any) (*big.Rat, bool) {
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return nil, false
+	}
+	n := new(big.Rat)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return n.SetInt64(rv.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return n.SetInt(new(big.Int).SetUint64(rv.Uint())), true
+	case reflect.Float32, reflect.Float64:
+		n = n.SetFloat64(rv.Float())
+		return n, n != nil
+	case reflect.String:
+		text, _, ok := parseEqualityNumericString(rv.String(), 64)
+		if !ok {
+			return nil, false
+		}
+		return n.SetString(text)
+	default:
+		return nil, false
+	}
+}
+
+// Bound request-data parsing before either floating-point conversion or
+// rational exponent expansion. Hexadecimal mantissas can contain e/E digits;
+// their exponent marker is p/P rather than the decimal e/E marker.
+func parseEqualityNumericString(value string, bitSize int) (text string, number float64, ok bool) {
+	text = strings.TrimSpace(value)
+	if len(text) == 0 || len(text) > 128 {
+		return "", 0, false
+	}
+	markers := "eE"
+	unsigned := strings.TrimLeft(text, "+-")
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		markers = "pP"
+	}
+	if i := strings.IndexAny(text, markers); i >= 0 {
+		exponent, err := strconv.ParseInt(text[i+1:], 10, 32)
+		if err != nil || exponent < -4096 || exponent > 4096 {
+			return "", 0, false
+		}
+	}
+	number, err := strconv.ParseFloat(text, bitSize)
+	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
+		return "", 0, false
+	}
+	return text, number, true
 }
 
 func compareValues(left, right any) int {
