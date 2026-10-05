@@ -1,1 +1,1 @@
-<p class="flash-notice">{flash.notice}</p>
+<p class="flash-notice">{props.Form.Flash["notice"]}</p>

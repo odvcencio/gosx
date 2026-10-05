@@ -103,9 +103,7 @@ component Page(props: PanelProps) {
 	}
 }
 
-// Row must carry this exact name: the strict boundary proves a loop source
-// by its element struct's DECLARED name (requireStrictSliceValue), so the Go
-// type the test supplies has to match the .gsx fixture's element struct.
+// The strict boundary proves loop elements by their rendered fields.
 type Row struct{ Label string }
 
 type childrenEachPanelProps struct{ Rows []Row }

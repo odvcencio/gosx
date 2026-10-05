@@ -1033,15 +1033,15 @@ type routeTestInnerStat struct {
 // TestRequireStrictSliceValueDirectRejections exercises
 // requireStrictSliceValue directly, mirroring
 // TestRequireStrictStructValueRejectsBoundaryMismatches's pattern for the
-// slice boundary: []map[string]any (the wrong Kind of element), a wrong
-// element type name, a wrong leaf type, and pointer elements each fail
+// slice boundary: []map[string]any (the wrong Kind of element), a missing
+// field, a wrong leaf type, and pointer elements each fail
 // closed with a message naming what the renderer expected.
 func TestRequireStrictSliceValueDirectRejections(t *testing.T) {
 	schema := ir.SlicePropSchema{
 		Elem:  "routeTestBreakdownRow",
 		Reads: map[string]string{"Label": "string"},
 	}
-	type otherRow struct{ Label string }
+	type otherRow struct{ Missing string }
 
 	for _, tc := range []struct {
 		name  string
@@ -1050,7 +1050,7 @@ func TestRequireStrictSliceValueDirectRejections(t *testing.T) {
 		{"nil value", nil},
 		{"not a slice", routeTestBreakdownRow{Label: "x"}},
 		{"slice of maps", []map[string]any{{"Label": "x"}}},
-		{"wrong element type name", []otherRow{{Label: "x"}}},
+		{"missing element field", []otherRow{{Missing: "x"}}},
 		{"pointer elements", []*routeTestBreakdownRow{{Label: "x"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1076,6 +1076,22 @@ func TestRequireStrictSliceValueDirectRejections(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("requireStrictSliceValue returned nil for a typed nil slice")
+		}
+	})
+
+	t.Run("different and anonymous element names pass structurally", func(t *testing.T) {
+		type rowData struct{ Label string }
+		for _, value := range []any{[]rowData{{Label: "x"}}, []struct{ Label string }{{Label: "x"}}, []rowData(nil)} {
+			if _, err := requireStrictSliceValue(value, schema); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("empty slice still proves field types", func(t *testing.T) {
+		type rowData struct{ Label int }
+		if _, err := requireStrictSliceValue([]rowData(nil), schema); err == nil {
+			t.Fatal("accepted an empty slice with a mismatched rendered field")
 		}
 	})
 
