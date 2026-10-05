@@ -26,39 +26,23 @@ function gosxRequestToken() {
   }
 
 function gosxHeadersObject(headers) {
-    const result = {};
-    if (!headers) return result;
-    if (typeof headers.forEach === "function") {
-      headers.forEach((value, key) => { result[key] = value; });
-      return result;
-    }
-    if (Array.isArray(headers)) {
-      for (const entry of headers) {
-        if (Array.isArray(entry) && entry.length >= 2) result[entry[0]] = entry[1];
-      }
-      return result;
-    }
-    for (const key of Object.keys(headers)) result[key] = headers[key];
-    return result;
-  }
-
-function gosxHasHeader(headers, name) {
-    const wanted = name.toLowerCase();
-    return Object.keys(headers).some((key) => String(key).toLowerCase() === wanted);
+    return headers && typeof headers[Symbol.iterator] === "function"
+      ? Object.fromEntries(headers)
+      : Object.assign({}, headers);
   }
 
   async function gosxRequest(input, init) {
     if (typeof window.fetch !== "function") {
-      return Promise.reject(new Error("fetch is not available"));
+      throw new Error("fetch is not available");
     }
     const url = gosxRequestURL(input);
     const sameOrigin = url.origin === window.location.origin;
-    const options = Object.assign({}, init || {});
+    const options = Object.assign({}, init);
     const csrf = options.csrf !== false;
     delete options.csrf;
     const headers = gosxHeadersObject(options.headers);
     const method = options.method || (input && input.method) || "GET";
-    if (csrf && sameOrigin && /^(POST|PUT|PATCH|DELETE)$/i.test(method) && !gosxHasHeader(headers, "X-CSRF-Token")) {
+    if (csrf && sameOrigin && /^(POST|PUT|PATCH|DELETE)$/i.test(method) && !Object.keys(headers).some((key) => key.toLowerCase() === "x-csrf-token")) {
       const token = gosxRequestToken();
       if (token) headers["X-CSRF-Token"] = token;
     }

@@ -276,6 +276,26 @@ test("core request transport owns CSRF defaults and preserves explicit headers",
   assert.equal(calls[2].init.headers, undefined);
 });
 
+test("core request transport preserves HeadersInit forms and explicit CSRF headers", async () => {
+  const calls = [];
+  const { context } = runModule(makeElement(), {
+    querySelector: () => ({ getAttribute: () => "automatic-token" }),
+    fetch(input, init) { calls.push(init); return Promise.resolve({}); },
+  });
+  for (const explicit of [false, true]) {
+    const entries = [["X-Trace", "preserved"]];
+    if (explicit) entries.push(["x-CsRf-ToKeN", "explicit-token"]);
+    for (const headers of [Object.fromEntries(entries), entries, new Headers(entries)]) {
+      const before = JSON.stringify(headers instanceof Headers ? [...headers] : headers);
+      await context.window.__gosx.request("/save", { method: "POST", headers });
+      const sent = new Headers(calls.at(-1).headers);
+      assert.equal(sent.get("x-trace"), "preserved");
+      assert.equal(sent.get("x-csrf-token"), explicit ? "explicit-token" : "automatic-token");
+      assert.equal(JSON.stringify(headers instanceof Headers ? [...headers] : headers), before);
+    }
+  }
+});
+
 test("surface requests inherit the surface abort signal through core transport", async () => {
   const calls = [];
   const surface = makeElement({ "data-gosx-runtime-surface": "editor" });
