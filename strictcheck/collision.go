@@ -89,7 +89,7 @@ func validatePackageDeclCollisions(files []transpile.PackageFile, generated map[
 			diagnostics = append(diagnostics, ir.Diagnostic{
 				Span: mine.span,
 				Message: fmt.Sprintf(
-					"%s %s collides with %s %s declared at %s; a strict .gsx file projects this declaration into the package as ordinary Go, and a Go package declares each name once",
+					"%s %s collides with %s %s declared at %s; strict checking and explicit transpilation project this declaration into the package as ordinary Go, and a Go package declares each name once",
 					mine.kind, name, sibling.kind, name, formatDeclPosition(sibling.span),
 				),
 				Hint: "rename one side; a converter type beside a component is commonly named " + name + "Data",
