@@ -73,6 +73,7 @@ start() {
 	ready="$4"
 	local_secret="$(openssl rand -hex 32)"
 	PORT="127.0.0.1:$port" \
+	GOSX_LISTEN_ADDR="127.0.0.1:$port" \
 	PUBLIC_URL="http://127.0.0.1:${port}" \
 	SESSION_SECRET="$local_secret" \
 		"$dir/dist/run.sh" >"$out/${name}-server.log" 2>&1 &

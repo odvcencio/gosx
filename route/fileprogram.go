@@ -38,7 +38,7 @@ type fileProgramRenderer struct {
 	err            error
 }
 
-func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
+func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (output string, replaced bool, renderErr error) {
 	// gosx#185: a render profile's validation pass runs before anything is
 	// written, over the whole compiled program, not just the component
 	// being rendered. A non-empty diagnostic list aborts the render here —
@@ -62,6 +62,12 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	if !ok {
 		return "", false, fmt.Errorf("component %q not found", component)
 	}
+	defer func() {
+		renderErr = locateRenderError(renderErr, comp.Span, component)
+		if renderErr != nil && opts.SourceFile != "" {
+			renderErr = renderErrorFile(renderErr, opts.SourceFile)
+		}
+	}()
 	entryEnv := opts.EvalEnv
 	if comp.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(comp.PropsType) != "" {
 		// gosx#226: a strict component rendered as the render entry (not as a
@@ -98,7 +104,7 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		// never around it.
 		props, err := strictSpreadProps(comp, opts.EntryProps)
 		if err != nil {
-			return "", false, fmt.Errorf("render strict entry %s (props %s): %w", comp.Name, comp.PropsType, err)
+			return "", false, locateEntryRenderError(fmt.Errorf("render strict entry %s (props %s): %w", comp.Name, comp.PropsType, err), prog, comp)
 		}
 		entryEnv = entryEnv.withValue("props", props)
 	}
@@ -229,6 +235,24 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 	if node == nil {
 		return
 	}
+	defer func() {
+		expression := node.Text
+		if expression == "" && node.Tag != "" {
+			expression = "<" + node.Tag + ">"
+		}
+		span := node.Span
+		span.File = r.opts.SourceFile
+		r.err = locateRenderError(r.err, span, expression)
+		if r.err != nil && r.opts.SourceFile != "" {
+			r.err = renderErrorFile(r.err, r.opts.SourceFile)
+		}
+		if recovered := recover(); recovered != nil {
+			if err, ok := recovered.(error); ok {
+				panic(locateRenderError(err, span, expression))
+			}
+			panic(locateRenderError(fmt.Errorf("%v", recovered), span, expression))
+		}
+	}()
 	switch node.Kind {
 	case ir.NodeElement:
 		r.writeElement(b, node, env)
@@ -2078,7 +2102,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 			frame, _ := evalFileExpr("props", env).(map[string]any)
 			props, err := strictSpreadPropsFromTypedFrame(comp, frame)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, locateAttrError(err, attrs[0])
 			}
 			setStrictComponentChildren(comp, props, children)
 			return props, nil, nil
@@ -2098,7 +2122,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 		}
 		props, err := strictSpreadProps(comp, source)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, locateAttrError(err, attrs[0])
 		}
 		setStrictComponentChildren(comp, props, children)
 		return props, source, nil
@@ -2126,7 +2150,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 			resolved.Name = field
 			converted, err := strictComponentAttrValue(comp, resolved, env, fieldType)
 			if err != nil {
-				return nil, nil, fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err)
+				return nil, nil, locateAttrError(fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err), attr)
 			}
 			value = converted
 		} else {

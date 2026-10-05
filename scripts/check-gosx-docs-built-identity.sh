@@ -125,6 +125,7 @@ if [ -z "$base_url" ]; then
 	local_secret="$("$python_cmd" -c 'import secrets; print(secrets.token_hex(32))')"
 	GOSX_APP_ROOT="$dist_root" \
 		PORT="127.0.0.1:${port}" \
+		GOSX_LISTEN_ADDR="127.0.0.1:${port}" \
 		PUBLIC_URL="$public_url" \
 		GOSX_DOCS_REVISION="$revision" \
 		GOSX_DOCS_BUILT_AT="$built_at" \

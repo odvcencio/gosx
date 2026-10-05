@@ -4042,7 +4042,8 @@ func (l *lowerer) extractAttrs(n *gotreesitter.Node) []Attr {
 	return attrs
 }
 
-func (l *lowerer) lowerAttr(n *gotreesitter.Node) Attr {
+func (l *lowerer) lowerAttr(n *gotreesitter.Node) (attr Attr) {
+	defer func() { attr.Span = l.span(n) }()
 	nameNode := l.childByField(n, "name")
 	name := ""
 	if nameNode != nil {
@@ -4088,7 +4089,7 @@ func (l *lowerer) lowerSpreadAttr(n *gotreesitter.Node) Attr {
 	if exprNode != nil {
 		expr = l.text(exprNode)
 	}
-	return Attr{Kind: AttrSpread, Expr: expr}
+	return Attr{Kind: AttrSpread, Expr: expr, Span: l.span(n)}
 }
 
 func stripGSXAttributeExpressionText(text string) string {
