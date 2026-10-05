@@ -569,6 +569,9 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 	}
 	ctx.pattern = pattern
 	server.MarkObservedRequest(ctx.Request, "error", pattern)
+	if ctx.Request != nil && server.WriteDevelopmentError(w, ctx.Request, err) {
+		return
+	}
 	if ctx.StatusCode() == 0 {
 		ctx.SetStatus(http.StatusInternalServerError)
 	}
@@ -582,7 +585,7 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 			title = "Server Error"
 		}
 		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: title}})
-		node = defaultStatusBody(title, defaultErrorMessage(err, pattern))
+		node = defaultStatusBody(title, "The server encountered an unexpected error.")
 	}
 
 	if errorLayout != nil {
@@ -798,16 +801,6 @@ func defaultStatusBody(title string, message string) gosx.Node {
 		gosx.El("h1", gosx.Text(title)),
 		gosx.El("p", gosx.Text(message)),
 	)
-}
-
-func defaultErrorMessage(err error, pattern string) string {
-	if err == nil {
-		return "The server encountered an unexpected error."
-	}
-	if pattern == "" {
-		return err.Error()
-	}
-	return fmt.Sprintf("%s (%s)", err.Error(), pattern)
 }
 
 func copyHeaders(dst, src http.Header) {

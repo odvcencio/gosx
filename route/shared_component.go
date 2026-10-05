@@ -20,6 +20,7 @@ import (
 type sharedComponentTarget struct {
 	prog *ir.Program
 	comp *ir.Component
+	file string
 }
 
 // loadSharedDirComponents compiles every .gsx file in dir through the same
@@ -83,7 +84,7 @@ func loadSharedDirComponents(dir string) (map[string]sharedComponentTarget, erro
 				// sibling stage) long before a render ever reaches this.
 				continue
 			}
-			targets[comp.Name] = sharedComponentTarget{prog: prog, comp: comp}
+			targets[comp.Name] = sharedComponentTarget{prog: prog, comp: comp, file: path}
 		}
 	}
 	return targets, nil
@@ -173,7 +174,7 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 	// entered. A slot child's NodeID indexes the caller's program, so the
 	// child renderer built below could not resolve it. See renderCallSlots.
 	slotNodes := r.renderCallSlots(node.Slots, env)
-	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile})
+	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile, SourceFile: target.file})
 	child.writeLocalComponentWithChildren(b, target.comp, node, env, childrenNode, slotNodes)
 	if child.err != nil {
 		r.err = child.err
