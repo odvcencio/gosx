@@ -1,5 +1,22 @@
+package app
+
+import (
+	"log"
+
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/route"
+)
+
+// .gsx types are renderer schemas; Go loader models use separate names.
+type PageData struct {
+	Form route.FormState
+}
+
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
+		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			return PageData{Form: ctx.FormState("subscribe")}, nil
+		},
 		Actions: route.FileActions{
 			"subscribe": func(ctx *action.Context) error {
 				email := ctx.FormData["email"]

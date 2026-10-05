@@ -162,8 +162,9 @@ const (
 // schema-blind, so it cannot know where three hops actually lands against a
 // given props struct. The lowerer (ir/lower.go) resolves each accepted path
 // against the same-file struct schema and reports the three-hop cap there,
-// with full component context. Operators outside the one `+` exception,
-// indexing, and calls need static Go type/method information that the
+// with full component context. Literal string keys into map[string]string
+// are also supported; the lowerer proves the map type. Other indexing,
+// operators outside the one `+` exception, and calls need information the
 // map-backed file renderer does not retain, so they fail closed.
 //
 // ValidateServerExpression is ValidateServerExpressionScope's empty-scope
@@ -289,6 +290,9 @@ func validate(expr ast.Expr, source string, scope Scope, pos exprPosition) error
 		}
 		return nil
 	case *ast.IndexExpr:
+		if _, _, ok := rootedSelectorPath(node, scope); ok {
+			return nil
+		}
 		return fmt.Errorf("index expressions are not supported by the strict server renderer because out-of-range behavior differs from Go")
 	case *ast.UnaryExpr:
 		return fmt.Errorf("unary operator %q is not supported by the strict server renderer because its dynamic coercion cannot preserve Go types", node.Op)
@@ -359,7 +363,7 @@ func classifyConcatOperand(operand ast.Expr, scope Scope) concatOperandKind {
 			return concatOperandString
 		}
 		return concatOperandNonStringLiteral
-	case *ast.SelectorExpr:
+	case *ast.SelectorExpr, *ast.IndexExpr:
 		if _, _, ok := rootedSelectorPath(node, scope); ok {
 			return concatOperandSelector
 		}
@@ -476,8 +480,24 @@ func ServerSelectorPath(source string, scope Scope) (root string, path []string,
 // paths through one definition. It admits props and, per scope, an Item or
 // Index binding name as syntactically valid roots — Scope's doc comment
 // explains why an Index root is admitted here even though it is never a
-// valid root once the lowerer resolves its type.
+// valid root once the lowerer resolves its type. A terminal literal string
+// index becomes an encoded map-key segment; the lowerer proves its map type.
 func rootedSelectorPath(expr ast.Expr, scope Scope) (root string, path []string, ok bool) {
+	if index, isIndex := unwrapParens(expr).(*ast.IndexExpr); isIndex {
+		key, literal := unwrapParens(index.Index).(*ast.BasicLit)
+		if !literal || key.Kind != token.STRING {
+			return "", nil, false
+		}
+		value, err := strconv.Unquote(key.Value)
+		if err != nil {
+			return "", nil, false
+		}
+		root, path, ok = rootedSelectorPath(index.X, scope)
+		if !ok {
+			return "", nil, false
+		}
+		return root, append(path, MapKeySegment(value)), true
+	}
 	selector, isSelector := unwrapParens(expr).(*ast.SelectorExpr)
 	if !isSelector || selector.Sel == nil || selector.Sel.Name == "" {
 		return "", nil, false
@@ -564,11 +584,11 @@ func ServerExpressionRootedPaths(source string, scope Scope) []RootedPath {
 	var paths []RootedPath
 	seen := make(map[string]struct{})
 	ast.Inspect(expr, func(n ast.Node) bool {
-		selector, ok := n.(*ast.SelectorExpr)
+		expression, ok := n.(ast.Expr)
 		if !ok {
 			return true
 		}
-		root, path, ok := rootedSelectorPath(selector, scope)
+		root, path, ok := rootedSelectorPath(expression, scope)
 		if !ok {
 			return true
 		}
