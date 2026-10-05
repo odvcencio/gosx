@@ -446,7 +446,16 @@
       const ro = canvas.__gosxResizeObserver;
       if (ro && box.source !== canvas && canvas.__gosxSizeFallbackAncestor !== box.source) {
         canvas.__gosxSizeFallbackAncestor = box.source;
-        try { ro.observe(box.source); } catch (e) { /* tolerate */ }
+        // This recovery can run in the canvas's ResizeObserver delivery.
+        // Observing a shallower ancestor there leaves undelivered notifications
+        // in WebKit. Register it in a later task outside that delivery cycle.
+        clearTimeout(canvas.__gosxROTimer);
+        const ancestor = box.source;
+        canvas.__gosxROTimer = setTimeout(function() {
+          canvas.__gosxROTimer = null;
+          if (canvas.__gosxResizeObserver !== ro) return;
+          try { ro.observe(ancestor); } catch (e) { /* tolerate */ }
+        }, 0);
       }
     }
 
@@ -487,6 +496,9 @@
         }
         inst.extraCleanup.length = 0;
       }
+      clearTimeout(inst.canvas.__gosxROTimer);
+      inst.canvas.__gosxROTimer = null;
+      inst.canvas.__gosxResizeObserver = null;
       if (inst.resizeObserver && typeof inst.resizeObserver.disconnect === "function") {
         inst.resizeObserver.disconnect();
       }
@@ -1091,51 +1103,38 @@
       // the DOM board's startMarquee (sitemapruntime/island_runtime.js): plain
       // left-drag pans, shift+left-drag marquee-selects.
       let marqueeing = false;
-      let marqueeOverlay = null;
+      let marqueeViewport = null;
+      function restoreMarqueeViewport() {
+        if (marqueeViewport && !instance.disposed) window.scrollTo(...marqueeViewport);
+      }
 
       function localPoint(e) {
         const rect = canvas.getBoundingClientRect();
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
       }
 
-      // ensureMarqueeOverlay lazily creates the absolutely-positioned selection
-      // rectangle inside the canvas's offset parent (mirrors the DOM board's
-      // [data-studio-site-map-marquee] overlay). pointer-events:none so it never
-      // intercepts the drag. Hidden until the first move.
-      function ensureMarqueeOverlay() {
-        if (marqueeOverlay && marqueeOverlay.parentNode) return marqueeOverlay;
-        const parent = canvas.parentNode || document.body;
-        const overlay = document.createElement("div");
-        overlay.setAttribute("data-gosx-canvas-marquee", "true");
-        overlay.style.cssText = "position:absolute;pointer-events:none;display:none;z-index:2;border:1px solid rgba(120,170,255,0.9);background:rgba(120,170,255,0.15)";
-        try { parent.appendChild(overlay); } catch (e) { /* tolerate */ }
-        marqueeOverlay = overlay;
-        return overlay;
-      }
-
+      // Keep the overlay mounted so dragging does not change the board's tree.
+      const marqueeOverlay = document.createElement("div");
+      marqueeOverlay.setAttribute("data-gosx-canvas-marquee", "true");
+      marqueeOverlay.style.cssText = "position:absolute;pointer-events:none;display:none;z-index:2;border:1px solid rgba(120,170,255,0.9);background:rgba(120,170,255,0.15)";
+      (canvas.parentNode || document.body).appendChild(marqueeOverlay);
       function clearMarqueeOverlay() {
-        if (marqueeOverlay) {
-          if (marqueeOverlay.parentNode) {
-            try { marqueeOverlay.parentNode.removeChild(marqueeOverlay); } catch (e) { /* tolerate */ }
-          }
-          marqueeOverlay = null;
-        }
+        marqueeOverlay.style.display = "none";
       }
-      // The overlay is created inside the board, but a board torn down mid-drag
-      // must not leave it behind — register a cleanup on the surface instance.
       if (!Array.isArray(instance.extraCleanup)) instance.extraCleanup = [];
-      instance.extraCleanup.push(clearMarqueeOverlay);
+      instance.extraCleanup.push(() => marqueeOverlay.remove());
 
       // Draw the overlay from the press origin to the current local point,
       // positioned relative to the canvas's offset within its positioned parent.
       function drawMarquee(curX, curY) {
-        const o = ensureMarqueeOverlay();
-        const s = o.style;
+        const s = marqueeOverlay.style;
         s.display = "block";
         s.left = (canvas.offsetLeft + Math.min(pressX, curX)) + "px";
         s.top = (canvas.offsetTop + Math.min(pressY, curY)) + "px";
         s.width = Math.abs(curX - pressX) + "px";
         s.height = Math.abs(curY - pressY) + "px";
+        // WebKit can scroll the focused canvas when its overlay changes.
+        window.requestAnimationFrame(restoreMarqueeViewport);
       }
 
       const onPointerDown = function(e) {
@@ -1151,6 +1150,7 @@
         // Shift+left-drag = marquee multi-select; plain left-drag = pan. (The
         // DOM board uses the same shift gate.)
         marqueeing = !!e.shiftKey;
+        marqueeViewport = marqueeing ? [window.scrollX, window.scrollY] : null;
         // Focus the canvas so arrow-key navigation (keydown below) applies to the
         // board surface, matching a click-to-focus affordance.
         try { if (typeof canvas.focus === "function") canvas.focus({ preventScroll: true }); } catch (err) { /* tolerate */ }
@@ -1184,6 +1184,7 @@
       const onPointerUp = function(e) {
         if (activePointer === null) return;
         if (e.pointerId !== undefined && e.pointerId !== activePointer) return;
+        restoreMarqueeViewport();
         const p = localPoint(e);
         const wasDrag = dragged;
         const wasMarquee = marqueeing;
@@ -1198,6 +1199,8 @@
           // travel) is treated as an empty marquee — the bridge clears the
           // multi-selection, matching the DOM board's "moved" gate.
           clearMarqueeOverlay();
+          restoreMarqueeViewport();
+          marqueeViewport = null;
           const sz = cssSize();
           if (wasDrag) {
             emit(CANVAS_EVENT_MARQUEE, [pressX, pressY, p.x, p.y, sz.w, sz.h]);
@@ -1218,6 +1221,7 @@
         activePointer = null;
         dragged = false;
         marqueeing = false;
+        marqueeViewport = null;
         clearMarqueeOverlay();
       };
 
