@@ -17,7 +17,7 @@
           "jsWireBytes": 248404,
           "lazyJsWireBytes": 196635,
           "requests": 9,
-          "totalWireBytes": 1007299,
+          "totalWireBytes": 991968,
           "wasmWireBytes": 650787
         },
         "require": [
@@ -134,7 +134,7 @@
           "jsWireBytes": 236944,
           "lazyJsWireBytes": 196635,
           "requests": 14,
-          "totalWireBytes": 1195223,
+          "totalWireBytes": 1180112,
           "wasmWireBytes": 650787
         },
         "require": [

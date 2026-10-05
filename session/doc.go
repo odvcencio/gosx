@@ -45,7 +45,12 @@
 // the proxy addresses and the public AllowedHosts are configured.
 //
 // Protect reads tokens from X-CSRF-Token. For a request that does not want JSON
-// it also reads the csrf_token field in urlencoded or multipart submissions.
+// it also reads the csrf_token field in URL-encoded and multipart submissions
+// under Options.MaxCSRFBodyBytes (1 MiB by default). Match this to the action
+// upload limit for larger native forms. Protect restores the unparsed body so
+// downstream limits still apply. Tokens are masked per response; legacy raw
+// tokens remain valid. Authentication changes also send X-CSRF-Token on the
+// response so enhanced forms can refresh their meta token and hidden fields.
 //
 // # Secrets and rotation
 //
@@ -57,6 +62,12 @@
 // Options.PreviousSecrets lets a secret rotate without signing everyone out:
 // the manager accepts a cookie sealed with an older secret and rewrites it with
 // the current one on the next response.
+//
+// Authentication should call Store.Renew to clear prior state and rotate the
+// token, and Store.Destroy on sign-out. The auth package does this automatically.
+// These cookie sessions cannot revoke an already issued cookie on the server.
+// Apps that need revocation should store a session version in the cookie and
+// check it against a server-side user record on each authenticated request.
 //
 // # Defaults that are deliberately strict
 //

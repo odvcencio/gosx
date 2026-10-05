@@ -195,7 +195,7 @@ test("a rendered initial document executes runtime, Stripe.js, then bridge and m
     else if (script.src === "/gosx/stripe-bridge.js") runScript(stripeBridgeSource, env.context, script.src);
     await flushAsyncWork();
   }
-  assert.equal(env.fetchCalls.filter((call) => call.url === "/session/emitted-order").length, 1);
+  assert.equal(env.fetchCalls.filter((call) => call.url === env.context.location.origin + "/session/emitted-order").length, 1);
   assert.equal(captures.mounts.length, 1);
   assert.equal(root.getAttribute("data-gosx-stripe-state"), "ready");
 });
@@ -213,7 +213,7 @@ test("repeated bridge execution keeps an existing surface mounted exactly once",
   await bootStripe(env, captures);
   runScript(stripeBridgeSource, env.context, "stripe-bridge-second.js");
   await flushAsyncWork();
-  assert.equal(env.fetchCalls.filter((call) => call.url === "/session/idempotent").length, 1);
+  assert.equal(env.fetchCalls.filter((call) => call.url === env.context.location.origin + "/session/idempotent").length, 1);
   assert.equal(captures.mounts.length, 1);
   assert.equal(captures.destroyed.length, 0);
   assert.equal(env.context.__gosx.runtimeSurfaces.size, 1);
@@ -242,7 +242,7 @@ test("Elements requests its secret through scoped same-origin transport and emit
   const captures = newCaptures();
   await bootStripe(env, captures);
 
-  const request = env.fetchCalls.find((call) => call.url === "/account/__actions/stripe-session");
+  const request = env.fetchCalls.find((call) => call.url === env.context.location.origin + "/account/__actions/stripe-session");
   assert.ok(request, "expected the fixed session action to be called");
   assert.equal(request.init.method, "POST");
   assert.equal(request.init.headers["X-CSRF-Token"], "csrf-token-public");
@@ -333,7 +333,7 @@ test("disposing a surface aborts an in-flight session request", async () => {
   await flushAsyncWork();
   runScript(stripeBridgeSource, env.context, "stripe-bridge.js");
   await flushAsyncWork();
-  const request = env.fetchCalls.find((call) => call.url === "/session/pending");
+  const request = env.fetchCalls.find((call) => call.url === env.context.location.origin + "/session/pending");
   assert.ok(request);
   env.context.__gosx_dispose_runtime_surfaces(root);
   assert.equal(request.init.signal.aborted, true);

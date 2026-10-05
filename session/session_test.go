@@ -150,10 +150,7 @@ func TestProtectRejectsMissingOrInvalidToken(t *testing.T) {
 	}
 }
 
-// TestProtectAcceptsMultipartFormToken proves the CSRF guard reads the
-// csrf_token carried in a multipart/form-data body (e.g. the studio
-// workbench's fetch() with a FormData payload and no X-CSRF-Token header).
-func TestProtectAcceptsMultipartFormToken(t *testing.T) {
+func TestProtectAcceptsMultipartHeaderOrNativeField(t *testing.T) {
 	manager := MustNew("csrf-test-secret-value", Options{})
 	handler := manager.Middleware(manager.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -161,8 +158,7 @@ func TestProtectAcceptsMultipartFormToken(t *testing.T) {
 			_, _ = io.WriteString(w, Token(r))
 			return
 		}
-		// Read a downstream field too, to confirm the cached multipart form
-		// is still usable by the handler after the middleware parsed it.
+		// The downstream handler owns multipart parsing.
 		_ = r.FormValue("name")
 		w.WriteHeader(http.StatusNoContent)
 	})))
@@ -179,7 +175,7 @@ func TestProtectAcceptsMultipartFormToken(t *testing.T) {
 	}
 	cookie := getRes.Result().Cookies()[0]
 
-	// Multipart POST carrying the valid token in the body and NO header.
+	// Multipart POST carrying the valid token in the header.
 	multipartBody := func(withToken bool) (*bytes.Buffer, string) {
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
@@ -200,6 +196,7 @@ func TestProtectAcceptsMultipartFormToken(t *testing.T) {
 	body, contentType := multipartBody(true)
 	validReq := httptest.NewRequest(http.MethodPost, "/form", body)
 	validReq.Header.Set("Content-Type", contentType)
+	validReq.Header.Set("X-CSRF-Token", token)
 	validReq.AddCookie(cookie)
 	validRes := httptest.NewRecorder()
 	handler.ServeHTTP(validRes, validReq)
@@ -207,15 +204,15 @@ func TestProtectAcceptsMultipartFormToken(t *testing.T) {
 		t.Fatalf("expected 204 for multipart csrf token, got %d", validRes.Code)
 	}
 
-	// Multipart POST WITHOUT the token and no header must still be rejected.
-	missingBody, missingContentType := multipartBody(false)
+	// A native multipart form carries its token in a hidden field.
+	missingBody, missingContentType := multipartBody(true)
 	missingReq := httptest.NewRequest(http.MethodPost, "/form", missingBody)
 	missingReq.Header.Set("Content-Type", missingContentType)
 	missingReq.AddCookie(cookie)
 	missingRes := httptest.NewRecorder()
 	handler.ServeHTTP(missingRes, missingReq)
-	if missingRes.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for multipart without csrf token, got %d", missingRes.Code)
+	if missingRes.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for native multipart csrf token, got %d", missingRes.Code)
 	}
 }
 
