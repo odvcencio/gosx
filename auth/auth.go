@@ -143,13 +143,14 @@ func (m *Manager) SignIn(r *http.Request, user User) bool {
 		m.observe(event)
 		return false
 	}
+	store.Renew()
 	store.Set(m.sessionKey, user)
 	event.Success = true
 	m.observe(event)
 	return true
 }
 
-// SignOut removes the authenticated user from the session.
+// SignOut destroys the current session.
 func (m *Manager) SignOut(r *http.Request) {
 	if m == nil {
 		return
@@ -170,7 +171,7 @@ func (m *Manager) SignOut(r *http.Request) {
 		m.observe(event)
 		return
 	}
-	store.Delete(m.sessionKey)
+	store.Destroy()
 	event.Success = true
 	m.observe(event)
 }
