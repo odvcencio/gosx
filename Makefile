@@ -411,6 +411,7 @@ test-repo-hygiene:
 	sh scripts/check-repo-hygiene-test.sh
 
 test-perf-budget-ci:
+	sh scripts/local-listen-overrides-test.sh
 	sh scripts/perf-budget-ci-test.sh
 	sh scripts/verify-perf-browser-identity-test.sh
 	sh scripts/check-perf-browser-pin-test.sh
