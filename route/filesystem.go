@@ -307,6 +307,8 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	if r.filePageAliases == nil {
 		r.filePageAliases = make(map[string]string)
 	}
+	// BuildChecked matches these only after canonical routing misses, keeping
+	// slash aliases from conflicting with or taking precedence over catch-alls.
 	for _, pageRoute := range routes {
 		pagePath := patternPath(pageRoute.Pattern)
 		if pagePath != "/" && !strings.HasSuffix(pagePath, "...}") {
