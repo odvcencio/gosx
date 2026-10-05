@@ -3,9 +3,11 @@ package server
 import (
 	"bufio"
 	"compress/gzip"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 	"sync"
 
@@ -46,7 +48,7 @@ func CompressionMiddleware() Middleware {
 			} else if requestAcceptsGzip(r) {
 				encoding = "gzip"
 			}
-			cw := &compressionWriter{ResponseWriter: w, encoding: encoding, identityRejected: !httpcompress.Accepts(r.Header.Get("Accept-Encoding"), "identity")}
+			cw := &compressionWriter{ResponseWriter: w, encoding: encoding, identityRejected: !requestAcceptsEncoding(r, "identity"), http11: r.ProtoAtLeast(1, 1)}
 			var writer http.ResponseWriter = cw
 			_, flush := w.(http.Flusher)
 			_, flushError := w.(interface{ FlushError() error })
@@ -70,6 +72,8 @@ type compressionWriter struct {
 	identityRejected bool
 	rejected         bool
 	hijacked         bool
+	http11           bool
+	output           struct{ io.Writer }
 }
 
 func (w *compressionWriter) WriteHeader(status int) {
@@ -160,13 +164,14 @@ func (w *compressionWriter) start(compress bool) error {
 		h.Del("Content-Length")
 		h.Set("Content-Encoding", w.encoding)
 		weakenETag(h)
+		w.output.Writer = w.ResponseWriter
 		if w.encoding == "br" {
 			br := brotliWriterPool.Get().(*brotli.Writer)
-			br.Reset(w.ResponseWriter)
+			br.Reset(&w.output)
 			w.compressor = br
 		} else {
 			gz := gzipWriterPool.Get().(*gzip.Writer)
-			gz.Reset(w.ResponseWriter)
+			gz.Reset(&w.output)
 			w.compressor = gz
 		}
 	}
@@ -214,10 +219,14 @@ func (w *compressionWriter) finish() {
 		return
 	}
 	_ = w.start(len(w.buffer) >= httpcompress.MinimumSize)
+	_ = w.closeCompressor()
+}
+
+func (w *compressionWriter) closeCompressor() error {
 	if w.compressor == nil {
-		return
+		return nil
 	}
-	_ = w.compressor.Close()
+	err := w.compressor.Close()
 	switch compressor := w.compressor.(type) {
 	case *brotli.Writer:
 		compressor.Reset(io.Discard)
@@ -227,27 +236,88 @@ func (w *compressionWriter) finish() {
 		gzipWriterPool.Put(compressor)
 	}
 	w.compressor = nil
+	w.output.Writer = nil
+	return err
 }
 
 func (w *compressionWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *compressionWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	// A raw takeover without prior HTTP output must remain raw. Once the
-	// handler has committed a response, send that output before handing over.
+	// Resolve support before committing buffered output. ResponseController
+	// follows the same Unwrap chain, but probing by calling it would take over.
+	var hijacker http.Hijacker
+	for current := w.ResponseWriter; current != nil; {
+		if h, ok := current.(http.Hijacker); ok {
+			hijacker = h
+			break
+		}
+		unwrapper, ok := current.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			break
+		}
+		current = unwrapper.Unwrap()
+	}
+	if hijacker == nil {
+		return nil, nil, http.ErrNotSupported
+	}
+	// Flush, rather than close, the compressor: a failed takeover must leave
+	// the current stream writable for the handler's fallback response.
 	if w.status != 0 || w.started {
 		if err := w.start(false); err != nil {
 			return nil, nil, err
 		}
-		w.finish()
-		if err := http.NewResponseController(w.ResponseWriter).Flush(); err != nil && err != http.ErrNotSupported {
+		if w.compressor != nil {
+			if err := w.compressor.Flush(); err != nil {
+				return nil, nil, err
+			}
+		}
+		if err := http.NewResponseController(w.ResponseWriter).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
 			return nil, nil, err
 		}
 	}
-	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
-	if err == nil {
-		w.hijacked = true
+	conn, rw, err := hijacker.Hijack()
+	if err != nil {
+		return conn, rw, err
 	}
-	return conn, rw, err
+	w.hijacked = true
+	if w.compressor != nil {
+		// net/http can no longer accept writes after a successful takeover.
+		// Finish the encoding through the returned connection, using the same
+		// HTTP/1.1 framing as the flushed response before raw tunnel data.
+		w.output.Writer = rw
+		var chunks io.WriteCloser
+		if w.http11 && !strings.EqualFold(w.headers.Get("Transfer-Encoding"), "identity") {
+			chunks = httputil.NewChunkedWriter(rw)
+			w.output.Writer = chunks
+		}
+		err = w.closeCompressor()
+		if err == nil && chunks != nil {
+			err = chunks.Close()
+			if err == nil {
+				trailers := http.Header{}
+				for key := range declaredTrailers(w.headers) {
+					trailers[key] = w.Header().Values(key)
+				}
+				for key, values := range w.Header() {
+					if strings.HasPrefix(key, http.TrailerPrefix) {
+						trailers[strings.TrimPrefix(key, http.TrailerPrefix)] = values
+					}
+				}
+				err = trailers.Write(rw)
+				if err == nil {
+					_, err = rw.WriteString("\r\n")
+				}
+			}
+		}
+		if err == nil {
+			err = rw.Flush()
+		}
+		if err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+	}
+	return conn, rw, nil
 }
 
 type compressionFlushWriter struct{ *compressionWriter }
